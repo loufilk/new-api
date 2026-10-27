@@ -20,7 +20,6 @@ import {
   BarChartIcon,
   CodeSquareIcon,
   GraduationCapIcon,
-  MessageSquarePlusIcon,
   NotepadTextIcon,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -31,11 +30,27 @@ type PlaygroundEmptyStateProps = {
   onSelectPrompt: (prompt: string) => void
 }
 
-const starterPrompts = [
-  { icon: BarChartIcon, text: 'Analyze data' },
-  { icon: NotepadTextIcon, text: 'Summarize text' },
-  { icon: CodeSquareIcon, text: 'Code' },
-  { icon: GraduationCapIcon, text: 'Get advice' },
+const starterCards = [
+  {
+    icon: BarChartIcon,
+    title: 'Analyze data',
+    description: 'Find patterns in your data',
+  },
+  {
+    icon: NotepadTextIcon,
+    title: 'Summarize text',
+    description: 'Condense long content into key points',
+  },
+  {
+    icon: CodeSquareIcon,
+    title: 'Code',
+    description: 'Write, debug, and explain code',
+  },
+  {
+    icon: GraduationCapIcon,
+    title: 'Get advice',
+    description: 'Get thoughtful answers and ideas',
+  },
 ]
 
 export function PlaygroundEmptyState({
@@ -45,13 +60,9 @@ export function PlaygroundEmptyState({
 
   return (
     <div className='flex min-h-[min(520px,calc(100svh-18rem))] items-center justify-center px-1 py-8 md:py-12'>
-      <div className='grid w-full max-w-2xl gap-5 text-center'>
-        <div className='bg-muted/50 text-muted-foreground mx-auto flex size-11 items-center justify-center rounded-xl border'>
-          <MessageSquarePlusIcon className='size-5' aria-hidden='true' />
-        </div>
-
+      <div className='grid w-full max-w-2xl justify-items-center gap-6 text-center'>
         <div className='grid gap-2'>
-          <h2 className='text-xl font-semibold tracking-tight text-balance md:text-2xl'>
+          <h2 className='text-2xl font-semibold tracking-tight text-balance md:text-3xl'>
             {t('Start a playground chat')}
           </h2>
           <p className='text-muted-foreground mx-auto max-w-lg text-sm leading-6 text-balance'>
@@ -61,19 +72,26 @@ export function PlaygroundEmptyState({
           </p>
         </div>
 
-        <div className='grid gap-2 sm:grid-cols-2'>
-          {starterPrompts.map(({ icon: Icon, text }) => {
-            const prompt = t(text)
+        <div className='grid w-full gap-3 sm:grid-cols-2'>
+          {starterCards.map(({ icon: Icon, title, description }) => {
+            const prompt = t(title)
 
             return (
               <Button
-                className='h-auto min-h-11 justify-start gap-2 px-3 py-2.5 text-left whitespace-normal'
-                key={text}
+                className='group h-auto min-h-24 justify-start gap-3 p-4 text-left whitespace-normal'
+                key={title}
                 onClick={() => onSelectPrompt(prompt)}
                 variant='outline'
               >
-                <Icon className='text-muted-foreground size-4' />
-                <span>{prompt}</span>
+                <span className='bg-muted text-foreground group-hover:bg-primary/10 group-hover:text-primary inline-flex size-9 shrink-0 items-center justify-center rounded-lg transition-colors'>
+                  <Icon className='size-4' aria-hidden='true' />
+                </span>
+                <span className='grid min-w-0 gap-0.5'>
+                  <span className='text-sm font-semibold'>{prompt}</span>
+                  <span className='text-muted-foreground text-xs leading-5'>
+                    {t(description)}
+                  </span>
+                </span>
               </Button>
             )
           })}

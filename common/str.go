@@ -135,6 +135,12 @@ func MaskEmail(email string) string {
 
 // MaskSensitiveInfo moved to the conversion kit (kitutil) because the types
 // package error formatting depends on it; host callers keep this name.
-func MaskSensitiveInfo(str string) string {
-	return kitutil.MaskSensitiveInfo(str)
+func MaskSensitiveInfo(str string, upstreamURLs ...string) string {
+	return kitutil.MaskSensitiveInfo(str, upstreamURLs...)
+}
+
+// MaskSensitiveLogInfo preserves conservative host redaction for infrastructure
+// logs that have no selected channel from which to obtain an address allowlist.
+func MaskSensitiveLogInfo(str string) string {
+	return kitutil.MaskSensitiveLogInfo(str)
 }

@@ -33,7 +33,9 @@ func GeminiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	info.ObserveResponseModel(gjson.GetBytes(responseBody, "modelVersion").Str)
-	markGeminiGoogleSearchCall(c, &geminiResponse)
+	var grounding geminiGroundingCounter
+	grounding.observe(&geminiResponse)
+	grounding.commit(info)
 	countGeminiBillableFunctionCalls(info, &geminiResponse)
 	if len(geminiResponse.Candidates) == 0 {
 		usage := buildUsageFromGeminiResponse(c, info, &geminiResponse)
@@ -67,7 +69,7 @@ func GeminiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	if responseID := helper.GetResponseID(c); responseID != "" {
 		responsesResp.ID = responseID
 	}
-	responsesResp.Model = info.UpstreamModelName
+	responsesResp.Model = info.OriginModelName
 	responsesResp.Usage = relayconvert.UsageFromChatUsage(&usage)
 
 	responseBody, err = common.Marshal(responsesResp)
@@ -83,7 +85,7 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 	created := common.GetTimestamp()
 	state, err := relayconvert.NewResponseStreamState(types.RelayFormatGemini, types.RelayFormatOpenAIResponses, relayconvert.ResponseStreamOptions{
 		ID:                 responseID,
-		Model:              info.UpstreamModelName,
+		Model:              info.OriginModelName,
 		Created:            created,
 		EmitSequenceNumber: true,
 	})

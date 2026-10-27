@@ -49,11 +49,18 @@ const (
 	RelayModeResponsesCompact
 
 	RelayModeAlphaSearch
+
+	RelayModeToolsSearch
+	RelayModeToolsFetch
 )
+
+func IsPlaygroundChatPath(path string) bool {
+	return strings.HasPrefix(path, "/pg/chat/completions") || strings.HasPrefix(path, "/api/user/playground/chat")
+}
 
 func Path2RelayMode(path string) int {
 	relayMode := RelayModeUnknown
-	if strings.HasPrefix(path, "/v1/chat/completions") || strings.HasPrefix(path, "/pg/chat/completions") {
+	if strings.HasPrefix(path, "/v1/chat/completions") || IsPlaygroundChatPath(path) {
 		relayMode = RelayModeChatCompletions
 	} else if strings.HasPrefix(path, "/v1/completions") {
 		relayMode = RelayModeCompletions
@@ -75,6 +82,10 @@ func Path2RelayMode(path string) int {
 		relayMode = RelayModeResponses
 	} else if strings.HasPrefix(path, "/v1/alpha/search") {
 		relayMode = RelayModeAlphaSearch
+	} else if strings.HasPrefix(path, "/v1/tools/search") {
+		relayMode = RelayModeToolsSearch
+	} else if strings.HasPrefix(path, "/v1/tools/fetch") {
+		relayMode = RelayModeToolsFetch
 	} else if strings.HasPrefix(path, "/v1/audio/speech") {
 		relayMode = RelayModeAudioSpeech
 	} else if strings.HasPrefix(path, "/v1/audio/transcriptions") {

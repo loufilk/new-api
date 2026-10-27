@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -60,14 +61,23 @@ type upstreamEnvelope[T any] struct {
 }
 
 type upstreamModel struct {
-	Description string          `json:"description"`
-	Endpoints   json.RawMessage `json:"endpoints"`
-	Icon        string          `json:"icon"`
-	ModelName   string          `json:"model_name"`
-	NameRule    int             `json:"name_rule"`
-	Status      int             `json:"status"`
-	Tags        string          `json:"tags"`
-	VendorName  string          `json:"vendor_name"`
+	ContextLength    *int            `json:"context_length,omitempty"`
+	MaxOutputTokens  *int            `json:"max_output_tokens,omitempty"`
+	KnowledgeCutoff  string          `json:"knowledge_cutoff,omitempty"`
+	ReleaseDate      string          `json:"release_date,omitempty"`
+	ParameterCount   string          `json:"parameter_count,omitempty"`
+	InputModalities  []string        `json:"input_modalities"`
+	OutputModalities []string        `json:"output_modalities"`
+	Capabilities     []string        `json:"capabilities"`
+	BonusEligible    *bool           `json:"bonus_eligible,omitempty"`
+	Description      string          `json:"description"`
+	Endpoints        json.RawMessage `json:"endpoints"`
+	Icon             string          `json:"icon"`
+	ModelName        string          `json:"model_name"`
+	NameRule         int             `json:"name_rule"`
+	Status           int             `json:"status"`
+	Tags             string          `json:"tags"`
+	VendorName       string          `json:"vendor_name"`
 }
 
 type upstreamVendor struct {
@@ -94,7 +104,7 @@ func newHTTPClient() *http.Client {
 		ResponseHeaderTimeout: time.Duration(timeoutSec) * time.Second,
 	}
 	if common.TLSInsecureSkipVerify {
-		transport.TLSClientConfig = common.InsecureTLSConfig
+		transport.TLSClientConfig = common.InsecureTLSConfig.Clone()
 	}
 	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, _, err := net.SplitHostPort(addr)
@@ -297,7 +307,7 @@ func fetchMetadataCatalog(c *gin.Context, locale string) (metadataSyncSource, ma
 				endpoints = string(item.Endpoints)
 			}
 		}
-		values := model.MetadataValues{Description: item.Description, Icon: item.Icon, Tags: item.Tags, Vendor: strings.TrimSpace(item.VendorName), Endpoints: endpoints, NameRule: item.NameRule, Status: item.Status}
+		values := model.MetadataValues{Description: item.Description, Icon: item.Icon, Tags: item.Tags, Vendor: strings.TrimSpace(item.VendorName), Endpoints: endpoints, NameRule: item.NameRule, Status: item.Status, ContextLength: item.ContextLength, MaxOutputTokens: item.MaxOutputTokens, KnowledgeCutoff: item.KnowledgeCutoff, ReleaseDate: item.ReleaseDate, ParameterCount: item.ParameterCount, InputModalities: item.InputModalities, OutputModalities: item.OutputModalities, Capabilities: item.Capabilities, BonusEligible: item.BonusEligible}
 		if err := model.ValidateMetadataValues(values); err != nil {
 			return source, nil, nil, fmt.Errorf("model %s: %w", item.ModelName, err)
 		}
@@ -387,7 +397,7 @@ func SyncUpstreamPreview(c *gin.Context) {
 		localValues := model.MetadataValues{}
 		if local != nil {
 			candidate.Kind = "update"
-			localValues = model.MetadataValues{Description: local.Description, Icon: local.Icon, Tags: local.Tags, Endpoints: local.Endpoints, NameRule: local.NameRule, Status: local.Status}
+			localValues = model.MetadataValues{Description: local.Description, Icon: local.Icon, Tags: local.Tags, Endpoints: local.Endpoints, NameRule: local.NameRule, Status: local.Status, ContextLength: local.ContextLength, MaxOutputTokens: local.MaxOutputTokens, KnowledgeCutoff: local.KnowledgeCutoff, ReleaseDate: local.ReleaseDate, ParameterCount: local.ParameterCount, InputModalities: model.ParseModelMetadataArray(local.InputModalities), OutputModalities: model.ParseModelMetadataArray(local.OutputModalities), Capabilities: model.ParseModelMetadataArray(local.Capabilities), BonusEligible: local.BonusEligible}
 			if localVendor != nil {
 				localValues.Vendor = localVendor.Name
 			}
@@ -398,7 +408,10 @@ func SyncUpstreamPreview(c *gin.Context) {
 		_ = common.Unmarshal(localRaw, &localFields)
 		_ = common.Unmarshal(upRaw, &upFields)
 		for _, field := range model.MetadataSyncFields {
-			if local == nil || localFields[field] != upFields[field] {
+			if upFields[field] == nil {
+				continue
+			}
+			if local == nil || !reflect.DeepEqual(localFields[field], upFields[field]) {
 				candidate.Fields = append(candidate.Fields, metadataSyncField{Field: field, Local: localFields[field], Upstream: upFields[field]})
 			}
 		}

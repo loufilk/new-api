@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { ModelDisplayCategory } from '@/lib/model-display-categories'
+
 // ----------------------------------------------------------------------------
 // Pricing Types
 // ----------------------------------------------------------------------------
@@ -100,7 +102,9 @@ export type PricingModel = {
   parameter_count?: string
   input_modalities?: Modality[]
   output_modalities?: Modality[]
-  capabilities?: ModelCapability[]
+  capabilities?: string[]
+  /** Local catalog filter override; absent/empty retains automatic classification. */
+  display_categories?: ModelDisplayCategory[] | null
 }
 
 /** Input/output modalities supported by a model. */
@@ -128,7 +132,7 @@ export type PricingData = {
   vendors: PricingVendor[]
   group_ratio: Record<string, number>
   usable_group: Record<string, { desc: string; ratio: number }>
-  supported_endpoint: Record<string, string>
+  supported_endpoint: Record<string, { path?: string; method?: string }>
   auto_groups: string[]
 }
 

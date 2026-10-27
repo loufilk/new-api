@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"time"
 
 	"gorm.io/gorm"
@@ -27,10 +28,14 @@ func (PerfMetric) TableName() string {
 }
 
 func UpsertPerfMetric(metric *PerfMetric) error {
+	return UpsertPerfMetricContext(context.Background(), metric)
+}
+
+func UpsertPerfMetricContext(ctx context.Context, metric *PerfMetric) error {
 	if metric == nil || metric.RequestCount == 0 {
 		return nil
 	}
-	return DB.Clauses(clause.OnConflict{
+	return DB.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{
 			{Name: "model_name"},
 			{Name: "group"},
@@ -113,6 +118,25 @@ func GetPerfMetricsSummaryBucketsAll(startTs int64, endTs int64, groups []string
 		Order("bucket_ts ASC").
 		Find(&summaries).Error
 	return summaries, err
+}
+
+// GetRecentPerfMetricSuccessBuckets reads the latest nonempty hours within
+// the supplied history window, independently of the summary's reporting window.
+func GetRecentPerfMetricSuccessBuckets(modelName string, startTs int64, endTs int64, groups []string, limit int) ([]PerfMetricSummaryBucket, error) {
+	if modelName == "" || limit <= 0 || (groups != nil && len(groups) == 0) {
+		return nil, nil
+	}
+	const hourBucket = "bucket_ts - (bucket_ts % 3600)"
+	query := DB.Model(&PerfMetric{}).
+		Select("model_name, "+hourBucket+" AS bucket_ts, SUM(request_count) AS request_count, SUM(success_count) AS success_count").
+		Where("model_name = ? AND bucket_ts >= ? AND bucket_ts <= ? AND request_count > 0", modelName, startTs, endTs)
+	if groups != nil {
+		query = query.Where(commonGroupCol+" IN ?", groups)
+	}
+	var buckets []PerfMetricSummaryBucket
+	err := query.Group("model_name, " + hourBucket).
+		Order("bucket_ts DESC").Limit(limit).Find(&buckets).Error
+	return buckets, err
 }
 
 func DeletePerfMetricsBefore(cutoffTs int64) error {

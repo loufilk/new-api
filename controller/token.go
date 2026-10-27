@@ -1,15 +1,20 @@
 package controller
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay"
+	relayhelper "github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -35,6 +40,8 @@ func (input *tokenAutoGroupsInput) UnmarshalJSON(data []byte) error {
 type tokenRequest struct {
 	model.Token
 	AutoGroups tokenAutoGroupsInput `json:"auto_groups"`
+	// 指针区分“未传”和显式 false：新建时未传即开启，更新时未传则保留原值。
+	AllowUserQuotaQuery *bool `json:"allow_user_quota_query"`
 }
 
 type tokenResponse struct {
@@ -60,7 +67,7 @@ func buildMaskedTokenResponse(token *model.Token) *tokenResponse {
 	maskedToken.Key = token.GetMaskedKey()
 	autoGroups, err := token.GetAutoGroups()
 	if err != nil {
-		common.SysError(fmt.Sprintf("failed to parse auto groups for token %d: %v", token.Id, err))
+		common.SysError(common.LogText("failed to parse auto groups for token %d: %v", token.Id, err))
 		autoGroups = nil
 	}
 	if len(autoGroups) == 0 {
@@ -87,6 +94,26 @@ func getTokenRequestUserGroup(c *gin.Context) (string, error) {
 	return model.GetUserGroup(c.GetInt("id"), false)
 }
 
+func validateTokenRequestGroup(c *gin.Context, tokenGroup string) bool {
+	if tokenGroup == "" {
+		return true
+	}
+	userGroup, err := getTokenRequestUserGroup(c)
+	if err != nil {
+		common.ApiError(c, err)
+		return false
+	}
+	if err := service.ValidateTokenGroup(userGroup, tokenGroup); err != nil {
+		message := i18n.MsgAuthTokenGroupForbidden
+		if errors.Is(err, service.ErrTokenGroupDeprecated) {
+			message = i18n.MsgAuthTokenGroupDeprecated
+		}
+		common.ApiErrorI18n(c, message, map[string]any{"Group": tokenGroup})
+		return false
+	}
+	return true
+}
+
 func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) bool {
 	if len(groups) == 0 {
 		if err := token.SetAutoGroups(nil); err != nil {
@@ -98,7 +125,7 @@ func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) boo
 
 	maxCount := setting.GetMaxTokenAutoGroups()
 	if len(groups) > maxCount {
-		common.ApiErrorI18n(c, i18n.MsgTokenAutoGroupsTooMany, map[string]any{"Max": maxCount})
+		common.ApiErrorT(c, "A token can select at most {{max}} Auto groups", map[string]any{"max": maxCount})
 		return false
 	}
 
@@ -110,12 +137,12 @@ func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) boo
 	seen := make(map[string]struct{}, len(groups))
 	for _, group := range groups {
 		if _, ok := seen[group]; ok {
-			common.ApiErrorI18n(c, i18n.MsgTokenAutoGroupsDuplicate, map[string]any{"Group": group})
+			common.ApiErrorT(c, "Auto group {{group}} is duplicated", map[string]any{"group": group})
 			return false
 		}
 		seen[group] = struct{}{}
 		if !service.IsUserSelectableGroup(userGroup, group) {
-			common.ApiErrorI18n(c, i18n.MsgTokenAutoGroupsInvalid, map[string]any{"Group": group})
+			common.ApiErrorT(c, "Auto group {{group}} is unavailable or unauthorized", map[string]any{"group": group})
 			return false
 		}
 	}
@@ -185,6 +212,172 @@ func GetTokenAutoGroups(c *gin.Context) {
 	})
 }
 
+type tokenModelScopeRequest struct {
+	Group          string   `json:"group"`
+	AutoGroupsMode string   `json:"auto_groups_mode"`
+	AutoGroups     []string `json:"auto_groups"`
+}
+
+func getRoutableModelsForGroups(user *model.UserBase, groups []string, allow func(*model.Channel, string) bool) ([]string, error) {
+	abilities, err := model.GetEnabledAbilitiesWithChannelsForGroups(groups)
+	if err != nil {
+		return nil, err
+	}
+	if len(abilities) == 0 {
+		return []string{}, nil
+	}
+
+	channelIDs := make([]int, 0, len(abilities))
+	seenChannelIDs := make(map[int]struct{}, len(abilities))
+	for _, ability := range abilities {
+		if _, exists := seenChannelIDs[ability.ChannelId]; exists {
+			continue
+		}
+		seenChannelIDs[ability.ChannelId] = struct{}{}
+		channelIDs = append(channelIDs, ability.ChannelId)
+	}
+	channels, err := model.GetChannelsByIds(channelIDs)
+	if err != nil {
+		return nil, err
+	}
+	channelByID := make(map[int]*model.Channel, len(channels))
+	for _, channel := range channels {
+		if channel != nil && channel.Status == common.ChannelStatusEnabled {
+			channelByID[channel.Id] = channel
+		}
+	}
+
+	acceptUnsetPricing := user.GetSetting().AcceptUnsetRatioModel
+	modelSet := make(map[string]struct{})
+	for _, ability := range abilities {
+		modelName := strings.TrimSpace(ability.Model)
+		if modelName == "" {
+			continue
+		}
+		if !acceptUnsetPricing && !relayhelper.HasModelBillingConfig(modelName) {
+			continue
+		}
+		channel := channelByID[ability.ChannelId]
+		if channel == nil {
+			continue
+		}
+		if allow != nil && !allow(channel, modelName) {
+			continue
+		}
+		modelSet[modelName] = struct{}{}
+	}
+
+	models := make([]string, 0, len(modelSet))
+	for modelName := range modelSet {
+		models = append(models, modelName)
+	}
+	sort.Strings(models)
+	return models, nil
+}
+
+// PreviewTokenModels returns models routable by the API key routing scope being
+// edited. It intentionally ignores model_limits so the selector can add any
+// model that is valid for the selected group(s). Existing whitelist selections
+// remain unchanged; the frontend marks unavailable selections for explicit review.
+func PreviewTokenModels(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	request := tokenModelScopeRequest{}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	userID := c.GetInt("id")
+	user, err := model.GetUserCache(userID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	token := &model.Token{Group: request.Group}
+	if err := service.ValidateTokenGroup(user.Group, token.Group); err != nil {
+		common.ApiSuccess(c, []string{})
+		return
+	}
+	var groups []string
+	if token.Group == "auto" && request.AutoGroupsMode == "custom" {
+		groups = service.FilterUserTokenAutoGroups(user.Group, request.AutoGroups)
+	} else {
+		if token.Group == "auto" && len(request.AutoGroups) > 0 {
+			if err := token.SetAutoGroups(request.AutoGroups); err != nil {
+				common.ApiError(c, err)
+				return
+			}
+		}
+		groups, err = service.GetTokenEffectiveGroups(user.Group, token)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	models, err := getRoutableModelsForGroups(user, groups, nil)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, models)
+}
+
+func GetTokenModels(c *gin.Context) {
+	app, ok := relay.NormalizeCCSwitchApp(c.Query("app"))
+	if !ok {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	respondWithTokenModels(c, func(channel *model.Channel, modelName string) bool {
+		return relay.SupportsCCSwitchModel(channel, app, modelName)
+	})
+}
+
+// GetTokenRoutableModels exposes the owned token's effective model scope for
+// console tools such as image generation, without a CLI-specific protocol filter.
+func GetTokenRoutableModels(c *gin.Context) {
+	respondWithTokenModels(c, nil)
+}
+
+func respondWithTokenModels(c *gin.Context, allow func(*model.Channel, string) bool) {
+	c.Header("Cache-Control", "no-store")
+	tokenID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || tokenID <= 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	userID := c.GetInt("id")
+	token, err := model.GetTokenByIds(tokenID, userID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	user, err := model.GetUserCache(userID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	groups, err := service.GetTokenEffectiveGroups(user.Group, token)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	modelLimit := token.GetModelLimitsMap()
+	models, err := getRoutableModelsForGroups(user, groups, func(channel *model.Channel, modelName string) bool {
+		if token.ModelLimitsEnabled && !middleware.TokenModelLimitAllows(modelLimit, modelName) {
+			return false
+		}
+		return allow == nil || allow(channel, modelName)
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, models)
+}
+
 func GetTokenKey(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	userId := c.GetInt("id")
@@ -248,7 +441,7 @@ func GetTokenUsage(c *gin.Context) {
 
 	token, err := model.GetTokenByKey(strings.TrimPrefix(tokenKey, "sk-"), false)
 	if err != nil {
-		common.SysError("failed to get token by key: " + err.Error())
+		common.SysError(common.LogText("failed to get token by key: %s", err.Error()))
 		common.ApiErrorI18n(c, i18n.MsgTokenGetInfoFailed)
 		return
 	}
@@ -258,20 +451,39 @@ func GetTokenUsage(c *gin.Context) {
 		expiredAt = 0
 	}
 
+	data := gin.H{
+		"object":               "token_usage",
+		"name":                 token.Name,
+		"total_granted":        token.RemainQuota + token.UsedQuota,
+		"total_used":           token.UsedQuota,
+		"total_available":      token.RemainQuota,
+		"unlimited_quota":      token.UnlimitedQuota,
+		"model_limits":         token.GetModelLimitsMap(),
+		"model_limits_enabled": token.ModelLimitsEnabled,
+		"expires_at":           expiredAt,
+	}
+	// 用户额度只在令牌允许时返回；IP 白名单已由 TokenAuthReadOnly 检查。
+	if token.AllowUserQuotaQuery {
+		userQuota, err := model.GetUserQuota(token.UserId, false)
+		var userUsedQuota int
+		if err == nil {
+			userUsedQuota, err = model.GetUserUsedQuota(token.UserId)
+		}
+		if err != nil {
+			common.SysError(common.LogText("failed to get user quota: %s", err.Error()))
+			common.ApiErrorI18n(c, i18n.MsgTokenGetInfoFailed)
+			return
+		}
+		data["user_quota"] = gin.H{
+			"total_available": userQuota,
+			"total_used":      userUsedQuota,
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"code":    true,
 		"message": "ok",
-		"data": gin.H{
-			"object":               "token_usage",
-			"name":                 token.Name,
-			"total_granted":        token.RemainQuota + token.UsedQuota,
-			"total_used":           token.UsedQuota,
-			"total_available":      token.RemainQuota,
-			"unlimited_quota":      token.UnlimitedQuota,
-			"model_limits":         token.GetModelLimitsMap(),
-			"model_limits_enabled": token.ModelLimitsEnabled,
-			"expires_at":           expiredAt,
-		},
+		"data":    data,
 	})
 }
 
@@ -284,7 +496,7 @@ func AddToken(c *gin.Context) {
 	}
 	token := request.Token
 	if len(token.Name) > 50 {
-		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
+		common.ApiErrorT(c, "Token name is too long")
 		return
 	}
 	params := tokenAuditParams(c)
@@ -292,12 +504,12 @@ func AddToken(c *gin.Context) {
 	// 非无限额度时，检查额度值是否超出有效范围
 	if !token.UnlimitedQuota {
 		if token.RemainQuota < 0 {
-			common.ApiErrorI18n(c, i18n.MsgTokenQuotaNegative)
+			common.ApiErrorT(c, "Quota value cannot be negative")
 			return
 		}
 		maxQuotaValue := maxTokenQuota()
 		if token.RemainQuota > maxQuotaValue {
-			common.ApiErrorI18n(c, i18n.MsgTokenQuotaExceedMax, map[string]any{"Max": maxQuotaValue})
+			common.ApiErrorT(c, "Quota value exceeds valid range, maximum is {{max}}", map[string]any{"max": logger.FormatQuota(maxQuotaValue)})
 			return
 		}
 	}
@@ -309,10 +521,10 @@ func AddToken(c *gin.Context) {
 		return
 	}
 	if int(count) >= maxTokens {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": fmt.Sprintf("已达到最大令牌数量限制 (%d)", maxTokens),
-		})
+		common.ApiErrorT(c, "Maximum number of tokens reached ({{max}})", map[string]any{"max": maxTokens})
+		return
+	}
+	if !validateTokenRequestGroup(c, token.Group) {
 		return
 	}
 	if token.Group == "auto" {
@@ -325,8 +537,8 @@ func AddToken(c *gin.Context) {
 	}
 	key, err := common.GenerateKey()
 	if err != nil {
-		common.ApiErrorI18n(c, i18n.MsgTokenGenerateFailed)
-		common.SysLog("failed to generate token key: " + err.Error())
+		common.ApiErrorT(c, "Failed to generate token")
+		common.SysLog(common.LogText("failed to generate token key: %s", err.Error()))
 		return
 	}
 	cleanToken := model.Token{
@@ -345,6 +557,7 @@ func AddToken(c *gin.Context) {
 		CrossGroupRetry:    token.CrossGroupRetry,
 		AutoGroups:         token.AutoGroups,
 	}
+	cleanToken.AllowUserQuotaQuery = request.AllowUserQuotaQuery == nil || *request.AllowUserQuotaQuery
 	err = cleanToken.Insert()
 	if err != nil {
 		common.ApiError(c, err)
@@ -395,17 +608,17 @@ func UpdateToken(c *gin.Context) {
 		params["id"] = token.Id
 	}
 	if len(token.Name) > 50 {
-		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
+		common.ApiErrorT(c, "Token name is too long")
 		return
 	}
 	if !token.UnlimitedQuota {
 		if token.RemainQuota < 0 {
-			common.ApiErrorI18n(c, i18n.MsgTokenQuotaNegative)
+			common.ApiErrorT(c, "Quota value cannot be negative")
 			return
 		}
 		maxQuotaValue := maxTokenQuota()
 		if token.RemainQuota > maxQuotaValue {
-			common.ApiErrorI18n(c, i18n.MsgTokenQuotaExceedMax, map[string]any{"Max": maxQuotaValue})
+			common.ApiErrorT(c, "Quota value exceeds valid range, maximum is {{max}}", map[string]any{"max": logger.FormatQuota(maxQuotaValue)})
 			return
 		}
 	}
@@ -418,17 +631,23 @@ func UpdateToken(c *gin.Context) {
 	previous := *cleanToken
 	if token.Status == common.TokenStatusEnabled {
 		if cleanToken.Status == common.TokenStatusExpired && cleanToken.ExpiredTime <= common.GetTimestamp() && cleanToken.ExpiredTime != -1 {
-			common.ApiErrorI18n(c, i18n.MsgTokenExpiredCannotEnable)
+			common.ApiErrorT(c, "Token has expired and cannot be enabled. Please modify the expiration time or set it to never expire")
 			return
 		}
 		if cleanToken.Status == common.TokenStatusExhausted && cleanToken.RemainQuota <= 0 && !cleanToken.UnlimitedQuota {
-			common.ApiErrorI18n(c, i18n.MsgTokenExhaustedCannotEable)
+			common.ApiErrorT(c, "Token quota is exhausted and cannot be enabled. Please modify the remaining quota or set it to unlimited")
 			return
 		}
 	}
 	if statusOnly != "" {
+		if token.Status == common.TokenStatusEnabled && !validateTokenRequestGroup(c, cleanToken.Group) {
+			return
+		}
 		cleanToken.Status = token.Status
 	} else {
+		if !validateTokenRequestGroup(c, token.Group) {
+			return
+		}
 		// If you add more fields, please also update token.Update()
 		cleanToken.Name = token.Name
 		cleanToken.ExpiredTime = token.ExpiredTime
@@ -437,6 +656,9 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
 		cleanToken.ModelLimits = token.ModelLimits
 		cleanToken.AllowIps = token.AllowIps
+		if request.AllowUserQuotaQuery != nil {
+			cleanToken.AllowUserQuotaQuery = *request.AllowUserQuotaQuery
+		}
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
 		if token.Group != "auto" {
@@ -470,6 +692,7 @@ func UpdateToken(c *gin.Context) {
 			{"model_limits", previous.ModelLimits != cleanToken.ModelLimits},
 			{"allow_ips", (previous.AllowIps == nil) != (cleanToken.AllowIps == nil) ||
 				(previous.AllowIps != nil && cleanToken.AllowIps != nil && *previous.AllowIps != *cleanToken.AllowIps)},
+			{"allow_user_quota_query", previous.AllowUserQuotaQuery != cleanToken.AllowUserQuotaQuery},
 			{"group", previous.Group != cleanToken.Group},
 			{"cross_group_retry", previous.CrossGroupRetry != cleanToken.CrossGroupRetry},
 			{"auto_groups", previous.AutoGroups != cleanToken.AutoGroups},
@@ -495,12 +718,12 @@ type TokenBatch struct {
 func DeleteTokenBatch(c *gin.Context) {
 	tokenBatch := TokenBatch{}
 	if err := c.ShouldBindJSON(&tokenBatch); err != nil {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 	params := tokenBatchAuditParams(c, tokenBatch.Ids)
 	if len(tokenBatch.Ids) == 0 {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 	userId := c.GetInt("id")
@@ -521,16 +744,16 @@ func DeleteTokenBatch(c *gin.Context) {
 func GetTokenKeysBatch(c *gin.Context) {
 	tokenBatch := TokenBatch{}
 	if err := c.ShouldBindJSON(&tokenBatch); err != nil {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 	params := tokenBatchAuditParams(c, tokenBatch.Ids)
 	if len(tokenBatch.Ids) == 0 {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 	if len(tokenBatch.Ids) > 100 {
-		common.ApiErrorI18n(c, i18n.MsgBatchTooMany, map[string]any{"Max": 100})
+		common.ApiErrorT(c, "Too many items in batch request, maximum is {{max}}", map[string]any{"max": 100})
 		return
 	}
 	userId := c.GetInt("id")

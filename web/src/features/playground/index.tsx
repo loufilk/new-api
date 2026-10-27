@@ -16,16 +16,27 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useCallback } from 'react'
+
+import { useAuthStore } from '@/stores/auth-store'
+
 import { PlaygroundChat } from './components/chat/playground-chat'
 import { PlaygroundInput } from './components/input/playground-input'
+import { PlaygroundBalanceBar } from './components/playground-balance-bar'
+import { PlaygroundQuotaBlock } from './components/playground-quota-block'
 import {
   useChatHandler,
   usePlaygroundConversation,
   usePlaygroundOptions,
   usePlaygroundState,
 } from './hooks'
+import type { Message } from './types'
 
 export function Playground() {
+  const user = useAuthStore((s) => s.auth.user)
+  const userQuota = user?.quota ?? 0
+  const isQuotaExceeded = userQuota <= 0
+
   const {
     config,
     parameterEnabled,
@@ -47,6 +58,16 @@ export function Playground() {
     onMessageUpdate: updateMessages,
   })
 
+  // The frontend guard covers every send path (input, starter prompt,
+  // regenerate, and edit+submit). The backend remains the final authority.
+  const guardedSendChat = useCallback(
+    (nextMessages: Message[]) => {
+      if (isQuotaExceeded) return
+      sendChat(nextMessages)
+    },
+    [isQuotaExceeded, sendChat]
+  )
+
   const {
     editingMessageKey,
     handleSendMessage,
@@ -58,7 +79,7 @@ export function Playground() {
   } = usePlaygroundConversation({
     messages,
     updateMessages,
-    sendChat,
+    sendChat: guardedSendChat,
   })
 
   const handleClearMessages = () => {
@@ -76,28 +97,36 @@ export function Playground() {
 
   return (
     <div className='relative flex size-full min-h-0 flex-col overflow-hidden'>
+      <div className='mx-auto w-full max-w-4xl px-4 pt-3 pb-2 md:pt-4'>
+        <PlaygroundBalanceBar quota={userQuota} />
+      </div>
+
       {/* Full-width scroll container: scrolling works even over side whitespace */}
       <div className='flex min-h-0 flex-1 flex-col overflow-hidden'>
-        <PlaygroundChat
-          messages={messages}
-          isLoadingMessages={isLoadingMessages}
-          onRegenerateMessage={handleRegenerateMessage}
-          onEditMessage={handleEditMessage}
-          onDeleteMessage={handleDeleteMessage}
-          onSelectPrompt={handleSendMessage}
-          isGenerating={isGenerating}
-          editingKey={editingMessageKey}
-          onCancelEdit={handleEditOpenChange}
-          onSaveEdit={(newContent) => applyEdit(newContent, false)}
-          onSaveEditAndSubmit={(newContent) => applyEdit(newContent, true)}
-        />
+        {isQuotaExceeded ? (
+          <PlaygroundQuotaBlock quota={userQuota} />
+        ) : (
+          <PlaygroundChat
+            messages={messages}
+            isLoadingMessages={isLoadingMessages}
+            onRegenerateMessage={handleRegenerateMessage}
+            onEditMessage={handleEditMessage}
+            onDeleteMessage={handleDeleteMessage}
+            onSelectPrompt={handleSendMessage}
+            isGenerating={isGenerating}
+            editingKey={editingMessageKey}
+            onCancelEdit={handleEditOpenChange}
+            onSaveEdit={(newContent) => applyEdit(newContent, false)}
+            onSaveEditAndSubmit={(newContent) => applyEdit(newContent, true)}
+          />
+        )}
       </div>
 
       {/* Input area: center content and constrain to the same container width */}
       <div className='mx-auto w-full max-w-4xl'>
         <PlaygroundInput
           config={config}
-          disabled={isGenerating}
+          disabled={isGenerating || isQuotaExceeded}
           groups={groups}
           groupValue={config.group}
           isGenerating={isGenerating}

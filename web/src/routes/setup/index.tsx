@@ -32,7 +32,7 @@ export const Route = createFileRoute('/setup/')({
     })
 
     if (status?.success && status.data?.status) {
-      throw redirect({ to: '/' })
+      throw redirect({ to: '/', reloadDocument: true })
     }
   },
   component: SetupWizard,

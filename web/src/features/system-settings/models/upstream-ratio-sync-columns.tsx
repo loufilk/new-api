@@ -59,25 +59,26 @@ export function useUpstreamRatioSyncColumns(
       {
         id: 'current',
         header: t('Current Price'),
-        size: 240,
-        minSize: 220,
+        size: upstreamNames.length === 1 ? 420 : 320,
+        minSize: 280,
+        // Offset source cells' checkbox (pl-7) and ui/table's checkbox pr-0 (-mr-3).
         cell: ({ row }) => (
-          <SyncPriceCell values={row.original.prices.current} />
+          <div className='-mr-3 pl-7'>
+            <SyncPriceCell values={row.original.prices.current} />
+          </div>
         ),
       },
-      ...upstreamNames.map(
-        (source): ColumnDef<PricingSyncRow> => ({
-          id: `upstream_${source}`,
-          size: upstreamNames.length === 1 ? 420 : 320,
-          minSize: 280,
-          header: isMobile
-            ? getUpstreamDisplayName(source, t)
-            : () => <SyncSourceHeader source={source} />,
-          cell: ({ row }) => (
-            <SyncSourcePriceCell row={row.original} source={source} />
-          ),
-        })
-      ),
+      ...upstreamNames.map((source): ColumnDef<PricingSyncRow> => ({
+        id: `upstream_${source}`,
+        size: upstreamNames.length === 1 ? 420 : 320,
+        minSize: 280,
+        header: isMobile
+          ? getUpstreamDisplayName(source, t)
+          : () => <SyncSourceHeader source={source} />,
+        cell: ({ row }) => (
+          <SyncSourcePriceCell row={row.original} source={source} />
+        ),
+      })),
     ],
     [upstreamNames, isMobile, t]
   )

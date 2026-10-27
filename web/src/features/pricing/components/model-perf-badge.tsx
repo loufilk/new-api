@@ -40,7 +40,7 @@ export interface ModelPerfBadgeProps extends React.HTMLAttributes<HTMLDivElement
   perf: ModelPerfBadgeData | undefined
 }
 
-const STATUS_SLOTS = Array.from({ length: 24 }, (_, slot) => slot)
+const STATUS_SAMPLE_LIMIT = 24
 
 export const ModelPerfBadge = memo(function ModelPerfBadge(
   props: ModelPerfBadgeProps
@@ -57,20 +57,24 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
     Number.isFinite(successRate) &&
     successRate >= 0 &&
     successRate <= 100
-  // Hourly points use the server window, including the current partial hour.
-  // Hours without traffic stay gray. Slot 23 is the current, partial hour.
-  const statusRates = useMemo(() => {
-    const windowStart = props.perf?.window_start
-    if (windowStart == null) return STATUS_SLOTS.map(() => undefined)
-    const ratesByHour = new Map<number, number>()
-    for (const point of props.perf?.recent_success_series ?? []) {
-      ratesByHour.set(point.ts, point.success_rate)
-    }
-    return STATUS_SLOTS.map((slot) => {
-      const hourStart = windowStart + slot * 3600
-      return ratesByHour.get(hourStart)
-    })
-  }, [props.perf?.recent_success_series, props.perf?.window_start])
+  const statusSamples = useMemo(
+    () =>
+      (props.perf?.recent_success_series ?? [])
+        .filter(
+          (point) =>
+            Number.isFinite(point.ts) &&
+            Number.isFinite(point.success_rate) &&
+            point.success_rate >= 0 &&
+            point.success_rate <= 100
+        )
+        .sort((a, b) => a.ts - b.ts)
+        .slice(-STATUS_SAMPLE_LIMIT),
+    [props.perf?.recent_success_series]
+  )
+  const statusLabel =
+    statusSamples.length > 0
+      ? t('Success rate')
+      : t('No performance data available')
 
   return (
     <div
@@ -80,13 +84,13 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
         props.className
       )}
     >
-      <dl className='flex min-w-0 items-start gap-5 text-xs tabular-nums'>
+      <dl className='flex min-w-0 flex-wrap items-start gap-5 text-sm tabular-nums'>
         <div className='w-24 shrink-0'>
           <dt
             title={t(
               'Success rate excludes business rejections and includes the current partial hour.'
             )}
-            className='text-muted-foreground flex items-center justify-between gap-1 text-[11px] leading-4'
+            className='text-muted-foreground flex items-center justify-between gap-1 text-xs leading-[1.4]'
           >
             <span>{t('Status')}</span>
             <span className='font-mono'>
@@ -95,36 +99,28 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
           </dt>
           <dd
             role='img'
-            aria-label={t(
-              'Recent success-rate samples; gray bars indicate missing data.'
-            )}
-            title={t(
-              'Recent success-rate samples; gray bars indicate missing data.'
-            )}
+            aria-label={statusLabel}
+            title={statusLabel}
             className='mt-1 flex h-3 w-24 items-center gap-px'
           >
-            {STATUS_SLOTS.map((slot) => {
-              const rate = statusRates[slot]
-              return (
+            {statusSamples.length > 0 ? (
+              statusSamples.map((sample) => (
                 <span
-                  key={slot}
+                  key={sample.ts}
                   aria-hidden
                   className={cn(
                     'h-full w-[3px] shrink-0 rounded-xs',
-                    rate != null &&
-                      Number.isFinite(rate) &&
-                      rate >= 0 &&
-                      rate <= 100
-                      ? getSuccessRateDotClass(rate)
-                      : 'bg-muted-foreground/15'
+                    getSuccessRateDotClass(sample.success_rate)
                   )}
                 />
-              )
-            })}
+              ))
+            ) : (
+              <span className='text-muted-foreground'>—</span>
+            )}
           </dd>
         </div>
         <div title={t('Average latency')} className='shrink-0'>
-          <dt className='text-muted-foreground text-[11px] leading-4'>
+          <dt className='text-muted-foreground text-xs leading-[1.4]'>
             {t('Latency short')}
           </dt>
           <dd className='mt-1 font-mono whitespace-nowrap'>
@@ -132,7 +128,7 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
           </dd>
         </div>
         <div title={t('Throughput')} className='shrink-0'>
-          <dt className='text-muted-foreground text-[11px] leading-4'>
+          <dt className='text-muted-foreground text-xs leading-[1.4]'>
             {t('Throughput short')}
           </dt>
           <dd className='mt-1 font-mono whitespace-nowrap'>

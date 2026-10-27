@@ -56,6 +56,7 @@ export function getChannelTypeIcon(type: number): string {
     60: 'NewAPI', // New API
     62: 'Vllm', // vLLM
     63: 'SGLang', // SGLang
+    64: 'Cline', // Cline
     3: 'Azure', // Azure
 
     // Anthropic
@@ -104,7 +105,7 @@ export function getChannelTypeIcon(type: number): string {
     52: 'Vidu', // Vidu
     36: 'Suno', // SunoAPI
     55: 'OpenAI', // Sora
-    54: 'Doubao', // DoubaoVideo
+    54: 'Doubao', // Doubao
     56: 'Replicate', // Replicate
 
     // Tools & Platforms

@@ -222,6 +222,136 @@ test('confirmed disable blocked by usage opens the existing cascade confirmation
   )
 })
 
+test('usage dialog offers one cancel button and force operation posts force params', async () => {
+  const user = userEvent.setup()
+  const post = vi
+    .spyOn(api, 'post')
+    .mockResolvedValueOnce({
+      data: {
+        success: false,
+        message: 'Plugin in use',
+        data: {
+          channels: [{ id: 7, name: 'Video channel' }],
+          in_flight_count: 0,
+        },
+      },
+    })
+    .mockResolvedValueOnce({ data: { success: true, data: null } })
+  await user.click(renderPlugins(true))
+  await user.click(
+    within(
+      await screen.findByRole('alertdialog', { name: 'Disable plugin?' })
+    ).getByRole('button', { name: 'Disable' })
+  )
+  const usage = await screen.findByRole('alertdialog', {
+    name: 'Plugin is still in use',
+  })
+  expect(within(usage).getAllByRole('button', { name: 'Cancel' })).toHaveLength(
+    1
+  )
+  expect(post).toHaveBeenCalledTimes(1)
+  await user.click(
+    within(usage).getByRole('button', { name: 'Force operation' })
+  )
+  await waitFor(() =>
+    expect(post).toHaveBeenLastCalledWith(
+      '/api/plugin/task/example/status',
+      { enabled: false },
+      expect.objectContaining({ params: { cascade: true, force: true } })
+    )
+  )
+})
+
+test('cancelling an in-use deletion never sends force and closes both confirmations', async () => {
+  const user = userEvent.setup()
+  const remove = vi.spyOn(api, 'delete').mockResolvedValueOnce({
+    data: {
+      success: false,
+      message: 'Plugin in use',
+      data: { channels: [], in_flight_count: 1 },
+    },
+  })
+  renderPlugins(true, 'table')
+  await user.click(screen.getAllByRole('button', { name: 'Open menu' })[0])
+  await user.click(
+    screen.getByRole('menuitem', { name: 'Delete active custom version' })
+  )
+  await user.click(
+    within(
+      await screen.findByRole('alertdialog', { name: 'Delete plugin version?' })
+    ).getByRole('button', { name: 'Delete' })
+  )
+  const usage = await screen.findByRole('alertdialog', {
+    name: 'Plugin is still in use',
+  })
+  expect(screen.getAllByRole('alertdialog')).toHaveLength(1)
+  expect(remove).toHaveBeenCalledExactlyOnceWith(
+    '/api/plugin/task/example/versions/1.0.0',
+    expect.objectContaining({ params: undefined })
+  )
+  await user.click(within(usage).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  )
+  expect(remove).toHaveBeenCalledTimes(1)
+})
+
+test('pending force deletion cannot repeat or dismiss and a failed operation remains retryable', async () => {
+  const user = userEvent.setup()
+  let finish!: (value: { data: { success: boolean; message: string } }) => void
+  const remove = vi
+    .spyOn(api, 'delete')
+    .mockResolvedValueOnce({
+      data: {
+        success: false,
+        message: 'Plugin in use',
+        data: { channels: [], in_flight_count: 1 },
+      },
+    })
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    .mockResolvedValueOnce({ data: { success: true, data: null } })
+  renderPlugins(true, 'table')
+  await user.click(screen.getAllByRole('button', { name: 'Open menu' })[0])
+  await user.click(
+    screen.getByRole('menuitem', { name: 'Delete active custom version' })
+  )
+  await user.click(
+    within(
+      await screen.findByRole('alertdialog', { name: 'Delete plugin version?' })
+    ).getByRole('button', { name: 'Delete' })
+  )
+  const usage = await screen.findByRole('alertdialog', {
+    name: 'Plugin is still in use',
+  })
+  const force = within(usage).getByRole('button', { name: 'Force operation' })
+  await user.click(force)
+  await waitFor(() => expect(force).toBeDisabled())
+  expect(within(usage).getByRole('button', { name: 'Cancel' })).toBeDisabled()
+  await user.click(force)
+  await user.keyboard('{Escape}')
+  expect(remove).toHaveBeenCalledTimes(2)
+  expect(usage).toBeInTheDocument()
+  expect(remove).toHaveBeenLastCalledWith(
+    '/api/plugin/task/example/versions/1.0.0',
+    expect.objectContaining({ params: { force: true } })
+  )
+  await act(async () =>
+    finish({ data: { success: false, message: 'Deletion failed' } })
+  )
+  await waitFor(() => expect(force).toBeEnabled())
+  expect(usage).toBeInTheDocument()
+  await user.click(force)
+  await waitFor(() =>
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  )
+  expect(remove).toHaveBeenCalledTimes(3)
+})
+
 test.each(['factory', 'override_over_factory'] as const)(
   '%s deletion protects the factory plugin while allowing custom version removal',
   async (source) => {

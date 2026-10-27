@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
 import { Loader2, RefreshCw, Trash2, Power, PowerOff } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -42,6 +42,7 @@ import {
   hasPermission,
 } from '@/lib/admin-permissions'
 import { handleServerError } from '@/lib/handle-server-error'
+import { getServerMessage } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
@@ -191,7 +192,7 @@ export function MultiKeyManageDialog({
       }
 
       if (response?.success) {
-        toast.success(response.message || t('Operation successful'))
+        toast.success(getServerMessage(response) || t('Operation successful'))
         queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
 
         // Reload data - reset to page 1 for bulk actions
@@ -232,6 +233,23 @@ export function MultiKeyManageDialog({
 
   if (!currentRow) return null
 
+  let keyTableBody: ReactNode
+  if (isLoading) {
+    keyTableBody = (
+      <div className='flex items-center justify-center py-12'>
+        <Loader2 className='text-muted-foreground h-8 w-8 animate-spin' />
+      </div>
+    )
+  } else if (keys.length === 0) {
+    keyTableBody = (
+      <div className='text-muted-foreground py-12 text-center'>
+        {t('No keys found')}
+      </div>
+    )
+  } else {
+    keyTableBody = null
+  }
+
   return (
     <>
       <Dialog
@@ -261,7 +279,7 @@ export function MultiKeyManageDialog({
         description={t(
           'Manage multi-key status and configuration for this channel'
         )}
-        contentClassName='flex max-h-[90vh] max-w-5xl flex-col'
+        contentClassName='flex max-h-[min(90dvh,var(--dialog-available-height))] max-w-5xl flex-col'
         titleClassName='flex items-center gap-2'
         contentHeight='min(72vh, 720px)'
         bodyClassName='space-y-4'
@@ -373,17 +391,7 @@ export function MultiKeyManageDialog({
 
           {/* Table */}
           <div className='min-h-0 flex-1 overflow-auto rounded-md border'>
-            {isLoading && (
-              <div className='flex items-center justify-center py-12'>
-                <Loader2 className='text-muted-foreground h-8 w-8 animate-spin' />
-              </div>
-            )}
-            {!isLoading && keys.length === 0 && (
-              <div className='text-muted-foreground py-12 text-center'>
-                {t('No keys found')}
-              </div>
-            )}
-            {!isLoading && !(keys.length === 0) && (
+            {keyTableBody ?? (
               <StaticDataTable
                 className='rounded-none border-0'
                 tableClassName='min-w-[800px]'

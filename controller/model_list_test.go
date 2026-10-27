@@ -49,7 +49,7 @@ func setupModelListControllerTestDB(t *testing.T) *gorm.DB {
 	model.DB = db
 	model.LOG_DB = db
 
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.Option{}))
 
 	t.Cleanup(func() {
 		sqlDB, err := db.DB()
@@ -528,4 +528,47 @@ func TestSetupLoginDoesNotTouchPasswordWhenPasswordFieldOmitted(t *testing.T) {
 	var stored model.User
 	require.NoError(t, db.First(&stored, user.Id).Error)
 	assert.Equal(t, hashedPassword, stored.Password)
+}
+
+func TestListModelsPublicOwnerOverridesWithoutLeakingOtherChannels(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	db := setupModelListControllerTestDB(t)
+	for _, ch := range []model.Channel{
+		{Id: 901, Type: constant.ChannelTypeOpenAI, Key: "secret-a", Name: "private-name-a", Status: common.ChannelStatusEnabled, Group: "default", Models: "public-a", Setting: common.GetPointer(`{"model_owned_by":"WanChuan A"}`)},
+		{Id: 902, Type: constant.ChannelTypeOpenAI, Key: "secret-b", Name: "private-name-b", Status: common.ChannelStatusEnabled, Group: "default", Models: "public-b", Setting: common.GetPointer(`{"model_owned_by":"WanChuan B"}`)},
+		{Id: 903, Type: constant.ChannelTypeOpenAI, Key: "secret-c", Name: "private-name-c", Status: common.ChannelStatusEnabled, Group: "private", Models: "public-a", Setting: common.GetPointer(`{"model_owned_by":"private-owner"}`)},
+	} {
+		require.NoError(t, db.Create(&ch).Error)
+		priority := int64(ch.Id)
+		require.NoError(t, db.Create(&model.Ability{Group: ch.Group, Model: ch.Models, ChannelId: ch.Id, Enabled: true, Priority: &priority}).Error)
+	}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+	payload := decodeListModelsPayload(t, recorder)
+	require.Len(t, payload.Data, 2)
+	owners := map[string]string{}
+	for _, item := range payload.Data {
+		owners[item.Id] = item.OwnedBy
+	}
+	assert.Equal(t, map[string]string{"public-a": "chuanapi", "public-b": "chuanapi"}, owners)
+	for _, private := range []string{"private-name", "secret-", "private-owner"} {
+		assert.NotContains(t, recorder.Body.String(), private)
+	}
+	// A limited API key must not gain visibility because a channel has a public label.
+	recorder = httptest.NewRecorder()
+	ctx, _ = gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyTokenModelLimitEnabled, true)
+	common.SetContextKey(ctx, constant.ContextKeyTokenModelLimit, map[string]bool{"public-b": true})
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+	payload = decodeListModelsPayload(t, recorder)
+	require.Len(t, payload.Data, 1)
+	assert.Equal(t, "public-b", payload.Data[0].Id)
+	assert.Equal(t, "chuanapi", payload.Data[0].OwnedBy)
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", 902).Update("setting", `{}`).Error)
+	assert.Equal(t, "chuanapi", buildOpenAIModel("public-b").OwnedBy)
 }

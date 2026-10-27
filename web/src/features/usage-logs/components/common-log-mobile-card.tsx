@@ -32,7 +32,7 @@ import dayjs from '@/lib/dayjs'
 import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
 
 import type { UsageLog } from '../data/schema'
-import { formatModelName, parseLogOther } from '../lib/format'
+import { formatModelName, logTokenName, parseLogOther } from '../lib/format'
 import {
   getLogTypeConfig,
   isDisplayableLogType,
@@ -40,7 +40,7 @@ import {
 } from '../lib/utils'
 import { ModelBadge, ResponseModelDetails } from './model-badge'
 import { StreamTpsCell, TimingMetricsCell } from './timing-metrics-cell'
-import { useUsageLogsContext } from './usage-logs-provider'
+import { useLogsViewScope, useUsageLogsContext } from './usage-logs-provider'
 
 type FieldName =
   | 'model'
@@ -64,12 +64,13 @@ export function CommonLogMobileCard<TData>(props: {
 }) {
   const { t } = useTranslation()
   const context = useUsageLogsContext()
+  const { isAdminView } = useLogsViewScope()
   const [selectedField, setSelectedField] = useState<FieldName | null>(null)
   const log = props.log
   const other = parseLogOther(log.other)
   const displayable = isDisplayableLogType(log.type)
   const timing = isTimingLogType(log.type)
-  const model = formatModelName(log)
+  const model = formatModelName(log, isAdminView)
   const config = getLogTypeConfig(log.type)
   const group = log.group || other?.group || ''
   const groupRatio =
@@ -106,7 +107,7 @@ export function CommonLogMobileCard<TData>(props: {
     },
     token: {
       label: t('Token'),
-      value: log.token_name,
+      value: logTokenName(log, t),
       visible: displayable && props.cells.has('token_name') && !!log.token_name,
       sensitive: true,
     },
@@ -194,6 +195,7 @@ export function CommonLogMobileCard<TData>(props: {
                   className='min-h-5 max-w-full min-w-0 justify-end'
                   isStream={log.is_stream}
                   isTask={other?.is_task === true}
+                  isSyncTask={other?.task_sync === true}
                   tokensPerSecond={
                     log.use_time > 0 && log.completion_tokens > 0
                       ? log.completion_tokens / log.use_time

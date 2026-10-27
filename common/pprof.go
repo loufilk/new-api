@@ -1,45 +1,45 @@
 package common
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"runtime/pprof"
 	"time"
 
+	"github.com/QuantumNous/new-api/pkg/lifecycle"
 	"github.com/shirou/gopsutil/cpu"
 )
 
-// Monitor 定时监控cpu使用率，超过阈值输出pprof文件
-func Monitor() {
-	for {
-		percent, err := cpu.Percent(time.Second, false)
+// Monitor retains the embedded-host compatibility entry point.
+func Monitor() { RunCPUProfileMonitor(context.Background(), context.Background()) }
+
+func RunCPUProfileMonitor(schedule, work context.Context) {
+	lifecycle.Periodic(schedule, work, func() time.Duration { return 30 * time.Second }, true, func(ctx context.Context) {
+		percent, err := cpu.PercentWithContext(ctx, time.Second, false)
+		if err != nil || len(percent) == 0 || percent[0] <= 80 {
+			return
+		}
+		if err := os.MkdirAll("./pprof", 0700); err != nil {
+			SysError("failed to create pprof directory: " + err.Error())
+			return
+		}
+		f, err := os.Create("./pprof/" + fmt.Sprintf("cpu-%s.pprof", time.Now().Format("20060102150405")))
 		if err != nil {
-			panic(err)
+			SysError("failed to create pprof file: " + err.Error())
+			return
 		}
-		if percent[0] > 80 {
-			fmt.Println("cpu usage too high")
-			// write pprof file
-			if _, err := os.Stat("./pprof"); os.IsNotExist(err) {
-				err := os.Mkdir("./pprof", os.ModePerm)
-				if err != nil {
-					SysLog("创建pprof文件夹失败 " + err.Error())
-					continue
-				}
-			}
-			f, err := os.Create("./pprof/" + fmt.Sprintf("cpu-%s.pprof", time.Now().Format("20060102150405")))
-			if err != nil {
-				SysLog("创建pprof文件失败 " + err.Error())
-				continue
-			}
-			err = pprof.StartCPUProfile(f)
-			if err != nil {
-				SysLog("启动pprof失败 " + err.Error())
-				continue
-			}
-			time.Sleep(10 * time.Second) // profile for 30 seconds
-			pprof.StopCPUProfile()
-			f.Close()
+		defer f.Close()
+		if err := pprof.StartCPUProfile(f); err != nil {
+			SysError("failed to start pprof: " + err.Error())
+			return
 		}
-		time.Sleep(30 * time.Second)
-	}
+		defer pprof.StopCPUProfile()
+		timer := time.NewTimer(10 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+		case <-timer.C:
+		}
+	})
 }

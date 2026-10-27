@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -93,8 +93,12 @@ function renderPanel() {
 }
 
 afterEach(async () => {
-  clients.forEach((client) => client.clear())
-  clients.length = 0
+  // Unmount language-sensitive observers before restoring the real fetch.
+  cleanup()
+  for (const client of clients.splice(0)) {
+    await client.cancelQueries()
+    client.clear()
+  }
   vi.unstubAllGlobals()
   await act(() => i18next.changeLanguage('en'))
 })

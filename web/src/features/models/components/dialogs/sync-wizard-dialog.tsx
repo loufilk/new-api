@@ -58,6 +58,15 @@ const FIELD_LABELS: Record<MetadataSyncField, string> = {
   endpoints: 'Custom endpoints',
   name_rule: 'Match Type',
   status: 'Model square visibility',
+  context_length: 'Context length',
+  max_output_tokens: 'Max output',
+  knowledge_cutoff: 'Knowledge cutoff',
+  release_date: 'Release date',
+  parameter_count: 'Parameters',
+  input_modalities: 'Input modalities',
+  output_modalities: 'Output modalities',
+  capabilities: 'Capabilities',
+  bonus_eligible: 'Bonus eligibility',
 }
 const REASON_LABELS = {
   create: 'New metadata',
@@ -201,6 +210,17 @@ export function SyncWizardDialog(props: {
   const hiddenSelectedCount = selected.filter(
     (item) => !visibleNames.has(item.model_name)
   ).length
+  const selectedExistingModels = selected.filter(
+    (item) => item.kind === 'update'
+  )
+  const changedFieldCount = selectedExistingModels.reduce(
+    (total, item) => total + item.fields.length,
+    0
+  )
+  const selectedFieldCount = selectedExistingModels.reduce(
+    (total, item) => total + selection[item.model_name].length,
+    0
+  )
   const updates: MetadataSyncSelection[] = selected
     .filter(
       (item) => item.kind === 'create' || selection[item.model_name].length > 0
@@ -260,7 +280,20 @@ export function SyncWizardDialog(props: {
         ? [...previous[name], field]
         : previous[name].filter((value) => value !== field),
     }))
+  const chooseAllFields = (checked: boolean) =>
+    setSelection((previous) => {
+      const next = { ...previous }
+      for (const item of selectedExistingModels) {
+        next[item.model_name] = checked
+          ? item.fields.map((field) => field.field)
+          : []
+      }
+      return next
+    })
   const impact = (field: MetadataSyncField) => {
+    if (field === 'bonus_eligible') {
+      return t('Controls whether bonus balance can pay for this model.')
+    }
     if (field === 'name_rule') {
       return t(
         'Changes which model names inherit this metadata. Prices are not inherited.'
@@ -278,7 +311,13 @@ export function SyncWizardDialog(props: {
     }
     return ''
   }
-  const display = (field: MetadataSyncField, value: string | number) => {
+  const display = (
+    field: MetadataSyncField,
+    value: string | number | boolean | string[] | null
+  ) => {
+    if (value === null || value === '') return '—'
+    if (typeof value === 'boolean') return value ? t('Enabled') : t('Disabled')
+    if (Array.isArray(value)) return value.join(', ') || '—'
     if (field === 'status') {
       return value === 1 ? t('Shown') : t('Not shown')
     }
@@ -288,7 +327,7 @@ export function SyncWizardDialog(props: {
         String(value)
       )
     }
-    return String(value || '—')
+    return String(value)
   }
 
   return (
@@ -635,11 +674,50 @@ export function SyncWizardDialog(props: {
       )}
       {step === 1 && (
         <div className='space-y-5'>
-          <p className='text-muted-foreground text-sm'>
-            {t(
-              'New records include the fields below. Existing fields are kept unless explicitly selected.'
+          <div className='space-y-3'>
+            {selected.some((item) => item.kind === 'create') && (
+              <p className='text-muted-foreground text-sm'>
+                {t(
+                  'New models: all metadata shown below will be imported automatically. No selection is needed.'
+                )}
+              </p>
             )}
-          </p>
+            {changedFieldCount > 0 && (
+              <>
+                <p className='text-muted-foreground text-sm'>
+                  {t(
+                    'Existing models: select fields to replace their current values with the values on the right. Unselected fields stay unchanged.'
+                  )}
+                </p>
+                <div className='flex flex-wrap items-center gap-2'>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    className='h-auto min-h-7 max-w-full py-1.5 whitespace-normal'
+                    disabled={busy || selectedFieldCount === changedFieldCount}
+                    onClick={() => chooseAllFields(true)}
+                  >
+                    {t('Select all changed fields')}
+                  </Button>
+                  <Button
+                    variant='ghost'
+                    size='sm'
+                    className='h-auto min-h-7 max-w-full py-1.5 whitespace-normal'
+                    disabled={busy || selectedFieldCount === 0}
+                    onClick={() => chooseAllFields(false)}
+                  >
+                    {t('Clear field selection')}
+                  </Button>
+                  <p className='text-muted-foreground text-xs' role='status'>
+                    {t('{{selected}} of {{total}} changed fields selected', {
+                      selected: selectedFieldCount,
+                      total: changedFieldCount,
+                    })}
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
           {selected.map((item) => (
             <section key={item.model_name} className='space-y-2'>
               <h3 className='font-mono text-sm font-semibold break-all'>

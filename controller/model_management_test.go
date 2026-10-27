@@ -170,7 +170,8 @@ func TestModelPricingConversionDatabaseMatrix(t *testing.T) {
 				{"conversion-fixed", model.PricingValues{"ModelPrice": float64(0.25), "ModelRatio": float64(7)}, `tier("request", fixed(0.25))`, ""},
 				{"gpt-4o-2024-05-13", model.PricingValues{"ModelRatio": float64(2), "CompletionRatio": float64(99)}, `tier("base", p * 4 + c * 12)`, ""},
 				{"gpt-image-2", model.PricingValues{"ModelPrice": float64(1)}, `tier("image", fixed(1)) * image_count`, ""},
-				{"qwen-image-3.0-pro", model.PricingValues{"ModelPrice": float64(1)}, `tier("image", fixed(1)) * image_count`, ""},
+				// Bailian image models are served by the alibaba task plugin, so their pricing is a task usage expression.
+				{"qwen-image-3.0-pro", model.PricingValues{"ModelPrice": float64(1)}, "", "Task pricing must be converted manually using the task usage schema."},
 				{"wan2.7-image-pro", model.PricingValues{"ModelPrice": float64(1)}, "", "Task pricing must be converted manually using the task usage schema."},
 				{"video-summarizer", model.PricingValues{"ModelPrice": float64(1)}, `tier("request", fixed(1))`, ""},
 				{"sora-transcript-helper", model.PricingValues{"ModelPrice": float64(1)}, `tier("request", fixed(1))`, ""},
@@ -275,7 +276,8 @@ func TestModelPricingConversionDatabaseMatrix(t *testing.T) {
 				}{
 					{"unrecognized-model", nil, model.CacheWriteNone},
 					{"gpt-5.6-terra", nil, model.CacheWriteNone},
-					{"gpt-5.6-terra", common.GetPointer(1.25), model.CacheWriteStandard},
+					{"gpt-5.6-terra", common.GetPointer(1.25), model.CacheWriteOpenAITTL},
+					{"custom-GPT-alias", common.GetPointer(0.0), model.CacheWriteOpenAITTL},
 					{"vendor/claude-sonnet-4-6-high", nil, model.CacheWriteClaudeTTL},
 					{"custom-CLAUDE-alias", common.GetPointer(0.0), model.CacheWriteClaudeTTL},
 					{"deepseek-reasoner", common.GetPointer(0.0), model.CacheWriteStandard},
@@ -305,13 +307,19 @@ func TestModelPricingConversionDatabaseMatrix(t *testing.T) {
 						vars := billingexpr.UsedVars(response.Data.Expression)
 						assert.Equal(t, tc.mode != model.CacheWriteNone, vars["cc"])
 						assert.Equal(t, tc.mode == model.CacheWriteClaudeTTL, vars["cc1h"])
+						assert.Equal(t, tc.mode == model.CacheWriteOpenAITTL, vars["cc12h"])
 						if tc.configured != nil && *tc.configured == 0 {
-							cost, _, err := billingexpr.RunExpr(response.Data.Expression, billingexpr.TokenParams{CC: 100, CC1h: 100})
+							cost, _, err := billingexpr.RunExpr(response.Data.Expression, billingexpr.TokenParams{CC: 100, CC1h: 100, CC12h: 100})
 							require.NoError(t, err)
 							assert.Zero(t, cost, "explicit zero cache prices must stay free")
 						}
 					})
 				}
+				// GPT names price the 12h write at twice the configured write price.
+				openai, err := model.PreviewModelPricingConversion("gpt-5.6-terra", model.PricingValues{"ModelRatio": 5.0, "CompletionRatio": 5.0, "CacheRatio": 0.1, "CreateCacheRatio": 1.25})
+				require.NoError(t, err)
+				assert.Equal(t, model.CacheWriteOpenAITTL, openai.CacheWriteMode)
+				assert.Equal(t, `tier("base", p * 10 + c * 50 + cr * 1 + cc * 12.5 + cc12h * 25)`, openai.Expression)
 				// The billing name remains authoritative for cache terms.
 				require.NoError(t, (&model.Channel{Name: "Cache alias", Type: 1, Models: "opaque-cache-alias", ModelMapping: common.GetPointer(`{"opaque-cache-alias":"claude-sonnet-4-6"}`)}).Insert())
 				alias, err := model.PreviewModelPricingConversion("opaque-cache-alias", model.PricingValues{"ModelRatio": 2.0})
@@ -363,14 +371,14 @@ func TestModelPricingConversionDatabaseMatrix(t *testing.T) {
 				aliConversion, err := model.PreviewModelPricingConversion(aliName, model.PricingValues{"ModelPrice": 0.04})
 				require.NoError(t, err)
 				require.Empty(t, aliConversion.UnsupportedReason)
+				// Ali image billing lives in the alibaba task plugin, where prompt_extend is a
+				// usage fact; the legacy conversion no longer adds a per-channel request multiplier.
+				assert.Equal(t, `tier("image", fixed(0.04)) * image_count`, aliConversion.Expression)
+				assert.Empty(t, aliConversion.BillingDetails.RequestRules)
 				quantity := 3
 				aliCost, _, err := billingexpr.RunExprWithRequest(aliConversion.Expression, billingexpr.TokenParams{}, billingexpr.RequestInput{ImageCount: &quantity, Body: []byte(`{"parameters":{"prompt_extend":true}}`)})
 				require.NoError(t, err)
-				assert.Equal(t, 240000.0, aliCost)
-				require.NoError(t, (&model.Channel{Name: "Different image rules", Models: aliName, Type: 1, Status: common.ChannelStatusEnabled}).Insert())
-				conflicting, err = model.PreviewModelPricingConversion(aliName, model.PricingValues{"ModelPrice": 0.04})
-				require.NoError(t, err)
-				assert.Contains(t, conflicting.UnsupportedReason, "different image request multipliers")
+				assert.Equal(t, 120000.0, aliCost)
 				for _, tc := range []struct {
 					name    string
 					pricing model.PricingValues
@@ -947,7 +955,8 @@ export function parseTaskResult() { return {}; }
 				require.NoError(t, db.Where("model = ? AND channel_id = ? AND enabled = ?", "matrix-hidden-unpriced", active.Id, true).First(&ability).Error)
 			})
 			t.Run("metadata_preview_selection_versions_and_transaction", func(t *testing.T) {
-				local := &model.Model{ModelName: "matrix-existing", Description: "Local description", Tags: "keep", Status: 1, SyncOfficial: 1}
+				local := &model.Model{ModelName: "matrix-existing", Description: "Local description", Tags: "keep", Status: 1, SyncOfficial: 1,
+					ContextLength: common.GetPointer(128000), Capabilities: `["vision"]`, BonusEligible: common.GetPointer(true)}
 				require.NoError(t, local.Insert())
 				blocked := &model.Model{ModelName: "matrix-blocked", Status: 1, SyncOfficial: 0}
 				require.NoError(t, blocked.Insert())
@@ -965,7 +974,8 @@ export function parseTaskResult() { return {}; }
 						payload = []upstreamVendor{{Name: "Matrix vendor", Status: 1}}
 					} else {
 						payload = []upstreamModel{
-							{ModelName: "matrix-existing", Description: fmt.Sprintf("Upstream %d", revision.Load()), VendorName: "Matrix vendor", Tags: "changed", Status: 0, Endpoints: []byte(`{"openai":{"path":"/v1/chat/completions","method":"POST"}}`)},
+							{ModelName: "matrix-existing", Description: fmt.Sprintf("Upstream %d", revision.Load()), VendorName: "Matrix vendor", Tags: "changed", Status: 0, Endpoints: []byte(`{"openai":{"path":"/v1/chat/completions","method":"POST"}}`),
+								ContextLength: common.GetPointer(0), BonusEligible: common.GetPointer(false)},
 							{ModelName: "matrix-new", Description: "New model", VendorName: "Matrix vendor", Status: 0, Endpoints: []byte(`{"openai":"/v1/chat/completions"}`)},
 							{ModelName: "matrix-blocked", Description: "Do not overwrite", Status: 1},
 							{ModelName: "matrix-catalog", Description: "Catalog only", Status: 1},
@@ -995,11 +1005,13 @@ export function parseTaskResult() { return {}; }
 				assert.Equal(t, "site", byName["matrix-new"].Scope)
 				assert.Equal(t, "catalog", byName["matrix-catalog"].Scope)
 				assert.Equal(t, "blocked", byName["matrix-blocked"].Kind)
+				assert.Contains(t, byName["matrix-existing"].Fields, metadataSyncField{Field: "context_length", Local: float64(128000), Upstream: float64(0)})
+				assert.Contains(t, byName["matrix-existing"].Fields, metadataSyncField{Field: "bonus_eligible", Local: true, Upstream: false})
 				var count int64
 				require.NoError(t, db.Model(&model.Vendor{}).Count(&count).Error)
 				assert.Zero(t, count)
 				body := map[string]any{"locale": "zh", "source_version": preview.Data.Source.Version, "selections": []model.MetadataSyncSelection{
-					{ModelName: "matrix-existing", RecordVersion: byName["matrix-existing"].RecordVersion, Fields: []string{"description", "endpoints"}},
+					{ModelName: "matrix-existing", RecordVersion: byName["matrix-existing"].RecordVersion, Fields: []string{"description", "endpoints", "context_length", "bonus_eligible"}},
 					{ModelName: "matrix-new", RecordVersion: byName["matrix-new"].RecordVersion, Create: true},
 				}}
 				beforePricing, err := model.GetModelPricingSnapshot([]string{"matrix-priced"})
@@ -1030,6 +1042,9 @@ export function parseTaskResult() { return {}; }
 				assert.Equal(t, []string{"Matrix vendor"}, result.Data.CreatedVendors)
 				require.NoError(t, db.First(&persisted, local.Id).Error)
 				assert.Equal(t, "Upstream 0", persisted.Description)
+				assert.Equal(t, common.GetPointer(0), persisted.ContextLength)
+				assert.Equal(t, common.GetPointer(false), persisted.BonusEligible)
+				assert.Equal(t, `["vision"]`, persisted.Capabilities, "absent upstream modalities must not clear local metadata")
 				assert.Equal(t, "keep", persisted.Tags)
 				assert.Equal(t, 1, persisted.Status)
 				assert.Zero(t, persisted.VendorID)
@@ -1524,6 +1539,12 @@ func TestSharedModelPluginPricingDatabaseMatrix(t *testing.T) {
 				_, err := jsplugin.DefaultRegistry.Register(source, jsplugin.Options{})
 				require.NoError(t, err)
 				t.Cleanup(func() { jsplugin.DefaultRegistry.Unregister(spec.key) })
+				if spec.key == "matrix-alpha" {
+					single, err := model.GetModelPricingSnapshot([]string{name})
+					require.NoError(t, err)
+					require.Len(t, single.Entries[0].PluginVariants, 1, "a sole provider must expose its separate pricing editor")
+					assert.Equal(t, "matrix-alpha", single.Entries[0].PluginVariants[0].PluginKey)
+				}
 			}
 
 			// Representative existing options have no plugin-expression row.
@@ -1559,6 +1580,21 @@ func TestSharedModelPluginPricingDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, base, loaded.Entries[0].PluginVariants[0].Effective)
 			assert.True(t, loaded.Entries[0].PluginVariants[1].Compatible)
 			assert.Equal(t, variant, loaded.Entries[0].PluginVariants[1].Configured)
+			// Ordinary relay pricing and the existing plugin expressions are
+			// saved together without changing either plugin's billing contract.
+			ordinary := model.ModelPricingChange{ModelName: name, ExpectedVersion: loaded.Entries[0].Version, Pricing: model.PricingValues{
+				"billing_setting.billing_mode": "tiered_expr", "billing_setting.billing_expr": `tier("image", fixed(0.04)) * image_count`,
+				billing_setting.PluginBillingExprOption: map[string]any{"matrix-alpha": base, "matrix-beta": variant},
+			}}
+			require.NoError(t, model.UpdateModelPricing([]model.ModelPricingChange{ordinary}))
+			separate, err := model.GetModelPricingSnapshot([]string{name})
+			require.NoError(t, err)
+			assert.Equal(t, ordinary.Pricing, separate.Entries[0].Configured)
+			assert.Equal(t, base, separate.Entries[0].PluginVariants[0].Effective)
+			assert.Equal(t, variant, separate.Entries[0].PluginVariants[1].Effective)
+			// Keep exercising the pre-existing plugin-default configuration below.
+			change.ExpectedVersion = separate.Entries[0].Version
+			require.NoError(t, model.UpdateModelPricing([]model.ModelPricingChange{change}))
 			var flat map[string]string
 			require.NoError(t, common.UnmarshalJsonStr(loaded.Options[billing_setting.PluginBillingExprOption], &flat))
 			assert.Equal(t, map[string]string{"matrix-beta::" + name: variant}, flat)

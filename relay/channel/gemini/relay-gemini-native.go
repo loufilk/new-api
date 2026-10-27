@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -36,6 +37,9 @@ func GeminiTextGenerationHandler(c *gin.Context, info *relaycommon.RelayInfo, re
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	info.ObserveResponseModel(gjson.GetBytes(responseBody, "modelVersion").Str)
+	var grounding geminiGroundingCounter
+	grounding.observe(&geminiResponse)
+	grounding.commit(info)
 	countGeminiBillableFunctionCalls(info, &geminiResponse)
 
 	if len(geminiResponse.Candidates) == 0 && geminiResponse.PromptFeedback != nil && geminiResponse.PromptFeedback.BlockReason != nil {
@@ -85,13 +89,23 @@ func NativeGeminiEmbeddingHandler(c *gin.Context, resp *http.Response, info *rel
 func GeminiTextGenerationStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	helper.SetEventStreamHeaders(c)
 
-	return geminiStreamHandler(c, info, resp, func(data string, geminiResponse *dto.GeminiChatResponse) bool {
+	usage, apiErr := geminiStreamHandler(c, info, resp, func(data string, geminiResponse *dto.GeminiChatResponse) bool {
 		err := helper.StringData(c, data)
 		if err != nil {
-			logger.LogError(c, "failed to write stream data: "+err.Error())
+			logger.LogError(c, common.LogText("failed to write stream data: %s", err.Error()))
+			openai.NewStreamResponseError(info, err)
 			return false
 		}
 		info.SendResponseCount++
 		return true
 	})
+	if streamFailure := info.StreamStatus.APIError(); streamFailure != nil {
+		common.SetContextKey(c, constant.ContextKeyStreamErrorHandled, true)
+		return usage, streamFailure
+	}
+	if cancellation := service.RelayRequestCancellation(c); cancellation != nil {
+		common.SetContextKey(c, constant.ContextKeyStreamErrorHandled, true)
+		return usage, cancellation
+	}
+	return usage, apiErr
 }

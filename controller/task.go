@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,8 +12,10 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/privacy"
 	"github.com/QuantumNous/new-api/relay"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -48,10 +51,9 @@ func GetTask(c *gin.Context) {
 	if createdAt == 0 {
 		createdAt = task.SubmitTime
 	}
-	failReason := task.FailReason
-	if task.Status == model.TaskStatusSuccess && taskFailReasonIsLegacyResultURL(task.FailReason) {
-		failReason = ""
-	}
+	// Relay tokens never grant administrator diagnostics, even for an admin owner.
+	failReason := taskFailReasonForViewer(task, common.RoleCommonUser)
+	c.Header("Cache-Control", "private, no-store")
 	c.JSON(http.StatusOK, gin.H{
 		"task_id":     task.TaskID,
 		"platform":    task.Platform,
@@ -111,6 +113,9 @@ func writeTaskArtifacts(c *gin.Context, task *model.Task, dashboard bool) {
 		})
 	}
 	response := gin.H{"task_id": task.TaskID, "artifacts": items}
+	if dashboard && task.Status == model.TaskStatusSuccess && task.Platform == constant.TaskPlatformSuno {
+		response["legacy_audio_clips"] = legacySunoAudioClips(task.Data)
+	}
 	if legacyVideoAvailable(task) {
 		legacyContentURL, buildErr := service.BuildTaskArtifactContentURL(task.TaskID, "video")
 		if buildErr != nil {
@@ -126,8 +131,41 @@ func writeTaskArtifacts(c *gin.Context, task *model.Task, dashboard bool) {
 	c.JSON(http.StatusOK, response)
 }
 
+// legacySunoAudioClips projects a pre-plugin Suno task's persisted snapshot
+// into the clips the dashboard audio preview renders. Task lists no longer
+// carry the snapshot, so the dashboard reads it here on demand. The snapshot
+// is either a clip array or a JSON string holding one; only clips with an
+// audio URL are kept and only preview fields are exposed.
+func legacySunoAudioClips(data json.RawMessage) []map[string]any {
+	clips := make([]map[string]any, 0)
+	if len(data) == 0 {
+		return clips
+	}
+	var items []map[string]any
+	if err := common.Unmarshal(data, &items); err != nil {
+		var encoded string
+		if common.Unmarshal(data, &encoded) != nil || common.UnmarshalJsonStr(encoded, &items) != nil {
+			return clips
+		}
+	}
+	for _, item := range items {
+		audioURL, _ := item["audio_url"].(string)
+		if strings.TrimSpace(audioURL) == "" {
+			continue
+		}
+		clip := map[string]any{"audio_url": audioURL}
+		for _, key := range []string{"clip_id", "id", "title", "tags", "duration", "image_url", "image_large_url", "metadata"} {
+			if value, ok := item[key]; ok {
+				clip[key] = value
+			}
+		}
+		clips = append(clips, clip)
+	}
+	return clips
+}
+
 func projectTaskArtifacts(task *model.Task) ([]relaychannel.TaskArtifact, error) {
-	if task == nil || task.Status != model.TaskStatusSuccess || !taskHasPluginExecution(task) {
+	if task == nil || task.Status != model.TaskStatusSuccess || !taskHasPluginExecution(task) || !task.ResultRetrievable() {
 		return []relaychannel.TaskArtifact{}, nil
 	}
 	adaptor := relay.GetTaskAdaptor(task.Platform)
@@ -196,10 +234,11 @@ func initTaskArtifactAdaptor(task *model.Task) (relaychannel.TaskAdaptor, error)
 	}
 	adaptor.Init(&relaycommon.RelayInfo{
 		ChannelMeta: &relaycommon.ChannelMeta{
-			ChannelType:    channelModel.Type,
-			ChannelBaseUrl: baseURL,
-			ApiKey:         pluginKey,
-			ChannelSetting: channelModel.GetSetting(),
+			ChannelType:     channelModel.Type,
+			ChannelBaseUrl:  baseURL,
+			ApiKey:          pluginKey,
+			ChannelSetting:  channelModel.GetSetting(),
+			HeadersOverride: channelModel.GetHeaderOverride(),
 		},
 	})
 	return adaptor, nil
@@ -287,7 +326,7 @@ func TaskArtifactContent(c *gin.Context) {
 		return
 	}
 	artifactKey := strings.TrimSpace(c.Param("artifact_key"))
-	if !taskArtifactKeyPattern.MatchString(artifactKey) {
+	if !taskArtifactKeyPattern.MatchString(artifactKey) || !task.ResultRetrievable() {
 		writeTaskArtifactError(c, http.StatusNotFound, "artifact_not_found", "Task or artifact not found")
 		return
 	}
@@ -346,8 +385,11 @@ func TaskArtifactContent(c *gin.Context) {
 		Method:  c.Request.Method,
 		Headers: taskArtifactClientHeaders(c.Request.Header),
 	}
-	descriptor, err := provider.BuildContentRequest(task, artifactKey, clientRequest)
+	descriptor, err := provider.BuildContentRequest(c.Request.Context(), task, artifactKey, clientRequest)
 	if err != nil || descriptor == nil {
+		if err != nil {
+			logger.LogWarn(c.Request.Context(), fmt.Sprintf("Failed to resolve plugin %s content for task %s: %v", artifactKey, task.TaskID, err))
+		}
 		writeTaskArtifactError(c, http.StatusInternalServerError, "artifact_plugin_error", "Artifact content plugin failed")
 		return
 	}
@@ -416,7 +458,9 @@ func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskD
 			}
 		}
 		item := relay.TaskModel2Dto(task)
+		item.FailReason = taskFailReasonForViewer(task, viewerRole)
 		item.LegacyVideoAvailable = legacyVideoAvailable(task)
+		item.ResultDiscarded = task.PrivateData.ResultDiscarded
 		if task.Status == model.TaskStatusSuccess {
 			item.ResultURL = ""
 			if taskFailReasonIsLegacyResultURL(task.FailReason) {
@@ -468,6 +512,20 @@ func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskD
 		result[i] = item
 	}
 	return result
+}
+
+// Failure text is untrusted upstream data, not a client-safe explanation.
+// Keep it on the stored task for operator diagnostics and only project the
+// ordinary caller's safe category. Successful legacy URLs remain hidden.
+func taskFailReasonForViewer(task *model.Task, viewerRole int) string {
+	if strings.TrimSpace(task.FailReason) == "" ||
+		(task.Status == model.TaskStatusSuccess && taskFailReasonIsLegacyResultURL(task.FailReason)) {
+		return ""
+	}
+	if viewerRole >= common.RoleAdminUser {
+		return task.FailReason
+	}
+	return privacy.SafeErrorText(http.StatusBadGateway, "")
 }
 
 func taskFailReasonIsLegacyResultURL(value string) bool {

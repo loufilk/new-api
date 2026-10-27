@@ -1,0 +1,62 @@
+name: Database candidate upstream audit
+
+on:
+  push:
+    branches: [codex/db-upstream-media-fix-20261001]
+    paths: [.github/workflows/db-upstream-media-audit.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: db-upstream-media-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/db-upstream-media-fix-20261001'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compare immutable source revisions without changing any branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=62d951fab129f4df1a921735835e5e9c7b8db031
+          upstream=56758edf95ec162033a6b73b553ac789404f87c9
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$base" HEAD
+          out="$RUNNER_TEMP/media-audit-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p "$out"
+          git fetch --no-tags https://github.com/QuantumNous/new-api.git "$upstream"
+          git cat-file -e "$upstream^{commit}"
+          git merge-base "$base" "$upstream" | tee "$out/merge-base.txt"
+          git log --oneline "$base..$upstream" > "$out/upstream-commits.txt"
+          git cherry -v "$base" "$upstream" > "$out/patch-equivalence.txt"
+          git diff --stat "$base" "$upstream" > "$out/diff-stat.txt"
+          git log --oneline -35 "$upstream" > "$out/upstream-recent.txt"
+          git archive --format=tar.gz -o "$out/upstream-source.tar.gz" "$upstream"
+          set +e
+          git merge-tree --write-tree --messages "$base" "$upstream" > "$out/merge-tree.txt"
+          status=$?
+          set -e
+          test "$status" -le 1
+          tree=$(head -n 1 "$out/merge-tree.txt")
+          git archive --format=tar.gz -o "$out/merge-preview.tar.gz" "$tree"
+          git diff --name-status "$base" "$tree" > "$out/merge-changes.txt"
+          printf '%s\n' "$status" > "$out/merge-exit-code.txt"
+          printf 'Candidate source: %s\nBase: %s\nUpstream: %s\n' "$GITHUB_SHA" "$base" "$upstream" > "$out/revisions.txt"
+          cat "$out/upstream-commits.txt" "$out/merge-tree.txt"
+          sha256sum "$out/"*.tar.gz > "$out/archive-sha256.txt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: db-upstream-media-audit-${{ github.sha }}
+          path: ${{ runner.temp }}/media-audit-${{ github.run_id }}-${{ github.run_attempt }}/
+          retention-days: 3
+          if-no-files-found: error

@@ -16,12 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Link, useLocation } from '@tanstack/react-router'
-import { ExternalLink, Loader2, ChevronRight } from 'lucide-react'
-import { useMemo, useCallback, useRef, useState } from 'react'
+import { ExternalLink, ChevronRight } from 'lucide-react'
+import { lazy, Suspense, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { LoadingState } from '@/components/loading-state'
 import {
   Collapsible,
   CollapsibleContent,
@@ -41,251 +41,140 @@ import {
   SidebarMenuSubItem,
   useSidebar,
 } from '@/components/ui/sidebar'
-import { fetchActiveChatKey } from '@/features/chat/hooks/use-active-chat-key'
 import { useChatPresets } from '@/features/chat/hooks/use-chat-presets'
 import {
   chatLinkRequiresApiKey,
   resolveChatUrl,
   type ChatPreset,
 } from '@/features/chat/lib/chat-links'
-import { handleServerError } from '@/lib/handle-server-error'
+import {
+  isCCSwitchPreset,
+  isSafeClientLink,
+} from '@/features/chat/lib/client-import'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { normalizeHref } from '../lib/url-utils'
 import type { NavChatPresets } from '../types'
 
-/**
- * Sub-menu item for a single chat preset
- */
-function ChatMenuItem({
-  preset,
-  active,
-  loading,
-  onOpen,
-  onNavigate,
-  preload,
-}: {
-  preset: ChatPreset
-  active: boolean
-  loading: boolean
-  onOpen: (preset: ChatPreset) => void | Promise<void>
-  onNavigate: () => void
-  preload?: false
-}) {
-  if (preset.type === 'web') {
-    return (
-      <SidebarMenuSubItem>
-        <SidebarMenuSubButton
-          isActive={active}
-          render={
-            <Link
-              to='/chat/$chatId'
-              params={{ chatId: preset.id }}
-              preload={preload}
-              onClick={onNavigate}
-            />
-          }
-        >
-          <span className='min-w-0 flex-1 truncate whitespace-nowrap'>
-            {preset.name}
-          </span>
-        </SidebarMenuSubButton>
-      </SidebarMenuSubItem>
-    )
-  }
+const ClientImportDialog = lazy(() =>
+  import('@/features/chat/components/client-import-dialog').then((module) => ({
+    default: module.ClientImportDialog,
+  }))
+)
 
+export function ChatPresetsItem(props: { item: NavChatPresets }) {
+  const userId = useAuthStore((state) => state.auth.user?.id)
+  // Remount the attempt whenever the authenticated account changes.
   return (
-    <SidebarMenuSubItem>
-      <SidebarMenuSubButton
-        onClick={() => {
-          if (!loading) void onOpen(preset)
-        }}
-        aria-disabled={loading ? 'true' : undefined}
-        isActive={false}
-        className='justify-between'
-      >
-        <span className='min-w-0 flex-1 truncate whitespace-nowrap'>
-          {preset.name}
-        </span>
-        {loading ? (
-          <Loader2 className='h-4 w-4 shrink-0 animate-spin' />
-        ) : (
-          <ExternalLink className='h-4 w-4 shrink-0' />
-        )}
-      </SidebarMenuSubButton>
-    </SidebarMenuSubItem>
+    <ChatPresetsSession
+      key={userId ?? 'signed-out'}
+      item={props.item}
+      userId={userId}
+    />
   )
 }
 
-/**
- * Dropdown menu item for a single chat preset
- */
-function DropdownPresetItem({
-  preset,
-  loading,
-  onOpen,
-}: {
-  preset: ChatPreset
-  loading: boolean
-  onOpen: (preset: ChatPreset) => void | Promise<void>
-}) {
-  if (preset.type === 'web') {
-    return (
-      <DropdownMenuItem
-        render={<Link to='/chat/$chatId' params={{ chatId: preset.id }} />}
-      >
-        {preset.name}
-      </DropdownMenuItem>
-    )
-  }
-
-  return (
-    <DropdownMenuItem
-      disabled={loading}
-      onClick={() => {
-        if (!loading) void onOpen(preset)
-      }}
-    >
-      {preset.name}
-      {loading ? (
-        <Loader2 className='ml-auto h-4 w-4 animate-spin opacity-70' />
-      ) : (
-        <ExternalLink className='ml-auto h-4 w-4 opacity-70' />
-      )}
-    </DropdownMenuItem>
-  )
-}
-
-/**
- * Dynamic chat presets navigation item
- */
-export function ChatPresetsItem({ item }: { item: NavChatPresets }) {
+function ChatPresetsSession(props: { item: NavChatPresets; userId?: number }) {
   const { t } = useTranslation()
   const { chatPresets, serverAddress } = useChatPresets()
   const { state, isMobile, setOpenMobile } = useSidebar()
-  const href = useLocation({ select: (location) => location.href })
-  const [loadingPresetId, setLoadingPresetId] = useState<string | null>(null)
-  const loadingPresetIdRef = useRef<string | null>(null)
-
-  const visiblePresets = useMemo(
-    () => chatPresets.filter((preset) => preset.type !== 'fluent'),
-    [chatPresets]
-  )
-
-  const handleOpenExternal = useCallback(
-    async (preset: ChatPreset) => {
-      if (preset.type === 'web') return
-
-      const needsKey = chatLinkRequiresApiKey(preset.url)
-      let activeKey: string | undefined
-
-      if (needsKey && loadingPresetIdRef.current) {
-        toast.info(t('Preparing your chat link, please try again in a moment.'))
-        return
-      }
-
-      if (needsKey) {
-        loadingPresetIdRef.current = preset.id
-        setLoadingPresetId(preset.id)
-        try {
-          activeKey = await fetchActiveChatKey()
-        } catch (error) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : t(
-                  'Unable to prepare chat link. Please ensure you have an enabled API key.'
-                )
-          handleServerError(error, message)
-          return
-        } finally {
-          loadingPresetIdRef.current = null
-          setLoadingPresetId(null)
-        }
-      }
-
-      const url = resolveChatUrl({
-        template: preset.url,
-        apiKey: needsKey ? activeKey : undefined,
-        serverAddress,
-      })
-
-      if (!url) {
-        toast.error(t('Invalid chat link. Please contact the administrator.'))
-        return
-      }
-
-      if (typeof window === 'undefined') return
-
-      window.open(url, '_blank', 'noopener')
-      setOpenMobile(false)
-    },
-    [serverAddress, setOpenMobile, t]
-  )
-
-  const normalizedHref = normalizeHref(href)
-
-  // Don't render if no visible presets
-  if (visiblePresets.length === 0) {
-    return null
+  const [preset, setPreset] = useState<ChatPreset | null>(null)
+  const visiblePresets = chatPresets.filter((item) => item.type !== 'fluent')
+  const openClient = (selected: ChatPreset) => {
+    if (
+      chatLinkRequiresApiKey(selected.url) ||
+      isCCSwitchPreset(selected.url)
+    ) {
+      if (props.userId) setPreset(selected)
+      return
+    }
+    const url = resolveChatUrl({ template: selected.url, serverAddress })
+    if (!isSafeClientLink(url)) {
+      toast.error(t('Invalid chat link. Please contact the administrator.'))
+      return
+    }
+    window.open(url, '_blank', 'noopener,noreferrer')
+    setOpenMobile(false)
   }
-
-  // Collapsed state on non-mobile - render dropdown menu
-  if (state === 'collapsed' && !isMobile) {
-    return (
-      <SidebarMenuItem>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={<SidebarMenuButton tooltip={item.title} />}
-          >
-            {item.icon && <item.icon className='h-4 w-4 shrink-0' />}
-            <span className='min-w-0 flex-1 truncate'>{item.title}</span>
-            <ChevronRight className='ms-auto h-4 w-4 shrink-0 opacity-70' />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align='start'>
-            {visiblePresets.map((preset) => (
-              <DropdownPresetItem
-                key={preset.id}
-                preset={preset}
-                loading={loadingPresetId === preset.id}
-                onOpen={handleOpenExternal}
-              />
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </SidebarMenuItem>
-    )
-  }
-
-  // Expanded state - render collapsible menu
+  if (visiblePresets.length === 0) return null
   return (
-    <Collapsible
-      defaultOpen={normalizedHref.startsWith('/chat')}
-      className='group/collapsible'
-      render={<SidebarMenuItem />}
-    >
-      <CollapsibleTrigger
-        className='group/collapsible-trigger'
-        render={<SidebarMenuButton />}
-      >
-        {item.icon && <item.icon className='shrink-0' />}
-        <span className='min-w-0 flex-1 truncate'>{item.title}</span>
-        <ChevronRight className='ms-auto size-4 shrink-0 transition-transform duration-200 group-data-[panel-open]/collapsible-trigger:rotate-90' />
-      </CollapsibleTrigger>
-      <CollapsibleContent className='CollapsibleContent'>
-        <SidebarMenuSub>
-          {visiblePresets.map((preset) => (
-            <ChatMenuItem
-              key={preset.id}
-              preset={preset}
-              active={normalizedHref === `/chat/${preset.id}`}
-              loading={loadingPresetId === preset.id}
-              onOpen={handleOpenExternal}
-              onNavigate={() => setOpenMobile(false)}
-              preload={isMobile ? false : undefined}
-            />
-          ))}
-        </SidebarMenuSub>
-      </CollapsibleContent>
-    </Collapsible>
+    <>
+      {state === 'collapsed' && !isMobile ? (
+        <SidebarMenuItem>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={<SidebarMenuButton tooltip={props.item.title} />}
+            >
+              {props.item.icon && (
+                <props.item.icon className='size-4 shrink-0' />
+              )}
+              <span className='min-w-0 flex-1 truncate'>
+                {props.item.title}
+              </span>
+              <ChevronRight className='ms-auto size-4 shrink-0 opacity-70' />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align='start'>
+              {visiblePresets.map((item) => (
+                <DropdownMenuItem
+                  key={item.id}
+                  onClick={() => openClient(item)}
+                >
+                  <span className='min-w-0 flex-1 truncate'>{item.name}</span>
+                  <ExternalLink
+                    className='ml-auto size-4 shrink-0'
+                    aria-hidden='true'
+                  />
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </SidebarMenuItem>
+      ) : (
+        <Collapsible className='group/collapsible' render={<SidebarMenuItem />}>
+          <CollapsibleTrigger
+            className='group/collapsible-trigger'
+            render={<SidebarMenuButton />}
+          >
+            {props.item.icon && <props.item.icon className='shrink-0' />}
+            <span className='min-w-0 flex-1 truncate'>{props.item.title}</span>
+            <ChevronRight className='ms-auto size-4 shrink-0 transition-transform duration-200 group-data-[panel-open]/collapsible-trigger:rotate-90' />
+          </CollapsibleTrigger>
+          <CollapsibleContent className='CollapsibleContent'>
+            <SidebarMenuSub>
+              {visiblePresets.map((item) => (
+                <SidebarMenuSubItem key={item.id}>
+                  <SidebarMenuSubButton
+                    render={<button type='button' />}
+                    onClick={() => openClient(item)}
+                    className='w-full justify-between'
+                    title={item.name}
+                  >
+                    <span className='min-w-0 flex-1 truncate text-left'>
+                      {item.name}
+                    </span>
+                    <ExternalLink
+                      className='size-4 shrink-0'
+                      aria-hidden='true'
+                    />
+                  </SidebarMenuSubButton>
+                </SidebarMenuSubItem>
+              ))}
+            </SidebarMenuSub>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
+      {preset && props.userId && (
+        <Suspense fallback={<LoadingState inline message={t('Loading...')} />}>
+          <ClientImportDialog
+            preset={preset}
+            serverAddress={serverAddress}
+            userId={props.userId}
+            onClose={() => {
+              setPreset(null)
+              setOpenMobile(false)
+            }}
+          />
+        </Suspense>
+      )}
+    </>
   )
 }

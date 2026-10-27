@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { useState, useMemo } from 'react'
+import { useCallback, useEffect, useState, useMemo } from 'react'
 
 import { useStatus } from '@/hooks/use-status'
 import { getNotice } from '@/lib/api'
@@ -63,7 +63,7 @@ function getAnnouncementKey(item: Record<string, unknown>): string {
  * Hook to manage notifications (Notice + Announcements)
  * Provides unread counts and read status management
  */
-export function useNotifications() {
+export function useNotifications(options: { autoOpen?: boolean } = {}) {
   const [popoverOpen, setPopoverOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<'notice' | 'announcements'>(
     'notice'
@@ -83,20 +83,25 @@ export function useNotifications() {
   // Fetch Announcements from status
   const { status, loading: statusLoading } = useStatus()
   const announcementsEnabled = status?.announcements_enabled ?? false
-  const announcements = useMemo<Record<string, unknown>[]>(() => {
-    if (!announcementsEnabled) return []
-    return ((status?.announcements || []) as Record<string, unknown>[]).slice(
-      0,
-      20
-    )
-  }, [announcementsEnabled, status?.announcements])
+  const rawAnnouncements = status?.announcements
+  const announcements: Record<string, unknown>[] = useMemo(
+    () =>
+      announcementsEnabled
+        ? ((rawAnnouncements || []) as Record<string, unknown>[]).slice(0, 20)
+        : [],
+    [announcementsEnabled, rawAnnouncements]
+  )
 
   // Notification store
   const {
     lastReadNotice,
+    readAnnouncementKeys,
     markNoticeRead,
     markAnnouncementsRead,
-    isAnnouncementRead,
+    closedUntilDate,
+    autoPopupShown,
+    setAutoPopupShown,
+    setClosedUntilDate,
   } = useNotificationStore()
 
   // Extract notice content
@@ -112,7 +117,7 @@ export function useNotifications() {
     const announcementsUnread = announcements.filter(
       (item: Record<string, unknown>) => {
         const key = getAnnouncementKey(item)
-        return !isAnnouncementRead(key)
+        return !readAnnouncementKeys.includes(key)
       }
     ).length
 
@@ -121,32 +126,71 @@ export function useNotifications() {
       announcements: announcementsUnread,
       total: noticeUnread + announcementsUnread,
     }
-  }, [noticeContent, lastReadNotice, announcements, isAnnouncementRead])
+  }, [noticeContent, lastReadNotice, announcements, readAnnouncementKeys])
 
-  const markAnnouncementsAsRead = () => {
+  const markAnnouncementsAsRead = useCallback(() => {
     if (announcements.length > 0) {
       const allKeys = announcements.map((item: Record<string, unknown>) =>
         getAnnouncementKey(item)
       )
       markAnnouncementsRead(allKeys)
     }
-  }
+  }, [announcements, markAnnouncementsRead])
 
   // Handle popover open
-  const handleOpenPopover = (tab?: 'notice' | 'announcements') => {
-    const nextTab = tab || activeTab
+  const handleOpenPopover = useCallback(
+    (tab?: 'notice' | 'announcements') => {
+      let nextTab = tab || activeTab
+      if (nextTab === 'notice' && !noticeContent && announcements.length > 0) {
+        nextTab = 'announcements'
+      }
 
-    // Mark currently visible content as read when opening the notification center
-    if (noticeContent) {
-      markNoticeRead(noticeContent)
-    }
-    if (nextTab === 'announcements') {
-      markAnnouncementsAsRead()
+      // Mark currently visible content as read when opening the notification center
+      if (noticeContent) {
+        markNoticeRead(noticeContent)
+      }
+      if (nextTab === 'announcements') {
+        markAnnouncementsAsRead()
+      }
+
+      setActiveTab(nextTab)
+      setAutoPopupShown()
+      setPopoverOpen(true)
+    },
+    [
+      activeTab,
+      announcements.length,
+      noticeContent,
+      markNoticeRead,
+      markAnnouncementsAsRead,
+      setAutoPopupShown,
+    ]
+  )
+
+  useEffect(() => {
+    if (
+      !options.autoOpen ||
+      autoPopupShown ||
+      useNotificationStore.getState().autoPopupShown ||
+      noticeLoading ||
+      statusLoading ||
+      closedUntilDate === new Date().toDateString() ||
+      (!noticeContent && announcements.length === 0)
+    ) {
+      return
     }
 
-    setActiveTab(nextTab)
-    setPopoverOpen(true)
-  }
+    handleOpenPopover(announcements.length > 0 ? 'announcements' : 'notice')
+  }, [
+    options.autoOpen,
+    autoPopupShown,
+    noticeLoading,
+    statusLoading,
+    closedUntilDate,
+    noticeContent,
+    announcements.length,
+    handleOpenPopover,
+  ])
 
   const handlePopoverOpenChange = (open: boolean) => {
     if (open) {
@@ -186,6 +230,10 @@ export function useNotifications() {
     // Actions
     openPopover: handleOpenPopover,
     closePopover: () => setPopoverOpen(false),
+    closeToday: () => {
+      setClosedUntilDate(new Date().toDateString())
+      setPopoverOpen(false)
+    },
     refetchNotice,
   }
 }

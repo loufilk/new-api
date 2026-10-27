@@ -2,13 +2,13 @@ package model
 
 import (
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/samber/lo"
 	"gorm.io/gorm"
@@ -38,6 +38,47 @@ func GetAllEnableAbilityWithChannels() ([]AbilityWithChannel, error) {
 		Where("abilities.enabled = ?", true).
 		Scan(&abilities).Error
 	return abilities, err
+}
+
+// GetEnabledAbilitiesWithChannelsForGroups returns only abilities that are
+// enabled and backed by a currently enabled channel. It is intended for
+// pre-flight capability listings, so disabled channels are never advertised.
+func GetEnabledAbilitiesWithChannelsForGroups(groups []string) ([]AbilityWithChannel, error) {
+	if len(groups) == 0 {
+		return []AbilityWithChannel{}, nil
+	}
+	values := make([]any, 0, len(groups))
+	for _, group := range groups {
+		values = append(values, group)
+	}
+	var abilities []AbilityWithChannel
+	err := DB.Table("abilities").
+		Select("abilities.*, channels.type as channel_type").
+		Joins("join channels on abilities.channel_id = channels.id").
+		Where("abilities.enabled = ? AND channels.status = ?", true, common.ChannelStatusEnabled).
+		Where(clause.IN{
+			Column: clause.Column{Table: "abilities", Name: "group"},
+			Values: values,
+		}).
+		Scan(&abilities).Error
+	return abilities, err
+}
+
+func (ability *Ability) BeforeUpdate(tx *gorm.DB) error {
+	groupSelected := len(tx.Statement.Selects) == 0
+	for _, field := range tx.Statement.Selects {
+		if field == "*" || field == "group" || field == "Group" {
+			groupSelected = true
+			break
+		}
+	}
+	if !groupSelected {
+		return nil
+	}
+	if err := lockGroupNamespace(tx); err != nil {
+		return err
+	}
+	return validateGroupNamesForWriteTx(tx, ability.Group)
 }
 
 func GetGroupEnabledModels(group string) []string {
@@ -76,7 +117,7 @@ func getPriority(group string, model string, retry int) (int, error) {
 
 	if len(priorities) == 0 {
 		// 如果没有查询到优先级，则返回错误
-		return 0, errors.New("数据库一致性被破坏")
+		return 0, errors.New("database consistency is broken")
 	}
 
 	// 确定要使用的优先级
@@ -117,6 +158,15 @@ func GetChannel(
 		return nil, err
 	}
 	abilities = filterAbilitiesByConstraints(abilities, model, filters)
+	// Like the memory cache, retry with the routing name (for example without
+	// @ modifiers) when no channel serves the exact name.
+	if normalized := ratio_setting.RoutingMatchModelName(model); len(abilities) == 0 && normalized != "" && normalized != model {
+		err = DB.Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, normalized, true).Order("priority DESC, weight DESC").Find(&abilities).Error
+		if err != nil {
+			return nil, err
+		}
+		abilities = filterAbilitiesByConstraints(abilities, model, filters)
+	}
 	if len(abilities) > 0 {
 		priorities := make([]int64, 0)
 		seen := make(map[int64]bool)
@@ -214,6 +264,17 @@ func identityFilterRequiresKey(filters []dto.ChannelFilter) bool {
 }
 
 func (channel *Channel) AddAbilities(tx *gorm.DB) error {
+	if tx == nil {
+		return DB.Transaction(func(inner *gorm.DB) error {
+			return channel.AddAbilities(inner)
+		})
+	}
+	if err := lockGroupNamespace(tx); err != nil {
+		return err
+	}
+	if err := validateJoinedGroupsForWriteTx(tx, channel.Group); err != nil {
+		return err
+	}
 	models_ := strings.Split(channel.Models, ",")
 	groups_ := strings.Split(channel.Group, ",")
 	abilitySet := make(map[string]struct{})
@@ -240,13 +301,8 @@ func (channel *Channel) AddAbilities(tx *gorm.DB) error {
 	if len(abilities) == 0 {
 		return nil
 	}
-	// choose DB or provided tx
-	useDB := DB
-	if tx != nil {
-		useDB = tx
-	}
 	for _, chunk := range lo.Chunk(abilities, 50) {
-		err := useDB.Clauses(clause.OnConflict{DoNothing: true}).Create(&chunk).Error
+		err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&chunk).Error
 		if err != nil {
 			return err
 		}
@@ -274,6 +330,19 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 				tx.Rollback()
 			}
 		}()
+	}
+
+	if err := lockGroupNamespace(tx); err != nil {
+		if isNewTx {
+			tx.Rollback()
+		}
+		return err
+	}
+	if err := validateJoinedGroupsForWriteTx(tx, channel.Group); err != nil {
+		if isNewTx {
+			tx.Rollback()
+		}
+		return err
 	}
 
 	// First delete all abilities of this channel
@@ -357,7 +426,7 @@ var fixLock = sync.Mutex{}
 func FixAbility() (int, int, error) {
 	lock := fixLock.TryLock()
 	if !lock {
-		return 0, 0, errors.New("已经有一个修复任务在运行中，请稍后再试")
+		return 0, 0, common.NewMessage("A repair task is already running. Please try again later")
 	}
 	defer fixLock.Unlock()
 
@@ -365,13 +434,13 @@ func FixAbility() (int, int, error) {
 	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
 		err := DB.Exec("DELETE FROM abilities").Error
 		if err != nil {
-			common.SysLog(fmt.Sprintf("Delete abilities failed: %s", err.Error()))
+			common.SysLog(common.LogText("Delete abilities failed: %s", err.Error()))
 			return 0, 0, err
 		}
 	} else {
 		err := DB.Exec("TRUNCATE TABLE abilities").Error
 		if err != nil {
-			common.SysLog(fmt.Sprintf("Truncate abilities failed: %s", err.Error()))
+			common.SysLog(common.LogText("Truncate abilities failed: %s", err.Error()))
 			return 0, 0, err
 		}
 	}
@@ -391,7 +460,7 @@ func FixAbility() (int, int, error) {
 		// Delete all abilities of this channel
 		err = DB.Where("channel_id IN ?", ids).Delete(&Ability{}).Error
 		if err != nil {
-			common.SysLog(fmt.Sprintf("Delete abilities failed: %s", err.Error()))
+			common.SysLog(common.LogText("Delete abilities failed: %s", err.Error()))
 			failCount += len(chunk)
 			continue
 		}
@@ -399,7 +468,7 @@ func FixAbility() (int, int, error) {
 		for _, channel := range chunk {
 			err = channel.AddAbilities(nil)
 			if err != nil {
-				common.SysLog(fmt.Sprintf("Add abilities for channel %d failed: %s", channel.Id, err.Error()))
+				common.SysLog(common.LogText("Add abilities for channel %d failed: %s", channel.Id, err.Error()))
 				failCount++
 			} else {
 				successCount++

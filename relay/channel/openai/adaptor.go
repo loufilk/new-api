@@ -97,6 +97,9 @@ func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayIn
 
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
+	if info.ChannelType == constant.ChannelTypeAzure && info.RelayMode == relayconstant.RelayModeResponses {
+		info.VendorToolUsage = azureResponsesToolUsage
+	}
 
 	// initialize ThinkingContentInfo when thinking_to_content is enabled
 	if info.ChannelSetting.ThinkingToContent {
@@ -676,6 +679,9 @@ func detectImageMimeType(filename string) string {
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
+	if info != nil && info.ChannelType == constant.ChannelTypeAzure {
+		info.VendorToolUsage = azureResponsesToolUsage
+	}
 	//  转换模型推理力度后缀
 	effort, originModel := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(request.Model)
 	preserveSuffix := model_setting.ShouldPreserveThinkingSuffix(request.Model) || (info != nil && model_setting.ShouldPreserveThinkingSuffix(info.OriginModelName))

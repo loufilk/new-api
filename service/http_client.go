@@ -116,7 +116,7 @@ func newRelayHTTPTransport() *http.Transport {
 	}
 	transport.ForceAttemptHTTP2 = true
 	if common.TLSInsecureSkipVerify {
-		transport.TLSClientConfig = common.InsecureTLSConfig
+		transport.TLSClientConfig = common.InsecureTLSConfig.Clone()
 	}
 	return transport
 }
@@ -154,6 +154,22 @@ func GetHttpClient() *http.Client {
 	return httpClient
 }
 
+// DoRequestWithoutRedirects keeps operator-configured transport, timeout and
+// cookie settings while preventing an authenticated auxiliary request from
+// forwarding custom credentials to a redirect target. The original response,
+// including a redirect status and body, remains available to the caller. Never
+// replace the redirect policy on the cached/shared client itself.
+func DoRequestWithoutRedirects(client *http.Client, request *http.Request) (*http.Response, error) {
+	if client == nil {
+		return nil, fmt.Errorf("HTTP client is not initialized")
+	}
+	requestClient := *client
+	requestClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return requestClient.Do(request)
+}
+
 // GetSSRFProtectedHTTPClient 返回带拨号时 SSRF 校验的客户端。
 // ssrfProtectedHTTPClient 由 InitHttpClient 在启动时初始化，运行期只读。
 func GetSSRFProtectedHTTPClient() *http.Client {
@@ -176,7 +192,7 @@ func warnLegacyProxyURLOnce(config *proxyURLConfig) {
 	}
 	logger.LogWarn(
 		context.Background(),
-		fmt.Sprintf(
+		common.LogText(
 			"legacy proxy URL suffix ignored at runtime: scheme=%s host=%s; update the channel proxy setting",
 			config.parsedURL.Scheme,
 			config.parsedURL.Host,
@@ -333,6 +349,9 @@ func newTransportFactory(proxyURL *url.URL, tlsConfig *tls.Config) (func() *http
 }
 
 func newHTTPClientFromPolicy(policy HTTPTransportPolicy, proxyURL *url.URL, tlsConfig *tls.Config) (*http.Client, error) {
+	if policy.TLSInsecureSkipVerify {
+		tlsConfig = common.InsecureTLSConfig
+	}
 	factory, err := newTransportFactory(proxyURL, tlsConfig)
 	if err != nil {
 		return nil, err

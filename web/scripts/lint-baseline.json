@@ -1,0 +1,968 @@
+{
+  "version": 1,
+  "upstreamRevision": "b0bf2580e2491869ee9fe861c12b86153c3fe5f4",
+  "oxlintVersion": "1.74.0",
+  "configSha256": "e4d28b65d320733f66ff7052358d335a0291b1351b0733bec1b01f8d2f54f585",
+  "note": "Curated allowlist of known upstream lint diagnostics. Each path must be byte-identical (LF-normalized sha256) to the pinned upstream revision; modified or new files must lint clean. Adopt new upstream files explicitly with --adopt after confirming they match the pinned revision.",
+  "files": {
+    "src/assets/brand-icons/icon-discord.tsx": {
+      "sha256": "a93dcc01fdc1595fa843f9b44f6318926e61e084154a334bf59a8be12d4ac15f",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/brand-icons/icon-docker.tsx": {
+      "sha256": "322f6314fd6cdf948d1c7cbc3c57eba9b93d17da60eb625d7c08e6ef79781a80",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/brand-icons/icon-facebook.tsx": {
+      "sha256": "4f95e666ccca10ca9bdad3dd56aa7809dc776076a24d98b97d12da4823a0a645",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/brand-icons/icon-figma.tsx": {
+      "sha256": "f1b81783f106f9373b04f4c1f828300f2dcf5f39547cc5371871a327f23c32ce",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/brand-icons/icon-github.tsx": {
+      "sha256": "68e997738073295981ef30779e5fa6ab03eee061fb14499feb30844a4b28fbbf",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/brand-icons/icon-gitlab.tsx": {
+      "sha256": "2be74aa794b7c83fe14c58a0c20b273ddf894c1b927ffa38660a8fed7f6aed68",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/brand-icons/icon-gmail.tsx": {
+      "sha256": "75bfd7725a62be47af38675e0f2e02b69708fcaf1dd06fc3de35f8be89d5e3a2",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/brand-icons/icon-linuxdo.tsx": {
+      "sha256": "fcca65d2b2637087cc85d841fa728372922f2b4c3a8261c687197d6c22ae4ed6",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/brand-icons/icon-medium.tsx": {
+      "sha256": "63343a9e2cad2faebf5238e30ad655af55c0c18674d418d7eb8fdac435295494",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/brand-icons/icon-notion.tsx": {
+      "sha256": "81c3fe181cbf61dcda05fb07564f1ed2a256b220e3ae91d4dd5b39b7290ee7bc",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/brand-icons/icon-skype.tsx": {
+      "sha256": "bcad485b346c72f7f0bcdd48dd9d69c42f3c1663017b9259630f7f4208643564",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/brand-icons/icon-slack.tsx": {
+      "sha256": "e2a9899d65ee096236a51c02c1e1d3f08567cc2a115791a9353f328c4534a8e5",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/brand-icons/icon-stripe.tsx": {
+      "sha256": "1325afe1e45de0b464cf2b4fb886fd50bcdbef7270558a9937a918a3a4de2872",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/brand-icons/icon-telegram.tsx": {
+      "sha256": "a2c0bb47f7735dec89077397f810d789b6b33995a60e83888243fe876de38064",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/brand-icons/icon-trello.tsx": {
+      "sha256": "34936ab5c6eaca0d3489a73c62c664c96ae320ee0c9765a006a6782bf983f2a0",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/brand-icons/icon-wechat.tsx": {
+      "sha256": "de28666c8e66efe1375578ef09675f6c875551f0d5905ca8c6c9a65a0f09d621",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/brand-icons/icon-whatsapp.tsx": {
+      "sha256": "27ac2a6ff6f252d08fa2e70eba0a1d786dc8bbfab01246a2b2f5be9b9705844b",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/brand-icons/icon-zoom.tsx": {
+      "sha256": "f6c34e078480ebd9c8eead22468d75792165ef4b6dfb16fc0cf8e8785cfe86a6",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/clerk-full-logo.tsx": {
+      "sha256": "c105528885af7a8db899ae0e9f9d75104b54fa76cea356052482aa2310095fd2",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/clerk-logo.tsx": {
+      "sha256": "4d60ee3876a3d26088fd7d2d7ea668c77ae2a07bd2ac6a716a22a52cba31c5b7",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        },
+        {
+          "code": "react(self-closing-comp)",
+          "severity": "warning",
+          "line": 39,
+          "column": 8,
+          "message": "Unnecessary closing tag"
+        }
+      ]
+    },
+    "src/assets/custom/icon-dir.tsx": {
+      "sha256": "d7f94d86e97e9e1c7fb66dea34684caa331369880814a1fe690c491c4820addd",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        },
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 21,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/custom/icon-layout-compact.tsx": {
+      "sha256": "e7cd56cb3ff691e6602567415029f2838f3a7d6706e5bc360d74fce31c7ee84f",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/custom/icon-layout-default.tsx": {
+      "sha256": "9a123dc40c6dcba9ea6aa51e56e577b5899fd0c1aa35b4d3fd0a63fade4af6c7",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/custom/icon-layout-full.tsx": {
+      "sha256": "ab879ce765b457d14383c3be0b22eefcebf942391919b77267d97cb76b96ed3d",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/custom/icon-sidebar-floating.tsx": {
+      "sha256": "10b01b5520f4053aee7385794bfdcd064fcca177c980930981bab2904ddf671d",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/custom/icon-sidebar-inset.tsx": {
+      "sha256": "f5e94074da4e0732523d2b399d5fdc707b7909c695358aadbf73a87ed0958e41",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/custom/icon-sidebar-sidebar.tsx": {
+      "sha256": "d34e2bb85a00474cb177eb956fcda24f08afbf2880d11fe07c10cd7a6e800db7",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/custom/icon-theme-dark.tsx": {
+      "sha256": "b2a22bc6536a460bbeec3da5c91e56e39e81cb46f7d6dd8df4ab9961d0590207",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/custom/icon-theme-light.tsx": {
+      "sha256": "247f9a592201652d79982c7f031157ee2e081ba83d686d4a2fd67d6cb2d60f2f",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/custom/icon-theme-system.tsx": {
+      "sha256": "cf72dd20bfbea0a8669149ef64ff470456ab9ee3cc6f7ffff2c04b14c59f6e72",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/assets/logo.tsx": {
+      "sha256": "e6f574ccbb799a62b791be6b01d29ee477e38db5d736a8bd33122ab592c6e7e4",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/components/ai-elements/actions.tsx": {
+      "sha256": "03dfe749cd16eb69e74a20ab4f1e67781e6f77a8396f71c64f37628c763f313a",
+      "diagnostics": [
+        {
+          "code": "react(self-closing-comp)",
+          "severity": "warning",
+          "line": 74,
+          "column": 43,
+          "message": "Unnecessary closing tag"
+        }
+      ]
+    },
+    "src/components/ai-elements/artifact.tsx": {
+      "sha256": "3aeb12889b8af88304787186a0261075dca8d7b6d4cc8a82b4d41e4b5f2c1186",
+      "diagnostics": [
+        {
+          "code": "react(self-closing-comp)",
+          "severity": "warning",
+          "line": 151,
+          "column": 43,
+          "message": "Unnecessary closing tag"
+        }
+      ]
+    },
+    "src/components/ai-elements/canvas.tsx": {
+      "sha256": "a274952e6c0ea6305da0235996dacacd0d894bc5397cd62f483f0c78a9129193",
+      "diagnostics": [
+        {
+          "code": "react(jsx-boolean-value)",
+          "severity": "warning",
+          "line": 35,
+          "column": 20,
+          "message": "Value must be omitted for boolean attribute \"selectionOnDrag\""
+        }
+      ]
+    },
+    "src/components/ai-elements/plan.tsx": {
+      "sha256": "7c44c68d66b5323bb77ceafb9bb06958fd1cf0af5ec08238414b7ba3e9ff8eeb",
+      "diagnostics": [
+        {
+          "code": "react(self-closing-comp)",
+          "severity": "warning",
+          "line": 142,
+          "column": 4,
+          "message": "Unnecessary closing tag"
+        }
+      ]
+    },
+    "src/components/confirm-dialog.tsx": {
+      "sha256": "42cae15b5584bcd534f7fd1a844ccb4326a4d35395980dbba6da10c036eb6ede",
+      "diagnostics": [
+        {
+          "code": "oxc(const-comparisons)",
+          "severity": "error",
+          "line": 65,
+          "column": 41,
+          "message": "Both sides of the logical operator are the same"
+        }
+      ]
+    },
+    "src/components/copy-button.tsx": {
+      "sha256": "e33f1b1c729870b385a99f99cabc4bc2387b24391ad4c56cc07425f50ead6b20",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 20,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        },
+        {
+          "code": "react(self-closing-comp)",
+          "severity": "warning",
+          "line": 83,
+          "column": 41,
+          "message": "Unnecessary closing tag"
+        }
+      ]
+    },
+    "src/components/data-table/core/column-header.tsx": {
+      "sha256": "68bc1b01c3e9717a7c032203e59a50d19acc545c6bf7d7a3f6a01cdee1ad9b37",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        },
+        {
+          "code": "eslint(no-nested-ternary)",
+          "severity": "error",
+          "line": 67,
+          "column": 12,
+          "message": "Do not nest ternary expressions."
+        }
+      ]
+    },
+    "src/components/data-table/toolbar/view-options.tsx": {
+      "sha256": "459e202b07e7b20a55ea352aff40d7a2c04772059bef2a0c52c1861b64135f69",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/components/layout/config/system-settings.config.ts": {
+      "sha256": "06f8dbe455b718ceda7d182063ad3e9843d66762be9bfaff4a8087fd593c52bd",
+      "diagnostics": []
+    },
+    "src/components/layout/config/top-nav.config.ts": {
+      "sha256": "167cbe1a91a6e35238c6b32f68e2b62f4c20a65495b2fde96b9c3e61001bee08",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/components/layout/lib/sidebar-view-registry.ts": {
+      "sha256": "fb2e48f63621db3564115300ddf5e0be9b1371faa7948b6f48fa9c7c934d5500",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/components/layout/lib/url-utils.ts": {
+      "sha256": "91f28a8ff47c565ea2867188149b74a38ec00c834b045b559e27b4dbda4909e8",
+      "diagnostics": [
+        {
+          "code": "eslint(curly)",
+          "severity": "error",
+          "line": 91,
+          "column": 7,
+          "message": "Expected { after 'if' condition."
+        }
+      ]
+    },
+    "src/components/long-text.tsx": {
+      "sha256": "0489df3bcfa903cc872bf10f41aaf1916fb8685fef1b806bf0498175a820a8ab",
+      "diagnostics": [
+        {
+          "code": "eslint(curly)",
+          "severity": "error",
+          "line": 58,
+          "column": 5,
+          "message": "Expected { after 'if' condition."
+        }
+      ]
+    },
+    "src/components/navigation-progress.tsx": {
+      "sha256": "46fda12fdf2042515019e0da8918a6835f3b014b1fc873c4e0333a04a2fcd852",
+      "diagnostics": [
+        {
+          "code": "react(jsx-boolean-value)",
+          "severity": "warning",
+          "line": 39,
+          "column": 13,
+          "message": "Value must be omitted for boolean attribute \"shadow\""
+        }
+      ]
+    },
+    "src/components/page-transition.tsx": {
+      "sha256": "12ebf153a5452c42a9db327ed3ac912c26cb3b29214437e96cb7a767d025cea9",
+      "diagnostics": [
+        {
+          "code": "react(jsx-no-useless-fragment)",
+          "severity": "error",
+          "line": 135,
+          "column": 12,
+          "message": "Fragments should contain more than one child."
+        }
+      ]
+    },
+    "src/components/skip-to-main.tsx": {
+      "sha256": "06489db1c69f4173f35c11374d6d148a856e447d0133a3f32298b723142df1d5",
+      "diagnostics": [
+        {
+          "code": "react(jsx-curly-brace-presence)",
+          "severity": "warning",
+          "line": 25,
+          "column": 18,
+          "message": "Curly braces are unnecessary here."
+        }
+      ]
+    },
+    "src/features/auth/lib/validation.ts": {
+      "sha256": "390dee01953bcc7d63e62168d206fae211303fd1ad867107f2908ba846e4bfa8",
+      "diagnostics": [
+        {
+          "code": "unicorn(prefer-string-replace-all)",
+          "severity": "error",
+          "line": 48,
+          "column": 37,
+          "message": "Prefer `String#replaceAll()` over `String#replace()` when using a regex with the global flag."
+        },
+        {
+          "code": "eslint(prefer-template)",
+          "severity": "warning",
+          "line": 57,
+          "column": 12,
+          "message": "Unexpected string concatenation."
+        },
+        {
+          "code": "unicorn(prefer-string-replace-all)",
+          "severity": "error",
+          "line": 67,
+          "column": 15,
+          "message": "Prefer `String#replaceAll()` over `String#replace()` when using a regex with the global flag."
+        }
+      ]
+    },
+    "src/features/channels/components/data-table-bulk-actions.tsx": {
+      "sha256": "70718ce50c953a095633f35c6db7882973e11d8fa37bc29f86cf9bbce71f46dd",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 20,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/features/chat/lib/send-to-fluent.ts": {
+      "sha256": "c0977d33f487cf25a1dd634c83a729dd73c7c95228255d2718a1c0e239343cba",
+      "diagnostics": [
+        {
+          "code": "unicorn(prefer-query-selector)",
+          "severity": "warning",
+          "line": 24,
+          "column": 30,
+          "message": "Prefer `.querySelector()` over `.getElementById()`."
+        }
+      ]
+    },
+    "src/features/dashboard/components/ui/panel-wrapper.tsx": {
+      "sha256": "206fcd101960dd19e5295dbb87e5adb675019e67058a751a54797027291387f8",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/features/dashboard/lib/api-info.ts": {
+      "sha256": "cdef5351ee5af63852f5221c5e37f5cdcd9c8dd50a3b16747fa41c7933957ff2",
+      "diagnostics": [
+        {
+          "code": "unicorn(prefer-optional-catch-binding)",
+          "severity": "error",
+          "line": 49,
+          "column": 12,
+          "message": "Prefer omitting the catch binding parameter if it is unused"
+        }
+      ]
+    },
+    "src/features/dashboard/lib/stats.ts": {
+      "sha256": "1eb2b60e505aa6fa4c190cfbaeb90e9f38910af61318907255c2f169fbefd2d4",
+      "diagnostics": [
+        {
+          "code": "unicorn(prefer-number-properties)",
+          "severity": "warning",
+          "line": 30,
+          "column": 7,
+          "message": "Use `Number.isNaN` instead of the global `isNaN`"
+        },
+        {
+          "code": "unicorn(prefer-number-properties)",
+          "severity": "warning",
+          "line": 30,
+          "column": 25,
+          "message": "Use `Number.isFinite` instead of the global `isFinite`"
+        }
+      ]
+    },
+    "src/features/home/constants.ts": {
+      "sha256": "1ec8860947976b4a77711cc9ab0735622c61f20e5ae023088e57e17a15bf8aaf",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 23,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/features/keys/components/data-table-bulk-actions.tsx": {
+      "sha256": "5bb78a4b2a90f47d778aee9275b32b9e4c3cc988db368b0c04df59366a2ceade",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        },
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 34,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/features/keys/constants.ts": {
+      "sha256": "b06c138a8847baf877a97e59c34162831b15b89ab36803d0bf2399d89afdbb74",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/features/pricing/constants.ts": {
+      "sha256": "7eb3c669f7a71f3ac2785d076b2f2e58abaf9c27a776f6b75a4ee91f1cba2b03",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/features/pricing/lib/filters.ts": {
+      "sha256": "e34a6a049f4f9d477be3ba7b786160838525dc2359bc020f1e801ae656b39388",
+      "diagnostics": [
+        {
+          "code": "unicorn(prefer-spread)",
+          "severity": "error",
+          "line": 193,
+          "column": 10,
+          "message": "Prefer the spread operator (`...`) over Array.from()"
+        }
+      ]
+    },
+    "src/features/redemption-codes/components/redemptions-columns.tsx": {
+      "sha256": "9f1fa0634be0657254846200d515d4cc033c47cad25c34013e1f9a9bf1e3ece7",
+      "diagnostics": [
+        {
+          "code": "react(self-closing-comp)",
+          "severity": "warning",
+          "line": 236,
+          "column": 14,
+          "message": "Unnecessary closing tag"
+        }
+      ]
+    },
+    "src/features/redemption-codes/components/redemptions-provider.tsx": {
+      "sha256": "69a97dad9654ecee87d401d752ef95379a5fb314bc328a39b69b4ae2b0a7429f",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 23,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/features/subscriptions/components/subscriptions-columns.tsx": {
+      "sha256": "64d88074f2bbfb052fee410d9e02c8992b724f30f7f763b39cc317c4b6e9a8ba",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/features/subscriptions/components/subscriptions-provider.tsx": {
+      "sha256": "4d4dca095ea7b290f55695ad90b9620b2fe1b3fd7ae3bd98186d4eb9b168722f",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 27,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/features/subscriptions/constants.ts": {
+      "sha256": "a9c754885d2981e568a2e46616082aa5cfbd49b6402ac4f4ea0890df1c3072b9",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/features/system-settings/general/pricing-section.tsx": {
+      "sha256": "742986bad69734575a07a8f620f1880a02c672c6fc91a22c5a20f4afc1815028",
+      "diagnostics": [
+        {
+          "code": "eslint(no-nested-ternary)",
+          "severity": "error",
+          "line": 239,
+          "column": 24,
+          "message": "Do not nest ternary expressions."
+        }
+      ]
+    },
+    "src/features/system-settings/integrations/amount-discount-dialog.tsx": {
+      "sha256": "dee9cfe5a9417da7d2d7a99abb952e99beb23c228471a18bb387abf35039e339",
+      "diagnostics": [
+        {
+          "code": "unicorn(prefer-number-properties)",
+          "severity": "warning",
+          "line": 159,
+          "column": 38,
+          "message": "Use `Number.parseInt` instead of the global `parseInt`"
+        },
+        {
+          "code": "unicorn(prefer-number-properties)",
+          "severity": "warning",
+          "line": 191,
+          "column": 38,
+          "message": "Use `Number.parseFloat` instead of the global `parseFloat`"
+        }
+      ]
+    },
+    "src/features/system-settings/integrations/amount-discount-visual-editor.tsx": {
+      "sha256": "04657811bb9df226eadcd1353e722f50b186646bd63a0ac6a8030e6c95b38544",
+      "diagnostics": [
+        {
+          "code": "unicorn(prefer-number-properties)",
+          "severity": "warning",
+          "line": 62,
+          "column": 26,
+          "message": "Use `Number.isNaN` instead of the global `isNaN`"
+        },
+        {
+          "code": "unicorn(prefer-number-properties)",
+          "severity": "warning",
+          "line": 62,
+          "column": 49,
+          "message": "Use `Number.isNaN` instead of the global `isNaN`"
+        }
+      ]
+    },
+    "src/features/system-settings/request-limits/rate-limit-dialog.tsx": {
+      "sha256": "41a37c6b5dbc10f546a8d7d6255d4b8058ae7f95145b3f8d9a983ac46fecc082",
+      "diagnostics": [
+        {
+          "code": "unicorn(prefer-number-properties)",
+          "severity": "warning",
+          "line": 175,
+          "column": 40,
+          "message": "Use `Number.parseInt` instead of the global `parseInt`"
+        },
+        {
+          "code": "unicorn(prefer-number-properties)",
+          "severity": "warning",
+          "line": 206,
+          "column": 40,
+          "message": "Use `Number.parseInt` instead of the global `parseInt`"
+        }
+      ]
+    },
+    "src/features/usage-logs/components/columns/column-helpers.tsx": {
+      "sha256": "90486807b40b9b826b30e81579ed649f2b0cf63a628c08c525e5c8daaf305f38",
+      "diagnostics": [
+        {
+          "code": "react(self-closing-comp)",
+          "severity": "warning",
+          "line": 57,
+          "column": 10,
+          "message": "Unnecessary closing tag"
+        }
+      ]
+    },
+    "src/features/usage-logs/components/task-logs-filter-bar.tsx": {
+      "sha256": "6600b6f08567ed084a3b2b78baee22aa1088a6cade14a484629d5f05c3a51849",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 21,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/features/users/components/users-provider.tsx": {
+      "sha256": "bbecf8c9f9b9b0123fa2d8924f021c56bb86121f7e3d294223a2f3e92c8b85ff",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 23,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/features/users/lib/user-actions.ts": {
+      "sha256": "b3083b76af2b9e1a414dce2f96217ec5e374eec781dc2d31f15a0e5a7d013bf9",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 19,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/features/users/lib/user-form.ts": {
+      "sha256": "c44eebf009ac102ebc923b61e20481c3751ff46aea919f0d669f52d400b12af5",
+      "diagnostics": [
+        {
+          "code": "typescript(no-import-type-side-effects)",
+          "severity": "error",
+          "line": 30,
+          "column": 1,
+          "message": "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime."
+        }
+      ]
+    },
+    "src/lib/utils.ts": {
+      "sha256": "59314839dfaf1b9582d76734d4a961e5f8c0049f66ccd5860a293c048fb0377a",
+      "diagnostics": [
+        {
+          "code": "unicorn(prefer-string-replace-all)",
+          "severity": "error",
+          "line": 39,
+          "column": 15,
+          "message": "Prefer `String#replaceAll()` over `String#replace()` when using a regex with the global flag."
+        },
+        {
+          "code": "unicorn(prefer-string-replace-all)",
+          "severity": "error",
+          "line": 39,
+          "column": 39,
+          "message": "Prefer `String#replaceAll()` over `String#replace()` when using a regex with the global flag."
+        },
+        {
+          "code": "eslint(prefer-template)",
+          "severity": "warning",
+          "line": 86,
+          "column": 10,
+          "message": "Unexpected string concatenation."
+        }
+      ]
+    }
+  }
+}

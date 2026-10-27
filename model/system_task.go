@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 
 	"github.com/QuantumNous/new-api/common"
@@ -352,12 +353,16 @@ func acquireSystemTaskLock(taskType string, taskID string, lockedBy string, now 
 }
 
 func UpdateSystemTaskState(taskID string, lockedBy string, state any) error {
+	return UpdateSystemTaskStateWithContext(context.Background(), taskID, lockedBy, state)
+}
+
+func UpdateSystemTaskStateWithContext(ctx context.Context, taskID string, lockedBy string, state any) error {
 	stateText, err := marshalSystemTaskJSON(state)
 	if err != nil {
 		return err
 	}
 	now := common.GetTimestamp()
-	result := DB.Model(&SystemTask{}).
+	result := DB.WithContext(ctx).Model(&SystemTask{}).
 		Where("task_id = ? AND status = ? AND locked_by = ?", taskID, SystemTaskStatusRunning, lockedBy).
 		Where("EXISTS (SELECT 1 FROM system_task_locks WHERE system_task_locks.task_id = system_tasks.task_id AND system_task_locks.locked_by = ? AND system_task_locks.locked_until >= ?)", lockedBy, now).
 		Updates(map[string]any{
@@ -376,7 +381,7 @@ func UpdateSystemTaskState(taskID string, lockedBy string, state any) error {
 	// Reuse `now` from the UPDATE so a clock tick cannot reintroduce false
 	// lock-loss; a lease that expires during the write is caught by the next heartbeat.
 	var held int64
-	err = DB.Model(&SystemTask{}).
+	err = DB.WithContext(ctx).Model(&SystemTask{}).
 		Where("task_id = ? AND status = ? AND locked_by = ?", taskID, SystemTaskStatusRunning, lockedBy).
 		Where("EXISTS (SELECT 1 FROM system_task_locks WHERE system_task_locks.task_id = system_tasks.task_id AND system_task_locks.locked_by = ? AND system_task_locks.locked_until >= ?)", lockedBy, now).
 		Count(&held).Error

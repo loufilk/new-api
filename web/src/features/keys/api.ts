@@ -26,6 +26,7 @@ import type {
   SearchApiKeysParams,
   ApiKeyFormData,
   TokenAutoGroupsConfig,
+  CCSwitchApp,
 } from './types'
 
 // ============================================================================
@@ -66,6 +67,28 @@ export async function getTokenAutoGroups(): Promise<
   ApiResponse<TokenAutoGroupsConfig>
 > {
   const res = await api.get('/api/token/auto-groups')
+  return res.data
+}
+
+// Models routable by the API key routing scope currently selected in the form.
+export async function getApiKeyScopeModels(data: {
+  group: string
+  auto_groups_mode: 'inherit' | 'custom'
+  auto_groups: string[]
+}): Promise<ApiResponse<string[]>> {
+  const res = await api.post('/api/token/models', data)
+  return res.data
+}
+
+// Models that this exact API key can route for the selected CC Switch app.
+export async function getCCSwitchTokenModels(
+  id: number,
+  app: CCSwitchApp
+): Promise<ApiResponse<string[]>> {
+  const params = new URLSearchParams({ app })
+  const res = await api.get(
+    `/api/user/tokens/${id}/models?${params.toString()}`
+  )
   return res.data
 }
 
@@ -110,9 +133,12 @@ export async function updateApiKeyStatus(
 
 // Fetch the real (unmasked) key for a token by ID
 export async function fetchTokenKey(
-  id: number
+  id: number,
+  config?: { signal?: AbortSignal }
 ): Promise<{ success: boolean; message?: string; data?: { key: string } }> {
-  const res = await api.post(`/api/token/${id}/key`)
+  const res = config
+    ? await api.post(`/api/token/${id}/key`, undefined, config)
+    : await api.post(`/api/token/${id}/key`)
   return res.data
 }
 

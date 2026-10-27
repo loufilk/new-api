@@ -5,6 +5,7 @@ import (
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 )
 
 // StreamResult is passed to each dataHandler invocation, providing methods
@@ -13,6 +14,7 @@ import (
 type StreamResult struct {
 	status  *relaycommon.StreamStatus
 	stopped bool
+	done    bool
 }
 
 func newStreamResult(status *relaycommon.StreamStatus) *StreamResult {
@@ -28,6 +30,10 @@ func (r *StreamResult) Error(err error) {
 	r.status.RecordError(err.Error())
 	var apiErr *types.NewAPIError
 	if errors.As(err, &apiErr) {
+		if apiErr.GetErrorType() == types.ErrorTypeNewAPIError && apiErr.GetErrorCode() == service.ClientGoneErrorCode {
+			r.status.MarkCancelled()
+			return
+		}
 		r.status.MarkFailed(string(apiErr.GetErrorCode()), apiErr.ToOpenAIError().Type, apiErr.StatusCode)
 	}
 }
@@ -44,6 +50,7 @@ func (r *StreamResult) Stop(err error) {
 func (r *StreamResult) Done() {
 	r.status.SetEndReason(relaycommon.StreamEndReasonDone, nil)
 	r.stopped = true
+	r.done = true
 }
 
 // IsStopped returns whether Stop() or Done() was called during this chunk.

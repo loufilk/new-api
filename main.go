@@ -3,10 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
-	"embed"
 	"errors"
 	"fmt"
-	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,17 +14,20 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/QuantumNous/new-api/chuanapi"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/controller"
+	"github.com/QuantumNous/new-api/extension"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/modules/imagegen"
 	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
-	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
-	"github.com/QuantumNous/new-api/pkg/wsmanager"
+	"github.com/QuantumNous/new-api/pkg/lifecycle"
+	"github.com/QuantumNous/new-api/pkg/moneyport"
 	"github.com/QuantumNous/new-api/relay"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/router"
@@ -34,110 +36,84 @@ import (
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
-	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 
 	_ "net/http/pprof"
 )
 
-//go:embed web/dist
-var buildFS embed.FS
-
-//go:embed web/dist/index.html
-var indexPage []byte
-
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "plugin" {
 		os.Exit(jsplugin.RunCLI(os.Args[2:], os.Stdout, os.Stderr))
 	}
+	if err := runApplication(); err != nil {
+		common.FatalLog(common.MaskSensitiveLogInfo(err.Error()))
+	}
+}
+
+func runApplication() error {
 	startTime := time.Now()
 	kitutil.SetLogging(common.SysLog, func(message string) {
 		logger.LogError(nil, message)
 	})
 	kitutil.SetSystemErrorLogging(common.SysError)
 
-	err := InitResources()
+	safeToCloseResources := true
+	defer func() {
+		if !safeToCloseResources {
+			return
+		}
+		if common.RDB != nil {
+			if err := common.RDB.Close(); err != nil {
+				common.SysError("failed to close Redis: " + err.Error())
+			}
+		}
+		if err := model.CloseDB(); err != nil {
+			common.SysError("failed to close database: " + err.Error())
+		}
+	}()
+
+	app := newApplicationRuntime()
+	err := InitResources(app.workers)
 	if err != nil {
-		common.FatalLog("failed to initialize resources: " + err.Error())
-		return
+		return fmt.Errorf("failed to initialize resources: %w", err)
 	}
 
-	common.SysLog("New API " + common.Version + " started")
+	common.SysLog(common.LogText("New API %s started", common.Version))
 	if os.Getenv("GIN_MODE") != "debug" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	if common.DebugEnabled {
-		common.SysLog("running in debug mode")
+		common.SysLog(common.LogText("running in debug mode"))
 	}
 
 	kitutil.Debug.Store(common.DebugEnabled)
-
-	defer func() {
-		err := model.CloseDB()
-		if err != nil {
-			common.FatalLog("failed to close database: " + err.Error())
-		}
-	}()
 
 	if common.RedisEnabled {
 		// for compatibility with old versions
 		common.MemoryCacheEnabled = true
 	}
 	if common.MemoryCacheEnabled {
-		common.SysLog("memory cache enabled")
-		common.SysLog(fmt.Sprintf("sync frequency: %d seconds", common.SyncFrequency))
+		common.SysLog(common.LogText("memory cache enabled"))
+		common.SysLog(common.LogText("sync frequency: %d seconds", common.SyncFrequency))
 
-		// Add panic recovery and retry for InitChannelCache
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					common.SysLog(fmt.Sprintf("InitChannelCache panic: %v, retrying once", r))
-					// Retry once
-					_, _, fixErr := model.FixAbility()
-					if fixErr != nil {
-						common.FatalLog(fmt.Sprintf("InitChannelCache failed: %s", fixErr.Error()))
-					}
-				}
-			}()
-			model.InitChannelCache()
-		}()
-
-		go model.SyncChannelCache(common.SyncFrequency)
+		if err := model.RefreshChannelCache(context.Background()); err != nil {
+			return fmt.Errorf("initial channel cache load failed: %w", err)
+		}
 	}
-	wsmanager.StartSubscriber(context.Background())
 
 	// Warm pricing after channel cache initialization so Advanced Custom
 	// endpoint inference can read cached route settings on first request.
 	model.GetPricing()
 
-	// 热更新配置
-	go model.SyncOptions(common.SyncFrequency)
-	go controller.SyncTaskPlugins()
-
-	// 周期性重载授权策略，保证多节点/多 master 部署下权限变更能传播到每个实例
-	go authz.StartPolicySync(common.SyncFrequency)
-
-	// 数据看板
-	go model.UpdateQuotaData()
-
-	if os.Getenv("CHANNEL_UPDATE_FREQUENCY") != "" {
-		frequency, err := strconv.Atoi(os.Getenv("CHANNEL_UPDATE_FREQUENCY"))
-		if err != nil {
-			common.FatalLog("failed to parse CHANNEL_UPDATE_FREQUENCY: " + err.Error())
+	var balanceInterval time.Duration
+	if value := os.Getenv("CHANNEL_UPDATE_FREQUENCY"); value != "" {
+		frequency, err := strconv.Atoi(value)
+		if err != nil || frequency <= 0 || frequency > 525600 {
+			return errors.New("CHANNEL_UPDATE_FREQUENCY must be positive minutes, at most one year")
 		}
-		go controller.AutomaticallyUpdateChannels(frequency)
+		balanceInterval = time.Duration(frequency) * time.Minute
 	}
-
-	// Codex credential auto-refresh check every 10 minutes, refresh when expires within 1 day
-	service.StartCodexCredentialAutoRefreshTask()
-
-	// Subscription quota reset task (daily/weekly/monthly/custom)
-	service.StartSubscriptionQuotaResetTask()
-
-	// Report this process as a system instance so the System Info page can show
-	// all currently alive nodes in multi-instance deployments.
-	service.StartSystemInstanceReporter()
 
 	// Wire task polling adaptor factory (breaks service -> relay import cycle).
 	// Must run before the system task runner starts: the async_task_poll handler
@@ -155,36 +131,23 @@ func main() {
 	// (DB-lease dedup across masters + run history), then start the runner that
 	// schedules and executes them. Master-only execution and the UpdateTask
 	// switch are enforced inside the runner and each handler's Enabled().
+	if err := extension.Default().ApplyLifecycle(extension.PhaseBeforeBackgroundWorkers); err != nil {
+		return fmt.Errorf("failed to apply extension startup lifecycle: %w", err)
+	}
 	controller.RegisterScheduledSystemTasks()
-	service.StartSystemTaskRunner()
 
 	if os.Getenv("BATCH_UPDATE_ENABLED") == "true" {
 		common.BatchUpdateEnabled = true
 		common.SysLog("batch update enabled with interval " + strconv.Itoa(common.BatchUpdateInterval) + "s")
-		model.InitBatchUpdater()
-	}
-
-	if os.Getenv("ENABLE_PPROF") == "true" {
-		gopool.Go(func() {
-			log.Println(http.ListenAndServe("0.0.0.0:8005", nil))
-		})
-		go common.Monitor()
-		common.SysLog("pprof enabled")
-	}
-
-	err = common.StartPyroScope()
-	if err != nil {
-		common.SysError(fmt.Sprintf("start pyroscope error : %v", err))
 	}
 
 	// Initialize HTTP server
 	server := gin.New()
 	if err := middleware.ConfigureTrustedProxies(server); err != nil {
-		common.FatalLog("failed to configure trusted proxies: " + err.Error())
-		return
+		return fmt.Errorf("failed to configure trusted proxies: %w", err)
 	}
 	server.Use(gin.CustomRecovery(func(c *gin.Context, err any) {
-		common.SysLog(fmt.Sprintf("panic detected: %v", err))
+		common.SysLog(common.LogText("panic detected: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
 				"message": fmt.Sprintf("Panic detected, error: %v. Please submit a issue here: https://github.com/Calcium-Ion/new-api", err),
@@ -202,47 +165,68 @@ func main() {
 	InjectGoogleAnalytics()
 
 	// 设置路由
-	router.SetRouter(server, router.WebAssets{
+	if err := router.SetRouter(server, router.WebAssets{
 		BuildFS:   buildFS,
 		IndexPage: indexPage,
-	})
+		Disabled:  frontendAssetsDisabled,
+	}); err != nil {
+		return fmt.Errorf("failed to initialize routes: %w", err)
+	}
 	var port = os.Getenv("PORT")
 	if port == "" {
 		port = strconv.Itoa(*common.Port)
 	}
 
 	srv := &http.Server{
-		Addr:    ":" + port,
-		Handler: server,
+		Addr:              ":" + port,
+		Handler:           app.gate.Wrap(server),
+		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			common.FatalLog("failed to start HTTP server: " + err.Error())
-		}
-	}()
-
-	time.Sleep(100 * time.Millisecond)
-
-	common.LogStartupSuccess(startTime, port)
-
+	listener, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		return fmt.Errorf("failed to bind HTTP server: %w", err)
+	}
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-quit
-	common.SysLog(fmt.Sprintf("received signal: %v, shutting down...", sig))
-
-	// SSE streams may run for minutes; give them time to finish before forced exit
-	shutdownTimeout := time.Duration(common.GetEnvOrDefault("SHUTDOWN_TIMEOUT_SECONDS", 120)) * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		common.SysError(fmt.Sprintf("server forced to shutdown: %v", err))
+	defer signal.Stop(quit)
+	safeToCloseResources = false
+	app.Start(balanceInterval, os.Getenv("ENABLE_PPROF") == "true")
+	if err := common.StartPyroScope(); err != nil {
+		common.SysError("start pyroscope error: " + common.MaskSensitiveLogInfo(err.Error()))
 	}
-	// 内存中的看板数据保存入库，避免重启丢失未落库数据 (issue #5679)
-	if common.DataExportEnabled {
-		model.SaveQuotaDataCache()
+	serveErrors := make(chan error, 1)
+	go func() { serveErrors <- srv.Serve(listener) }()
+	common.LogStartupSuccess(startTime, port)
+
+	var runErr error
+	select {
+	case sig := <-quit:
+		common.SysLog(fmt.Sprintf("received signal: %v, shutting down...", sig))
+	case err := <-serveErrors:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			runErr = fmt.Errorf("HTTP server stopped: %w", err)
+			common.SysError(runErr.Error())
+		}
+	case err := <-app.workers.Failures():
+		runErr = err
+		common.SysError(err.Error())
+	}
+	safeToCloseResources = app.Shutdown(srv)
+	if !safeToCloseResources {
+		return errors.New("runtime shutdown or finalization did not complete")
+	}
+
+	// A worker may fail after SIGTERM selected the shutdown path. Shutdown
+	// proved the group joined, so this read cannot block and preserves that
+	// late failure instead of returning a successful process exit.
+	if runErr == nil {
+		runErr = app.workers.Wait(context.Background())
 	}
 	common.SysLog("server exited")
+	return runErr
 }
 
 func InjectUmamiAnalytics() {
@@ -288,13 +272,13 @@ func InjectGoogleAnalytics() {
 	indexPage = bytes.ReplaceAll(indexPage, placeholder, analyticsInject)
 }
 
-func InitResources() error {
+func InitResources(workers *lifecycle.Group) error {
 	// Initialize resources here if needed
 	// This is a placeholder function for future resource initialization
 	err := godotenv.Load(".env")
 	if err != nil {
 		if common.DebugEnabled {
-			common.SysLog("No .env file found, using default environment variables. If needed, please create a .env file and set the relevant variables.")
+			common.SysLog(common.LogText("No .env file found, using default environment variables. If needed, please create a .env file and set the relevant variables."))
 		}
 	}
 
@@ -308,21 +292,58 @@ func InitResources() error {
 
 	service.InitHttpClient()
 
-	service.InitTokenEncoders()
+	if err := chuanapi.RegisterRuntimeServices(); err != nil {
+		common.FatalLog("failed to register chuanapi runtime services: " + err.Error())
+		return err
+	}
+	// Runtime funding implementations are composed explicitly and frozen before
+	// any request can create a BillingSession.
+	fundingFactories := moneyport.NewFactoryRegistry()
+	if err := service.RegisterHostFundingFactories(fundingFactories); err != nil {
+		common.FatalLog("failed to register host funding factories: " + err.Error())
+		return err
+	}
+	if err := chuanapi.RegisterFundingFactories(fundingFactories); err != nil {
+		common.FatalLog("failed to register chuanapi funding factories: " + err.Error())
+		return err
+	}
+	if err := service.ConfigureFundingFactoryRegistry(fundingFactories); err != nil {
+		common.FatalLog("failed to configure funding factory registry: " + err.Error())
+		return err
+	}
+
+	// Compose the extension registry before any migration runs: model.InitDB
+	// reads extension.Default() to append extension models to the core
+	// AutoMigrate call and to run extension data steps. Registration is
+	// build-time and explicit, so a wiring failure here must abort startup
+	// rather than silently start with an unmigrated extension schema.
+	registry := extension.NewRegistry()
+	if err := imagegen.Register(registry, workers); err != nil {
+		common.FatalLog("failed to register image generation module: " + err.Error())
+		return err
+	}
+	if err := chuanapi.Register(registry); err != nil {
+		common.FatalLog("failed to register chuanapi extension: " + err.Error())
+		return err
+	}
+	if err := extension.SetDefault(registry); err != nil {
+		common.FatalLog("failed to install extension registry: " + err.Error())
+		return err
+	}
 
 	// Initialize SQL Database
 	err = model.InitDB()
 	if err != nil {
-		common.FatalLog("failed to initialize database: " + err.Error())
+		common.FatalLog(common.LogText("failed to initialize database: %s", err.Error()))
 		return err
 	}
 	if err = authz.Init(model.DB); err != nil {
-		common.FatalLog("failed to initialize authorization: " + err.Error())
+		common.FatalLog(common.LogText("failed to initialize authorization: %s", err.Error()))
 		return err
 	}
 	if common.PasswordLoginEncryptionEnabled {
 		if err = model.InitPasswordEncryption(); err != nil {
-			common.FatalLog("failed to initialize password encryption: " + err.Error())
+			common.FatalLog(common.LogText("failed to initialize password encryption: %s", err.Error()))
 			return err
 		}
 	}
@@ -332,7 +353,7 @@ func InitResources() error {
 	// Initialize options, should after model.InitDB()
 	if common.IsMasterNode {
 		if err := model.MigrateRetiredFrontendOptions(); err != nil {
-			common.SysError("failed to migrate retired frontend options: " + err.Error())
+			common.SysError(common.LogText("failed to migrate retired frontend options: %s", err.Error()))
 		}
 	}
 	model.InitOptionMap()
@@ -352,18 +373,13 @@ func InitResources() error {
 		return err
 	}
 
-	perfmetrics.Init()
-
-	// 启动系统监控
-	common.StartSystemMonitor()
-
 	// Initialize i18n
 	err = i18n.Init()
 	if err != nil {
-		common.SysError("failed to initialize i18n: " + err.Error())
+		common.SysError(common.LogText("failed to initialize i18n: %s", err.Error()))
 		// Don't return error, i18n is not critical
 	} else {
-		common.SysLog("i18n initialized with languages: " + strings.Join(i18n.SupportedLanguages(), ", "))
+		common.SysLog(common.LogText("i18n initialized with languages: %s", strings.Join(i18n.SupportedLanguages(), ", ")))
 	}
 	// Register user language loader for lazy loading
 	i18n.SetUserLangLoader(model.GetUserLanguage)
@@ -371,11 +387,9 @@ func InitResources() error {
 	// Load custom OAuth providers from database
 	err = oauth.LoadCustomProviders()
 	if err != nil {
-		common.SysError("failed to load custom OAuth providers: " + err.Error())
+		common.SysError(common.LogText("failed to load custom OAuth providers: %s", err.Error()))
 		// Don't return error, custom OAuth is not critical
 	}
-
-	service.StartAuthArtifactCleanup()
 
 	return nil
 }

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
 type StreamEndReason string
@@ -55,6 +57,8 @@ type StreamStatus struct {
 	errorStatus      int
 	incompleteReason string
 	expectsTerminal  bool
+	apiError         *types.NewAPIError
+	clientGone       bool
 }
 
 // StreamOutcome holds classification facts only; upstream messages never
@@ -78,10 +82,27 @@ func (s *StreamStatus) SetEndReason(reason StreamEndReason, err error) {
 	if s == nil {
 		return
 	}
+	if reason == StreamEndReasonClientGone {
+		s.mu.Lock()
+		s.clientGone = true
+		s.mu.Unlock()
+	}
 	s.endOnce.Do(func() {
 		s.EndReason = reason
 		s.EndError = err
 	})
+}
+
+// ClientGone keeps the observed disconnect separate from the first diagnostic.
+// A provider or scanner error can win the end reason before a concurrent write
+// fails, but callers must still suppress any later writes to that client.
+func (s *StreamStatus) ClientGone() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.clientGone
 }
 
 func (s *StreamStatus) RecordError(msg string) {
@@ -168,6 +189,30 @@ func (s *StreamStatus) ResponseOutcome() string {
 
 func (s *StreamStatus) ResponseFailed() bool {
 	return s.ResponseOutcome() == string(ResponseOutcomeFailed)
+}
+
+// SetAPIError records the typed semantic failure that terminated a stream.
+// It is intentionally separate from EndError: transport/scanner failures may
+// end a stream without being a provider-declared response failure.
+func (s *StreamStatus) SetAPIError(apiErr *types.NewAPIError) {
+	if s == nil || apiErr == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.apiError == nil {
+		s.apiError = apiErr
+	}
+}
+
+// APIError returns the first typed semantic failure recorded for the stream.
+func (s *StreamStatus) APIError() *types.NewAPIError {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.apiError
 }
 
 func (s *StreamStatus) OutcomeSnapshot() StreamOutcome {

@@ -3,9 +3,9 @@ package helper
 import (
 	"maps"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -13,17 +13,25 @@ import (
 )
 
 func ResolveIncomingBillingExprRequestInput(c *gin.Context, info *relaycommon.RelayInfo) (billingexpr.RequestInput, error) {
+	requestTime := time.Now()
+	if info != nil && !info.StartTime.IsZero() {
+		requestTime = info.StartTime
+	}
 	if info != nil && info.BillingRequestInput != nil {
 		input := cloneRequestInput(*info.BillingRequestInput)
-		merged := cloneStringMap(info.RequestHeaders)
+		if input.Timestamp <= 0 {
+			input.Timestamp = requestTime.Unix()
+		}
+		merged := requestHeadersFromContext(c)
+		maps.Copy(merged, cloneStringMap(info.RequestHeaders))
 		maps.Copy(merged, input.Headers)
 		input.Headers = merged
 		return input, nil
 	}
 
-	input := billingexpr.RequestInput{}
+	input := billingexpr.RequestInput{Headers: requestHeadersFromContext(c), Timestamp: requestTime.Unix()}
 	if info != nil {
-		input.Headers = cloneStringMap(info.RequestHeaders)
+		maps.Copy(input.Headers, cloneStringMap(info.RequestHeaders))
 	}
 
 	bodyBytes, err := readIncomingBillingExprBody(c)
@@ -42,19 +50,11 @@ func ResolveImageBillingRequestInput(c *gin.Context, info *relaycommon.RelayInfo
 	if !ok {
 		return input, nil
 	}
-	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
-	if info.ChannelMeta != nil {
-		channelType = info.ChannelType
-	}
-	count, err := request.ImageCount(channelType == constant.ChannelTypeAli)
+	count, err := request.ImageCount(false)
 	if err != nil {
 		return input, err
 	}
-	topLevelCount, err := request.ImageCount(false)
-	if err != nil {
-		return input, err
-	}
-	body := map[string]any{"model": request.Model, "n": topLevelCount, "size": request.Size, "quality": request.Quality}
+	body := map[string]any{"model": request.Model, "n": count, "size": request.Size, "quality": request.Quality}
 	if request.BillingParameters != nil {
 		body["parameters"] = request.BillingParameters
 	}
@@ -96,7 +96,11 @@ func readIncomingBillingExprBody(c *gin.Context) ([]byte, error) {
 
 func cloneRequestInput(src billingexpr.RequestInput) billingexpr.RequestInput {
 	input := billingexpr.RequestInput{
-		Headers: cloneStringMap(src.Headers),
+		Headers:   cloneStringMap(src.Headers),
+		Timestamp: src.Timestamp,
+	}
+	if len(src.Params) > 0 {
+		input.Params = maps.Clone(src.Params)
 	}
 	if src.ImageCount != nil {
 		count := *src.ImageCount
@@ -104,6 +108,9 @@ func cloneRequestInput(src billingexpr.RequestInput) billingexpr.RequestInput {
 	}
 	if len(src.Body) > 0 {
 		input.Body = append([]byte(nil), src.Body...)
+	}
+	if len(src.Usage) > 0 {
+		input.Usage = maps.Clone(src.Usage)
 	}
 	return input
 }
@@ -125,4 +132,18 @@ func cloneStringMap(src map[string]string) map[string]string {
 		dst[key] = value
 	}
 	return dst
+}
+
+func requestHeadersFromContext(c *gin.Context) map[string]string {
+	headers := map[string]string{}
+	if c == nil || c.Request == nil {
+		return headers
+	}
+	for key, values := range c.Request.Header {
+		if strings.TrimSpace(key) == "" || len(values) == 0 {
+			continue
+		}
+		headers[key] = values[0]
+	}
+	return headers
 }

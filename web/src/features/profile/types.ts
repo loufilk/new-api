@@ -63,10 +63,6 @@ export interface UserProfile {
   aff_code?: string
   /** Number of successful affiliate invites */
   aff_count: number
-  /** Affiliate quota (pending rewards) */
-  aff_quota: number
-  /** Total affiliate quota earned (historical) */
-  aff_history_quota: number
   /** Invite user ID */
   invite_user_id?: number
   /** Account creation timestamp */
@@ -98,8 +94,10 @@ export type NotifyType = 'email' | 'webhook' | 'bark' | 'gotify'
 export interface UserSettings {
   /** Notification type */
   notify_type?: NotifyType
-  /** Quota warning threshold */
+  /** Quota warning threshold in quota units; 0 or absent uses the site default */
   quota_warning_threshold?: number
+  /** Receive low balance reminders; absent means on */
+  quota_warning_enabled?: boolean
   /** Webhook URL */
   webhook_url?: string
   /** Webhook secret */
@@ -120,6 +118,8 @@ export interface UserSettings {
   record_ip_log?: boolean
   /** Receive upstream model update notifications (admin only) */
   upstream_model_update_notify_enabled?: boolean
+  /** Receive channel notifications (admin only); absent means on for root only */
+  channel_notify_enabled?: boolean
   /** Preferred interface/API response language */
   language?: string
 }
@@ -152,6 +152,7 @@ export interface EmailBindingFlow extends AccountSecurityResult {
 export interface UpdateUserSettingsRequest {
   notify_type?: string
   quota_warning_threshold?: number
+  quota_warning_enabled?: boolean
   webhook_url?: string
   webhook_secret?: string
   notification_email?: string
@@ -162,6 +163,7 @@ export interface UpdateUserSettingsRequest {
   accept_unset_model_ratio_model?: boolean
   record_ip_log?: boolean
   upstream_model_update_notify_enabled?: boolean
+  channel_notify_enabled?: boolean
 }
 
 /**

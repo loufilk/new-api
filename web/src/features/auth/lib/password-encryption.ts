@@ -91,6 +91,9 @@ async function rsaOaepEncrypt(
       )
       const plaintext = new TextEncoder().encode(password)
       const algorithm = publicKey.algorithm as RsaHashedKeyAlgorithm
+      if (algorithm.modulusLength < 2048 || algorithm.modulusLength > 16384) {
+        throw new Error('Password encryption key has an unsupported size')
+      }
       if (plaintext.byteLength > algorithm.modulusLength / 8 - 66) {
         const secret = globalThis.crypto.getRandomValues(new Uint8Array(32))
         const nonce = globalThis.crypto.getRandomValues(new Uint8Array(12))
@@ -139,41 +142,119 @@ async function rsaOaepEncrypt(
     }
   }
 
-  // Web Crypto is restricted to secure contexts in browsers. Lazy-loading
-  // forge keeps the normal HTTPS bundle small while supporting HTTP intranets.
-  const forge = await import('node-forge')
-  const publicKey = forge.pki.publicKeyFromPem(publicKeyPEM)
-  const plaintext = forge.util.encodeUtf8(password)
-  if (plaintext.length > publicKey.n.bitLength() / 8 - 66) {
-    const secret = forge.random.getBytesSync(32)
-    const nonce = forge.random.getBytesSync(12)
-    const wrappedKey = publicKey.encrypt(secret, 'RSA-OAEP', {
-      md: forge.md.sha256.create(),
-      label: 'password-v2',
-    })
-    const cipher = forge.cipher.createCipher('AES-GCM', secret)
-    cipher.start({
-      iv: nonce,
-      additionalData: `password-v2:${keyId}`,
-      tagLength: 128,
-    })
-    cipher.update(forge.util.createBuffer(plaintext))
-    if (!cipher.finish()) throw new Error('Password encryption failed')
-    const ciphertext = cipher.output.getBytes() + cipher.mode.tag.getBytes()
+  // Only SubtleCrypto requires a secure context. Keep the browser fallback
+  // lazy, and require the browser CSPRNG for every OAEP seed, AES key and nonce.
+  if (typeof globalThis.crypto?.getRandomValues !== 'function') {
+    throw new Error('Secure randomness is unavailable')
+  }
+  const [{ OAEP, mgf1 }, { sha256 }, publicKey] = await Promise.all([
+    import('micro-rsa-dsa-dh/rsa.js'),
+    import('@noble/hashes/sha2.js'),
+    parseRsaPublicKey(publicKeyPEM),
+  ])
+  const plaintext = new TextEncoder().encode(password)
+  if (plaintext.length > Math.ceil(publicKey.n.toString(2).length / 8) - 66) {
+    const { gcm } = await import('@noble/ciphers/aes.js')
+    const secret = globalThis.crypto.getRandomValues(new Uint8Array(32))
+    const nonce = globalThis.crypto.getRandomValues(new Uint8Array(12))
+    const wrappedKey = OAEP(
+      sha256,
+      mgf1(sha256),
+      new TextEncoder().encode('password-v2')
+    ).encrypt(publicKey, secret)
+    const ciphertext = gcm(
+      secret,
+      nonce,
+      new TextEncoder().encode(`password-v2:${keyId}`)
+    ).encrypt(plaintext)
     return [
       'v2',
-      forge.util.encode64(wrappedKey),
-      forge.util.encode64(nonce),
-      forge.util.encode64(ciphertext),
+      arrayBufferToBase64(wrappedKey.buffer),
+      arrayBufferToBase64(nonce.buffer),
+      arrayBufferToBase64(ciphertext.buffer),
     ].join('.')
   }
-  const ciphertext = publicKey.encrypt(plaintext, 'RSA-OAEP', {
-    md: forge.md.sha256.create(),
-  })
-  return forge.util.encode64(ciphertext)
+  const ciphertext = OAEP(sha256, mgf1(sha256)).encrypt(publicKey, plaintext)
+  return arrayBufferToBase64(ciphertext.buffer)
+}
+
+async function parseRsaPublicKey(
+  pem: string
+): Promise<{ n: bigint; e: bigint }> {
+  const { BitString, Integer, Null, ObjectIdentifier, Sequence, fromBER } =
+    await import('asn1js')
+  const der = pemToDER(pem)
+  const limits = { maxDepth: 5, maxNodes: 10, maxContentLength: 4096 }
+  const spki = fromBER(der, limits)
+  if (
+    spki.offset !== der.byteLength ||
+    !(spki.result instanceof Sequence) ||
+    spki.result.lenBlock.isIndefiniteForm ||
+    spki.result.valueBlock.value.length !== 2
+  ) {
+    throw new Error('Password encryption key is not valid SPKI')
+  }
+  const [algorithm, encodedKey] = spki.result.valueBlock.value
+  if (
+    !(algorithm instanceof Sequence) ||
+    algorithm.lenBlock.isIndefiniteForm ||
+    algorithm.valueBlock.value.length !== 2 ||
+    !(algorithm.valueBlock.value[0] instanceof ObjectIdentifier) ||
+    algorithm.valueBlock.value[0].valueBlock.toString() !==
+      '1.2.840.113549.1.1.1' ||
+    !(algorithm.valueBlock.value[1] instanceof Null) ||
+    algorithm.valueBlock.value[1].lenBlock.length !== 0 ||
+    !(encodedKey instanceof BitString) ||
+    encodedKey.idBlock.isConstructed ||
+    encodedKey.valueBlock.unusedBits !== 0
+  ) {
+    throw new Error('Password encryption key is not RSA')
+  }
+  const keyBytes = encodedKey.valueBlock.valueHexView
+  const rsa = fromBER(keyBytes, limits)
+  if (
+    rsa.offset !== keyBytes.byteLength ||
+    !(rsa.result instanceof Sequence) ||
+    rsa.result.lenBlock.isIndefiniteForm ||
+    rsa.result.valueBlock.value.length !== 2
+  ) {
+    throw new Error('Password encryption RSA key is invalid')
+  }
+  const [modulus, exponent] = rsa.result.valueBlock.value
+  if (
+    !(modulus instanceof Integer) ||
+    !(exponent instanceof Integer) ||
+    modulus.valueBlock.valueHexView.length > 2049 ||
+    exponent.valueBlock.valueHexView.length > 33
+  ) {
+    throw new Error('Password encryption RSA parameters are invalid')
+  }
+  const n = modulus.toBigInt()
+  const e = exponent.toBigInt()
+  const bits = n.toString(2).length
+  if (
+    n <= 0n ||
+    bits < 2048 ||
+    bits > 16384 ||
+    n % 2n === 0n ||
+    e < 3n ||
+    e % 2n === 0n ||
+    e >= 2n ** 256n
+  ) {
+    throw new Error('Password encryption RSA parameters are unsupported')
+  }
+  return { n, e }
 }
 
 function pemToDER(pem: string): ArrayBuffer {
+  if (
+    pem.length > 8192 ||
+    !/^-----BEGIN PUBLIC KEY-----\s+[A-Za-z0-9+/=\s]+-----END PUBLIC KEY-----\s*$/.test(
+      pem
+    )
+  ) {
+    throw new Error('Password encryption key is not valid PEM')
+  }
   const body = pem
     .replace('-----BEGIN PUBLIC KEY-----', '')
     .replace('-----END PUBLIC KEY-----', '')

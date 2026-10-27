@@ -98,7 +98,7 @@ export function usePlaygroundOptions({
       modelsError,
       getOptionLoadErrorMessage(
         modelsError,
-        t('Failed to load playground models')
+        t('Failed to load text generation models')
       )
     )
   }, [isModelsError, modelsError, t])
@@ -110,7 +110,7 @@ export function usePlaygroundOptions({
       groupsError,
       getOptionLoadErrorMessage(
         groupsError,
-        t('Failed to load playground groups')
+        t('Failed to load text generation groups')
       )
     )
   }, [isGroupsError, groupsError, t])

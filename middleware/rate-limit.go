@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/gin-contrib/static"
 	"github.com/gin-gonic/gin"
 )
 
@@ -114,7 +115,7 @@ func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark st
 		duration,
 	)
 	if err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("rate limit check failed (mark=%s): %v", mark, err))
+		logger.LogError(c.Request.Context(), common.LogText("rate limit check failed (mark=%s): %v", mark, err))
 		c.Status(http.StatusInternalServerError)
 		c.Abort()
 		return
@@ -157,11 +158,26 @@ func rateLimitFactory(maxRequestNum int, duration int64, mark string) func(c *gi
 	}
 }
 
-func GlobalWebRateLimit() func(c *gin.Context) {
+// GlobalWebRateLimit limits dashboard pages and other fallback paths per IP.
+// Files that exist in the frontend build count against a separate static
+// limiter instead, so lazy-loaded chunks and icons do not use up the page
+// budget. The static limiter is disabled by default.
+func GlobalWebRateLimit(frontendFS static.ServeFileSystem) func(c *gin.Context) {
+	webLimit := defNext
 	if common.GlobalWebRateLimitEnable {
-		return rateLimitFactory(common.GlobalWebRateLimitNum, common.GlobalWebRateLimitDuration, "GW")
+		webLimit = rateLimitFactory(common.GlobalWebRateLimitNum, common.GlobalWebRateLimitDuration, "GW")
 	}
-	return defNext
+	staticLimit := defNext
+	if common.GlobalStaticRateLimitEnable {
+		staticLimit = rateLimitFactory(common.GlobalStaticRateLimitNum, common.GlobalStaticRateLimitDuration, "GS")
+	}
+	return func(c *gin.Context) {
+		if frontendFS.Exists("/", c.Request.URL.Path) {
+			staticLimit(c)
+			return
+		}
+		webLimit(c)
+	}
 }
 
 func GlobalAPIRateLimit() func(c *gin.Context) {
@@ -171,11 +187,100 @@ func GlobalAPIRateLimit() func(c *gin.Context) {
 	return defNext
 }
 
-func CriticalRateLimit() func(c *gin.Context) {
-	if common.CriticalRateLimitEnable {
-		return rateLimitFactory(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, "CT")
+// criticalRateLimitScopes maps a registered Gin route pattern to its isolated
+// critical bucket. Keys are the Gin registration pattern (method + FullPath),
+// never the request URL, so aliases and wildcard routes share the bucket their
+// handlers were vetted against instead of each URL creating a fresh bucket.
+// The mapping is the single source of truth for the host's critical auth flows:
+// router/api-router.go declares these routes through CriticalRateLimit().
+var criticalRateLimitScopes = map[string]string{
+	"GET /api/reset_password":                  "password-reset-request",
+	"POST /api/user/reset":                     "password-reset-confirm",
+	"POST /api/oauth/state":                    "oauth-state",
+	"POST /api/oauth/email/bind/start":         "oauth-bind",
+	"POST /api/oauth/email/bind/resend":        "oauth-bind",
+	"POST /api/oauth/email/bind":               "oauth-bind",
+	"GET /api/oauth/wechat":                    "oauth-login",
+	"POST /api/oauth/wechat/bind":              "oauth-bind",
+	"GET /api/oauth/telegram/login":            "oauth-login",
+	"POST /api/oauth/telegram/bind/start":      "oauth-bind",
+	"GET /api/oauth/telegram/bind/:flow_token": "oauth-bind",
+	"GET /api/oauth/:provider":                 "oauth-login",
+	"POST /api/user/auth/refresh":              "auth-refresh",
+	"POST /api/user/auth/logout":               "auth-logout",
+	"POST /api/user/register":                  "auth-register",
+	"POST /api/user/login":                     "auth-password-login",
+	"POST /api/user/login/2fa":                 "auth-2fa",
+	"POST /api/user/login/verify":              "auth-2fa",
+	"POST /api/user/login/passkey/begin":       "auth-passkey-begin",
+	"POST /api/user/login/passkey/finish":      "auth-passkey-finish",
+	"POST /api/user/passkey/login/begin":       "auth-passkey-begin",
+	"POST /api/user/passkey/login/finish":      "auth-passkey-finish",
+}
+
+// criticalRateLimitScopeForRoute returns the isolated bucket named for a
+// registered route, or an empty string when the route has no dedicated scope.
+func criticalRateLimitScopeForRoute(method, fullPath string) string {
+	return criticalRateLimitScopes[method+" "+fullPath]
+}
+
+// CriticalRateLimitRouteScopes returns a copy of the static route-to-bucket
+// table so route coverage tests and diagnostics can assert that every scoped
+// authentication route is actually registered.
+func CriticalRateLimitRouteScopes() map[string]string {
+	scopes := make(map[string]string, len(criticalRateLimitScopes))
+	for route, scope := range criticalRateLimitScopes {
+		scopes[route] = scope
 	}
-	return defNext
+	return scopes
+}
+
+// CriticalRateLimit enforces the configured critical limit on every route,
+// isolating unrelated critical flows while preserving the configured limit and
+// duration. Routes in criticalRateLimitScopes resolve to their CT:<scope>
+// bucket by registered method + FullPath; unknown routes keep the generic CT
+// bucket. This prevents background session refreshes, logout, or OAuth traffic
+// from exhausting the password-login bucket.
+func CriticalRateLimit() func(c *gin.Context) {
+	if !common.CriticalRateLimitEnable {
+		return defNext
+	}
+	maxRequestNum, duration := common.CriticalRateLimitNum, common.CriticalRateLimitDuration
+	limiter := memoryRateLimiter
+	if common.RedisEnabled {
+		limiter = redisRateLimiter
+	} else {
+		inMemoryRateLimiter.Init(common.RateLimitKeyExpirationDuration)
+	}
+	return func(c *gin.Context) {
+		mark := "CT"
+		if scope := criticalRateLimitScopeForRoute(c.Request.Method, c.FullPath()); scope != "" {
+			mark += ":" + scope
+		}
+		limiter(c, maxRequestNum, duration, mark)
+	}
+}
+
+// CriticalRateLimitByScope keeps the explicit-scope API for callers outside the
+// static route table: a non-empty scope isolates the route as CT:<scope>, while
+// an empty scope intentionally keeps the generic CT bucket regardless of the
+// route. Routes in the table should declare CriticalRateLimit() instead.
+func CriticalRateLimitByScope(scope string) func(c *gin.Context) {
+	if !common.CriticalRateLimitEnable {
+		return defNext
+	}
+	if scope == "" {
+		return rateLimitFactory(
+			common.CriticalRateLimitNum,
+			common.CriticalRateLimitDuration,
+			"CT",
+		)
+	}
+	return rateLimitFactory(
+		common.CriticalRateLimitNum,
+		common.CriticalRateLimitDuration,
+		"CT:"+scope,
+	)
 }
 
 func UserCriticalRateLimit(scope string) func(c *gin.Context) {
@@ -234,7 +339,7 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key string) {
 	allowed, _, ttlSeconds, err := redisFixedWindowTake(c.Request.Context(), key, maxRequestNum, duration)
 	if err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("rate limit check failed (key=%s): %v", key, err))
+		logger.LogError(c.Request.Context(), common.LogText("rate limit check failed (key=%s): %v", key, err))
 		c.Status(http.StatusInternalServerError)
 		c.Abort()
 		return

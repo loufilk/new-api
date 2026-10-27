@@ -161,10 +161,7 @@ export function ModelMappingEditor(props: ModelMappingEditorProps) {
         const mapped = entries.map(([from, to], index) => {
           const toString = String(to)
           const existingIndex = remainingRows.findIndex(
-            (row) =>
-              row.from === from ||
-              (row.from === from && row.to === toString) ||
-              previousRows[index]?.id === row.id
+            (row) => row.from === from || previousRows[index]?.id === row.id
           )
           if (existingIndex >= 0) {
             const [existing] = remainingRows.splice(existingIndex, 1)
@@ -434,6 +431,11 @@ export function ModelMappingEditor(props: ModelMappingEditorProps) {
         )}
 
         <TabsContent value='visual' className='space-y-2'>
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'Users call the model on the left. The platform forwards the request to the upstream model on the right.'
+            )}
+          </p>
           {rows.length > 0 ? (
             <div className='space-y-2'>
               {showFilter && (

@@ -106,10 +106,17 @@ export function PluginsTable(props: PluginsTableProps) {
     },
   })
   const deleteMutation = useMutation({
-    mutationFn: (plugin: TaskPluginListItem) =>
-      deleteTaskPluginVersion(plugin.meta.key, plugin.meta.version),
+    mutationFn: ({
+      plugin,
+      force,
+    }: {
+      plugin: TaskPluginListItem
+      force?: boolean
+    }) => deleteTaskPluginVersion(plugin.meta.key, plugin.meta.version, force),
     onSuccess: () => {
       setDeleteTarget(null)
+      setBlockedAction(null)
+      setBlockedUsage(null)
       toast.success(t('Plugin version deleted'))
       queryClient.invalidateQueries({ queryKey: ['task-plugins'] })
     },
@@ -406,16 +413,18 @@ export function PluginsTable(props: PluginsTableProps) {
         }}
       />
       <ConfirmDialog
-        open={Boolean(deleteTarget)}
+        open={Boolean(deleteTarget) && blockedAction !== 'delete'}
         onOpenChange={(open) => {
-          if (!open) setDeleteTarget(null)
+          if (!open && !deleteMutation.isPending) setDeleteTarget(null)
         }}
         title={t('Delete plugin version?')}
         destructive
         isLoading={deleteMutation.isPending}
         confirmText={t('Delete')}
         handleConfirm={() => {
-          if (deleteTarget) deleteMutation.mutate(deleteTarget)
+          if (deleteTarget && !deleteMutation.isPending) {
+            deleteMutation.mutate({ plugin: deleteTarget })
+          }
         }}
         desc={
           hasFactoryFallback
@@ -430,62 +439,55 @@ export function PluginsTable(props: PluginsTableProps) {
       <ConfirmDialog
         open={Boolean(blockedAction)}
         onOpenChange={(open) => {
-          if (!open) {
+          if (!open && !statusMutation.isPending && !deleteMutation.isPending) {
             setBlockedAction(null)
             setBlockedUsage(null)
+            setDeleteTarget(null)
+            setStatusTarget(null)
           }
         }}
         title={t('Plugin is still in use')}
         desc={usageDescription}
-        handleConfirm={() => setBlockedAction(null)}
-        confirmText={t('Cancel')}
+        destructive
+        isLoading={statusMutation.isPending || deleteMutation.isPending}
+        confirmText={t('Force operation')}
+        handleConfirm={() => {
+          if (statusMutation.isPending || deleteMutation.isPending) return
+          if (blockedAction === 'delete' && deleteTarget) {
+            deleteMutation.mutate({ plugin: deleteTarget, force: true })
+          } else if (blockedAction === 'disable' && statusTarget) {
+            statusMutation.mutate({
+              key: statusTarget.meta.key,
+              enabled: false,
+              options: { cascade: true, force: true },
+            })
+          }
+        }}
       >
-        <div className='flex flex-wrap gap-2'>
-          {blockedAction === 'disable' && blockedUsage?.channels.length ? (
+        {blockedAction === 'disable' && blockedUsage?.channels.length ? (
+          <div className='flex'>
             <Button
               variant='outline'
-              onClick={() =>
-                statusTarget &&
+              disabled={statusMutation.isPending || deleteMutation.isPending}
+              onClick={() => {
+                if (
+                  !statusTarget ||
+                  statusMutation.isPending ||
+                  deleteMutation.isPending
+                ) {
+                  return
+                }
                 statusMutation.mutate({
                   key: statusTarget.meta.key,
                   enabled: false,
                   options: { cascade: true },
                 })
-              }
+              }}
             >
               {t('Cascade disable channels')}
             </Button>
-          ) : null}
-          <Button
-            variant='destructive'
-            onClick={() => {
-              if (blockedAction === 'delete' && deleteTarget) {
-                deleteTaskPluginVersion(
-                  deleteTarget.meta.key,
-                  deleteTarget.meta.version,
-                  true
-                )
-                  .then(() => {
-                    setBlockedAction(null)
-                    setDeleteTarget(null)
-                    queryClient.invalidateQueries({
-                      queryKey: ['task-plugins'],
-                    })
-                  })
-                  .catch((error: Error) => handleServerError(error))
-              }
-              if (blockedAction === 'disable' && statusTarget) {
-                statusMutation.mutate({
-                  key: statusTarget.meta.key,
-                  enabled: false,
-                  options: { cascade: true, force: true },
-                })
-              }
-            }}
-          >
-            {t('Force operation')}
-          </Button>
-        </div>
+          </div>
+        ) : null}
       </ConfirmDialog>
     </>
   )

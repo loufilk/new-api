@@ -22,6 +22,39 @@ import i18next from 'i18next'
 import { initReactI18next } from 'react-i18next'
 import { afterEach, beforeAll } from 'vitest'
 
+function createMemoryStorage(): Storage {
+  const values = new Map<string, string>()
+
+  return {
+    get length() {
+      return values.size
+    },
+    clear() {
+      values.clear()
+    },
+    getItem(key) {
+      return values.get(key) ?? null
+    },
+    key(index) {
+      return [...values.keys()][index] ?? null
+    },
+    removeItem(key) {
+      values.delete(key)
+    },
+    setItem(key, value) {
+      values.set(key, String(value))
+    },
+  }
+}
+
+// Bun exposes a partial Node localStorage object when Vitest starts without a
+// valid --localstorage-file. Tests and persisted Zustand stores require the
+// browser Storage contract, so install a deterministic in-memory implementation.
+Object.defineProperty(globalThis, 'localStorage', {
+  configurable: true,
+  value: createMemoryStorage(),
+})
+
 // The testing-library default of 1000ms for findBy*/waitFor is too tight for
 // this suite on contended CI runners, where a first-in-file test also pays the
 // full cold-render cost. Keep it below vitest's testTimeout so async lookup

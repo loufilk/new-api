@@ -20,6 +20,7 @@ import { useMemo } from 'react'
 
 import type { SystemStatus } from '@/features/auth/types'
 import { useStatus } from '@/hooks/use-status'
+import { API_BASE_URL } from '@/lib/api-url'
 
 import {
   type ChatPreset,
@@ -40,6 +41,11 @@ function getStoredStatusChats(): RawChatConfig {
 }
 
 function extractServerAddress(status: SystemStatus | null) {
+  // External chat clients must import from the API origin, not the console.
+  if (API_BASE_URL) {
+    return API_BASE_URL
+  }
+
   const fromStatus =
     (status?.server_address as string | undefined) ??
     (status?.serverAddress as string | undefined) ??

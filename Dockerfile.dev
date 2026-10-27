@@ -1,20 +1,20 @@
 # Backend-only build for frontend development
 # Skips frontend build and uses a placeholder for //go:embed web/dist
 
-FROM golang:1.26.1-alpine AS builder
+FROM golang:1.27.3-alpine@sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4 AS builder
 
 ENV GO111MODULE=on CGO_ENABLED=0
 ARG TARGETOS
 ARG TARGETARCH
 ENV GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64}
-ENV GOEXPERIMENT=greenteagc
 
 WORKDIR /build
 
 ADD go.mod go.sum ./
-# relaykit is a local submodule referenced via replace; its go.mod must be
-# present for go mod download to resolve the main module graph.
+# relaykit and tokenkit are local submodules referenced via replace; their
+# go.mod files must be present for go mod download to resolve the main module graph.
 ADD relaykit/go.mod ./relaykit/go.mod
+ADD tokenkit/go.mod ./tokenkit/go.mod
 RUN go mod download
 
 COPY . .

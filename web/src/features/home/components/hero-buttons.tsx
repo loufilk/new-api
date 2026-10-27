@@ -24,12 +24,13 @@ import { Button } from '@/components/ui/button'
 
 interface HeroButtonsProps {
   isAuthenticated: boolean
+  registrationEnabled?: boolean
 }
 
-/**
- * Hero section action buttons
- */
-export function HeroButtons({ isAuthenticated }: HeroButtonsProps) {
+export function HeroButtons({
+  isAuthenticated,
+  registrationEnabled = false,
+}: HeroButtonsProps) {
   const { t } = useTranslation()
   if (isAuthenticated) {
     return (
@@ -41,8 +42,11 @@ export function HeroButtons({ isAuthenticated }: HeroButtonsProps) {
 
   return (
     <>
-      <Button size='lg' render={<Link to='/sign-up' />}>
-        {t('Get Started')}
+      <Button
+        size='lg'
+        render={<Link to={registrationEnabled ? '/sign-up' : '/sign-in'} />}
+      >
+        {registrationEnabled ? t('Get Started') : t('Sign In')}
         <ArrowRight className='ml-2 h-5 w-5' />
       </Button>
       <Button size='lg' variant='outline' render={<Link to='/sign-in' />}>

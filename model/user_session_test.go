@@ -10,7 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/alicebob/miniredis/v2"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -21,23 +21,21 @@ type setMiniRedisTimeOnEvalHook struct {
 	at     time.Time
 }
 
-func (hook setMiniRedisTimeOnEvalHook) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Context, error) {
-	if cmd.Name() == "eval" {
-		hook.server.SetTime(hook.at)
+func (setMiniRedisTimeOnEvalHook) DialHook(next redis.DialHook) redis.DialHook {
+	return next
+}
+
+func (hook setMiniRedisTimeOnEvalHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if cmd.Name() == "eval" {
+			hook.server.SetTime(hook.at)
+		}
+		return next(ctx, cmd)
 	}
-	return ctx, nil
 }
 
-func (setMiniRedisTimeOnEvalHook) AfterProcess(context.Context, redis.Cmder) error {
-	return nil
-}
-
-func (setMiniRedisTimeOnEvalHook) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmder) (context.Context, error) {
-	return ctx, nil
-}
-
-func (setMiniRedisTimeOnEvalHook) AfterProcessPipeline(context.Context, []redis.Cmder) error {
-	return nil
+func (setMiniRedisTimeOnEvalHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
 }
 
 func setupUserSessionTest(t *testing.T) {

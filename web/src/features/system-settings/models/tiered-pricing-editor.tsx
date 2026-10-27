@@ -103,6 +103,7 @@ import {
 } from './billing-time-fields'
 import { DraftNumberInput } from './draft-number-input'
 import { RequestSimulation } from './request-simulation'
+import { carryStableUiKey, getStableUiKey } from './tiered-pricing-ui-key'
 import { VisualBillingDocumentEditor } from './visual-billing-document-editor'
 
 type Preset = {
@@ -299,6 +300,7 @@ const PRESET_GROUPS: PresetGroup[] = [
   },
 ]
 
+// ---------------------------------------------------------------------------
 // Raw expression editor
 // ---------------------------------------------------------------------------
 
@@ -316,8 +318,8 @@ function RawExprEditor({ exprString, onChange }: RawExprEditorProps) {
           <div>
             {t('Variables')}: <code>len</code>, <code>p</code>, <code>c</code>,{' '}
             <code>cr</code>, <code>cc</code>, <code>cc1h</code>,{' '}
-            <code>img</code>, <code>img_cr</code>, <code>img_o</code>,{' '}
-            <code>ai</code>, <code>ao</code>
+            <code>cc12h</code>, <code>img</code>, <code>img_cr</code>,{' '}
+            <code>img_o</code>, <code>ai</code>, <code>ao</code>
           </div>
           <div>
             {t('Functions')}: <code>tier(name, value)</code>,{' '}
@@ -561,18 +563,23 @@ function RuleGroupCard({
   onRemove,
 }: RuleGroupCardProps) {
   const { t } = useTranslation()
+  const emitGroupChange = (next: RequestRuleGroup) =>
+    onChange(carryStableUiKey(group, next))
 
   const handleConditionChange = (
     conditionIndex: number,
     next: RequestCondition
   ) => {
     const conditions = [...group.conditions]
-    conditions[conditionIndex] = next
-    onChange({ ...group, conditions })
+    conditions[conditionIndex] = carryStableUiKey(
+      conditions[conditionIndex],
+      next
+    )
+    emitGroupChange({ ...group, conditions })
   }
 
   const handleAddCondition = (timeMode: boolean) => {
-    onChange({
+    emitGroupChange({
       ...group,
       conditions: [
         ...group.conditions,
@@ -600,12 +607,11 @@ function RuleGroupCard({
       <div className='space-y-2'>
         {group.conditions.map((condition, conditionIndex) => (
           <RuleConditionRow
-            // eslint-disable-next-line react/no-array-index-key -- Parsed editor rows have no IDs; preserve input identity while their editable labels and values change.
-            key={conditionIndex}
+            key={getStableUiKey(condition)}
             condition={condition}
             onChange={(next) => handleConditionChange(conditionIndex, next)}
             onRemove={() =>
-              onChange({
+              emitGroupChange({
                 ...group,
                 conditions: group.conditions.filter(
                   (_, i) => i !== conditionIndex
@@ -641,7 +647,7 @@ function RuleGroupCard({
           step={0.000001}
           value={group.multiplier}
           onValueChange={(value) =>
-            onChange({ ...group, multiplier: String(value) })
+            emitGroupChange({ ...group, multiplier: String(value) })
           }
           className='w-32'
           placeholder='1.0'
@@ -733,6 +739,7 @@ function CostEstimator({ effectiveExpr, fullExpr, currency }: EstimatorProps) {
     cacheReadTokens: 0,
     cacheCreateTokens: 0,
     cacheCreate1hTokens: 0,
+    cacheCreate12hTokens: 0,
     imageTokens: 0,
     imageCacheTokens: 0,
     imageOutputTokens: 0,
@@ -746,10 +753,15 @@ function CostEstimator({ effectiveExpr, fullExpr, currency }: EstimatorProps) {
   )
 
   const tokens = useMemo(() => {
-    const values = buildEstimatorTokens(promptTokens, completionTokens, extras)
+    const values = buildEstimatorTokens(
+      promptTokens,
+      completionTokens,
+      extras,
+      effectiveExpr
+    )
     if (lengthOverride.trim()) values.len = Number(lengthOverride)
     return values
-  }, [promptTokens, completionTokens, extras, lengthOverride])
+  }, [promptTokens, completionTokens, extras, lengthOverride, effectiveExpr])
 
   const result = useMemo(
     () =>
@@ -759,6 +771,18 @@ function CostEstimator({ effectiveExpr, fullExpr, currency }: EstimatorProps) {
       }),
     [effectiveExpr, promptTokens, completionTokens, extras, tokens, billingTime]
   )
+
+  if (result.error === 'task usage') {
+    return (
+      <Alert>
+        <AlertDescription>
+          {t(
+            "Task usage data is required to estimate this expression. Check the model's task plugin configuration."
+          )}
+        </AlertDescription>
+      </Alert>
+    )
+  }
 
   return (
     <div className='bg-muted/30 space-y-3 rounded-md border p-3'>
@@ -889,8 +913,9 @@ Input side:
 - p — input token count (for pricing). Automatically excludes sub-categories priced separately (e.g., if cr is used, cache tokens are deducted from p)
 - len — total input context length (for condition checks). Not affected by auto-exclusion; always reflects the full input length. Use in tier conditions
 - cr — cache-hit (read) token count
-- cc — cache-create token count (5-min TTL)
+- cc — cache-create token count (Claude 5-min TTL, OpenAI 30-min TTL)
 - cc1h — cache-create token count (1-hour TTL, Claude-specific)
+- cc12h — cache-create token count (12-hour TTL, OpenAI-specific)
 - img — image input token count
 - ai — audio input token count
 
@@ -1255,13 +1280,12 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
               <>
                 {requestRuleGroups.map((group, groupIndex) => (
                   <RuleGroupCard
-                    // eslint-disable-next-line react/no-array-index-key -- Parsed editor rows have no IDs; preserve input identity while their editable labels and values change.
-                    key={groupIndex}
+                    key={getStableUiKey(group)}
                     group={group}
                     index={groupIndex}
                     onChange={(next) => {
                       const updated = [...requestRuleGroups]
-                      updated[groupIndex] = next
+                      updated[groupIndex] = carryStableUiKey(group, next)
                       handleRuleGroupsChange(updated)
                     }}
                     onRemove={() =>

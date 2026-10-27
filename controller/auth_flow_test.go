@@ -828,6 +828,7 @@ type legacyGitHubOAuthProvider struct {
 	verifiedEmails     []string
 	verifiedEmailsErr  error
 	verifiedEmailCalls int
+	onVerifiedEmails   func()
 }
 
 func (*legacyGitHubOAuthProvider) GetName() string { return "GitHub" }
@@ -836,7 +837,42 @@ func (provider *legacyGitHubOAuthProvider) GetUserInfo(context.Context, *oauth.O
 }
 func (provider *legacyGitHubOAuthProvider) GetVerifiedEmails(context.Context, *oauth.OAuthToken) ([]string, error) {
 	provider.verifiedEmailCalls++
+	if provider.onVerifiedEmails != nil {
+		provider.onVerifiedEmails()
+	}
 	return provider.verifiedEmails, provider.verifiedEmailsErr
+}
+
+func TestOAuthLegacyGitHubEmailEvidenceMustStillMatchAtCommit(t *testing.T) {
+	for _, change := range []map[string]any{
+		{"email": "changed@example.com"},
+		{"github_id": "relinked-subject"},
+		{"auth_version": 2},
+		{"status": common.UserStatusDisabled},
+	} {
+		for field := range change {
+			t.Run(field, func(t *testing.T) {
+				setupSecurityEnrollmentTest(t)
+				user := model.User{Username: "legacy-race", AffCode: "legacy-race", Email: "confirmed@example.com", GitHubId: "legacy-name", AuthVersion: 1, Status: common.UserStatusEnabled, Role: common.RoleCommonUser, Group: "default"}
+				require.NoError(t, model.DB.Create(&user).Error)
+				provider := &legacyGitHubOAuthProvider{providerUserID: "900001", legacyID: "legacy-name", verifiedEmails: []string{user.Email}}
+				provider.onVerifiedEmails = func() {
+					require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", user.Id).Updates(change).Error)
+				}
+				response := legacyGitHubOAuthLogin(t, provider)
+				var result securityEnrollmentResponse
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+				assert.False(t, result.Success)
+				assert.Empty(t, response.Header().Values("Set-Cookie"))
+				count, err := model.CountActiveUserSessions(user.Id, time.Now().Unix())
+				require.NoError(t, err)
+				assert.Zero(t, count)
+				var claims int64
+				require.NoError(t, model.DB.Model(&model.ExternalIdentityClaim{}).Where("provider = ? AND subject = ?", "github", "900001").Count(&claims).Error)
+				assert.Zero(t, claims)
+			})
+		}
+	}
 }
 func (*legacyGitHubOAuthProvider) IsUserIDTaken(providerUserID string) bool {
 	return model.IsGitHubIdAlreadyTaken(providerUserID)

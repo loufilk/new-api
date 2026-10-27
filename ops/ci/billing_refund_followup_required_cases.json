@@ -1,0 +1,134 @@
+{
+  "policy": "financial-consistency-v2-atomic-source-token-task-ownership",
+  "database_suite": {
+    "label": "official-subscription-refund",
+    "package": "model",
+    "top": "TestOfficialSubscriptionRefundDatabaseBehavior",
+    "dsn_env": {
+      "mysql": "TEST_MYSQL_DSN",
+      "postgres": "TEST_POSTGRES_DSN"
+    },
+    "fixture_isolation": "subscriptionPeriodDatabase creates unique owned tables and PostgreSQL schema, refuses existing fixture tables, and preserves the pre-existing public index",
+    "required_leaf_suffixes": [],
+    "sqlite_result": "Atomic source and receipt rollback/replay is required; historical SQLITE_BUSY_SNAPSHOT parity is not acceptance."
+  },
+  "sqlite_only_suites": [
+    {
+      "label": "billing-error-classifier",
+      "package": "model",
+      "selector": "^TestBillingErrorClassificationExcludesSecretDetails$",
+      "required_tests": [
+        "TestBillingErrorClassificationExcludesSecretDetails",
+        "TestBillingErrorClassificationExcludesSecretDetails/nil",
+        "TestBillingErrorClassificationExcludesSecretDetails/unknown_secret",
+        "TestBillingErrorClassificationExcludesSecretDetails/wrapped_unknown_secret",
+        "TestBillingErrorClassificationExcludesSecretDetails/timeout",
+        "TestBillingErrorClassificationExcludesSecretDetails/cancel",
+        "TestBillingErrorClassificationExcludesSecretDetails/identity",
+        "TestBillingErrorClassificationExcludesSecretDetails/missing",
+        "TestBillingErrorClassificationExcludesSecretDetails/terminal_owner",
+        "TestBillingErrorClassificationExcludesSecretDetails/ledger_conflict",
+        "TestBillingErrorClassificationExcludesSecretDetails/ledger_invalid"
+      ],
+      "scope": "Pure retained BillingRefundErrorCode code/class return values exclude synthetic secret details. No retry/backoff scheduling, worker, database, or whole-logging-system leakage claim."
+    },
+    {
+      "label": "official-token-refund",
+      "package": "model",
+      "selector": "^(TestOfficialTokenRefundUsesBatchAndIndependentSQL|TestOfficialTokenRefundUsesAsyncCacheWithoutPrivateFence|TestBillingTokenContextPreservesFence|TestBillingTokenRedisErrorRetainsLegacyLiveContextPolicy|TestBillingTokenExpiredDeadlineBeforeNotificationRollsBackSource)$",
+      "required_tests": [
+        "TestOfficialTokenRefundUsesBatchAndIndependentSQL",
+        "TestOfficialTokenRefundUsesAsyncCacheWithoutPrivateFence",
+        "TestBillingTokenContextPreservesFence",
+        "TestBillingTokenRedisErrorRetainsLegacyLiveContextPolicy",
+        "TestBillingTokenExpiredDeadlineBeforeNotificationRollsBackSource"
+      ]
+    },
+    {
+      "label": "official-midjourney-refund",
+      "package": "controller",
+      "selector": "^(TestMidjourneyMissingChannelRequiresReviewWithoutRefund|TestMidjourneyTransientChannelLookupCannotAuthorizeRefund|TestMidjourneyEmptyUpstreamIDsHaveIndependentRefundReceipts|TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts|TestMidjourneyCacheMissRequiresAuthoritativeAbsence)$",
+      "required_tests": [
+        "TestMidjourneyMissingChannelRequiresReviewWithoutRefund",
+        "TestMidjourneyTransientChannelLookupCannotAuthorizeRefund",
+        "TestMidjourneyEmptyUpstreamIDsHaveIndependentRefundReceipts",
+        "TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts",
+        "TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts/legacy_null",
+        "TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts/legacy_empty",
+        "TestMidjourneyRefundPreservesLegacyAndUnchargedReceipts/prepared_uncharged",
+        "TestMidjourneyCacheMissRequiresAuthoritativeAbsence"
+      ]
+    },
+    {
+      "label": "official-wallet-allocation",
+      "package": "modules/chuanapi/wallet",
+      "selector": "^(TestOfficialCompatibilityKeeps093RefundRemainder)$",
+      "required_tests": [
+        "TestOfficialCompatibilityKeeps093RefundRemainder"
+      ]
+    },
+    {
+      "label": "normal-wallet-settlement",
+      "package": "service",
+      "selector": "^(TestWalletSettlementSurvivesTokenDeletion|TestWalletSettlementRejectsChangedTokenIdentity|TestPostConsumeQuotaIdempotencyCoversWalletAndToken|TestPostConsumeQuotaRefundIdempotencyCoversWalletAndToken|TestPostConsumeQuotaRefundRequiresDebitReceipt|TestPostConsumeQuotaRollsBackWalletWhenTokenUpdateFails|TestBillingSessionWalletSettleRollsBackFundingWhenTokenUpdateFails|TestBillingSessionWalletRefundSettleRollsBackFundingWhenTokenUpdateFails|TestWalletSettleFailsClosedWithoutTransactionalSettlementCapability|TestWalletReserveLedgerSequenceUnchanged|TestWalletReceiptOrderValuesAndDefensiveCopy|TestReceiptNilForFundingWithoutReceiptCapability|TestSubscriptionReserveUsesTargetDeltaWithoutDoubleCount|TestReserveFundingFailureRollsBackTokenAndRetryDebitsFresh|TestNeedsRefundUsesOutstandingReserveCapability|TestReserveFailsClosedWithoutReservableCapability|TestStreamFailurePartialUsageSettlesOnceAndNeverRefunds|TestStreamFailureWithoutUsageRefundsReservationOnce)$",
+      "required_tests": [
+        "TestWalletSettlementSurvivesTokenDeletion",
+        "TestWalletSettlementSurvivesTokenDeletion/soft/trusted",
+        "TestWalletSettlementSurvivesTokenDeletion/soft/charge",
+        "TestWalletSettlementSurvivesTokenDeletion/soft/refund",
+        "TestWalletSettlementSurvivesTokenDeletion/hard/trusted",
+        "TestWalletSettlementSurvivesTokenDeletion/hard/charge",
+        "TestWalletSettlementSurvivesTokenDeletion/hard/refund",
+        "TestWalletSettlementRejectsChangedTokenIdentity",
+        "TestWalletSettlementRejectsChangedTokenIdentity/owner",
+        "TestWalletSettlementRejectsChangedTokenIdentity/credential",
+        "TestPostConsumeQuotaIdempotencyCoversWalletAndToken",
+        "TestPostConsumeQuotaRefundIdempotencyCoversWalletAndToken",
+        "TestPostConsumeQuotaRefundRequiresDebitReceipt",
+        "TestPostConsumeQuotaRollsBackWalletWhenTokenUpdateFails",
+        "TestBillingSessionWalletSettleRollsBackFundingWhenTokenUpdateFails",
+        "TestBillingSessionWalletRefundSettleRollsBackFundingWhenTokenUpdateFails",
+        "TestWalletSettleFailsClosedWithoutTransactionalSettlementCapability",
+        "TestWalletReserveLedgerSequenceUnchanged",
+        "TestWalletReceiptOrderValuesAndDefensiveCopy",
+        "TestReceiptNilForFundingWithoutReceiptCapability",
+        "TestSubscriptionReserveUsesTargetDeltaWithoutDoubleCount",
+        "TestReserveFundingFailureRollsBackTokenAndRetryDebitsFresh",
+        "TestNeedsRefundUsesOutstandingReserveCapability",
+        "TestReserveFailsClosedWithoutReservableCapability",
+        "TestStreamFailurePartialUsageSettlesOnceAndNeverRefunds",
+        "TestStreamFailureWithoutUsageRefundsReservationOnce"
+      ]
+    },
+    {
+      "label": "official-task-submission",
+      "package": "controller",
+      "selector": "^(TestPresentTaskSubmissionUsesNativePresenterAfterPersistence|TestPresentTaskSubmissionFallbackUsesPersistedPublicID|TestPresentTaskSubmissionUsesHostOpenAIVideoCreateReceipt|TestExecuteTaskSubmissionPreservesHoldWhenAcceptedInsertFails|TestExecuteTaskSubmissionRollsBackInsertedTaskWhenHandoffFails|TestExecuteTaskSubmissionRejectsUnsupportedAtomicBilling|TestExecuteTaskSubmissionPersistsPinnedPluginProvenance|TestExecuteTaskSubmissionPersistsExecutionOnlyRequestID|TestExecuteTaskSubmissionHonorsRouteRetainResult|TestExecuteTaskSubmissionPreservesHoldOnCancellationAfterUpstreamAcceptance|TestExecuteTaskSubmissionDisconnectBeforeUpstreamAcceptanceSkipsSubmitAndRefunds|TestExecuteTaskSubmissionCallerCancellationDuringSubmitRefundsBeforeDurableBarrier|TestExecuteTaskSubmissionDisconnectAfterDurableInsertDoesNotRefund|TestAcceptedSubmitStreamNeverRetries|TestRespondTaskSubmissionErrorWithoutCause|TestExecuteTaskSubmissionPreservesHoldWhenAcceptedFinalReserveFails)$",
+      "required_tests": [
+        "TestPresentTaskSubmissionUsesNativePresenterAfterPersistence",
+        "TestPresentTaskSubmissionFallbackUsesPersistedPublicID",
+        "TestPresentTaskSubmissionUsesHostOpenAIVideoCreateReceipt",
+        "TestExecuteTaskSubmissionPreservesHoldWhenAcceptedInsertFails",
+        "TestExecuteTaskSubmissionRollsBackInsertedTaskWhenHandoffFails",
+        "TestExecuteTaskSubmissionRejectsUnsupportedAtomicBilling",
+        "TestExecuteTaskSubmissionPersistsPinnedPluginProvenance",
+        "TestExecuteTaskSubmissionPersistsExecutionOnlyRequestID",
+        "TestExecuteTaskSubmissionHonorsRouteRetainResult",
+        "TestExecuteTaskSubmissionHonorsRouteRetainResult/immediate_success_is_discarded",
+        "TestExecuteTaskSubmissionHonorsRouteRetainResult/immediate_failure_is_discarded",
+        "TestExecuteTaskSubmissionHonorsRouteRetainResult/asynchronous_result_is_retained",
+        "TestExecuteTaskSubmissionPreservesHoldOnCancellationAfterUpstreamAcceptance",
+        "TestExecuteTaskSubmissionDisconnectBeforeUpstreamAcceptanceSkipsSubmitAndRefunds",
+        "TestExecuteTaskSubmissionCallerCancellationDuringSubmitRefundsBeforeDurableBarrier",
+        "TestExecuteTaskSubmissionDisconnectAfterDurableInsertDoesNotRefund",
+        "TestAcceptedSubmitStreamNeverRetries",
+        "TestRespondTaskSubmissionErrorWithoutCause",
+        "TestExecuteTaskSubmissionPreservesHoldWhenAcceptedFinalReserveFails"
+      ]
+    }
+  ],
+  "scope": "Current v2 financial correctness plus retained compatibility boundaries; new exact native and SQLite configuration cases are listed in financial_consistency_required_cases.json.",
+  "baseline_pin": "efd192eb7caf2b0eec7243334ef4aba29c11aa44",
+  "baseline_tree": "01d413d8bcb789bed923b9cbb68eb192bbd0c3df",
+  "source_pin_policy": "Every execution must record and verify the immutable actual commit, tree and tracked-file hashes; this inventory is part of that tree."
+}

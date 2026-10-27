@@ -1,9 +1,12 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -12,6 +15,7 @@ import (
 )
 
 type Token struct {
+	CacheRevision      int64          `json:"-" gorm:"type:bigint;not null;default:1"`
 	Id                 int            `json:"id"`
 	UserId             int            `json:"user_id" gorm:"index"`
 	Key                string         `json:"key" gorm:"type:varchar(128);uniqueIndex"`
@@ -30,6 +34,8 @@ type Token struct {
 	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
 	AutoGroups         string         `json:"-" gorm:"type:text"`
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
+	// 允许用此令牌查询所属用户的额度；新建令牌默认开启，已有令牌升级后保持关闭
+	AllowUserQuotaQuery bool `json:"allow_user_quota_query"`
 }
 
 func (token *Token) GetAutoGroups() ([]string, error) {
@@ -134,20 +140,20 @@ func sanitizeLikePattern(input string) (string, error) {
 func validateLikePattern(input string) error {
 	// 1. 连续的 % 直接拒绝
 	if strings.Contains(input, "%%") {
-		return errors.New("搜索模式中不允许包含连续的 % 通配符")
+		return common.NewMessage("The search pattern cannot contain consecutive % wildcards")
 	}
 
 	// 2. 统计 % 数量，不得超过 2
 	count := strings.Count(input, "%")
 	if count > 2 {
-		return errors.New("搜索模式中最多允许包含 2 个 % 通配符")
+		return common.NewMessage("The search pattern can contain at most 2 % wildcards")
 	}
 
 	// 3. 含 % 时，去掉 % 后关键词长度必须 >= 2
 	if count > 0 {
 		stripped := strings.ReplaceAll(input, "%", "")
 		if len(stripped) < 2 {
-			return errors.New("使用模糊搜索时，关键词长度至少为 2 个字符")
+			return common.NewMessage("Fuzzy search keywords must be at least 2 characters long")
 		}
 	}
 
@@ -175,11 +181,11 @@ func SearchUserTokens(userId int, keyword string, token string, offset int, limi
 	if hasFuzzy {
 		count, err := CountUserTokens(userId)
 		if err != nil {
-			common.SysLog("failed to count user tokens: " + err.Error())
-			return nil, 0, errors.New("获取令牌数量失败")
+			common.SysLog(common.LogText("failed to count user tokens: %s", err.Error()))
+			return nil, 0, common.NewMessage("Failed to get the token count")
 		}
 		if int(count) > maxTokens {
-			return nil, 0, errors.New("令牌数量超过上限，仅允许精确搜索，请勿使用 % 通配符")
+			return nil, 0, common.NewMessage("Token count exceeds the limit. Only exact search is allowed, do not use the % wildcard")
 		}
 	}
 
@@ -204,15 +210,15 @@ func SearchUserTokens(userId int, keyword string, token string, offset int, limi
 	// 先查匹配总数（用于分页，受 maxTokens 上限保护，避免全表 COUNT）
 	err = baseQuery.Limit(maxTokens).Count(&total).Error
 	if err != nil {
-		common.SysError("failed to count search tokens: " + err.Error())
-		return nil, 0, errors.New("搜索令牌失败")
+		common.SysError(common.LogText("failed to count search tokens: %s", err.Error()))
+		return nil, 0, common.NewMessage("Failed to search tokens")
 	}
 
 	// 再分页查数据
 	err = baseQuery.Order("id desc").Offset(offset).Limit(limit).Find(&tokens).Error
 	if err != nil {
-		common.SysError("failed to search tokens: " + err.Error())
-		return nil, 0, errors.New("搜索令牌失败")
+		common.SysError(common.LogText("failed to search tokens: %s", err.Error()))
+		return nil, 0, common.NewMessage("Failed to search tokens")
 	}
 	return tokens, total, nil
 }
@@ -233,7 +239,7 @@ func ValidateUserToken(key string) (token *Token, err error) {
 				token.Status = common.TokenStatusExpired
 				err := token.SelectUpdate()
 				if err != nil {
-					common.SysLog("failed to update token status" + err.Error())
+					common.SysLog(common.LogText("failed to update token status%s", err.Error()))
 				}
 			}
 			return token, ErrTokenInvalid
@@ -243,14 +249,14 @@ func ValidateUserToken(key string) (token *Token, err error) {
 				token.Status = common.TokenStatusExhausted
 				err := token.SelectUpdate()
 				if err != nil {
-					common.SysLog("failed to update token status" + err.Error())
+					common.SysLog(common.LogText("failed to update token status%s", err.Error()))
 				}
 			}
 			return token, ErrTokenInvalid
 		}
 		return token, nil
 	}
-	common.SysLog("ValidateUserToken: failed to get token: " + err.Error())
+	common.SysLog(common.LogText("ValidateUserToken: failed to get token: %s", err.Error()))
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrTokenInvalid
 	}
@@ -259,7 +265,7 @@ func ValidateUserToken(key string) (token *Token, err error) {
 
 func GetTokenByIds(id int, userId int) (*Token, error) {
 	if id == 0 || userId == 0 {
-		return nil, errors.New("id 或 userId 为空！")
+		return nil, common.NewMessage("Token ID or user ID is empty")
 	}
 	token := Token{Id: id, UserId: userId}
 	var err error = nil
@@ -269,7 +275,7 @@ func GetTokenByIds(id int, userId int) (*Token, error) {
 
 func GetTokenById(id int) (*Token, error) {
 	if id == 0 {
-		return nil, errors.New("id 为空！")
+		return nil, errors.New("token id is empty")
 	}
 	token := Token{Id: id}
 	var err error = nil
@@ -287,48 +293,88 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 		// Don't return error - fall through to DB
 	}
 	token = &Token{}
-	if err = DB.Where(commonKeyCol+" = ?", key).First(token).Error; err != nil {
-		return nil, err
+	if !common.RedisEnabled {
+		err = DB.Where(commonKeyCol+" = ?", key).First(token).Error
+		return token, err
 	}
-	if common.RedisEnabled {
-		// 冷缓存时用数据库快照初始化；已存在的哈希只刷新 TTL，
-		// 避免快照覆盖 Redis 中已被原子预扣的余额。初始化失败不影响本次读取。
-		if _, cacheErr := cacheInitToken(*token); cacheErr != nil {
-			common.SysLog("failed to init token cache: " + cacheErr.Error())
+	// Quota invalidation frequently makes only the hash cold. An established
+	// permission floor needs no row-lock transaction: use the ordinary SQL read
+	// and recheck its revision before returning/publishing. Permission uncertainty
+	// alone takes the locked recovery path below.
+	pending, revision := tokenPermissionKeys(key)
+	if _, fenceErr := getPermissionCacheRevision(pending, revision); fenceErr == nil {
+		if err = DB.Where(commonKeyCol+" = ?", key).First(token).Error; err != nil {
+			return nil, err
 		}
+		if checkPermissionCacheRevision(pending, revision, token.CacheRevision) == nil {
+			_, _ = cacheInitToken(*token)
+			return token, nil
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), permissionCacheReadTimeout)
+	defer cancel()
+	err = DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockForUpdate(tx).Where(commonKeyCol+" = ?", key).First(token).Error; err != nil {
+			return err
+		}
+		_, cacheErr := cacheInitTokenAtAuthority(ctx, *token, true)
+		if errors.Is(cacheErr, ErrPermissionCacheStale) {
+			return cacheErr
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return token, nil
 }
 
 func (token *Token) Insert() error {
-	var err error
-	err = DB.Create(token).Error
-	return err
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
+		if err := validateTokenGroupsForWriteTx(tx, token); err != nil {
+			return err
+		}
+		return tx.Create(token).Error
+	})
 }
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
 func (token *Token) Update() (err error) {
-	// 写库前失效缓存并设置 fence，防止并发读者把过期快照重新写回缓存。
-	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
-		common.SysLog("failed to invalidate token cache before update: " + cacheErr.Error())
-	}
-	return DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups").Updates(token).Error
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
+		if err := validateTokenGroupsForWriteTx(tx, token); err != nil {
+			return err
+		}
+		if err := advanceTokenPermissionRevisionTx(tx, token.Id); err != nil {
+			return err
+		}
+		return tx.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
+			"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups",
+			"allow_user_quota_query").Updates(token).Error
+	})
 }
 
-func (token *Token) SelectUpdate() (err error) {
-	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
-		common.SysLog("failed to invalidate token cache before status update: " + cacheErr.Error())
-	}
-	// This can update zero values
-	return DB.Model(token).Select("accessed_time", "status").Updates(token).Error
+func (token *Token) SelectUpdate() error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := advanceTokenPermissionRevisionTx(tx, token.Id); err != nil {
+			return err
+		}
+		return tx.Model(token).Select("accessed_time", "status").Updates(token).Error
+	})
 }
 
-func (token *Token) Delete() (err error) {
-	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
-		common.SysLog("failed to invalidate token cache before delete: " + cacheErr.Error())
-	}
-	return DB.Delete(token).Error
+func (token *Token) Delete() error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := advanceTokenPermissionRevisionTx(tx, token.Id); err != nil {
+			return err
+		}
+		return tx.Delete(token).Error
+	})
 }
 
 func (token *Token) IsModelLimitsEnabled() bool {
@@ -364,7 +410,7 @@ func DisableModelLimits(tokenId int) error {
 func DeleteTokenById(id int, userId int) (err error) {
 	// Why we need userId here? In case user want to delete other's token.
 	if id == 0 || userId == 0 {
-		return errors.New("id 或 userId 为空！")
+		return common.NewMessage("Token ID or user ID is empty")
 	}
 	token := Token{Id: id, UserId: userId}
 	err = DB.Where(token).First(&token).Error
@@ -376,14 +422,26 @@ func DeleteTokenById(id int, userId int) (err error) {
 
 func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
 	if quota < 0 {
-		return errors.New("quota 不能为负数！")
+		return errors.New("quota cannot be negative")
+	}
+	if quota == 0 {
+		return nil
+	}
+	return applyTokenQuotaDelta(tokenId, key, quota)
+}
+
+// IncreaseTokenQuotaForRefund preserves the official rc.46 cache/batch/SQL
+// refund path. Non-refund settlement and compensation retain their existing API.
+func IncreaseTokenQuotaForRefund(tokenId int, key string, quota int) (err error) {
+	if quota < 0 {
+		return errors.New("quota cannot be negative")
 	}
 	if common.RedisEnabled {
 		gopool.Go(func() {
 			// 守卫式增量：哈希不存在时跳过，由下次读取从数据库水合，
 			// 绝不创建只有配额字段的残缺哈希。
 			if _, err := cacheApplyTokenQuotaDelta(tokenId, key, int64(quota)); err != nil {
-				common.SysLog("failed to increase token quota: " + err.Error())
+				common.SysLog(common.LogText("failed to increase token quota: %s", err.Error()))
 			}
 		})
 	}
@@ -407,31 +465,104 @@ func increaseTokenQuota(id int, quota int) (err error) {
 
 func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 	if quota < 0 {
-		return errors.New("quota 不能为负数！")
+		return errors.New("quota cannot be negative")
 	}
-	if common.RedisEnabled {
-		gopool.Go(func() {
-			if _, err := cacheApplyTokenQuotaDelta(id, key, int64(-quota)); err != nil {
-				common.SysLog("failed to decrease token quota: " + err.Error())
-			}
-		})
-	}
-	if common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeTokenQuota, id, -quota)
+	if quota == 0 {
 		return nil
 	}
-	return decreaseTokenQuota(id, quota)
+	return applyTokenQuotaDelta(id, key, -quota)
 }
 
-func decreaseTokenQuota(id int, quota int) (err error) {
-	err = DB.Model(&Token{}).Where("id = ?", id).Updates(
+// ApplyTokenQuotaDeltaTx updates token quota inside a caller-owned database
+// transaction. delta follows the balance direction: positive refunds quota,
+// negative consumes quota. The token cache is fenced before the database write
+// so a rolled-back transaction leaves only a cold cache, never a stale value.
+func ApplyTokenQuotaDeltaTx(tx *gorm.DB, id int, key string, delta int) error {
+	if tx == nil {
+		return errors.New("token quota transaction is nil")
+	}
+	if id <= 0 {
+		return errors.New("token id must be positive")
+	}
+	if delta == 0 {
+		return nil
+	}
+	// Unscoped() is a chainable GORM statement. A SELECT on that same
+	// statement would leak FROM/WHERE clauses into UPDATE (including SQLite
+	// UPDATE ... FROM tokens). Keep each query fresh on the SAME transaction.
+	fresh := func() *gorm.DB {
+		query := tx.Session(&gorm.Session{NewDB: true})
+		if tx.Statement.Unscoped {
+			query = query.Unscoped()
+		}
+		return query
+	}
+	var token Token
+	if err := lockForUpdate(fresh()).First(&token, id).Error; err != nil {
+		return err
+	}
+	if token.Key != key {
+		return errors.New("token quota identity mismatch")
+	}
+	// SQLite silently promotes overflowing INTEGER arithmetic to REAL. Check
+	// both signed counters before SQL so all supported engines fail closed.
+	if delta > 0 && (token.RemainQuota > math.MaxInt-delta || token.UsedQuota < math.MinInt+delta) ||
+		delta < 0 && (token.RemainQuota < math.MinInt-delta || token.UsedQuota > math.MaxInt+delta) {
+		return billingRefundReviewError("token_counter_bounds", "token quota counter is out of integer range")
+	}
+	ctx := tx.Statement.Context
+	if err := invalidateTokenCacheForMutationContext(ctx, key); err != nil {
+		code, class := BillingRefundErrorCode(err)
+		common.SysLog(fmt.Sprintf("failed to invalidate token quota cache before transaction: code=%s class=%s", code, class))
+	}
+	// A Redis socket deadline can expire before the context timer publishes
+	// cancellation. Do not turn that elapsed transaction budget into a live
+	// cache error and proceed with SQL. Unexpired Redis failures retain the
+	// existing log-and-proceed policy.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
+	}
+	result := fresh().Model(&Token{}).Where("id = ?", id).Updates(
 		map[string]any{
-			"remain_quota":  gorm.Expr("remain_quota - ?", quota),
-			"used_quota":    gorm.Expr("used_quota + ?", quota),
+			"remain_quota":  gorm.Expr("remain_quota + ?", delta),
+			"used_quota":    gorm.Expr("used_quota - ?", delta),
 			"accessed_time": common.GetTimestamp(),
 		},
-	).Error
-	return err
+	)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("token quota update affected %d rows for token %d", result.RowsAffected, id)
+	}
+	return nil
+}
+
+// SettleTokenQuotaDeltaTx accounts for an already-authorized request after the
+// upstream work has run. Revoking its token must not cancel the owner's wallet
+// settlement. Soft-deleted rows retain their counters without becoming usable;
+// physically removed rows have no counters left to update. A surviving row must
+// still match both the original owner and credential, including on deleted rows.
+// Reservations must keep using the live-token-only path instead.
+func SettleTokenQuotaDeltaTx(tx *gorm.DB, id, userID int, key string, delta int) error {
+	if tx == nil || id <= 0 || userID <= 0 || key == "" {
+		return errors.New("invalid authorized token settlement identity")
+	}
+	var token Token
+	err := lockForUpdate(tx.Unscoped()).First(&token, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if token.UserId != userID || token.Key != key {
+		return errors.New("token settlement identity mismatch")
+	}
+	return ApplyTokenQuotaDeltaTx(tx.Unscoped(), id, key, delta)
 }
 
 // CountUserTokens returns total number of tokens for the given user, used for pagination
@@ -444,18 +575,21 @@ func CountUserTokens(userId int) (int64, error) {
 // BatchDeleteTokens 删除指定用户的一组令牌，返回成功删除数量
 func BatchDeleteTokens(ids []int, userId int) (int, error) {
 	if len(ids) == 0 {
-		return 0, errors.New("ids 不能为空！")
+		return 0, common.NewMessage("Token IDs cannot be empty")
 	}
 
 	tx := DB.Begin()
 
 	var tokens []Token
-	if err := tx.Where("user_id = ? AND id IN (?)", userId, ids).Find(&tokens).Error; err != nil {
+	if err := lockForUpdate(tx).Where("user_id = ? AND id IN (?)", userId, ids).Order("id").Find(&tokens).Error; err != nil {
 		tx.Rollback()
 		return 0, err
 	}
-	if err := invalidateTokensCache(tokens); err != nil {
-		common.SysLog("failed to invalidate token cache before batch delete: " + err.Error())
+	for _, token := range tokens {
+		if err := advanceTokenPermissionRevisionTx(tx, token.Id); err != nil {
+			tx.Rollback()
+			return 0, err
+		}
 	}
 
 	if err := tx.Where("user_id = ? AND id IN (?)", userId, ids).Delete(&Token{}).Error; err != nil {
@@ -486,7 +620,7 @@ func InvalidateUserTokensCache(userId int) error {
 		return nil
 	}
 	if userId <= 0 {
-		return errors.New("userId 无效")
+		return errors.New("invalid user id")
 	}
 	var tokens []Token
 	if err := DB.Unscoped().

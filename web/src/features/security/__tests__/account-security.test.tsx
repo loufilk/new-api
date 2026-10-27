@@ -77,7 +77,11 @@ it('requires verification after username confirmation and cancels without deleti
     data: { success: true, data: {} },
   })
   const user = userEvent.setup()
-  render(<DeleteAccountDialog open username='user' onOpenChange={vi.fn()} />)
+  render(
+    <QueryClientProvider client={client}>
+      <DeleteAccountDialog open username='user' onOpenChange={vi.fn()} />
+    </QueryClientProvider>
+  )
   expect(screen.getByRole('button', { name: 'Delete Account' })).toBeDisabled()
   await user.type(screen.getByRole('textbox'), 'user')
   await user.click(screen.getByRole('button', { name: 'Delete Account' }))
@@ -235,7 +239,9 @@ it.each(['unmount', 'account change'])(
     )
     const user = userEvent.setup()
     const view = render(
-      <DeleteAccountDialog open username='user' onOpenChange={vi.fn()} />
+      <QueryClientProvider client={client}>
+        <DeleteAccountDialog open username='user' onOpenChange={vi.fn()} />
+      </QueryClientProvider>
     )
     await user.type(screen.getByRole('textbox'), 'user')
     await user.click(screen.getByRole('button', { name: 'Delete Account' }))
@@ -393,7 +399,11 @@ it('regenerates backup codes through scoped verification and keeps the result vi
   const close = vi.fn()
   const success = vi.fn()
   const user = userEvent.setup()
-  render(<TwoFABackupDialog open onOpenChange={close} onSuccess={success} />)
+  render(
+    <QueryClientProvider client={client}>
+      <TwoFABackupDialog open onOpenChange={close} onSuccess={success} />
+    </QueryClientProvider>
+  )
   await user.click(screen.getByRole('button', { name: 'Generate New Codes' }))
   const input = await screen.findByRole('textbox', {
     name: 'Authenticator code',
@@ -451,7 +461,9 @@ it('allows a common new password after verifying the current password once', asy
   const user = userEvent.setup()
   const onOpenChange = vi.fn()
   render(
-    <ChangePasswordDialog open username='user' onOpenChange={onOpenChange} />
+    <QueryClientProvider client={client}>
+      <ChangePasswordDialog open username='user' onOpenChange={onOpenChange} />
+    </QueryClientProvider>
   )
   expect(screen.getByText('Use 8–128 characters.')).toBeVisible()
   await user.type(screen.getByLabelText('Current Password'), 'current-password')
@@ -503,7 +515,11 @@ it.each(['button', 'escape'])(
       .spyOn(api, 'put')
       .mockResolvedValue({ data: { success: true } })
     const user = userEvent.setup()
-    render(<ChangePasswordDialog open username='user' onOpenChange={vi.fn()} />)
+    render(
+      <QueryClientProvider client={client}>
+        <ChangePasswordDialog open username='user' onOpenChange={vi.fn()} />
+      </QueryClientProvider>
+    )
     await user.type(
       screen.getByLabelText('Current Password'),
       'current-password'
@@ -575,7 +591,9 @@ it.each(['unmount', 'account change'])(
       .mockResolvedValue({ data: { success: true, data: {} } })
     const user = userEvent.setup()
     const view = render(
-      <ChangePasswordDialog open username='user' onOpenChange={vi.fn()} />
+      <QueryClientProvider client={client}>
+        <ChangePasswordDialog open username='user' onOpenChange={vi.fn()} />
+      </QueryClientProvider>
     )
     await user.type(
       screen.getByLabelText('Current Password'),
@@ -642,12 +660,14 @@ it('sets a first password after verifying an existing factor without asking for 
   })
   const user = userEvent.setup()
   render(
-    <ChangePasswordDialog
-      open
-      username='user'
-      hasPassword={false}
-      onOpenChange={vi.fn()}
-    />
+    <QueryClientProvider client={client}>
+      <ChangePasswordDialog
+        open
+        username='user'
+        hasPassword={false}
+        onOpenChange={vi.fn()}
+      />
+    </QueryClientProvider>
   )
   expect(screen.queryByLabelText('Current Password')).not.toBeInTheDocument()
   await user.type(
@@ -719,12 +739,14 @@ it('confirms both email addresses after identity verification and freezes the su
   const onSuccess = vi.fn()
   const user = userEvent.setup()
   render(
-    <EmailBindDialog
-      open
-      currentEmail='old@example.com'
-      onOpenChange={vi.fn()}
-      onSuccess={onSuccess}
-    />
+    <QueryClientProvider client={client}>
+      <EmailBindDialog
+        open
+        currentEmail='old@example.com'
+        onOpenChange={vi.fn()}
+        onSuccess={onSuccess}
+      />
+    </QueryClientProvider>
   )
   await user.type(screen.getByLabelText('Email Address'), 'new@example.com')
   await user.click(screen.getByRole('button', { name: 'Continue' }))

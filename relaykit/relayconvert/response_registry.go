@@ -78,6 +78,10 @@ type ResponseStreamOptions struct {
 	Model        string
 	Created      int64
 	IncludeUsage bool
+	// DisableUsageText opts out of Responses-to-Chat usage text capture only
+	// when the caller accounts for emitted output, including failed streams.
+	// The zero value preserves fallback usage for direct and composed routes.
+	DisableUsageText bool
 	// EmitSequenceNumber opts into the current Responses SSE wire contract.
 	// It is explicit so relaykit callers that depend on the historical zero-value
 	// output are not changed merely by upgrading the module.
@@ -461,6 +465,27 @@ func (s *ResponseStreamState) UsageText() string {
 		}
 	}
 	return ""
+}
+
+// HasUsageText reports generated output available for usage estimation without
+// requiring that the caller retain it. Metadata and role-only frames are not
+// generated output. Composed routes inspect each conversion step.
+func (s *ResponseStreamState) HasUsageText() bool {
+	if s == nil {
+		return false
+	}
+	for _, state := range s.stepStates {
+		if source, ok := state.(interface{ HasUsageText() bool }); ok {
+			if source.HasUsageText() {
+				return true
+			}
+			continue
+		}
+		if source, ok := state.(interface{ UsageText() string }); ok && source.UsageText() != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // Diagnostics returns every conversion-loss diagnostic observed so far. This
@@ -893,7 +918,7 @@ func usageFromClaudeResponse(resp *dto.ClaudeResponse) *dto.Usage {
 	return nil
 }
 
-func convertOAIChatResponseToOAIResponses(_ context.Context, _ convmeta.Meta, response any) (any, *dto.Usage, error) {
+func convertOAIChatResponseToOAIResponses(_ context.Context, info convmeta.Meta, response any) (any, *dto.Usage, error) {
 	chatResponse, err := asOAIChatResponse(response)
 	if err != nil {
 		return nil, nil, err
@@ -902,7 +927,7 @@ func convertOAIChatResponseToOAIResponses(_ context.Context, _ convmeta.Meta, re
 	if id == "" {
 		id = fmt.Sprintf("resp_%s", kitutil.GetUUID())
 	}
-	return ChatCompletionsResponseToResponsesResponse(chatResponse, id)
+	return oaichat.ChatCompletionsResponseToResponsesResponseWithTools(chatResponse, id, convmeta.ResponsesToolStateOf(info))
 }
 
 func convertOAIResponsesResponseToOAIChat(_ context.Context, _ convmeta.Meta, response any) (any, *dto.Usage, error) {
@@ -938,7 +963,7 @@ func newOAIChatToOAIResponsesStreamState(options ResponseStreamOptions) any {
 	return state
 }
 
-func convertOAIChatStreamResponseToOAIResponses(_ context.Context, _ convmeta.Meta, response any, state any) ([]any, *dto.Usage, error) {
+func convertOAIChatStreamResponseToOAIResponses(_ context.Context, info convmeta.Meta, response any, state any) ([]any, *dto.Usage, error) {
 	chatResponse, err := asOAIChatStreamResponse(response)
 	if err != nil {
 		return nil, nil, err
@@ -946,6 +971,9 @@ func convertOAIChatStreamResponseToOAIResponses(_ context.Context, _ convmeta.Me
 	streamState, ok := state.(*ChatToResponsesStreamState)
 	if !ok || streamState == nil {
 		return nil, nil, errors.New("OAI chat to OAI responses stream state is required")
+	}
+	if streamState.Tools == nil {
+		streamState.Tools = convmeta.ResponsesToolStateOf(info)
 	}
 	events, err := ChatCompletionsStreamChunkToResponsesEvents(chatResponse, streamState)
 	if err != nil {
@@ -964,7 +992,12 @@ func finalizeOAIChatStreamResponseToOAIResponses(_ context.Context, _ convmeta.M
 }
 
 func newOAIResponsesToOAIChatStreamState(options ResponseStreamOptions) any {
-	state := NewResponsesToChatStreamState(strings.TrimSpace(options.Model), options.IncludeUsage)
+	var state *oairesponses.ResponsesToChatStreamState
+	if options.DisableUsageText {
+		state = oairesponses.NewResponsesToChatStreamStateWithoutUsageText(strings.TrimSpace(options.Model), options.IncludeUsage)
+	} else {
+		state = oairesponses.NewResponsesToChatStreamState(strings.TrimSpace(options.Model), options.IncludeUsage)
+	}
 	state.ID = strings.TrimSpace(options.ID)
 	if options.Created != 0 {
 		state.Created = options.Created
@@ -1178,7 +1211,7 @@ func convertGeminiChatResponseToOAIChat(_ context.Context, info convmeta.Meta, r
 	usage := UsageFromGeminiMetadata(geminiResponse.GetUsageMetadata(), fallbackPromptTokens(info))
 	openAIResponse := ResponseGeminiChat2OpenAI(fmt.Sprintf("chatcmpl-%s", kitutil.GetUUID()), kitutil.GetTimestamp(), geminiResponse)
 	if info != nil && info.HasChannelMeta() {
-		openAIResponse.Model = info.GetUpstreamModelName()
+		openAIResponse.Model = info.GetOriginModelName()
 	}
 	if usage != nil {
 		openAIResponse.Usage = *usage
@@ -1202,7 +1235,7 @@ func convertGeminiChatStreamResponseChunkToOAIChat(_ context.Context, info convm
 	usage := UsageFromGeminiMetadata(geminiResponse.GetUsageMetadata(), fallbackPromptTokens(info))
 	model := ""
 	if info != nil && info.HasChannelMeta() {
-		model = info.GetUpstreamModelName()
+		model = info.GetOriginModelName()
 	}
 	responses, err := streamState.ConvertChunk(geminiResponse, model, usage)
 	if err != nil {
@@ -1218,7 +1251,7 @@ func finalizeGeminiChatStreamResponseToOAIChat(_ context.Context, info convmeta.
 	}
 	model := ""
 	if info != nil && info.HasChannelMeta() {
-		model = info.GetUpstreamModelName()
+		model = info.GetOriginModelName()
 	}
 	responses, err := streamState.Finalize(model)
 	if err != nil {
@@ -1238,7 +1271,7 @@ func convertGeminiChatStreamResponseToOAIChat(_ context.Context, info convmeta.M
 		openAIResponse.Id = fmt.Sprintf("chatcmpl-%s", kitutil.GetUUID())
 		openAIResponse.Created = kitutil.GetTimestamp()
 		if info != nil && info.HasChannelMeta() {
-			openAIResponse.Model = info.GetUpstreamModelName()
+			openAIResponse.Model = info.GetOriginModelName()
 		}
 		openAIResponse.Usage = usage
 	}

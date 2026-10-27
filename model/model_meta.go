@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 
 	"gorm.io/gorm"
 )
@@ -46,6 +47,20 @@ type Model struct {
 	CreatedTime        int64          `json:"created_time" gorm:"bigint"`
 	UpdatedTime        int64          `json:"updated_time" gorm:"bigint"`
 	DeletedAt          gorm.DeletedAt `json:"-" gorm:"index;uniqueIndex:uk_model_name_delete_at,priority:2"`
+
+	// 模型元数据（目录字段，未知值保持 NULL/空，不由模型名推断）。
+	// 数组字段以 JSON 数组字符串形式存储（与 endpoints 一致），读取侧负责解析与降级。
+	ContextLength     *int                   `json:"context_length,omitempty" gorm:"bigint"`
+	MaxOutputTokens   *int                   `json:"max_output_tokens,omitempty" gorm:"bigint"`
+	KnowledgeCutoff   string                 `json:"knowledge_cutoff,omitempty" gorm:"type:varchar(64)"`
+	ReleaseDate       string                 `json:"release_date,omitempty" gorm:"type:varchar(64)"`
+	ParameterCount    string                 `json:"parameter_count,omitempty" gorm:"type:varchar(64)"`
+	InputModalities   string                 `json:"input_modalities,omitempty" gorm:"type:text"`
+	OutputModalities  string                 `json:"output_modalities,omitempty" gorm:"type:text"`
+	Capabilities      string                 `json:"capabilities,omitempty" gorm:"type:text"`
+	DisplayCategories ModelDisplayCategories `json:"display_categories,omitempty" gorm:"type:text"`
+	// BonusEligible 三态：nil=尚未配置，false=不可用，true=可用。不使用 GORM default 标签。
+	BonusEligible *bool `json:"bonus_eligible,omitempty"`
 
 	BoundChannels []BoundChannel `json:"bound_channels,omitempty" gorm:"-"`
 	EnableGroups  []string       `json:"enable_groups,omitempty" gorm:"-"`
@@ -234,7 +249,12 @@ func SearchModelsWithChannels(keyword, vendor, status, syncOfficial string, offs
 }
 
 func (mi *Model) Insert() error {
-	return metadataTransaction(func(tx *gorm.DB) error {
+	normalized, err := mi.DisplayCategories.Normalize()
+	if err != nil {
+		return err
+	}
+	mi.DisplayCategories = normalized
+	err = metadataTransaction(func(tx *gorm.DB) error {
 		if err := validateModelVendor(tx, mi.VendorID); err != nil {
 			return err
 		}
@@ -247,6 +267,11 @@ func (mi *Model) Insert() error {
 		mi.Status, mi.SyncOfficial = status, syncOfficial
 		return tx.Model(&Model{}).Where("id = ?", mi.Id).Updates(map[string]any{"status": status, "sync_official": syncOfficial}).Error
 	})
+	// A transaction error can be a lost COMMIT acknowledgement. Cache eviction
+	// is safe even after rollback; retaining a possibly revoked grant is not.
+	InvalidatePricingCache()
+	InvalidateModelBonusEligibleCache()
+	return err
 }
 
 func IsModelNameDuplicated(id int, name string) (bool, error) {
@@ -259,14 +284,97 @@ func IsModelNameDuplicated(id int, name string) (bool, error) {
 }
 
 func (mi *Model) Update() error {
-	return metadataTransaction(func(tx *gorm.DB) error {
+	return mi.UpdateWithMetadataPresence(nil)
+}
+
+// UpdateWithMetadataPresence preserves catalog facts omitted by management
+// clients. Explicit null/empty/false values retain the existing clear/set
+// contract; nil presence retains the full-record Update behavior for callers.
+func (mi *Model) UpdateWithMetadataPresence(present map[string]common.RawMessage) error {
+	normalized, err := mi.DisplayCategories.Normalize()
+	if err != nil {
+		return err
+	}
+	mi.DisplayCategories = normalized
+	err = metadataTransaction(func(tx *gorm.DB) error {
 		if err := validateModelVendor(tx, mi.VendorID); err != nil {
 			return err
 		}
+		fields := []string{"model_name", "description", "icon", "tags", "vendor_id", "endpoints", "status", "sync_official", "name_rule", "updated_time", "context_length", "max_output_tokens", "knowledge_cutoff", "release_date", "parameter_count", "input_modalities", "output_modalities", "capabilities", "bonus_eligible"}
+		if present != nil || mi.DisplayCategories == nil {
+			// The metadata mutation lock covers this read and update, including
+			// concurrent official syncs; never write a stale pre-lock snapshot.
+			var saved Model
+			if err := tx.First(&saved, mi.Id).Error; err != nil {
+				return err
+			}
+			if mi.DisplayCategories == nil {
+				mi.DisplayCategories = saved.DisplayCategories
+			} else {
+				fields = append(fields, "display_categories")
+			}
+			if present != nil {
+				keys := make(map[string]bool, len(present))
+				for key := range present {
+					keys[strings.ToLower(key)] = true
+				}
+				if !keys["context_length"] {
+					mi.ContextLength = saved.ContextLength
+				}
+				if !keys["max_output_tokens"] {
+					mi.MaxOutputTokens = saved.MaxOutputTokens
+				}
+				if !keys["knowledge_cutoff"] {
+					mi.KnowledgeCutoff = saved.KnowledgeCutoff
+				}
+				if !keys["release_date"] {
+					mi.ReleaseDate = saved.ReleaseDate
+				}
+				if !keys["parameter_count"] {
+					mi.ParameterCount = saved.ParameterCount
+				}
+				if !keys["input_modalities"] {
+					mi.InputModalities = saved.InputModalities
+				}
+				if !keys["output_modalities"] {
+					mi.OutputModalities = saved.OutputModalities
+				}
+				if !keys["capabilities"] {
+					mi.Capabilities = saved.Capabilities
+				}
+				if !keys["bonus_eligible"] {
+					mi.BonusEligible = saved.BonusEligible
+				}
+			}
+		} else {
+			fields = append(fields, "display_categories")
+		}
 		mi.UpdatedTime = common.GetTimestamp()
 		return tx.Model(&Model{}).Where("id = ?", mi.Id).
-			Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "status", "sync_official", "name_rule", "updated_time").Updates(mi).Error
+			Select(fields).Updates(mi).Error
 	})
+	// A transaction error can be a lost COMMIT acknowledgement. Cache eviction
+	// is safe even after rollback; retaining a possibly revoked grant is not.
+	InvalidatePricingCache()
+	InvalidateModelBonusEligibleCache()
+	return err
+}
+
+// ParseModelMetadataArray 将 models 表中的 JSON 数组字符串解析为字符串切片。
+// 空值、null 或无效存量值安全降级为空数组，保证 /api/pricing 始终输出 JSON 数组。
+func ParseModelMetadataArray(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return []string{}
+	}
+	var items []string
+	if err := common.Unmarshal([]byte(raw), &items); err != nil {
+		return []string{}
+	}
+	if items == nil {
+		return []string{}
+	}
+	return items
 }
 
 func (mi *Model) Delete() error {
@@ -372,6 +480,9 @@ func DeleteModelMetadata(ids []int, removeFromChannels, removePricing bool) (Mod
 	} else {
 		err = metadataTransaction(deleteRecords)
 	}
+	// Either transaction may have committed before its acknowledgement failed.
+	InvalidatePricingCache()
+	InvalidateModelBonusEligibleCache()
 	if err != nil {
 		return ModelDeleteResult{}, err
 	}
@@ -439,21 +550,48 @@ func normalizeLookupValues(values []string) []string {
 	return normalized
 }
 
+// PreferredModelOwner contains public discovery metadata only. The deterministic
+// representative is not a promise about weighted routing or request failover.
+type PreferredModelOwner struct {
+	ChannelType  int
+	ModelOwnedBy string
+}
+
 func GetPreferredModelOwnerChannelTypes(modelNames []string, groups []string) (map[string]int, error) {
-	result := make(map[string]int)
+	owners, err := lookupPreferredModelOwners(modelNames, groups)
+	result := make(map[string]int, len(owners))
+	for name, owner := range owners {
+		result[name] = owner.ChannelType
+	}
+	return result, err
+}
+
+// GetPreferredModelOwners is scoped to the caller's visible groups. An empty
+// scope must never turn a public discovery query into a global channel lookup.
+func GetPreferredModelOwners(modelNames []string, groups []string) (map[string]PreferredModelOwner, error) {
+	groups = normalizeLookupValues(groups)
+	if len(groups) == 0 {
+		return map[string]PreferredModelOwner{}, nil
+	}
+	return lookupPreferredModelOwners(modelNames, groups)
+}
+
+func lookupPreferredModelOwners(modelNames []string, groups []string) (map[string]PreferredModelOwner, error) {
+	result := make(map[string]PreferredModelOwner)
 	modelNames = normalizeLookupValues(modelNames)
 	if len(modelNames) == 0 {
 		return result, nil
 	}
 
 	type row struct {
-		Model       string
-		ChannelType int
+		Model          string
+		ChannelType    int
+		ChannelSetting *string
 	}
 	var rows []row
 
 	query := DB.Table("abilities").
-		Select("abilities.model as model, channels.type as channel_type").
+		Select("abilities.model as model, channels.type as channel_type, channels.setting as channel_setting").
 		Joins("JOIN channels ON abilities.channel_id = channels.id").
 		Where("abilities.model IN ? AND abilities.enabled = ? AND channels.status = ?", modelNames, true, common.ChannelStatusEnabled).
 		Order("COALESCE(abilities.priority, 0) DESC").
@@ -473,7 +611,16 @@ func GetPreferredModelOwnerChannelTypes(modelNames []string, groups []string) (m
 		if _, ok := result[r.Model]; ok {
 			continue
 		}
-		result[r.Model] = r.ChannelType
+		owner := PreferredModelOwner{ChannelType: r.ChannelType}
+		// Decode locally: Channel.GetSetting repairs malformed settings by writing
+		// to the database, which is not appropriate in a public read endpoint.
+		if r.ChannelSetting != nil {
+			var setting dto.ChannelSettings
+			if err := common.UnmarshalJsonStr(*r.ChannelSetting, &setting); err == nil && setting.ValidateModelOwnedBy() == nil {
+				owner.ModelOwnedBy = strings.TrimSpace(setting.ModelOwnedBy)
+			}
+		}
+		result[r.Model] = owner
 	}
 	return result, nil
 }

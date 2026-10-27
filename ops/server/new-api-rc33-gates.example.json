@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "upstream_commit": "eb99ab1b40343c3317bb47981cccdbb2b159a5fa",
+  "candidate": {
+    "commit": "CANDIDATE_COMMIT",
+    "version": "v1.0.0-rc.33+main.eb99ab1.chuanapi.20260906",
+    "image": "wanchuan/new-api@sha256:CANDIDATE_IMAGE_DIGEST",
+    "source_archive": {"file": "source.tar.gz", "sha256": "SOURCE_SHA256"}
+  },
+  "checks": {
+    "SOURCE": {"status": "PENDING"},
+    "GO_TEST": {"status": "PENDING"},
+    "GO_VET": {"status": "PENDING"},
+    "GO_RACE": {"status": "PENDING"},
+    "RELAYKIT_BUILD": {"status": "PENDING"},
+    "RELAYKIT_TEST": {"status": "PENDING"},
+    "WEB_TYPECHECK": {"status": "PENDING"},
+    "WEB_TEST": {"status": "PENDING"},
+    "WEB_BUILD": {"status": "PENDING"},
+    "WEB_LINT": {"status": "PENDING"},
+    "WEB_FORMAT": {"status": "PENDING"},
+    "WEB_AUDIT": {"status": "PENDING"},
+    "SQLITE_MIGRATION_TWICE": {"status": "PENDING"},
+    "MYSQL_MIGRATION_TWICE": {"status": "PENDING"},
+    "PG_RESTORE_TWICE": {"status": "PENDING"},
+    "LOG_DATABASE": {"status": "PENDING"},
+    "RC31_APP_ROLLBACK": {"status": "PENDING"},
+    "FUNDS_INVARIANTS": {"status": "PENDING"},
+    "PLUGIN_REGISTRY": {"status": "PENDING"},
+    "TASK_PRICING": {"status": "PENDING"},
+    "CONTRACTS": {"status": "PENDING"},
+    "UPSTREAM_REGRESSION_CHECK": {"status": "PENDING"},
+    "IMAGE_SIGNATURE": {"status": "PENDING"},
+    "SBOM": {"status": "PENDING"}
+  },
+  "canary": {
+    "started_at": "CANARY_STARTED_AT_UTC",
+    "observations": {"file": "observations.jsonl", "sha256": "OBSERVATIONS_SHA256"}
+  }
+}

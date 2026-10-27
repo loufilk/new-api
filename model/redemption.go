@@ -2,7 +2,6 @@ package model
 
 import (
 	"errors"
-	"fmt"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -126,7 +125,7 @@ func SearchRedemptions(keyword string, status string, startIdx int, num int) (re
 
 func GetRedemptionById(id int) (*Redemption, error) {
 	if id == 0 {
-		return nil, errors.New("id 为空！")
+		return nil, common.NewMessage("ID is empty")
 	}
 	redemption := Redemption{Id: id}
 	var err error = nil
@@ -136,10 +135,10 @@ func GetRedemptionById(id int) (*Redemption, error) {
 
 func Redeem(key string, userId int) (quota int, err error) {
 	if key == "" {
-		return 0, errors.New("未提供兑换码")
+		return 0, errors.New("redemption code not provided")
 	}
 	if userId == 0 {
-		return 0, errors.New("无效的 user id")
+		return 0, errors.New("invalid user id")
 	}
 	redemption := &Redemption{}
 
@@ -148,16 +147,18 @@ func Redeem(key string, userId int) (quota int, err error) {
 		keyCol = `"key"`
 	}
 	common.RandomSleep()
+	var replayTotalAfter int
+	ledgerApplied := false
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		err := lockForUpdate(tx).Where(keyCol+" = ?", key).First(redemption).Error
 		if err != nil {
-			return errors.New("无效的兑换码")
+			return errors.New("invalid redemption code")
 		}
 		if redemption.Status != common.RedemptionCodeStatusEnabled {
-			return errors.New("该兑换码已被使用")
+			return errors.New("redemption code already used")
 		}
 		if redemption.ExpiredTime != 0 && redemption.ExpiredTime < common.GetTimestamp() {
-			return errors.New("该兑换码已过期")
+			return errors.New("redemption code expired")
 		}
 		// Compare-and-swap on status: only the transaction that flips
 		// enabled -> used may credit quota, so a concurrent redeem of the
@@ -173,16 +174,36 @@ func Redeem(key string, userId int) (quota int, err error) {
 			return result.Error
 		}
 		if result.RowsAffected == 0 {
-			return errors.New("该兑换码已被使用")
+			return errors.New("redemption code already used")
 		}
-		return creditTopUpQuota(tx, userId, redemption.Quota, nil)
+
+		// 兑换码入账并写账本（同一事务；幂等键 = redemption id，兑换码一次性，
+		// 数据库状态 CAS 已保证不会被重复兑换）
+		ledgerResult, err := CreditQuotaTx(tx, LedgerEntry{
+			UserId:        userId,
+			Account:       AccountPaid,
+			Delta:         redemption.Quota,
+			Reason:        LedgerReasonRedemption,
+			ReferenceType: "redemption",
+			ReferenceId:   strconv.Itoa(redemption.Id),
+		})
+		if err != nil {
+			return err
+		}
+		replayTotalAfter = ledgerResult.TotalAfter
+		ledgerApplied = true
+		return nil
+
 	})
 	if err != nil {
-		common.SysError("redemption failed: " + err.Error())
+		common.SysError(common.LogText("redemption failed: %s", err.Error()))
 		return 0, ErrRedeemFailed
 	}
-	syncCreditUserQuotaCache(userId, redemption.Quota, "redemption")
-	RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d", logger.LogQuota(redemption.Quota), redemption.Id))
+	if ledgerApplied {
+		// 账本提交后失效用户缓存；守卫式增量与失效叠加安全（对已删除哈希跳过）。
+		RefreshUserQuotaCache(userId, replayTotalAfter)
+	}
+	RecordLog(userId, LogTypeTopup, common.NewMessage("Topped up {{quota}} with a redemption code, code ID {{id}}", map[string]any{"quota": logger.FormatQuota(redemption.Quota), "id": redemption.Id}))
 	return redemption.Quota, nil
 }
 
@@ -224,7 +245,7 @@ func (redemption *Redemption) Delete() error {
 
 func DeleteRedemptionById(id int) (err error) {
 	if id == 0 {
-		return errors.New("id 为空！")
+		return common.NewMessage("ID is empty")
 	}
 	redemption := Redemption{Id: id}
 	err = DB.Where(redemption).First(&redemption).Error

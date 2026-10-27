@@ -37,16 +37,25 @@ func lockMetadataMutation(tx *gorm.DB) error {
 
 var ErrMetadataSyncConflict = errors.New("metadata changed; preview again before applying")
 
-var MetadataSyncFields = []string{"description", "icon", "tags", "vendor", "endpoints", "name_rule", "status"}
+var MetadataSyncFields = []string{"description", "icon", "tags", "vendor", "endpoints", "name_rule", "status", "context_length", "max_output_tokens", "knowledge_cutoff", "release_date", "parameter_count", "input_modalities", "output_modalities", "capabilities", "bonus_eligible"}
 
 type MetadataValues struct {
-	Description string `json:"description"`
-	Icon        string `json:"icon"`
-	Tags        string `json:"tags"`
-	Vendor      string `json:"vendor"`
-	Endpoints   string `json:"endpoints"`
-	NameRule    int    `json:"name_rule"`
-	Status      int    `json:"status"`
+	ContextLength    *int     `json:"context_length,omitempty"`
+	MaxOutputTokens  *int     `json:"max_output_tokens,omitempty"`
+	KnowledgeCutoff  string   `json:"knowledge_cutoff,omitempty"`
+	ReleaseDate      string   `json:"release_date,omitempty"`
+	ParameterCount   string   `json:"parameter_count,omitempty"`
+	InputModalities  []string `json:"input_modalities"`
+	OutputModalities []string `json:"output_modalities"`
+	Capabilities     []string `json:"capabilities"`
+	BonusEligible    *bool    `json:"bonus_eligible,omitempty"`
+	Description      string   `json:"description"`
+	Icon             string   `json:"icon"`
+	Tags             string   `json:"tags"`
+	Vendor           string   `json:"vendor"`
+	Endpoints        string   `json:"endpoints"`
+	NameRule         int      `json:"name_rule"`
+	Status           int      `json:"status"`
 }
 
 type MetadataSyncSelection struct {
@@ -227,6 +236,54 @@ func ApplyMetadataSync(updates []MetadataSyncUpdate, upstreamVendors map[string]
 					fields[field] = update.Values.NameRule
 				case "status":
 					fields[field] = update.Values.Status
+				case "context_length":
+					if update.Values.ContextLength != nil {
+						fields[field] = *update.Values.ContextLength
+					}
+				case "max_output_tokens":
+					if update.Values.MaxOutputTokens != nil {
+						fields[field] = *update.Values.MaxOutputTokens
+					}
+				case "knowledge_cutoff":
+					if strings.TrimSpace(update.Values.KnowledgeCutoff) != "" {
+						fields[field] = update.Values.KnowledgeCutoff
+					}
+				case "release_date":
+					if strings.TrimSpace(update.Values.ReleaseDate) != "" {
+						fields[field] = update.Values.ReleaseDate
+					}
+				case "parameter_count":
+					if strings.TrimSpace(update.Values.ParameterCount) != "" {
+						fields[field] = update.Values.ParameterCount
+					}
+				case "input_modalities":
+					if update.Values.InputModalities != nil {
+						encoded, err := common.Marshal(update.Values.InputModalities)
+						if err != nil {
+							return err
+						}
+						fields[field] = string(encoded)
+					}
+				case "output_modalities":
+					if update.Values.OutputModalities != nil {
+						encoded, err := common.Marshal(update.Values.OutputModalities)
+						if err != nil {
+							return err
+						}
+						fields[field] = string(encoded)
+					}
+				case "capabilities":
+					if update.Values.Capabilities != nil {
+						encoded, err := common.Marshal(update.Values.Capabilities)
+						if err != nil {
+							return err
+						}
+						fields[field] = string(encoded)
+					}
+				case "bonus_eligible":
+					if update.Values.BonusEligible != nil {
+						fields[field] = *update.Values.BonusEligible
+					}
 				case "vendor":
 					vendorID := 0
 					name := update.Values.Vendor
@@ -270,6 +327,10 @@ func ApplyMetadataSync(updates []MetadataSyncUpdate, upstreamVendors map[string]
 		}
 		return nil
 	})
+	// Sync can revoke a direct grant or change which model names it matches.
+	// Unknown COMMIT outcomes must not keep the old positive caches warm.
+	InvalidatePricingCache()
+	InvalidateModelBonusEligibleCache()
 	if err != nil {
 		return nil, err
 	}

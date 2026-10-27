@@ -2,7 +2,6 @@ package service
 
 import (
 	"encoding/base64"
-	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -42,7 +41,7 @@ func attachQuotaSaturation(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, o
 		return
 	}
 	attachQuotaSaturationToOther(other, clamp)
-	logger.LogWarn(ctx, fmt.Sprintf("quota saturation on consume log: op=%s kind=%s original=%g clamped=%d user=%d model=%s",
+	logger.LogWarn(ctx, common.LogText("quota saturation on consume log: op=%s kind=%s original=%g clamped=%d user=%d model=%s",
 		clamp.Op, clamp.Kind, clamp.Original, clamp.Clamped, relayInfo.UserId, relayInfo.GetBillingModelName()))
 }
 
@@ -82,6 +81,7 @@ func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		if relayInfo.ConversionDiagnosticsTruncated() {
 			other.SetAdmin("conversion_diagnostics_truncated", true)
 		}
+		appendStreamAdminDiagnostics(ctx, relayInfo, other)
 	}
 	if common.GetContextKeyBool(ctx, constant.ContextKeyChannelIsMultiKey) {
 		other.SetAdmin("is_multi_key", true)
@@ -95,6 +95,54 @@ func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	if events := RequestPolicy(ctx).Events(); len(events) > 0 {
 		other.SetAdmin("request_policy", events)
 	}
+}
+
+func appendStreamAdminDiagnostics(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
+	if relayInfo == nil || other == nil || !relayInfo.IsStream {
+		return
+	}
+
+	diagnostics := map[string]any{
+		"event_count": relayInfo.ReceivedResponseCount,
+	}
+	if relayInfo.HasSendResponse() {
+		diagnostics["first_event_ms"] = relayInfo.FirstResponseTime.Sub(relayInfo.StartTime).Milliseconds()
+	}
+	if ctx != nil {
+		if upstreamRequestID := ctx.GetString(common.UpstreamRequestIdKey); upstreamRequestID != "" {
+			diagnostics["upstream_request_id"] = upstreamRequestID
+		}
+	}
+
+	if relayInfo.StreamStatus != nil {
+		ss := relayInfo.StreamStatus
+		diagnostics["termination"] = string(ss.EndReason)
+		diagnostics["client_disconnected"] = ss.EndReason == relaycommon.StreamEndReasonClientGone
+		diagnostics["upstream_eof"] = ss.EndReason == relaycommon.StreamEndReasonEOF
+		diagnostics["idle_timeout"] = ss.EndReason == relaycommon.StreamEndReasonTimeout
+
+		var errorText strings.Builder
+		if ss.EndError != nil {
+			errorText.WriteString(ss.EndError.Error())
+		}
+		for _, entry := range ss.Errors {
+			if errorText.Len() > 0 {
+				errorText.WriteByte(' ')
+			}
+			errorText.WriteString(entry.Message)
+		}
+		classified := strings.ToLower(errorText.String())
+		if strings.Contains(classified, "output-loop") || strings.Contains(classified, "output loop") {
+			diagnostics["output_loop_error"] = true
+		}
+		if strings.Contains(classified, "reasoning") &&
+			(strings.Contains(classified, "recover") || strings.Contains(classified, "replay") ||
+				strings.Contains(classified, "decrypt") || strings.Contains(classified, "encrypted")) {
+			diagnostics["reasoning_recovery_error"] = true
+		}
+	}
+
+	other.SetAdmin("stream_diagnostics", diagnostics)
 }
 
 func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelRatio, groupRatio, completionRatio float64,
@@ -114,7 +162,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	}
 	if relayInfo.IsModelMapped {
 		other.SetPublic("is_model_mapped", true)
-		other.SetPublic("upstream_model_name", relayInfo.UpstreamModelName)
+		other.SetAdmin("upstream_model_name", relayInfo.UpstreamModelName)
 	}
 
 	isSystemPromptOverwritten := common.GetContextKeyBool(ctx, constant.ContextKeySystemPromptOverride)
@@ -138,20 +186,19 @@ func AppendResponseModelLogInfo(relayInfo *relaycommon.RelayInfo, other *model.L
 		return
 	}
 	observation := relayInfo.ResponseModel
-	if !observation.Mismatch &&
-		observation.ReturnedModel == observation.RequestedModel &&
+	if observation.ReturnedModel == observation.RequestedModel &&
 		(observation.UpstreamModel == "" || observation.UpstreamModel == observation.RequestedModel) &&
 		(relayInfo.ChannelMeta == nil || !relayInfo.IsModelMapped) {
 		return
 	}
-	other.SetPublic("response_model", *observation)
+	other.SetAdmin("response_model", *observation)
 }
 
 func appendParamOverrideInfo(relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
 	if relayInfo == nil || other == nil || len(relayInfo.ParamOverrideAudit) == 0 {
 		return
 	}
-	other.SetPublic("po", relayInfo.ParamOverrideAudit)
+	other.SetAdmin("po", relayInfo.ParamOverrideAudit)
 }
 
 func appendStreamStatus(relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
@@ -181,7 +228,7 @@ func appendStreamStatus(relayInfo *relaycommon.RelayInfo, other *model.LogOther)
 		}
 		streamInfo["errors"] = messages
 	}
-	other.SetPublic("stream_status", streamInfo)
+	other.SetAdmin("stream_status", streamInfo)
 }
 
 func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
@@ -221,7 +268,9 @@ func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other *model.LogOther) 
 		if usedFinal < 0 {
 			usedFinal = 0
 		}
-		if relayInfo.SubscriptionAmountTotal > 0 {
+		if relayInfo.SubscriptionSnapshotUnknown {
+			other.SetPublic("subscription_snapshot_unknown", true)
+		} else if relayInfo.SubscriptionAmountTotal > 0 {
 			remain := max(relayInfo.SubscriptionAmountTotal-usedFinal, 0)
 			other.SetPublic("subscription_total", relayInfo.SubscriptionAmountTotal)
 			other.SetPublic("subscription_used", usedFinal)
@@ -260,7 +309,7 @@ func appendRequestConversionChain(relayInfo *relaycommon.RelayInfo, other *model
 	if len(chain) == 0 {
 		return
 	}
-	other.SetPublic("request_conversion", chain)
+	other.SetAdmin("request_conversion", chain)
 }
 
 func appendFinalRequestFormat(relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
@@ -270,7 +319,7 @@ func appendFinalRequestFormat(relayInfo *relaycommon.RelayInfo, other *model.Log
 	if relayInfo.GetFinalRequestRelayFormat() == types.RelayFormatClaude {
 		// claude indicates the final upstream request format is Claude Messages.
 		// Frontend log rendering uses this to keep the original Claude input display.
-		other.SetPublic("claude", true)
+		other.SetAdmin("claude", true)
 	}
 }
 
@@ -348,7 +397,7 @@ func InjectTieredBillingInfo(other *model.LogOther, relayInfo *relaycommon.Relay
 			other.SetPublic("image_cache_tokens", tokens.ImgCR)
 			other.SetPublic("billing_tokens", map[string]float64{
 				"p": tokens.P, "c": tokens.C, "len": tokens.Len,
-				"cr": tokens.CR, "cc": tokens.CC, "cc1h": tokens.CC1h,
+				"cr": tokens.CR, "cc": tokens.CC, "cc1h": tokens.CC1h, "cc12h": tokens.CC12h,
 				"img": tokens.Img, "img_cr": tokens.ImgCR, "img_o": tokens.ImgO,
 				"ai": tokens.AI, "ao": tokens.AO,
 			})

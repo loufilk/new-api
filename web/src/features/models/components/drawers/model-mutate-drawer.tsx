@@ -36,6 +36,7 @@ import { ErrorState } from '@/components/error-state'
 import { JsonEditor } from '@/components/json-editor'
 import { LoadingState } from '@/components/loading-state'
 import { LobeIconField } from '@/components/lobe-icon-field'
+import { MultiSelect } from '@/components/multi-select'
 import { TagInput } from '@/components/tag-input'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -75,6 +76,7 @@ import { getNameRuleOptions, ENDPOINT_TEMPLATES } from '../../constants'
 import { modelsQueryKeys, vendorsQueryKeys } from '../../lib'
 import {
   modelFormSchema,
+  MODEL_FORM_DEFAULT_VALUES,
   transformModelToFormDefaults,
   transformFormDataToModelPayload,
   type ModelFormValues,
@@ -115,12 +117,7 @@ export function ModelMutateDrawer(props: {
   const loadedKey = useRef('')
   const form = useForm({
     resolver: zodResolver(modelFormSchema),
-    defaultValues: transformModelToFormDefaults({
-      model_name: '',
-      status: 1,
-      sync_official: 1,
-      name_rule: 0,
-    } as Model),
+    defaultValues: MODEL_FORM_DEFAULT_VALUES,
   })
   const vendorsQuery = useQuery({
     queryKey: vendorsQueryKeys.list(),
@@ -163,6 +160,7 @@ export function ModelMutateDrawer(props: {
 
   useEffect(() => {
     if (!props.open) {
+      form.reset(MODEL_FORM_DEFAULT_VALUES)
       setCreatedModel(null)
       loadedKey.current = ''
       return
@@ -172,16 +170,12 @@ export function ModelMutateDrawer(props: {
       : `channel:${currentRow?.model_name ?? ''}`
     if (loadedKey.current === key || (isEditing && !modelQuery.data)) return
     form.reset(
-      transformModelToFormDefaults(
-        (isEditing
-          ? modelQuery.data
-          : {
-              model_name: currentRow?.model_name ?? '',
-              status: 1,
-              sync_official: 1,
-              name_rule: 0,
-            }) as Model
-      )
+      isEditing && modelQuery.data
+        ? transformModelToFormDefaults(modelQuery.data)
+        : {
+            ...MODEL_FORM_DEFAULT_VALUES,
+            model_name: currentRow?.model_name ?? '',
+          }
     )
     loadedKey.current = key
   }, [props.open, currentRow, isEditing, modelQuery.data, form])
@@ -195,7 +189,7 @@ export function ModelMutateDrawer(props: {
           t('Save or discard pricing changes before renaming metadata.')
         )
       }
-      const payload = transformFormDataToModelPayload(values)
+      const payload = transformFormDataToModelPayload(values, savedModel)
       const response = currentRow?.id
         ? await updateModel({ ...payload, id: currentRow.id })
         : await createModel(payload)
@@ -401,7 +395,7 @@ export function ModelMutateDrawer(props: {
                                 }))}
                                 onValueChange={(value) =>
                                   field.onChange(
-                                    value ? Number.parseInt(value) : undefined
+                                    value ? Number.parseInt(value) : 0
                                   )
                                 }
                                 value={field.value ? String(field.value) : null}
@@ -409,6 +403,54 @@ export function ModelMutateDrawer(props: {
                                 placeholder={t('Select vendor')}
                               />
                             </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name='display_categories'
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>{t('Display categories')}</FormLabel>
+                            <FormControl>
+                              <MultiSelect
+                                options={[
+                                  { value: 'text', label: t('Text') },
+                                  {
+                                    value: 'images',
+                                    label: t('Image Generation'),
+                                  },
+                                  { value: 'video', label: t('Video') },
+                                  { value: 'audio', label: t('Audio') },
+                                  { value: 'vectors', label: t('Vectors') },
+                                  {
+                                    value: 'decision',
+                                    label: t('Decision Models'),
+                                  },
+                                ]}
+                                selected={field.value ?? []}
+                                onChange={field.onChange}
+                                aria-label={t('Display categories')}
+                                placeholder={t('Automatic classification')}
+                                disabled={isSubmitting}
+                              />
+                            </FormControl>
+                            <FormDescription>
+                              {t(
+                                'Leave empty for automatic classification. Affects model square filters only, not API endpoints, routing, permissions or billing.'
+                              )}
+                            </FormDescription>
+                            <Button
+                              type='button'
+                              variant='outline'
+                              size='sm'
+                              disabled={isSubmitting || !field.value?.length}
+                              onClick={() => field.onChange([])}
+                            >
+                              {t('Restore automatic classification')}
+                            </Button>
                             <FormMessage />
                           </FormItem>
                         )}

@@ -218,7 +218,7 @@ func TestWebCacheHeadersDoNotLeakOntoPluginRoutes(t *testing.T) {
 	assert.Empty(t, pluginResponse.Header().Get("Cache-Version"))
 
 	fallbackResponse := performPluginRequest(outer, http.MethodGet, "/unknown")
-	assert.Equal(t, "max-age=604800", fallbackResponse.Header().Get("Cache-Control"))
+	assert.Equal(t, "public,max-age=604800", fallbackResponse.Header().Get("Cache-Control"))
 	assert.NotEmpty(t, fallbackResponse.Header().Get("Cache-Version"))
 }
 
@@ -901,13 +901,13 @@ func TestWebFallbackDoesNotCacheMissingAPIOrAssets(t *testing.T) {
 	page := performPluginRequest(outer, http.MethodGet, "/security")
 	assert.Equal(t, http.StatusOK, page.Code)
 	assert.Equal(t, "dashboard", page.Body.String())
-	assert.Equal(t, "no-cache", page.Header().Get("Cache-Control"))
+	assert.Equal(t, "no-store", page.Header().Get("Cache-Control"))
 }
 
 func TestSecurityRoutesDisableCachingBeforeAuthentication(t *testing.T) {
 	outer := gin.New()
 	SetApiRouter(outer)
-	for _, path := range []string{"/api/user/token/status", "/api/user/token", "/api/audit/self", "/api/audit"} {
+	for _, path := range []string{"/api/user/access_tokens", "/api/user/access_tokens/catalog", "/api/user/access_tokens/scopes", "/api/audit/self", "/api/audit"} {
 		t.Run(path, func(t *testing.T) {
 			response := performPluginRequest(outer, http.MethodGet, path)
 			assert.Equal(t, http.StatusUnauthorized, response.Code)

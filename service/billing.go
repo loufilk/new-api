@@ -1,9 +1,11 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -34,6 +36,18 @@ func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycom
 			types.ErrOptionWithSkipRetry(),
 		)
 	}
+	// A task retry keeps its reservation, but must hold the newly selected
+	// provider's full quote before it can start more billable work.
+	if relayInfo != nil && relayInfo.Billing != nil {
+		if err := relayInfo.Billing.ReserveBeforeSubmit(preConsumedQuota); err != nil {
+			var apiErr *types.NewAPIError
+			if errors.As(err, &apiErr) {
+				return apiErr
+			}
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+		}
+		return nil
+	}
 	session, apiErr := NewBillingSession(c, relayInfo, preConsumedQuota)
 	if apiErr != nil {
 		return apiErr
@@ -54,19 +68,19 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 		delta := actualQuota - preConsumed
 
 		if delta > 0 {
-			logger.LogInfo(ctx, fmt.Sprintf("预扣费后补扣费：%s（实际消耗：%s，预扣费：%s）",
+			logger.LogInfo(ctx, common.LogText("charging the difference after pre-consume: %s (actual %s, pre-consumed %s)",
 				logger.FormatQuota(delta),
 				logger.FormatQuota(actualQuota),
 				logger.FormatQuota(preConsumed),
 			))
 		} else if delta < 0 {
-			logger.LogInfo(ctx, fmt.Sprintf("预扣费后返还扣费：%s（实际消耗：%s，预扣费：%s）",
+			logger.LogInfo(ctx, common.LogText("refunding the difference after pre-consume: %s (actual %s, pre-consumed %s)",
 				logger.FormatQuota(-delta),
 				logger.FormatQuota(actualQuota),
 				logger.FormatQuota(preConsumed),
 			))
 		} else {
-			logger.LogInfo(ctx, fmt.Sprintf("预扣费与实际消耗一致，无需调整：%s（按次计费）",
+			logger.LogInfo(ctx, common.LogText("pre-consumed quota matches the actual quota, no adjustment: %s (per-request billing)",
 				logger.FormatQuota(actualQuota),
 			))
 		}

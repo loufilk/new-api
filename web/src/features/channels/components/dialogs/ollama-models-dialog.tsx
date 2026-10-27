@@ -40,7 +40,9 @@ import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
 import { getFreshAuthHeaders } from '@/lib/api'
+import { apiUrl } from '@/lib/api-url'
 import { handleServerError } from '@/lib/handle-server-error'
+import { getServerMessage } from '@/lib/server-error-message'
 
 import {
   deleteOllamaModel,
@@ -136,8 +138,8 @@ export function OllamaModelsDialog({
           })
           if (payloadLive?.success) {
             normalized = normalizeOllamaModels(payloadLive.data)
-          } else if (payloadLive?.message) {
-            lastErr = String(payloadLive.message)
+          } else {
+            lastErr = getServerMessage(payloadLive) || ''
           }
         } catch (err: unknown) {
           lastErr = err instanceof Error ? err.message : ''
@@ -151,7 +153,7 @@ export function OllamaModelsDialog({
           normalized = normalizeOllamaModels(payload.data)
           lastErr = ''
         } else {
-          lastErr = String(payload?.message || '')
+          lastErr = getServerMessage(payload) || ''
         }
       }
 
@@ -244,7 +246,7 @@ export function OllamaModelsDialog({
 
     try {
       const authHeaders = await getFreshAuthHeaders()
-      const response = await fetch('/api/channel/ollama/pull/stream', {
+      const response = await fetch(apiUrl('/api/channel/ollama/pull/stream'), {
         method: 'POST',
         credentials: 'include',
         headers: {

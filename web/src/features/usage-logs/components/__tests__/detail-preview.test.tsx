@@ -22,12 +22,21 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from '@testing-library/react'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterAll, afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import en from '@/i18n/locales/en.json'
+import zh from '@/i18n/locales/zh.json'
+import { useAuthStore } from '@/stores/auth-store'
 import {
   DEFAULT_CURRENCY_CONFIG,
   useSystemConfigStore,
@@ -47,12 +56,12 @@ vi.hoisted(() => {
 })
 afterAll(() => vi.unstubAllGlobals())
 
-function makeLog(other: LogOtherData): UsageLog {
+function makeLog(other: LogOtherData, type = 2): UsageLog {
   return {
     id: 1,
     user_id: 1,
     created_at: 1,
-    type: 2,
+    type,
     content: '',
     username: 'user',
     token_name: 'token',
@@ -73,9 +82,13 @@ function makeLog(other: LogOtherData): UsageLog {
   }
 }
 
-function DetailPreview(props: { other: LogOtherData; isAdmin: boolean }) {
+function DetailPreview(props: {
+  other: LogOtherData
+  isAdmin: boolean
+  type?: number
+}) {
   const table = useReactTable({
-    data: [makeLog(props.other)],
+    data: [makeLog(props.other, props.type)],
     columns: useCommonLogsColumns(props.isAdmin, false),
     getCoreRowModel: getCoreRowModel(),
   })
@@ -96,6 +109,10 @@ const previousConfig = useSystemConfigStore.getState().config
 let client: QueryClient
 const i18n = createInstance()
 beforeEach(async () => {
+  useAuthStore.getState().auth.reset()
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'pricing-viewer', role: 100 })
   await i18n.init({
     lng: 'en',
     resources: { en },
@@ -107,25 +124,45 @@ beforeEach(async () => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   client.setQueryData(['status'], {}, { updatedAt: Date.now() + 60_000 })
   client.setQueryData(
-    ['pricing'],
+    ['pricing', 'user:1:'],
     { data: [], vendors: [] },
     { updatedAt: Date.now() + 60_000 }
   )
 })
-afterEach(() => {
+afterEach(async () => {
+  // Stop observers before changing identity or discarding their seeded caches.
+  cleanup()
+  await client.cancelQueries()
   client.clear()
+  useAuthStore.getState().auth.reset()
   useSystemConfigStore.getState().setConfig(previousConfig)
 })
-function renderPreview(other: LogOtherData, isAdmin = true) {
+function renderPreview(other: LogOtherData, isAdmin = true, type?: number) {
   render(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={client}>
-        <DetailPreview other={other} isAdmin={isAdmin} />
+        <DetailPreview other={other} isAdmin={isAdmin} type={type} />
       </QueryClientProvider>
     </I18nextProvider>
   )
   return screen.getByRole('button', { name: /./ })
 }
+
+test('keeps log details open when the parent refreshes with unchanged data', async () => {
+  const other = { model_price: 0.25 }
+  const wrapper = ({ children }: { children: React.ReactNode }) => (
+    <I18nextProvider i18n={i18n}>
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    </I18nextProvider>
+  )
+  const { rerender } = render(<DetailPreview other={other} isAdmin />, {
+    wrapper,
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Per-call · $0.25' }))
+  expect(await screen.findByRole('dialog')).toBeVisible()
+  rerender(<DetailPreview other={other} isAdmin />)
+  expect(screen.getByRole('dialog')).toBeVisible()
+})
 
 test.each([
   {
@@ -153,6 +190,15 @@ test.each([
     expected: 'priority · Per-call $0.01/request',
   },
   {
+    name: 'parsed token expression',
+    other: {
+      billing_mode: 'tiered_expr',
+      matched_tier: 'standard',
+      expr_b64: btoa('tier("standard", p * 2 + c * 10)'),
+    },
+    expected: 'standard · $2 / $10/M',
+  },
+  {
     name: 'per-call',
     other: { model_price: 0.25 },
     expected: 'Per-call · $0.25',
@@ -174,6 +220,111 @@ test.each([
     admin_info: { task_plugin: plugin },
   })
   expect(preview.textContent).toBe(expected)
+})
+
+test.each([
+  {
+    tier: 'standard',
+    billingUnit: 'token' as const,
+    fixedPrice: undefined,
+    expected: 'Dynamic Pricing · standard',
+  },
+  {
+    tier: 'long_context',
+    billingUnit: 'token' as const,
+    fixedPrice: undefined,
+    expected: 'Dynamic Pricing · long_context',
+  },
+  {
+    tier: 'free_small_output',
+    billingUnit: 'request' as const,
+    fixedPrice: 0,
+    expected: 'free_small_output · Per-call $0/request',
+  },
+])(
+  'nested expression preserves the recorded $tier settlement in the list',
+  ({ tier, billingUnit, fixedPrice, expected }) => {
+    const expression = `len <= 272000
+      ? (c > 5
+        ? tier("standard", p * 2 + c * 10 + cr * 0.1 + cc * 2.5)
+        : tier("free_small_output", fixed(0)))
+      : (c > 5
+        ? tier("long_context", p * 5 + c * 22.5 + cr * 0.5)
+        : tier("free_small_output", fixed(0)))`
+    const preview = renderPreview({
+      billing_mode: 'tiered_expr',
+      billing_unit: billingUnit,
+      fixed_price: fixedPrice,
+      matched_tier: tier,
+      expr_b64: btoa(expression),
+    })
+    expect(preview.textContent).toBe(expected)
+  }
+)
+
+test.each([
+  { name: 'missing expression', expr: undefined },
+  { name: 'invalid encoded expression', expr: '%' },
+  {
+    name: 'tier absent from the parsed expression',
+    expr: btoa('tier("different", p * 99 + c * 99)'),
+  },
+])(
+  'token pricing with $name preserves the saved tier without guessing prices',
+  ({ expr }) => {
+    const preview = renderPreview({
+      billing_mode: 'tiered_expr',
+      matched_tier: 'recorded',
+      expr_b64: expr,
+    })
+    expect(preview.textContent).toBe('Dynamic Pricing · recorded')
+  }
+)
+
+test.each([false, true])(
+  'dynamic pricing without a saved tier uses a localized neutral fallback for task=%s',
+  async (isTask) => {
+    i18n.addResourceBundle('zh', 'translation', zh.translation)
+    const preview = renderPreview({
+      is_task: isTask,
+      billing_mode: 'tiered_expr',
+      expr_b64: btoa(
+        isTask
+          ? 'tier("base", u("clips") * 0.25)'
+          : 'tier("base", p * 2 + c * 10)'
+      ),
+    })
+    expect(preview.textContent).toBe(
+      'Dynamic Pricing · Special billing expression'
+    )
+    await act(() => i18n.changeLanguage('zh'))
+    expect(
+      screen.getByRole('button', { name: '动态计费 · 特殊计费表达式' })
+    ).toBeVisible()
+  }
+)
+
+test('top-up content_parts render in the viewer language', async () => {
+  i18n.addResourceBundle('zh', 'translation', {
+    'Online top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}':
+      '在线充值成功，充值额度：{{quota}}，支付金额：{{amount}}',
+  })
+  await i18n.changeLanguage('zh')
+  const preview = renderPreview(
+    {
+      content_parts: [
+        {
+          key: 'Online top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}',
+          params: { quota: '$10.000000', amount: '10.00' },
+        },
+      ],
+    },
+    false,
+    1
+  )
+  expect(preview.textContent).toBe(
+    '在线充值成功，充值额度：$10.000000，支付金额：10.00'
+  )
 })
 
 test('quota saturation remains first and only billing adds to the counter', () => {
@@ -244,7 +395,7 @@ test.each([
 ])(
   'task expression $tier shows its recorded unit price',
   ({ expression, tier, expected }) => {
-    client.setQueryData(['pricing'], {
+    client.setQueryData(['pricing', 'user:1:'], {
       data: [
         {
           model_name: 'wan2.5-i2v-preview',
@@ -273,7 +424,7 @@ test.each([
 )
 
 test('task log prices use localized unit labels from pricing metadata', async () => {
-  client.setQueryData(['pricing'], {
+  client.setQueryData(['pricing', 'user:1:'], {
     data: [
       {
         model_name: 'wan2.5-i2v-preview',
@@ -302,7 +453,7 @@ test('task log prices use localized unit labels from pricing metadata', async ()
 })
 
 test('task log prices select the executing provider’s schema', () => {
-  client.setQueryData(['pricing'], {
+  client.setQueryData(['pricing', 'user:1:'], {
     data: [
       {
         model_name: 'wan2.5-i2v-preview',
@@ -338,10 +489,10 @@ test('task log prices select the executing provider’s schema', () => {
 })
 
 test.each(['missing schema', 'unsupported expression', 'unknown tier'])(
-  'task pricing with %s shows an explicit unavailable summary',
+  'task pricing with %s preserves the saved tier without guessing prices',
   (scenario) => {
     if (scenario !== 'missing schema') {
-      client.setQueryData(['pricing'], {
+      client.setQueryData(['pricing', 'user:1:'], {
         data: [
           {
             model_name: 'wan2.5-i2v-preview',
@@ -361,6 +512,8 @@ test.each(['missing schema', 'unsupported expression', 'unknown tier'])(
       expr_b64: Buffer.from(expression).toString('base64'),
       matched_tier: scenario === 'unknown tier' ? 'old' : 'music',
     })
-    expect(preview.textContent).toBe('Dynamic Pricing · No matching results')
+    expect(preview.textContent).toBe(
+      `Dynamic Pricing · ${scenario === 'unknown tier' ? 'old' : 'music'}`
+    )
   }
 )

@@ -16,16 +16,65 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
-import { expect, test, vi } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 
 import en from '@/i18n/locales/en.json'
 import zh from '@/i18n/locales/zh.json'
 
 import { ModelMappingEditor } from '../model-mapping-editor'
+
+describe('model mapping editor external value sync', () => {
+  test('parses an external JSON value into visual rows once', () => {
+    const onChange = vi.fn()
+    const { rerender } = render(
+      <ModelMappingEditor
+        value={JSON.stringify({ 'gpt-3.5-turbo': 'gpt-4' })}
+        onChange={onChange}
+      />
+    )
+
+    expect(screen.getByDisplayValue('gpt-3.5-turbo')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('gpt-4')).toBeInTheDocument()
+
+    rerender(
+      <ModelMappingEditor
+        value={JSON.stringify({ 'gpt-3.5-turbo': 'gpt-4' })}
+        onChange={onChange}
+      />
+    )
+
+    expect(screen.getAllByDisplayValue('gpt-3.5-turbo')).toHaveLength(1)
+  })
+
+  test('shows a validation error for invalid JSON without looping updates', () => {
+    const onChange = vi.fn()
+    render(<ModelMappingEditor value='not-json' onChange={onChange} />)
+
+    expect(
+      screen.getByText('Model mapping must be valid JSON format')
+    ).toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  test('propagates visual row edits as JSON', () => {
+    const onChange = vi.fn()
+    render(
+      <ModelMappingEditor
+        value={JSON.stringify({ a: 'b' })}
+        onChange={onChange}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Mapping' }))
+
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(typeof onChange.mock.calls[0][0]).toBe('string')
+  })
+})
 
 test('external mapping changes update the editor without emitting an edit', () => {
   const onChange = vi.fn()
@@ -190,15 +239,15 @@ test('a draft request with only the upstream name focuses the request field, and
       draftRequest={{ from: '', to: 'up-1', token: 1 }}
     />
   )
-  await waitFor(() =>
-    expect(
-      screen.getAllByRole('combobox', { name: 'Request Model Name' })
-    ).toHaveLength(2)
-  )
+  // The row is committed before its passive effect moves focus.
+  await waitFor(() => {
+    const requestFields = screen.getAllByRole('combobox', {
+      name: 'Request Model Name',
+    })
+    expect(requestFields).toHaveLength(2)
+    expect(requestFields[1]).toHaveFocus()
+  })
   expect(screen.getByDisplayValue('up-1')).toBeVisible()
-  expect(
-    screen.getAllByRole('combobox', { name: 'Request Model Name' })[1]
-  ).toHaveFocus()
 
   view.rerender(
     <ModelMappingEditor

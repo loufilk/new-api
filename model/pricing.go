@@ -1,7 +1,6 @@
 package model
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +48,19 @@ type Pricing struct {
 	BillingUsageSchema     map[string]jsplugin.UsageFieldSchema `json:"billing_usage_schema,omitempty"`
 	BillingUsageExamples   []jsplugin.UsageExample              `json:"billing_usage_examples,omitempty"`
 	PricingVersion         string                               `json:"pricing_version,omitempty"`
+	// 模型元数据（目录字段，从命中的 Model 记录复制；未知值保持 nil/空）。
+	// 数组字段始终输出 JSON 数组，空/无效存量值安全降级为空数组。
+	// BonusEligible 三态：nil=尚未配置，false=不可用，true=可用。
+	ContextLength     *int                   `json:"context_length,omitempty"`
+	MaxOutputTokens   *int                   `json:"max_output_tokens,omitempty"`
+	KnowledgeCutoff   string                 `json:"knowledge_cutoff,omitempty"`
+	ReleaseDate       string                 `json:"release_date,omitempty"`
+	ParameterCount    string                 `json:"parameter_count,omitempty"`
+	InputModalities   []string               `json:"input_modalities"`
+	OutputModalities  []string               `json:"output_modalities"`
+	Capabilities      []string               `json:"capabilities"`
+	DisplayCategories ModelDisplayCategories `json:"display_categories,omitempty"`
+	BonusEligible     *bool                  `json:"bonus_eligible,omitempty"`
 }
 
 type PricingVendor struct {
@@ -76,18 +88,49 @@ var (
 	modelSupportEndpointsLock = sync.RWMutex{}
 )
 
-func GetPricing() []Pricing {
-	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-		updatePricingLock.Lock()
-		defer updatePricingLock.Unlock()
-		// Double check after acquiring the lock
-		if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-			modelSupportEndpointsLock.Lock()
-			defer modelSupportEndpointsLock.Unlock()
-			updatePricing()
+// FilterPricingByUsableGroups projects a pricing catalogue onto the host's
+// usable-group set. Public pricing handlers and optional console modules share
+// this implementation so visibility semantics cannot drift between surfaces.
+func FilterPricingByUsableGroups(pricing []Pricing, usableGroups map[string]string) []Pricing {
+	if len(pricing) == 0 {
+		return pricing
+	}
+	if len(usableGroups) == 0 {
+		return []Pricing{}
+	}
+
+	filtered := make([]Pricing, 0, len(pricing))
+	for _, item := range pricing {
+		if common.StringsContains(item.EnableGroup, "all") {
+			filtered = append(filtered, item)
+			continue
+		}
+		for _, group := range item.EnableGroup {
+			if _, ok := usableGroups[group]; ok {
+				filtered = append(filtered, item)
+				break
+			}
 		}
 	}
-	return pricingMap
+	return filtered
+}
+
+func GetPricing() []Pricing {
+	pricing, _ := getPricingSnapshot()
+	return pricing
+}
+
+// getPricingSnapshot returns the rows and their age under the same lock, so
+// derived eligibility caches cannot grant an older snapshot another full TTL.
+func getPricingSnapshot() ([]Pricing, time.Time) {
+	updatePricingLock.Lock()
+	defer updatePricingLock.Unlock()
+	if time.Since(lastGetPricingTime) > time.Minute || len(pricingMap) == 0 {
+		modelSupportEndpointsLock.Lock()
+		defer modelSupportEndpointsLock.Unlock()
+		updatePricing()
+	}
+	return pricingMap, lastGetPricingTime
 }
 
 func InvalidatePricingCache() {
@@ -101,10 +144,9 @@ func InvalidatePricingCache() {
 
 // GetVendors 返回当前定价接口使用到的供应商信息
 func GetVendors() []PricingVendor {
-	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-		// 保证先刷新一次
-		GetPricing()
-	}
+	GetPricing()
+	updatePricingLock.Lock()
+	defer updatePricingLock.Unlock()
 	return vendorsList
 }
 
@@ -170,7 +212,7 @@ func loadPricingAdvancedCustomConfigs(enableAbilities []AbilityWithChannel) map[
 	for _, channelID := range channelIDs {
 		channel, err := CacheGetChannel(channelID)
 		if err != nil {
-			common.SysLog(fmt.Sprintf("load advanced custom channel settings error: channel_id=%d, error=%v", channelID, err))
+			common.SysLog(common.LogText("load advanced custom channel settings error: channel_id=%d, error=%v", channelID, err))
 			continue
 		}
 		if channel.Type != constant.ChannelTypeAdvancedCustom {
@@ -194,7 +236,7 @@ func updatePricing() {
 	//modelRatios := common.GetModelRatios()
 	enableAbilities, err := GetAllEnableAbilityWithChannels()
 	if err != nil {
-		common.SysLog(fmt.Sprintf("GetAllEnableAbilityWithChannels error: %v", err))
+		common.SysLog(common.LogText("GetAllEnableAbilityWithChannels error: %v", err))
 		return
 	}
 	// 预加载模型元数据与供应商一次，避免循环查询
@@ -343,6 +385,16 @@ func updatePricing() {
 			pricing.Icon = meta.Icon
 			pricing.Tags = meta.Tags
 			pricing.VendorID = meta.VendorID
+			pricing.ContextLength = meta.ContextLength
+			pricing.MaxOutputTokens = meta.MaxOutputTokens
+			pricing.KnowledgeCutoff = meta.KnowledgeCutoff
+			pricing.ReleaseDate = meta.ReleaseDate
+			pricing.ParameterCount = meta.ParameterCount
+			pricing.InputModalities = ParseModelMetadataArray(meta.InputModalities)
+			pricing.OutputModalities = ParseModelMetadataArray(meta.OutputModalities)
+			pricing.Capabilities = ParseModelMetadataArray(meta.Capabilities)
+			pricing.DisplayCategories = meta.DisplayCategories
+			pricing.BonusEligible = meta.BonusEligible
 		}
 		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
 		if findPrice {

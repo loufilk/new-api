@@ -9,4 +9,12 @@ docs
 .gocache
 /web/node_modules
 /web/dist
+/local
+/archive
+/backups
+/downloads
+/output
+/tmp
+/secrets
+/semantic-review
 !THIRD-PARTY-LICENSES.md

@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Combobox } from '@/components/ui/combobox'
 import {
   AlertTriangle,
   ChevronDown,
@@ -27,6 +26,7 @@ import {
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { EmptyState } from '@/components/empty-state'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -41,12 +41,19 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
+import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
-const sectionCardClassName =
-  'relative shadow-sm ring-0 before:pointer-events-none before:absolute before:inset-0 before:rounded-xl before:border before:border-border/90'
-const sectionHeaderClassName = 'border-b bg-muted/20'
+const sectionCardClassName = 'min-w-0 shadow-none'
+const sectionHeaderClassName = 'gap-2 border-b'
 
 type Rule = {
   _id: string
@@ -111,8 +118,12 @@ function flattenRules(nested: Record<string, Record<string, string>>): Rule[] {
   return rules
 }
 
-function serializeRules(rules: Rule[]): string {
-  const result: Record<string, Record<string, string>> = {}
+function serializeRules(rules: Rule[], groupNames: string[]): string {
+  // An explicit empty entry is stored configuration, not a missing rule. Keep
+  // it until the user removes that group; never invent a default grant for it.
+  const result: Record<string, Record<string, string>> = Object.fromEntries(
+    groupNames.map((name) => [name, {}])
+  )
   for (const { userGroup, visible, targetGroup, description } of rules) {
     if (!userGroup || !targetGroup) continue
     if (!result[userGroup]) result[userGroup] = {}
@@ -141,13 +152,15 @@ function GroupSelect(props: GroupSelectProps) {
 
   return (
     <Combobox
-  options={knownOptions.map((name) => ({ value: name, label: name }))}
-  value={props.value}
-  onValueChange={(value) => { if (value) props.onValueChange(value) }}
-  className={props.className}
-  placeholder={props.placeholder}
-  aria-label={props.placeholder}
-/>
+      options={knownOptions.map((name) => ({ value: name, label: name }))}
+      value={props.value}
+      onValueChange={(value) => {
+        if (value) props.onValueChange(value)
+      }}
+      className={props.className}
+      placeholder={props.placeholder}
+      aria-label={props.placeholder}
+    />
   )
 }
 
@@ -169,26 +182,30 @@ type GroupSectionProps = {
 
 function GroupSection(props: GroupSectionProps) {
   const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(true)
   const isKnownGroup = props.groupOptions.includes(props.groupName)
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div className='rounded-lg border'>
-        <div className='flex items-center justify-between p-3'>
-          <div className='flex items-center gap-2'>
-            <CollapsibleTrigger
-              render={
-                <Button variant='ghost' size='sm' className='h-6 w-6 p-0' />
-              }
-            >
-              {open ? (
-                <ChevronUp className='h-4 w-4' />
-              ) : (
-                <ChevronDown className='h-4 w-4' />
-              )}
-            </CollapsibleTrigger>
-            <span className='font-semibold'>{props.groupName}</span>
+        <div className='flex items-center justify-between gap-2 p-3'>
+          <CollapsibleTrigger
+            render={
+              <Button
+                variant='ghost'
+                className='h-auto min-w-0 justify-start whitespace-normal'
+              />
+            }
+            aria-label={t('Rules for {{group}}', { group: props.groupName })}
+          >
+            {open ? (
+              <ChevronUp className='h-4 w-4' />
+            ) : (
+              <ChevronDown className='h-4 w-4' />
+            )}
+            <span className='min-w-0 truncate font-semibold'>
+              {props.groupName}
+            </span>
             {!isKnownGroup && (
               <StatusBadge variant='danger' copyable={false}>
                 <AlertTriangle className='mr-1 h-3 w-3' />
@@ -198,13 +215,17 @@ function GroupSection(props: GroupSectionProps) {
             <StatusBadge variant='neutral' copyable={false}>
               {props.items.length} {t('rules')}
             </StatusBadge>
-          </div>
-          <div className='flex items-center gap-1'>
+          </CollapsibleTrigger>
+          <div className='flex shrink-0 items-center gap-1'>
             <Button
               variant='ghost'
               size='sm'
               className='h-7 w-7 p-0'
-              onClick={() => props.onAdd(props.groupName)}
+              aria-label={t('Add rule')}
+              onClick={() => {
+                props.onAdd(props.groupName)
+                setOpen(true)
+              }}
             >
               <Plus className='h-4 w-4' />
             </Button>
@@ -212,6 +233,7 @@ function GroupSection(props: GroupSectionProps) {
               variant='ghost'
               size='sm'
               className='text-destructive h-7 w-7 p-0'
+              aria-label={t('Remove {{group}}', { group: props.groupName })}
               onClick={() => props.onRemoveGroup(props.groupName)}
             >
               <Trash2 className='h-4 w-4' />
@@ -221,7 +243,10 @@ function GroupSection(props: GroupSectionProps) {
         <CollapsibleContent>
           <div className='space-y-2 border-t p-3'>
             {props.items.map((rule) => (
-              <div key={rule._id} className='flex items-center gap-2'>
+              <div
+                key={rule._id}
+                className='grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-lg border p-3 sm:grid-cols-[130px_minmax(0,1fr)_minmax(0,1fr)_auto] sm:border-0 sm:p-0'
+              >
                 <Select
                   value={rule.visible ? 'visible' : 'hidden'}
                   onValueChange={(v) =>
@@ -229,7 +254,10 @@ function GroupSection(props: GroupSectionProps) {
                     props.onUpdate(rule._id, 'visible', v === 'visible')
                   }
                 >
-                  <SelectTrigger className='w-[130px]'>
+                  <SelectTrigger
+                    className='w-full sm:w-[130px]'
+                    aria-label={t('Group visibility')}
+                  >
                     <SelectValue>
                       <StatusBadge
                         label={rule.visible ? t('Extra visible') : t('Hidden')}
@@ -257,9 +285,9 @@ function GroupSection(props: GroupSectionProps) {
                     </SelectGroup>
                   </SelectContent>
                 </Select>
-                <div className='flex flex-1 items-center gap-1.5'>
+                <div className='col-start-1 row-start-2 flex min-w-0 items-center gap-1.5 sm:col-start-auto sm:row-start-auto'>
                   <GroupSelect
-                    className='flex-1'
+                    className='min-w-0 flex-1'
                     options={props.groupOptions}
                     value={rule.targetGroup}
                     placeholder={t('Group name')}
@@ -277,7 +305,8 @@ function GroupSection(props: GroupSectionProps) {
                 </div>
                 {rule.visible ? (
                   <Input
-                    className='flex-1'
+                    className='col-start-1 row-start-3 min-w-0 sm:col-start-auto sm:row-start-auto'
+                    aria-label={t('Description')}
                     value={rule.description}
                     placeholder={t('Description')}
                     onChange={(e) =>
@@ -285,14 +314,15 @@ function GroupSection(props: GroupSectionProps) {
                     }
                   />
                 ) : (
-                  <div className='text-muted-foreground flex-1 px-3 text-sm'>
+                  <div className='text-muted-foreground hidden px-3 text-sm sm:block'>
                     -
                   </div>
                 )}
                 <Button
                   variant='ghost'
                   size='sm'
-                  className='text-destructive h-8 w-8 p-0'
+                  className='text-destructive col-start-2 row-start-1 size-8 p-0 sm:col-start-auto sm:row-start-auto'
+                  aria-label={t('Delete rule')}
                   onClick={() => props.onRemove(rule._id)}
                 >
                   <Trash2 className='h-4 w-4' />
@@ -314,13 +344,18 @@ export function GroupSpecialUsableRulesEditor(
     flattenRules(safeParseJson(props.value))
   )
 
+  const [groupNames, setGroupNames] = useState<string[]>(() =>
+    Object.keys(safeParseJson(props.value))
+  )
+
   const { onChange } = props
   const emitChange = useCallback(
-    (newRules: Rule[]) => {
+    (newRules: Rule[], newGroupNames: string[] = groupNames) => {
       setRules(newRules)
-      onChange(serializeRules(newRules))
+      setGroupNames(newGroupNames)
+      onChange(serializeRules(newRules, newGroupNames))
     },
-    [onChange]
+    [groupNames, onChange]
   )
 
   const updateRule = useCallback(
@@ -348,29 +383,37 @@ export function GroupSpecialUsableRulesEditor(
 
   const removeGroup = useCallback(
     (groupName: string) =>
-      emitChange(rules.filter((r) => r.userGroup !== groupName)),
-    [rules, emitChange]
+      emitChange(
+        rules.filter((r) => r.userGroup !== groupName),
+        groupNames.filter((name) => name !== groupName)
+      ),
+    [rules, groupNames, emitChange]
   )
 
   const addRuleToGroup = useCallback(
     (groupName: string) => {
-      emitChange([
-        ...rules,
-        {
-          _id: uid(),
-          userGroup: groupName,
-          visible: true,
-          targetGroup: '',
-          description: '',
-        },
-      ])
+      emitChange(
+        [
+          ...rules,
+          {
+            _id: uid(),
+            userGroup: groupName,
+            visible: true,
+            targetGroup: '',
+            description: '',
+          },
+        ],
+        groupNames.includes(groupName) ? groupNames : [...groupNames, groupName]
+      )
     },
-    [rules, emitChange]
+    [rules, groupNames, emitChange]
   )
 
   const grouped = useMemo(() => {
-    const map: Record<string, Rule[]> = {}
-    const order: string[] = []
+    const map: Record<string, Rule[]> = Object.fromEntries(
+      groupNames.map((name) => [name, []])
+    )
+    const order = [...groupNames]
     for (const r of rules) {
       if (!r.userGroup) continue
       if (!map[r.userGroup]) {
@@ -380,7 +423,7 @@ export function GroupSpecialUsableRulesEditor(
       map[r.userGroup].push(r)
     }
     return order.map((name) => ({ name, items: map[name] }))
-  }, [rules])
+  }, [groupNames, rules])
 
   const newGroupCandidates = useMemo(() => {
     const used = new Set(grouped.map((g) => g.name))
@@ -400,9 +443,10 @@ export function GroupSpecialUsableRulesEditor(
       <CardContent>
         <div className='space-y-3'>
           {grouped.length === 0 ? (
-            <p className='text-muted-foreground py-4 text-center text-sm'>
-              {t('No rules yet. Add a group below to get started.')}
-            </p>
+            <EmptyState
+              className='min-h-40'
+              title={t('No rules yet. Add a group below to get started.')}
+            />
           ) : (
             grouped.map((group) => (
               <GroupSection
@@ -420,7 +464,7 @@ export function GroupSpecialUsableRulesEditor(
 
           <div className='flex items-center justify-center pt-2'>
             <GroupSelect
-              className='w-[240px]'
+              className='w-full sm:w-72'
               options={newGroupCandidates}
               value=''
               placeholder={t('Add rules for a user group')}

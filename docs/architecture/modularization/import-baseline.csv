@@ -1,0 +1,6 @@
+layer,path,import_target,classification,phase_target
+backend,main.go,github.com/QuantumNous/new-api/chuanapi,COMPOSITION_ROOT,retain as the only production host-to-ChuanAPI composition edge
+frontend,web/src/extensions/index.ts,./chuanapi,COMPOSITION_ROOT,retain as frontend composition root
+frontend,web/src/routes/help/index.tsx,@/extensions/chuanapi/help,TEMPORARY_CORE_DEBT,remove in Phase 2 through generic help/page accessor
+frontend,web/src/routes/help/guides/$slug.tsx,@/extensions/chuanapi/help,TEMPORARY_CORE_DEBT,remove in Phase 2 through generic help/page accessor
+frontend,web/src/routes/help/api/index.tsx,@/extensions/chuanapi/help,TEMPORARY_CORE_DEBT,remove in Phase 2 through generic help/page accessor

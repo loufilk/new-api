@@ -1,0 +1,278 @@
+name: Database and media candidate acceptance
+
+on:
+  push:
+    branches: [codex/db-upstream-media-fix-20261001]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: db-media-acceptance-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CGO_ENABLED: '1'
+  GOWORK: 'off'
+  GOTOOLCHAIN: local
+  GOFLAGS: '-mod=readonly'
+  SQL_DSN: ''
+  LOG_SQL_DSN: ''
+  REDIS_CONN_STRING: ''
+  TEST_DATABASE_COMPAT: ''
+  TEST_DATABASE_DIALECT: ''
+  TEST_DATABASE_DSN: ''
+  TEST_LOG_DATABASE_DSN: ''
+  TEST_MYSQL_DSN: ''
+  TEST_POSTGRES_DSN: ''
+  TEST_RUNTIME_REDIS: ''
+  TEST_REDIS_DSN: ''
+
+jobs:
+  backend:
+    if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/db-upstream-media-fix-20261001'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require the real merge and record immutable source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor 62d951fab129f4df1a921735835e5e9c7b8db031 HEAD
+          git merge-base --is-ancestor 56758edf95ec162033a6b73b553ac789404f87c9 HEAD
+          out="$RUNNER_TEMP/db-media-backend"
+          mkdir -p "$out" web/dist
+          touch web/dist/index.html
+          printf 'OUT=%s\n' "$out" >> "$GITHUB_ENV"
+          git log -1 --format='%H%n%T%n%P%n%s' > "$out/revision.txt"
+          git archive --format=tar.gz -o "$out/source.tar.gz" HEAD
+          sha256sum "$out/source.tar.gz" > "$out/source.sha256"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+      - name: Module integrity, build and vet
+        run: |
+          set -euo pipefail
+          go version | tee "$OUT/go-version.txt"
+          go mod verify | tee "$OUT/modules.log"
+          go build -p 2 ./... 2>&1 | tee "$OUT/build.log"
+          go vet -p 2 ./... 2>&1 | tee "$OUT/vet.log"
+      - name: Complete root and media entrypoint regressions
+        if: success() || failure()
+        run: |
+          set -euo pipefail
+          go test -p 2 ./... -count=1 -timeout=15m -json > "$OUT/root-tests.jsonl" 2>&1
+          python3 - <<'PYCODE'
+          import json, os
+          from pathlib import Path
+          events = [json.loads(line) for line in (Path(os.environ['OUT']) / 'root-tests.jsonl').read_text().splitlines() if line.startswith('{')]
+          required = {'TestChuanAPIAccessTokenScopeEnforcement', 'TestAccessTokenRouteRulesCoverEveryDashboardRoute', 'TestGroupRenameRouteRequiresRootAuth', 'TestReferralRewardsRouteScopesToAuthenticatedUser', 'TestReferralTransferRouteValidatesInput', 'TestReferralTransferRouteReplaysSameKeyOnce', 'TestWalletFrontendOwnershipStaysInChuanAPIExtension'}
+          passed = {e.get('Test') for e in events if e.get('Action') == 'pass'}
+          assert required <= passed, required - passed
+          assert not any(e.get('Action') in {'fail', 'build-fail'} for e in events)
+          print('All integration regression contracts passed:', sorted(required))
+          PYCODE
+      - name: Complete root race regressions
+        if: success() || failure()
+        run: |
+          set -euo pipefail
+          go test -race -p 2 ./... -count=1 -timeout=15m -json > "$OUT/root-race.jsonl" 2>&1
+      - name: Independent relaykit build, vet and full race suite
+        if: success() || failure()
+        working-directory: relaykit
+        run: |
+          set -euo pipefail
+          go build -p 2 ./... 2>&1 | tee "$OUT/relaykit-build.log"
+          go vet -p 2 ./... 2>&1 | tee "$OUT/relaykit-vet.log"
+          go test -race -p 2 ./... -count=1 -timeout=10m -json > "$OUT/relaykit-race.jsonl" 2>&1
+      - name: Evidence and release gate regressions
+        if: success() || failure()
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s ops/ci/tests -p 'test_*.py' -v 2>&1 | tee "$OUT/evidence-gate.log"
+          python3 -m unittest discover -s ops/server/tests -p test_release_gate.py -v 2>&1 | tee "$OUT/release-gate.log"
+          git diff --exit-code --ignore-space-at-eol
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: db-media-backend-${{ github.sha }}
+          path: ${{ runner.temp }}/db-media-backend/
+          retention-days: 7
+          if-no-files-found: error
+
+  frontend:
+    if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/db-upstream-media-fix-20261001'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    defaults:
+      run:
+        shell: bash
+        working-directory: web
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.0'
+          no-cache: true
+      - name: Install locked dependencies and check source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          out="$RUNNER_TEMP/db-media-frontend-${{ matrix.shard }}"
+          mkdir -p "$out"
+          printf '%s\n' "$GITHUB_SHA" > "$out/revision.txt"
+          printf 'OUT=%s\n' "$out" >> "$GITHUB_ENV"
+          bun install --frozen-lockfile
+          bun run typecheck 2>&1 | tee "$out/typecheck.log"
+          bun run lint:ci 2>&1 | tee "$out/lint.log"
+          bun run format:check 2>&1 | tee "$out/format.log"
+          bun run copyright:check 2>&1 | tee "$out/copyright.log"
+      - name: Complete frontend suite without exclusions
+        if: success() || failure()
+        run: |
+          set -euo pipefail
+          shard='${{ matrix.shard }}'
+          bun run test --shard="$shard/4" --maxWorkers=2 --reporter=default --reporter=json --outputFile="$OUT/vitest-$shard.json" > "$OUT/vitest-$shard.log" 2>&1
+          tail -n 15 "$OUT/vitest-$shard.log"
+      - name: Production build and dependency audit without publishing
+        if: (success() || failure()) && matrix.shard == 1
+        run: |
+          set -euo pipefail
+          bun run build 2>&1 | tee "$OUT/build.log"
+          bun audit --production 2>&1 | tee "$OUT/dependencies.log"
+          git diff --exit-code --ignore-space-at-eol
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: db-media-frontend-${{ matrix.shard }}-${{ github.sha }}
+          path: ${{ runner.temp }}/db-media-frontend-${{ matrix.shard }}/
+          retention-days: 7
+          if-no-files-found: error
+
+  services:
+    if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/db-upstream-media-fix-20261001'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - {name: sqlite, kind: database, dialect: sqlite, mysql: '', postgres: '', redis: '', clickhouse: ''}
+          - {name: mysql57, kind: database, dialect: mysql, mysql: 'mysql:5.7.44', postgres: '', redis: '', clickhouse: ''}
+          - {name: postgres96, kind: database, dialect: postgres, mysql: '', postgres: 'postgres:9.6.24-alpine', redis: '', clickhouse: ''}
+          - {name: postgres18, kind: database, dialect: postgres, mysql: '', postgres: 'postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2', redis: 'redis:7.2-alpine', clickhouse: ''}
+          - {name: redis, kind: redis, dialect: '', mysql: '', postgres: '', redis: 'redis:7.2-alpine', clickhouse: ''}
+          - {name: clickhouse, kind: clickhouse, dialect: '', mysql: '', postgres: '', redis: '', clickhouse: 'clickhouse/clickhouse-server:25.8'}
+    services:
+      mysql:
+        image: ${{ matrix.mysql }}
+        env: {MYSQL_ROOT_PASSWORD: compat, MYSQL_ROOT_HOST: '%', MYSQL_DATABASE: runtime_compat}
+        ports: ['127.0.0.1::3306']
+        options: --health-cmd="mysqladmin ping -h 127.0.0.1 -pcompat --silent" --health-interval=10s --health-timeout=5s --health-retries=12
+      postgres:
+        image: ${{ matrix.postgres }}
+        env: {POSTGRES_PASSWORD: compat, POSTGRES_DB: runtime_compat}
+        ports: ['127.0.0.1::5432']
+        options: --health-cmd="pg_isready -U postgres -d runtime_compat" --health-interval=5s --health-timeout=5s --health-retries=12
+      redis:
+        image: ${{ matrix.redis }}
+        ports: ['127.0.0.1::6379']
+        options: --health-cmd="redis-cli ping" --health-interval=5s --health-timeout=3s --health-retries=12
+      clickhouse:
+        image: ${{ matrix.clickhouse }}
+        env: {CLICKHOUSE_DB: runtime_compat, CLICKHOUSE_USER: compat, CLICKHOUSE_PASSWORD: compat, CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: '1'}
+        ports: ['127.0.0.1::9000']
+        options: >-
+          --health-cmd="clickhouse-client --user compat --password compat --query 'SELECT 1'"
+          --health-interval=5s --health-timeout=5s --health-retries=24 --ulimit nofile=262144:262144
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+      - name: Record disposable service identity and exact revision
+        env:
+          MYSQL_ID: ${{ job.services.mysql.id }}
+          PG_ID: ${{ job.services.postgres.id }}
+          REDIS_ID: ${{ job.services.redis.id }}
+          CH_ID: ${{ job.services.clickhouse.id }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          out="$RUNNER_TEMP/db-media-${{ matrix.name }}"
+          mkdir -p "$out" web/dist
+          touch web/dist/index.html
+          printf 'OUT=%s\n' "$out" >> "$GITHUB_ENV"
+          printf '%s\n' "$GITHUB_SHA" > "$out/revision.txt"
+          for id in "$MYSQL_ID" "$PG_ID" "$REDIS_ID" "$CH_ID"; do
+            if [ -n "$id" ]; then docker inspect --format '{{.Config.Image}} {{.Image}}' "$id" >> "$out/images.txt"; fi
+          done
+      - name: Require real database, wallet, audit and credential contracts
+        env:
+          KIND: ${{ matrix.kind }}
+          LABEL: ${{ matrix.name }}
+          DIALECT: ${{ matrix.dialect }}
+          MYSQL_ID: ${{ job.services.mysql.id }}
+          PG_ID: ${{ job.services.postgres.id }}
+          REDIS_ID: ${{ job.services.redis.id }}
+          CH_ID: ${{ job.services.clickhouse.id }}
+          MYSQL_PORT: ${{ job.services.mysql.ports['3306'] }}
+          PG_PORT: ${{ job.services.postgres.ports['5432'] }}
+          REDIS_PORT: ${{ job.services.redis.ports['6379'] }}
+          CH_PORT: ${{ job.services.clickhouse.ports['9000'] }}
+        run: bash ops/ci/verify_candidate_services.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: db-media-${{ matrix.name }}-${{ github.sha }}
+          path: ${{ runner.temp }}/db-media-${{ matrix.name }}/
+          retention-days: 7
+          if-no-files-found: error
+
+  acceptance:
+    if: always() && github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/db-upstream-media-fix-20261001'
+    needs: [backend, frontend, services]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Fail closed unless every exact-revision suite passed
+        env:
+          BACKEND: ${{ needs.backend.result }}
+          FRONTEND: ${{ needs.frontend.result }}
+          SERVICES: ${{ needs.services.result }}
+        run: |
+          set -euo pipefail
+          printf 'sha=%s backend=%s frontend=%s services=%s\n' "$GITHUB_SHA" "$BACKEND" "$FRONTEND" "$SERVICES" >> "$GITHUB_STEP_SUMMARY"
+          test "$BACKEND" = success
+          test "$FRONTEND" = success
+          test "$SERVICES" = success

@@ -17,17 +17,24 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
-import { ComboboxInput } from '@/components/ui/combobox-input'
+import { Combobox } from '@/components/ui/combobox'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { getUserModels } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
+
+import { getCCSwitchTokenModels } from '../../api'
+import type { ApiKey, CCSwitchApp } from '../../types'
+import {
+  buildValidatedCCSwitchURL,
+  ccSwitchModelsQueryKey,
+} from './cc-switch-utils'
 
 const APP_CONFIGS = {
   claude: {
@@ -52,47 +59,14 @@ const APP_CONFIGS = {
   },
 } as const
 
-type AppType = keyof typeof APP_CONFIGS
-
-function getServerAddress(): string {
-  try {
-    const raw = localStorage.getItem('status')
-    if (raw) {
-      const status = JSON.parse(raw)
-      if (status.server_address) return status.server_address
-    }
-  } catch {
-    /* empty */
-  }
-  return window.location.origin
-}
-
-function buildCCSwitchURL(
-  app: string,
-  name: string,
-  models: Record<string, string>,
-  apiKey: string
-): string {
-  const serverAddress = getServerAddress()
-  const endpoint = app === 'codex' ? `${serverAddress}/v1` : serverAddress
-  const params = new URLSearchParams()
-  params.set('resource', 'provider')
-  params.set('app', app)
-  params.set('name', name)
-  params.set('endpoint', endpoint)
-  params.set('apiKey', apiKey)
-  for (const [k, v] of Object.entries(models)) {
-    if (v) params.set(k, v)
-  }
-  params.set('homepage', serverAddress)
-  params.set('enabled', 'true')
-  return `ccswitch://v1/import?${params.toString()}`
-}
+type AppType = CCSwitchApp
 
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
   tokenKey: string
+  token: ApiKey | null
+  serverAddress?: string
 }
 
 export function CCSwitchDialog(props: Props) {
@@ -100,31 +74,59 @@ export function CCSwitchDialog(props: Props) {
   const [app, setApp] = useState<AppType>('claude')
   const [name, setName] = useState<string>(APP_CONFIGS.claude.defaultName)
   const [models, setModels] = useState<Record<string, string>>({})
+  const [preparedUrl, setPreparedUrl] = useState('')
+  const validation = useRef({ active: true })
+  useEffect(() => {
+    setPreparedUrl('')
+    const attempt = { active: true }
+    validation.current = attempt
+    return () => {
+      attempt.active = false
+    }
+  }, [
+    props.open,
+    props.token?.id,
+    props.tokenKey,
+    props.serverAddress,
+    app,
+    name,
+    models,
+  ])
 
-  const { data: modelsData } = useQuery({
-    queryKey: ['user-models-ccswitch'],
-    queryFn: async () => requireServerSuccess(await getUserModels()),
-    enabled: props.open,
+  const {
+    data: modelsData,
+    isFetching,
+    isError,
+    refetch,
+  } = useQuery({
+    queryKey: ccSwitchModelsQueryKey(props.token, app),
+    queryFn: async () => {
+      if (!props.token) return { success: true, data: [] as string[] }
+      return requireServerSuccess(
+        await getCCSwitchTokenModels(props.token.id, app)
+      )
+    },
+    enabled: props.open && !!props.token,
     staleTime: 5 * 60 * 1000,
   })
 
   const modelOptions = useMemo(() => {
     const items = modelsData?.data ?? []
-    return items.map((m) => ({ value: m, label: m }))
+    return items.map((modelName) => ({ value: modelName, label: modelName }))
   }, [modelsData?.data])
 
   useEffect(() => {
     if (props.open) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setModels({})
-
       setApp('claude')
-
       setName(APP_CONFIGS.claude.defaultName)
     }
-  }, [props.open])
+  }, [props.open, props.token?.id])
 
   const currentConfig = APP_CONFIGS[app]
+  const noModelsMessage = `${t('API Key')} ${t('Group')}: ${t('No models found')}`
+  const hasNoModels = !isFetching && !isError && modelOptions.length === 0
 
   const handleAppChange = (val: string) => {
     const appVal = val as AppType
@@ -133,18 +135,49 @@ export function CCSwitchDialog(props: Props) {
     setModels({})
   }
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    if (preparedUrl) {
+      window.open(preparedUrl, '_blank', 'noopener,noreferrer')
+      setPreparedUrl('')
+      props.onOpenChange(false)
+      return
+    }
     if (!models.model) {
       toast.warning(t('Please select a primary model'))
       return
     }
-    const key = props.tokenKey.startsWith('sk-')
-      ? props.tokenKey
-      : `sk-${props.tokenKey}`
-    const url = buildCCSwitchURL(app, name, models, key)
-    window.open(url, '_blank')
-    props.onOpenChange(false)
+    if (!props.token || !props.tokenKey) return
+
+    const attempt = validation.current
+    const latest = await refetch()
+    if (!attempt.active) return
+    const availableModels = latest.data?.data ?? []
+    if (latest.isError || availableModels.length === 0) {
+      toast.warning(noModelsMessage)
+      return
+    }
+    const url = buildValidatedCCSwitchURL(
+      app,
+      name,
+      models,
+      props.tokenKey,
+      availableModels,
+      props.serverAddress
+    )
+    if (!url) {
+      toast.warning(t('The selected model is no longer available'))
+      setModels({})
+      return
+    }
+    setPreparedUrl(url)
   }
+
+  const openDisabled =
+    !props.token ||
+    !props.tokenKey ||
+    isFetching ||
+    isError ||
+    modelOptions.length === 0
 
   return (
     <Dialog
@@ -153,15 +186,15 @@ export function CCSwitchDialog(props: Props) {
       title={t('Import to CC Switch')}
       contentClassName='sm:max-w-md'
       contentHeight='auto'
-      bodyClassName={
-        currentConfig.modelFields.length === 1 ? 'space-y-4 pb-52' : 'space-y-4'
-      }
+      bodyClassName='space-y-4'
       footer={
         <>
           <Button variant='outline' onClick={() => props.onOpenChange(false)}>
             {t('Cancel')}
           </Button>
-          <Button onClick={handleSubmit}>{t('Open CC Switch')}</Button>
+          <Button onClick={handleSubmit} disabled={openDisabled}>
+            {preparedUrl ? t('Open CC Switch') : t('Continue')}
+          </Button>
         </>
       }
     >
@@ -190,25 +223,33 @@ export function CCSwitchDialog(props: Props) {
         </div>
 
         <div className='space-y-2'>
-          <Label>{t('Name')}</Label>
-          <ComboboxInput
-            options={[]}
+          <Label htmlFor='cc-switch-name'>{t('Name')}</Label>
+          <Input
+            id='cc-switch-name'
             value={name}
-            onValueChange={setName}
+            onChange={(event) => setName(event.target.value)}
             placeholder={currentConfig.defaultName}
-            emptyText=''
-            allowCustomValue
           />
         </div>
 
+        {hasNoModels && (
+          <p className='text-muted-foreground text-sm' role='status'>
+            {noModelsMessage}
+          </p>
+        )}
+
         {currentConfig.modelFields.map((field) => (
           <div key={field.key} className='space-y-2'>
-            <Label required={field.required}>{t(field.labelKey)}</Label>
-            <ComboboxInput
+            <Label htmlFor={`cc-switch-${field.key}`} required={field.required}>
+              {t(field.labelKey)}
+            </Label>
+            <Combobox
+              id={`cc-switch-${field.key}`}
+              aria-label={t(field.labelKey)}
               options={modelOptions}
               value={models[field.key] || ''}
               onValueChange={(v) =>
-                setModels((prev) => ({ ...prev, [field.key]: v }))
+                setModels((prev) => ({ ...prev, [field.key]: v ?? '' }))
               }
               placeholder={t('Select or enter model name')}
               emptyText={t('No models found')}

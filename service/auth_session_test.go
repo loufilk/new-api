@@ -13,7 +13,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -32,7 +32,7 @@ func setupAuthSessionTestDB(t *testing.T) *model.User {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuthFlow{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuthFlow{}, &model.UserAccessToken{}))
 	model.DB = db
 	common.RedisEnabled = false
 	common.UserSessionActiveLimit = common.DefaultUserSessionActiveLimit
@@ -276,6 +276,16 @@ func TestCleanupAuthArtifactsRemovesOnlyExpiredRecords(t *testing.T) {
 		ExpiresAt: now.Add(time.Minute),
 	}).Error)
 
+	retention := time.Duration(common.UserSessionRevokedRetentionDays) * 24 * time.Hour
+	for _, token := range []model.UserAccessToken{
+		{Name: "past retention", TokenHash: "past-retention", ExpiresAt: now.Add(-retention - time.Hour).Unix()},
+		{Name: "within retention", TokenHash: "within-retention", ExpiresAt: now.Add(-retention + time.Hour).Unix()},
+		{Name: "never expires", TokenHash: "never-expires"},
+	} {
+		token.UserId = 1
+		require.NoError(t, model.DB.Create(&token).Error)
+	}
+
 	cleanupAuthArtifacts()
 
 	var sessionCount int64
@@ -285,6 +295,9 @@ func TestCleanupAuthArtifactsRemovesOnlyExpiredRecords(t *testing.T) {
 	require.NoError(t, model.DB.Find(&flows).Error)
 	require.Len(t, flows, 1)
 	assert.Equal(t, "recent-flow", flows[0].TokenHash)
+	var kept []string
+	require.NoError(t, model.DB.Model(&model.UserAccessToken{}).Order("id").Pluck("token_hash", &kept).Error)
+	assert.Equal(t, []string{"within-retention", "never-expires"}, kept)
 }
 
 func TestCleanupAuthArtifactsContinuesWithRevokedCleanupAfterExpiredBatchFailure(t *testing.T) {

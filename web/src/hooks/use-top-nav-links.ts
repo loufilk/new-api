@@ -19,17 +19,12 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import type { TopNavLink } from '@/components/layout/types'
+import { applyNavigationExtensions } from '@/extensions'
 import { useStatus } from '@/hooks/use-status'
 import { parseHeaderNavModulesFromStatus } from '@/lib/nav-modules'
+import { BUILT_IN_HELP_PATH, resolvePublicDocsUrl } from '@/lib/public-site'
 import { useAuthStore } from '@/stores/auth-store'
-
-export type TopNavLink = {
-  title: string
-  href: string
-  disabled?: boolean
-  requiresAuth?: boolean
-  external?: boolean
-}
 
 /**
  * Generate top navigation links based on HeaderNavModules configuration from backend /api/status
@@ -55,16 +50,16 @@ export function useTopNavLinks(): TopNavLink[] {
     )
   }, [status])
 
-  // Documentation link (may be external)
-  const docsLink: string | undefined = status?.docs_link as string | undefined
-
   const isAuthed = !!auth?.user
 
   const links: TopNavLink[] = []
 
   // Home
   if (modules?.home !== false) {
-    links.push({ title: t('Home'), href: '/' })
+    links.push({
+      title: t('Home'),
+      href: '/',
+    })
   }
 
   // Console -> /dashboard (new console path)
@@ -76,7 +71,11 @@ export function useTopNavLinks(): TopNavLink[] {
   const pricing = modules?.pricing
   if (pricing && typeof pricing === 'object' && pricing.enabled) {
     const requiresAuth = pricing.requireAuth && !isAuthed
-    links.push({ title: t('Model Square'), href: '/pricing', requiresAuth })
+    links.push({
+      title: t('Model Square'),
+      href: '/pricing',
+      requiresAuth,
+    })
   }
 
   // Rankings
@@ -86,19 +85,30 @@ export function useTopNavLinks(): TopNavLink[] {
     links.push({ title: t('Rankings'), href: '/rankings', requiresAuth })
   }
 
-  // Docs (supports external links)
+  // Docs (built-in /help by default; explicit external URLs stay same-tab
+  // document navigations, while legacy marketing entries resolve to /help)
   if (modules?.docs !== false) {
-    if (docsLink) {
-      links.push({ title: t('Docs'), href: docsLink, external: true })
-    } else {
-      links.push({ title: t('Docs'), href: '/docs' })
-    }
+    links.push({ title: t('API Access'), href: '/help/api' })
+    const docsHref = resolvePublicDocsUrl(status?.docs_link)
+    links.push({
+      title: t('Docs'),
+      href: docsHref,
+      external: false,
+      documentNavigation: docsHref !== BUILT_IN_HELP_PATH,
+    })
   }
 
   // About
   if (modules?.about !== false) {
-    links.push({ title: t('About'), href: '/about' })
+    links.push({
+      title: t('About'),
+      href: '/about',
+      documentNavigation: true,
+    })
   }
 
-  return links
+  return applyNavigationExtensions(links, {
+    isAuthenticated: isAuthed,
+    status: (status as Record<string, unknown> | null) ?? null,
+  })
 }

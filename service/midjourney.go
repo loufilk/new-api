@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func CovertMjpActionToModelName(mjAction string) string {
@@ -30,28 +32,39 @@ func CovertMjpActionToModelName(mjAction string) string {
 	return modelName
 }
 
-// PrepareMidjourneyTaskBilling sets the durable refund marker before the task is inserted.
+// PrepareMidjourneyTaskBilling captures the original authorized token before
+// insertion. The empty receipt is an uncharged marker, never a refund source.
 func PrepareMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.Midjourney, quota int, shouldBill bool) (bool, error) {
 	if task == nil {
 		return false, errors.New("Midjourney task is nil")
 	}
 	task.Quota = 0
 	task.TokenId = 0
+	task.TokenFingerprint = model.BillingTokenFingerprint("no-token-v2")
+	task.BillingAccounted = false
+	task.BillingRequestID = ""
+	task.BillingOriginalQuota = 0
 	task.BillingChannelId = 0
+	task.WalletDebit = []model.LedgerShare{}
 	if !shouldBill {
 		return false, nil
 	}
-	if relayInfo == nil {
-		return false, errors.New("relay info is nil")
-	}
-	if quota < 0 {
-		return false, errors.New("quota cannot be negative")
+	if relayInfo == nil || relayInfo.RequestId == "" || len(relayInfo.RequestId) > 64 || strings.TrimSpace(relayInfo.RequestId) != relayInfo.RequestId || quota < 0 || quota > common.MaxQuota {
+		return false, errors.New("invalid Midjourney billing input")
 	}
 	if relayInfo.BillingSource == BillingSourceSubscription {
 		return false, errors.New("legacy Midjourney billing does not support subscriptions")
 	}
-
+	if !relayInfo.IsPlayground {
+		if relayInfo.TokenId <= 0 || relayInfo.TokenKey == "" {
+			return false, errors.New("original Midjourney token identity is missing")
+		}
+		task.TokenId = relayInfo.TokenId
+		task.TokenFingerprint = model.BillingTokenFingerprint(relayInfo.TokenKey)
+	}
 	task.Quota = quota
+	task.BillingRequestID = relayInfo.RequestId
+	task.BillingOriginalQuota = quota
 	task.BillingChannelId = task.ChannelId
 	if relayInfo.ChannelMeta != nil && relayInfo.ChannelId > 0 {
 		task.BillingChannelId = relayInfo.ChannelId
@@ -59,80 +72,217 @@ func PrepareMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.
 	return true, nil
 }
 
-// SettleMidjourneyTaskBilling charges a persisted legacy task and records the applied stages.
+// SettleMidjourneyTaskBilling supports explicitly identified legacy unreserved rows.
+// New submissions must use ReserveMidjourneyBilling and PersistMidjourneyBilling.
+// It returns true only for a newly acknowledged commit.
+// A replay must not repeat the caller's display log. The row is locked before
+// the source, so settlement and failure observers use the same lock order.
 func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.Midjourney, prepared bool) (bool, error) {
 	if !prepared {
 		return false, nil
 	}
-	if relayInfo == nil {
-		return false, errors.New("relay info is nil")
+	if relayInfo == nil || task == nil || task.Id <= 0 || relayInfo.UserId != task.UserId || relayInfo.RequestId == "" {
+		return false, errors.New("invalid persisted Midjourney billing identity")
 	}
-	if task == nil || task.Id == 0 {
-		return false, errors.New("Midjourney task must be persisted before billing")
-	}
-
-	result, billingErr := postConsumeQuotaWithResult(relayInfo, task.Quota, 0, true)
-	if !result.FundingApplied {
-		task.Quota = 0
-		task.TokenId = 0
-		task.BillingChannelId = 0
-		if updateErr := task.UpdateBillingState(); updateErr != nil {
-			return false, errors.Join(billingErr, fmt.Errorf("clear Midjourney billing state: %w", updateErr))
+	order := WalletDebitOrder(relayInfo)
+	var persisted *model.Midjourney
+	var receipt *model.LedgerResult
+	applied := false
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		var err error
+		persisted, err = model.LoadMidjourneyFinancialTx(tx, task.Id, task.UserId)
+		if err != nil {
+			return err
 		}
-		return false, billingErr
-	}
-
-	task.TokenId = 0
-	if result.TokenApplied {
-		task.TokenId = relayInfo.TokenId
-	}
-	if updateErr := task.UpdateBillingState(); updateErr != nil {
-		return true, errors.Join(billingErr, fmt.Errorf("update Midjourney billing state: %w", updateErr))
-	}
-	return true, billingErr
-}
-
-// RefundMidjourneyQuota reverses every accounting element recorded for a billed legacy task.
-func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason string) bool {
-	quota := task.Quota
-	if quota == 0 {
-		return true
-	}
-
-	if err := model.IncreaseUserQuota(task.UserId, quota, false); err != nil {
-		logger.LogWarn(ctx, fmt.Sprintf("退还 Midjourney 用户额度失败 task %s: %s", task.MjId, err.Error()))
-		return false
-	}
-
-	if task.TokenId > 0 {
-		tokenKey := resolveTokenKey(ctx, task.TokenId, task.MjId)
-		if tokenKey != "" {
-			if err := model.IncreaseTokenQuota(task.TokenId, tokenKey, quota); err != nil {
-				logger.LogWarn(ctx, fmt.Sprintf("退还 Midjourney 令牌额度失败 task %s: %s", task.MjId, err.Error()))
+		if persisted.MjId != task.MjId || !persisted.HasCurrentBillingIdentity() || persisted.WalletDebit == nil || persisted.Quota < 0 || persisted.Quota > common.MaxQuota || persisted.BillingRequestID != relayInfo.RequestId || persisted.BillingOriginalQuota != task.BillingOriginalQuota || persisted.BillingRequestID != task.BillingRequestID || persisted.Quota != 0 && persisted.Quota != persisted.BillingOriginalQuota {
+			return model.ErrTaskFinancialReview
+		}
+		tokenID, fingerprint := 0, model.BillingTokenFingerprint("no-token-v2")
+		if !relayInfo.IsPlayground {
+			tokenID, fingerprint = relayInfo.TokenId, model.BillingTokenFingerprint(relayInfo.TokenKey)
+		}
+		if persisted.TokenId != tokenID || persisted.TokenFingerprint != fingerprint {
+			return fmt.Errorf("%w: original Midjourney token identity changed", model.ErrTaskFinancialReview)
+		}
+		if persisted.BillingAccounted {
+			if _, err := model.ClaimMidjourneyBillingOwnerTx(tx, persisted, false, persisted.BillingOriginalQuota); err != nil {
+				return err
+			}
+			return model.ValidateTaskWalletReceipt(persisted.WalletDebit, persisted.Quota)
+		}
+		if len(persisted.WalletDebit) > 0 {
+			return fmt.Errorf("%w: Midjourney receipt exists without accounting marker", model.ErrTaskFinancialReview)
+		}
+		if persisted.Quota == 0 && persisted.BillingOriginalQuota > 0 {
+			_, err := model.ClaimMidjourneyBillingOwnerTx(tx, persisted, false, 0)
+			return err // charging was canceled before it committed
+		}
+		if persisted.Status == "FAILURE" {
+			return errors.New("Midjourney task failed before charging")
+		}
+		owned, err := model.ClaimMidjourneyBillingOwnerTx(tx, persisted, true, persisted.BillingOriginalQuota)
+		if err != nil {
+			return err
+		}
+		if owned {
+			return fmt.Errorf("%w: request owner exists without Midjourney accounting", model.ErrTaskFinancialReview)
+		}
+		entry := model.LedgerEntry{UserId: persisted.UserId, Account: model.AccountPaid, Delta: persisted.Quota, Reason: model.LedgerReasonBillingSettle, ReferenceType: "relay", ReferenceId: relayInfo.RequestId, RequestId: relayInfo.RequestId, IdempotencyKey: fmt.Sprintf("billing:settle:%s:%d", relayInfo.RequestId, persisted.Quota)}
+		if err := model.RejectTaskSourceOnlyReplayTx(tx, persisted.UserId, entry.IdempotencyKey); err != nil {
+			return err
+		}
+		if persisted.Quota > 0 {
+			receipt, err = model.DebitQuotaTx(tx, entry, order...)
+			if err != nil {
+				return err
+			}
+			if receipt.Replayed {
+				return fmt.Errorf("%w: source-only Midjourney charge", model.ErrTaskFinancialReview)
 			}
 		}
-	}
-
-	billingChannelId := task.GetBillingChannelId()
-	model.UpdateUserUsedQuota(task.UserId, -quota)
-	model.UpdateChannelUsedQuota(billingChannelId, -quota)
-	other := model.NewLogOther()
-	other.SetPublic("task_id", task.MjId)
-	other.SetPublic("reason", reason)
-	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
-		UserId:    task.UserId,
-		LogType:   model.LogTypeRefund,
-		Content:   "",
-		ChannelId: billingChannelId,
-		ModelName: CovertMjpActionToModelName(task.Action),
-		Quota:     quota,
-		TokenId:   task.TokenId,
-		Other:     other,
+		if err := model.ApplyBillingTokenDeltaTx(tx, &model.BillingFinalization{UserID: persisted.UserId, TokenID: persisted.TokenId, TokenFingerprint: persisted.TokenFingerprint}, -persisted.Quota); err != nil {
+			return err
+		}
+		if err := model.ApplyTaskUsageDeltaTx(tx, persisted.UserId, persisted.GetBillingChannelId(), persisted.Quota, 1); err != nil {
+			return err
+		}
+		persisted.WalletDebit = appendTaskShares([]model.LedgerShare{}, receipt)
+		persisted.BillingAccounted = true
+		if err := persisted.UpdateBillingStateTx(tx); err != nil {
+			return err
+		}
+		applied = true
+		return nil
 	})
+	if err != nil {
+		// Never erase a marker after an uncertain COMMIT: the next caller must
+		// reread the row to establish whether the entire transaction committed.
+		return false, err
+	}
+	*task = *persisted
+	if receipt != nil {
+		model.RefreshUserQuotaCache(task.UserId, receipt.TotalAfter)
+	}
+	if applied {
+		checkAndSendQuotaNotify(relayInfo, task.Quota, 0)
+	}
+	return applied, nil
+}
 
-	task.Quota = 0
-	if err := task.UpdateBillingState(); err != nil {
-		logger.LogError(ctx, fmt.Sprintf("Midjourney 退款成功但清除 quota 失败 task %s: %s", task.MjId, err.Error()))
+// RefundMidjourneyQuota uses the locked, current outstanding receipt. The same
+// transaction owns source, original token, usage and the zero-quota marker.
+func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason string) bool {
+	if task == nil || task.Id <= 0 {
+		return false
+	}
+	var persisted *model.Midjourney
+	var receipt *model.LedgerResult
+	var display *model.RecordTaskBillingLogParams
+	err := model.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var err error
+		persisted, err = model.LoadMidjourneyFinancialTx(tx, task.Id, task.UserId)
+		if err != nil {
+			return err
+		}
+		if persisted.MjId != task.MjId || persisted.RequiresFinancialReview() {
+			return model.ErrTaskFinancialReview
+		}
+		quota := persisted.Quota
+		if quota < 0 || quota > common.MaxQuota || !persisted.HasCurrentBillingIdentity() {
+			return model.ErrTaskFinancialReview
+		}
+		if quota == 0 {
+			if persisted.WalletDebit == nil || len(persisted.WalletDebit) != 0 {
+				return model.ErrTaskFinancialReview
+			}
+			actual, allowNew := persisted.BillingOriginalQuota, false
+			if !persisted.BillingAccounted {
+				actual = 0
+				// A first explicit cancellation of a zero-price preparation owns
+				// the request without incrementing usage. A later charge sees this
+				// owner and cannot mistake the missing accounting flag for new work.
+				allowNew = persisted.BillingOriginalQuota == 0 && persisted.Status != "SUCCESS"
+			}
+			_, err := model.ClaimMidjourneyBillingOwnerTx(tx, persisted, allowNew, actual)
+			return err
+		}
+		if quota != persisted.BillingOriginalQuota || persisted.Status == "SUCCESS" {
+			return model.ErrTaskFinancialReview
+		}
+		if !persisted.BillingAccounted {
+			if persisted.WalletDebit == nil || len(persisted.WalletDebit) != 0 {
+				return model.ErrTaskFinancialReview
+			}
+			owned, err := model.ClaimMidjourneyBillingOwnerTx(tx, persisted, true, 0)
+			if err != nil {
+				return err
+			}
+			if owned {
+				return fmt.Errorf("%w: Midjourney accounting marker conflicts with its owner", model.ErrTaskFinancialReview)
+			}
+			key := fmt.Sprintf("billing:settle:%s:%d", persisted.BillingRequestID, persisted.BillingOriginalQuota)
+			if err := model.RejectTaskSourceOnlyReplayTx(tx, persisted.UserId, key); err != nil {
+				return err
+			}
+			// Only a new, explicitly identified uncharged row can be cleared.
+			persisted.Quota = 0
+			return persisted.UpdateBillingStateTx(tx)
+		}
+		if _, err := model.ClaimMidjourneyBillingOwnerTx(tx, persisted, false, persisted.BillingOriginalQuota); err != nil {
+			return err
+		}
+		if err := model.ValidateTaskWalletReceipt(persisted.WalletDebit, quota); err != nil {
+			return err
+		}
+		referenceID, legacyKey := persisted.MjId, "midjourney:refund:"+persisted.MjId
+		if referenceID == "" {
+			referenceID = strconv.Itoa(persisted.Id)
+			legacyKey = "midjourney:refund-local:" + referenceID
+		}
+		operationID := fmt.Sprintf("midjourney:financial-refund:%d", persisted.Id)
+		if err := model.RejectTaskSourceOnlyReplayTx(tx, persisted.UserId, operationID, legacyKey); err != nil {
+			return err
+		}
+		entry := model.LedgerEntry{UserId: persisted.UserId, Account: model.AccountPaid, Reason: model.LedgerReasonTaskRefund, ReferenceType: "mj_task", ReferenceId: referenceID, RequestId: persisted.MjId, IdempotencyKey: operationID}
+		entry.SetMetadata(map[string]any{"reason": reason})
+		receipt, err = model.CreditQuotaSharesTx(tx, entry, persisted.WalletDebit)
+		if err != nil {
+			return err
+		}
+		if receipt.Replayed {
+			return fmt.Errorf("%w: source-only Midjourney refund", model.ErrTaskFinancialReview)
+		}
+		if err := model.ApplyBillingTokenDeltaTx(tx, &model.BillingFinalization{UserID: persisted.UserId, TokenID: persisted.TokenId, TokenFingerprint: persisted.TokenFingerprint}, quota); err != nil {
+			return err
+		}
+		if err := model.ApplyTaskUsageDeltaTx(tx, persisted.UserId, persisted.GetBillingChannelId(), -quota, 0); err != nil {
+			return err
+		}
+		other := model.NewLogOther()
+		other.SetPublic("task_id", persisted.MjId)
+		other.SetPublic("reason", reason)
+		params := model.RecordTaskBillingLogParams{UserId: persisted.UserId, LogType: model.LogTypeRefund, ChannelId: persisted.GetBillingChannelId(), ModelName: CovertMjpActionToModelName(persisted.Action), Quota: quota, TokenId: persisted.TokenId, Other: other, OperationID: operationID}
+		logged, err := model.RecordTaskBillingLogTx(tx, params)
+		if err != nil {
+			return err
+		}
+		if !logged {
+			display = &params
+		}
+		persisted.Quota = 0
+		persisted.WalletDebit = []model.LedgerShare{}
+		return persisted.UpdateBillingStateTx(tx)
+	})
+	if err != nil {
+		logger.LogWarn(ctx, "Midjourney refund requires retry or reconciliation: "+err.Error())
+		return false
+	}
+	*task = *persisted
+	if receipt != nil {
+		model.RefreshUserQuotaCache(task.UserId, receipt.TotalAfter)
+	}
+	if display != nil {
+		model.RecordTaskBillingLog(*display)
 	}
 	return true
 }
@@ -298,6 +448,9 @@ func RecordMidjourneyPolicyResponse(c *gin.Context, response *dto.MidjourneyResp
 }
 
 func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestURL string) (*dto.MidjourneyResponseWithStatusCode, []byte, error) {
+	// Until dispatch starts, all local parsing/build failures are known-unsent.
+	common.SetContextKey(c, constant.ContextKeyUpstreamRequestAttempted, false)
+	common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, true)
 	var nullBytes []byte
 	//var requestBody io.Reader
 	//requestBody = c.Request.Body
@@ -346,9 +499,20 @@ func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestU
 		req.Header.Set("mj-api-secret", auth)
 	}
 	defer cancel()
-	resp, err := GetHttpClient().Do(req)
+	client := GetHttpClient()
+	if client == nil || (req.URL.Scheme != "http" && req.URL.Scheme != "https") || req.URL.Host == "" {
+		return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "create_request_failed", http.StatusInternalServerError), nullBytes, errors.New("invalid Midjourney HTTP client or URL")
+	}
+	common.SetContextKey(c, constant.ContextKeyUpstreamRequestAttempted, true)
+	common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, false)
+	resp, err := DoRequestWithoutRedirects(client, req)
 	if err != nil {
-		common.SysLog("do request failed: " + err.Error())
+		var dialErr *net.OpError
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) || errors.As(err, &dialErr) && dialErr.Op == "dial" {
+			common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, true)
+		}
+		common.SysLog(common.LogText("do request failed: %s", err.Error()))
 		return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "do_request_failed", http.StatusInternalServerError), nullBytes, err
 	}
 	statusCode := resp.StatusCode

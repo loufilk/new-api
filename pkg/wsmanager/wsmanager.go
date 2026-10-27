@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -34,9 +34,10 @@ type closeEvent struct {
 }
 
 var (
-	mu       sync.Mutex
-	nextID   uint64
-	registry = map[int]map[uint64]*entry{}
+	mu           sync.Mutex
+	nextID       uint64
+	registry     = map[int]map[uint64]*entry{}
+	shuttingDown bool
 
 	originOnce sync.Once
 	originID   string
@@ -63,6 +64,11 @@ func Register(channelID int, kind string, close func(reason string)) func() {
 	}
 
 	mu.Lock()
+	if shuttingDown {
+		mu.Unlock()
+		safeClose("server shutting down")
+		return func() {}
+	}
 	if registry[channelID] == nil {
 		registry[channelID] = map[uint64]*entry{}
 	}
@@ -97,7 +103,7 @@ func CloseChannels(channelIDs []int, reason string) int {
 		e.close(reason)
 	}
 	if len(entries) > 0 {
-		common.SysLog(fmt.Sprintf("closed %d active websocket connection(s), channels=%v, kinds=%v, reason=%s", len(entries), entryChannelIDs(entries), entryKindCounts(entries), reason))
+		common.SysLog(common.LogText("closed %d active websocket connection(s), channels=%v, kinds=%v, reason=%s", len(entries), entryChannelIDs(entries), entryKindCounts(entries), reason))
 	}
 	return len(entries)
 }
@@ -105,7 +111,7 @@ func CloseChannels(channelIDs []int, reason string) int {
 func CloseChannelsAndBroadcast(channelIDs []int, reason string) int {
 	count := CloseChannels(channelIDs, reason)
 	if err := PublishCloseChannels(context.Background(), channelIDs, reason); err != nil {
-		common.SysLog(fmt.Sprintf("failed to publish websocket close event: %v", err))
+		common.SysLog(common.LogText("failed to publish websocket close event: %v", err))
 	}
 	return count
 }
@@ -115,16 +121,50 @@ func StartSubscriber(ctx context.Context) {
 	if !common.RedisEnabled || rdb == nil {
 		return
 	}
+	subscriberOnce.Do(func() { go RunSubscriber(ctx) })
+}
+
+func RunSubscriber(ctx context.Context) {
+	rdb := common.RDB
+	if !common.RedisEnabled || rdb == nil {
+		return
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	subscriberOnce.Do(func() {
-		go func() {
-			pubsub := rdb.Subscribe(ctx, channelCloseTopic(rdb.Options().DB))
-			defer pubsub.Close()
-			receiveChannelCloseEvents(ctx, pubsub.Channel(), getOriginID())
-		}()
-	})
+	pubsub := rdb.Subscribe(ctx, channelCloseTopic(rdb.Options().DB))
+	defer pubsub.Close()
+	receiveChannelCloseEvents(ctx, pubsub.Channel(), getOriginID())
+}
+
+// Shutdown closes this process's sockets only; it must not broadcast a channel
+// disable to other healthy instances. The HTTP gate separately joins handlers
+// and their accounting work, rather than treating registry deletion as drain.
+func Shutdown() {
+	mu.Lock()
+	shuttingDown = true
+	var entries []*entry
+	for _, connections := range registry {
+		for _, connection := range connections {
+			entries = append(entries, connection)
+		}
+	}
+	registry = make(map[int]map[uint64]*entry)
+	mu.Unlock()
+	var closed sync.WaitGroup
+	for _, connection := range entries {
+		closed.Add(1)
+		go func(e *entry) {
+			defer closed.Done()
+			defer func() {
+				if recover() != nil {
+					common.SysError("websocket shutdown callback panicked")
+				}
+			}()
+			e.close("server shutting down")
+		}(connection)
+	}
+	closed.Wait()
 }
 
 func PublishCloseChannels(ctx context.Context, channelIDs []int, reason string) error {
@@ -164,7 +204,7 @@ func receiveChannelCloseEvents(ctx context.Context, ch <-chan *redis.Message, or
 			}
 			var event closeEvent
 			if err := common.Unmarshal([]byte(msg.Payload), &event); err != nil {
-				common.SysLog(fmt.Sprintf("failed to unmarshal websocket close event: %v", err))
+				common.SysLog(common.LogText("failed to unmarshal websocket close event: %v", err))
 				continue
 			}
 			if event.Origin == origin {

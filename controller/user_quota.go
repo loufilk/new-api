@@ -2,10 +2,12 @@ package controller
 
 import (
 	"errors"
+	"fmt"
+	"github.com/QuantumNous/new-api/i18n"
 	"net/http"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -44,24 +46,46 @@ func manageUserQuota(c *gin.Context, req ManageRequest) {
 		markAuditLogged(c)
 	}()
 
-	adjustment, err := model.AdjustUserQuota(req.Id, c.GetInt("role"), req.Mode, req.Value)
+	requestID := strings.TrimSpace(req.RequestId)
+	if requestID == "" {
+		requestID = strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	}
+	if requestID == "" {
+		requestID = model.NewAutoLedgerKey("admin_quota_request")
+	}
+	if len(requestID) > 128 {
+		params["failure_reason"] = "invalid_parameters"
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	adjustment, err := model.AdjustUserQuota(req.Id, c.GetInt("role"), req.Mode, req.Value, model.LedgerEntry{
+		OperatorId: c.GetInt("id"), ReferenceType: "admin_quota", ReferenceId: requestID,
+		RequestId:      c.GetString(common.RequestIdKey),
+		IdempotencyKey: fmt.Sprintf("admin_quota:%d:%s", c.GetInt("id"), requestID),
+	})
 	if err != nil {
 		switch {
 		case errors.Is(err, model.ErrInvalidUserQuotaAdjustment):
 			params["failure_reason"] = "invalid_parameters"
 			if (req.Mode == "add" || req.Mode == "subtract") && req.Value <= 0 {
-				common.ApiErrorI18n(c, i18n.MsgUserQuotaChangeZero)
+				common.ApiErrorT(c, "Quota change amount cannot be zero")
 			} else {
-				common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+				common.ApiErrorT(c, "Invalid parameters")
 			}
 		case errors.Is(err, model.ErrUserQuotaPermission):
 			params["failure_reason"] = "permission_denied"
-			common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+			common.ApiErrorT(c, "No permission to update users of same or higher permission level")
 		case errors.Is(err, gorm.ErrRecordNotFound):
 			params["failure_reason"] = "target_not_found"
-			common.ApiErrorI18n(c, i18n.MsgUserNotExists)
+			common.ApiErrorT(c, "User does not exist")
 		case errors.Is(err, model.ErrWalletQuotaLimitExceeded):
 			params["failure_reason"] = "quota_limit_exceeded"
+			common.ApiError(c, err)
+		case errors.Is(err, model.ErrLedgerInsufficientBalance):
+			params["failure_reason"] = "insufficient_balance"
+			common.ApiError(c, err)
+		case errors.Is(err, model.ErrLedgerIdempotencyConflict):
+			params["failure_reason"] = "idempotency_conflict"
 			common.ApiError(c, err)
 		default:
 			params["failure_reason"] = "database_error"
@@ -77,6 +101,11 @@ func manageUserQuota(c *gin.Context, req ManageRequest) {
 		params["quota"] = req.Value
 	}
 	success = true
+	if adjustment.Replayed {
+		params["replayed"] = true
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
+		return
+	}
 	operation := model.AuditOperation{Action: action, Params: params}
 	model.RecordLogWithAdminInfo(adjustment.UserID, model.LogTypeTopup,
 		auditContentEN(action, params), auditOperatorInfo(c), &operation, c)

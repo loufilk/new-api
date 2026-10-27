@@ -20,8 +20,15 @@ import type { QueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { t } from 'i18next'
 
+import i18n from '@/i18n/config'
+import { toBackendLanguage } from '@/i18n/languages'
+import { API_BASE_URL } from '@/lib/api-url'
 import { publishAuthSessionEvent } from '@/lib/auth-session-sync'
-import { hasSessionHint } from '@/lib/session-hint'
+import {
+  clearSessionHint,
+  hasSessionHint,
+  markSessionHint,
+} from '@/lib/session-hint'
 import {
   useAuthStore,
   type AuthBootstrapState,
@@ -68,7 +75,7 @@ export class AuthRotationError extends Error {
 }
 
 const authClient = axios.create({
-  baseURL: '',
+  baseURL: API_BASE_URL,
   withCredentials: true,
   headers: {
     // no-store forbids storage; no-cache also revalidates any older cached response.
@@ -79,6 +86,24 @@ const authClient = axios.create({
 const refreshRaceDelays = [80, 200, 500] as const
 let refreshPromise: Promise<RefreshOutcome> | null = null
 let authEpoch = 0
+let authSessionEpoch = 0
+
+// Token refresh/rotation keeps an owner's in-flight requests valid. Identity
+// changes do not: a logout followed by a login must invalidate them even when
+// a session identifier is reused. Observe the store so every auth entry point
+// (including setUser/reset) participates in this boundary.
+useAuthStore.subscribe((state, previousState) => {
+  if (
+    state.auth.user?.id !== previousState.auth.user?.id ||
+    state.auth.session?.sid !== previousState.auth.session?.sid
+  ) {
+    authSessionEpoch += 1
+  }
+})
+
+export function getAuthSessionEpoch(): number {
+  return authSessionEpoch
+}
 
 class AuthRefreshSupersededError extends Error {
   constructor() {
@@ -154,6 +179,10 @@ export function applyAuthBundle(
   const previousSID = useAuthStore.getState().auth.session?.sid
   authEpoch += 1
   useAuthStore.getState().auth.setBundle(bundle)
+  // Keep the frontend host's non-credential hint in sync with the successful
+  // authentication result and the server session's own expiry; the API host's
+  // hint is unreadable when the console is hosted on a different origin.
+  markSessionHint(bundle.session.expires_at)
   if (synchronizeTabs && previousSID !== bundle.session.sid) {
     publishAuthSessionEvent('authenticated', bundle.session.sid)
   }
@@ -191,6 +220,9 @@ export function clearAuthentication(
   const sid = useAuthStore.getState().auth.session?.sid
   authEpoch += 1
   useAuthStore.getState().auth.reset(bootstrapState)
+  // Explicit sign-out and server-side invalidation both land here, so the
+  // frontend host's hint is cleared in lockstep with the session.
+  clearSessionHint()
   if (synchronizeTabs && sid) {
     publishAuthSessionEvent('signed_out', sid)
   }
@@ -281,7 +313,12 @@ async function requestRefresh(
       '/api/user/auth/refresh',
       undefined,
       {
-        headers: expectedSID ? { 'X-Auth-Session': expectedSID } : undefined,
+        headers: {
+          'Accept-Language': toBackendLanguage(
+            i18n.resolvedLanguage || i18n.language
+          ),
+          ...(expectedSID ? { 'X-Auth-Session': expectedSID } : {}),
+        },
       }
     )
     return { status: response.status, data: response.data }
@@ -410,6 +447,9 @@ export async function bootstrapAuthentication(): Promise<RefreshOutcome> {
 export function getCommonHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'Accept-Language': toBackendLanguage(
+      i18n.resolvedLanguage || i18n.language
+    ),
   }
   const accessToken = useAuthStore.getState().auth.accessToken
   if (accessToken) {

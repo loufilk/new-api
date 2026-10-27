@@ -128,7 +128,7 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
-		logger.LogError(c, "Do gemini request failed: "+err.Error())
+		logger.LogError(c, common.LogText("Do gemini request failed: %s", err.Error()))
 		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 	}
 
@@ -148,6 +148,7 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 	usage, openaiErr := adaptor.DoResponse(c, resp.(*http.Response), info)
 	if openaiErr != nil {
+		consumePartialTextStreamQuota(c, info, usage)
 		service.ResetStatusCode(openaiErr, statusCodeMappingStr)
 		return openaiErr
 	}
@@ -234,7 +235,7 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPI
 
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
-		logger.LogError(c, "Do gemini request failed: "+err.Error())
+		logger.LogError(c, common.LogText("Do gemini request failed: %s", err.Error()))
 		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 	}
 

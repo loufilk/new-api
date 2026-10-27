@@ -37,6 +37,28 @@ export function indexCustomOAuthBindings(
 }
 
 /**
+ * OAuth provider callbacks are registered on the configured ServerAddress
+ * origin. When the console is served from another entry (for example the CN
+ * site), the provider would complete the flow on that origin and this browser
+ * would never receive the session, so the console must not start OAuth from
+ * there. This decides availability in the UI only; server-side flows stay
+ * unchanged. A missing or unparsable ServerAddress keeps the previous behavior
+ * (OAuth offered), because status is expected to carry it.
+ */
+export function isOAuthAvailableOnOrigin(
+  serverAddress: string | null | undefined,
+  origin: string = window.location.origin
+): boolean {
+  const value = (serverAddress ?? '').trim()
+  if (!value) return true
+  try {
+    return new URL(value).origin === origin
+  } catch {
+    return true
+  }
+}
+
+/**
  * Build GitHub OAuth URL
  */
 export function buildGitHubOAuthUrl(clientId: string, state: string): string {

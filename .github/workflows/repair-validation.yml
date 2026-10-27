@@ -1,0 +1,261 @@
+name: Repair regression validation
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repair-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  GOWORK: 'off'
+  GOTOOLCHAIN: local
+  GOFLAGS: '-mod=readonly'
+  CGO_ENABLED: '1'
+  PYTHONDONTWRITEBYTECODE: '1'
+  SQL_DSN: ''
+  LOG_SQL_DSN: ''
+  REDIS_CONN_STRING: ''
+  TEST_MYSQL_DSN: ''
+  TEST_MYSQL_LOG_DSN: ''
+  TEST_POSTGRES_DSN: ''
+  TEST_POSTGRES_LOG_DSN: ''
+
+jobs:
+  databases:
+    name: Repair contracts (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: sqlite
+            dialect: sqlite
+            mysql: ''
+            postgres: ''
+          - name: mysql57
+            dialect: mysql
+            mysql: mysql:5.7.44
+            postgres: ''
+          - name: postgres96
+            dialect: postgres
+            mysql: ''
+            postgres: postgres:9.6.24-alpine
+          - name: postgres18
+            dialect: postgres
+            mysql: ''
+            postgres: postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    services:
+      mysql:
+        image: ${{ matrix.mysql }}
+        env:
+          MYSQL_ROOT_PASSWORD: compat
+          MYSQL_ROOT_HOST: '%'
+          MYSQL_DATABASE: repair_compat
+        ports: ['127.0.0.1::3306']
+        options: --health-cmd="mysqladmin ping -h 127.0.0.1 -pcompat --silent" --health-interval=5s --health-timeout=5s --health-retries=24
+      postgres:
+        image: ${{ matrix.postgres }}
+        env:
+          POSTGRES_PASSWORD: compat
+          POSTGRES_DB: repair_compat
+        ports: ['127.0.0.1::5432']
+        options: --health-cmd="pg_isready -U postgres -d repair_compat" --health-interval=5s --health-timeout=5s --health-retries=24
+    env:
+      REPORT_LABEL: ${{ matrix.name }}
+      DIALECT: ${{ matrix.dialect }}
+    steps:
+      - name: Initialize isolated evidence directory
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/repair-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$REPORT_LABEL"
+          mkdir -p "$out"
+          printf 'OUT=%s\n' "$out" >> "$GITHUB_ENV"
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+            tokenkit/go.sum
+      - name: Required real database, migration and accounting contracts
+        env:
+          MYSQL_ID: ${{ job.services.mysql.id }}
+          MYSQL_PORT: ${{ job.services.mysql.ports['3306'] }}
+          PG_ID: ${{ job.services.postgres.id }}
+          PG_PORT: ${{ job.services.postgres.ports['5432'] }}
+        run: bash ops/ci/verify_repair_services.sh database
+      - name: Integration evidence gate regressions
+        if: (success() || failure()) && matrix.dialect == 'sqlite'
+        run: |
+          python3 -m unittest discover -s ops/ci/tests -p test_go_test_report.py -v
+          python3 -m unittest discover -s ops/ci/tests -p test_repair_service_env.py -v
+      - name: Preserve exact-SHA database evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: repair-${{ matrix.name }}-${{ env.SOURCE_SHA }}
+          path: ${{ env.OUT }}/
+          retention-days: 7
+          if-no-files-found: error
+
+  redis:
+    name: Redis script eviction recovery (${{ matrix.version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: redis72
+            version: '7.2.16'
+            image: redis:7.2.16-alpine@sha256:29e8589c3f9ba699b5f7aa4b3c7733c58852a3626439e619aa0ee78de08c6ca0
+          - name: redis880
+            version: '8.8.0'
+            image: redis:8.8.0-alpine@sha256:9d317178eceac8454a2284a9e6df2466b93c745529947f0cd42a0fa9609d7005
+    services:
+      redis:
+        image: ${{ matrix.image }}
+        ports: ['127.0.0.1::6379']
+        options: --health-cmd="redis-cli ping" --health-interval=5s --health-timeout=3s --health-retries=24
+    steps:
+      - name: Initialize isolated evidence directory
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/repair-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${{ matrix.name }}"
+          mkdir -p "$out"
+          printf 'OUT=%s\n' "$out" >> "$GITHUB_ENV"
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+            tokenkit/go.sum
+      - name: Required real Redis SCRIPT FLUSH and request accounting contracts
+        env:
+          REDIS_ID: ${{ job.services.redis.id }}
+          REDIS_PORT: ${{ job.services.redis.ports['6379'] }}
+          REDIS_EXPECTED_VERSION: ${{ matrix.version }}
+        run: bash ops/ci/verify_repair_services.sh redis
+      - name: Preserve exact-SHA Redis evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: repair-${{ matrix.name }}-${{ env.SOURCE_SHA }}
+          path: ${{ env.OUT }}/
+          retention-days: 7
+          if-no-files-found: error
+
+  api-image:
+    name: API-only Docker build and restart
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Initialize isolated evidence directory
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/repair-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-api-image"
+          mkdir -p "$out"
+          printf 'OUT=%s\n' "$out" >> "$GITHUB_ENV"
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: Build local image and probe an isolated disposable container twice
+        run: bash ops/ci/smoke_api_container.sh
+      - name: Preserve image, startup and health evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: repair-api-image-${{ env.SOURCE_SHA }}
+          path: ${{ env.OUT }}/
+          retention-days: 7
+          if-no-files-found: error
+
+  synthetic-lifecycle:
+    name: Exact 093 lifecycle (PG 18.6, ${{ matrix.log_layout }} logs)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        log_layout: [shared, separate]
+    steps:
+      - name: Initialize isolated synthetic evidence directory
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/repair-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-synthetic-lifecycle-${{ matrix.log_layout }}"
+          mkdir -p "$out"
+          printf 'OUT=%s\n' "$out" >> "$GITHUB_ENV"
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: 093c7197d5eac50787971fd5ff7553a414142fc7
+          path: baseline
+          persist-credentials: false
+      - name: Lifecycle evidence gate regressions
+        working-directory: candidate
+        run: python3 -m unittest discover -s ops/ci/tests -p test_application_lifecycle.py -v
+      - name: Source-built baseline and candidate on synthetic primary and log databases
+        run: |
+          python3 candidate/ops/ci/verify_application_lifecycle.py \
+            --baseline-dir baseline --candidate-dir candidate \
+            --candidate-sha "$SOURCE_SHA" --out "$OUT" \
+            --log-database-layout "${{ matrix.log_layout }}"
+      - name: Preserve synthetic lifecycle evidence (not production equivalence)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: repair-synthetic-lifecycle-${{ matrix.log_layout }}-${{ env.SOURCE_SHA }}
+          path: ${{ env.OUT }}/
+          retention-days: 7
+          if-no-files-found: error
+
+  acceptance:
+    name: Required repair validation
+    if: always()
+    needs: [databases, redis, api-image, synthetic-lifecycle]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Reject failed, canceled or skipped required jobs
+        env:
+          DATABASES: ${{ needs.databases.result }}
+          REDIS: ${{ needs.redis.result }}
+          API_IMAGE: ${{ needs.api-image.result }}
+          SYNTHETIC_LIFECYCLE: ${{ needs.synthetic-lifecycle.result }}
+        run: |
+          set -euo pipefail
+          printf 'sha=%s databases=%s redis=%s api-image=%s synthetic-lifecycle=%s (not production equivalence)\n' "$SOURCE_SHA" "$DATABASES" "$REDIS" "$API_IMAGE" "$SYNTHETIC_LIFECYCLE" >> "$GITHUB_STEP_SUMMARY"
+          test "$DATABASES" = success
+          test "$REDIS" = success
+          test "$API_IMAGE" = success
+          test "$SYNTHETIC_LIFECYCLE" = success

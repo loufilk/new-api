@@ -16,7 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useNavigate, useRouter } from '@tanstack/react-router'
+import { useRouter } from '@tanstack/react-router'
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -43,8 +44,29 @@ export function GeneralError({
   error,
 }: GeneralErrorProps) {
   const { t } = useTranslation()
-  const navigate = useNavigate()
   const { history } = useRouter()
+  useEffect(() => {
+    if (
+      !(error instanceof Error) ||
+      (error.name !== 'ChunkLoadError' &&
+        !/^Loading (CSS )?chunk .+ failed\./.test(error.message))
+    ) {
+      return
+    }
+
+    // Recover only when the failed route is displayed, never on intent preload.
+    // Keep the marker across reloads so a persistent failure shows this page.
+    try {
+      const key = `tanstack_router_reload:${error.message}`
+      if (sessionStorage.getItem(key)) return
+      sessionStorage.setItem(key, '1')
+    } catch {
+      // Without a persistent marker, reloading could loop indefinitely.
+      return
+    }
+    window.location.reload()
+  }, [error])
+
   const status = getHttpStatus(error)
   const isRateLimited = status === 429
   const title = isRateLimited
@@ -57,10 +79,8 @@ export function GeneralError({
   return (
     <div className={cn('h-svh w-full', className)}>
       <div className='m-auto flex h-full w-full flex-col items-center justify-center gap-2'>
-        {!minimal && (
-          <h1 className='text-[7rem] leading-tight font-bold'>
-            {status ?? 500}
-          </h1>
+        {!minimal && status !== undefined && (
+          <h1 className='text-[7rem] leading-tight font-bold'>{status}</h1>
         )}
         <span className='font-medium'>{title}</span>
         <p className='text-muted-foreground text-center'>
@@ -88,9 +108,7 @@ export function GeneralError({
             >
               {t('Report an issue')}
             </Button>
-            <Button onClick={() => navigate({ to: '/' })}>
-              {t('Back to Home')}
-            </Button>
+            <Button render={<a href='/' />}>{t('Back to Home')}</Button>
           </div>
         )}
       </div>

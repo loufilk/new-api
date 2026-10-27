@@ -26,7 +26,10 @@ import { ErrorState } from '@/components/error-state'
 import { useModelPricing } from '@/features/model-pricing/api'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
-import { requireServerSuccess } from '@/lib/server-error-message'
+import {
+  getServerMessage,
+  requireServerSuccess,
+} from '@/lib/server-error-message'
 
 import { getModels, searchModels, getVendors } from '../api'
 import { DEFAULT_PAGE_SIZE } from '../constants'
@@ -36,7 +39,7 @@ import { DataTableBulkActions } from './data-table-bulk-actions'
 import { useModelsColumns } from './models-columns'
 import { useModels } from './models-provider'
 
-const route = getRouteApi('/_authenticated/models/$section')
+const route = getRouteApi('/_authenticated/model-management/$section')
 
 export function ModelsTable() {
   const { t } = useTranslation()
@@ -224,7 +227,7 @@ export function ModelsTable() {
   if (isError || data?.success === false) {
     return (
       <ErrorState
-        description={error?.message ?? data?.message}
+        description={error?.message ?? getServerMessage(data)}
         onRetry={() => void refetch()}
       />
     )

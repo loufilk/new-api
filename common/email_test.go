@@ -2,6 +2,7 @@ package common
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -9,8 +10,12 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
+	"mime"
+	"mime/multipart"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strconv"
 	"strings"
@@ -288,11 +293,62 @@ func TestSendEmailUsesExplicitStartTLSWithInsecureCertificate(t *testing.T) {
 
 	select {
 	case message := <-server.messages:
-		require.Contains(t, message, "Subject: =?UTF-8?B?")
+		require.Contains(t, message, "Subject: Verification")
 		require.Contains(t, message, "<p>123456</p>")
+		require.Contains(t, message, "Content-Type: multipart/alternative;")
+		require.Contains(t, message, "Content-Type: text/plain; charset=UTF-8")
+		require.Contains(t, message, "Content-Type: text/html; charset=UTF-8")
+		require.Contains(t, message, "X-Mailin-Track: false")
+		require.Contains(t, message, "X-Mailin-Track-Clicks: false")
+		require.Contains(t, message, "X-Mailin-Track-Opens: false")
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for SMTP DATA")
 	}
+}
+
+func TestBuildEmailMessageCreatesReadableMultipartAlternative(t *testing.T) {
+	withSMTPSettings(t)
+	SMTPFrom = "noreply@chuanapi.com"
+	SystemName = "万川智能"
+
+	message, err := buildEmailMessage(
+		"邮箱验证码",
+		"receiver@example.com",
+		"您好：\n\n验证码：123456",
+		"<!doctype html><html><body><p>您好：</p><p>验证码：<strong>123456</strong></p></body></html>",
+	)
+	require.NoError(t, err)
+
+	parsed, err := mail.ReadMessage(bytes.NewReader(message))
+	require.NoError(t, err)
+	mediaType, params, err := mime.ParseMediaType(parsed.Header.Get("Content-Type"))
+	require.NoError(t, err)
+	require.Equal(t, "multipart/alternative", mediaType)
+
+	reader := multipart.NewReader(parsed.Body, params["boundary"])
+	plainPart, err := reader.NextPart()
+	require.NoError(t, err)
+	require.Equal(t, "text/plain; charset=UTF-8", plainPart.Header.Get("Content-Type"))
+	plainBody, err := io.ReadAll(plainPart)
+	require.NoError(t, err)
+	require.Contains(t, string(plainBody), "验证码：123456")
+
+	htmlPart, err := reader.NextPart()
+	require.NoError(t, err)
+	require.Equal(t, "text/html; charset=UTF-8", htmlPart.Header.Get("Content-Type"))
+	htmlBody, err := io.ReadAll(htmlPart)
+	require.NoError(t, err)
+	require.Contains(t, string(htmlBody), "<strong>123456</strong>")
+
+	_, err = reader.NextPart()
+	require.ErrorIs(t, err, io.EOF)
+}
+
+func TestHTMLToPlainTextRemovesMarkupAndTrackingCandidates(t *testing.T) {
+	plainText := htmlToPlainText("<style>.hidden{display:none}</style><p>您好</p><p>验证码：<strong>123456</strong></p><script>alert(1)</script>")
+	require.Equal(t, "您好\n验证码： 123456", plainText)
+	require.NotContains(t, plainText, "alert")
+	require.NotContains(t, plainText, "display:none")
 }
 
 func TestSendEmailExplicitStartTLSRequiresServerSupport(t *testing.T) {

@@ -1,0 +1,621 @@
+path,old_path,status,insertions,deletions,binary,ownership,module,artifact_kind,disposition,matched_rule,rule_note
+.dockerignore,,M,8,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+.env.example,,M,14,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+.gitattributes,,M,2,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+.github/workflows/ci.yml,,M,27,1,false,OPS_DEPLOYMENT,ci,ops,REVIEW,prefix:.github/,CI and repository operations
+.github/workflows/database-compat.yml,,A,110,0,false,OPS_DEPLOYMENT,ci,ops,REVIEW,prefix:.github/,CI and repository operations
+.gitignore,,M,11,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+AGENTS.md,,M,0,3,false,UPSTREAM_CORE,core-review,documentation,REVIEW,default:*,unclassified upstream-tree delta
+Dockerfile,,M,5,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+VERSION,,M,1,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+bin/migration_quota_bigint_mysql.sql,,A,233,0,false,OPS_DEPLOYMENT,migration-tooling,tooling,REVIEW,prefix:bin/,Operational migration and helper scripts
+bin/migration_quota_bigint_postgres.sql,,A,271,0,false,OPS_DEPLOYMENT,migration-tooling,tooling,REVIEW,prefix:bin/,Operational migration and helper scripts
+chuanapi/backfill_step_test.go,,A,154,0,false,COMPOSITION_ROOT,backend-composition,test,SPLIT,prefix:chuanapi/,Current adapter; implementation details must migrate into individual modules
+chuanapi/register.go,,A,131,0,false,COMPOSITION_ROOT,backend-composition,production,SPLIT,prefix:chuanapi/,Current adapter; implementation details must migrate into individual modules
+chuanapi/register_test.go,,A,107,0,false,COMPOSITION_ROOT,backend-composition,test,SPLIT,prefix:chuanapi/,Current adapter; implementation details must migrate into individual modules
+chuanapi/routes_test.go,,A,41,0,false,COMPOSITION_ROOT,backend-composition,test,SPLIT,prefix:chuanapi/,Current adapter; implementation details must migrate into individual modules
+common/account_password.go,,M,20,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+common/account_password_blocklist.LICENSE,,A,25,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+common/account_password_blocklist.txt,,A,3000,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+common/account_password_blocklist_test.go,,A,27,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+common/constants.go,,M,18,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+common/email.go,,M,136,18,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+common/email_test.go,,M,57,1,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+common/image_endpoint_test.go,,A,26,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+common/model.go,,M,1,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+constant/context_key.go,,M,3,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+controller/access_token_audit_test.go,,M,7,1,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+controller/audit.go,,M,2,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+controller/auth_session.go,,M,16,0,false,GENERIC_CORE_ENHANCEMENT,security,production,UPSTREAM_CANDIDATE,contains:auth_session,Generic session hardening
+controller/health_test.go,,A,99,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+controller/image_async.go,,A,194,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,contains:image_async,Async image-generation backend surface
+controller/image_async_test.go,,A,143,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,contains:image_async,Async image-generation backend surface
+controller/llms.go,,A,302,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+controller/llms_test.go,,A,71,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+controller/misc.go,,M,70,11,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+controller/model_bonus_eligible.go,,A,86,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+controller/model_bonus_eligible_test.go,,A,146,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+controller/model_list_test.go,,M,1,1,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+controller/model_management_test.go,,M,10,3,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+controller/model_sync.go,,M,24,11,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+controller/option.go,,M,5,20,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+controller/option_effective_billing_test.go,,A,95,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+controller/payment_creation_compliance_test.go,,A,58,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+controller/payment_logging.go,,A,13,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+controller/payment_logging_test.go,,A,78,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+controller/playground.go,,M,91,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+controller/playground_bootstrap_test.go,,A,149,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+controller/playground_test.go,,A,103,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+controller/plugin_native_e2e_test.go,,M,32,7,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+controller/pricing.go,,M,11,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+controller/relay.go,,M,15,7,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+controller/relay_responses_stream_error_test.go,,A,42,0,false,GENERIC_CORE_ENHANCEMENT,responses,test,UPSTREAM_CANDIDATE,contains:relay_responses,Generic Responses API provider enhancement
+controller/relay_task_plugin_test.go,,M,35,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+controller/return_path_test.go,,M,9,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+controller/secure_verification.go,,M,1,1,false,GENERIC_CORE_ENHANCEMENT,security,production,UPSTREAM_CANDIDATE,contains:secure_verification,Generic verification hardening
+controller/security_account_test.go,,M,29,3,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+controller/topup.go,,M,63,18,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+controller/topup_creem.go,,M,18,14,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+controller/topup_epay_test.go,,A,84,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+controller/topup_stripe.go,,M,9,5,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+controller/topup_waffo.go,,M,11,7,false,CHUANAPI_MODULE,payment-waffo,production,EXTRACT,prefix:controller/topup_waffo,ChuanAPI Waffo topup integration
+controller/topup_waffo_pancake.go,,M,9,5,false,CHUANAPI_MODULE,payment-waffo,production,EXTRACT,prefix:controller/topup_waffo,ChuanAPI Waffo topup integration
+controller/user.go,,M,53,82,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+controller/user_manage_test.go,,M,82,12,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+controller/user_quota.go,,M,30,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+controller/wallet.go,,A,188,0,false,CHUANAPI_MODULE,wallet,production,EXTRACT,prefix:controller/wallet,Wallet HTTP surface
+controller/wallet_test.go,,A,158,0,false,CHUANAPI_MODULE,wallet,test,EXTRACT,prefix:controller/wallet,Wallet HTTP surface
+docker-compose.yml,,M,53,21,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+docs/new-api-rc33-production-runbook.md,,A,122,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
+docs/new-api-rc33-review.md,,A,103,0,false,TEST_COMPAT,documentation,documentation,REVIEW,prefix:docs/,Non-runtime documentation and review evidence
+extension/boundary_test.go,,A,71,0,false,GENERIC_EXTENSION_KERNEL,backend-extension,test,RETAIN,prefix:extension/,Startup model migration and route contribution registry
+extension/migration.go,,A,280,0,false,GENERIC_EXTENSION_KERNEL,backend-extension,production,RETAIN,prefix:extension/,Startup model migration and route contribution registry
+extension/migration_test.go,,A,381,0,false,GENERIC_EXTENSION_KERNEL,backend-extension,test,RETAIN,prefix:extension/,Startup model migration and route contribution registry
+extension/registry.go,,A,183,0,false,GENERIC_EXTENSION_KERNEL,backend-extension,production,RETAIN,prefix:extension/,Startup model migration and route contribution registry
+extension/registry_test.go,,A,361,0,false,GENERIC_EXTENSION_KERNEL,backend-extension,test,RETAIN,prefix:extension/,Startup model migration and route contribution registry
+extension/routes.go,,A,153,0,false,GENERIC_EXTENSION_KERNEL,backend-extension,production,RETAIN,prefix:extension/,Startup model migration and route contribution registry
+extension/routes_test.go,,A,213,0,false,GENERIC_EXTENSION_KERNEL,backend-extension,test,RETAIN,prefix:extension/,Startup model migration and route contribution registry
+logger/logger.go,,M,6,7,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+main.go,,M,28,5,false,COMPOSITION_ROOT,backend-composition,production,RETAIN,exact:main.go,Only production host entrypoint allowed to import chuanapi composition adapter
+middleware/auth.go,,M,25,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+middleware/cache.go,,M,12,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+middleware/cache_test.go,,A,55,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+middleware/cors.go,,M,45,6,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+middleware/distributor.go,,M,3,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+middleware/logger.go,,M,8,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+middleware/rate-limit.go,,M,17,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+middleware/turnstile-check.go,,M,90,46,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+middleware/turnstile-check_test.go,,A,141,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+model/affiliate.go,,A,296,0,false,CHUANAPI_MODULE,affiliate,production,EXTRACT,prefix:model/affiliate,Affiliate-owned models
+model/affiliate_reconcile.go,,A,156,0,false,CHUANAPI_MODULE,affiliate,production,EXTRACT,prefix:model/affiliate,Affiliate-owned models
+model/balance_ledger.go,,A,1120,0,false,CHUANAPI_MODULE,wallet,production,EXTRACT,prefix:model/balance_ledger,Wallet ledger-owned models and tests
+model/balance_ledger_test.go,,A,819,0,false,CHUANAPI_MODULE,wallet,test,EXTRACT,prefix:model/balance_ledger,Wallet ledger-owned models and tests
+model/checkin.go,,M,19,38,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+model/database_compat_integration_test.go,,A,316,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+model/db_time.go,,M,14,5,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+model/log_format_test.go,,M,57,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+model/main.go,,M,101,35,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+model/migration_registry_test.go,,A,86,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+model/model_bonus_eligible.go,,A,109,0,false,CHUANAPI_MODULE,wallet,production,EXTRACT,prefix:model/model_bonus_eligible,Wallet bonus policy-owned models and tests
+model/model_bonus_eligible_admin.go,,A,163,0,false,CHUANAPI_MODULE,wallet,production,EXTRACT,prefix:model/model_bonus_eligible,Wallet bonus policy-owned models and tests
+model/model_bonus_eligible_test.go,,A,230,0,false,CHUANAPI_MODULE,wallet,test,EXTRACT,prefix:model/model_bonus_eligible,Wallet bonus policy-owned models and tests
+model/model_meta.go,,M,33,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+model/model_metadata_sync.go,,M,65,8,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+model/model_metadata_test.go,,A,265,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+model/option.go,,M,46,8,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+model/option_affiliate_reward_test.go,,A,64,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+model/payment_method_guard_test.go,,M,62,11,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+model/pricing.go,,M,21,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+model/pricing_refresh.go,,M,1,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+model/quota_reserve.go,,M,13,80,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+model/quota_reserve_test.go,,M,152,31,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+model/quota_schema_bigint_test.go,,A,320,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+model/redemption.go,,M,24,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+model/redemption_test.go,,M,4,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+model/release_upgrade_integration_test.go,,A,87,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+model/subscription.go,,M,19,8,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+model/system_task.go,,M,6,5,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+model/system_task_test.go,,M,8,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+model/task.go,,M,59,12,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+model/task_cas_test.go,,M,11,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+model/task_effective_requestid_test.go,,A,217,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+model/token.go,,M,33,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+model/topup.go,,M,147,51,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+model/user.go,,M,109,203,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+model/user_cache.go,,M,2,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+model/user_quota_adjustment.go,,M,22,20,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+model/user_update_test.go,,M,184,11,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+model/utils.go,,M,8,7,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+ops/server/Caddyfile,,A,189,0,false,OPS_DEPLOYMENT,ops,ops,RETAIN,prefix:ops/,Deployment and operations assets
+ops/server/new-api-rc33-gates.example.json,,A,40,0,false,OPS_DEPLOYMENT,ops,ops,RETAIN,prefix:ops/,Deployment and operations assets
+ops/server/new-api-release-gate.py,,A,154,0,false,OPS_DEPLOYMENT,ops,ops,RETAIN,prefix:ops/,Deployment and operations assets
+ops/server/tests/test_dashboard_route_contract.py,,A,109,0,false,OPS_DEPLOYMENT,ops,ops,RETAIN,prefix:ops/,Deployment and operations assets
+ops/server/tests/test_release_gate.py,,A,145,0,false,OPS_DEPLOYMENT,ops,ops,RETAIN,prefix:ops/,Deployment and operations assets
+pkg/billingexpr/request_snapshot.go,,A,225,0,false,GENERIC_CORE_ENHANCEMENT,billing-expression,production,UPSTREAM_CANDIDATE,prefix:pkg/billingexpr/,Generic pricing expression capability
+pkg/billingexpr/request_snapshot_test.go,,A,125,0,false,GENERIC_CORE_ENHANCEMENT,billing-expression,test,UPSTREAM_CANDIDATE,prefix:pkg/billingexpr/,Generic pricing expression capability
+pkg/billingexpr/run.go,,M,22,10,false,GENERIC_CORE_ENHANCEMENT,billing-expression,production,UPSTREAM_CANDIDATE,prefix:pkg/billingexpr/,Generic pricing expression capability
+pkg/billingexpr/types.go,,M,9,3,false,GENERIC_CORE_ENHANCEMENT,billing-expression,production,UPSTREAM_CANDIDATE,prefix:pkg/billingexpr/,Generic pricing expression capability
+pkg/moneyport/boundary_test.go,,A,42,0,false,GENERIC_EXTENSION_KERNEL,money-port,test,RETAIN,prefix:pkg/moneyport/,Runtime funding capability leaf package
+pkg/moneyport/funding.go,,A,48,0,false,GENERIC_EXTENSION_KERNEL,money-port,production,RETAIN,prefix:pkg/moneyport/,Runtime funding capability leaf package
+relay/channel/api_request_getbody_test.go,,M,21,2,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+relay/channel/deepseek/adaptor_reasoning_test.go,,A,48,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+relay/channel/openai/chat_via_responses.go,,M,35,1,false,GENERIC_CORE_ENHANCEMENT,responses,production,UPSTREAM_CANDIDATE,contains:chat_via_responses,Generic Responses API chat bridge
+relay/channel/openai/chat_via_responses_stream_estimate_test.go,,A,116,0,false,GENERIC_CORE_ENHANCEMENT,responses,test,UPSTREAM_CANDIDATE,contains:chat_via_responses,Generic Responses API chat bridge
+relay/channel/openai/helper.go,,M,0,7,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+relay/channel/openai/image_console_test.go,,A,42,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+relay/channel/openai/relay_responses.go,,M,117,3,false,GENERIC_CORE_ENHANCEMENT,responses,production,UPSTREAM_CANDIDATE,contains:relay_responses,Generic Responses API provider enhancement
+relay/channel/openai/relay_responses_stream_failure_test.go,,A,234,0,false,GENERIC_CORE_ENHANCEMENT,responses,test,UPSTREAM_CANDIDATE,contains:relay_responses,Generic Responses API provider enhancement
+relay/channel/openai/relay_responses_test.go,,A,72,0,false,GENERIC_CORE_ENHANCEMENT,responses,test,UPSTREAM_CANDIDATE,contains:relay_responses,Generic Responses API provider enhancement
+relay/channel/xai/adaptor_reasoning_test.go,,A,76,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+relay/claude_handler.go,,M,19,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+relay/common/relay_info.go,,M,23,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+relay/compatible_handler.go,,M,22,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+relay/constant/relay_mode.go,,M,5,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+relay/helper/billing_expr_request.go,,M,26,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+relay/helper/common.go,,M,26,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+relay/helper/price.go,,M,8,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+relay/image_handler.go,,M,75,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,exact:relay/image_handler.go,Image relay entrypoint
+relay/image_handler_test.go,,A,269,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,exact:relay/image_handler_test.go,Image relay regression tests
+relay/relay_task.go,,M,12,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+relay/relay_task_test.go,,M,38,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+relay/responses_handler.go,,M,36,4,false,GENERIC_CORE_ENHANCEMENT,responses,production,UPSTREAM_CANDIDATE,contains:responses_handler,Generic Responses API relay enhancement
+relay/responses_handler_test.go,,A,143,0,false,GENERIC_CORE_ENHANCEMENT,responses,test,UPSTREAM_CANDIDATE,contains:responses_handler,Generic Responses API relay enhancement
+relaykit/dto/openai_image.go,,M,2,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+relaykit/relayconvert/internal/oai_responses/to_oai_chat_stream_resp.go,,M,23,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+relaykit/relayconvert/internal/oai_responses/usage_text_capture_test.go,,A,26,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+relaykit/relayconvert/response_registry.go,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+relaykit/relayconvert/response_registry_test.go,,M,1,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+router/api-router.go,,M,70,28,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+router/api_router_test.go,,A,63,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+router/auth_session_test.go,,A,197,0,false,GENERIC_CORE_ENHANCEMENT,security,test,UPSTREAM_CANDIDATE,contains:auth_session,Generic session hardening
+router/dashboard.go,,M,0,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+router/extension_routes_test.go,,A,120,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+router/image_async_test.go,,A,28,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,contains:image_async,Async image-generation backend surface
+router/main.go,,M,32,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+router/plugin_router_test.go,,M,1,1,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+router/pricing_access_test.go,,A,29,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+router/relay-router.go,,M,8,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+service/affiliate_reward.go,,A,165,0,false,CHUANAPI_MODULE,affiliate,production,EXTRACT,prefix:service/affiliate_reward,Affiliate reward and maintenance implementation
+service/affiliate_reward_maintenance.go,,A,202,0,false,CHUANAPI_MODULE,affiliate,production,EXTRACT,prefix:service/affiliate_reward,Affiliate reward and maintenance implementation
+service/affiliate_reward_maintenance_system_task_test.go,,A,88,0,false,CHUANAPI_MODULE,affiliate,test,EXTRACT,prefix:service/affiliate_reward,Affiliate reward and maintenance implementation
+service/affiliate_reward_test.go,,A,388,0,false,CHUANAPI_MODULE,affiliate,test,EXTRACT,prefix:service/affiliate_reward,Affiliate reward and maintenance implementation
+service/auth_session.go,,M,47,3,false,GENERIC_CORE_ENHANCEMENT,security,production,UPSTREAM_CANDIDATE,contains:auth_session,Generic session hardening
+service/billing_session.go,,M,178,55,false,GENERIC_CORE_ENHANCEMENT,billing-orchestration,production,RETAIN,exact:service/billing_session.go,Generic request billing orchestrator; Wallet implementation must be injected
+service/billing_usage_ledger_test.go,,A,83,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+service/bonus_eligible.go,,A,138,0,false,CHUANAPI_MODULE,wallet,production,EXTRACT,prefix:service/bonus_eligible,Wallet bonus eligibility implementation
+service/bonus_eligible_test.go,,A,491,0,false,CHUANAPI_MODULE,wallet,test,EXTRACT,prefix:service/bonus_eligible,Wallet bonus eligibility implementation
+service/channel_affinity_usage_cache_test.go,,M,6,7,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+service/chuanapi_domain_test.go,,A,94,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+service/funding_source.go,,M,278,11,false,UPSTREAM_CORE,wallet-mixed,production,SPLIT,exact:service/funding_source.go,Contains WalletFunding and SubscriptionFunding; must split through ports before extraction
+service/image_async.go,,A,114,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,contains:image_async,Async image-generation backend surface
+service/image_async_test.go,,A,63,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,contains:image_async,Async image-generation backend surface
+service/log_info_generate.go,,M,49,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+service/log_info_generate_stream_test.go,,A,68,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+service/midjourney.go,,M,23,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+service/moneyport_capability_test.go,,A,397,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+service/passkey/service_test.go,,A,108,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+service/quota.go,,M,115,35,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+service/quota_idempotency_test.go,,A,237,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+service/quota_wss_billing_identity_test.go,,A,219,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+service/stream_estimate.go,,A,192,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+service/stream_estimate_test.go,,A,165,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+service/task_billing.go,,M,90,13,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+service/task_billing_identity_test.go,,A,194,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+service/task_billing_test.go,,M,129,16,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+service/task_polling.go,,M,65,38,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+service/task_polling_test.go,,M,101,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+service/task_request_id_test.go,,A,58,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+service/text_quota.go,,M,10,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+service/text_quota_test.go,,M,16,3,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+service/tiered_settle_test.go,,M,10,17,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+service/usage_count_bench_test.go,,A,57,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+service/wallet_funding_ledger_test.go,,A,157,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/bun.lock,,M,7,6,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/index.html,,M,2,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/package.json,,M,4,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/public/brand/wanchuan-mark-v2.png,,A,0,0,true,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/public/logo.png,,M,0,0,true,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/rsbuild.config.ts,,M,6,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/scripts/sync-i18n.mjs,,M,8,7,false,UPSTREAM_CORE,core-review,tooling,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/brand-icons/icon-discord.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/brand-icons/icon-docker.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/brand-icons/icon-facebook.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/brand-icons/icon-figma.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/brand-icons/icon-github.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/brand-icons/icon-gitlab.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/brand-icons/icon-gmail.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/brand-icons/icon-linuxdo.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/brand-icons/icon-medium.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/brand-icons/icon-notion.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/brand-icons/icon-skype.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/brand-icons/icon-slack.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/brand-icons/icon-stripe.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/brand-icons/icon-telegram.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/brand-icons/icon-trello.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/brand-icons/icon-wechat.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/brand-icons/icon-whatsapp.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/brand-icons/icon-zoom.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/clerk-full-logo.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/clerk-logo.tsx,,M,2,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/custom/icon-dir.tsx,,M,2,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/custom/icon-layout-compact.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/custom/icon-layout-default.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/custom/icon-layout-full.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/custom/icon-sidebar-floating.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/custom/icon-sidebar-inset.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/custom/icon-sidebar-sidebar.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/custom/icon-theme-dark.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/custom/icon-theme-light.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/custom/icon-theme-system.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/assets/logo.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/__tests__/confirm-dialog.test.tsx,,A,73,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/__tests__/risk-acknowledgement-dialog.test.tsx,,A,176,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/ai-elements/__tests__/response-fade-render.test.tsx,,M,9,9,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/ai-elements/__tests__/response-fade.test.ts,,M,1,3,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/ai-elements/__tests__/web-preview-sandbox.test.tsx,,A,54,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/ai-elements/__tests__/web-preview.test.tsx,,A,102,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/ai-elements/actions.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/ai-elements/artifact.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/ai-elements/canvas.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/ai-elements/plan.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/ai-elements/prompt-input.tsx,,M,55,47,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/ai-elements/response-fade.ts,,M,0,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/ai-elements/response-renderer-inline.tsx,,M,1,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/ai-elements/web-preview.tsx,,M,25,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/command-menu.tsx,,M,7,6,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/confirm-dialog.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/copy-button.tsx,,M,2,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/data-table/core/column-header.tsx,,M,13,8,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/data-table/toolbar/faceted-filter.tsx,,M,32,18,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/data-table/toolbar/view-options.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/layout/components/__tests__/footer-sanitize.test.tsx,,A,81,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/layout/components/app-header.tsx,,M,32,34,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/layout/components/footer.tsx,,M,34,10,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/layout/components/nav-group.tsx,,M,10,7,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/layout/components/nav-link-item.tsx,,M,14,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/layout/components/public-header.tsx,,M,74,35,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/layout/components/public-navigation.tsx,,M,17,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/layout/components/system-brand.tsx,,M,8,10,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/layout/components/top-nav.tsx,,M,79,41,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/layout/config/system-settings.config.ts,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/layout/config/top-nav.config.ts,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/layout/lib/sidebar-view-registry.ts,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/layout/lib/url-utils.ts,,M,2,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/layout/types.ts,,M,5,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/long-text.tsx,,M,2,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/multi-select.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/navigation-progress.tsx,,M,1,6,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/page-transition.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/rich-content.tsx,,M,29,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/risk-acknowledgement-dialog.tsx,,M,62,29,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/search.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/skip-to-main.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/tag-input.tsx,,M,4,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/turnstile.tsx,,M,6,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/components/ui/combobox.tsx,,M,1,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/context/__tests__/search-context.test.tsx,,A,81,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/context/search-context.tsx,,A,37,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/context/search-provider.tsx,,M,2,18,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/extensions/__tests__/bridge.test.ts,,A,105,0,false,GENERIC_EXTENSION_KERNEL,frontend-extension,test,RETAIN,prefix:web/src/extensions/,Generic frontend extension contracts
+web/src/extensions/brand.ts,,A,42,0,false,GENERIC_EXTENSION_KERNEL,frontend-extension,production,RETAIN,prefix:web/src/extensions/,Generic frontend extension contracts
+web/src/extensions/chuanapi/brand.ts,,A,19,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/flags.ts,,A,38,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/components/ai-docs-callout.tsx,,A,91,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/components/api-code-block.tsx,,A,60,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/components/api-endpoint-tree.tsx,,A,218,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/components/docs-shell.tsx,,A,82,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/components/docs-sidebar.tsx,,A,120,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/components/faq-section.tsx,,A,73,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/components/guide-article.tsx,,A,104,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/components/prev-next-nav.tsx,,A,74,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/endpoints.ts,,A,629,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/faq.ts,,A,46,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/anthropic-sdk.ts,,A,125,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/authentication.ts,,A,104,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/billing.ts,,A,68,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/cc-switch.ts,,A,70,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/cherry-studio.ts,,A,68,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/claude-code.ts,,A,96,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/cline-roo.ts,,A,84,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/codex-cli.ts,,A,97,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/compatibility.ts,,A,77,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/console-tour.ts,,A,75,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/function-calling.ts,,A,124,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/immersive-translate.ts,,A,54,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/index.ts,,A,58,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/openai-sdk.ts,,A,110,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/playground.ts,,A,47,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/quick-start.ts,,A,89,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/streaming.ts,,A,121,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/troubleshooting.ts,,A,96,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/guides/vision.ts,,A,110,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/nav.ts,,A,114,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/content/types.ts,,A,89,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/index.tsx,,A,21,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/lib/api-samples.ts,,A,324,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/lib/docs-utils.ts,,A,88,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/pages/api-reference-page.tsx,,A,433,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/pages/docs-index.tsx,,A,119,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/help/pages/guide-page.tsx,,A,96,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/i18n/index.ts,,A,58,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/i18n/locales/en.json,,A,41,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/i18n/locales/fr.json,,A,41,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/i18n/locales/ja.json,,A,41,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/i18n/locales/ru.json,,A,41,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/i18n/locales/vi.json,,A,41,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/i18n/locales/zh-TW.json,,A,41,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/i18n/locales/zh.json,,A,41,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/index.ts,,A,37,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/navigation.test.ts,,A,126,0,false,CHUANAPI_MODULE,console,test,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/chuanapi/navigation.ts,,A,53,0,false,CHUANAPI_MODULE,console,production,RETAIN,prefix:web/src/extensions/chuanapi/,Concrete ChuanAPI frontend implementation
+web/src/extensions/flags.ts,,A,56,0,false,GENERIC_EXTENSION_KERNEL,frontend-extension,production,RETAIN,prefix:web/src/extensions/,Generic frontend extension contracts
+web/src/extensions/i18n.ts,,A,111,0,false,GENERIC_EXTENSION_KERNEL,frontend-extension,production,RETAIN,prefix:web/src/extensions/,Generic frontend extension contracts
+web/src/extensions/index.ts,,A,52,0,false,COMPOSITION_ROOT,frontend-composition,production,RETAIN,exact:web/src/extensions/index.ts,Frontend concrete extension wiring root
+web/src/extensions/navigation.test.ts,,A,52,0,false,GENERIC_EXTENSION_KERNEL,frontend-extension,test,RETAIN,prefix:web/src/extensions/,Generic frontend extension contracts
+web/src/extensions/navigation.ts,,A,64,0,false,GENERIC_EXTENSION_KERNEL,frontend-extension,production,RETAIN,prefix:web/src/extensions/,Generic frontend extension contracts
+web/src/features/auth/auth-layout.tsx,,M,3,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/auth/forgot-password/components/forgot-password-form.tsx,,M,2,28,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/auth/lib/oauth-callback-mode.ts,,M,17,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/auth/lib/validation.ts,,M,3,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/auth/reset-password-confirm/index.tsx,,M,10,9,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/auth/sign-in/components/user-auth-form.tsx,,M,1,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/auth/sign-up/components/sign-up-form.tsx,,M,11,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/auth/types.ts,,M,10,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/channels/components/__tests__/model-mapping-editor.test.tsx,,A,71,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/channels/components/channels-columns.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/channels/components/data-table-bulk-actions.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/channels/components/dialogs/advanced-custom-editor-dialog.tsx,,M,29,19,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/channels/components/dialogs/multi-key-manage-dialog.tsx,,M,19,12,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/channels/components/dialogs/param-override-editor-dialog.tsx,,M,373,330,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/channels/components/dialogs/upstream-update-dialog.tsx,,M,4,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/channels/components/drawers/channel-mutate-drawer.tsx,,M,43,132,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/channels/components/model-mapping-editor.tsx,,M,53,52,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/channels/constants.ts,,M,2,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/channels/lib/channel-field-update.ts,,M,0,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/channels/lib/model-categories.ts,,M,0,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/channels/lib/model-mapping-validation.ts,,M,5,7,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/channels/lib/upstream-update-utils.ts,,M,4,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/chat/lib/send-to-fluent.ts,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/dashboard/components/models/models-chart-preferences.tsx,,M,16,24,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/dashboard/components/models/models-filter-dialog.tsx,,M,6,7,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/dashboard/components/overview/__tests__/setup-guide.test.tsx,,M,10,6,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/dashboard/components/overview/overview-dashboard.tsx,,M,66,34,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/dashboard/components/ui/panel-wrapper.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/dashboard/lib/__tests__/charts-aggregation.test.ts,,A,72,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/dashboard/lib/api-info.ts,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/dashboard/lib/charts.ts,,M,32,26,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/dashboard/lib/stats.ts,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/dashboard/lib/text.ts,,M,3,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/errors/forbidden.tsx,,M,2,5,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/errors/general-error.tsx,,M,2,5,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/errors/not-found-error.tsx,,M,2,5,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/errors/unauthorized-error.tsx,,M,2,5,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/home/components/__tests__/hero-terminal-demo.test.tsx,,A,85,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/home/components/gateway-card.tsx,,M,2,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/home/components/hero-buttons.tsx,,M,10,6,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/home/components/hero-terminal-demo.tsx,,M,61,21,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/home/components/scrolling-icons.tsx,,M,4,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/home/components/sections/cta.tsx,,M,9,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/home/components/sections/features.tsx,,M,82,116,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/home/components/sections/hero.tsx,,M,13,21,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/home/components/sections/stats.tsx,,M,47,92,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/home/constants.ts,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/home/index.tsx,,M,19,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/image-generation/__tests__/api.test.ts,,A,378,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/artwork-workflow.test.tsx,,A,208,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/bootstrap.test.ts,,A,142,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/download.test.ts,,A,163,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/generation-cancel.test.tsx,,A,195,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/generation-interaction.test.tsx,,A,235,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/history-panel.test.tsx,,A,157,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/history-race.test.tsx,,A,477,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/history-storage.test.ts,,A,87,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/history-ttl.test.tsx,,A,241,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/history-utils.test.ts,,A,386,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/image-url-safety.test.ts,,A,232,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/interceptor-auth.test.ts,,A,121,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/model-capabilities.test.ts,,A,142,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/model-discovery.test.tsx,,A,173,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/model-filter.test.ts,,A,107,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/prompt-locale.test.tsx,,A,108,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/reference-uploader.test.tsx,,A,116,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/reference-validation.test.ts,,A,120,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/request-builders.test.ts,,A,236,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/response-format.test.ts,,A,157,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/route-guard.test.ts,,A,200,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/sidebar-image.test.ts,,A,149,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/use-image-data.test.tsx,,A,141,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/use-image-history.test.tsx,,A,204,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/__tests__/use-reference-images.test.tsx,,A,113,0,false,GENERIC_MODULE,imagegen,test,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/api.ts,,A,284,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/components/GenerationForm.tsx,,A,494,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/components/HistoryPanel.tsx,,A,364,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/components/ImageGenerationPage.tsx,,A,370,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/components/ReferenceUploader.tsx,,A,173,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/components/ResultGallery.tsx,,A,141,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/constants.ts,,A,39,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/hooks/use-image-data.ts,,A,101,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/hooks/use-image-generation.ts,,A,136,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/hooks/use-image-history.ts,,A,453,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/hooks/use-reference-images.ts,,A,108,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/index.tsx,,A,19,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/lib/blob-store.ts,,A,93,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/lib/history-utils.ts,,A,208,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/lib/managed-object-urls.ts,,A,82,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/lib/model-capabilities.ts,,A,193,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/lib/model-filter.ts,,A,88,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/lib/reference-data-url.ts,,A,70,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/lib/reference-validation.ts,,A,93,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/lib/request-builders.ts,,A,224,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/storage/history-storage.ts,,A,75,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/image-generation/types.ts,,A,94,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/features/image-generation/,Generic image-generation frontend module
+web/src/features/keys/api.ts,,M,5,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/keys/components/data-table-bulk-actions.tsx,,M,2,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/keys/constants.ts,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/models/__tests__/metadata-sync.test.tsx,,M,83,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/models/__tests__/model-listing.test.tsx,,M,6,4,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/models/components/deployment-access-guard.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/models/components/deployments-table.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/models/components/dialogs/sync-wizard-dialog.tsx,,M,20,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/models/components/models-table.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/models/components/prefill-group-shared.ts,,M,14,10,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/models/components/vendor-linked-models.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/models/components/vendors-table.tsx,,M,2,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/models/index.tsx,,M,3,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/models/lib/deployments-utils.ts,,M,6,6,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/models/section-registry.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/models/types.ts,,M,20,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/playground/components/chat/playground-empty-state.tsx,,M,37,19,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/playground/components/input/playground-input-tools.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/playground/components/playground-balance-bar.tsx,,A,53,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/playground/components/playground-quota-block.tsx,,A,62,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/playground/hooks/use-playground-options.ts,,M,2,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/playground/index.tsx,,M,44,15,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/pricing/__tests__/task-expr.test.ts,,M,5,1,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/pricing/__tests__/task-matrix-display.test.ts,,M,1,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/pricing/__tests__/task-matrix.test.ts,,M,1,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/pricing/components/model-details-api.tsx,,M,7,6,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/pricing/components/model-details-apps.tsx,,M,24,14,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/pricing/components/model-details-uptime-sparkline.tsx,,M,22,24,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/pricing/constants.ts,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/pricing/lib/filters.ts,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/pricing/lib/mock-stats.ts,,M,22,8,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/profile/__tests__/settings.test.tsx,,M,0,2,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/profile/api.ts,,M,4,13,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/profile/components/checkin-calendar-card.tsx,,M,17,79,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/profile/components/sidebar-modules-card.tsx,,M,7,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/profile/components/tabs/notification-tab.tsx,,M,8,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/profile/index.tsx,,M,1,9,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/profile/types.ts,,M,0,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/rankings/components/entity-links.tsx,,M,6,10,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/rankings/index.tsx,,M,35,30,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/rankings/lib/format.ts,,M,8,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/redemption-codes/components/redemptions-columns.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/redemption-codes/components/redemptions-provider.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/redemption-codes/lib/redemption-form.ts,,M,1,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/security/__tests__/page.test.tsx,,M,0,2,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/security/components/__tests__/login-session-utils.test.ts,,M,18,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/security/components/__tests__/privacy-card.test.tsx,,M,0,2,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/setup/setup-wizard.tsx,,M,42,32,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/subscriptions/components/subscriptions-columns.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/subscriptions/components/subscriptions-provider.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/subscriptions/constants.ts,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-info/components/system-tasks-panel.tsx,,M,49,36,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/__tests__/pricing-sync.test.tsx,,M,29,8,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/__tests__/task-public-address.test.ts,,M,1,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/auth/custom-oauth/components/preset-selector.tsx,,M,13,9,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/billing/index.tsx,,M,2,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/billing/section-registry.tsx,,M,2,6,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/content/dashboard-section.tsx,,M,4,6,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/general/channel-affinity/__tests__/cache-stats-dialog.test.tsx,,A,124,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/general/channel-affinity/cache-stats-dialog.tsx,,M,48,36,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/general/channel-affinity/constants.ts,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/general/pricing-section.tsx,,M,1,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/general/quota-settings-section.tsx,,M,22,40,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/integrations/amount-discount-dialog.tsx,,M,2,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/integrations/amount-discount-visual-editor.tsx,,M,3,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/integrations/amount-options-visual-editor.tsx,,M,4,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/integrations/utils.ts,,M,5,5,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/maintenance/config.ts,,M,1,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/maintenance/sidebar-modules-section.tsx,,M,6,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/models/__tests__/tiered-pricing-ui-key.test.ts,,A,52,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/models/group-ratio-visual-editor.tsx,,M,10,9,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/models/group-special-usable-editor.tsx,,M,18,9,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/models/model-ratio-table-columns.tsx,,M,6,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/models/tiered-pricing-editor.tsx,,M,40,31,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/models/tiered-pricing-ui-key.ts,,A,37,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/models/upstream-price-cells.tsx,,M,17,5,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/models/upstream-ratio-sync-helpers.ts,,M,41,16,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/models/upstream-ratio-sync-table.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/models/utils.ts,,M,5,5,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/request-limits/rate-limit-dialog.tsx,,M,2,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/request-limits/rate-limit-section.tsx,,M,3,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/types.ts,,M,2,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/system-settings/utils/json-parser.ts,,M,5,5,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/task-plugins/__tests__/enabled-option.test.ts,,M,1,4,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/task-plugins/__tests__/plugin-url.test.ts,,M,1,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/task-plugins/lib/host-protocols.ts,,M,0,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/usage-logs/__tests__/access.test.ts,,M,1,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/usage-logs/__tests__/artifacts.test.ts,,M,1,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/usage-logs/__tests__/mobile-layout.test.ts,,M,1,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/usage-logs/__tests__/task-details.test.ts,,M,1,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/usage-logs/audit/__tests__/viewer.test.tsx,,M,8,2,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/usage-logs/audit/components/audit-log-filter-bar.tsx,,M,7,8,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/usage-logs/components/columns/column-helpers.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/usage-logs/components/dialogs/user-info-dialog.tsx,,M,104,92,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/usage-logs/components/task-logs-filter-bar.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/usage-logs/types.ts,,M,6,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/users/components/__tests__/quota-display.test.tsx,,M,3,2,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/users/components/data-table-bulk-actions.tsx,,M,3,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/users/components/user-quota-dialog.tsx,,M,8,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/users/components/users-columns.tsx,,M,12,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/users/components/users-mutate-drawer.tsx,,M,20,6,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/users/components/users-provider.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/users/components/users-table.tsx,,M,2,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/users/lib/user-actions.ts,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/users/lib/user-form.ts,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/users/types.ts,,M,1,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/__tests__/funding-flow.test.tsx,,A,345,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/api.ts,,M,62,12,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/components/__tests__/ledger-table-error.test.tsx,,A,51,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/components/__tests__/wallet-stats-card.test.tsx,,A,152,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/components/affiliate-rewards-card.tsx,,D,0,136,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/components/creem-products-section.tsx,,M,8,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/components/dialogs/billing-history-dialog.tsx,,M,48,33,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/components/ledger-table.tsx,,A,312,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/components/recharge-form-card.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/components/redemption-card.tsx,,A,64,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/components/wallet-stats-card.tsx,,M,82,41,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/hooks/index.ts,,M,1,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/hooks/use-affiliate.ts,,M,1,29,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/hooks/use-wallet.ts,,A,64,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/index.tsx,,M,124,173,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/lib/__tests__/ledger.test.ts,,A,36,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/lib/__tests__/wallet-contract.test.ts,,A,68,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/lib/ledger.ts,,A,47,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/lib/ui.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/features/wallet/types.ts,,M,90,13,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/hooks/__tests__/sidebar-internal-routes.test.tsx,,A,139,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/hooks/__tests__/use-notifications.test.tsx,,A,129,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/hooks/__tests__/use-table-url-state.test.ts,,A,81,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/hooks/use-notifications.ts,,M,11,10,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/hooks/use-sidebar-config.ts,,M,5,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/hooks/use-sidebar-data.ts,,M,8,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/hooks/use-table-url-state.ts,,M,6,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/hooks/use-top-nav-links.ts,,M,30,15,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/i18n/config.ts,,M,113,40,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/i18n/locales/en.json,,M,145,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/i18n/locales/fr.json,,M,146,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/i18n/locales/ja.json,,M,150,6,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/i18n/locales/ru.json,,M,147,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/i18n/locales/vi.json,,M,147,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/i18n/locales/zh-TW.json,,M,147,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/i18n/locales/zh.json,,M,147,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/i18n/static-keys.ts,,M,27,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/lib/__tests__/status-query.test.ts,,A,109,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/lib/currency.ts,,M,12,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/lib/http-client.ts,,M,9,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/lib/http-status-code-rules.ts,,M,3,3,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/lib/legacy-route.test.ts,,M,2,2,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/lib/legacy-route.ts,,M,2,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/lib/localized-text.ts,,M,0,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/lib/nav-modules.ts,,M,48,38,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/lib/public-site.ts,,A,37,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/lib/session-hint.ts,,M,1,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/lib/status-query.ts,,M,142,87,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/lib/utils.ts,,M,2,2,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/routeTree.gen.ts,,M,122,36,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/routes/__root.tsx,,M,24,9,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/routes/_authenticated/chat/$chatId.tsx,,M,6,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/routes/_authenticated/chat/__tests__/-chat-iframe-sandbox.test.ts,,A,38,0,false,UPSTREAM_CORE,core-review,test,REVIEW,default:*,unclassified upstream-tree delta
+web/src/routes/_authenticated/image/index.tsx,,A,49,0,false,GENERIC_MODULE,imagegen,production,EXTRACT,prefix:web/src/routes/_authenticated/image/,Image-generation route shell
+web/src/routes/_authenticated/model-management/$section.tsx,web/src/routes/_authenticated/models/$section.tsx,R094,0,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/routes/_authenticated/model-management/index.tsx,web/src/routes/_authenticated/models/index.tsx,R091,0,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/routes/about/index.tsx,,M,4,4,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/routes/help/api/index.tsx,,A,52,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/routes/help/guides/$slug.tsx,,A,30,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/routes/help/index.tsx,,A,25,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/routes/index.tsx,,M,7,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/routes/setup/index.tsx,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/stores/system-config-store.ts,,M,1,1,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta
+web/src/test-setup.ts,,M,33,0,false,UPSTREAM_CORE,core-review,production,REVIEW,default:*,unclassified upstream-tree delta

@@ -16,6 +16,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+/**
+ * Tells apart the two OAuth callbacks that land on the same `/oauth/:provider`
+ * route: an account **bind**, which runs inside a popup we opened, and a plain
+ * **login** redirect, which runs in the user's own tab.
+ *
+ * `window.opener` alone cannot make that call. Any tab opened from an external
+ * link (`target="_blank"`, Slack, mail clients, another site) carries a live
+ * opener, and that opener survives the cross-origin round trip to the identity
+ * provider. Such a login callback used to be misread as a bind, so it posted a
+ * handshake to a window that speaks no such protocol and sat on the binding
+ * screen until the deadline elapsed.
+ *
+ * The popup we open for a bind is same-origin (`about:blank`) before it is sent
+ * to the provider, so we stamp its own sessionStorage. That stamp rides along
+ * through the provider round trip and is scoped to the popup alone, which makes
+ * it positive proof of a bind flow.
+ */
 
 const OAUTH_POPUP_FLOW_KEY_PREFIX = 'oauth_popup_flow:'
 

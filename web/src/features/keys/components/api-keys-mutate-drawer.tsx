@@ -64,10 +64,13 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { RelatedPolicyLink } from '@/features/system-settings/request-policies/related-policy-link'
 import { useStatus } from '@/hooks/use-status'
-import { getUserModels, getUserGroups } from '@/lib/api'
+import { getUserGroups } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { handleServerError } from '@/lib/handle-server-error'
-import { requireServerSuccess } from '@/lib/server-error-message'
+import {
+  requireServerSuccess,
+  translateServerText,
+} from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 import {
@@ -75,6 +78,7 @@ import {
   updateApiKey,
   getApiKey,
   getTokenAutoGroups,
+  getApiKeyScopeModels,
 } from '../api'
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
@@ -96,12 +100,14 @@ type ApiKeyMutateDrawerProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   currentRow?: ApiKey
+  onCreated?: () => void
 }
 
 export function ApiKeysMutateDrawer({
   open,
   onOpenChange,
   currentRow,
+  onCreated,
 }: ApiKeyMutateDrawerProps) {
   const { t } = useTranslation()
   const isUpdate = !!currentRow
@@ -114,14 +120,6 @@ export function ApiKeysMutateDrawer({
     null
   )
   const defaultUseAutoGroup = status?.default_use_auto_group === true
-
-  // Fetch models
-  const { data: modelsData } = useQuery({
-    queryKey: ['user-models'],
-    queryFn: async () => requireServerSuccess(await getUserModels()),
-    enabled: open,
-    staleTime: 0,
-  })
 
   // Fetch groups
   const {
@@ -158,16 +156,15 @@ export function ApiKeysMutateDrawer({
     staleTime: 0,
   })
 
-  const models = modelsData?.data || []
   const groups = useMemo<ApiKeyGroupOption[]>(
     () =>
       Object.entries(groupsData?.data || {}).map(([key, info]) => ({
         value: key,
         label: key,
-        desc: info.desc || key,
+        desc: info.desc ? translateServerText(t, info.desc) : key,
         ratio: info.ratio,
       })),
-    [groupsData]
+    [groupsData, t]
   )
   const backendHasAuto = groups.some((g) => g.value === 'auto')
   const availableAutoGroupNames = useMemo(
@@ -205,6 +202,9 @@ export function ApiKeysMutateDrawer({
   // Load existing data when updating
   useEffect(() => {
     if (!open) {
+      form.reset(
+        getApiKeyFormDefaultValues(defaultUseAutoGroup && backendHasAuto)
+      )
       setInitializedTarget(null)
       return
     }
@@ -262,6 +262,61 @@ export function ApiKeysMutateDrawer({
     isUpdate && currentRow ? `update:${currentRow.id}` : 'create'
   const isFormInitialized = initializedTarget === formTarget
   const selectedGroup = form.watch('group')
+  const autoGroupsMode = form.watch('auto_groups_mode')
+  const selectedAutoGroups = form.watch('auto_groups')
+  const selectedModelLimits = form.watch('model_limits')
+  const scopeAutoGroups = useMemo(
+    () =>
+      selectedGroup === 'auto' && autoGroupsMode === 'custom'
+        ? selectedAutoGroups
+        : [],
+    [selectedGroup, autoGroupsMode, selectedAutoGroups]
+  )
+
+  const { data: modelsData } = useQuery({
+    queryKey: [
+      'api-key-scope-models',
+      selectedGroup || '',
+      autoGroupsMode,
+      scopeAutoGroups,
+    ],
+    queryFn: async () =>
+      requireServerSuccess(
+        await getApiKeyScopeModels({
+          group: selectedGroup || '',
+          auto_groups_mode: autoGroupsMode,
+          auto_groups: scopeAutoGroups,
+        })
+      ),
+    enabled: open && isFormInitialized,
+    staleTime: 0,
+  })
+
+  const models = useMemo(() => modelsData?.data ?? [], [modelsData?.data])
+  const availableModelSet = useMemo(() => new Set(models), [models])
+  const unavailableSelectedModels = useMemo(
+    () =>
+      modelsData?.success
+        ? selectedModelLimits.filter(
+            (modelName) => !availableModelSet.has(modelName)
+          )
+        : [],
+    [availableModelSet, modelsData?.success, selectedModelLimits]
+  )
+  const modelOptions = useMemo(
+    () => [
+      ...models.map((modelName) => ({
+        label: modelName,
+        value: modelName,
+      })),
+      ...unavailableSelectedModels.map((modelName) => ({
+        label: modelName,
+        value: modelName,
+        hint: t('Unavailable for current routing scope'),
+      })),
+    ],
+    [models, t, unavailableSelectedModels]
+  )
 
   // Correct group after groups load: if the form value is not in available groups, fall back
   useEffect(() => {
@@ -320,6 +375,7 @@ export function ApiKeysMutateDrawer({
         }
 
         if (successCount > 0) {
+          onCreated?.()
           toast.success(
             t('Successfully created {{count}} API Key(s)', {
               count: successCount,
@@ -342,7 +398,7 @@ export function ApiKeysMutateDrawer({
 
   const handleSetExpiry = (months: number, days: number, hours: number) => {
     if (months === 0 && days === 0 && hours === 0) {
-      form.setValue('expired_time', undefined)
+      form.setValue('expired_time', null)
       return
     }
 
@@ -361,19 +417,10 @@ export function ApiKeysMutateDrawer({
   const quotaPlaceholder = tokensOnly
     ? t('Enter quota in tokens')
     : t('Enter quota in {{currency}}', { currency: currencyLabel })
-  const autoGroupsMode = form.watch('auto_groups_mode')
   const unlimitedQuota = form.watch('unlimited_quota')
 
   return (
-    <Sheet
-      open={open}
-      onOpenChange={(v) => {
-        onOpenChange(v)
-        if (!v) {
-          form.reset()
-        }
-      }}
-    >
+    <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         className={sideDrawerContentClassName('max-w-none sm:!max-w-[620px]')}
       >
@@ -524,8 +571,8 @@ export function ApiKeysMutateDrawer({
                     <div className='grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center'>
                       <FormControl>
                         <DateTimePicker
-                          value={field.value}
-                          onChange={field.onChange}
+                          value={field.value ?? undefined}
+                          onChange={(date) => field.onChange(date ?? null)}
                           placeholder={t('Never expires')}
                           className='min-w-0 [&_input[type=time]]:w-24 sm:[&_input[type=time]]:w-32'
                         />
@@ -703,10 +750,7 @@ export function ApiKeysMutateDrawer({
                           <FormLabel>{t('Model Limits')}</FormLabel>
                           <FormControl>
                             <MultiSelect
-                              options={models.map((m) => ({
-                                label: m,
-                                value: m,
-                              }))}
+                              options={modelOptions}
                               selected={field.value}
                               onChange={field.onChange}
                               placeholder={t(
@@ -715,7 +759,16 @@ export function ApiKeysMutateDrawer({
                             />
                           </FormControl>
                           <FormDescription>
-                            {t('Limit which models can be used with this key')}
+                            {unavailableSelectedModels.length > 0
+                              ? t(
+                                  '{{count}} selected model(s) are unavailable for the current routing scope. They remain in the whitelist until you remove or replace them.',
+                                  {
+                                    count: unavailableSelectedModels.length,
+                                  }
+                                )
+                              : t(
+                                  'Limit which models can be used with this key'
+                                )}
                           </FormDescription>
                           <FormMessage />
                         </FormItem>
@@ -746,6 +799,31 @@ export function ApiKeysMutateDrawer({
                             )}
                           </FormDescription>
                           <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name='allow_user_quota_query'
+                      render={({ field }) => (
+                        <FormItem className={sideDrawerSwitchItemClassName()}>
+                          <div className='flex flex-col gap-0.5'>
+                            <FormLabel className='text-sm'>
+                              {t('Allow querying user quota')}
+                            </FormLabel>
+                            <FormDescription className='text-xs'>
+                              {t(
+                                "When enabled, this API key can be used to check your account's remaining and used quota."
+                              )}
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                            />
+                          </FormControl>
                         </FormItem>
                       )}
                     />

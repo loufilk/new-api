@@ -1,0 +1,526 @@
+{
+  "source_pin_policy": "Every execution must record and verify the immutable actual commit, tree and tracked-file hashes; this inventory is part of that tree.",
+  "policy": "financial-consistency-v2-atomic-source-token-task-ownership",
+  "service_matrix_additions": [
+    {
+      "prefix": "financial_lost_ack",
+      "test": "TestFinancialConsistencyLostACKRefund",
+      "required_leaf_suffixes": [
+        "readable",
+        "read_failure"
+      ]
+    },
+    {
+      "prefix": "financial_task_refund",
+      "test": "TestFinancialConsistencyTaskRefundAtomic",
+      "required_leaf_suffixes": [
+        "batch_false/tokens",
+        "batch_false/tasks",
+        "batch_true/tokens",
+        "batch_true/tasks"
+      ]
+    },
+    {
+      "prefix": "financial_mj_refund",
+      "test": "TestFinancialConsistencyMidjourneyRefundAtomic",
+      "required_leaf_suffixes": [
+        ""
+      ]
+    },
+    {
+      "prefix": "financial_stale_success",
+      "test": "TestFinancialConsistencyStaleChannelFailurePreservesSuccess",
+      "required_leaf_suffixes": [
+        ""
+      ]
+    },
+    {
+      "prefix": "financial_metadata",
+      "test": "TestFinancialConsistencyUnknownMetadataNeverBlindRefunds",
+      "required_leaf_suffixes": [
+        "both_ids",
+        "channel"
+      ]
+    },
+    {
+      "prefix": "financial_submit",
+      "test": "TestFinancialConsistencyTaskSubmitNetReceipt",
+      "required_leaf_suffixes": [
+        "trusted_zero",
+        "preconsume_more",
+        "preconsume_less",
+        "reserved",
+        "submit_rollback",
+        "submit_lost_ack"
+      ]
+    },
+    {
+      "prefix": "financial_task_identity",
+      "test": "TestFinancialConsistencyTaskOriginalTokenIdentity",
+      "required_leaf_suffixes": [
+        "hard_delete",
+        "same_id_new_key"
+      ]
+    },
+    {
+      "prefix": "task_atomic",
+      "test": "TestTaskFinancialAtomic",
+      "required_leaf_suffixes": [
+        "refund_rollback_source",
+        "refund_rollback_token",
+        "refund_rollback_user_usage",
+        "refund_rollback_channel_usage",
+        "refund_rollback_task_receipt",
+        "refund_rollback_main_log",
+        "commit_boundary_refund_false_mode_1",
+        "commit_boundary_refund_false_mode_2",
+        "commit_boundary_refund_true_mode_1",
+        "commit_boundary_refund_true_mode_2",
+        "settlement_more_retains_exact_net_receipt",
+        "concurrent_fresh_snapshots",
+        "fail_closed_wallet_receipt",
+        "fail_closed_token_fingerprint",
+        "fail_closed_source_only_refund",
+        "fail_closed_legacy_no_token",
+        "soft_deleted_original_token"
+      ]
+    },
+    {
+      "prefix": "mj_atomic",
+      "test": "TestMidjourneyFinancialAtomic",
+      "required_leaf_suffixes": [
+        "charge_quota_0_commit_mode_1",
+        "charge_quota_0_commit_mode_2",
+        "charge_quota_300_commit_mode_1",
+        "charge_quota_300_commit_mode_2",
+        "refund_tokens",
+        "refund_channels",
+        "refund_midjourneys",
+        "refund_logs",
+        "refund_lost_ack",
+        "concurrent_refund_fresh_snapshots",
+        "fail_closed_missing_identity",
+        "fail_closed_missing_receipt",
+        "fail_closed_source_only_refund",
+        "fail_closed_source_only_charge",
+        "uncharged_failure_never_refunds",
+        "no_token_uses_explicit_identity"
+      ]
+    },
+    {
+      "prefix": "separate_log",
+      "test": "TestTaskFinancialSeparateLogFailureIsAtMostOnce",
+      "required_leaf_suffixes": [
+        "midjourney_false",
+        "midjourney_true"
+      ]
+    },
+    {
+      "prefix": "lifecycle_initial",
+      "test": "TestBillingLifecycleInitialReservationRollback",
+      "required_leaf_suffixes": [
+        "wallet/source_receipt",
+        "wallet/token",
+        "wallet/held",
+        "subscription/source_receipt",
+        "subscription/token",
+        "subscription/held"
+      ]
+    },
+    {
+      "prefix": "lifecycle_reserve",
+      "test": "TestBillingLifecycleReserveRollback",
+      "required_leaf_suffixes": [
+        "wallet/source_receipt",
+        "wallet/token",
+        "wallet/held",
+        "subscription/source_receipt",
+        "subscription/token",
+        "subscription/held"
+      ]
+    },
+    {
+      "prefix": "lifecycle_admission_failure",
+      "test": "TestBillingLifecycleRefundAdmissionFailurePreservesHeld",
+      "required_leaf_suffixes": [
+        "wallet",
+        "subscription"
+      ]
+    },
+    {
+      "prefix": "lifecycle_ready_recovery",
+      "test": "TestBillingLifecycleReadyRefundRecoversWithoutRequestWorker",
+      "required_leaf_suffixes": [
+        "wallet",
+        "subscription"
+      ]
+    },
+    {
+      "prefix": "lifecycle_unknown_delivery",
+      "test": "TestBillingLifecycleUnknownDeliveryNeverAdmitsRefund",
+      "required_leaf_suffixes": [
+        "wallet",
+        "subscription"
+      ]
+    },
+    {
+      "prefix": "lifecycle_trusted_zero",
+      "test": "TestBillingLifecycleTrustedZeroHasDurableHeldReceipt",
+      "required_leaf_suffixes": [
+        ""
+      ]
+    },
+    {
+      "prefix": "lifecycle_reservation_ack",
+      "test": "TestBillingLifecycleReservationCommitAckRecovery",
+      "required_leaf_suffixes": [
+        "wallet/initial",
+        "wallet/reserve",
+        "subscription/initial",
+        "subscription/reserve"
+      ]
+    },
+    {
+      "prefix": "mj_request_owner",
+      "test": "TestMidjourneyFinancialRequestOwner",
+      "required_leaf_suffixes": [
+        "same_request_same_amount",
+        "same_request_different_amount",
+        "same_request_other_user",
+        "zero_request_duplicate",
+        "canceled_request_cannot_recharge",
+        "source_only_different_amount_fails_closed"
+      ]
+    },
+    {
+      "prefix": "mj_zero_refund_identity",
+      "test": "TestMidjourneyFinancialZeroRefundIdentity",
+      "required_leaf_suffixes": [
+        ""
+      ]
+    },
+    {
+      "prefix": "financial_contention",
+      "test": "TestFinancialConsistencyTerminalContention",
+      "required_leaf_suffixes": [
+        "wallet_settle_refund",
+        "task_refund",
+        "midjourney_refund"
+      ]
+    },
+    {
+      "prefix": "review_failure_usage",
+      "test": "TestTaskFinancialReviewFailureUsageCommitAndRecovery",
+      "required_leaf_suffixes": [
+        "token_write_fault=false",
+        "token_write_fault=true"
+      ]
+    },
+    {
+      "prefix": "review_legacy_terminal",
+      "test": "TestTaskFinancialReviewLegacyTerminalObservation",
+      "required_leaf_suffixes": [
+        "SUCCESS",
+        "FAILURE"
+      ]
+    },
+    {
+      "prefix": "review_zero_price_usage",
+      "test": "TestTaskFinancialReviewFailureZeroPriceUsage",
+      "required_leaf_suffixes": [
+        ""
+      ]
+    },
+    {
+      "prefix": "review_task_recovery_fairness",
+      "test": "TestTaskFinancialReviewRecoveryFairness",
+      "required_leaf_suffixes": [
+        ""
+      ]
+    },
+    {
+      "prefix": "review_mj_recovery_fairness",
+      "test": "TestMidjourneyFinancialReviewRecoveryFairness",
+      "required_leaf_suffixes": [
+        ""
+      ]
+    },
+    {
+      "prefix": "review_quota_export",
+      "test": "TestTaskFinancialReviewQuotaExportParity",
+      "required_leaf_suffixes": [
+        "separate_log=false",
+        "separate_log=true"
+      ]
+    },
+    {
+      "prefix": "realtime_lifecycle",
+      "test": "TestRealtimeBillingLifecycle",
+      "required_leaf_suffixes": [
+        "wallet/aggregate",
+        "wallet/segment_rollback",
+        "wallet/segment_lost_ack",
+        "wallet/final_lost_ack",
+        "wallet/partial_refund",
+        "wallet/zero_usage",
+        "wallet/zero_price",
+        "wallet/fixed_price",
+        "wallet/missing_total",
+        "subscription/aggregate",
+        "subscription/segment_rollback",
+        "subscription/segment_lost_ack",
+        "subscription/final_lost_ack",
+        "subscription/partial_refund",
+        "subscription/zero_usage",
+        "subscription/zero_price",
+        "subscription/fixed_price",
+        "subscription/missing_total"
+      ]
+    },
+    {
+      "prefix": "realtime_trusted",
+      "test": "TestRealtimeBillingTrustedObservedOnly",
+      "required_leaf_suffixes": [
+        ""
+      ]
+    },
+    {
+      "prefix": "subscription_snapshot_unknown",
+      "test": "TestSubscriptionReservationOldPeriodSnapshotUnknown",
+      "required_leaf_suffixes": [
+        "fresh_replay",
+        "reserve_lost_ack"
+      ]
+    },
+    {
+      "prefix": "unowned_hold",
+      "test": "TestBillingUnownedHoldRequiresReview",
+      "required_leaf_suffixes": [
+        "refund",
+        "settle_zero",
+        "settle_more",
+        "handoff_zero",
+        "handoff_more",
+        "free_task_zero"
+      ]
+    },
+    {
+      "prefix": "audio_fixed_price",
+      "test": "TestAudioFixedPriceBilling",
+      "required_leaf_suffixes": [
+        "fixed_price",
+        "token_ratios"
+      ]
+    }
+  ],
+  "model_suites": [
+    {
+      "package": "model",
+      "label": "subscription-financial-consistency",
+      "top": "TestSubscriptionFinancialConsistencyDatabaseMatrix",
+      "dsn_env": {
+        "mysql": "TEST_MYSQL_DSN",
+        "postgres": "TEST_POSTGRES_DSN"
+      },
+      "required_leaf_suffixes": [
+        "absolute_reserve_and_terminal_identity",
+        "real_commit_lost_ack_replay",
+        "receipt_write_failure_rolls_back_reserve_and_settle",
+        "caller_transaction_rollback_preserves_reservation",
+        "retired_period_rejects_growth_and_closes_old_settlement",
+        "task_adjustment_requires_exact_prior_evidence",
+        "unknown_legacy_period_requires_review",
+        "overflow_cannot_credit_or_publish_a_receipt",
+        "concurrent_request_claims_validate_the_winner/same_identity",
+        "concurrent_request_claims_validate_the_winner/different_user",
+        "concurrent_request_claims_validate_the_winner/different_amount",
+        "concurrent_settle_and_refund_have_one_terminal_owner"
+      ]
+    },
+    {
+      "package": "model",
+      "label": "financial-review-read-only",
+      "top": "TestFinancialReviewReportDatabaseMatrix",
+      "dsn_env": {
+        "mysql": "TEST_MYSQL_DSN",
+        "postgres": "TEST_POSTGRES_DSN"
+      },
+      "required_leaf_suffixes": [
+        "pending_identity_redaction_and_no_writes",
+        "undeployed_and_partial_schemas_are_not_clean_history"
+      ]
+    },
+    {
+      "package": "model",
+      "label": "subscription-correctness",
+      "top": "TestFinancialConsistencySubscriptionDatabaseMatrix",
+      "sqlite_modes": [
+        "sqlite_immediate",
+        "sqlite_deferred"
+      ],
+      "dsn_env": {
+        "mysql": "TEST_MYSQL_DSN",
+        "postgres": "TEST_POSTGRES_DSN"
+      },
+      "required_leaf_suffixes": [
+        "request_identity",
+        "refund_receipt_write_failure",
+        "old_period_refund"
+      ]
+    },
+    {
+      "package": "model",
+      "label": "subscription-supplement",
+      "top": "TestSubscriptionSupplementDatabaseMatrix",
+      "dsn_env": {
+        "mysql": "TEST_MYSQL_DSN",
+        "postgres": "TEST_POSTGRES_DSN"
+      },
+      "required_leaf_suffixes": [
+        "same_operation_and_independent_segments",
+        "concurrent_same_operation_has_one_owner",
+        "amount_and_full_identity_conflicts",
+        "token_sql_error",
+        "terminal_receipt_sql_error",
+        "real_commit_lost_ack_replay",
+        "retired_period_rejects_new_charge_but_keeps_prior_replay",
+        "invalid_input_and_replacement_token_fail_closed"
+      ]
+    },
+    {
+      "package": "model",
+      "label": "midjourney-migration",
+      "top": "TestMidjourneyWalletReceiptMigrationDatabaseMatrix",
+      "dsn_env": {
+        "mysql": "TEST_MYSQL_DSN",
+        "postgres": "TEST_POSTGRES_DSN"
+      },
+      "required_leaf_suffixes": [
+        "upgrade=false",
+        "upgrade=true"
+      ],
+      "existing_report": true,
+      "required_semantics": "All four financial identity/accounting columns migrate without backfilling old fingerprints; roundtrip new identity, hide private JSON, migrate twice."
+    }
+  ],
+  "limitations": [
+    "Separate LOG_DB assertions prove financial commit plus best-effort display at most once, not cross-database atomic delivery.",
+    "Parent proxy nodes verify exactly one same-binary child execution; never double-count proxies as financial tests.",
+    "Historical baseline parity/invalid-fixture/liveness outcomes are retained separately."
+  ],
+  "model_matrix_additions": [
+    {
+      "prefix": "token_counter_bounds",
+      "test": "runFinancialTokenCounterBoundsCases",
+      "required_leaf_suffixes": [
+        "remaining_overflow",
+        "remaining_underflow",
+        "used_overflow",
+        "used_underflow",
+        "exact_integer_boundary",
+        "unscoped_debit_active",
+        "unscoped_debit_soft_deleted"
+      ]
+    },
+    {
+      "prefix": "subscription_wallet_lock_order",
+      "test": "runFinancialSubscriptionLockOrderCases",
+      "native_required_leaf_suffixes": [
+        "supplement_vs_wallet_same_user_token"
+      ],
+      "sqlite_lock_contention_claim": false
+    }
+  ],
+  "realtime_suite": {
+    "label": "realtime-financial",
+    "package": "relay/channel/openai",
+    "top": "TestRealtimeFinancialConsistencyDatabaseMatrix",
+    "dsn_env": {
+      "mysql": "TEST_FINALIZATION_REALTIME_MYSQL_DSN",
+      "postgres": "TEST_FINALIZATION_REALTIME_POSTGRES_DSN"
+    },
+    "required_leaf_suffixes": [
+      "financial/multiple_response_done",
+      "financial/segment_sql_failure_observed_once",
+      "financial/tiered_audio_and_cache_facts",
+      "financial/tiered_image_cache_presence",
+      "financial/tiered_mixed_cache_presence/known_first",
+      "financial/tiered_mixed_cache_presence/missing_first",
+      "termination/request_cancel",
+      "termination/upstream_close",
+      "termination/client_close"
+    ],
+    "scope": "Real bidirectional WS and SQL/Token accounting; a one-connection fixture is not a lock-contention proof."
+  },
+  "sqlite_only_suites": [
+    {
+      "label": "realtime-free-entry",
+      "package": "relay",
+      "required_tests": [
+        "TestPrepareFreeRealtimeBilling/wallet_only/model",
+        "TestPrepareFreeRealtimeBilling/wallet_only/group",
+        "TestPrepareFreeRealtimeBilling/subscription_only/model",
+        "TestPrepareFreeRealtimeBilling/subscription_only/group"
+      ],
+      "scope": "Actual Prepare entry for model/group free routes, not native locking evidence."
+    },
+    {
+      "label": "financial-bonus-cache",
+      "package": "model",
+      "required_tests": [
+        "TestBonusEligibilityExpiresPreviouslyTrueCache",
+        "TestBonusEligibilityDoesNotRepublishInvalidatedSnapshot",
+        "TestBonusEligibilityCommittedMetadataRefreshControls",
+        "TestBonusEligibilityCommittedMetadataRefreshControls/update",
+        "TestBonusEligibilityCommittedMetadataRefreshControls/sync",
+        "TestBonusEligibilityCommittedMetadataRefreshControls/delete",
+        "TestBonusEligibilityDoesNotExtendPricingSnapshotLifetime",
+        "TestBonusEligibilityModelUpdateInvalidatesAfterCommit",
+        "TestBonusEligibilityRejectedMutationKeepsEligibility",
+        "TestBonusEligibilityCommitACKLossInvalidates",
+        "TestBonusEligibilityMutationCommitBoundaries",
+        "TestBonusEligibilityMutationCommitBoundaries/batch_commit",
+        "TestBonusEligibilityMutationCommitBoundaries/batch_lost_ack",
+        "TestBonusEligibilityMutationCommitBoundaries/delete_lost_ack",
+        "TestBonusEligibilityMutationCommitBoundaries/delete_pricing_lost_ack",
+        "TestBonusEligibilityMutationCommitBoundaries/sync_bonus_lost_ack",
+        "TestBonusEligibilityMutationCommitBoundaries/sync_name_rule_lost_ack"
+      ],
+      "scope": "TTL/inflight/commit control with the package-owned SQLite fixture.",
+      "require_run": true
+    },
+    {
+      "label": "financial-bonus-cache-status",
+      "package": "controller",
+      "required_tests": [
+        "TestModelBonusCacheStatusOnlyCommitACKLoss"
+      ],
+      "scope": "SQLite-only real status-only HTTP handler, real COMMIT lost ACK, committed row plus both wildcard-cache and exact fallback behavior; not native concurrency evidence."
+    },
+    {
+      "label": "financial-admin-input",
+      "package": "controller",
+      "required_tests": [
+        "TestManageUserQuotaInputPresenceAndType/missing_override",
+        "TestManageUserQuotaInputPresenceAndType/null_override",
+        "TestManageUserQuotaInputPresenceAndType/explicit_zero_override",
+        "TestManageUserQuotaInputPresenceAndType/fractional_override",
+        "TestManageUserQuotaInputPresenceAndType/nonfinite_exponent_override",
+        "TestManageUserQuotaInputPresenceAndType/unsafe_integer_override",
+        "TestManageUserQuotaInputPresenceAndType/numeric_string_override",
+        "TestManageUserQuotaInputPresenceAndType/missing_nonquota",
+        "TestManageUserQuotaInputPresenceAndType/null_nonquota"
+      ],
+      "scope": "SQLite-only real ManageUser input-presence/type boundaries, explicit zero and authenticated nonquota controls; not native concurrency evidence."
+    }
+  ],
+  "nested_module_suites": [
+    {
+      "module": "relaykit",
+      "package": "./dto",
+      "selector": "^TestRealtimeUsage",
+      "require_full_package_tests": true,
+      "scope": "Full DTO fields, aliases, overflow, missing totals and cache completeness; separately build/test this module."
+    }
+  ]
+}

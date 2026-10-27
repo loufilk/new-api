@@ -32,6 +32,7 @@ import {
   ModelCardGrid,
   ModelDetailsDrawer,
 } from './components'
+import { ModelCategories } from './components/model-categories'
 import { EXCLUDED_GROUPS, VIEW_MODES } from './constants'
 import { useFilters } from './hooks/use-filters'
 import { usePricingData } from './hooks/use-pricing-data'
@@ -55,6 +56,8 @@ export function Pricing() {
   } = usePricingData()
 
   const {
+    category,
+    setCategory,
     searchInput,
     sortBy,
     vendorFilter,
@@ -125,6 +128,7 @@ export function Pricing() {
       return (
         <ModelCardGrid
           models={filteredModels}
+          endpointMap={endpointMap}
           onModelClick={handleModelClick}
           priceRate={priceRate}
           usdExchangeRate={usdExchangeRate}
@@ -201,6 +205,12 @@ export function Pricing() {
               className='mx-auto mt-4 max-w-2xl sm:mt-6'
             />
           </header>
+
+          <ModelCategories
+            models={models || []}
+            value={category}
+            onChange={setCategory}
+          />
 
           <div className='grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]'>
             <PricingSidebar

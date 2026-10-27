@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 )
 
 // GetAllModelsMeta 获取模型列表（分页）
@@ -111,7 +112,7 @@ func CreateModelMeta(c *gin.Context) {
 		return
 	}
 	if m.ModelName == "" {
-		common.ApiErrorMsg(c, "模型名称不能为空")
+		common.ApiErrorT(c, "Model name cannot be empty")
 		return
 	}
 	if err := model.ValidateMetadataValues(model.MetadataValues{Endpoints: m.Endpoints, Status: m.Status, NameRule: m.NameRule}); err != nil {
@@ -123,7 +124,7 @@ func CreateModelMeta(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	} else if dup {
-		common.ApiErrorMsg(c, "模型名称已存在")
+		common.ApiErrorT(c, "Model name already exists")
 		return
 	}
 
@@ -141,12 +142,17 @@ func UpdateModelMeta(c *gin.Context) {
 	statusOnly := c.Query("status_only") == "true"
 
 	var m model.Model
-	if err := c.ShouldBindJSON(&m); err != nil {
+	if err := c.ShouldBindBodyWith(&m, binding.JSON); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	var present map[string]common.RawMessage
+	if err := c.ShouldBindBodyWith(&present, binding.JSON); err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	if m.Id == 0 {
-		common.ApiErrorMsg(c, "缺少模型 ID")
+		common.ApiErrorT(c, "Missing model ID")
 		return
 	}
 
@@ -156,13 +162,18 @@ func UpdateModelMeta(c *gin.Context) {
 			return
 		}
 		// 只更新状态，防止误清空其他字段
-		if err := model.DB.Model(&model.Model{}).Where("id = ?", m.Id).Update("status", m.Status).Error; err != nil {
+		err := model.DB.Model(&model.Model{}).Where("id = ?", m.Id).Update("status", m.Status).Error
+		// Status changes can remove rule-matched eligibility even if the COMMIT
+		// acknowledgement is lost. This does not change exact-name fallback.
+		model.InvalidatePricingCache()
+		model.InvalidateModelBonusEligibleCache()
+		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
 	} else {
 		if strings.TrimSpace(m.ModelName) == "" {
-			common.ApiErrorMsg(c, "模型名称不能为空")
+			common.ApiErrorT(c, "Model name cannot be empty")
 			return
 		}
 		if err := model.ValidateMetadataValues(model.MetadataValues{Endpoints: m.Endpoints, Status: m.Status, NameRule: m.NameRule}); err != nil {
@@ -174,11 +185,11 @@ func UpdateModelMeta(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		} else if dup {
-			common.ApiErrorMsg(c, "模型名称已存在")
+			common.ApiErrorT(c, "Model name already exists")
 			return
 		}
 
-		if err := m.Update(); err != nil {
+		if err := m.UpdateWithMetadataPresence(present); err != nil {
 			common.ApiError(c, err)
 			return
 		}

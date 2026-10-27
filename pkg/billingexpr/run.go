@@ -17,7 +17,7 @@ import (
 // The environment exposes:
 //   - p, c             — prompt / completion tokens (auto-excluding separately-priced sub-categories)
 //   - len              — total input context length for tier conditions (never reduced by sub-category exclusion)
-//   - cr, cc, cc1h     — cache read / creation / creation-1h tokens
+//   - cr, cc, cc1h, cc12h — cache read / creation / creation-1h / creation-12h tokens
 //   - tier(name, value) — trace callback that records which tier matched
 //   - max, min, abs, ceil, floor — standard math helpers
 //
@@ -56,6 +56,10 @@ func runProgram(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[
 		RequestRules: append([]RequestRuleTrace(nil), requestRules...),
 	}
 	headers := normalizeHeaders(request.Headers)
+	now := time.Now()
+	if request.Timestamp > 0 {
+		now = time.Unix(request.Timestamp, 0)
+	}
 	imageCount := 1
 	if usedVars["image_count"] {
 		if request.ImageCount != nil {
@@ -75,6 +79,7 @@ func runProgram(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[
 		"cr":          params.CR,
 		"cc":          params.CC,
 		"cc1h":        params.CC1h,
+		"cc12h":       params.CC12h,
 		"img":         params.Img,
 		"img_cr":      params.ImgCR,
 		"img_o":       params.ImgO,
@@ -113,7 +118,15 @@ func runProgram(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[
 		},
 		"param": func(path string) any {
 			path = strings.TrimSpace(path)
-			if path == "" || len(request.Body) == 0 {
+			if path == "" {
+				return nil
+			}
+			if request.Params != nil {
+				if value, ok := request.Params[path]; ok {
+					return value
+				}
+			}
+			if len(request.Body) == 0 {
 				return nil
 			}
 			result := gjson.GetBytes(request.Body, path)
@@ -134,11 +147,11 @@ func runProgram(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[
 			}
 			return strings.Contains(fmt.Sprint(source), substr)
 		},
-		"hour":    func(tz string) int { return timeInZone(tz).Hour() },
-		"minute":  func(tz string) int { return timeInZone(tz).Minute() },
-		"weekday": func(tz string) int { return int(timeInZone(tz).Weekday()) },
-		"month":   func(tz string) int { return int(timeInZone(tz).Month()) },
-		"day":     func(tz string) int { return timeInZone(tz).Day() },
+		"hour":    func(tz string) int { return timeInZone(tz, now).Hour() },
+		"minute":  func(tz string) int { return timeInZone(tz, now).Minute() },
+		"weekday": func(tz string) int { return int(timeInZone(tz, now).Weekday()) },
+		"month":   func(tz string) int { return int(timeInZone(tz, now).Month()) },
+		"day":     func(tz string) int { return timeInZone(tz, now).Day() },
 		"max":     math.Max,
 		"min":     math.Min,
 		"abs":     math.Abs,
@@ -157,16 +170,16 @@ func runProgram(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[
 	return f, trace, nil
 }
 
-func timeInZone(tz string) time.Time {
+func timeInZone(tz string, now time.Time) time.Time {
 	tz = strings.TrimSpace(tz)
 	if tz == "" {
-		return time.Now().UTC()
+		return now.UTC()
 	}
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
-		return time.Now().UTC()
+		return now.UTC()
 	}
-	return time.Now().In(loc)
+	return now.In(loc)
 }
 
 func normalizeHeaders(headers map[string]string) map[string]string {

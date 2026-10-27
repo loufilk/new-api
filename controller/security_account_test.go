@@ -11,8 +11,12 @@ import (
 	"encoding/pem"
 	"errors"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"net/mail"
 	"net/textproto"
 	"regexp"
 	"strings"
@@ -21,8 +25,10 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
@@ -130,7 +136,7 @@ func TestSecurityAccountDeletionAcceptsEitherFactorAndRevokesSessions(t *testing
 			}
 			otherSession, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "second-session")
 			require.NoError(t, err)
-			require.NoError(t, model.UpdateUserAccessToken(user.Id, "account-delete-access-token"))
+			require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", user.Id).Update("access_token", "account-delete-access-token").Error)
 			response := securityEnrollmentRequest("DELETE", "/api/user/self", "", proof, identity, DeleteSelf)
 			var result securityEnrollmentResponse
 			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
@@ -195,7 +201,8 @@ func TestSecurityAccountDeletionRechecksTransactionAndConsumesFailedProof(t *tes
 				assert.Contains(t, response.Body.String(), "SECURITY_PROOF_CONSUMED")
 			}
 			if scenario != "write failure" {
-				assert.Error(t, model.DeleteUserForSession(identity))
+				_, err := model.DeleteUserForSession(identity)
+				assert.Error(t, err)
 			}
 			_, err := model.GetUserById(user.Id, false)
 			require.NoError(t, err)
@@ -233,6 +240,11 @@ func TestSecurityAccountDeletionConcurrentRequestsHaveOneWinner(t *testing.T) {
 	require.NoError(t, model.DB.Unscoped().First(&deleted, user.Id).Error)
 	assert.True(t, deleted.DeletedAt.Valid)
 	assert.Equal(t, identity.UserAuthVersion+1, deleted.AuthVersion)
+	_, _, err := service.ValidateLoginSession(identity)
+	assert.Error(t, err)
+	count, err := model.CountActiveUserSessions(user.Id, time.Now().Unix())
+	require.NoError(t, err)
+	assert.Zero(t, count)
 }
 
 type securityMailbox struct {
@@ -313,16 +325,45 @@ func (mailbox *securityMailbox) receive(connection net.Conn) {
 
 func (mailbox *securityMailbox) code(t *testing.T, receiver string) string {
 	t.Helper()
-	mailbox.mutex.Lock()
-	defer mailbox.mutex.Unlock()
-	for index := len(mailbox.mail[receiver]) - 1; index >= 0; index-- {
-		match := regexp.MustCompile(`<strong>([0-9]{6})</strong>`).FindStringSubmatch(mailbox.mail[receiver][index])
+	bodies := mailbox.htmlBodies(t, receiver)
+	for index := len(bodies) - 1; index >= 0; index-- {
+		match := regexp.MustCompile(`<strong>([0-9]{6})</strong>`).FindStringSubmatch(bodies[index])
 		if len(match) == 2 {
 			return match[1]
 		}
 	}
 	t.Fatalf("no verification email delivered to %s", receiver)
 	return ""
+}
+
+func (mailbox *securityMailbox) htmlBodies(t *testing.T, receiver string) []string {
+	t.Helper()
+	mailbox.mutex.Lock()
+	defer mailbox.mutex.Unlock()
+	var bodies []string
+	for _, raw := range mailbox.mail[receiver] {
+		message, err := mail.ReadMessage(strings.NewReader(raw))
+		require.NoError(t, err)
+		mediaType, params, err := mime.ParseMediaType(message.Header.Get("Content-Type"))
+		require.NoError(t, err)
+		require.Equal(t, "multipart/alternative", mediaType)
+		reader := multipart.NewReader(message.Body, params["boundary"])
+		for {
+			part, err := reader.NextPart() // Decodes quoted-printable transfer encoding.
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			require.NoError(t, err)
+			body, err := io.ReadAll(part)
+			require.NoError(t, err)
+			partType, _, err := mime.ParseMediaType(part.Header.Get("Content-Type"))
+			require.NoError(t, err)
+			if partType == "text/html" {
+				bodies = append(bodies, string(body))
+			}
+		}
+	}
+	return bodies
 }
 
 func startSecurityEmailBinding(t *testing.T, identity service.AuthIdentity, email, method string) service.EmailBindingData {
@@ -381,7 +422,7 @@ func TestSecurityAccountPasswordRequiresCurrentPassword(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			user, identity := setupSecurityEnrollmentTest(t)
 			proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: service.VerificationScopePasswordChange}, service.VerificationMethodPassword)
-			request, err := common.Marshal(map[string]string{"password": "password123", "original_password": test.original})
+			request, err := common.Marshal(map[string]string{"password": "Cedar-river-782!quiet", "original_password": test.original})
 			require.NoError(t, err)
 			response := securityEnrollmentRequest(http.MethodPut, "/api/user/self", string(request), proof, identity, UpdateSelf)
 			var result securityEnrollmentResponse
@@ -390,7 +431,7 @@ func TestSecurityAccountPasswordRequiresCurrentPassword(t *testing.T) {
 			stored, err := model.GetUserById(user.Id, true)
 			require.NoError(t, err)
 			if test.success {
-				assert.True(t, common.ValidatePasswordAndHash("password123", stored.Password))
+				assert.True(t, common.ValidatePasswordAndHash("Cedar-river-782!quiet", stored.Password))
 				assert.True(t, strings.HasPrefix(stored.Password, "$argon2id$"))
 			} else {
 				assert.Equal(t, "CURRENT_PASSWORD_INVALID", result.Code)
@@ -505,7 +546,7 @@ func TestSecurityAccountPasswordPolicyAndHashCompatibility(t *testing.T) {
 		name, password string
 		valid          bool
 	}{
-		{"common password accepted", "password123", true},
+		{"common password rejected", "password123", false},
 		{"short", "seven77", false},
 		{"too long", strings.Repeat("界", 129), false},
 		{"long Unicode", strings.Repeat("界🔒 ", 40), true},
@@ -529,6 +570,32 @@ func TestSecurityAccountPasswordPolicyAndHashCompatibility(t *testing.T) {
 	for _, invalid := range []string{"$argon2id$", "$argon2id$v=19$m=4294967295,t=2,p=1$bad$bad", "$argon2id$v=19$m=19456,t=2,p=1$bad$bad"} {
 		assert.False(t, common.ValidatePasswordAndHash("example-password", invalid))
 	}
+}
+
+func TestSecurityAccountCommonPasswordRejectionKeepsCredentialAndConsumesProof(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: service.VerificationScopePasswordChange}, service.VerificationMethodPassword)
+	body, err := common.Marshal(map[string]string{"password": "password123", "original_password": "enrollment-password"})
+	require.NoError(t, err)
+	response := securityEnrollmentRequest(http.MethodPut, "/api/user/self", string(body), proof, identity, UpdateSelf)
+	var result securityEnrollmentResponse
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	assert.False(t, result.Success)
+	assert.Equal(t, "PASSWORD_POLICY_REJECTED", result.Code)
+	assert.Contains(t, response.Body.String(), common.ErrAccountPasswordCommon.Error())
+	stored, err := model.GetUserById(user.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, user.Password, stored.Password)
+	assert.Equal(t, user.AuthVersion, stored.AuthVersion)
+	response = securityEnrollmentRequest(http.MethodPut, "/api/user/self", string(body), proof, identity, UpdateSelf)
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	assert.Equal(t, "SECURITY_PROOF_CONSUMED", result.Code)
+	var audits []model.AuditLog
+	require.NoError(t, model.LOG_DB.Find(&audits).Error)
+	encoded, err := common.Marshal(audits)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "password123")
+	assert.NotContains(t, string(encoded), proof)
 }
 
 func TestSecurityAccountEncryptedLongPasswordLogin(t *testing.T) {
@@ -636,7 +703,9 @@ func TestSecurityAccountEmailConfirmationAndAudit(t *testing.T) {
 			require.NoError(t, err)
 			assert.Contains(t, string(encoded), "user.binding_bind")
 			assert.NotContains(t, string(encoded), flow.FlowToken)
-			assert.NotContains(t, string(encoded), newCode)
+			// Audit event and request IDs are long runs of time digits that can
+			// contain the six-digit code by chance; only the whole code is a leak.
+			assert.NotRegexp(t, `(^|\D)`+newCode+`(\D|$)`, string(encoded))
 		})
 	}
 }
@@ -645,7 +714,7 @@ func TestSecurityAccountEmailResendAndAttemptLimit(t *testing.T) {
 	_, identity := setupSecurityEnrollmentTest(t)
 	mailbox := newSecurityMailbox(t)
 	flow := startSecurityEmailBinding(t, identity, "new@example.com", service.VerificationMethodPassword)
-	_, err := service.ResendAccountEmailBinding(identity, flow.FlowToken)
+	_, err := service.ResendAccountEmailBinding(identity, flow.FlowToken, "")
 	assert.ErrorIs(t, err, model.ErrEmailBindingResendWait)
 	_, err = service.FinishEmailBinding(identity, flow.FlowToken, "invalid", "")
 	assert.ErrorIs(t, err, model.ErrEmailBindingCodeInvalid)
@@ -656,7 +725,7 @@ func TestSecurityAccountEmailResendAndAttemptLimit(t *testing.T) {
 	payload, err := common.Marshal(state)
 	require.NoError(t, err)
 	require.NoError(t, model.DB.Model(stored).Update("payload", string(payload)).Error)
-	replacement, err := service.ResendAccountEmailBinding(identity, flow.FlowToken)
+	replacement, err := service.ResendAccountEmailBinding(identity, flow.FlowToken, "")
 	require.NoError(t, err)
 	assert.Equal(t, flow.ExpiresAt, replacement.ExpiresAt)
 	_, state, err = model.GetEmailBinding(identity, flow.FlowToken)
@@ -674,6 +743,54 @@ func TestSecurityAccountEmailResendAndAttemptLimit(t *testing.T) {
 	}
 	_, err = service.FinishEmailBinding(identity, flow.FlowToken, mailbox.code(t, flow.Email), "")
 	assert.ErrorIs(t, err, model.ErrEmailBindingLocked)
+}
+
+// Email binding codes and account security notices are written in the account
+// owner's saved language, else in the language the request states, and quote
+// provider names HTML-escaped.
+func TestSecurityAccountMailsFollowTheOwnersLanguage(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	mailbox := newSecurityMailbox(t)
+	mails := func(receiver string) string {
+		return strings.Join(mailbox.htmlBodies(t, receiver), "\n")
+	}
+	saveLanguage := func(language string) {
+		setting, err := common.Marshal(dto.UserSetting{Language: language})
+		require.NoError(t, err)
+		require.NoError(t, model.DB.Model(user).Update("setting", string(setting)).Error)
+	}
+
+	saveLanguage("zhCN")
+	require.NoError(t, model.DB.Model(user).Update("email", "previous@example.com").Error)
+	flow := startSecurityEmailBinding(t, identity, "new@example.com", service.VerificationMethodPassword)
+	request, err := common.Marshal(map[string]string{"flow_token": flow.FlowToken, "new_code": mailbox.code(t, flow.Email), "old_code": mailbox.code(t, "previous@example.com")})
+	require.NoError(t, err)
+	response := securityEnrollmentRequest("POST", "/api/oauth/email/bind", string(request), "", identity, EmailBind)
+	require.Contains(t, response.Body.String(), `"success":true`)
+	assert.Contains(t, mails("new@example.com"), "请确认将此邮箱地址绑定到您的账户。")
+	assert.Contains(t, mails("new@example.com"), "您的账户安全设置有变动：邮箱地址已确认。")
+	assert.Contains(t, mails("previous@example.com"), "您的账户正在申请更换邮箱地址，请确认替换当前邮箱。")
+	assert.Contains(t, mails("previous@example.com"), "您的账户安全设置有变动：邮箱地址已更换。")
+
+	for _, tc := range []struct {
+		name, saved, acceptLanguage, receiver, want string
+	}{
+		{"request language when none is saved", "", "zh-TW", "tw@example.com", "您的帳戶安全設定有變動：已綁定登入帳號 &lt;b&gt;Corp&lt;/b&gt;。"},
+		{"saved language over the request", "en", "zh-CN", "en@example.com", "Your account security settings have changed: Login account linked: &lt;b&gt;Corp&lt;/b&gt;."},
+		{"default language when neither states one", "", "", "default@example.com", "Your account security settings have changed: Login account linked: &lt;b&gt;Corp&lt;/b&gt;."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			saveLanguage(tc.saved)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodGet, "/api/oauth/github", nil)
+			if tc.acceptLanguage != "" {
+				c.Request.Header.Set("Accept-Language", tc.acceptLanguage)
+			}
+			lang := service.AccountMailLanguage(c, user.Id)
+			require.NoError(t, service.NotifyAccountSecurityChange(lang, tc.receiver, i18n.MsgSecurityEventLoginLinked, map[string]any{"Provider": "<b>Corp</b>"}))
+			assert.Contains(t, mails(tc.receiver), tc.want)
+		})
+	}
 }
 
 func TestSecurityAccountEmailConcurrentClaimsHaveOneOwner(t *testing.T) {

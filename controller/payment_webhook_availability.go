@@ -3,6 +3,7 @@ package controller
 import (
 	"strings"
 
+	"github.com/QuantumNous/new-api/pkg/paymentcore"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
@@ -77,10 +78,15 @@ func isWaffoPancakeTopUpEnabled() bool {
 	if !isPaymentComplianceConfirmed() {
 		return false
 	}
-	// Presence-of-credentials = enabled. Webhook public keys ship inside
-	// the SDK; mode (test/prod) is read from each event.
+	// Presence-of-credentials = enabled, plus the trusted environment and
+	// store id that webhook settlement pins into the order binding. Webhook
+	// public keys ship inside the SDK; mode is read from each event.
+	if _, err := paymentcore.ConfiguredWaffoPancakeEnvironment(); err != nil {
+		return false
+	}
 	return strings.TrimSpace(setting.WaffoPancakeMerchantID) != "" &&
 		strings.TrimSpace(setting.WaffoPancakePrivateKey) != "" &&
+		strings.TrimSpace(setting.WaffoPancakeStoreID) != "" &&
 		strings.TrimSpace(setting.WaffoPancakeProductID) != ""
 }
 

@@ -3,6 +3,8 @@ package model
 import (
 	"context"
 	"encoding/json"
+	"net"
+	"net/url"
 	"os"
 	"sync"
 	"testing"
@@ -13,18 +15,38 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 func TestMain(m *testing.M) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	var dialector gorm.Dialector
+	nativeDSN := os.Getenv("TEST_MODEL_POSTGRES_DSN")
+	if nativeDSN != "" {
+		parsed, err := url.Parse(nativeDSN)
+		if err != nil || !net.ParseIP(parsed.Hostname()).IsLoopback() {
+			panic("TEST_MODEL_POSTGRES_DSN must name a disposable loopback PostgreSQL fixture")
+		}
+		dialector = postgres.Open(nativeDSN)
+	} else {
+		dialector = sqlite.Open(":memory:")
+	}
+	db, err := gorm.Open(dialector, &gorm.Config{})
 	if err != nil {
 		panic("failed to open test db: " + err.Error())
 	}
 	DB = db
 	LOG_DB = db
 
-	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	if nativeDSN != "" {
+		common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
+		var version string
+		if err := db.Raw("SHOW server_version_num").Scan(&version).Error; err != nil || version != "180006" {
+			panic("native model tests require PostgreSQL 18.6")
+		}
+	} else {
+		common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	}
 	common.RedisEnabled = false
 	common.BatchUpdateEnabled = false
 	common.LogConsumeEnabled = true
@@ -34,10 +56,15 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic("failed to get sql.DB: " + err.Error())
 	}
-	sqlDB.SetMaxOpenConns(1)
+	if nativeDSN != "" {
+		sqlDB.SetMaxOpenConns(8)
+	} else {
+		sqlDB.SetMaxOpenConns(1)
+	}
 
 	if err := db.AutoMigrate(
 		&Task{},
+		&Option{},
 		&User{},
 		&UserSession{},
 		&AuthFlow{},
@@ -59,6 +86,13 @@ func TestMain(m *testing.M) {
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},
+		&BalanceLedgerOperation{},
+		&BalanceLedger{},
+		&Model{},
+		&Vendor{},
+		&ModelBonusEligibleAudit{},
+		&ReferralCommission{},
+		&UserAccessToken{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -69,6 +103,8 @@ func TestMain(m *testing.M) {
 func truncateTables(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
+		DB.Exec("DELETE FROM balance_ledger")
+		DB.Exec("DELETE FROM balance_ledger_operations")
 		DB.Exec("DELETE FROM tasks")
 		DB.Exec("DELETE FROM auth_flows")
 		DB.Exec("DELETE FROM external_identity_claims")
@@ -77,6 +113,7 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM two_fa_backup_codes")
 		DB.Exec("DELETE FROM two_fas")
 		DB.Exec("DELETE FROM tokens")
+		DB.Exec("DELETE FROM user_access_tokens")
 		DB.Exec("DELETE FROM user_oauth_bindings")
 		DB.Exec("DELETE FROM users")
 		DB.Exec("DELETE FROM logs")
@@ -91,6 +128,11 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM system_instances")
 		DB.Exec("DELETE FROM system_task_locks")
 		DB.Exec("DELETE FROM system_tasks")
+		DB.Exec("DELETE FROM models")
+		DB.Exec("DELETE FROM vendors")
+		DB.Exec("DELETE FROM model_bonus_eligible_audits")
+		DB.Exec("DELETE FROM referral_commissions")
+		InvalidateModelBonusEligibleCache()
 	})
 }
 
@@ -235,6 +277,7 @@ func TestUpdateWithStatus_Win(t *testing.T) {
 
 	task := &Task{
 		TaskID:   "task_cas_win",
+		UserId:   7,
 		Status:   TaskStatusInProgress,
 		Progress: "50%",
 		Data:     json.RawMessage(`{}`),
@@ -258,6 +301,7 @@ func TestUpdateWithStatus_Lose(t *testing.T) {
 
 	task := &Task{
 		TaskID: "task_cas_lose",
+		UserId: 7,
 		Status: TaskStatusFailure,
 		Data:   json.RawMessage(`{}`),
 	}
@@ -278,6 +322,7 @@ func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 
 	task := &Task{
 		TaskID: "task_cas_race",
+		UserId: 7,
 		Status: TaskStatusInProgress,
 		Quota:  1000,
 		Data:   json.RawMessage(`{}`),
@@ -286,6 +331,7 @@ func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 
 	const goroutines = 5
 	wins := make([]bool, goroutines)
+	errs := make([]error, goroutines)
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 
@@ -296,6 +342,7 @@ func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 			*t = Task{
 				ID:       task.ID,
 				TaskID:   task.TaskID,
+				UserId:   task.UserId,
 				Status:   TaskStatusSuccess,
 				Progress: "100%",
 				Quota:    task.Quota,
@@ -304,12 +351,16 @@ func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 			t.CreatedAt = task.CreatedAt
 			t.UpdatedAt = time.Now().Unix()
 			won, err := t.UpdateWithStatus(TaskStatusInProgress)
+			errs[idx] = err
 			if err == nil {
 				wins[idx] = won
 			}
 		}(i)
 	}
 	wg.Wait()
+	for i, err := range errs {
+		require.NoError(t, err, "CAS candidate %d", i)
+	}
 
 	winCount := 0
 	for _, w := range wins {
@@ -325,6 +376,7 @@ func TestUpdateWithStatus_PersistsPluginStateAndPollFailures(t *testing.T) {
 
 	task := &Task{
 		TaskID: "task_cas_plugin_state",
+		UserId: 7,
 		Status: TaskStatusInProgress,
 		Data:   json.RawMessage(`{}`),
 		PrivateData: TaskPrivateData{

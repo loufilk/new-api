@@ -8,12 +8,17 @@ import (
 )
 
 type RequestInput struct {
-	Headers map[string]string
-	Body    []byte
-	Usage   map[string]any
+	// Headers and Params may be persisted in a BillingSnapshot. Callers that
+	// freeze an async request must store only the expression-referenced values,
+	// never the full incoming request.
+	Headers   map[string]string `json:"headers,omitempty"`
+	Params    map[string]any    `json:"params,omitempty"`
+	Timestamp int64             `json:"timestamp,omitempty"`
+	Body      []byte            `json:"-"`
+	Usage     map[string]any    `json:"-"`
 	// ImageCount is a validated billing quantity, separate from the frozen
 	// request's n. Settlement can replace it with the actual returned count.
-	ImageCount *int
+	ImageCount *int `json:"image_count,omitempty"`
 }
 
 // TokenParams holds all token dimensions passed into an Expr evaluation.
@@ -24,8 +29,9 @@ type TokenParams struct {
 	C     float64 // completion tokens (text) — auto-excludes sub-categories priced separately
 	Len   float64 // total input context length for tier conditions (non-Claude: raw prompt_tokens; Claude: text + cache read + cache creation)
 	CR    float64 // cache read (hit) tokens
-	CC    float64 // cache creation tokens (5-min TTL for Claude, generic for others)
+	CC    float64 // cache creation tokens (5-min TTL for Claude, 30-min TTL for OpenAI, generic for others)
 	CC1h  float64 // cache creation tokens — 1-hour TTL (Claude only)
+	CC12h float64 // cache creation tokens — 12-hour TTL (OpenAI only)
 	Img   float64 // image input tokens
 	ImgCR float64 // image cache read tokens, separated only when explicitly priced
 	ImgO  float64 // image output tokens
@@ -70,6 +76,7 @@ type BillingSnapshot struct {
 	GroupRatio                float64        `json:"group_ratio"`
 	EstimatedPromptTokens     int            `json:"estimated_prompt_tokens"`
 	EstimatedCompletionTokens int            `json:"estimated_completion_tokens"`
+	PreConsumeMultiplier      float64        `json:"pre_consume_multiplier,omitempty"` // Reservation only; zero in older snapshots means 1.
 	EstimatedQuotaBeforeGroup float64        `json:"estimated_quota_before_group"`
 	EstimatedQuotaAfterGroup  int            `json:"estimated_quota_after_group"`
 	EstimatedTier             string         `json:"estimated_tier"`
@@ -79,6 +86,7 @@ type BillingSnapshot struct {
 	ExprVersion               int            `json:"expr_version"`
 	TaskUsageBilling          bool           `json:"task_usage_billing,omitempty"`
 	UsageFacts                map[string]any `json:"usage_facts,omitempty"`
+	RequestInput              *RequestInput  `json:"request_input,omitempty"`
 }
 
 // TieredResult holds everything needed after running tiered settlement.

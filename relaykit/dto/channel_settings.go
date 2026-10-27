@@ -4,13 +4,18 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
 type ChannelSettings struct {
+	// ModelOwnedBy is an explicitly public label for model discovery, not a routing hint.
+	ModelOwnedBy              string `json:"model_owned_by,omitempty"`
 	TaskPluginKey             string `json:"task_plugin_key,omitempty"`
 	ForceFormat               bool   `json:"force_format,omitempty"`
 	ThinkingToContent         bool   `json:"thinking_to_content,omitempty"`
@@ -19,12 +24,55 @@ type ChannelSettings struct {
 	ResponsesWebSocketEnabled bool   `json:"responses_websocket_enabled,omitempty"`
 	SystemPrompt              string `json:"system_prompt,omitempty"`
 	SystemPromptOverride      bool   `json:"system_prompt_override,omitempty"`
+	// TaskExtendPluginKeys lists the task plugins a New API channel (type 60)
+	// is extended with. The upstream gateway may host many plugins, so the
+	// channel serves every listed plugin's models while the request still pins
+	// the executing plugin. TaskPluginKey remains the single type-61 binding
+	// and stays valid on a New API channel as well.
+	TaskExtendPluginKeys []string `json:"task_extend_plugin_keys,omitempty"`
 	// HTTPProtocol controls outbound HTTP version negotiation for this channel.
 	// Accepted values: "", "auto" (default), "http1".
 	HTTPProtocol string `json:"http_protocol,omitempty"`
 	// HTTP2ConnectionShards spreads HTTP/2 traffic across N independent transports
 	// (1-8). Zero/unset means 1. Ignored when HTTPProtocol is "http1".
 	HTTP2ConnectionShards int `json:"http2_connection_shards,omitempty"`
+	// TLSInsecureSkipVerify accepts upstream certificates that fail
+	// verification, such as self-signed ones, for this channel only.
+	TLSInsecureSkipVerify bool `json:"tls_insecure_skip_verify,omitempty"`
+}
+
+// ValidateModelOwnedBy bounds public display metadata independently of transport settings.
+func (s ChannelSettings) ValidateModelOwnedBy() error {
+	if !utf8.ValidString(s.ModelOwnedBy) || utf8.RuneCountInString(strings.TrimSpace(s.ModelOwnedBy)) > 64 ||
+		strings.ContainsFunc(s.ModelOwnedBy, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }) {
+		return fmt.Errorf("model_owned_by must contain at most 64 characters without control or formatting characters")
+	}
+	return nil
+}
+
+// BindsTaskPlugin reports whether the channel is bound to the task plugin,
+// either through the single binding or the New API extension list.
+func (s ChannelSettings) BindsTaskPlugin(key string) bool {
+	if key == "" {
+		return false
+	}
+	return s.TaskPluginKey == key || slices.Contains(s.TaskExtendPluginKeys, key)
+}
+
+// TaskPluginBindings returns the sorted, de-duplicated set of task plugins the
+// channel binds through either field, so callers can compare bindings as a set.
+func (s ChannelSettings) TaskPluginBindings() []string {
+	bindings := make([]string, 0, len(s.TaskExtendPluginKeys)+1)
+	if s.TaskPluginKey != "" {
+		bindings = append(bindings, s.TaskPluginKey)
+	}
+	for _, key := range s.TaskExtendPluginKeys {
+		if key != "" && !slices.Contains(bindings, key) {
+			bindings = append(bindings, key)
+		}
+	}
+	slices.Sort(bindings)
+	return bindings
 }
 
 const (
@@ -67,9 +115,17 @@ const (
 	AwsKeyTypeApiKey AwsKeyType = "api_key"
 )
 
+type AwsApiType string
+
+const (
+	AwsApiTypeInvokeModel AwsApiType = "invoke_model"
+	AwsApiTypeMantle      AwsApiType = "mantle"
+)
+
 type ChannelOtherSettings struct {
 	AzureResponsesVersion                 string                `json:"azure_responses_version,omitempty"`
-	VertexKeyType                         VertexKeyType         `json:"vertex_key_type,omitempty"` // "json" or "api_key"
+	VertexKeyType                         VertexKeyType         `json:"vertex_key_type,omitempty"`   // "json" or "api_key"
+	VertexProjectID                       string                `json:"vertex_project_id,omitempty"` // 仅当 vertex_key_type=api_key 时使用；JSON 模式下从 service account 解析
 	OpenRouterEnterprise                  *bool                 `json:"openrouter_enterprise,omitempty"`
 	ClaudeBetaQuery                       bool                  `json:"claude_beta_query,omitempty"`          // Claude 渠道是否强制追加 ?beta=true
 	AllowServiceTier                      bool                  `json:"allow_service_tier,omitempty"`         // 是否允许 service_tier 透传（默认过滤以避免额外计费）
@@ -80,6 +136,7 @@ type ChannelOtherSettings struct {
 	AllowIncludeObfuscation               bool                  `json:"allow_include_obfuscation,omitempty"`  // 是否允许 stream_options.include_obfuscation 透传（默认过滤以避免关闭流混淆保护）
 	DisableTaskPollingSleep               bool                  `json:"disable_task_polling_sleep,omitempty"` // 是否跳过异步任务轮询间隔
 	AwsKeyType                            AwsKeyType            `json:"aws_key_type,omitempty"`
+	AwsApiType                            AwsApiType            `json:"aws_api_type,omitempty"`
 	UpstreamModelUpdateCheckEnabled       bool                  `json:"upstream_model_update_check_enabled,omitempty"`        // 是否检测上游模型更新
 	UpstreamModelUpdateAutoSyncEnabled    bool                  `json:"upstream_model_update_auto_sync_enabled,omitempty"`    // 是否自动同步上游模型更新
 	UpstreamModelUpdateLastCheckTime      int64                 `json:"upstream_model_update_last_check_time,omitempty"`      // 上次检测时间
@@ -128,6 +185,10 @@ const (
 	advancedCustomConverterOpenAIResponsesToGemini     = "openai_responses_to_gemini_generate_content"
 	advancedCustomConverterGeminiContentToOpenAIChat   = "gemini_generate_content_to_openai_chat_completions"
 	advancedCustomConverterOpenAIChatToGeminiContent   = "openai_chat_completions_to_gemini_generate_content"
+	// Same values as relayconvert.ConverterClaudeMessagesToOpenAIResponses and
+	// relayconvert.ConverterGeminiContentToOpenAIResponses.
+	advancedCustomConverterClaudeMessagesToOpenAIResponses = "claude_messages_to_openai_responses"
+	advancedCustomConverterGeminiContentToOpenAIResponses  = "gemini_generate_content_to_openai_responses"
 )
 
 const (
@@ -175,6 +236,8 @@ const (
 	advancedCustomEndpointPathOpenAIResponses        = "/v1/responses"
 	advancedCustomEndpointPathOpenAIResponsesCompact = "/v1/responses/compact"
 	advancedCustomEndpointPathOpenAIAlphaSearch      = "/v1/alpha/search"
+	advancedCustomEndpointPathDeepSeekToolsSearch    = "/v1/tools/search"
+	advancedCustomEndpointPathDeepSeekToolsFetch     = "/v1/tools/fetch"
 	advancedCustomEndpointPathClaudeMessages         = "/v1/messages"
 	advancedCustomEndpointPathJinaRerank             = "/v1/rerank"
 	advancedCustomEndpointPathImageGeneration        = "/v1/images/generations"
@@ -300,6 +363,10 @@ func advancedCustomEndpointTypeFromIncomingPath(incomingPath string) (types.Endp
 		return types.EndpointTypeOpenAIResponseCompact, true
 	case advancedCustomEndpointPathOpenAIAlphaSearch:
 		return types.EndpointTypeOpenAIAlphaSearch, true
+	case advancedCustomEndpointPathDeepSeekToolsSearch:
+		return types.EndpointTypeDeepSeekToolsSearch, true
+	case advancedCustomEndpointPathDeepSeekToolsFetch:
+		return types.EndpointTypeDeepSeekToolsFetch, true
 	case advancedCustomEndpointPathClaudeMessages:
 		return types.EndpointTypeAnthropic, true
 	case advancedCustomEndpointPathJinaRerank:
@@ -405,7 +472,9 @@ func IsAdvancedCustomConverterAllowed(converter string) bool {
 		advancedCustomConverterOpenAIResponsesToOpenAIChat,
 		advancedCustomConverterOpenAIResponsesToGemini,
 		advancedCustomConverterGeminiContentToOpenAIChat,
-		advancedCustomConverterOpenAIChatToGeminiContent:
+		advancedCustomConverterOpenAIChatToGeminiContent,
+		advancedCustomConverterClaudeMessagesToOpenAIResponses,
+		advancedCustomConverterGeminiContentToOpenAIResponses:
 		return true
 	default:
 		return false
@@ -600,7 +669,8 @@ func validateAdvancedCustomConverterPath(index int, incomingPath string, convert
 	switch converter {
 	case advancedCustomConverterNone:
 		return nil
-	case advancedCustomConverterClaudeMessagesToOpenAIChat:
+	case advancedCustomConverterClaudeMessagesToOpenAIChat,
+		advancedCustomConverterClaudeMessagesToOpenAIResponses:
 		if incomingPath == "/v1/messages" {
 			return nil
 		}
@@ -618,7 +688,8 @@ func validateAdvancedCustomConverterPath(index int, incomingPath string, convert
 		if incomingPath == "/v1/responses" {
 			return nil
 		}
-	case advancedCustomConverterGeminiContentToOpenAIChat:
+	case advancedCustomConverterGeminiContentToOpenAIChat,
+		advancedCustomConverterGeminiContentToOpenAIResponses:
 		if strings.Contains(incomingPath, ":generateContent") || strings.Contains(incomingPath, ":streamGenerateContent") {
 			return nil
 		}

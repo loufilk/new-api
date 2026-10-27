@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -45,6 +46,7 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			require.NoError(t, err)
 			sqlDB.SetMaxOpenConns(1)
 			previousDB, previousType, previousSnapshot := DB, common.MainDatabaseType(), CurrentRequestPolicy()
+			previousOwner := setting.GetPublicModelOwnedBy()
 			common.OptionMapRWMutex.Lock()
 			previousOptions := maps.Clone(common.OptionMap)
 			common.OptionMap = maps.Clone(previousSnapshot.Options)
@@ -58,6 +60,7 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 					require.NoError(t, updateOptionMap(k, v))
 				}
 				requestPolicySnapshot.Store(previousSnapshot)
+				setting.LoadPublicModelOwnedBy(previousOwner)
 				common.OptionMapRWMutex.Lock()
 				common.OptionMap = previousOptions
 				common.OptionMapRWMutex.Unlock()
@@ -92,6 +95,27 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			loadOptionsFromDatabase()
 			assert.Equal(t, "strict", CurrentRequestPolicy().Affinity.SessionMode)
 			assert.Equal(t, rules, CurrentRequestPolicy().Options["channel_affinity_setting.rules"], "a global mode never rewrites rule fields")
+			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{setting.SensitiveCheckExemptGroupsOptionKey: " 破甲 \n\n破甲\nVIP "}))
+			assert.Equal(t, []string{"破甲", "VIP"}, CurrentRequestPolicy().TextExemptGroups)
+			assert.Equal(t, "破甲\nVIP", setting.SensitiveCheckExemptGroupsToString())
+			var groupOption Option
+			require.NoError(t, db.Where(map[string]any{"key": setting.SensitiveCheckExemptGroupsOptionKey}).First(&groupOption).Error)
+			assert.Equal(t, "破甲\nVIP", groupOption.Value)
+			require.NoError(t, UpdateOption(setting.PublicModelOwnedByOptionKey, " Public brand "))
+			assert.Equal(t, "Public brand", setting.GetPublicModelOwnedBy())
+			assert.Error(t, UpdateOption(setting.PublicModelOwnedByOptionKey, "bad\x00owner"))
+			assert.Equal(t, "Public brand", setting.GetPublicModelOwnedBy())
+			loadOptionsFromDatabase()
+			loadOptionsFromDatabase()
+			assert.Equal(t, "Public brand", setting.GetPublicModelOwnedBy())
+			assert.Equal(t, "破甲\nVIP", setting.SensitiveCheckExemptGroupsToString())
+			assert.Error(t, UpdateRequestPolicyOptions(map[string]string{setting.SensitiveCheckExemptGroupsOptionKey: "auto"}))
+			assert.Equal(t, "破甲\nVIP", setting.SensitiveCheckExemptGroupsToString())
+			require.NoError(t, UpdateOptionsBulk(map[string]string{setting.PublicModelOwnedByOptionKey: "  ", setting.SensitiveCheckExemptGroupsOptionKey: " 破甲 \n破甲 "}))
+			assert.Equal(t, "chuanapi", setting.GetPublicModelOwnedBy())
+			assert.Equal(t, "破甲", CurrentRequestPolicy().Options[setting.SensitiveCheckExemptGroupsOptionKey])
+			loadOptionsFromDatabase()
+			assert.Equal(t, "破甲", setting.SensitiveCheckExemptGroupsToString())
 			snapshot := CurrentRequestPolicy()
 			assert.Error(t, UpdateRequestPolicyOptions(map[string]string{"channel_affinity_setting.session_mode": "unknown"}))
 			assert.Same(t, snapshot, CurrentRequestPolicy())

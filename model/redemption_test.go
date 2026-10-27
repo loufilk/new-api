@@ -104,10 +104,14 @@ func setupRedeemFixture(t *testing.T, quota int) (userId int, key string) {
 	t.Helper()
 	require.NoError(t, DB.AutoMigrate(&Redemption{}))
 	require.NoError(t, DB.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(&Redemption{}).Error)
+	require.NoError(t, DB.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(&BalanceLedger{}).Error)
+	require.NoError(t, DB.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(&BalanceLedgerOperation{}).Error)
 	t.Cleanup(func() {
 		require.NoError(t, DB.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(&Redemption{}).Error)
 		DB.Exec("DELETE FROM users")
 		DB.Exec("DELETE FROM logs")
+		DB.Exec("DELETE FROM balance_ledger")
+		DB.Exec("DELETE FROM balance_ledger_operations")
 	})
 
 	user := &User{Username: "redeem-user", Password: "password", Status: common.UserStatusEnabled, Quota: 0}

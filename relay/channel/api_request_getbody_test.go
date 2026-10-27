@@ -217,7 +217,6 @@ func TestDoTaskApiRequest_KeepsReplayableGetBody(t *testing.T) {
 	}))
 	defer server.Close()
 
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", bytes.NewReader(payload))
@@ -333,6 +332,24 @@ func writeH2TestResponse(framer *http2.Framer, streamID uint32) error {
 	return framer.WriteData(streamID, true, []byte(`{}`))
 }
 
+func finishH2TestConnection(conn net.Conn) {
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		_ = conn.Close()
+		return
+	}
+
+	// Send a FIN after the final HTTP/2 frame, then wait for the client side
+	// to close before releasing the socket. An immediate full close can become
+	// a TCP reset on Windows and discard the GOAWAY/response still in flight.
+	_ = tcpConn.CloseWrite()
+	go func() {
+		defer tcpConn.Close()
+		_ = tcpConn.SetReadDeadline(time.Now().Add(15 * time.Second))
+		_, _ = io.Copy(io.Discard, tcpConn)
+	}()
+}
+
 func awaitH2ServerResult(t *testing.T, resultCh <-chan h2ServerResult) h2ServerResult {
 	t.Helper()
 	select {
@@ -416,16 +433,17 @@ func runGoAwayAfterFirstRequestServer(ln net.Listener) <-chan h2ServerResult {
 
 			if attempt == 0 {
 				err = framer.WriteGoAway(0, http2.ErrCodeNo, nil)
-				conn.Close()
 				if err != nil {
+					conn.Close()
 					res.err = err
 					return
 				}
+				finishH2TestConnection(conn)
 				continue
 			}
 
 			err = writeH2TestResponse(framer, streamID)
-			conn.Close()
+			finishH2TestConnection(conn)
 			if err != nil {
 				res.err = err
 			}
@@ -582,8 +600,11 @@ func TestUpstreamGetBody_HTTP2CannotRetryWithoutGetBody(t *testing.T) {
 	resp, err := client.Do(req) //nolint:bodyclose // Do fails, no body to close
 	require.Error(t, err)
 	assert.Nil(t, resp)
-	require.ErrorContains(t, err, "cannot retry err")
-	require.ErrorContains(t, err, "Request.Body was written")
+	// The concrete transport error is intentionally not asserted here. Depending
+	// on the OS/socket timing, Go may surface its own "cannot retry" error or the
+	// peer reset first. The safety invariant is transport-independent: a body with
+	// no GetBody must fail rather than be replayed, and the server must observe
+	// exactly one stream containing the original body.
 
 	srv := awaitH2ServerResult(t, resCh)
 	require.NoError(t, srv.err)

@@ -3,7 +3,7 @@ package controller
 import (
 	"fmt"
 	"net/http"
-	"strings"
+	"slices"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -120,63 +121,16 @@ func init() {
 	})
 }
 
-func channelOwnerName(channelType int) string {
-	apiType, success := common.ChannelType2APIType(channelType)
-	if !success {
-		return strings.ToLower(constant.GetChannelTypeName(channelType))
+// buildOpenAIModel never uses provider/channel ownership on a public endpoint.
+// The static catalog still serves the authenticated administration UI.
+func buildOpenAIModel(modelName string) dto.OpenAIModels {
+	item, ok := openAIModelsMap[modelName]
+	if !ok {
+		item = dto.OpenAIModels{Id: modelName, Object: "model", Created: 1626777600}
 	}
-	adaptor := relay.GetAdaptor(apiType)
-	if adaptor == nil {
-		return strings.ToLower(constant.GetChannelTypeName(channelType))
-	}
-	adaptor.Init(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
-		ChannelType: channelType,
-	}})
-	if name := strings.TrimSpace(adaptor.GetChannelName()); name != "" {
-		return name
-	}
-	return strings.ToLower(constant.GetChannelTypeName(channelType))
-}
-
-func getPreferredModelOwners(modelNames []string, groups []string) map[string]string {
-	channelTypes, err := model.GetPreferredModelOwnerChannelTypes(modelNames, groups)
-	if err != nil {
-		common.SysLog(fmt.Sprintf("GetPreferredModelOwnerChannelTypes error: %v", err))
-		return map[string]string{}
-	}
-
-	ownerByChannelType := make(map[int]string)
-	owners := make(map[string]string, len(channelTypes))
-	for modelName, channelType := range channelTypes {
-		owner, ok := ownerByChannelType[channelType]
-		if !ok {
-			owner = channelOwnerName(channelType)
-			ownerByChannelType[channelType] = owner
-		}
-		if owner != "" {
-			owners[modelName] = owner
-		}
-	}
-	return owners
-}
-
-func buildOpenAIModel(modelName string, ownerByModel map[string]string) dto.OpenAIModels {
-	var oaiModel dto.OpenAIModels
-	if staticModel, ok := openAIModelsMap[modelName]; ok {
-		oaiModel = staticModel
-	} else {
-		oaiModel = dto.OpenAIModels{
-			Id:      modelName,
-			Object:  "model",
-			Created: 1626777600,
-			OwnedBy: "custom",
-		}
-	}
-	if owner, ok := ownerByModel[modelName]; ok && owner != "" {
-		oaiModel.OwnedBy = owner
-	}
-	oaiModel.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(modelName)
-	return oaiModel
+	item.OwnedBy = setting.GetPublicModelOwnedBy()
+	item.SupportedEndpointTypes = model.GetModelSupportEndpointTypes(modelName)
+	return item
 }
 
 type modelListGroups struct {
@@ -215,7 +169,7 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 	}, nil
 }
 
-func ListModels(c *gin.Context, modelType int) {
+func visibleModelNames(c *gin.Context) ([]string, error) {
 	acceptUnsetRatioModel := operation_setting.SelfUseModeEnabled
 	if !acceptUnsetRatioModel {
 		userId := c.GetInt("id")
@@ -230,11 +184,7 @@ func ListModels(c *gin.Context, modelType int) {
 	userModelNames := make([]string, 0)
 	groups, err := getModelListGroups(c)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "get user group failed",
-		})
-		return
+		return nil, err
 	}
 	ownerGroups := groups.ownerGroups
 	modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
@@ -262,13 +212,18 @@ func ListModels(c *gin.Context, modelType int) {
 		userModelNames = append(userModelNames, modelName)
 	}
 
-	ownerByModel := map[string]string{}
-	if len(ownerGroups) > 0 {
-		ownerByModel = getPreferredModelOwners(userModelNames, ownerGroups)
+	return userModelNames, nil
+}
+
+func ListModels(c *gin.Context, modelType int) {
+	userModelNames, err := visibleModelNames(c)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "get user group failed"})
+		return
 	}
 	userOpenAiModels := make([]dto.OpenAIModels, 0, len(userModelNames))
 	for _, modelName := range userModelNames {
-		userOpenAiModels = append(userOpenAiModels, buildOpenAIModel(modelName, ownerByModel))
+		userOpenAiModels = append(userOpenAiModels, buildOpenAIModel(modelName))
 	}
 
 	switch modelType {
@@ -346,28 +301,31 @@ func EnabledListModels(c *gin.Context) {
 }
 
 func RetrieveModel(c *gin.Context, modelType int) {
-	modelId := c.Param("model")
-	if aiModel, ok := openAIModelsMap[modelId]; ok {
-		switch modelType {
-		case constant.ChannelTypeAnthropic:
-			c.JSON(200, dto.AnthropicModel{
-				ID:          aiModel.Id,
-				CreatedAt:   time.Unix(int64(aiModel.Created), 0).UTC().Format(time.RFC3339),
-				DisplayName: aiModel.Id,
-				Type:        "model",
-			})
-		default:
-			c.JSON(200, aiModel)
-		}
-	} else {
-		openAIError := types.OpenAIError{
-			Message: fmt.Sprintf("The model '%s' does not exist", modelId),
-			Type:    "invalid_request_error",
-			Param:   "model",
-			Code:    "model_not_found",
-		}
-		c.JSON(200, gin.H{
-			"error": openAIError,
+	modelID := c.Param("model")
+	visible, err := visibleModelNames(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": types.OpenAIError{
+			Message: "Failed to resolve available models", Type: "api_error", Code: "model_lookup_failed",
+		}})
+		return
+	}
+	if !slices.Contains(visible, modelID) {
+		c.JSON(http.StatusNotFound, gin.H{"error": types.OpenAIError{
+			Message: fmt.Sprintf("The model '%s' does not exist", modelID),
+			Type:    "invalid_request_error", Param: "model", Code: "model_not_found",
+		}})
+		return
+	}
+	item := buildOpenAIModel(modelID)
+	switch modelType {
+	case constant.ChannelTypeAnthropic:
+		c.JSON(http.StatusOK, dto.AnthropicModel{
+			ID: item.Id, CreatedAt: time.Unix(int64(item.Created), 0).UTC().Format(time.RFC3339),
+			DisplayName: item.Id, Type: "model",
 		})
+	case constant.ChannelTypeGemini:
+		c.JSON(http.StatusOK, dto.GeminiModel{Name: item.Id, DisplayName: item.Id})
+	default:
+		c.JSON(http.StatusOK, item)
 	}
 }

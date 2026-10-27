@@ -169,7 +169,7 @@ func CompleteLoginVerification(token string, verification *LoginVerification, me
 		}
 		// A binding that was relinked while the challenge was open is left as it
 		// is and the login continues without the rewrite.
-		written, err := model.MigrateLegacyGitHubBindingWithTx(tx, state.UserID, payload.PendingGitHubLegacyID, payload.PendingGitHubID)
+		written, err := model.MigrateLegacyGitHubBindingWithTx(tx, state.UserID, payload.PendingGitHubLegacyID, payload.PendingGitHubID, nil)
 		if err != nil {
 			return err
 		}

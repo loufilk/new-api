@@ -19,10 +19,14 @@ For commercial licensing, please contact support@quantumnous.com
 import { Mail, Shield, Send, Link2, Unlink } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { SiGithub, SiWechat, SiLinux } from 'react-icons/si'
 import { toast } from 'sonner'
 
-import { IconDiscord } from '@/assets/brand-icons'
+import {
+  IconGithub,
+  IconWeChat,
+  IconLinuxDo,
+  IconDiscord,
+} from '@/assets/brand-icons'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
@@ -45,6 +49,7 @@ import { api } from '@/lib/api'
 import {
   buildOAuthAuthorizationUrl,
   indexCustomOAuthBindings,
+  isOAuthAvailableOnOrigin,
   type CustomOAuthBinding,
 } from '@/lib/oauth'
 import {
@@ -92,6 +97,10 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
   const customProviders = status?.custom_oauth_providers as
     | CustomOAuthProviderInfo[]
     | undefined
+  // Provider callbacks finish on the ServerAddress origin, so binding cannot
+  // complete from another entry (for example the CN site). Unbound OAuth rows
+  // are hidden there; already-bound ones stay visible for information.
+  const oauthAvailable = isOAuthAvailableOnOrigin(status?.server_address)
   const customBindingsByProviderId = useMemo(
     () => indexCustomOAuthBindings(customBindings),
     [customBindings]
@@ -137,6 +146,7 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
   }
 
   const startOAuthBinding = async (provider: string) => {
+    if (!oauthAvailable) return
     const prepared = await security.run(async (signal) => {
       const proof = await security.verify(
         { scope: 'account.binding.bind', context: { provider } },
@@ -238,7 +248,7 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
     {
       id: 'wechat',
       label: t('WeChat'),
-      icon: SiWechat as React.ComponentType<{ className?: string }>,
+      icon: IconWeChat,
       value: undefined,
       isBound: Boolean(
         (profile as unknown as Record<string, unknown>).wechat_id
@@ -249,7 +259,7 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
     {
       id: 'github',
       label: t('GitHub'),
-      icon: SiGithub,
+      icon: IconGithub,
       value: (profile as unknown as Record<string, unknown>).github_id as
         | string
         | undefined,
@@ -299,7 +309,7 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
     {
       id: 'linuxdo',
       label: t('LinuxDO'),
-      icon: SiLinux as React.ComponentType<{ className?: string }>,
+      icon: IconLinuxDo,
       value: (profile as unknown as Record<string, unknown>).linux_do_id as
         | string
         | undefined,
@@ -309,7 +319,15 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
       isEnabled: status?.linuxdo_oauth || false,
       onBind: () => void startOAuthBinding('linuxdo'),
     },
-  ].filter((binding) => binding.isEnabled)
+  ].filter(
+    (binding) =>
+      binding.isEnabled &&
+      (oauthAvailable ||
+        binding.isBound ||
+        !['github', 'discord', 'oidc', 'telegram', 'linuxdo'].includes(
+          binding.id
+        ))
+  )
 
   return (
     <>
@@ -372,6 +390,7 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
         {customProviders?.map((provider) => {
           const binding = customBindingsByProviderId.get(provider.id)
           const isBound = !!binding
+          if (!oauthAvailable && !isBound) return null
           return (
             <li
               key={provider.id}

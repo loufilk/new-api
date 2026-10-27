@@ -16,6 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { createElement } from 'react'
+
+import { extensionMonitorPage } from '@/extensions'
+
 import type { ContentSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
 import { AnnouncementsSection } from './announcements-section'
@@ -52,6 +56,11 @@ const CONTENT_SECTIONS = [
         }}
       />
     ),
+  },
+  {
+    id: 'model-monitor',
+    titleKey: 'monitor.settings.title',
+    build: () => createElement(extensionMonitorPage().settingsPage),
   },
   {
     id: 'announcements',

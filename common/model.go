@@ -2,9 +2,6 @@ package common
 
 import "strings"
 
-// ZImagePromptExtendMultiplier is the legacy Ali image request surcharge.
-const ZImagePromptExtendMultiplier = 2
-
 var (
 	// OpenAIResponseOnlyModels is a list of models that are only available for OpenAI responses.
 	OpenAIResponseOnlyModels = []string{
@@ -30,15 +27,9 @@ var (
 		"wanx2.1-t2i-plus",
 		"wanx2.0-t2i-turbo",
 		"prefix:imagen-",
+		"prefix:grok-imagine-image",
 		"flux-",
 		"flux.1-",
-	}
-	OpenAITextModels = []string{
-		"gpt-",
-		"o1",
-		"o3",
-		"o4",
-		"chatgpt",
 	}
 )
 
@@ -60,16 +51,6 @@ func IsImageGenerationModel(modelName string) bool {
 			}
 			continue
 		}
-		if strings.Contains(modelName, m) {
-			return true
-		}
-	}
-	return false
-}
-
-func IsOpenAITextModel(modelName string) bool {
-	modelName = strings.ToLower(modelName)
-	for _, m := range OpenAITextModels {
 		if strings.Contains(modelName, m) {
 			return true
 		}

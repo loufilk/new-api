@@ -45,3 +45,13 @@ service/openaicompat/chat_responses_live_local_test.go
 go.work
 go.work.sum
 
+# Local workspace partitions and compatibility junctions.
+/local/*
+!/local/README.md
+/archive
+/backups
+/downloads
+/output
+/tmp
+/secrets
+/semantic-review

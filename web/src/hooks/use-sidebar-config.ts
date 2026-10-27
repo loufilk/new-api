@@ -40,6 +40,7 @@ const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
   chat: {
     enabled: true,
     playground: true,
+    image: true,
     chat: true,
   },
   console: {
@@ -98,6 +99,7 @@ const mergeWithDefaultSidebarModules = (
  */
 const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/playground': { section: 'chat', module: 'playground' },
+  '/image': { section: 'chat', module: 'image' },
   '/dashboard': { section: 'console', module: 'detail' },
   '/dashboard/overview': { section: 'console', module: 'detail' },
   '/dashboard/models': { section: 'console', module: 'detail' },
@@ -112,9 +114,9 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/profile': { section: 'personal', module: 'personal' },
   '/security': { section: 'personal', module: 'security' },
   '/channels': { section: 'admin', module: 'channel' },
-  '/models': { section: 'admin', module: 'models' },
-  '/models/metadata': { section: 'admin', module: 'models' },
-  '/models/deployments': { section: 'admin', module: 'models' },
+  '/model-management': { section: 'admin', module: 'models' },
+  '/model-management/metadata': { section: 'admin', module: 'models' },
+  '/model-management/deployments': { section: 'admin', module: 'models' },
   '/users': { section: 'admin', module: 'user' },
   '/redemption-codes': { section: 'admin', module: 'redemption' },
   '/subscriptions': { section: 'admin', module: 'subscription' },

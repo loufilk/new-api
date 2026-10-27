@@ -1,6 +1,7 @@
 package perfmetrics
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math"
@@ -13,8 +14,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/perf_metrics_setting"
-
-	"github.com/bytedance/gopkg/util/gopool"
+	"github.com/redis/go-redis/v9"
 )
 
 var hotBuckets sync.Map
@@ -22,6 +22,11 @@ var hotBuckets sync.Map
 // seriesSchema is a stable client cache/schema marker. Do not change it when
 // hiding fields or making response-only privacy hardening changes.
 const seriesSchema = "dbcd0a3c01b55203"
+
+// MaxRecentModels bounds the historical lookups made by one summary request.
+const MaxRecentModels = 50
+const recentSuccessSampleLimit = 24
+const recentSuccessHistoryHours = 7 * 24
 
 func Init() {
 	go flushLoop()
@@ -63,6 +68,41 @@ func RecordRelayResult(ctx context.Context, info *relaycommon.RelayInfo, apiErr 
 	})
 }
 
+// RecordTaskResult samples one async task exactly once, at its terminal
+// transition, after the polling status CAS is won. Latency is the end-to-end
+// task duration (second resolution, unlike the ms-resolution relay samples);
+// throughput is only present when the provider reports tokens.
+func RecordTaskResult(task *model.Task, result *relaycommon.TaskInfo) {
+	if task == nil {
+		return
+	}
+	modelName := task.Properties.OriginModelName
+	if bc := task.PrivateData.BillingContext; bc != nil && bc.OriginModelName != "" {
+		modelName = bc.OriginModelName
+	}
+	endTs := task.FinishTime
+	if endTs <= 0 {
+		endTs = time.Now().Unix()
+	}
+	sample := Sample{
+		Model:   modelName,
+		Group:   task.Group,
+		Success: task.Status == model.TaskStatusSuccess,
+	}
+	if task.SubmitTime > 0 && endTs > task.SubmitTime {
+		sample.LatencyMs = (endTs - task.SubmitTime) * 1000
+	}
+	if sample.Success && result != nil {
+		tokens := int64(cmp.Or(result.TotalTokens, result.CompletionTokens))
+		genStart := cmp.Or(task.StartTime, task.SubmitTime)
+		if tokens > 0 && genStart > 0 && endTs > genStart {
+			sample.OutputTokens = tokens
+			sample.GenerationMs = (endTs - genStart) * 1000
+		}
+	}
+	Record(sample)
+}
+
 func Record(sample Sample) {
 	setting := perf_metrics_setting.GetSetting()
 	if !setting.Enabled || sample.Model == "" {
@@ -82,9 +122,13 @@ func Record(sample Sample) {
 	}
 	actual, _ := hotBuckets.LoadOrStore(key, &atomicBucket{})
 	actual.(*atomicBucket).add(sample)
-	gopool.Go(func() {
-		recordRedis(key, sample)
-	})
+	// Admission owns the client snapshot. Do not queue no-op work when Redis
+	// is disabled, or consult mutable global configuration from a later task.
+	if common.RedisEnabled {
+		if client := common.RDB; client != nil {
+			recordRedisBackground(func() { recordRedis(client, key, sample) })
+		}
+	}
 }
 
 // queryWindow covers the current partial hour plus the preceding complete
@@ -150,16 +194,43 @@ func Query(params QueryParams) (QueryResult, error) {
 	return result, nil
 }
 
-func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
-	startTs, endTs := queryWindow(time.Now(), hours)
+func QuerySummaryAll(hours int, groups []string, recentModels ...string) (SummaryAllResult, error) {
+	if len(recentModels) > MaxRecentModels {
+		return SummaryAllResult{}, common.NewMessage("Invalid parameters")
+	}
+	now := time.Now()
+	startTs, endTs := queryWindow(now, hours)
+	recentStartTs, _ := queryWindow(now, recentSuccessHistoryHours)
 	allowedGroups := allowedGroupSet(groups)
+	queryStartTs := startTs
 
-	rows, err := model.GetPerfMetricsSummaryBucketsAll(startTs, endTs, groups)
+	recentBuckets := make(map[string]map[int64]counters, len(recentModels))
+	for _, name := range recentModels {
+		if name == "" {
+			continue
+		}
+		if _, exists := recentBuckets[name]; exists {
+			continue
+		}
+		recentBuckets[name] = map[int64]counters{}
+		buckets, err := model.GetRecentPerfMetricSuccessBuckets(name, recentStartTs, endTs, groups, recentSuccessSampleLimit)
+		if err != nil {
+			return SummaryAllResult{}, err
+		}
+		for _, bucket := range buckets {
+			queryStartTs = min(queryStartTs, bucket.BucketTs)
+			mergeModelBucket(recentBuckets, name, bucket.BucketTs, counters{
+				requestCount: bucket.RequestCount,
+				successCount: bucket.SuccessCount,
+			})
+		}
+	}
+
+	rows, err := model.GetPerfMetricsSummaryBucketsAll(queryStartTs, endTs, groups)
 	if err != nil {
 		return SummaryAllResult{}, err
 	}
 
-	totals := map[string]counters{}
 	modelBuckets := map[string]map[int64]counters{}
 	for _, row := range rows {
 		value := counters{
@@ -169,13 +240,12 @@ func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
 			outputTokens:   row.OutputTokens,
 			generationMs:   row.GenerationMs,
 		}
-		mergeModelTotals(totals, row.ModelName, value)
 		mergeModelBucket(modelBuckets, row.ModelName, row.BucketTs, value)
 	}
 
 	hotBuckets.Range(func(key, value any) bool {
 		k := key.(bucketKey)
-		if k.bucketTs < startTs || k.bucketTs > endTs {
+		if k.bucketTs > endTs {
 			return true
 		}
 		if allowedGroups != nil {
@@ -187,10 +257,40 @@ func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
 		if snap.requestCount == 0 {
 			return true
 		}
-		mergeModelTotals(totals, k.model, snap)
+		if _, requested := recentBuckets[k.model]; requested && k.bucketTs >= recentStartTs {
+			mergeModelBucket(recentBuckets, k.model, k.bucketTs, snap)
+		}
+		if k.bucketTs < queryStartTs {
+			return true
+		}
 		mergeModelBucket(modelBuckets, k.model, k.bucketTs, snap)
 		return true
 	})
+
+	recentSeries := make(map[string][]SuccessRatePoint, len(recentBuckets))
+	for name, buckets := range recentBuckets {
+		points := recentSuccessSeries(buckets)
+		if len(points) == 0 {
+			continue
+		}
+		recentSeries[name] = points[max(0, len(points)-recentSuccessSampleLimit):]
+	}
+
+	// Requested models are summarized over the same hours as their status samples.
+	totals := map[string]counters{}
+	for name, buckets := range modelBuckets {
+		fromTs := startTs
+		if points, ok := recentSeries[name]; ok {
+			fromTs = points[0].Ts
+		}
+		for bucketTs, value := range buckets {
+			if bucketTs < fromTs {
+				delete(buckets, bucketTs)
+				continue
+			}
+			mergeModelTotals(totals, name, value)
+		}
+	}
 
 	all := counters{}
 	models := make([]ModelSummary, 0, len(totals))
@@ -222,7 +322,10 @@ func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
 		return models[i].RequestCount > models[j].RequestCount
 	})
 
-	return SummaryAllResult{Summary: summarize(all), WindowStart: startTs, WindowEnd: endTs, Models: models}, nil
+	return SummaryAllResult{
+		Summary: summarize(all), WindowStart: startTs, WindowEnd: endTs,
+		Models: models, RecentSuccessSeries: recentSeries,
+	}, nil
 }
 
 func mergeModelTotals(totals map[string]counters, modelName string, value counters) {
@@ -449,15 +552,12 @@ func avgTps(value counters) float64 {
 	return float64(value.outputTokens) / (float64(value.generationMs) / 1000)
 }
 
-func recordRedis(key bucketKey, sample Sample) {
-	if !common.RedisEnabled || common.RDB == nil {
-		return
-	}
+func recordRedis(client *redis.Client, key bucketKey, sample Sample) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
 	redisKey := redisBucketKey(key)
-	pipe := common.RDB.TxPipeline()
+	pipe := client.TxPipeline()
 	pipe.HIncrBy(ctx, redisKey, "req", 1)
 	if sample.Success {
 		pipe.HIncrBy(ctx, redisKey, "ok", 1)

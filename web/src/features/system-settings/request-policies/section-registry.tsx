@@ -32,6 +32,7 @@ const POLICY_SECTIONS = [
           CheckSensitiveEnabled: settings.CheckSensitiveEnabled,
           CheckSensitiveOnPromptEnabled: settings.CheckSensitiveOnPromptEnabled,
           SensitiveWords: settings.SensitiveWords,
+          SensitiveCheckExemptGroups: settings.SensitiveCheckExemptGroups,
         }}
       />
     ),

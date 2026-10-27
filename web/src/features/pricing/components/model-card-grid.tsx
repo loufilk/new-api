@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -26,6 +26,7 @@ import { getPerfMetricsSummary } from '@/features/performance-metrics/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { DEFAULT_PRICING_PAGE_SIZE, DEFAULT_TOKEN_UNIT } from '../constants'
+import type { ModelEndpointMap } from '../lib/model-endpoints'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelCard } from './model-card'
 import type { ModelPerfBadgeData } from './model-perf-badge'
@@ -38,9 +39,12 @@ export interface ModelCardGridProps {
   tokenUnit?: TokenUnit
   showRechargePrice?: boolean
   selectedGroup?: string
+  endpointMap?: ModelEndpointMap
 }
 
-export function ModelCardGrid(props: ModelCardGridProps) {
+export const ModelCardGrid = memo(function ModelCardGrid(
+  props: ModelCardGridProps
+) {
   const { t } = useTranslation()
   const [page, setPage] = useState(1)
   const pageSize = DEFAULT_PRICING_PAGE_SIZE
@@ -48,17 +52,19 @@ export function ModelCardGrid(props: ModelCardGridProps) {
   const totalPages = Math.max(1, Math.ceil(props.models.length / pageSize))
   const currentPage = Math.min(page, totalPages)
 
-  const perfQuery = useQuery({
-    queryKey: ['perf-metrics-summary', 24],
-    queryFn: async () => requireServerSuccess(await getPerfMetricsSummary(24)),
-    staleTime: 60 * 1000,
-    retry: false,
-  })
-
   const pagedModels = useMemo(() => {
     const start = (currentPage - 1) * pageSize
     return props.models.slice(start, start + pageSize)
   }, [currentPage, pageSize, props.models])
+  const recentModels = pagedModels.map((model) => model.model_name || '')
+  const perfQuery = useQuery({
+    queryKey: ['perf-metrics-summary', 24, recentModels],
+    queryFn: async () =>
+      requireServerSuccess(await getPerfMetricsSummary(24, recentModels)),
+    enabled: recentModels.length > 0,
+    staleTime: 60 * 1000,
+    retry: false,
+  })
 
   const perfMap = useMemo(() => {
     const map = new Map<string, ModelPerfBadgeData>()
@@ -67,6 +73,17 @@ export function ModelCardGrid(props: ModelCardGridProps) {
         ...model,
         window_start: perfQuery.data?.data.window_start,
         window_end: perfQuery.data?.data.window_end,
+      })
+    }
+    for (const [name, series] of Object.entries(
+      perfQuery.data?.data?.recent_success_series ?? {}
+    )) {
+      map.set(name, {
+        avg_latency_ms: Number.NaN,
+        avg_tps: Number.NaN,
+        success_rate: Number.NaN,
+        ...map.get(name),
+        recent_success_series: series,
       })
     }
     return map
@@ -83,13 +100,14 @@ export function ModelCardGrid(props: ModelCardGridProps) {
           <ModelCard
             key={model.id ?? model.model_name}
             model={model}
+            endpointMap={props.endpointMap}
             tokenUnit={tokenUnit}
             priceRate={props.priceRate}
             usdExchangeRate={props.usdExchangeRate}
             showRechargePrice={props.showRechargePrice}
             selectedGroup={props.selectedGroup}
             perf={perfMap.get(model.model_name || '')}
-            onClick={() => props.onModelClick(model.model_name || '')}
+            onClick={props.onModelClick}
           />
         ))}
       </div>
@@ -132,4 +150,4 @@ export function ModelCardGrid(props: ModelCardGridProps) {
       )}
     </div>
   )
-}
+})
