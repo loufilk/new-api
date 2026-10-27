@@ -251,6 +251,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// Every selected provider is priced afresh, including expression -> per-call retries.
 	info.OriginModelName = modelName
+	info.TieredBillingSnapshot = nil
 	var priceData types.PriceData
 	var err error
 	pluginKey := c.GetString("task_plugin_key")
@@ -579,7 +580,6 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 	if adaptor == nil {
 		return nil
 	}
-
 	key := channelModel.Key
 	if task.PrivateData.Key != "" {
 		key = task.PrivateData.Key

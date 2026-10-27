@@ -270,7 +270,13 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 	// The channel type tells plugin adaptors whether the upstream is another
 	// New API gateway, the same signal submission derives from the request.
 	info := &relaycommon.RelayInfo{}
-	info.ChannelMeta = &relaycommon.ChannelMeta{ChannelType: ch.Type, ChannelId: ch.Id, ChannelBaseUrl: baseURL, ChannelSetting: ch.GetSetting(), HeadersOverride: ch.GetHeaderOverride()}
+	info.ChannelMeta = &relaycommon.ChannelMeta{
+		ChannelType:     ch.Type,
+		ChannelId:       ch.Id,
+		ChannelBaseUrl:  baseURL,
+		ChannelSetting:  ch.GetSetting(),
+		HeadersOverride: ch.GetHeaderOverride(),
+	}
 	info.ApiKey = ch.Key
 	adaptor.Init(info)
 	resp, err := adaptor.FetchBatchTasks(baseURL, ch.Key, tasks, proxy)
@@ -811,7 +817,8 @@ func recordPollFailure(ctx context.Context, adaptor TaskPollingAdaptor, task *mo
 	}
 	task.PrivateData.PollFailures++
 	// TASK_POLL_MAX_FAILURES <= 0 disables the consecutive-failure cutoff, matching
-	// TASK_TIMEOUT_MINUTES semantics; a cutoff only requests operator review.
+	// TASK_TIMEOUT_MINUTES semantics; the default 72h sweep and the failure
+	// cutoff only request operator review, never an automatic refund.
 	giveUp := constant.TaskPollMaxFailures > 0 && task.PrivateData.PollFailures >= constant.TaskPollMaxFailures
 	if giveUp || class == pollClassUnrecognized || class == pollClassHookError {
 		// The redacted body is intentionally not persisted to Task.Data on these

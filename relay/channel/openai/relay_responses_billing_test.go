@@ -20,6 +20,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -183,6 +184,13 @@ func TestOaiResponsesStreamHandlerCompletionLifecycle(t *testing.T) {
 			assert.Equal(t, tc.wantEnd, info.StreamStatus.EndReason)
 			assert.Equal(t, tc.responseStatus, info.StreamStatus.ResponseOutcome())
 			assert.Equal(t, tc.wantError, info.StreamStatus.HasErrors())
+			other := service.GenerateTextOtherInfo(c, info, 1, 1, 1, 0, 1, 0, 1).Snapshot()
+			assert.NotContains(t, other, "stream_status")
+			adminInfo, ok := other["admin_info"].(map[string]any)
+			require.True(t, ok)
+			streamInfo, ok := adminInfo["stream_status"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, tc.wantError, streamInfo["status"] == "error")
 			if tc.responseStatus != "" {
 				assert.Equal(t, 7, usage.PromptTokens)
 				assert.Equal(t, 5, usage.CompletionTokens)

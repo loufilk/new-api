@@ -313,6 +313,7 @@ export const STATIC_I18N_KEYS = [
   'Failed to delete redemption code',
   'Failed to delete invalid redemption codes',
   'Failed to update redemption code status',
+  'Used redemption codes cannot be modified',
   'Name must be between {{min}} and {{max}} characters',
   'Count must be between {{min}} and {{max}}',
   'Expired time cannot be earlier than current time',

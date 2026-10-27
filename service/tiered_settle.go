@@ -26,8 +26,9 @@ type TieredResultWrapper = billingexpr.TieredResult
 // report them as text-only. This function normalizes to text-only when
 // sub-categories are separately priced.
 //
-// A Claude 1h or OpenAI 12h write without its own price costs a fixed multiple of the
-// short write price: it is billed in cc, or in p when cc has no price either.
+// A long-lived cache write (Claude 1h, OpenAI 12h) without its own price
+// costs a fixed multiple of the short write price: it is billed in cc, or in
+// p when cc has no price either.
 func BuildTieredTokenParams(usage *dto.Usage, isClaudeUsageSemantic bool, usedVars map[string]bool) billingexpr.TokenParams {
 	p := float64(usage.PromptTokens)
 	c := float64(usage.CompletionTokens)
