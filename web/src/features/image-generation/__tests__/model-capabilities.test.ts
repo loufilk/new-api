@@ -26,15 +26,25 @@ import {
 } from '../lib/model-capabilities'
 
 describe('getModelCapability resolves image model families', () => {
-  test('the dedicated Console model enables ratios, low/medium quality and three references without changing Web', () => {
+  test('Grok 2.0 and its Console alias enable ratios, supported quality and three references', () => {
     const consoleModel = getModelCapability('grok-imagine-image-2.0-console')
     expect(consoleModel.sizes).toContain('16:9')
     expect(consoleModel.qualities).toEqual(['low', 'medium'])
     expect(consoleModel.maxReferenceImages).toBe(3)
-    expect(getModelCapability('grok-imagine-image-2.0').qualities).toEqual([])
+    expect(getModelCapability('grok-imagine-image-2.0').qualities).toEqual([
+      'low',
+      'medium',
+    ])
     expect(
       getModelCapability('grok-imagine-image-2.0').maxReferenceImages
-    ).toBe(0)
+    ).toBe(3)
+  })
+  test('the edit-only Grok model requires references and allows a single output', () => {
+    const capability = getModelCapability('grok-imagine-image-edit')
+    expect(capability.requiresReferenceImage).toBe(true)
+    expect(capability.maxReferenceImages).toBe(8)
+    expect(capability.maxN).toBe(1)
+    expect(capability.requestFormat).toBe('grok')
   })
   test('dall-e-3 exposes three sizes, hd quality, two styles, single image, no references', () => {
     const capability = getModelCapability('dall-e-3')

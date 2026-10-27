@@ -323,6 +323,7 @@ function ImageGenerationWorkspace() {
           styles={capability.styles}
           maxCount={capability.maxN}
           maxReferenceImages={capability.maxReferenceImages}
+          requiresReferenceImage={capability.requiresReferenceImage}
           references={references.items}
           referenceErrorKey={references.errorKey}
           onAddReferenceFiles={references.addFiles}
@@ -333,7 +334,7 @@ function ImageGenerationWorkspace() {
           onGenerate={() => void handleGenerate()}
           onCancel={generation.cancel}
         />
-        {capability.requestFormat === 'grok-console' ? (
+        {data.model.toLowerCase() === 'grok-imagine-image-2.0-console' ? (
           <p className='text-muted-foreground text-sm'>
             {t(
               'Console supports up to 3 reference images and low/medium quality. Size sets the aspect ratio; resolution is 1K.'

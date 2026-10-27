@@ -178,6 +178,53 @@ test('stopping async polling aborts the wait without resubmitting or sending can
 })
 
 describe('requestImageGeneration selects the synchronous image endpoint', () => {
+  test.each([
+    'grok-imagine-image',
+    'grok-imagine-image-quality',
+    'grok-imagine-image-2.0',
+    'grok-imagine-image-edit',
+  ])(
+    '%s sends reference images as JSON instead of multipart',
+    async (model) => {
+      postMock.mockResolvedValue({ data: { data: [] } })
+      await requestImageGeneration({
+        fullKey: 'fixture',
+        model,
+        prompt: 'Edit this',
+        count: 1,
+        size: '16:9',
+        quality: 'medium',
+        style: '',
+        images: [new File(['hello'], 'a.png', { type: 'image/png' })],
+      })
+      expect(postMock.mock.calls[0][0]).toBe('/v1/images/edits')
+      expect(postMock.mock.calls[0][1]).not.toBeInstanceOf(FormData)
+      expect(postMock.mock.calls[0][1]).toMatchObject({
+        model,
+        n: 1,
+        aspect_ratio: '16:9',
+        resolution: '1k',
+        images: [{ url: 'data:image/png;base64,aGVsbG8=' }],
+      })
+    }
+  )
+
+  test('edit-only Grok rejects a missing reference without sending a request', async () => {
+    await expect(
+      requestImageGeneration({
+        fullKey: 'fixture',
+        model: 'grok-imagine-image-edit',
+        prompt: 'Edit this',
+        count: 1,
+        size: 'auto',
+        quality: '',
+        style: '',
+        images: [],
+      })
+    ).rejects.toThrow('Add reference images')
+    expect(postMock).not.toHaveBeenCalled()
+  })
+
   test('Console generations send aspect ratio, explicit 1K resolution and selected quality', async () => {
     postMock.mockResolvedValue({ data: { data: [] } })
     await requestImageGeneration({

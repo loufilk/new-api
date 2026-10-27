@@ -26,6 +26,35 @@ import {
 } from '../lib/request-builders'
 
 describe('buildGenerationsBody constructs the JSON generations request', () => {
+  test.each([
+    'grok-imagine-image',
+    'grok-imagine-image-quality',
+    'grok-imagine-image-2.0',
+  ])(
+    '%s sends a native aspect ratio and omits stale pixel sizes and unsupported options',
+    (model) => {
+      const body = buildGenerationsBody({
+        model,
+        prompt: 'A lake',
+        count: 2,
+        size: '1024x1024',
+        quality: 'high',
+        style: 'vivid',
+      })
+      expect(body).toMatchObject({
+        aspect_ratio: 'auto',
+        resolution: '1k',
+        n: 2,
+      })
+      expect(body).not.toHaveProperty('size')
+      expect(body).not.toHaveProperty('style')
+      if (model === 'grok-imagine-image-2.0') {
+        expect(body.quality).toBe('low')
+      } else {
+        expect(body).not.toHaveProperty('quality')
+      }
+    }
+  )
   test('includes model/prompt/n/response_format plus supported options', () => {
     const body = buildGenerationsBody({
       model: 'dall-e-3',
@@ -97,6 +126,24 @@ describe('buildGenerationsBody constructs the JSON generations request', () => {
 })
 
 describe('buildEditsFormData constructs the multipart edits request', () => {
+  test.each([
+    ['photo.PNG', 'image/png'],
+    ['photo.jpeg', 'image/jpeg'],
+    ['photo.webp', 'image/webp'],
+  ])('preserves the image MIME type for an untyped %s upload', (name, mime) => {
+    const form = buildEditsFormData({
+      model: 'gpt-image-2',
+      prompt: 'Edit this',
+      count: 1,
+      size: 'auto',
+      images: [new File(['image bytes'], name)],
+    })
+    const upload = form.get('image') as File
+    expect(upload.name).toBe(name)
+    expect(upload.type).toBe(mime)
+    expect(upload.size).toBe(11)
+  })
+
   test('sends a single file as image and clamps count and references', () => {
     const first = new File(['a'], 'a.png', { type: 'image/png' })
     const second = new File(['b'], 'b.png', { type: 'image/png' })
