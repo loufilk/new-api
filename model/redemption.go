@@ -154,7 +154,7 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if err != nil {
 			return errors.New("invalid redemption code")
 		}
-		if redemption.Status != common.RedemptionCodeStatusEnabled {
+		if redemption.Status != common.RedemptionCodeStatusEnabled || redemption.RedeemedTime != 0 || redemption.UsedUserId != 0 {
 			return errors.New("redemption code already used")
 		}
 		if redemption.ExpiredTime != 0 && redemption.ExpiredTime < common.GetTimestamp() {
@@ -220,11 +220,13 @@ func (redemption *Redemption) Insert() error {
 }
 
 func (redemption *Redemption) SelectUpdate() error {
-	// This can update zero values
-	return DB.Model(redemption).Select("redeemed_time", "status").Updates(redemption).Error
+	if redemption.Status != common.RedemptionCodeStatusEnabled && redemption.Status != common.RedemptionCodeStatusDisabled {
+		return common.NewMessage("Invalid parameters")
+	}
+	return redemption.updateUnusedFields(map[string]any{"status": redemption.Status})
 }
 
-// Update Make sure your token's fields is completed, because this will update non-zero values
+// Update edits administrative metadata without writing a stale redemption state.
 func (redemption *Redemption) Update() error {
 	if redemption.Quota <= 0 {
 		return errors.New("redemption quota must be positive")
@@ -232,8 +234,35 @@ func (redemption *Redemption) Update() error {
 	if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
 		return err
 	}
-	var err error
-	err = DB.Model(redemption).Select("name", "status", "quota", "redeemed_time", "expired_time").Updates(redemption).Error
+	return redemption.updateUnusedFields(map[string]any{
+		"name":         redemption.Name,
+		"quota":        redemption.Quota,
+		"expired_time": redemption.ExpiredTime,
+	})
+}
+
+// updateUnusedFields serializes administrative changes with redemption. A used
+// code is terminal: neither stale full edits nor status changes may revive it or
+// rewrite the amount recorded by the wallet ledger.
+func (redemption *Redemption) updateUnusedFields(fields map[string]any) error {
+	if redemption.Id <= 0 {
+		return common.NewMessage("ID is empty")
+	}
+	var current Redemption
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockForUpdate(tx).First(&current, redemption.Id).Error; err != nil {
+			return err
+		}
+		if (current.Status != common.RedemptionCodeStatusEnabled && current.Status != common.RedemptionCodeStatusDisabled) || current.RedeemedTime != 0 || current.UsedUserId != 0 {
+			return common.NewMessage("Used redemption codes cannot be modified")
+		}
+		// MySQL may report zero changed rows for an idempotent edit. The locked
+		// read above establishes existence and eligibility independently.
+		return tx.Model(&current).Updates(fields).Error
+	})
+	if err == nil {
+		*redemption = current
+	}
 	return err
 }
 
