@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "stage": "incremental-rc46-alignment",
+  "stage": "merged-rc47-alignment",
   "production_baseline": {
     "repository": "1057300248/wanchuan-new-api",
     "commit": "093c7197d5eac50787971fd5ff7553a414142fc7",
@@ -13,13 +13,13 @@
   },
   "upstream_reference": {
     "repository": "QuantumNous/new-api",
-    "commit": "7d8b91268dab69d7150f345c448b5e250163146a",
-    "release_tag": "v1.0.0-rc.46",
-    "release_commit": "7d8b91268dab69d7150f345c448b5e250163146a",
-    "commits_after_release": 0,
-    "alignment_method": "Incremental feature ports plus targeted rc.46 dependency and build updates, not a literal merge of upstream history. Existing custom dependency choices are retained.",
-    "tree": "b0c81ba58095ef0399b23ba59f9ec6ec6c2db8eb"
+    "commit": "01da3a55f838cfa21010b05c7451c0a42cf5a173",
+    "release_tag": "v1.0.0-rc.47",
+    "release_commit": "e835b1bfc43b565d625537830dbfb19328925134",
+    "commits_after_release": 7,
+    "alignment_method": "Upstream history through 01da3a55f838cfa21010b05c7451c0a42cf5a173 was merged as the second parent of 75f57ad6018b0e732382ea6ee11457ca0a551823 on 2026-10-27. Custom repairs and dependency choices are retained.",
+    "tree": "743e1058e97f21dea680edaa1be579e3eedc36c2"
   },
-  "version": "v1.0.0-rc.46.chuanapi.1",
-  "scope": "Incremental ports from immutable production source; not a release, merge or deployment authorization. Feature parity is not asserted by this manifest."
+  "version": "v1.0.0-rc.47.chuanapi.1",
+  "scope": "Records the upstream history already merged on the repair branch; production_baseline and feature_reference remain historical source pins. This manifest does not authorize a release, main-branch merge or deployment, and does not assert feature parity."
 }
