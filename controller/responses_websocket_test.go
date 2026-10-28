@@ -1395,6 +1395,11 @@ func TestResponsesWebSocketCloseCodes(t *testing.T) {
 			if tc.end != nil {
 				tc.end(t, fixture)
 			}
+			if tc.timeout {
+				event := readResponsesWSTestEvent(t, fixture.client)
+				assert.Equal(t, "error", event["type"])
+				assert.Equal(t, float64(http.StatusGatewayTimeout), event["status"])
+			}
 			require.NoError(t, fixture.client.SetReadDeadline(time.Now().Add(5*time.Second)))
 			_, _, err := fixture.client.ReadMessage()
 			var closeErr *websocket.CloseError
@@ -1402,7 +1407,37 @@ func TestResponsesWebSocketCloseCodes(t *testing.T) {
 			assert.Equal(t, tc.code, closeErr.Code)
 			assert.Equal(t, tc.reason, closeErr.Text)
 			fixture.closeAndWait(t)
-			assertResponsesWSAccounting(t, fixture, []int{1000})
+			if tc.timeout {
+				// A created-only timeout has no billable measurement. Keep the
+				// original reservation for review, not a guessed fixed fee/refund.
+				var owner model.BillingFinalization
+				require.NoError(t, model.DB.Where("user_id = ?", fixture.user.Id).First(&owner).Error)
+				assert.Equal(t, model.BillingDeliveryUnknown, owner.State)
+				assert.Equal(t, "upstream_delivery_unknown", owner.LastErrorCode)
+				assert.Equal(t, 1000, owner.SourceHeld)
+				assert.Equal(t, 1000, owner.TokenHeld)
+				assert.Equal(t, fixture.token.Id, owner.TokenID)
+				assert.Equal(t, model.BillingTokenFingerprint(fixture.token.Key), owner.TokenFingerprint)
+				assert.Zero(t, owner.ActualQuota)
+				require.NoError(t, model.DB.First(fixture.user, fixture.user.Id).Error)
+				require.NoError(t, model.DB.First(fixture.token, fixture.token.Id).Error)
+				assert.Equal(t, 99000, fixture.user.Quota)
+				assert.Equal(t, 99000, fixture.user.QuotaPaid)
+				assert.Equal(t, fixture.user.Quota, fixture.user.QuotaPaid+fixture.user.QuotaBonus+fixture.user.QuotaReward)
+				assert.Zero(t, fixture.user.UsedQuota)
+				assert.Equal(t, 2000, fixture.token.RemainQuota)
+				assert.Equal(t, 1000, fixture.token.UsedQuota)
+				var logs int64
+				require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("user_id = ? AND type = ?", fixture.user.Id, model.LogTypeConsume).Count(&logs).Error)
+				assert.Zero(t, logs, "unknown usage must not produce a successful consume log")
+				var ledger []model.BalanceLedger
+				require.NoError(t, model.DB.Where("user_id = ?", fixture.user.Id).Find(&ledger).Error)
+				require.Len(t, ledger, 1)
+				assert.Equal(t, -1000, ledger[0].Delta)
+				assert.Equal(t, string(model.AccountPaid), ledger[0].Account)
+			} else {
+				assertResponsesWSAccounting(t, fixture, []int{1000})
+			}
 			if tc.upstreamCode != 0 {
 				require.Len(t, upstreamCodes, 1)
 				assert.Equal(t, tc.upstreamCode, <-upstreamCodes)

@@ -60,6 +60,9 @@ func TestMain(m *testing.M) {
 	model.LOG_DB = db
 
 	common.SetDatabaseTypes(databaseType, databaseType)
+	if err := initServiceTestDatabaseDialect(); err != nil {
+		panic("failed to initialize test database dialect: " + err.Error())
+	}
 	common.RedisEnabled = false
 	common.BatchUpdateEnabled = false
 	common.LogConsumeEnabled = true
@@ -109,6 +112,24 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(m.Run())
+}
+
+// Match startup's column quoting for the current disposable main/log database.
+// Never follow an inherited log DSN or run startup migrations in this fixture.
+func initServiceTestDatabaseDialect() error {
+	logDSN, hadLogDSN := os.LookupEnv("LOG_SQL_DSN")
+	if err := os.Unsetenv("LOG_SQL_DSN"); err != nil {
+		return err
+	}
+	defer func() {
+		if hadLogDSN {
+			_ = os.Setenv("LOG_SQL_DSN", logDSN)
+		}
+	}()
+	wasMaster := common.IsMasterNode
+	common.IsMasterNode = false
+	defer func() { common.IsMasterNode = wasMaster }()
+	return model.InitLogDB()
 }
 
 // ---------------------------------------------------------------------------
