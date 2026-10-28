@@ -65,6 +65,9 @@ func authHelper(c *gin.Context, minRole int) {
 		abortWithWebMessage(c, http.StatusForbidden, "AUTH_INSUFFICIENT_PRIVILEGE", common.NewMessage("Unauthorized, insufficient privileges"))
 		return
 	}
+	if !enforceAgentDashboardRoute(c, user.Role, useAccessToken) {
+		return
+	}
 	var lookup *accessTokenLookup
 	if useAccessToken {
 		lookup = requestAccessTokenLookup(c)
@@ -85,7 +88,7 @@ func authHelper(c *gin.Context, minRole int) {
 	// 的写接口都会自动留痕（无需在路由上单独挂审计中间件，避免漏挂）。
 	// handler 内手动埋点者会设置 ContextKeyAuditLogged，finishAdminAudit 据此跳过。
 	var auditWriter *auditResponseWriter
-	if minRole >= common.RoleAdminUser {
+	if minRole >= common.RoleAgentUser {
 		auditWriter = beginAdminAudit(c)
 	}
 
@@ -119,6 +122,9 @@ func TryUserAuth() func(c *gin.Context) {
 			}
 		}
 		if credentialKind != dashboardCredentialUnmatched {
+			if !enforceAgentDashboardRoute(c, user.Role, credentialKind == dashboardCredentialPAT) {
+				return
+			}
 			setDashboardAuthContext(c, user, identity, credentialKind == dashboardCredentialPAT)
 			if credentialKind == dashboardCredentialPAT {
 				setAccessTokenContext(c, lookup)
@@ -145,6 +151,9 @@ func SessionAuth() func(c *gin.Context) {
 		}
 		if user.Status != common.UserStatusEnabled || user.Role < common.RoleCommonUser || !validUserInfo(user.Username, user.Role) {
 			writeDashboardAuthError(c, service.ErrLoginSessionRevoked)
+			return
+		}
+		if !enforceAgentDashboardRoute(c, user.Role, false) {
 			return
 		}
 		setDashboardAuthContext(c, user, identity, false)
@@ -466,6 +475,9 @@ func TokenOrUserAuth() func(c *gin.Context) {
 				writeDashboardAuthError(c, err)
 				return
 			}
+			if !enforceAgentDashboardRoute(c, user.Role, false) {
+				return
+			}
 			setDashboardAuthContext(c, user, identity, false)
 			c.Next()
 			return
@@ -537,6 +549,11 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 		}
 		if userCache.Status != common.UserStatusEnabled {
 			common.ApiErrorStatus(c, http.StatusForbidden, errors.New(common.TranslateMessage(c, i18n.MsgAuthUserBanned)))
+			c.Abort()
+			return
+		}
+		if userCache.Role == common.RoleAgentUser {
+			common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Unauthorized, insufficient privileges"))
 			c.Abort()
 			return
 		}
@@ -635,6 +652,10 @@ func TokenAuth() func(c *gin.Context) {
 			return
 		}
 		userEnabled := userCache.Status == common.UserStatusEnabled
+		if userCache.Role == common.RoleAgentUser {
+			abortWithOpenAiMessage(c, http.StatusForbidden, "Agent administrators cannot use inference tokens", types.ErrorCodeAccessDenied)
+			return
+		}
 		if !userEnabled {
 			abortWithOpenAiMessage(c, http.StatusForbidden, common.TranslateMessage(c, i18n.MsgAuthUserBanned))
 			return

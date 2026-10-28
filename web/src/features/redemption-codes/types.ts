@@ -25,6 +25,7 @@ import { z } from 'zod'
 export const redemptionSchema = z.object({
   id: z.number(),
   user_id: z.number(),
+  budget_agent_id: z.number().optional(),
   name: z.string(),
   key: z.string(),
   status: z.number(), // 1: enabled, 2: disabled, 3: used
@@ -48,6 +49,7 @@ export interface ApiResponse<T = unknown> {
 }
 
 export interface GetRedemptionsParams {
+  agent_user_id?: number
   p?: number
   page_size?: number
 }
@@ -64,6 +66,7 @@ export interface GetRedemptionsResponse {
 }
 
 export interface SearchRedemptionsParams {
+  agent_user_id?: number
   keyword?: string
   status?: string
   p?: number
@@ -75,6 +78,7 @@ export interface RedemptionFormData {
   name: string
   quota: number
   expired_time: number
+  request_id?: string
   count?: number // Only for create
   status?: number // Only for status update
 }

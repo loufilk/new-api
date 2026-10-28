@@ -344,6 +344,11 @@ func GetAllUsers(c *gin.Context) {
 		return
 	}
 
+	if err := model.PopulateAgentInvitationSummaries(users); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(users)
 
@@ -374,6 +379,11 @@ func SearchUsers(c *gin.Context) {
 		return
 	}
 
+	if err := model.PopulateAgentInvitationSummaries(users); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(users)
 	common.ApiSuccess(c, pageInfo)
@@ -398,6 +408,10 @@ func GetUser(c *gin.Context) {
 	myRole := c.GetInt("role")
 	if !canManageTargetRole(myRole, user.Role) {
 		common.ApiErrorT(c, "No permission to access users of same or higher level")
+		return
+	}
+	if err := model.PopulateAgentInvitationSummaries([]*model.User{user}); err != nil {
+		common.ApiError(c, err)
 		return
 	}
 	user.AdminPermissions = authz.Capabilities(user.Id, user.Role)
@@ -489,6 +503,13 @@ func buildSelfUserData(user *model.User) map[string]interface{} {
 func calculateUserPermissions(userRole int) map[string]interface{} {
 	permissions := map[string]interface{}{}
 
+	// Agent administrators do not inherit common-user console or wallet access.
+	if userRole == common.RoleAgentUser {
+		permissions["sidebar_settings"] = false
+		permissions["sidebar_modules"] = map[string]any{"admin": map[string]any{"redemption": true}}
+		permissions["agent_redemption"] = true
+		return permissions
+	}
 	// 根据用户角色计算权限
 	if userRole == common.RoleRootUser {
 		// 超级管理员不需要边栏设置功能
@@ -982,7 +1003,7 @@ func CreateUser(c *gin.Context) {
 	}
 	auditParams := map[string]any{"role": user.Role}
 	// Creating an administrator grants privilege just like promoting one.
-	if user.Role >= common.RoleAdminUser {
+	if user.Role >= common.RoleAgentUser {
 		authorization := requireAdminUserProof(c, service.VerificationScopeAdminUserCreate, service.AdminUserCreateContext{Role: user.Role})
 		if authorization == nil {
 			return
@@ -1079,12 +1100,12 @@ func ManageUser(c *gin.Context) {
 	user := model.User{
 		Id: req.Id,
 	}
-	// Fill attributes
-	model.DB.Unscoped().Where(&user).First(&user)
-	if user.Id == 0 {
+	// Only a live user may be managed; a supplied nonzero ID is not proof of existence.
+	if err := model.DB.First(&user, req.Id).Error; err != nil {
 		common.ApiErrorT(c, "User does not exist")
 		return
 	}
+	expectedUser := user
 	myRole := c.GetInt("role")
 	if !canManageTargetRole(myRole, user.Role) {
 		common.ApiErrorT(c, "No permission to update users of same or higher permission level")
@@ -1130,6 +1151,18 @@ func ManageUser(c *gin.Context) {
 			"message": "",
 		})
 		return
+	case "set_agent":
+		if user.Role != common.RoleCommonUser {
+			common.ApiErrorT(c, "Only common users can become agent administrators")
+			return
+		}
+		user.Role = common.RoleAgentUser
+	case "unset_agent":
+		if user.Role != common.RoleAgentUser {
+			common.ApiErrorT(c, "User is not an agent administrator")
+			return
+		}
+		user.Role = common.RoleCommonUser
 	case "promote":
 		if myRole != common.RoleRootUser {
 			common.ApiErrorT(c, "Regular administrators cannot promote other users to administrator")
@@ -1159,36 +1192,36 @@ func ManageUser(c *gin.Context) {
 	if authorization == nil {
 		return
 	}
-	if req.Action == "demote" {
-		if err := model.DB.Transaction(func(tx *gorm.DB) error {
-			if err := user.UpdateWithTx(tx, false); err != nil {
-				return err
-			}
-			return authz.ClearUserAuthorizationInTx(tx, user.Id)
-		}); err != nil {
-			common.ApiError(c, err)
-			return
+	roleChanged := expectedUser.Role != user.Role
+	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		changed, err := model.ApplyUserManagementActionTx(tx, c.GetInt("id"), expectedUser, req.Action)
+		if err != nil {
+			return err
 		}
+		user = *changed
+		if roleChanged {
+			return authz.ClearUserAuthorizationInTx(tx, user.Id)
+		}
+		return nil
+	}); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if roleChanged {
 		if err := authz.ReloadPolicy(); err != nil {
 			common.ApiError(c, err)
 			return
 		}
-		if err := model.PublishUserAuthCache(user.Id); err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		if _, err := model.RevokeAllUserSessions(user.Id, "admin_demote"); err != nil {
-			common.ApiError(c, err)
-			return
-		}
-	} else {
-		if err := user.Update(false); err != nil {
-			common.ApiError(c, err)
-			return
-		}
 	}
-	// Update/UpdateWithTx has already published the new user hash and revoked
-	// browser sessions exactly once. Only PAT/relay token caches still need an
+	if err := model.PublishUserAuthCache(user.Id); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if _, err := model.RevokeAllUserSessions(user.Id, "admin_"+req.Action); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	// The committed role/status is published and browser sessions revoked. Only PAT/relay token caches still need an
 	// explicit invalidation; deleting the user hash here would discard the
 	// freshly published auth-version floor.
 	if err := model.InvalidateUserTokensCache(user.Id); err != nil {

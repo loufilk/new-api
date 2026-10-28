@@ -17,11 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { type FormEvent, useEffect, useState } from 'react'
+import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { useAgentAccount } from '@/features/agent-redemption/hooks/use-agent-account'
+import { canReserveQuota, getBatchQuota } from '@/features/agent-redemption/lib/quota'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
+import { ErrorState } from '@/components/error-state'
 import { DateTimePicker } from '@/components/datetime-picker'
 import {
   SideDrawerSection,
@@ -91,6 +96,10 @@ export function RedemptionsMutateDrawer({
   currentRow,
 }: RedemptionsMutateDrawerProps) {
   const { t } = useTranslation()
+  const isAgent = useAuthStore((state) => state.auth.user?.role === ROLE.AGENT)
+  const accountQuery = useAgentAccount(open)
+  const submitting = useRef(false)
+  const request = useRef<{ signature: string; id: string } | null>(null)
   const isUpdate = !!currentRow
   const redemptionId = currentRow?.id
   const { triggerRefresh } = useRedemptions()
@@ -168,13 +177,32 @@ export function RedemptionsMutateDrawer({
   const isLoadingRedemption = redemptionLoadState === 'loading'
 
   const onSubmit = async (data: RedemptionFormValues) => {
+    if (submitting.current) return
     if (isUpdate && (!currentRow || !loadedRedemption || !isUpdateReady)) {
       return
     }
 
+    const basePayload = transformFormDataToPayload(data)
+    if (isUpdate && loadedRedemption && !form.getFieldState('quota_dollars').isDirty) basePayload.quota = loadedRedemption.quota
+    if (!Number.isSafeInteger(basePayload.quota) || basePayload.quota <= 0) {
+      form.setError('quota_dollars', { message: t('Invalid quota amount') })
+      return
+    }
+    if (!isUpdate && getBatchQuota(basePayload.quota, basePayload.count ?? 1) === null) {
+      form.setError('quota_dollars', { message: t('Invalid quota amount') })
+      return
+    }
+    if (isAgent) {
+      const existingReservation = isUpdate && loadedRedemption?.status === 1 ? loadedRedemption.quota : 0
+      const available = (accountQuery.account?.available_quota ?? -1) + existingReservation
+      if (!accountQuery.account || !canReserveQuota(basePayload.quota, isUpdate ? 1 : (basePayload.count ?? 1), available)) {
+        form.setError('quota_dollars', { message: t('Insufficient available agent quota') })
+        return
+      }
+    }
+    submitting.current = true
     setIsSubmitting(true)
     try {
-      const basePayload = transformFormDataToPayload(data)
 
       if (isUpdate && currentRow && loadedRedemption) {
         const quota = form.getFieldState('quota_dollars').isDirty
@@ -194,8 +222,11 @@ export function RedemptionsMutateDrawer({
         }
       } else {
         // Create mode
-        const result = await createRedemption(basePayload)
+        const signature = JSON.stringify(basePayload)
+        if (request.current?.signature !== signature) request.current = { signature, id: crypto.randomUUID() }
+        const result = await createRedemption({ ...basePayload, request_id: request.current.id })
         if (result.success) {
+          request.current = null
           const count = result.data?.length || 0
           toast.success(
             count > 1
@@ -222,6 +253,7 @@ export function RedemptionsMutateDrawer({
     } catch (error) {
       handleServerError(error)
     } finally {
+      submitting.current = false
       setIsSubmitting(false)
     }
   }
@@ -247,6 +279,8 @@ export function RedemptionsMutateDrawer({
   const currencyLabel = getCurrencyLabel()
   const tokensOnly = currencyMeta.kind === 'tokens'
   const quotaStep = getEditableQuotaStep()
+  const batchQuota = getBatchQuota(parseQuotaFromDollars(form.watch('quota_dollars')), isUpdate ? 1 : (form.watch('count') ?? 1))
+  const budgetLoading = isAgent && (!accountQuery.account || accountQuery.isFetching)
   const quotaLabel = t('Quota ({{currency}})', { currency: currencyLabel })
   const quotaPlaceholder = tokensOnly
     ? t('Enter quota in tokens')
@@ -260,7 +294,7 @@ export function RedemptionsMutateDrawer({
 
   return (
     <>
-      <Sheet open={open} onOpenChange={onOpenChange}>
+      <Sheet open={open} onOpenChange={(nextOpen) => { if (!submitting.current) onOpenChange(nextOpen) }}>
         <SheetContent
           className={sideDrawerContentClassName('sm:max-w-[600px]')}
         >
@@ -279,6 +313,7 @@ export function RedemptionsMutateDrawer({
               {t('Click save when you&apos;re done.')}
             </SheetDescription>
           </SheetHeader>
+          {isAgent && accountQuery.isError && <ErrorState onRetry={() => { void accountQuery.refetch() }} />}
           <Form {...form}>
             <form
               id='redemption-form'
@@ -287,10 +322,15 @@ export function RedemptionsMutateDrawer({
               aria-busy={isLoadingRedemption}
             >
               <fieldset
-                disabled={!isUpdateReady || isSubmitting}
+                disabled={!isUpdateReady || isSubmitting || budgetLoading}
                 className='contents'
               >
                 <SideDrawerSection>
+                  {isAgent && <div className='bg-muted space-y-1 rounded-md p-3 text-sm' role='status'>
+                    <p>{t('Available quota')}: {formatQuotaWithCurrency(accountQuery.account?.available_quota ?? 0, { abbreviate: false })}</p>
+                    <p>{t('Batch reservation')}: {batchQuota === null ? '—' : formatQuotaWithCurrency(batchQuota, { abbreviate: false })}</p>
+                    <p className='text-muted-foreground'>{t('The server rechecks the budget before creating codes.')}</p>
+                  </div>}
                   <FormField
                     control={form.control}
                     name='name'
@@ -412,7 +452,7 @@ export function RedemptionsMutateDrawer({
                               placeholder={t('Number of codes to create')}
                               onChange={(e) =>
                                 field.onChange(
-                                  Number.parseInt(e.target.value, 10) || 1
+                                  e.target.value === '' ? NaN : Number(e.target.value)
                                 )
                               }
                             />
@@ -432,13 +472,13 @@ export function RedemptionsMutateDrawer({
             </form>
           </Form>
           <SheetFooter className={sideDrawerFooterClassName()}>
-            <SheetClose render={<Button variant='outline' />}>
+            <SheetClose render={<Button variant='outline' disabled={isSubmitting} />}>
               {t('Close')}
             </SheetClose>
             <Button
               form='redemption-form'
               type='submit'
-              disabled={isSubmitting || !isUpdateReady}
+              disabled={isSubmitting || !isUpdateReady || budgetLoading}
             >
               {submitButtonLabel}
             </Button>

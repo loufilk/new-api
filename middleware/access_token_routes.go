@@ -41,6 +41,14 @@ func accessTokenScopeRule(scope string) accessTokenRouteRule {
 // Casbin-guarded routes declare themselves through
 // DeclareAccessTokenPermissionRoute when they are registered.
 var accessTokenRouteRules = map[string]accessTokenRouteRule{
+	// Agent budgets and invitation policy are browser-only control-plane operations.
+	"GET /api/agent-redemption/accounts":            accessTokenSessionRule,
+	"GET /api/agent-redemption/accounts/:id/ledger": accessTokenSessionRule,
+	"POST /api/agent-redemption/allocations":        accessTokenSessionRule,
+	"GET /api/agent-redemption/invitations":         accessTokenSessionRule,
+	"GET /api/agent-redemption/invitation-policy":   accessTokenSessionRule,
+	"PUT /api/agent-redemption/invitation-policy":   accessTokenSessionRule,
+
 	// router/api-router.go: top level
 	"GET /api/models":                     accessTokenScopeRule("profile:read"),
 	"GET /api/status/test":                accessTokenScopeRule("log:read"),

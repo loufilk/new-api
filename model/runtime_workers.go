@@ -15,6 +15,13 @@ func StartRuntimeWorkers(group *lifecycle.Group, frequency int) {
 		frequency = 60
 	}
 	interval := time.Duration(frequency) * time.Second
+	group.Go("agent-redemption-expiry", func(schedule, work context.Context) {
+		lifecycle.Periodic(schedule, work, func() time.Duration { return time.Minute }, true, func(context.Context) {
+			if _, err := ReleaseExpiredAgentRedemptions(200); err != nil {
+				common.SysError("agent redemption expiry reconciliation failed: " + common.MaskSensitiveLogInfo(err.Error()))
+			}
+		})
+	})
 	if common.MemoryCacheEnabled {
 		group.Go("channel-cache", func(schedule, _ context.Context) { RunChannelCacheSync(schedule, frequency) })
 	}

@@ -63,6 +63,12 @@ func TestMain(m *testing.M) {
 	}
 
 	if err := db.AutoMigrate(
+		&AgentRedemptionAccount{},
+		&AgentRedemptionLedger{},
+		&AgentRedemptionOperation{},
+		&AgentInvitation{},
+		&AgentInvitationPolicy{},
+		&AgentInvitationPolicyAudit{},
 		&Task{},
 		&Option{},
 		&User{},
@@ -103,6 +109,12 @@ func TestMain(m *testing.M) {
 func truncateTables(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
+		DB.Exec("DELETE FROM agent_redemption_ledgers")
+		DB.Exec("DELETE FROM agent_redemption_operations")
+		DB.Exec("DELETE FROM agent_redemption_accounts")
+		DB.Exec("DELETE FROM agent_invitations")
+		DB.Exec("DELETE FROM agent_invitation_policy_audits")
+		DB.Exec("DELETE FROM agent_invitation_policies")
 		DB.Exec("DELETE FROM balance_ledger")
 		DB.Exec("DELETE FROM balance_ledger_operations")
 		DB.Exec("DELETE FROM tasks")

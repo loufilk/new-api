@@ -68,6 +68,8 @@ const MANAGE_ACTION_TITLES: Record<AdminUserManageAction, string> = {
   enable: 'Verify to enable user',
   promote: 'Verify to promote user',
   demote: 'Verify to demote user',
+  set_agent: 'Verify to grant agent role',
+  unset_agent: 'Verify to remove agent role',
 }
 
 interface DataTableRowActionsProps {
@@ -230,6 +232,15 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             <DropdownMenuShortcut>
               <PowerOff size={16} />
             </DropdownMenuShortcut>
+          </DropdownMenuItem>
+        )}
+
+        {!isAdmin && (
+          <DropdownMenuItem
+            disabled={verificationActive}
+            onClick={() => handleManage(user.role === USER_ROLE.AGENT ? 'unset_agent' : 'set_agent')}
+          >
+            {user.role === USER_ROLE.AGENT ? t('Remove agent role') : t('Grant agent role')}
           </DropdownMenuItem>
         )}
 

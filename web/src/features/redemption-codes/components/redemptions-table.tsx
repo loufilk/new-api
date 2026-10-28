@@ -29,6 +29,10 @@ import {
 } from '@/components/data-table'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 import { createServerError } from '@/lib/server-error-message'
 
 import { getRedemptions, searchRedemptions } from '../api'
@@ -56,6 +60,10 @@ function isDisabledRedemptionRow(redemption: Redemption) {
 export function RedemptionsTable() {
   const { t } = useTranslation()
   const columns = useRedemptionsColumns()
+  const user = useAuthStore((state) => state.auth.user)
+  const search = route.useSearch()
+  const navigate = route.useNavigate()
+  const agentId = user?.role === ROLE.AGENT ? user.id : search.agent_user_id
   const { refreshTrigger } = useRedemptions()
   const isMobile = useMediaQuery('(max-width: 640px)')
 
@@ -84,6 +92,9 @@ export function RedemptionsTable() {
   const { data, isLoading, isFetching } = useQuery({
     queryKey: [
       'redemptions',
+      user?.id,
+      user?.role,
+      agentId,
       pagination.pageIndex + 1,
       pagination.pageSize,
       globalFilter,
@@ -96,6 +107,7 @@ export function RedemptionsTable() {
       const params = {
         p: pagination.pageIndex + 1,
         page_size: pagination.pageSize,
+        agent_user_id: agentId,
       }
 
       const result =
@@ -158,6 +170,8 @@ export function RedemptionsTable() {
   )
 
   return (
+    <>
+    {user && user.role >= ROLE.ADMIN && <div className='mb-3 max-w-xs space-y-1'><Label htmlFor='redemption-agent-filter'>{t('Agent ID')}</Label><Input id='redemption-agent-filter' type='number' min={1} step={1} value={search.agent_user_id ?? ''} placeholder={t('All agents')} onChange={(event) => { const value = Number(event.target.value); void navigate({ search: (previous) => ({ ...previous, page: 1, agent_user_id: Number.isSafeInteger(value) && value > 0 ? value : undefined }) }) }} /></div>}
     <DataTablePage
       table={table}
       columns={columns}
@@ -188,5 +202,6 @@ export function RedemptionsTable() {
       }}
       bulkActions={<DataTableBulkActions table={table} />}
     />
+    </>
   )
 }

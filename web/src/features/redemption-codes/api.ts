@@ -35,8 +35,9 @@ import type {
 export async function getRedemptions(
   params: GetRedemptionsParams = {}
 ): Promise<GetRedemptionsResponse> {
-  const { p = 1, page_size = 10 } = params
-  const res = await api.get(`/api/redemption/?p=${p}&page_size=${page_size}`)
+  const { p = 1, page_size = 10, agent_user_id } = params
+  const scope = agent_user_id ? `&agent_user_id=${agent_user_id}` : ''
+  const res = await api.get(`/api/redemption/?p=${p}&page_size=${page_size}${scope}`)
   return res.data
 }
 
@@ -44,9 +45,10 @@ export async function getRedemptions(
 export async function searchRedemptions(
   params: SearchRedemptionsParams
 ): Promise<GetRedemptionsResponse> {
-  const { keyword = '', status = '', p = 1, page_size = 10 } = params
+  const { keyword = '', status = '', p = 1, page_size = 10, agent_user_id } = params
   const queryParams = new URLSearchParams()
   queryParams.set('keyword', keyword)
+  if (agent_user_id) queryParams.set('agent_user_id', String(agent_user_id))
   if (status) queryParams.set('status', status)
   queryParams.set('p', String(p))
   queryParams.set('page_size', String(page_size))

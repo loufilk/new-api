@@ -334,7 +334,7 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 		}
 
 		redemptionRoute := apiRouter.Group("/redemption")
-		redemptionRoute.Use(middleware.AdminAuth())
+		redemptionRoute.Use(middleware.DisableCache(), middleware.AgentRedemptionAuth())
 		{
 			redemptionRoute.GET("/", controller.GetAllRedemptions)
 			redemptionRoute.GET("/search", controller.SearchRedemptions)
@@ -344,6 +344,15 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 			redemptionRoute.PUT("/", controller.UpdateRedemption)
 			redemptionRoute.DELETE("/invalid", controller.DeleteInvalidRedemption)
 			redemptionRoute.DELETE("/:id", controller.DeleteRedemption)
+		}
+		agentRoute := apiRouter.Group("/agent-redemption", middleware.DisableCache(), middleware.AgentRedemptionAuth())
+		{
+			agentRoute.GET("/accounts", controller.GetAgentRedemptionAccounts)
+			agentRoute.GET("/accounts/:id/ledger", controller.GetAgentRedemptionLedger)
+			agentRoute.POST("/allocations", middleware.AdminAuth(), controller.AllocateAgentRedemptionQuota)
+			agentRoute.GET("/invitations", controller.GetAgentInvitations)
+			agentRoute.GET("/invitation-policy", middleware.RootAuth(), controller.GetAgentInvitationPolicy)
+			agentRoute.PUT("/invitation-policy", middleware.RootAuth(), controller.UpdateAgentInvitationPolicy)
 		}
 		handlePermissionRoute(apiRouter.Group("", middleware.DisableCache(), middleware.AdminAuth()), http.MethodGet, "/audit", authz.AuditRead, controller.GetAuditLogs)
 		apiRouter.GET("/audit/self", middleware.DisableCache(), middleware.UserAuth(), controller.GetAuditLogs)

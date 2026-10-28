@@ -20,6 +20,7 @@ import { useMemo } from 'react'
 
 import type { NavGroup, NavItem } from '@/components/layout/types'
 import { useStatus } from '@/hooks/use-status'
+import { canAccessAgentRoute } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 type SidebarSectionConfig = {
@@ -333,5 +334,5 @@ export function useIsSidebarModuleVisible(url: string): boolean {
       ? null
       : parseUserSidebarConfig(auth?.user?.sidebar_modules)
 
-  return isModuleEnabled(url, adminConfig, userConfig)
+  return canAccessAgentRoute(auth?.user?.role, url) && isModuleEnabled(url, adminConfig, userConfig)
 }

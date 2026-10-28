@@ -105,6 +105,7 @@ type User struct {
 	AffQuota             int                        `json:"aff_quota" gorm:"type:bigint;default:0;column:aff_quota"`           // 待使用邀请奖励（quota units）
 	AffHistoryQuota      int                        `json:"aff_history_quota" gorm:"type:bigint;default:0;column:aff_history"` // 邀请奖励累计值（不因划转减少）
 	InviterId            int                        `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
+	Invitation           *AgentInvitationSummary    `json:"invitation,omitempty" gorm:"-:all"`
 	DeletedAt            gorm.DeletedAt             `gorm:"index"`
 	LinuxDOId            string                     `json:"linux_do_id" gorm:"column:linux_do_id;index"`
 	Setting              string                     `json:"setting" gorm:"type:text;column:setting"`
@@ -617,20 +618,6 @@ func HardDeleteUserById(id int) (int64, error) {
 	return user.HardDelete()
 }
 
-// inviteUser 只维护邀请人数。奖励由下级实际 paid 消费产生，不在注册时创建余额。
-func inviteUser(inviterId int) (err error) {
-	result := DB.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]interface{}{
-		"aff_count": gorm.Expr("aff_count + ?", 1),
-	})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
-}
-
 func (user *User) prepareForInsert(tx *gorm.DB) error {
 	user.Email = NormalizeEmail(user.Email)
 	if err := ensureEmailAvailableWithTx(tx, user.Email, 0); err != nil {
@@ -683,36 +670,15 @@ func ensureEmailAvailableWithTx(tx *gorm.DB, email string, excludeUserID int) er
 }
 
 func (user *User) Insert(inviterId int) error {
+	original := *user
 	if err := DB.Transaction(func(tx *gorm.DB) error {
-		return withNormalizedEmailLock(tx, user.Email, func(tx *gorm.DB) error {
-			if err := user.prepareForInsert(tx); err != nil {
-				return err
-			}
-			user.InviterId = resolveInviterForInsert(tx, user.Id, inviterId)
-			// Ordinary registration starts with no balance; only the verified
-			// LinuxDO creation path may credit a signup bonus.
-			user.QuotaPaid = 0
-			user.QuotaBonus = 0
-			user.QuotaReward = 0
-			user.Quota = 0
-			user.AffCode = common.GetRandomString(4)
-
-			// 初始化用户设置，包括默认的边栏配置
-			if user.Setting == "" {
-				defaultSetting := dto.UserSetting{}
-				// 这里暂时不设置SidebarModules，因为需要在用户创建后根据角色设置
-				user.SetSetting(defaultSetting)
-			}
-
-			if err := tx.Create(user).Error; err != nil {
-				return err
-			}
-			return nil
-		})
+		return user.insertWithInvitationTx(tx, inviterId, InvitationSourcePassword)
 	}); err != nil {
+		// Failed inserts must not leave a generated ID or password hash on the
+		// caller's object, so a retry cannot accidentally rehash or reuse it.
+		*user = original
 		return err
 	}
-
 	user.finishInsert(user.InviterId)
 	return nil
 }
@@ -736,61 +702,49 @@ func (user *User) finishInsert(inviterId int) {
 	if bonusQuota := user.QuotaBonus; bonusQuota > 0 {
 		RecordLog(user.Id, LogTypeSystem, common.NewMessage("Registration bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(bonusQuota)}))
 	}
-	if inviterId != 0 {
-		_ = inviteUser(inviterId)
-	}
 }
 
 func (user *User) FinishInsert(inviterId int) {
 	user.finishInsert(inviterId)
 }
 
-// InsertWithTx inserts a new user within an existing transaction.
-// This is used for OAuth registration where user creation and binding need to be atomic.
-// Post-creation tasks (sidebar config, logs, inviter rewards) are handled after the transaction commits.
+// InsertWithTx creates a new OAuth user with immutable invitation attribution.
+// User, invitation and any test balance commit with the caller's OAuth binding.
+// A nested transaction also protects callers passing DB rather than an open tx.
 func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
+	if tx == nil {
+		return ErrLedgerInvalidEntry
+	}
+	return tx.Transaction(func(tx *gorm.DB) error {
+		return user.insertWithInvitationTx(tx, inviterId, InvitationSourceOAuth)
+	})
+}
+
+func (user *User) insertWithInvitationTx(tx *gorm.DB, inviterId int, source string) error {
 	return withNormalizedEmailLock(tx, user.Email, func(tx *gorm.DB) error {
 		if err := user.prepareForInsert(tx); err != nil {
 			return err
 		}
-		user.InviterId = resolveInviterForInsert(tx, user.Id, inviterId)
-		user.QuotaPaid = 0
-		user.QuotaBonus = 0
-		user.QuotaReward = 0
-		user.Quota = 0
-		user.AffCode = common.GetRandomString(4)
-
-		// 初始化用户设置
-		if user.Setting == "" {
-			defaultSetting := dto.UserSetting{}
-			user.SetSetting(defaultSetting)
+		invitation, err := resolveInviterForInsert(tx, user.Id, inviterId, source)
+		if err != nil {
+			return err
 		}
-
+		// Neither client-supplied balances nor inviter/role snapshots are used.
+		user.InviterId = 0
+		user.Invitation = nil
+		if invitation != nil {
+			user.InviterId = invitation.InviterId
+		}
+		user.QuotaPaid, user.QuotaBonus, user.QuotaReward, user.Quota = 0, 0, 0, 0
+		user.AffCode = common.GetRandomString(4)
+		if user.Setting == "" {
+			user.SetSetting(dto.UserSetting{})
+		}
 		if err := tx.Create(user).Error; err != nil {
 			return err
 		}
-		return nil
+		return commitRegistrationInvitationTx(tx, user, invitation)
 	})
-}
-
-// resolveInviterForInsert validates and snapshots the direct inviter while the
-// new user row is being created. Invalid, disabled, deleted, and self referrals
-// are ignored rather than turning a valid registration into an error.
-func resolveInviterForInsert(tx *gorm.DB, userId, inviterId int) int {
-	if tx == nil || inviterId <= 0 || inviterId == userId {
-		return 0
-	}
-	var inviter struct {
-		Id     int
-		Status int
-	}
-	if err := tx.Model(&User{}).Select("id, status").Where("id = ?", inviterId).First(&inviter).Error; err != nil {
-		return 0
-	}
-	if inviter.Status != common.UserStatusEnabled {
-		return 0
-	}
-	return inviter.Id
 }
 
 // InsertLinuxDOWithTx creates an account for a verified built-in LinuxDO identity.
@@ -814,7 +768,7 @@ func (user *User) InsertLinuxDOWithTx(tx *gorm.DB, inviterId int, subject string
 		return ErrAccountBindingChanged
 	}
 	user.LinuxDOId = subject
-	if err := user.InsertWithTx(tx, inviterId); err != nil {
+	if err := user.insertWithInvitationTx(tx, inviterId, InvitationSourceLinuxDO); err != nil {
 		return err
 	}
 	if err := UpdateLinuxDOBindingWithTx(tx, user.Id, subject); err != nil {
@@ -854,9 +808,6 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 
 	if bonusQuota := user.QuotaBonus; bonusQuota > 0 {
 		RecordLog(user.Id, LogTypeSystem, common.NewMessage("Registration bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(bonusQuota)}))
-	}
-	if inviterId != 0 {
-		_ = inviteUser(inviterId)
 	}
 }
 
@@ -920,7 +871,7 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 			return err
 		}
 	}
-	if err = tx.Model(&current).Omit("quota", "quota_paid", "quota_bonus", "quota_reward", "used_quota", "request_count", "access_token", "aff_count", "aff_quota", "aff_history", "auth_version", "cache_revision").Updates(newUser).Error; err != nil {
+	if err = tx.Model(&current).Omit("quota", "quota_paid", "quota_bonus", "quota_reward", "used_quota", "request_count", "access_token", "aff_count", "aff_quota", "aff_history", "inviter_id", "auth_version", "cache_revision").Updates(newUser).Error; err != nil {
 		return err
 	}
 	return tx.First(user, user.Id).Error

@@ -3,7 +3,6 @@ package controller
 import (
 	"net/http"
 	"strconv"
-	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -15,9 +14,9 @@ import (
 
 func GetAllRedemptions(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
-	redemptions, total, err := model.GetAllRedemptions(pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	redemptions, total, err := model.GetRedemptionsScoped(redemptionScope(c), redemptionAgentFilter(c), "", "", pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
-		common.ApiError(c, err)
+		redemptionAPIError(c, err)
 		return
 	}
 	pageInfo.SetTotal(int(total))
@@ -30,9 +29,9 @@ func SearchRedemptions(c *gin.Context) {
 	keyword := c.Query("keyword")
 	status := c.Query("status")
 	pageInfo := common.GetPageQuery(c)
-	redemptions, total, err := model.SearchRedemptions(keyword, status, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	redemptions, total, err := model.GetRedemptionsScoped(redemptionScope(c), redemptionAgentFilter(c), keyword, status, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
-		common.ApiError(c, err)
+		redemptionAPIError(c, err)
 		return
 	}
 	pageInfo.SetTotal(int(total))
@@ -44,12 +43,12 @@ func SearchRedemptions(c *gin.Context) {
 func GetRedemption(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		common.ApiError(c, err)
+		redemptionAPIError(c, err)
 		return
 	}
-	redemption, err := model.GetRedemptionById(id)
+	redemption, err := model.GetRedemptionScoped(redemptionScope(c), id)
 	if err != nil {
-		common.ApiError(c, err)
+		redemptionAPIError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -66,54 +65,15 @@ func AddRedemption(c *gin.Context) {
 		return
 	}
 
-	redemption := model.Redemption{}
-	err := c.ShouldBindJSON(&redemption)
+	var redemption model.RedemptionCreateRequest
+	if err := c.ShouldBindJSON(&redemption); err != nil {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	keys, err := model.CreateRedemptionsScoped(redemptionScope(c), redemption)
 	if err != nil {
-		common.ApiError(c, err)
+		redemptionAPIError(c, err)
 		return
-	}
-	if utf8.RuneCountInString(redemption.Name) == 0 || utf8.RuneCountInString(redemption.Name) > 20 {
-		common.ApiErrorT(c, "Redemption code name length must be between 1-20")
-		return
-	}
-	if redemption.Count <= 0 {
-		common.ApiErrorT(c, "Redemption code count must be greater than 0")
-		return
-	}
-	if redemption.Count > 100 {
-		common.ApiErrorT(c, "Maximum 100 redemption codes can be generated at once")
-		return
-	}
-	if redemption.Quota <= 0 {
-		common.ApiErrorT(c, "Redemption quota must be positive")
-		return
-	}
-	if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if err := validateExpiredTime(redemption.ExpiredTime); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	var keys []string
-	for i := 0; i < redemption.Count; i++ {
-		key := common.GetUUID()
-		cleanRedemption := model.Redemption{
-			UserId:      c.GetInt("id"),
-			Name:        redemption.Name,
-			Key:         key,
-			CreatedTime: common.GetTimestamp(),
-			Quota:       redemption.Quota,
-			ExpiredTime: redemption.ExpiredTime,
-		}
-		err = cleanRedemption.Insert()
-		if err != nil {
-			common.SysError(common.LogText("failed to insert redemption: %s", err.Error()))
-			common.ApiErrorStatus(c, http.StatusOK, common.NewMessage("Failed to create redemption code, please try again later"), gin.H{"data": keys})
-			return
-		}
-		keys = append(keys, key)
 	}
 	recordManageAudit(c, "redemption.create", map[string]any{
 		"name":  redemption.Name,
@@ -130,9 +90,9 @@ func AddRedemption(c *gin.Context) {
 
 func DeleteRedemption(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
-	err := model.DeleteRedemptionById(id)
+	_, err := model.DeleteRedemptionsScoped(redemptionScope(c), []int{id}, false)
 	if err != nil {
-		common.ApiError(c, err)
+		redemptionAPIError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -143,42 +103,14 @@ func DeleteRedemption(c *gin.Context) {
 }
 
 func UpdateRedemption(c *gin.Context) {
-	statusOnly := c.Query("status_only")
-	redemption := model.Redemption{}
-	err := c.ShouldBindJSON(&redemption)
-	if err != nil {
-		common.ApiError(c, err)
+	var redemption model.RedemptionUpdateRequest
+	if err := c.ShouldBindJSON(&redemption); err != nil {
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	cleanRedemption, err := model.GetRedemptionById(redemption.Id)
+	cleanRedemption, err := model.UpdateRedemptionScoped(redemptionScope(c), redemption, c.Query("status_only") != "")
 	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if statusOnly == "" {
-		if redemption.Quota <= 0 {
-			common.ApiErrorT(c, "Redemption quota must be positive")
-			return
-		}
-		if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		if err := validateExpiredTime(redemption.ExpiredTime); err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		// If you add more fields, please also update redemption.Update()
-		cleanRedemption.Name = redemption.Name
-		cleanRedemption.Quota = redemption.Quota
-		cleanRedemption.ExpiredTime = redemption.ExpiredTime
-	}
-	if statusOnly != "" {
-		cleanRedemption.Status = redemption.Status
-	}
-	err = cleanRedemption.Update()
-	if err != nil {
-		common.ApiError(c, err)
+		redemptionAPIError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -190,9 +122,9 @@ func UpdateRedemption(c *gin.Context) {
 }
 
 func DeleteInvalidRedemption(c *gin.Context) {
-	rows, err := model.DeleteInvalidRedemptions()
+	rows, err := model.DeleteRedemptionsScoped(redemptionScope(c), nil, true)
 	if err != nil {
-		common.ApiError(c, err)
+		redemptionAPIError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -218,9 +150,9 @@ func DeleteRedemptionBatch(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	count, err := model.BatchDeleteRedemptions(request.Ids)
+	count, err := model.DeleteRedemptionsScoped(redemptionScope(c), request.Ids, false)
 	if err != nil {
-		common.ApiError(c, err)
+		redemptionAPIError(c, err)
 		return
 	}
 	recordManageAudit(c, "redemption.delete_batch", map[string]any{
@@ -229,4 +161,10 @@ func DeleteRedemptionBatch(c *gin.Context) {
 		"requested_redemption_ids": request.Ids,
 	})
 	common.ApiSuccess(c, count)
+}
+
+// Filtering never supplies the authority: the model always enforces the scope.
+func redemptionAgentFilter(c *gin.Context) int {
+	id, _ := strconv.Atoi(c.Query("agent_user_id"))
+	return id
 }

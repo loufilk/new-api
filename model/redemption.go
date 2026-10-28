@@ -8,21 +8,26 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 type Redemption struct {
-	Id           int            `json:"id"`
-	UserId       int            `json:"user_id"`
-	Key          string         `json:"key" gorm:"type:char(32);uniqueIndex"`
-	Status       int            `json:"status" gorm:"default:1"`
-	Name         string         `json:"name" gorm:"index"`
-	Quota        int            `json:"quota" gorm:"default:100"`
-	CreatedTime  int64          `json:"created_time" gorm:"bigint"`
-	RedeemedTime int64          `json:"redeemed_time" gorm:"bigint"`
-	Count        int            `json:"count" gorm:"-:all"` // only for api request
-	UsedUserId   int            `json:"used_user_id"`
-	DeletedAt    gorm.DeletedAt `gorm:"index"`
-	ExpiredTime  int64          `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
+	BudgetAgentID       int            `json:"budget_agent_id" gorm:"not null;default:0;index"`
+	BudgetReserved      bool           `json:"budget_reserved" gorm:"not null;default:false"`
+	BudgetVersion       int            `json:"-" gorm:"not null;default:0"`
+	CreationOperationID int            `json:"-" gorm:"not null;default:0;index"`
+	Id                  int            `json:"id"`
+	UserId              int            `json:"user_id"`
+	Key                 string         `json:"key" gorm:"type:char(32);uniqueIndex"`
+	Status              int            `json:"status" gorm:"default:1"`
+	Name                string         `json:"name" gorm:"index"`
+	Quota               int            `json:"quota" gorm:"default:100"`
+	CreatedTime         int64          `json:"created_time" gorm:"bigint"`
+	RedeemedTime        int64          `json:"redeemed_time" gorm:"bigint"`
+	Count               int            `json:"count" gorm:"-:all"` // only for api request
+	UsedUserId          int            `json:"used_user_id"`
+	DeletedAt           gorm.DeletedAt `gorm:"index"`
+	ExpiredTime         int64          `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
 }
 
 func GetAllRedemptions(startIdx int, num int) (redemptions []*Redemption, total int64, err error) {
@@ -149,16 +154,29 @@ func Redeem(key string, userId int) (quota int, err error) {
 	common.RandomSleep()
 	var replayTotalAfter int
 	ledgerApplied := false
-	err = DB.Transaction(func(tx *gorm.DB) error {
+	expired := false
+	err = DB.Session(&gorm.Session{Logger: DB.Logger.LogMode(gormlogger.Silent)}).Transaction(func(tx *gorm.DB) error {
 		err := lockForUpdate(tx).Where(keyCol+" = ?", key).First(redemption).Error
 		if err != nil {
 			return errors.New("invalid redemption code")
 		}
-		if redemption.Status != common.RedemptionCodeStatusEnabled {
+		if redemption.Status != common.RedemptionCodeStatusEnabled || redemption.UsedUserId != 0 || redemption.RedeemedTime != 0 {
 			return errors.New("redemption code already used")
 		}
 		if redemption.ExpiredTime != 0 && redemption.ExpiredTime < common.GetTimestamp() {
-			return errors.New("redemption code expired")
+			expired = true
+			if err := updateRedemptionBudgetTx(tx, redemption, 0, 0, false, "expire"); err != nil {
+				return err
+			}
+			return tx.Model(redemption).Select("budget_reserved", "budget_version").Updates(redemption).Error
+		}
+		if redemption.BudgetAgentID != 0 {
+			if !redemption.BudgetReserved {
+				return ErrAgentQuotaInvariant
+			}
+			if err := updateRedemptionBudgetTx(tx, redemption, userId, 0, true, "redeem"); err != nil {
+				return err
+			}
 		}
 		// Compare-and-swap on status: only the transaction that flips
 		// enabled -> used may credit quota, so a concurrent redeem of the
@@ -166,9 +184,11 @@ func Redeem(key string, userId int) (quota int, err error) {
 		result := tx.Model(&Redemption{}).
 			Where("id = ? AND status = ?", redemption.Id, common.RedemptionCodeStatusEnabled).
 			Updates(map[string]any{
-				"redeemed_time": common.GetTimestamp(),
-				"status":        common.RedemptionCodeStatusUsed,
-				"used_user_id":  userId,
+				"redeemed_time":   common.GetTimestamp(),
+				"status":          common.RedemptionCodeStatusUsed,
+				"used_user_id":    userId,
+				"budget_reserved": redemption.BudgetReserved,
+				"budget_version":  redemption.BudgetVersion,
 			})
 		if result.Error != nil {
 			return result.Error
@@ -190,13 +210,20 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if err != nil {
 			return err
 		}
+		if ledgerResult.Replayed {
+			return ErrRedemptionUsedImmutable
+		}
 		replayTotalAfter = ledgerResult.TotalAfter
 		ledgerApplied = true
 		return nil
 
 	})
 	if err != nil {
-		common.SysError(common.LogText("redemption failed: %s", err.Error()))
+		// The database error may contain a usable code. Never log its text.
+		common.SysError("redemption failed")
+		return 0, ErrRedeemFailed
+	}
+	if expired {
 		return 0, ErrRedeemFailed
 	}
 	if ledgerApplied {
@@ -208,69 +235,41 @@ func Redeem(key string, userId int) (quota int, err error) {
 }
 
 func (redemption *Redemption) Insert() error {
+	if redemption.BudgetAgentID != 0 || redemption.BudgetReserved {
+		return ErrAgentQuotaInvalid
+	}
 	if redemption.Quota <= 0 {
 		return errors.New("redemption quota must be positive")
 	}
 	if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
 		return err
 	}
-	var err error
-	err = DB.Create(redemption).Error
-	return err
+	return DB.Session(&gorm.Session{Logger: DB.Logger.LogMode(gormlogger.Silent)}).Create(redemption).Error
 }
 
 func (redemption *Redemption) SelectUpdate() error {
-	// This can update zero values
-	return DB.Model(redemption).Select("redeemed_time", "status").Updates(redemption).Error
+	_, err := UpdateRedemptionScoped(RedemptionScope{Role: common.RoleRootUser, system: true}, RedemptionUpdateRequest{ID: redemption.Id, Status: redemption.Status}, true)
+	return err
 }
 
-// Update Make sure your token's fields is completed, because this will update non-zero values
+// Update preserves use markers and runs value edits through budget accounting.
+// Status transitions must use SelectUpdate or the scoped status-only API.
 func (redemption *Redemption) Update() error {
-	if redemption.Quota <= 0 {
-		return errors.New("redemption quota must be positive")
-	}
-	if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
-		return err
-	}
-	var err error
-	err = DB.Model(redemption).Select("name", "status", "quota", "redeemed_time", "expired_time").Updates(redemption).Error
+	_, err := UpdateRedemptionScoped(RedemptionScope{Role: common.RoleRootUser, system: true}, RedemptionUpdateRequest{ID: redemption.Id, Name: redemption.Name, Quota: redemption.Quota, ExpiredTime: redemption.ExpiredTime}, false)
 	return err
 }
 
-func (redemption *Redemption) Delete() error {
-	var err error
-	err = DB.Delete(redemption).Error
-	return err
-}
+func (redemption *Redemption) Delete() error { return DeleteRedemptionById(redemption.Id) }
 
-func DeleteRedemptionById(id int) (err error) {
-	if id == 0 {
-		return common.NewMessage("ID is empty")
-	}
-	redemption := Redemption{Id: id}
-	err = DB.Where(redemption).First(&redemption).Error
-	if err != nil {
-		return err
-	}
-	return redemption.Delete()
+func DeleteRedemptionById(id int) error {
+	_, err := DeleteRedemptionsScoped(RedemptionScope{Role: common.RoleRootUser, system: true}, []int{id}, false)
+	return err
 }
 
 func DeleteInvalidRedemptions() (int64, error) {
-	now := common.GetTimestamp()
-	result := DB.Where("status IN ? OR (status = ? AND expired_time != 0 AND expired_time < ?)", []int{common.RedemptionCodeStatusUsed, common.RedemptionCodeStatusDisabled}, common.RedemptionCodeStatusEnabled, now).Delete(&Redemption{})
-	return result.RowsAffected, result.Error
+	return DeleteRedemptionsScoped(RedemptionScope{Role: common.RoleRootUser, system: true}, nil, true)
 }
 
-// BatchDeleteRedemptions soft-deletes the selected codes in one statement.
 func BatchDeleteRedemptions(ids []int) (int64, error) {
-	if len(ids) == 0 || len(ids) > 1000 {
-		return 0, errors.New("select between 1 and 1000 redemption codes")
-	}
-	for _, id := range ids {
-		if id <= 0 {
-			return 0, errors.New("redemption IDs must be positive")
-		}
-	}
-	result := DB.Where("id IN ?", ids).Delete(&Redemption{})
-	return result.RowsAffected, result.Error
+	return DeleteRedemptionsScoped(RedemptionScope{Role: common.RoleRootUser, system: true}, ids, false)
 }
