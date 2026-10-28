@@ -126,8 +126,12 @@ it('leaves asynchronous default initialization with react-hook-form', async () =
   await waitFor(() =>
     expect(screen.getByLabelText('Loading defaults')).toHaveTextContent('ready')
   )
-  expect(screen.getByRole('textbox', { name: 'First' })).toHaveValue('old-first')
-  expect(screen.getByRole('textbox', { name: 'Second' })).toHaveValue('old-second')
+  expect(screen.getByRole('textbox', { name: 'First' })).toHaveValue(
+    'old-first'
+  )
+  expect(screen.getByRole('textbox', { name: 'Second' })).toHaveValue(
+    'old-second'
+  )
   expect(loadDefaults).toHaveBeenCalledTimes(1)
 })
 

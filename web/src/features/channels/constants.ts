@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-
 export const CHANNEL_PRIORITY_GUIDE_KEYS = {
   card: 'channels:priority-drag-guide:card:v1',
   table: 'channels:priority-drag-guide:v1',
