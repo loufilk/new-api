@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type TFunction } from 'i18next'
+import type { TFunction } from 'i18next'
 
 import type { TokenUnit } from './types'
 
@@ -36,6 +36,15 @@ export const SORT_OPTIONS = {
 } as const
 
 export type SortOption = (typeof SORT_OPTIONS)[keyof typeof SORT_OPTIONS]
+
+/** Keep bookmarked pre-upgrade sorting meaningful and reject stale unknown values. */
+export function normalizeSortOption(value: unknown): SortOption {
+  if (value === 'price-low') return SORT_OPTIONS.INPUT_PRICE_LOW
+  if (value === 'price-high') return SORT_OPTIONS.INPUT_PRICE_HIGH
+  return Object.values(SORT_OPTIONS).includes(value as SortOption)
+    ? (value as SortOption)
+    : SORT_OPTIONS.NAME
+}
 
 export function getSortLabels(t: TFunction): Record<SortOption, string> {
   return {

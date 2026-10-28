@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -32,7 +33,9 @@ import { ModelRatioVisualEditor } from '../model-ratio-visual-editor'
 
 let client: QueryClient | undefined
 
-afterEach(() => {
+afterEach(async () => {
+  cleanup()
+  await client?.cancelQueries()
   client?.clear()
   localStorage.clear()
   window.getSelection()?.removeAllRanges()
@@ -44,7 +47,24 @@ async function renderEditor() {
     if (url === '/api/pricing') {
       return { data: { success: true, data: [], vendors: [] } }
     }
-    return { data: { success: true, data: {} } }
+    return {
+      data: {
+        success: true,
+        data: { entries: [], options: {}, empty_version: 'selection-fixture' },
+      },
+    }
+  })
+  vi.spyOn(api, 'post').mockImplementation(async (url, body) => {
+    if (url !== '/api/option/model_pricing/preview') {
+      throw new Error('Unexpected POST in model selection test')
+    }
+    const request = body as { pricing: Record<string, unknown> }
+    return {
+      data: {
+        success: true,
+        data: { effective: request.pricing, cache_write_mode: 'none' },
+      },
+    }
   })
   const modelRatio = JSON.stringify({
     'gpt-4.1-mini': 0.2,
@@ -105,6 +125,14 @@ it('keeps the drag-selected model name highlighted when the row click opens the 
   expect(
     await screen.findByRole('region', { name: 'Edit model pricing' })
   ).toBeInTheDocument()
+  // Keep the editor open through its debounced preview request; assertions
+  // below must still hold after that asynchronous render, not just at mount.
+  await waitFor(() =>
+    expect(api.post).toHaveBeenCalledWith(
+      '/api/option/model_pricing/preview',
+      expect.objectContaining({ model_name: 'gpt-4.1-mini' })
+    )
+  )
   expect(nameCell).toBeInTheDocument()
   expect(String(window.getSelection())).toBe('gpt-4.1-mini')
 })
@@ -121,5 +149,13 @@ it('keeps other rows mounted when a different model is opened for editing', asyn
   expect(
     await screen.findByRole('region', { name: 'Edit model pricing' })
   ).toBeInTheDocument()
+  // Keep the editor open through its debounced preview request; assertions
+  // below must still hold after that asynchronous render, not just at mount.
+  await waitFor(() =>
+    expect(api.post).toHaveBeenCalledWith(
+      '/api/option/model_pricing/preview',
+      expect.objectContaining({ model_name: 'gpt-4.1-mini' })
+    )
+  )
   expect(otherName).toBeInTheDocument()
 })

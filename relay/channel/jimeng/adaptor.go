@@ -1,12 +1,12 @@
 package jimeng
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -70,6 +70,12 @@ type imageRequestPayload struct {
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	// This legacy CVProcess adaptor only has the provider-native width/height
+	// contract in extra_fields. Do not silently discard or guess a mapping from
+	// OpenAI size, aspect_ratio or resolution (including super-resolution).
+	if request.Size != "" && request.Size != "auto" || request.AspectRatio != nil || request.Resolution != nil {
+		return nil, types.NewErrorWithStatusCode(errors.New("Jimeng CVProcess does not support size, aspect_ratio or resolution; use provider-native extra_fields width and height"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
 	payload := imageRequestPayload{
 		ReqKey: request.Model,
 		Prompt: request.Prompt,
@@ -79,7 +85,7 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	}
 
 	if len(request.ExtraFields) > 0 {
-		if err := json.Unmarshal(request.ExtraFields, &payload); err != nil {
+		if err := common.Unmarshal(request.ExtraFields, &payload); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal extra fields: %w", err)
 		}
 	}

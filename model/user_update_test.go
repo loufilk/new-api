@@ -2,7 +2,9 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -54,6 +56,7 @@ func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing
 		DisplayName:     "before",
 		Status:          common.UserStatusEnabled,
 		Quota:           1000,
+		QuotaPaid:       1000,
 		UsedQuota:       20,
 		RequestCount:    3,
 		AffCount:        2,
@@ -66,10 +69,13 @@ func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing
 	staleUser, err := GetUserById(user.Id, true)
 	require.NoError(t, err)
 
-	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]any{
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]interface{}{
 		"quota":         gorm.Expr("quota - ?", 400),
 		"used_quota":    gorm.Expr("used_quota + ?", 400),
 		"request_count": gorm.Expr("request_count + ?", 1),
+		"quota_paid":    gorm.Expr("quota_paid - ?", 400),
+		"quota_bonus":   gorm.Expr("quota_bonus + ?", 100),
+		"quota_reward":  gorm.Expr("quota_reward + ?", 300),
 		"aff_count":     gorm.Expr("aff_count + ?", 1),
 		"aff_quota":     gorm.Expr("aff_quota - ?", 500),
 		"aff_history":   gorm.Expr("aff_history + ?", 500),
@@ -85,6 +91,9 @@ func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing
 	assert.Equal(t, 600, got.Quota)
 	assert.Equal(t, 420, got.UsedQuota)
 	assert.Equal(t, 4, got.RequestCount)
+	assert.Equal(t, 600, got.QuotaPaid)
+	assert.Equal(t, 100, got.QuotaBonus)
+	assert.Equal(t, 300, got.QuotaReward)
 	assert.Equal(t, 3, got.AffCount)
 	assert.Equal(t, 300, got.AffQuota)
 	assert.Equal(t, 1700, got.AffHistoryQuota)
@@ -164,7 +173,7 @@ func TestRevokeUserAccessTokenOnlyClearsLegacyToken(t *testing.T) {
 	user.SetAccessToken("legacy-token")
 	require.NoError(t, DB.Create(&user).Error)
 
-	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]any{
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]interface{}{
 		"quota":        gorm.Expr("quota + ?", 500),
 		"aff_quota":    gorm.Expr("aff_quota - ?", 500),
 		"display_name": "concurrent-update",
@@ -219,7 +228,7 @@ func TestUpdateUserSettingOnlyUpdatesSetting(t *testing.T) {
 	}
 	require.NoError(t, DB.Create(&user).Error)
 
-	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]any{
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]interface{}{
 		"quota":         gorm.Expr("quota - ?", 250),
 		"used_quota":    gorm.Expr("used_quota + ?", 250),
 		"request_count": gorm.Expr("request_count + ?", 1),
@@ -300,7 +309,7 @@ func TestUpdateUserBindColumnOnlyTouchesTheBindingColumn(t *testing.T) {
 	truncateTables(t)
 
 	user := createUserBindTestUser(t)
-	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]any{
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]interface{}{
 		"role":   common.RoleAdminUser,
 		"status": common.UserStatusEnabled,
 		"group":  "vip",
@@ -405,6 +414,170 @@ func TestResetUserPasswordByEmailRequiresSingleActiveMatch(t *testing.T) {
 
 	err = ResetUserPasswordByEmail("missing@example.com", "NewPassword123")
 	require.True(t, errors.Is(err, ErrEmailNotFound))
+}
+
+// ---------------------------------------------------------------------------
+// inviteUser 并发回归：邀请更新不得覆盖同时发生的钱包/账本变更
+// ---------------------------------------------------------------------------
+
+func setupInviteRaceTestState(t *testing.T) {
+	t.Helper()
+	setupLedgerTestState(t)
+}
+
+// TestInviteUserDoesNotOverwriteConcurrentLedgerChanges 回归测试：inviteUser
+// 只能做邀请计数的原子列增量。历史实现 GetUserById + DB.Save(user) 会把
+// 读取时刻的旧快照写回全行，覆盖并发的账本事务对
+// quota_paid/quota_bonus/quota_reward（及 quota 镜像）的更新。
+func TestInviteUserDoesNotOverwriteConcurrentLedgerChanges(t *testing.T) {
+	setupInviteRaceTestState(t)
+
+	user := User{
+		Id:              101,
+		Username:        "invite-race-user",
+		Password:        "password",
+		Status:          common.UserStatusEnabled,
+		Quota:           1500,
+		QuotaPaid:       1000,
+		QuotaBonus:      200,
+		QuotaReward:     300,
+		AffCount:        5,
+		AffQuota:        800,
+		AffHistoryQuota: 1200,
+	}
+	require.NoError(t, DB.Create(&user).Error)
+
+	// 模拟旧实现的读快照时刻：并发账本变更之前读取的用户行。
+	staleUser, err := GetUserById(user.Id, true)
+	require.NoError(t, err)
+	require.NotNil(t, staleUser)
+	assert.Equal(t, 1000, staleUser.QuotaPaid, "前置条件：快照必须持有变更前的余额")
+
+	// 并发钱包扣减（真实账本路径：事务内更新余额列 + quota 镜像 + balance_ledger）
+	result, err := DebitQuota(LedgerEntry{
+		UserId:         user.Id,
+		Delta:          400,
+		Reason:         LedgerReasonBillingPreConsume,
+		ReferenceType:  "test",
+		ReferenceId:    "invite-race-debit",
+		IdempotencyKey: "test:invite-race-debit",
+	}, AccountPaid, AccountBonus)
+	require.NoError(t, err)
+	require.False(t, result.Replayed)
+
+	// 邀请更新只允许触碰 aff_count。
+	require.NoError(t, inviteUser(user.Id))
+
+	got := getUserBalances(t, user.Id)
+	// 钱包余额与镜像必须保留并发账本的结果；旧实现 DB.Save(staleUser)
+	// 会把这些断言需要的值覆盖回 1000/200/300/1500。
+	assert.Equal(t, 600, got.QuotaPaid)
+	assert.Equal(t, 200, got.QuotaBonus)
+	assert.Equal(t, 300, got.QuotaReward)
+	assert.Equal(t, 1100, got.Quota)
+	assertQuotaInvariant(t, got)
+	// 邀请计数精确递增一次。
+	assert.Equal(t, 6, got.AffCount)
+	assert.Equal(t, 800, got.AffQuota)
+	assert.Equal(t, 1200, got.AffHistoryQuota)
+}
+
+// TestInviteUserConcurrentWithLedgerDebits 并发验证：多次邀请更新与钱包账本
+// 扣减交错执行时，无任何余额/镜像丢失，邀请计数精确累加。
+// 测试库使用单连接 SQLite，数据库访问天然串行，断言的是最终不变量。
+func TestInviteUserConcurrentWithLedgerDebits(t *testing.T) {
+	setupInviteRaceTestState(t)
+
+	user := User{
+		Id:              102,
+		Username:        "invite-concurrent-user",
+		Password:        "password",
+		Status:          common.UserStatusEnabled,
+		Quota:           1500,
+		QuotaPaid:       1000,
+		QuotaBonus:      200,
+		QuotaReward:     300,
+		AffCount:        0,
+		AffQuota:        0,
+		AffHistoryQuota: 0,
+	}
+	require.NoError(t, DB.Create(&user).Error)
+
+	const inviters = 8
+	const debits = 3
+	var wg sync.WaitGroup
+	inviteErrs := make([]error, inviters)
+	debitErrs := make([]error, debits)
+	wg.Add(inviters + debits)
+	for i := 0; i < inviters; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			inviteErrs[idx] = inviteUser(user.Id)
+		}(i)
+	}
+	for i := 0; i < debits; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			_, err := DebitQuota(LedgerEntry{
+				UserId:         user.Id,
+				Delta:          100,
+				Reason:         LedgerReasonBillingPreConsume,
+				ReferenceType:  "test",
+				ReferenceId:    fmt.Sprintf("invite-concurrent-debit-%d", idx),
+				IdempotencyKey: fmt.Sprintf("test:invite-concurrent-debit-%d", idx),
+			}, AccountPaid, AccountBonus)
+			debitErrs[idx] = err
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range inviteErrs {
+		require.NoError(t, err, "invite %d", i)
+	}
+	for i, err := range debitErrs {
+		require.NoError(t, err, "ledger debit %d", i)
+	}
+
+	got := getUserBalances(t, user.Id)
+	// 三次扣减全部生效（paid 先扣 100*3），邀请更新未吞掉任何一笔账本变更。
+	assert.Equal(t, 700, got.QuotaPaid)
+	assert.Equal(t, 200, got.QuotaBonus)
+	assert.Equal(t, 300, got.QuotaReward)
+	assert.Equal(t, 1200, got.Quota)
+	assertQuotaInvariant(t, got)
+	// 八次邀请全部精确计数，不创建注册时奖励余额。
+	assert.Equal(t, inviters, got.AffCount)
+	assert.Zero(t, got.AffQuota)
+	assert.Zero(t, got.AffHistoryQuota)
+}
+
+// TestInviteUserRejectsSoftDeletedUser 邀请更新必须命中用户行：
+// 已（软）删除用户的邀请计数不得被"复活"写入。
+func TestInviteUserRejectsSoftDeletedUser(t *testing.T) {
+	setupInviteRaceTestState(t)
+
+	user := User{
+		Id:              103,
+		Username:        "invite-deleted-user",
+		Password:        "password",
+		Status:          common.UserStatusEnabled,
+		Quota:           500,
+		QuotaPaid:       500,
+		AffCount:        1,
+		AffQuota:        100,
+		AffHistoryQuota: 100,
+	}
+	require.NoError(t, DB.Create(&user).Error)
+	require.NoError(t, DB.Delete(&user).Error)
+
+	err := inviteUser(user.Id)
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+
+	var got User
+	require.NoError(t, DB.Unscoped().First(&got, user.Id).Error)
+	assert.Equal(t, 1, got.AffCount)
+	assert.Equal(t, 100, got.AffQuota)
+	assert.Equal(t, 100, got.AffHistoryQuota)
+	assert.Equal(t, 500, got.QuotaPaid)
 }
 
 func createAccessTokenTestUser(t *testing.T, username string) User {

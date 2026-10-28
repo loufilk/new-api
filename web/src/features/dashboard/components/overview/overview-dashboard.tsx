@@ -52,6 +52,7 @@ import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
 import type { ApiKey } from '@/features/keys/types'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { getUserModels } from '@/lib/api'
+import { API_BASE_URL } from '@/lib/api-url'
 import { handleServerError } from '@/lib/handle-server-error'
 import { MOTION_TRANSITION } from '@/lib/motion'
 import { ROLE } from '@/lib/roles'
@@ -84,26 +85,27 @@ const SETUP_GUIDE_CODE_PATTERN = [
   '}',
 ].join('\n')
 
-type DashboardActionPath =
+type InternalDashboardActionPath =
   | '/keys'
   | '/wallet'
-  | '/playground'
   | '/channels'
   | '/usage-logs'
-  | '/pricing'
+type ExternalDashboardActionPath = '/playground' | '/pricing'
 
-interface StartStep {
+type DashboardActionTarget =
+  | { to: InternalDashboardActionPath; external?: false }
+  | { to: ExternalDashboardActionPath; external: true }
+
+type StartStep = DashboardActionTarget & {
   title: string
   description: string
-  to: DashboardActionPath
   icon: LucideIcon
   completed: boolean
 }
 
-interface QuickAction {
+type QuickAction = DashboardActionTarget & {
   title: string
   description: string
-  to: DashboardActionPath
   icon: LucideIcon
   adminOnly?: boolean
 }
@@ -146,7 +148,7 @@ function getCurrentOrigin(): string {
 }
 
 function normalizeEndpoint(sourceUrl?: string): string {
-  const fallback = `${getCurrentOrigin()}/v1/chat/completions`
+  const fallback = `${API_BASE_URL || getCurrentOrigin()}/v1/chat/completions`
   const trimmed = sourceUrl?.trim()
   if (!trimmed) return fallback
 
@@ -226,7 +228,6 @@ function StartStepItem(props: {
   index: number
   isLast: boolean
 }) {
-  const Icon = props.step.icon
   const StatusIcon = props.step.completed ? Check : Circle
 
   return (
@@ -249,32 +250,50 @@ function StartStepItem(props: {
         />
       </span>
 
-      <Link
-        to={props.step.to}
-        className='bg-background/70 hover:bg-muted/50 focus-visible:ring-ring flex min-w-0 flex-1 items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left shadow-xs transition-colors outline-none focus-visible:ring-2'
-      >
-        <span className='flex min-w-0 items-start gap-2.5'>
-          <span className='bg-muted mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg'>
-            <Icon className='size-3.5' aria-hidden='true' />
+      {props.step.external ? (
+        <a
+          href={props.step.to}
+          className='bg-background/70 hover:bg-muted/50 focus-visible:ring-ring flex min-w-0 flex-1 items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left shadow-xs transition-colors outline-none focus-visible:ring-2'
+        >
+          <StartStepContent step={props.step} index={props.index} />
+        </a>
+      ) : (
+        <Link
+          to={props.step.to}
+          className='bg-background/70 hover:bg-muted/50 focus-visible:ring-ring flex min-w-0 flex-1 items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left shadow-xs transition-colors outline-none focus-visible:ring-2'
+        >
+          <StartStepContent step={props.step} index={props.index} />
+        </Link>
+      )}
+    </li>
+  )
+}
+
+function StartStepContent(props: { step: StartStep; index: number }) {
+  const Icon = props.step.icon
+  return (
+    <>
+      <span className='flex min-w-0 items-start gap-2.5'>
+        <span className='bg-muted mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg'>
+          <Icon className='size-3.5' aria-hidden='true' />
+        </span>
+        <span className='flex min-w-0 flex-col gap-0.5'>
+          <span className='flex items-center gap-2 text-sm font-medium'>
+            <span className='text-muted-foreground font-mono text-xs tabular-nums'>
+              {props.index + 1}.
+            </span>
+            <span className='truncate'>{props.step.title}</span>
           </span>
-          <span className='flex min-w-0 flex-col gap-0.5'>
-            <span className='flex items-center gap-2 text-sm font-medium'>
-              <span className='text-muted-foreground font-mono text-xs tabular-nums'>
-                {props.index + 1}.
-              </span>
-              <span className='truncate'>{props.step.title}</span>
-            </span>
-            <span className='text-muted-foreground line-clamp-1 text-xs'>
-              {props.step.description}
-            </span>
+          <span className='text-muted-foreground line-clamp-1 text-xs'>
+            {props.step.description}
           </span>
         </span>
-        <ArrowRight
-          className='text-muted-foreground size-4 shrink-0'
-          aria-hidden='true'
-        />
-      </Link>
-    </li>
+      </span>
+      <ArrowRight
+        className='text-muted-foreground size-4 shrink-0'
+        aria-hidden='true'
+      />
+    </>
   )
 }
 
@@ -427,7 +446,13 @@ function QuickActionItem(props: { action: QuickAction }) {
     <Button
       variant='outline'
       className='h-auto justify-start rounded-xl px-3 py-3 text-left'
-      render={<Link to={props.action.to} />}
+      render={
+        props.action.external ? (
+          <a href={props.action.to} />
+        ) : (
+          <Link to={props.action.to} />
+        )
+      }
     >
       <span className='bg-muted flex size-9 shrink-0 items-center justify-center rounded-lg'>
         <Icon className='size-4' aria-hidden='true' />
@@ -452,7 +477,13 @@ function CompactQuickAction(props: { action: QuickAction }) {
       variant='outline'
       size='sm'
       className='bg-background/70 h-8 min-w-24 gap-1.5 px-2.5'
-      render={<Link to={props.action.to} />}
+      render={
+        props.action.external ? (
+          <a href={props.action.to} />
+        ) : (
+          <Link to={props.action.to} />
+        )
+      }
     >
       <Icon data-icon='inline-start' />
       <span>{props.action.title}</span>
@@ -522,8 +553,9 @@ export function OverviewDashboard() {
       },
       {
         title: t('Send a request'),
-        description: t('Verify routing with Playground or your client'),
+        description: t('Verify routing with Text Generation or your client'),
         to: '/playground',
+        external: true,
         icon: TerminalSquare,
         completed: requestCount > 0,
       },
@@ -556,6 +588,7 @@ export function OverviewDashboard() {
         title: t('Pricing'),
         description: t('Review model rates before scaling traffic'),
         to: '/pricing',
+        external: true,
         icon: BookOpen,
       },
     ],

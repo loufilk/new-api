@@ -15,6 +15,8 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -131,6 +133,18 @@ func buildSSEBody(n int) string {
 }
 
 // ---------- Basic correctness ----------
+
+func TestFlushWriterCommitsGinResponseHeaders(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	c.Status(http.StatusAccepted)
+	require.False(t, c.Writer.Written())
+	require.NoError(t, FlushWriter(c))
+	assert.True(t, c.Writer.Written(), "retry guards must see that a header-only flush committed the response")
+	assert.Equal(t, http.StatusAccepted, recorder.Code)
+	assert.True(t, recorder.Flushed)
+}
 
 func TestStreamScannerHandler_NilInputs(t *testing.T) {
 	t.Parallel()
@@ -359,6 +373,158 @@ func TestStreamScannerHandler_ClientCancelAbortsUpstreamAndReturns(t *testing.T)
 }
 
 // ---------- Ping tests ----------
+
+func TestStreamScannerHandler_PingDeliveryFailureAbortsUpstream(t *testing.T) {
+	setting := operation_setting.GetGeneralSetting()
+	oldEnabled, oldSeconds := setting.PingIntervalEnabled, setting.PingIntervalSeconds
+	setting.PingIntervalEnabled, setting.PingIntervalSeconds = true, 1
+	t.Cleanup(func() {
+		setting.PingIntervalEnabled, setting.PingIntervalSeconds = oldEnabled, oldSeconds
+	})
+
+	for _, failure := range []string{"write", "short_write", "flush"} {
+		for _, queued := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/queued=%t", failure, queued), func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				pr, pw := io.Pipe()
+				releasePing := make(chan struct{})
+				var releaseOnce sync.Once
+				release := func() { releaseOnce.Do(func() { close(releasePing) }) }
+				writer := &streamPingFailureWriter{
+					ResponseRecorder: httptest.NewRecorder(), failure: failure,
+					pingStarted: make(chan struct{}), releasePing: releasePing,
+				}
+				c, _ := gin.CreateTestContext(writer)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+				resp := &http.Response{Body: pr}
+				info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}
+				firstHandled, done := make(chan struct{}), make(chan struct{})
+				var received []string
+				var deliveryErrors []error
+				go func() {
+					defer close(done)
+					StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {
+						received = append(received, data)
+						if err := StringData(c, data); err != nil {
+							deliveryErrors = append(deliveryErrors, err)
+							sr.Stop(err)
+						}
+						if data == "first" {
+							close(firstHandled)
+						}
+					})
+				}()
+				t.Cleanup(func() {
+					cancel()
+					release()
+					_ = pr.Close()
+					_ = pw.Close()
+					select {
+					case <-done:
+					case <-time.After(3 * time.Second):
+						t.Error("stream goroutines did not finish during cleanup")
+					}
+				})
+				writeUpstream := func(payloads ...string) {
+					result := make(chan error, 1)
+					go func() {
+						for _, payload := range payloads {
+							if _, err := fmt.Fprintf(pw, "data: %s\n", payload); err != nil {
+								result <- err
+								return
+							}
+						}
+						result <- nil
+					}()
+					select {
+					case err := <-result:
+						require.NoError(t, err)
+					case <-time.After(3 * time.Second):
+						t.Fatal("upstream scanner did not read the test event")
+					}
+				}
+				writeUpstream("first")
+				select {
+				case <-firstHandled:
+				case <-time.After(3 * time.Second):
+					t.Fatal("first stream event was not delivered")
+				}
+				select {
+				case <-writer.pingStarted:
+				case <-time.After(3 * time.Second):
+					t.Fatal("the slow upstream did not trigger a ping")
+				}
+				if queued {
+					// The ping still owns the writer lock. Reading the second pipe
+					// write proves the first event has reached the callback queue.
+					writeUpstream("after_ping_1", "after_ping_2")
+				}
+				release()
+				select {
+				case <-done:
+				case <-time.After(3 * time.Second):
+					t.Fatal("ping delivery failure did not close the blocked upstream")
+				}
+
+				_, err := fmt.Fprint(pw, "data: after_failure\n")
+				assert.ErrorIs(t, err, io.ErrClosedPipe, "the upstream body must be closed before returning")
+				assert.NoError(t, ctx.Err(), "the write error itself must stop the stream without client cancellation")
+				assert.Equal(t, []string{"first"}, received, "queued events must not invoke the handler after the ping fails")
+				assert.Empty(t, deliveryErrors)
+				assert.NotContains(t, writer.Body.String(), "after_ping")
+				require.NotNil(t, info.StreamStatus)
+				assert.Equal(t, relaycommon.StreamEndReasonClientGone, info.StreamStatus.EndReason)
+				if failure == "short_write" {
+					assert.ErrorIs(t, info.StreamStatus.EndError, io.ErrShortWrite)
+				} else {
+					assert.ErrorIs(t, info.StreamStatus.EndError, io.ErrClosedPipe)
+				}
+				assert.Equal(t, string(relaycommon.ResponseOutcomeCancelled), info.StreamStatus.ResponseOutcome())
+				apiErr := info.StreamStatus.APIError()
+				require.NotNil(t, apiErr)
+				assert.Equal(t, service.ClientGoneErrorCode, apiErr.GetErrorCode())
+				assert.True(t, types.IsSkipRetryError(apiErr))
+			})
+		}
+	}
+}
+
+type streamPingFailureWriter struct {
+	*httptest.ResponseRecorder
+	failure      string
+	pingStarted  chan struct{}
+	releasePing  <-chan struct{}
+	pendingFlush bool
+}
+
+func (w *streamPingFailureWriter) Write(p []byte) (int, error) {
+	if string(p) == ": PING\n\n" {
+		if w.failure == "write" || w.failure == "short_write" {
+			close(w.pingStarted)
+			<-w.releasePing
+			if w.failure == "short_write" {
+				return len(p) / 2, nil
+			}
+			return 0, io.ErrClosedPipe
+		}
+		w.pendingFlush = true
+	}
+	return w.ResponseRecorder.Write(p)
+}
+
+func (w *streamPingFailureWriter) WriteString(s string) (int, error) {
+	return w.Write([]byte(s))
+}
+
+func (w *streamPingFailureWriter) FlushError() error {
+	if w.pendingFlush {
+		close(w.pingStarted)
+		<-w.releasePing
+		return io.ErrClosedPipe
+	}
+	w.ResponseRecorder.Flush()
+	return nil
+}
 
 func TestStreamScannerHandler_PingSentDuringSlowUpstream(t *testing.T) {
 	setting := operation_setting.GetGeneralSetting()
@@ -657,6 +823,23 @@ func TestNewStreamScannerCallerLimit(t *testing.T) {
 	require.True(t, scanner.Scan())
 	assert.Equal(t, "data: ok", scanner.Text())
 	require.NoError(t, scanner.Err())
+}
+
+type keepAliveFlushFailureWriter struct {
+	*httptest.ResponseRecorder
+}
+
+func (writer *keepAliveFlushFailureWriter) FlushError() error { return io.ErrClosedPipe }
+
+func TestStreamKeepAlivePreservesDownstreamFlushFailure(t *testing.T) {
+	writer := &keepAliveFlushFailureWriter{ResponseRecorder: httptest.NewRecorder()}
+	c, _ := gin.CreateTestContext(writer)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	stop := StartStreamKeepAlive(c, time.Hour)
+	defer stop()
+	_, err := c.Writer.WriteString("data: response\n\n")
+	require.NoError(t, err)
+	assert.ErrorIs(t, FlushWriter(c), io.ErrClosedPipe, "keepalive must not hide delivery failure from the stream owner")
 }
 
 // ---------- Write deadlines ----------

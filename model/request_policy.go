@@ -22,15 +22,16 @@ import (
 // settings API. It is rebuilt from the option map on every option write, so
 // the runtime globals updated by the same write never disagree with it.
 type RequestPolicySnapshot struct {
-	Affinity        operation_setting.ChannelAffinitySetting
-	RetryTimes      int
-	RetryCodes      []operation_setting.StatusCodeRange
-	DisableCodes    []operation_setting.StatusCodeRange
-	DisableKeywords []string
-	CheckText       bool
-	TextKeywords    []string
-	AutoDisable     bool
-	Options         map[string]string
+	Affinity         operation_setting.ChannelAffinitySetting
+	RetryTimes       int
+	RetryCodes       []operation_setting.StatusCodeRange
+	DisableCodes     []operation_setting.StatusCodeRange
+	DisableKeywords  []string
+	CheckText        bool
+	TextKeywords     []string
+	TextExemptGroups []string
+	AutoDisable      bool
+	Options          map[string]string
 }
 
 var requestPolicySnapshot atomic.Pointer[RequestPolicySnapshot]
@@ -59,6 +60,7 @@ func requestPolicyDefaultOptions() map[string]string {
 	defaults["CheckSensitiveEnabled"] = strconv.FormatBool(setting.CheckSensitiveEnabled)
 	defaults["CheckSensitiveOnPromptEnabled"] = strconv.FormatBool(setting.CheckSensitiveOnPromptEnabled)
 	defaults["SensitiveWords"] = setting.SensitiveWordsToString()
+	defaults[setting.SensitiveCheckExemptGroupsOptionKey] = setting.SensitiveCheckExemptGroupsToString()
 	defaults["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
 	defaults["ChannelDisableThreshold"] = strconv.FormatFloat(common.ChannelDisableThreshold, 'f', -1, 64)
 	return defaults
@@ -69,7 +71,7 @@ func IsRequestPolicyOption(key string) bool {
 		return true
 	}
 	switch key {
-	case "CheckSensitiveEnabled", "CheckSensitiveOnPromptEnabled", "SensitiveWords", "AutomaticEnableChannelEnabled", "ChannelDisableThreshold", "monitor_setting.auto_test_channel_enabled", "monitor_setting.auto_test_channel_minutes", "monitor_setting.channel_test_concurrency", "monitor_setting.channel_test_mode", "RetryTimes", "AutomaticRetryStatusCodes", "AutomaticDisableChannelEnabled", "AutomaticDisableStatusCodes", "AutomaticDisableKeywords":
+	case setting.SensitiveCheckExemptGroupsOptionKey, "CheckSensitiveEnabled", "CheckSensitiveOnPromptEnabled", "SensitiveWords", "AutomaticEnableChannelEnabled", "ChannelDisableThreshold", "monitor_setting.auto_test_channel_enabled", "monitor_setting.auto_test_channel_minutes", "monitor_setting.channel_test_concurrency", "monitor_setting.channel_test_mode", "RetryTimes", "AutomaticRetryStatusCodes", "AutomaticDisableChannelEnabled", "AutomaticDisableStatusCodes", "AutomaticDisableKeywords":
 		return true
 	}
 	return false
@@ -147,6 +149,14 @@ func BuildRequestPolicy(options map[string]string) (*RequestPolicySnapshot, erro
 		if _, err := strconv.ParseBool(raw[key]); err != nil {
 			return nil, fmt.Errorf("invalid boolean: %s", key)
 		}
+	}
+	normalizedGroups, err := setting.NormalizeSensitiveCheckExemptGroups(raw[setting.SensitiveCheckExemptGroupsOptionKey])
+	if err != nil {
+		return nil, err
+	}
+	raw[setting.SensitiveCheckExemptGroupsOptionKey] = normalizedGroups
+	if normalizedGroups != "" {
+		snapshot.TextExemptGroups = strings.Split(normalizedGroups, "\n")
 	}
 	snapshot.CheckText = raw["CheckSensitiveEnabled"] == "true" && raw["CheckSensitiveOnPromptEnabled"] == "true"
 	for word := range strings.SplitSeq(raw["SensitiveWords"], "\n") {
@@ -235,7 +245,16 @@ func UpdateRequestPolicyOptions(values map[string]string) error {
 		return err
 	}
 	if err := DB.Transaction(func(tx *gorm.DB) error {
-		for key, value := range values {
+		if _, writesGroups := values[setting.SensitiveCheckExemptGroupsOptionKey]; writesGroups {
+			if err := lockGroupNamespace(tx); err != nil {
+				return err
+			}
+			if err := validateGroupNamesForWriteTx(tx, snapshot.TextExemptGroups...); err != nil {
+				return err
+			}
+		}
+		for key := range values {
+			value := snapshot.Options[key]
 			option := Option{Key: key}
 			if err := tx.FirstOrCreate(&option, Option{Key: key}).Error; err != nil {
 				return err
@@ -248,8 +267,8 @@ func UpdateRequestPolicyOptions(values map[string]string) error {
 	}); err != nil {
 		return err
 	}
-	for key, value := range values {
-		if err := updateOptionMap(key, value); err != nil {
+	for key := range values {
+		if err := updateOptionMap(key, snapshot.Options[key]); err != nil {
 			return err
 		}
 	}

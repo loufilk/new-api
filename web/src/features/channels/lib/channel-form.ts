@@ -31,11 +31,12 @@ import {
   MODEL_FETCHABLE_TYPES,
   OPENAI_FIELD_PASSTHROUGH_TYPES,
 } from '../constants'
-import type { Channel } from '../types'
+import type { AdvancedCustomConfig, Channel } from '../types'
 import {
   CHANNEL_TYPE_ADVANCED_CUSTOM,
   advancedCustomConfigUsesRelativeUpstreamPath,
   hasValidAdvancedCustomModelListRoute,
+  normalizeAdvancedCustomConfig,
   parseAdvancedCustomConfig,
   stringifyAdvancedCustomConfig,
   validateAdvancedCustomConfig,
@@ -261,6 +262,15 @@ export const channelFormSchema = z
     batch_add_set_key_prefix_2_name: z.boolean().optional(),
     key_mode: z.enum(['append', 'replace']).optional(), // For editing multi-key channels
     // Channel extra settings (stored in setting JSON, not sent directly)
+    model_owned_by: z
+      .string()
+      .optional()
+      .refine(
+        (value) =>
+          value === undefined ||
+          ([...value.trim()].length <= 64 && !/[\p{Cc}\p{Cf}]/u.test(value)),
+        'Channel model owner label must be at most 64 characters without control or formatting characters'
+      ),
     force_format: z.boolean().optional(),
     thinking_to_content: z.boolean().optional(),
     proxy: z
@@ -458,6 +468,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   batch_add_set_key_prefix_2_name: false,
   key_mode: 'append',
   // Channel extra settings
+  model_owned_by: '',
   force_format: false,
   thinking_to_content: false,
   proxy: '',
@@ -503,6 +514,7 @@ export function transformChannelToFormDefaults(
 ): ChannelFormValues {
   // Parse channel extra settings from setting field
   let extraSettings = {
+    model_owned_by: '',
     task_plugin_key: '',
     task_extend_plugin_keys: [] as string[],
     force_format: false,
@@ -525,6 +537,10 @@ export function transformChannelToFormDefaults(
         parsed.http2_connection_shards
       )
       extraSettings = {
+        model_owned_by:
+          typeof parsed.model_owned_by === 'string'
+            ? parsed.model_owned_by
+            : '',
         task_plugin_key: parsed.task_plugin_key || '',
         task_extend_plugin_keys: readTaskExtendPluginKeys(channel.type, parsed),
         force_format: parsed.force_format || false,
@@ -594,7 +610,13 @@ export function transformChannelToFormDefaults(
         ? parsed.upstream_model_update_ignored_models.join(',')
         : ''
       if (parsed.advanced_custom) {
-        advancedCustom = stringifyAdvancedCustomConfig(parsed.advanced_custom)
+        const advancedCustomConfig = normalizeAdvancedCustomConfig(
+          parsed.advanced_custom as AdvancedCustomConfig
+        )
+        // The channel-wide flag is saved independently. Do not materialize it
+        // into route flags: disabling it must not leave new implicit overrides.
+        // Preserve any route flag already present, regardless of its history.
+        advancedCustom = stringifyAdvancedCustomConfig(advancedCustomConfig)
       }
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -658,6 +680,7 @@ export function transformChannelToFormDefaults(
  */
 export function buildSettingJSON(formData: ChannelFormValues): string {
   const settingObj: Record<string, unknown> = {
+    model_owned_by: formData.model_owned_by?.trim() || undefined,
     task_plugin_key:
       formData.type === CHANNEL_TYPE_TASK_PLUGIN
         ? formData.task_plugin_key?.trim() || ''

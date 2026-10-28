@@ -122,6 +122,10 @@ export interface SystemStatus {
     display_in_currency?: boolean
     display_token_stat_enabled?: boolean
     quota_per_unit?: number
+    signup_bonus_enabled?: boolean
+    signup_bonus_quota?: number
+    referral_bonus_enabled?: boolean
+    referral_bonus_rate?: number
     quota_display_type?: string
     usd_exchange_rate?: number
     custom_currency_symbol?: string
@@ -134,6 +138,7 @@ export interface SystemStatus {
     password_login_enabled?: boolean
     password_login_encryption_enabled?: boolean
     password_register_enabled?: boolean
+    server_address?: string
     custom_oauth_providers?: CustomOAuthProviderInfo[]
     [key: string]: unknown
   }
@@ -169,6 +174,10 @@ export interface SystemStatus {
   display_in_currency?: boolean
   display_token_stat_enabled?: boolean
   quota_per_unit?: number
+  signup_bonus_enabled?: boolean
+  signup_bonus_quota?: number
+  referral_bonus_enabled?: boolean
+  referral_bonus_rate?: number
   quota_display_type?: string
   usd_exchange_rate?: number
   custom_currency_symbol?: string
@@ -181,6 +190,7 @@ export interface SystemStatus {
   password_login_enabled?: boolean
   password_login_encryption_enabled?: boolean
   password_register_enabled?: boolean
+  server_address?: string
   custom_oauth_providers?: CustomOAuthProviderInfo[]
   log_export_enabled?: boolean
   log_max_range_days?: number

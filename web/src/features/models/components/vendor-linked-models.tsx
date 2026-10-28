@@ -169,7 +169,7 @@ export function VendorLinkedModels({
           onClick={() => {
             onNavigate(() => {
               void navigate({
-                to: '/models/$section',
+                to: '/model-management/$section',
                 params: { section: 'metadata' },
                 search: { vendor: [String(vendor.id)], page: 1 },
               })

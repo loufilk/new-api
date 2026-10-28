@@ -3,11 +3,13 @@ package controller
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +23,8 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
+	"github.com/QuantumNous/new-api/pkg/moneyport"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -29,14 +33,76 @@ import (
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
 	"github.com/gorilla/websocket"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 var responsesWSTestUserSequence atomic.Int64
+
+// openResponsesWSPostgres opens the opt-in PostgreSQL instance in a fresh,
+// isolated schema addressed through SQL_DSN's search_path. It initializes the
+// production database stack with model.InitDB so package-level schema state
+// (model column-name quoting) is set; the caller pins IsMasterNode=false, so
+// InitDB never runs the production migrations and the fixture migrates exactly
+// the tables its own tests use. The admin connection only creates and drops
+// this schema, so a shared test database keeps every other schema untouched.
+// Cleanup releases every connection and drops the schema even when a later
+// setup step aborts the fixture.
+func openResponsesWSPostgres(t *testing.T, dsn string) (*gorm.DB, *sql.DB, func()) {
+	t.Helper()
+	require.True(t, strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://"),
+		"TEST_RESPONSES_WS_POSTGRES_DSN must be a postgres:// URL so model.InitDB selects PostgreSQL")
+	admin, err := gorm.Open(postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true}), &gorm.Config{Logger: gormlogger.Default.LogMode(gormlogger.Silent)})
+	require.NoError(t, err, "TEST_RESPONSES_WS_POSTGRES_DSN is set but the connection failed")
+	adminSQL, err := admin.DB()
+	require.NoError(t, err)
+
+	var (
+		sqlDB     *sql.DB
+		schema    string
+		closeOnce sync.Once
+	)
+	closeDB := func() {
+		closeOnce.Do(func() {
+			// The admin connection must be released even when a failing
+			// assertion aborts the drop below.
+			defer func() { _ = adminSQL.Close() }()
+			if sqlDB != nil {
+				_ = sqlDB.Close()
+			}
+			if schema != "" {
+				require.NoError(t, admin.Exec(fmt.Sprintf("DROP SCHEMA %q CASCADE", schema)).Error)
+			}
+		})
+	}
+	t.Cleanup(closeDB)
+
+	var version string
+	require.NoError(t, admin.Raw("SHOW server_version").Scan(&version).Error)
+	require.NotEmpty(t, version)
+	t.Logf("Responses WebSocket PostgreSQL server_version=%s", version)
+
+	schema = fmt.Sprintf("responses_ws_%d", time.Now().UnixNano())
+	require.NoError(t, admin.Exec(fmt.Sprintf("CREATE SCHEMA %q", schema)).Error)
+
+	parsed, err := url.Parse(dsn)
+	require.NoError(t, err)
+	query := parsed.Query()
+	query.Set("search_path", schema)
+	parsed.RawQuery = query.Encode()
+	// model.InitDB reads SQL_DSN; never log the resulting connection string.
+	t.Setenv("SQL_DSN", parsed.String())
+	require.NoError(t, model.InitDB())
+	db := model.DB
+	sqlDB, err = db.DB()
+	require.NoError(t, err)
+	return db, sqlDB, closeDB
+}
 
 func setupResponsesWSRequestTest(t *testing.T) (*model.User, *model.Token) {
 	t.Helper()
@@ -58,19 +124,27 @@ func setupResponsesWSRequestTest(t *testing.T) (*model.User, *model.Token) {
 	t.Setenv("SQL_DSN", os.Getenv("TEST_RESPONSES_SQL_DSN"))
 	t.Setenv("LOG_SQL_DSN", os.Getenv("TEST_RESPONSES_LOG_SQL_DSN"))
 	common.IsMasterNode, common.MemoryCacheEnabled, common.RedisEnabled = false, false, false
-	common.SQLitePath = filepath.Join(t.TempDir(), "responses.db")
-	require.NoError(t, model.InitDB())
-	db := model.DB
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, model.InitLogDB())
-	if model.LOG_DB != db {
-		logSQL, err := model.LOG_DB.DB()
+
+	var (
+		db      *gorm.DB
+		sqlDB   *sql.DB
+		closeDB func()
+	)
+	if dsn := strings.TrimSpace(os.Getenv("TEST_RESPONSES_WS_POSTGRES_DSN")); dsn != "" {
+		db, sqlDB, closeDB = openResponsesWSPostgres(t, dsn)
+	} else {
+		common.SQLitePath = filepath.Join(t.TempDir(), "responses.db")
+		require.NoError(t, model.InitDB())
+		db = model.DB
+		var err error
+		sqlDB, err = db.DB()
 		require.NoError(t, err)
-		logSQL.SetMaxOpenConns(1)
-		t.Cleanup(func() { require.NoError(t, logSQL.Close()) })
+		// SQLite serializes writers; one connection keeps the fixture free of
+		// "database is locked" flakes.
+		sqlDB.SetMaxOpenConns(1)
+		closeDB = func() { require.NoError(t, sqlDB.Close()) }
 	}
+	model.DB, model.LOG_DB = db, db
 	setting.ModelRequestRateLimitEnabled = false
 	t.Cleanup(func() {
 		model.DB = previousDB
@@ -86,9 +160,11 @@ func setupResponsesWSRequestTest(t *testing.T) (*model.User, *model.Token) {
 		setting.ModelRequestRateLimitMutex.Lock()
 		setting.ModelRequestRateLimitGroup = previousGroups
 		setting.ModelRequestRateLimitMutex.Unlock()
-		require.NoError(t, sqlDB.Close())
+		closeDB()
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}))
+	// PostgreSQL model writes validate group references through options; keep
+	// the fixture complete rather than weakening that production safety check.
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.User{}, &model.Token{}))
 	// The shared in-memory limiter outlives each database fixture. Give every
 	// user a separate quota bucket, including when the tests run with -count.
 	user := &model.User{Id: 5062000 + int(responsesWSTestUserSequence.Add(1)), Username: "responses-ws-user", Status: common.UserStatusEnabled, Group: "default", Quota: 1000, AuthVersion: 1}
@@ -243,8 +319,10 @@ func TestResponsesWSRequestRunnerUsesExistingMemoryRateLimit(t *testing.T) {
 	apiError := runner(httptest.NewRequest(http.MethodPost, "/v1/responses", nil), "limited", handle)
 	require.NotNil(t, apiError)
 	assert.Equal(t, http.StatusTooManyRequests, apiError.StatusCode)
-	message := i18n.Translate("", i18n.MsgRateLimitTotalReached, map[string]any{"Minutes": 1, "Max": 1})
-	assert.Equal(t, common.MessageWithRequestId(message, "limited"), apiError.Error())
+	// The shared limiter now returns a structured, request-correlated reason
+	// rather than an empty 429 body. Preserve that reason through the WS runner.
+	assert.Equal(t, common.MessageWithRequestId("model_total_request_limit_exceeded", "limited"), apiError.Error())
+	assert.NotContains(t, apiError.Error(), token.Key)
 	assert.Equal(t, 1, called)
 }
 
@@ -272,6 +350,39 @@ func TestResponsesWSRequestRunnerSharesRedisSuccessLimitWithHTTP(t *testing.T) {
 	engine.ServeHTTP(response, request)
 	assert.Equal(t, http.StatusTooManyRequests, response.Code)
 	assert.False(t, called)
+}
+
+// responsesSSEDataFrames extracts the JSON payload of every data frame from an
+// SSE response body. SSE handlers re-marshal typed events, so assertions
+// compare parsed JSON rather than raw byte order.
+func responsesSSEDataFrames(t *testing.T, body string) []string {
+	t.Helper()
+	var frames []string
+	for _, line := range strings.Split(body, "\n") {
+		if payload, ok := strings.CutPrefix(line, "data: "); ok && payload != "[DONE]" {
+			frames = append(frames, payload)
+		}
+	}
+	return frames
+}
+
+// responsesSSEBodyContainsFrame reports whether any data frame in an SSE body
+// parses as the expected JSON value. SSE handlers re-marshal typed events, so
+// assertions must not depend on raw key order.
+func responsesSSEBodyContainsFrame(t *testing.T, body, expected string) bool {
+	t.Helper()
+	var expectedValue any
+	require.NoError(t, common.UnmarshalJsonStr(expected, &expectedValue))
+	for _, frame := range responsesSSEDataFrames(t, body) {
+		var actualValue any
+		if common.UnmarshalJsonStr(frame, &actualValue) != nil {
+			continue
+		}
+		if assert.ObjectsAreEqual(expectedValue, actualValue) {
+			return true
+		}
+	}
+	return false
 }
 
 type responsesWSBillingTest struct {
@@ -329,6 +440,15 @@ func waitPerfCounters(t *testing.T, wantRequests int64) (requests, successes int
 
 func newResponsesWSBillingTest(t *testing.T, expression string, handle func(*websocket.Conn, *http.Request), httpEvents ...string) *responsesWSBillingTest {
 	t.Helper()
+	// This fixture exercises the production BillingSession path, so install the
+	// same host funding factories as the application composition root. The
+	// process registry is write-once, so retain an earlier fixture's setup.
+	registry := moneyport.NewFactoryRegistry()
+	require.NoError(t, service.RegisterHostFundingFactories(registry))
+	require.NoError(t, walletmodule.RegisterFundingFactory(registry))
+	if err := service.ConfigureFundingFactoryRegistry(registry); err != nil {
+		require.Contains(t, err.Error(), "already configured")
+	}
 	user, token := setupResponsesWSRequestTest(t)
 	previousTimeout := constant.StreamingTimeout
 	constant.StreamingTimeout = 30
@@ -355,9 +475,12 @@ func newResponsesWSBillingTest(t *testing.T, expression string, handle func(*web
 		"group_ratio_setting.group_ratio": `{"default":1}`,
 		"perf_metrics_setting.enabled":    "true",
 	}))
-	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}))
-	require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}))
-	require.NoError(t, model.DB.Model(user).Updates(map[string]any{"quota": 100000, "setting": `{"billing_preference":"wallet_only"}`}).Error)
+	// The host wallet funding path settles through the atomic balance ledger,
+	// which the extension registry normally contributes to AutoMigrate. Wallet
+	// pre-consume validates the split account columns directly, so fund paid
+	// alongside the legacy quota mirror.
+	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.Log{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}))
+	require.NoError(t, model.DB.Model(user).Updates(map[string]any{"quota": 100000, "quota_paid": 100000, "setting": `{"billing_preference":"wallet_only"}`}).Error)
 	require.NoError(t, model.DB.Model(token).Update("remain_quota", 3000).Error)
 
 	fixture := &responsesWSBillingTest{user: user, token: token, done: make(chan struct{}), upstreamDone: make(chan struct{}), httpDone: make(chan struct{}, 1)}
@@ -519,12 +642,43 @@ func assertResponsesWSAccounting(t *testing.T, fixture *responsesWSBillingTest, 
 		assert.Equal(t, quota, logs[index].Quota)
 		charged += quota
 	}
+	// Joining the HTTP/WS handlers does not join BillingSession's background
+	// refund. Durable admission is not completion of the atomic source/token
+	// transaction. Wait for BOTH authoritative rows, not a cache, fixed delay or
+	// scheduling signal. On timeout CollectT reports
+	// the last exact counters; original accounting/ledger assertions remain.
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		var token model.Token
+		var user model.User
+		if !assert.NoError(collect, model.DB.First(&token, fixture.token.Id).Error) ||
+			!assert.NoError(collect, model.DB.First(&user, fixture.user.Id).Error) {
+			return
+		}
+		assert.Equal(collect, 3000-charged, token.RemainQuota, "terminal token remaining quota")
+		assert.Equal(collect, charged, token.UsedQuota, "terminal token used quota")
+		assert.Equal(collect, 100000-charged, user.Quota, "terminal wallet quota")
+		assert.Equal(collect, charged, user.UsedQuota, "terminal user used quota")
+		assert.Equal(collect, user.Quota, user.QuotaPaid+user.QuotaBonus+user.QuotaReward, "terminal split-account invariant")
+	}, 3*time.Second, 10*time.Millisecond, "request accounting did not reach its exact terminal state")
 	require.NoError(t, model.DB.First(fixture.token, fixture.token.Id).Error)
 	require.NoError(t, model.DB.First(fixture.user, fixture.user.Id).Error)
 	assert.Equal(t, 3000-charged, fixture.token.RemainQuota)
 	assert.Equal(t, charged, fixture.token.UsedQuota)
 	assert.Equal(t, 100000-charged, fixture.user.Quota)
 	assert.Equal(t, charged, fixture.user.UsedQuota)
+	// Split-account consistency: the compatibility quota mirror must always
+	// equal the funding accounts it summarizes.
+	assert.Equal(t, fixture.user.Quota, fixture.user.QuotaPaid+fixture.user.QuotaBonus+fixture.user.QuotaReward)
+	// The atomic balance ledger must show exactly the settled deductions, so a
+	// double charge or an incomplete refund cannot hide behind token quota
+	// arithmetic. The refund scenario expects a zero net here.
+	var ledgerRows []model.BalanceLedger
+	require.NoError(t, model.DB.Where("user_id = ?", fixture.user.Id).Find(&ledgerRows).Error)
+	var ledgerNet int
+	for _, row := range ledgerRows {
+		ledgerNet += row.Delta
+	}
+	assert.Equal(t, -charged, ledgerNet)
 }
 
 func TestResponsesWebSocketReusesConnectionAndSettlesEachRequest(t *testing.T) {
@@ -810,9 +964,9 @@ func TestResponsesWebSocketInitialUpstreamRejectionRefundsReservation(t *testing
 		name, upstream, wantType, wantMessage string
 		status                                int
 	}{
-		{name: "structured error", upstream: `{"type":"error","response_id":"rejected","status":400,"error":{"type":"invalid_request_error","code":"invalid_input","message":"Invalid input"}}`, status: http.StatusBadRequest, wantType: "invalid_request_error", wantMessage: "Invalid input"},
+		{name: "structured error", upstream: `{"type":"error","response_id":"rejected","status":400,"error":{"type":"invalid_request_error","code":"invalid_input","message":"Invalid input"}}`, status: http.StatusBadRequest, wantType: "invalid_request_error", wantMessage: "invalid request"},
 		// A frame without an error object is still reported as a request error.
-		{name: "bare error", upstream: `{"type":"error","status":500,"message":"upstream rejected"}`, status: http.StatusInternalServerError, wantType: "invalid_request_error", wantMessage: "upstream rejected"},
+		{name: "bare error", upstream: `{"type":"error","status":500,"message":"upstream rejected"}`, status: http.StatusInternalServerError, wantType: "invalid_request_error", wantMessage: "invalid request"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			preConsumed := make(chan int, 1)
@@ -851,6 +1005,8 @@ func TestResponsesWebSocketInitialUpstreamRejectionRefundsReservation(t *testing
 			rejectionError, _ := rejection["error"].(map[string]any)
 			assert.Equal(t, tc.wantType, rejectionError["type"])
 			assert.Equal(t, tc.wantMessage, rejectionError["message"])
+			assert.NotContains(t, rejectionError["message"], "Invalid input")
+			assert.NotContains(t, rejectionError["message"], "upstream rejected")
 			assert.Equal(t, 2000, <-preConsumed, "the rejected request reserved quota before contacting upstream")
 			deadline := time.NewTimer(3 * time.Second)
 			defer deadline.Stop()
@@ -880,16 +1036,24 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 			// sseTerminal is the flat error envelope used by the Responses SSE
 			// protocol; the WebSocket protocol nests the error instead.
 			sseTerminal string
+			// expected is the client-visible frame. Empty means the frame is
+			// forwarded unchanged (successful frames keep every upstream field).
+			expected string
+			// sseExpected is the flat SSE envelope equivalent of expected. SSE
+			// clients receive a typed re-marshal, so key order and the numeric
+			// rendering of sequence_number may differ; assertions compare JSON.
+			sseExpected string
 			delta       bool
 			failed      bool
 			ignored     bool
+			refundable  bool
 		}{
-			{name: "failed-null-fixed", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":null,"error":{"code":"server_error","message":"sensitive upstream detail"}}}`, failed: true},
-			{name: "failed-missing-fixed", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed"}}`, failed: true},
+			{name: "failed-null-fixed", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":null,"error":{"code":"server_error","message":"sensitive upstream detail"}}}`, expected: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":null,"error":{"code":"server_error","message":"upstream request failed"}}}`, sseExpected: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":null,"error":{"code":"server_error","message":"upstream request failed (request id: responses-http-billing)"}}}`, failed: true, refundable: true},
+			{name: "failed-missing-fixed", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed"}}`, failed: true, refundable: true},
 			{name: "failed-actual-usage", expression: `tier("input", p * 2)`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":{"input_tokens":1000,"output_tokens":10,"total_tokens":1010}}}`, failed: true},
 			{name: "failed-estimated-output", expression: `tier("output", c * 2000)`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":null}}`, delta: true, failed: true},
-			{name: "error-after-created", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"error","status":500,"error":{"type":"server_error","code":"server_error","message":"Internal server error"}}`, sseTerminal: `{"type":"error","code":"server_error","message":"Internal server error","param":null,"sequence_number":2}`, failed: true},
-			{name: "business-error-after-created", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"error","status":400,"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"Input too long"}}`, sseTerminal: `{"type":"error","code":"context_length_exceeded","message":"Input too long","param":null,"sequence_number":2}`, failed: true, ignored: true},
+			{name: "error-after-created", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"error","status":500,"error":{"type":"server_error","code":"server_error","message":"Internal server error"}}`, sseTerminal: `{"type":"error","code":"server_error","message":"Internal server error","param":null,"sequence_number":2}`, expected: `{"type":"error","status":500,"error":{"type":"server_error","code":"server_error","message":"upstream request failed"}}`, sseExpected: `{"type":"error","code":"server_error","message":"upstream request failed (request id: responses-http-billing)","sequence_number":2}`, failed: true, refundable: true},
+			{name: "business-error-after-created", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"error","status":400,"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"Input too long"}}`, sseTerminal: `{"type":"error","code":"context_length_exceeded","message":"Input too long","param":null,"sequence_number":2}`, expected: `{"type":"error","status":400,"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"invalid request"}}`, sseExpected: `{"type":"error","code":"context_length_exceeded","message":"invalid request (request id: responses-http-billing)","sequence_number":2}`, failed: true, refundable: true, ignored: true},
 			{name: "completed-at-output-limit", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.incomplete","response":{"id":"first","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":1000,"output_tokens":1,"total_tokens":1001}}}`},
 			{name: "completed-zero-fixed", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.completed","response":{"id":"first","status":"completed","usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}`},
 		} {
@@ -941,16 +1105,34 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 					require.NoError(t, err)
 					require.NoError(t, response.Body.Close())
 					assert.Equal(t, http.StatusOK, response.StatusCode)
-					assert.Contains(t, string(body), terminal)
+					expectedFrame := terminal
+					if tc.expected != "" {
+						expectedFrame = tc.expected
+					}
+					if tc.sseExpected != "" {
+						expectedFrame = tc.sseExpected
+					}
+					// SSE responses are typed re-marshals, so compare parsed
+					// frames instead of raw key order or numeric rendering.
+					assert.True(t, responsesSSEBodyContainsFrame(t, string(body), expectedFrame),
+						"the sanitized error frame must be delivered: %s", string(body))
+					assert.NotContains(t, string(body), "sensitive upstream detail")
 				} else {
 					require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","stream_id":"planner","model":"ws-billing","input":"hi","max_output_tokens":1}`)))
-					for _, expected := range events {
+					for index, event := range events {
+						expected := event
+						if index == len(events)-1 && tc.expected != "" {
+							expected = tc.expected
+						}
 						actual, err := common.Marshal(readResponsesWSTestEvent(t, fixture.client))
 						require.NoError(t, err)
-						assert.JSONEq(t, expected, string(actual), "upstream frames must be delivered once and unchanged")
+						assert.JSONEq(t, expected, string(actual), "upstream frames must be delivered once; only recognized error fields are rewritten")
 					}
 				}
-				quotas := []int{1000}
+				var quotas []int
+				if !tc.refundable {
+					quotas = append(quotas, 1000)
+				}
 				if tc.failed {
 					// The first terminal must complete settlement and middleware before
 					// admitting this immediately following request.
@@ -970,8 +1152,9 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 				require.Len(t, logs, len(quotas))
 				var other map[string]any
 				require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
-				stream := other["stream_status"].(map[string]any)
-				if tc.failed {
+				adminInfo := other["admin_info"].(map[string]any)
+				stream := adminInfo["stream_status"].(map[string]any)
+				if tc.failed && !tc.refundable {
 					assert.Equal(t, "error", stream["status"])
 					assert.Equal(t, "failed", stream["response_status"])
 				} else {
@@ -982,8 +1165,16 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 						assert.Equal(t, "completed", stream["response_status"])
 					}
 				}
-				assert.NotContains(t, logs[0].Other, "sensitive upstream detail")
-				expectedRequests := int64(len(quotas))
+				userLogs, err := model.GetLogByTokenId(fixture.token.Id)
+				require.NoError(t, err)
+				for _, entry := range userLogs {
+					assert.NotContains(t, entry.Other, "sensitive upstream detail")
+					assert.NotContains(t, entry.Other, "admin_info")
+				}
+				expectedRequests := int64(1)
+				if tc.failed {
+					expectedRequests++
+				}
 				if tc.ignored {
 					expectedRequests--
 				}
@@ -1105,14 +1296,14 @@ func TestResponsesWebSocketAmbiguousControlErrorClosesAndSettlesOnce(t *testing.
 	require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.cancel","response_id":"active"}`)))
 	body, err := common.Marshal(readResponsesWSTestEvent(t, fixture.client))
 	require.NoError(t, err)
-	assert.JSONEq(t, terminal, string(body))
+	assert.JSONEq(t, `{"type":"error","status":500,"error":{"type":"server_error","code":"server_error","message":"upstream request failed"}}`, string(body))
 	_, _, err = fixture.client.ReadMessage()
 	// A dropped socket would read as a synthetic 1006; 1011 is the gateway's frame.
 	var closeErr *websocket.CloseError
 	require.ErrorAs(t, err, &closeErr, "an unattributed error must close the connection instead of remaining busy")
 	assert.Equal(t, websocket.CloseInternalServerErr, closeErr.Code)
 	fixture.closeAndWait(t)
-	assertResponsesWSAccounting(t, fixture, []int{1000})
+	assertResponsesWSAccounting(t, fixture, nil)
 }
 
 // Every way a session ends sends the client a close frame whose code says
@@ -1204,6 +1395,11 @@ func TestResponsesWebSocketCloseCodes(t *testing.T) {
 			if tc.end != nil {
 				tc.end(t, fixture)
 			}
+			if tc.timeout {
+				event := readResponsesWSTestEvent(t, fixture.client)
+				assert.Equal(t, "error", event["type"])
+				assert.Equal(t, float64(http.StatusGatewayTimeout), event["status"])
+			}
 			require.NoError(t, fixture.client.SetReadDeadline(time.Now().Add(5*time.Second)))
 			_, _, err := fixture.client.ReadMessage()
 			var closeErr *websocket.CloseError
@@ -1211,7 +1407,37 @@ func TestResponsesWebSocketCloseCodes(t *testing.T) {
 			assert.Equal(t, tc.code, closeErr.Code)
 			assert.Equal(t, tc.reason, closeErr.Text)
 			fixture.closeAndWait(t)
-			assertResponsesWSAccounting(t, fixture, []int{1000})
+			if tc.timeout {
+				// A created-only timeout has no billable measurement. Keep the
+				// original reservation for review, not a guessed fixed fee/refund.
+				var owner model.BillingFinalization
+				require.NoError(t, model.DB.Where("user_id = ?", fixture.user.Id).First(&owner).Error)
+				assert.Equal(t, model.BillingDeliveryUnknown, owner.State)
+				assert.Equal(t, "upstream_delivery_unknown", owner.LastErrorCode)
+				assert.Equal(t, 1000, owner.SourceHeld)
+				assert.Equal(t, 1000, owner.TokenHeld)
+				assert.Equal(t, fixture.token.Id, owner.TokenID)
+				assert.Equal(t, model.BillingTokenFingerprint(fixture.token.Key), owner.TokenFingerprint)
+				assert.Zero(t, owner.ActualQuota)
+				require.NoError(t, model.DB.First(fixture.user, fixture.user.Id).Error)
+				require.NoError(t, model.DB.First(fixture.token, fixture.token.Id).Error)
+				assert.Equal(t, 99000, fixture.user.Quota)
+				assert.Equal(t, 99000, fixture.user.QuotaPaid)
+				assert.Equal(t, fixture.user.Quota, fixture.user.QuotaPaid+fixture.user.QuotaBonus+fixture.user.QuotaReward)
+				assert.Zero(t, fixture.user.UsedQuota)
+				assert.Equal(t, 2000, fixture.token.RemainQuota)
+				assert.Equal(t, 1000, fixture.token.UsedQuota)
+				var logs int64
+				require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("user_id = ? AND type = ?", fixture.user.Id, model.LogTypeConsume).Count(&logs).Error)
+				assert.Zero(t, logs, "unknown usage must not produce a successful consume log")
+				var ledger []model.BalanceLedger
+				require.NoError(t, model.DB.Where("user_id = ?", fixture.user.Id).Find(&ledger).Error)
+				require.Len(t, ledger, 1)
+				assert.Equal(t, -1000, ledger[0].Delta)
+				assert.Equal(t, string(model.AccountPaid), ledger[0].Account)
+			} else {
+				assertResponsesWSAccounting(t, fixture, []int{1000})
+			}
 			if tc.upstreamCode != 0 {
 				require.Len(t, upstreamCodes, 1)
 				assert.Equal(t, tc.upstreamCode, <-upstreamCodes)
@@ -1258,7 +1484,8 @@ func TestResponsesWebSocketRejectsSecondControlWhileOnePending(t *testing.T) {
 	assert.Equal(t, float64(http.StatusBadRequest), rejected["status"])
 	assert.Equal(t, "second-cancel", rejected["event_id"])
 	rejectedError, _ := rejected["error"].(map[string]any)
-	assert.Contains(t, rejectedError["message"], "already pending")
+	assert.Equal(t, "invalid request", rejectedError["message"], "local control conflicts are reported with a safe category")
+	assert.NotContains(t, rejectedError["message"], "already pending")
 	release <- struct{}{}
 	assert.Equal(t, "response.completed", readResponsesWSTestEvent(t, fixture.client)["type"])
 	fixture.closeAndWait(t)
@@ -1342,7 +1569,11 @@ func TestResponsesWebSocketIgnoresLateErrorForPreviousResponse(t *testing.T) {
 			require.Equal(t, "response.created", created["type"], "the late error must not reach the client or end the request: %v", created)
 			assert.Equal(t, "response.completed", readResponsesWSTestEvent(t, fixture.client)["type"])
 			fixture.closeAndWait(t)
-			assertResponsesWSAccounting(t, fixture, []int{1000, 1000})
+			quotas := []int{1000}
+			if tc.firstTerminalType == "response.completed" {
+				quotas = append(quotas, 1000)
+			}
+			assertResponsesWSAccounting(t, fixture, quotas)
 		})
 	}
 }
@@ -1370,7 +1601,7 @@ func TestResponsesWebSocketForwardsErrorForOtherResponseWithoutEndingRequest(t *
 	assert.Equal(t, "response.created", readResponsesWSTestEvent(t, fixture.client)["type"])
 	stray, err := common.Marshal(readResponsesWSTestEvent(t, fixture.client))
 	require.NoError(t, err)
-	assert.JSONEq(t, strayError, string(stray))
+	assert.JSONEq(t, `{"type":"error","response_id":"other","status":500,"error":{"type":"server_error","code":"server_error","message":"upstream request failed"}}`, string(stray))
 	assert.Equal(t, "response.completed", readResponsesWSTestEvent(t, fixture.client)["type"])
 	fixture.closeAndWait(t)
 	assertResponsesWSAccounting(t, fixture, []int{1000})
@@ -1379,7 +1610,8 @@ func TestResponsesWebSocketForwardsErrorForOtherResponseWithoutEndingRequest(t *
 	require.Len(t, logs, 1)
 	var other map[string]any
 	require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
-	stream, _ := other["stream_status"].(map[string]any)
+	adminInfo, _ := other["admin_info"].(map[string]any)
+	stream, _ := adminInfo["stream_status"].(map[string]any)
 	assert.Equal(t, "ok", stream["status"])
 	assert.Equal(t, "completed", stream["response_status"])
 }

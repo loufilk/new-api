@@ -137,10 +137,18 @@ function aspect(size) {
   const p = sizeParts(size);
   return !p || p[0] <= 0 || p[1] <= 0 ? "16:9" : p[1] > p[0] ? "9:16" : "16:9";
 }
+function requestedVideoDuration(req) {
+  const value = req.duration !== undefined ? req.duration : (req.metadata || {}).durationSeconds;
+  if (value === undefined) return undefined;
+  const seconds = Number(value);
+  if ((typeof value !== "number" && typeof value !== "string") || !Number.isInteger(seconds) || seconds < 1 || seconds > 3600)
+    throw new Error("durationSeconds must be an integer between 1 and 3600");
+  return seconds;
+}
+
 function duration(req) {
-  let n = Number(req.duration);
-  if (!Number.isFinite(n) || n <= 0) n = 8;
-  return n;
+  const seconds = requestedVideoDuration(req);
+  return seconds === undefined ? 8 : seconds;
 }
 function region(ctx, model) {
   const setting = ctx.userSetting || {};
@@ -243,7 +251,8 @@ export function buildSubmitRequest(ctx) {
   const req = ctx.requestBody || {},
     metadata = Object.assign({}, req.metadata || {}),
     model = ctx.upstreamModel || "veo-3.0-generate-001";
-  if (Number(req.duration) > 0) metadata.durationSeconds = Number(req.duration);
+  const seconds = requestedVideoDuration(req);
+  if (seconds !== undefined) metadata.durationSeconds = seconds;
   if (!metadata.resolution && req.size) metadata.resolution = resolution(req.size);
   if (!metadata.aspectRatio && req.size) metadata.aspectRatio = aspect(req.size);
   if (metadata.resolution) metadata.resolution = String(metadata.resolution).toLowerCase();

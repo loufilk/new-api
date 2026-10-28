@@ -1,0 +1,4 @@
+path,literal,context,phase_target
+controller/misc.go,chuanapi.com,email verification and password reset footer,Phase 1 trusted public-site configuration
+middleware/turnstile-check.go,chuanapi.com,Turnstile expected verified hostname,Phase 1 fail-closed trusted hostname configuration
+web/src/lib/public-site.ts,https://chuanapi.com,marketing home and quickstart URLs,Phase 1 frontend extension/public-site configuration

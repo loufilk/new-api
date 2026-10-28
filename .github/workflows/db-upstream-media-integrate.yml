@@ -1,0 +1,179 @@
+name: Assemble database candidate upstream merge
+
+on:
+  push:
+    branches: [codex/db-upstream-media-fix-20261001]
+    paths:
+      - .github/workflows/db-upstream-media-integrate.yml
+      - ops/upgrade/merge_20261001.py
+      - ops/upgrade/media_20261001.patch.b64
+      - ops/upgrade/finish_20261001.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: db-upstream-media-integrate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  integrate:
+    if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/db-upstream-media-fix-20261001'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GOWORK: 'off'
+      GOTOOLCHAIN: local
+      SQL_DSN: ''
+      LOG_SQL_DSN: ''
+      REDIS_CONN_STRING: ''
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Assemble reviewed merge without touching main
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/merge-evidence"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor 62d951fab129f4df1a921735835e5e9c7b8db031 HEAD
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch --no-tags https://github.com/QuantumNous/new-api.git 56758edf95ec162033a6b73b553ac789404f87c9
+          if git merge-base --is-ancestor 56758edf95ec162033a6b73b553ac789404f87c9 HEAD; then
+            echo 'Pinned upstream is already integrated; this recipe is one-shot.'
+            exit 1
+          fi
+          set +e
+          git merge --no-commit --no-ff 56758edf95ec162033a6b73b553ac789404f87c9 > "$RUNNER_TEMP/merge-evidence/merge.log" 2>&1
+          status=$?
+          set -e
+          test "$status" -le 1
+          git diff --name-only --diff-filter=U > "$RUNNER_TEMP/merge-evidence/conflicts.txt"
+          python3 ops/upgrade/merge_20261001.py
+          python3 - <<'PY'
+          import base64, gzip, hashlib, pathlib, subprocess
+          encoded = pathlib.Path('ops/upgrade/media_20261001.patch.b64').read_text().strip()
+          encoded = encoded.replace('RS3riIx3XVHg', 'RS3riIx3VHg')
+          patch = gzip.decompress(base64.b64decode(encoded, validate=True))
+          digest = hashlib.sha256(patch).hexdigest()
+          assert digest == '2ebb0c6a8a0e350fc68749de750ac29073d64a72ec8bee578b3606764b04006b', digest
+          subprocess.run(['git', 'apply', '--check', '-'], input=patch, check=True)
+          subprocess.run(['git', 'apply', '-'], input=patch, check=True)
+          pathlib.Path('ops/upgrade/media_20261001.patch.b64').write_text(encoded + '\n')
+          print('Applied reviewed media patch:', digest)
+          PY
+          python3 ops/upgrade/finish_20261001.py
+          git add -A
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+      - name: Resolve plugin dependency without downgrading the database foundation
+        shell: bash
+        run: |
+          set -euo pipefail
+          go version | tee "$RUNNER_TEMP/merge-evidence/go-version.txt"
+          git diff --name-only --diff-filter=ACMR HEAD -- '*.go' | xargs -r gofmt -w
+          go mod tidy
+          python3 - <<'PY'
+          import re, subprocess
+          before = subprocess.check_output(['git', 'show', '62d951fab129f4df1a921735835e5e9c7b8db031:go.mod'], text=True)
+          after = open('go.mod').read()
+          protected = ['gorm.io/gorm', 'gorm.io/driver/mysql', 'gorm.io/driver/postgres', 'gorm.io/driver/clickhouse', 'github.com/glebarez/sqlite', 'github.com/jackc/pgx/v5', 'github.com/go-sql-driver/mysql', 'github.com/redis/go-redis/v9', 'github.com/gin-gonic/gin']
+          for name in protected:
+              pattern = r'^\s*' + re.escape(name) + r'\s+(\S+)'
+              a, b = re.search(pattern, before, re.M), re.search(pattern, after, re.M)
+              assert a and b and a.group(1) == b.group(1), name
+          assert re.search(r'^go 1\.27\.1$', after, re.M)
+          PY
+          mkdir -p web/dist
+          touch web/dist/index.html
+          go build -p 2 ./... 2>&1 | tee "$RUNNER_TEMP/merge-evidence/root-build.log"
+          (cd relaykit && go build -p 2 ./...) 2>&1 | tee "$RUNNER_TEMP/merge-evidence/relaykit-build.log"
+      - name: Independent relaykit complete regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd relaykit && go test -p 2 ./... -count=1 -timeout=10m -json) 2>&1 | tee "$RUNNER_TEMP/merge-evidence/relaykit-tests.jsonl"
+      - name: Cline entrypoint and complete root regressions
+        if: success() || failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -p 2 ./relay/channel/cline -count=1 -timeout=5m -json 2>&1 | tee "$RUNNER_TEMP/merge-evidence/cline-tests.jsonl"
+          go test -p 2 ./... -count=1 -timeout=15m -json 2>&1 | tee "$RUNNER_TEMP/merge-evidence/root-tests.jsonl"
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        if: success() || failure()
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        if: success() || failure()
+        with:
+          bun-version: '1.4.0'
+          no-cache: true
+      - name: Format and typecheck the merged frontend
+        if: success() || failure()
+        working-directory: web
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run format
+          bun run typecheck 2>&1 | tee "$RUNNER_TEMP/merge-evidence/typecheck.log"
+          bun run format:check 2>&1 | tee "$RUNNER_TEMP/merge-evidence/format.log"
+          bun run lint:ci 2>&1 | tee "$RUNNER_TEMP/merge-evidence/lint.log"
+      - name: Complete frontend regressions and production build
+        if: success() || failure()
+        working-directory: web
+        shell: bash
+        run: |
+          set -uo pipefail
+          status=0
+          for shard in 1 2 3 4; do
+            bun run test --shard="$shard/4" --maxWorkers=2 --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/merge-evidence/vitest-$shard.json" > "$RUNNER_TEMP/merge-evidence/vitest-$shard.log" 2>&1 || status=1
+            tail -n 15 "$RUNNER_TEMP/merge-evidence/vitest-$shard.log"
+          done
+          bun run build 2>&1 | tee "$RUNNER_TEMP/merge-evidence/frontend-build.log" || status=1
+          exit "$status"
+      - name: Publish only the isolated candidate branch with fast-forward protection
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/codex/db-upstream-media-fix-20261001'
+          test "$GITHUB_REPOSITORY" = '1057300248/wanchuan-new-api'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(cat .git/MERGE_HEAD)" = '56758edf95ec162033a6b73b553ac789404f87c9'
+          git add -A
+          git diff --cached --check
+          git commit -m 'merge: integrate upstream 56758edf and fix media on the upgraded database foundation' -m 'Preserve BIGINT split-wallet balances, extension migration order and database driver versions. Fix final Cline wire content, scoped route composition and credential regressions. AI-assisted integration; no production deployment.'
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:$GITHUB_REF"
+          git log -1 --format='%H%n%T%n%P%n%s' | tee "$RUNNER_TEMP/merge-evidence/published-revision.txt"
+      - name: Save exact assembled source and diff even on validation failure
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/merge-evidence"
+          mkdir -p "$out"
+          git add -A
+          tree=$(git write-tree)
+          git archive --format=tar.gz -o "$out/source.tar.gz" "$tree"
+          git diff 62d951fab129f4df1a921735835e5e9c7b8db031 --stat > "$out/diff-stat.txt"
+          git status --short > "$out/status.txt"
+          sha256sum "$out/source.tar.gz" > "$out/source.sha256"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: db-upstream-assembly-${{ github.sha }}
+          path: ${{ runner.temp }}/merge-evidence/
+          retention-days: 3
+          if-no-files-found: error

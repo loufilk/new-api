@@ -1,11 +1,15 @@
 package openai
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -331,5 +335,77 @@ func requireOrderedSubstrings(t *testing.T, s string, parts ...string) {
 		idx := strings.Index(s[offset:], part)
 		require.NotEqualf(t, -1, idx, "missing %q after byte offset %d", part, offset)
 		offset += idx + len(part)
+	}
+}
+
+func TestResponsesConvertedJSONFailurePreservesUsage(t *testing.T) {
+	for _, tc := range []struct {
+		name, status, errorJSON string
+		measured                bool
+	}{
+		{"failed with usage", "failed", `{"type":"server_error","code":"failed","message":"upstream failed"}`, true},
+		{"error without type", "failed", `{"code":"failed","message":"upstream failed"}`, true},
+		{"cancelled with usage", "cancelled", `null`, true},
+		{"explicit empty failure", "failed", `{"code":"failed","message":"upstream failed"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"status":"` + tc.status + `","error":` + tc.errorJSON
+			if tc.measured {
+				body += `,"usage":{"input_tokens":11,"output_tokens":4,"total_tokens":15}`
+			}
+			body += `}`
+			c, recorder, resp, info := newResponsesChatTestContext(t, body, false)
+			resp.Header.Set("Content-Type", "application/json")
+			usage, apiErr := OaiResponsesToChatHandler(c, info, resp)
+			require.NotNil(t, apiErr)
+			assert.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+			assert.False(t, service.ShouldRetryRelayError(c, apiErr, 2))
+			assert.Empty(t, recorder.Body.String())
+			assert.True(t, common.GetContextKeyBool(c, constant.ContextKeyUpstreamExplicitRejection))
+			if tc.measured {
+				require.NotNil(t, usage)
+				assert.Equal(t, 15, usage.TotalTokens)
+				assert.True(t, common.GetContextKeyBool(c, constant.ContextKeyResponsesPartialUsage))
+			} else {
+				assert.Nil(t, usage)
+			}
+		})
+	}
+}
+
+func TestBufferedResponsesIdleAndCancellationCloseBlockedBody(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 1
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+	for _, cancelled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cancelled_%t", cancelled), func(t *testing.T) {
+			c, recorder, resp, info := newResponsesChatTestContext(t, "", false)
+			reader, writer := io.Pipe()
+			defer writer.Close()
+			resp.Body = reader
+			ctx, cancel := context.WithCancel(c.Request.Context())
+			defer cancel()
+			c.Request = c.Request.WithContext(ctx)
+			var fallback atomic.Bool
+			cutoff := time.AfterFunc(1800*time.Millisecond, func() { fallback.Store(true); reader.Close() })
+			defer cutoff.Stop()
+			go func() {
+				_, _ = io.WriteString(writer, `data: {"type":"response.in_progress","response":{"usage":{"input_tokens":11,"output_tokens":4,"total_tokens":15}}}`+"\n\n")
+				if cancelled {
+					cancel()
+				}
+			}()
+			usage, apiErr := OaiResponsesToChatBufferedStreamHandler(c, info, resp)
+			require.NotNil(t, apiErr)
+			assert.False(t, fallback.Load(), "handler must unblock without a client deadline or test fallback")
+			require.NotNil(t, usage)
+			assert.Equal(t, 15, usage.TotalTokens)
+			assert.Empty(t, recorder.Body.String())
+			if cancelled {
+				assert.Equal(t, relaycommon.StreamEndReasonClientGone, info.StreamStatus.EndReason)
+			} else {
+				assert.Equal(t, relaycommon.StreamEndReasonTimeout, info.StreamStatus.EndReason)
+			}
+		})
 	}
 }

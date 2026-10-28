@@ -21,17 +21,34 @@ import { useMemo } from 'react'
 
 import { useStatus } from '@/hooks/use-status'
 import { requireServerSuccess } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { getPricing } from '../api'
+import { getPricing, getPublicPricing } from '../api'
 
 export function usePricingData(enabled = true) {
   const { status } = useStatus()
+  const bootstrapState = useAuthStore((state) => state.auth.bootstrapState)
+  const userID = useAuthStore((state) => state.auth.user?.id ?? null)
+  const sessionSID = useAuthStore((state) => state.auth.session?.sid ?? null)
+
+  // The endpoint follows the resolved identity instead of a 401 downgrade:
+  // anonymous visitors use the public catalogue, authenticated users keep the
+  // dashboard endpoint (and its group pricing). `checking` means the identity
+  // probe is still in flight, so wait for it rather than guessing.
+  const identityResolved = bootstrapState !== 'checking'
+  const isAuthenticated = identityResolved && userID !== null
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['pricing'],
-    queryFn: async () => requireServerSuccess(await getPricing()),
+    queryKey: [
+      'pricing',
+      isAuthenticated ? `user:${userID}:${sessionSID ?? ''}` : 'public',
+    ],
+    queryFn: async () =>
+      requireServerSuccess(
+        await (isAuthenticated ? getPricing() : getPublicPricing())
+      ),
     staleTime: 5 * 60 * 1000,
-    enabled,
+    enabled: enabled && identityResolved,
   })
 
   // Ensure rates never reach zero to prevent division errors

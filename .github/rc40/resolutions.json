@@ -1,0 +1,470 @@
+[
+  {
+    "path": ".agents/rules/billing.md",
+    "hunks": 2,
+    "reason": "Update image billing contract for rc39 task-plugin migration; retain safety invariants.",
+    "resolved_sha256": "ec1e4b97d8b80a36937374acdf67f84e6552b90dacb0a6457d3ebe1d3324dc7b"
+  },
+  {
+    "path": ".gitignore",
+    "hunks": 1,
+    "reason": "Retain local output and secret-directory exclusions.",
+    "resolved_sha256": "975cb750bde7ee40a1860d3c20f2c61f7630e1d5145b458bfbc170f8d3a4f7aa"
+  },
+  {
+    "path": "AGENTS.md",
+    "hunks": 1,
+    "reason": "Restore explicit billing read-gate triggers without duplicating rules.",
+    "resolved_sha256": "05cf0e34679991d959fd2b6a14eabf47b93c694b0754d840b72250975e6962e7"
+  },
+  {
+    "path": "controller/auth_flow_test.go",
+    "hunks": 2,
+    "reason": "Retain commit-time email, status, identity and auth-version race regressions.",
+    "resolved_sha256": "b34465d5de46b8b02e5694c0420cf91704f562b1d04ae32cec9cd88054c548d2"
+  },
+  {
+    "path": "controller/oauth.go",
+    "hunks": 1,
+    "reason": "Retain locked identity/email-evidence revalidation before issuing a session.",
+    "resolved_sha256": "1985e5c0b1982c86c793c4d8a99f3f869836122b117c815850818d7b16a951f7"
+  },
+  {
+    "path": "controller/relay.go",
+    "hunks": 1,
+    "reason": "Retain no-retry-after-stream-error guard.",
+    "resolved_sha256": "358bf0fd5978591b3e0e379d8dd03a546ca02a363b139e82d317fba7fe138fdd"
+  },
+  {
+    "path": "controller/relay_task_plugin_test.go",
+    "hunks": 3,
+    "reason": "Keep execution identity AND upstream retainResult coverage; use shared dialect fixture with wallet ledger tables.",
+    "resolved_sha256": "3a4d0add9454c65b2805b94c6056f076105a49a53ce9c90bbedd343f501d851e"
+  },
+  {
+    "path": "controller/responses_websocket_test.go",
+    "hunks": 17,
+    "reason": "Retain PostgreSQL/Redis, split-ledger and privacy regressions; fixed-charge rejection fixture reflects input-only reservation.",
+    "resolved_sha256": "233c71620de0175012a156e9c29a3bfc9d597a601bba09d933e1427f2b658809"
+  },
+  {
+    "path": "middleware/distributor.go",
+    "hunks": 1,
+    "reason": "Preserve all playground routes and token-specific effective group context.",
+    "resolved_sha256": "d7781ddf07ce751253e454fcaba3ba6bfc23b2ff24f03aa33e9b53251ca9aeaf"
+  },
+  {
+    "path": "middleware/distributor_test.go",
+    "hunks": 1,
+    "reason": "Add multiple-plugin New API routing and rebinding regressions.",
+    "resolved_sha256": "4dcb8d49081d2f4094f9e6d0f348c140e03afbd92d5d3c9f0b20d398619567b9"
+  },
+  {
+    "path": "model/account_security.go",
+    "hunks": 1,
+    "reason": "Retain transactional claim uniqueness and commit-time identity evidence checks.",
+    "resolved_sha256": "cdb7a44eb6eaea2e78a861cf2a5569a3e1ad6ab5e41af0700972314ef1f17b2f"
+  },
+  {
+    "path": "model/task.go",
+    "hunks": 1,
+    "reason": "Persist result retention together with wallet debit and legacy request identity.",
+    "resolved_sha256": "e81d554dc5efdb3f1f95f1db3640c1f2e9e15e6c9832ac8561523b34129eb38f"
+  },
+  {
+    "path": "model/user.go",
+    "hunks": 1,
+    "reason": "Retain duplicate/deleted GitHub binding rejection.",
+    "resolved_sha256": "8cb29fd2095ba57edee1f5cede6bb5ebf6426169bd35d30e1c08fe240e4c8721"
+  },
+  {
+    "path": "pkg/perf_metrics/metrics_test.go",
+    "hunks": 1,
+    "reason": "Add asynchronous terminal-task metric regressions.",
+    "resolved_sha256": "b16bf0327d32aae1550c659e96e8bc83eb9bddcccddb8c67efbab33420e318aa"
+  },
+  {
+    "path": "relay/channel/openai/relay-openai.go",
+    "hunks": 1,
+    "reason": "Retain typed stream-failure accounting and no false success.",
+    "resolved_sha256": "d1fc1681b10820f8e1fd4bab41b806f0e0318a8f636bacf8e54e63d92ef06c84"
+  },
+  {
+    "path": "relay/channel/openai/relay_responses.go",
+    "hunks": 2,
+    "reason": "Retain model masking, terminal failure emission and disconnect semantics.",
+    "resolved_sha256": "dbbf789221d31957f1a3a049fea7219d15ca173bd69f2969ffcf33db64fe9be5"
+  },
+  {
+    "path": "relay/common/stream_status.go",
+    "hunks": 2,
+    "reason": "Retain typed provider-declared stream errors used by settlement.",
+    "resolved_sha256": "f40ebfedfdb73d4c419bf68f61f0fa69bbfb903e1c551466834bfbefa3055b64"
+  },
+  {
+    "path": "relay/convert_request_error_test.go",
+    "hunks": 1,
+    "reason": "Add classified Ali image conversion error regression.",
+    "resolved_sha256": "9be2804431c3ae9b12617ebe225b0dcfbb852cf82ac4574abacf725ece70b1aa"
+  },
+  {
+    "path": "relay/image_handler.go",
+    "hunks": 1,
+    "reason": "Retain JSON DTO support and classified-error handling imports.",
+    "resolved_sha256": "69f72dffccd0088a1aaee6edb841b23aa8ee5e83340ff860a0e36b61ca9c4e54"
+  },
+  {
+    "path": "relay/response_model_test.go",
+    "hunks": 3,
+    "reason": "Keep upstream model observations in admin-only fields.",
+    "resolved_sha256": "1bef51ccff612110eae06cce4ec3a148d17d0fb4a08f927cf369496d6680a49f"
+  },
+  {
+    "path": "relay/responses_websocket.go",
+    "hunks": 1,
+    "reason": "Retain user-visible WebSocket privacy boundary.",
+    "resolved_sha256": "c78604b7c1fcffb2d393827938019a7d0194ae2ab20bbe9107a26af5e26c4e9b"
+  },
+  {
+    "path": "relay/responses_websocket_test.go",
+    "hunks": 1,
+    "reason": "Retain success-frame precision and recognized-error sanitization regressions.",
+    "resolved_sha256": "15fdce246383eb56e5c764e790ec83fa2cbfb505ecc222d2c0d08effe57e1869"
+  },
+  {
+    "path": "service/log_info_generate.go",
+    "hunks": 2,
+    "reason": "Keep diagnostics and upstream model identity out of user logs.",
+    "resolved_sha256": "a4797e0a0807b34c336e5975baff0e0275feb5f710ff6683b946de732a99ace4"
+  },
+  {
+    "path": "service/login_verification.go",
+    "hunks": 1,
+    "reason": "Use stricter custom transaction signature consistently.",
+    "resolved_sha256": "3ae659c665cc8a8edb6f44677f76a1e006f3165a7d0c6698925927c0a0c8d476"
+  },
+  {
+    "path": "service/task_billing_test.go",
+    "hunks": 1,
+    "reason": "Retain money-port fixtures and new plugin billing fixtures.",
+    "resolved_sha256": "408829fb0d9f6880929748c7cd465dd6645578ff4afc53a1699f34bfbbeb309d"
+  },
+  {
+    "path": "web/src/components/floating-window.tsx",
+    "hunks": 8,
+    "reason": "Integrate expanded floating-window and icon support; preserve nonconflicting custom behavior.",
+    "resolved_sha256": "8839c3e7671a8848bec57c5a6a927e918cf2a5a767182c411b65fca938fda1d7"
+  },
+  {
+    "path": "web/src/components/floating-window/__tests__/floating-window.test.tsx",
+    "hunks": 3,
+    "reason": "Integrate expanded floating-window and icon support; preserve nonconflicting custom behavior.",
+    "resolved_sha256": "3f1b67f4344605687a846c27e8577fa412e20def08338415de8f59da018edcdc"
+  },
+  {
+    "path": "web/src/components/multi-select.tsx",
+    "hunks": 5,
+    "reason": "Integrate expanded floating-window and icon support; preserve nonconflicting custom behavior.",
+    "resolved_sha256": "4ed2543f109dab336e2ec7a99da26f174f63e9478467b8aaa3595f6b9653dad8"
+  },
+  {
+    "path": "web/src/features/channels/components/__tests__/channel-configuration.test.tsx",
+    "hunks": 8,
+    "reason": "Use explicit select/preview/confirm mapping workflow; retire implicit guessed mapping UI and update behavioral tests.",
+    "resolved_sha256": "b9a4b149998d10487310f51942e2197a421a59d21991ef7d0de2891b4ea02084"
+  },
+  {
+    "path": "web/src/features/channels/components/__tests__/model-mapping-batch-dialog.test.tsx",
+    "hunks": 7,
+    "reason": "Use explicit select/preview/confirm mapping workflow; retire implicit guessed mapping UI and update behavioral tests.",
+    "resolved_sha256": "ad1e3f94eb8383d022b1399c65612af290ba2b9203b4374121871f320a7c79d3"
+  },
+  {
+    "path": "web/src/features/channels/components/__tests__/upstream-model-selection.test.tsx",
+    "hunks": 1,
+    "reason": "Use explicit select/preview/confirm mapping workflow; retire implicit guessed mapping UI and update behavioral tests.",
+    "resolved_sha256": "5cff8444c3b55976c4cc72be026b2780c40c4928e3886088493051cafa705163"
+  },
+  {
+    "path": "web/src/features/channels/components/dialogs/upstream-update-dialog.tsx",
+    "hunks": 2,
+    "reason": "Use explicit select/preview/confirm mapping workflow; retire implicit guessed mapping UI and update behavioral tests.",
+    "resolved_sha256": "3865dd03b08abc2415f362123a72879c4ed3ba6e0a0bf5c95c4f121c61e64a6d"
+  },
+  {
+    "path": "web/src/features/channels/components/model-mapping-batch-dialog.tsx",
+    "hunks": 13,
+    "reason": "Use explicit select/preview/confirm mapping workflow; retire implicit guessed mapping UI and update behavioral tests.",
+    "resolved_sha256": "925d4d273250caa884de3393f14049dfc5a296e7d1165781b33b42f545e59cdb"
+  },
+  {
+    "path": "web/src/features/channels/components/model-redirect-panel.tsx",
+    "hunks": 5,
+    "reason": "Use explicit select/preview/confirm mapping workflow; retire implicit guessed mapping UI and update behavioral tests.",
+    "resolved_sha256": "4f11bac50d5da4dff7aa848e83c3dded48c34eeafc286c85e4c141c5d78cf783"
+  },
+  {
+    "path": "web/src/features/channels/components/__tests__/model-mapping-editor.test.tsx",
+    "hunks": 1,
+    "reason": "Retain fireEvent used by original mapping regression and keep upstream added tests.",
+    "resolved_sha256": "3aa7a8fb5f216ae8369d8a005801b145de5a14432a551dc634d207e2633e6156"
+  },
+  {
+    "path": "web/src/features/channels/components/drawers/channel-mutate-drawer.tsx",
+    "hunks": 11,
+    "reason": "Retain Cline channel type and integrate New API multiple task plugin binding; remove auto-guessed alias UI.",
+    "resolved_sha256": "af082195e8f9f47b3dc99b43c1d3e54553e5b8df610ad27acbe1bc635c6bc8fc"
+  },
+  {
+    "path": "web/src/features/channels/lib/header-passthrough.ts",
+    "hunks": 1,
+    "reason": "Whitespace-only overlap.",
+    "resolved_sha256": "a3613ec718f6e356c0a7a0a47d16fa70be6bc7574c5b48dc537a2e3a4f219b88"
+  },
+  {
+    "path": "web/src/features/channels/lib/model-mapping-rules.ts",
+    "hunks": 1,
+    "reason": "Whitespace-only overlap.",
+    "resolved_sha256": "011a56e6379b3bdb99267e3e619666964de78861db38f8bb50148b58cbe6ae28"
+  },
+  {
+    "path": "web/src/features/keys/components/dialogs/cc-switch-dialog.tsx",
+    "hunks": 1,
+    "reason": "Normalize cleared combobox values without changing token-scoped model/group/protocol discovery.",
+    "resolved_sha256": "ec7bb12044ce5908e65c9cef32fe517d31bb6d4458ce7661a9c13a8d921a594d"
+  },
+  {
+    "path": "web/src/features/pricing/__tests__/task-matrix-display.test.ts",
+    "hunks": 1,
+    "reason": "Remove duplicate Vitest import; retain conditional task display regressions.",
+    "resolved_sha256": "a63c41bc2026d238d59db65bb9c8e549eb3958fca27dd9c21956722beee4578a"
+  },
+  {
+    "path": "web/src/features/pricing/components/model-details-uptime-sparkline.tsx",
+    "hunks": 1,
+    "reason": "Unify repeated status branches with equivalent labels and colors.",
+    "resolved_sha256": "7e6fc8c179b463c16e9bab06eb7bdbb1d20df8cc8c8e70dce5a7846110455aa1"
+  },
+  {
+    "path": "web/src/features/system-info/components/system-tasks-panel.tsx",
+    "hunks": 3,
+    "reason": "Use active-task/history layout and shared empty/error states.",
+    "resolved_sha256": "612c1db87d9077772a93871a3cd658a42a17946f7eceb5b47b4eef68e327e3af"
+  },
+  {
+    "path": "web/src/features/system-settings/billing/index.tsx",
+    "hunks": 1,
+    "reason": "Retain ChuanAPI signup/affiliate settings; remove obsolete pre-consume floor; integrate new quota fields without resurrecting legacy invite bonuses.",
+    "resolved_sha256": "f04a3db160b47326120811362933ec66f2641107e3af328b28c3feed295855d8"
+  },
+  {
+    "path": "web/src/features/system-settings/billing/section-registry.tsx",
+    "hunks": 1,
+    "reason": "Retain ChuanAPI signup/affiliate settings; remove obsolete pre-consume floor; integrate new quota fields without resurrecting legacy invite bonuses.",
+    "resolved_sha256": "0005a3a81f0c1f3b3c5aadb11f22d1984daed47b87b868acc6170e86b7f0fca9"
+  },
+  {
+    "path": "web/src/features/system-settings/general/quota-settings-section.tsx",
+    "hunks": 1,
+    "reason": "Retain ChuanAPI signup/affiliate settings; remove obsolete pre-consume floor; integrate new quota fields without resurrecting legacy invite bonuses.",
+    "resolved_sha256": "28ec361c79bc2bdeeebace071507f37d86a5548a21cca9b4fd70fac0562de57a"
+  },
+  {
+    "path": "web/src/features/system-settings/types.ts",
+    "hunks": 1,
+    "reason": "Retain ChuanAPI signup/affiliate settings; remove obsolete pre-consume floor; integrate new quota fields without resurrecting legacy invite bonuses.",
+    "resolved_sha256": "c774a78ccd4be9813b519aea71aaf8422c585413d420e8b1926a5d49459de373"
+  },
+  {
+    "path": "web/src/features/system-settings/models/__tests__/group-pricing-decimals.test.tsx",
+    "hunks": 1,
+    "reason": "Provide required tab props to updated pricing editor regression.",
+    "resolved_sha256": "c318775b5873834142616f537707415389023c7d220a668d5b76b80799a02f69"
+  },
+  {
+    "path": "web/src/features/system-settings/models/group-ratio-form.tsx",
+    "hunks": 5,
+    "reason": "Preserve transactional group rename planning/submission while adopting tabs, validation focus and reorder UI.",
+    "resolved_sha256": "c75ad2bd7d6ef879c515d44c7fd9b488956d2b02914b7f1ab212c5e43db8da13"
+  },
+  {
+    "path": "web/src/features/system-settings/models/group-ratio-visual-editor.tsx",
+    "hunks": 3,
+    "reason": "Retain pending rename resolution in pricing table with shared drag/keyboard reorder component and settings tabs.",
+    "resolved_sha256": "fe96e925e8a6a05880f589c0c27b016c979727e7350a9cb42bf59d5822ee357d"
+  },
+  {
+    "path": "web/src/features/system-settings/request-policies/__tests__/routing.test.tsx",
+    "hunks": 1,
+    "reason": "Retain existing copyright header; behavioral changes merge outside hunk.",
+    "resolved_sha256": "c3f05ca6e416ca1e4c586d7f6047172f8f4ffee60808f993108732f520a2ea71"
+  },
+  {
+    "path": "web/src/features/system-settings/request-policies/api.ts",
+    "hunks": 1,
+    "reason": "Retain existing copyright header; behavioral changes merge outside hunk.",
+    "resolved_sha256": "fc3fefad549dbda6ee2f2113121f6b69e9dae777af0ed97a6389024fc39c494b"
+  },
+  {
+    "path": "web/src/features/system-settings/request-policies/decision-record.tsx",
+    "hunks": 1,
+    "reason": "Retain existing copyright header; behavioral changes merge outside hunk.",
+    "resolved_sha256": "0f9789120747a23f50a8066571b5716ce06bfc692ae9fac737ca058d3c0afdb1"
+  },
+  {
+    "path": "web/src/features/system-settings/request-policies/policy-label.ts",
+    "hunks": 1,
+    "reason": "Retain existing copyright header; behavioral changes merge outside hunk.",
+    "resolved_sha256": "5e7eceb22f4da37a8f5463ee9ac332f87b67b3378f046a3dbc1bb78c39043da5"
+  },
+  {
+    "path": "web/src/features/system-settings/request-policies/related-policy-link.tsx",
+    "hunks": 1,
+    "reason": "Retain existing copyright header; behavioral changes merge outside hunk.",
+    "resolved_sha256": "3e8042cd860ed6f67944d80a8cd33cb1f7b3ab7e95c4adefcacc6c5c20d52c0c"
+  },
+  {
+    "path": "web/src/features/system-settings/request-policies/routing-form.ts",
+    "hunks": 1,
+    "reason": "Retain existing copyright header; behavioral changes merge outside hunk.",
+    "resolved_sha256": "29c60852c48712f23aa70fc7b433b477565d66795a9a0486c94a8ffed94d11a6"
+  },
+  {
+    "path": "web/src/features/system-settings/request-policies/routing-section.tsx",
+    "hunks": 1,
+    "reason": "Retain existing copyright header; behavioral changes merge outside hunk.",
+    "resolved_sha256": "247632fb5ccada477e9f538ed11b8dcded83c6d2621f083f2a03fddf493b0407"
+  },
+  {
+    "path": "web/src/features/system-settings/request-policies/use-save-policy.ts",
+    "hunks": 1,
+    "reason": "Retain existing copyright header; behavioral changes merge outside hunk.",
+    "resolved_sha256": "2cb4aefc9739d7050a50b648b8c5dfd62957da7b7b70919ba08da9ad7c7f83bd"
+  },
+  {
+    "path": "web/src/features/usage-logs/components/__tests__/billing-source-visibility.test.tsx",
+    "hunks": 5,
+    "reason": "Keep historical subscription billing visible after expiration; wallet marker remains conditional.",
+    "resolved_sha256": "ef6e8e762bb02f373be744d7ee493cb3ad2107a6bcbfa0949d022e6fbd831ea4"
+  },
+  {
+    "path": "web/src/features/usage-logs/components/__tests__/cost-display.test.tsx",
+    "hunks": 2,
+    "reason": "Keep historical subscription billing visible after expiration; wallet marker remains conditional.",
+    "resolved_sha256": "e8db61828c3baaf1800baaa2fe641efbc9cee3e73fd58f55e3d599fe1f7b1da2"
+  },
+  {
+    "path": "web/src/features/usage-logs/components/__tests__/mobile-card.test.tsx",
+    "hunks": 1,
+    "reason": "Retain auth-store cleanup isolation.",
+    "resolved_sha256": "4886afdfb1285098e29b3f10c44620691ca5196f239d8ea3e69b50398c2971e1"
+  },
+  {
+    "path": "web/src/features/usage-logs/components/__tests__/model-badge.test.tsx",
+    "hunks": 1,
+    "reason": "Use waitFor for upstream added asynchronous tests.",
+    "resolved_sha256": "3aec608f785b42b3ebbdb00b087380f6050f1d872cb550f4de3374ca9ebbda16"
+  },
+  {
+    "path": "web/src/features/usage-logs/components/columns/common-logs-columns.tsx",
+    "stage": 3,
+    "reason": "Whitespace-insensitive diff reviewed: integrate memo/currency dependency/task_sync; reapply admin-only model observation difference.",
+    "resolved_sha256": "d9847c5b3f032f85e0f3aeecf2d23810893418e85c03434974124efce66323da"
+  },
+  {
+    "path": "web/src/features/usage-logs/components/dialogs/details-dialog.tsx",
+    "hunks": 1,
+    "reason": "Keep admin-only model observations and mapping visibility.",
+    "resolved_sha256": "22a35fb01ab40b8d93eef2f404242868fa587f70feb0c23c4707a7ef3ba3e380"
+  },
+  {
+    "path": "web/src/features/usage-logs/components/log-cost-display.tsx",
+    "hunks": 1,
+    "reason": "Show historical subscription funding independently of current subscription availability.",
+    "resolved_sha256": "08e99c0db5c27f9c87a5d3a4519ab563e879a2d8f2c1c03f312332185e465c99"
+  },
+  {
+    "path": "web/src/features/usage-logs/lib/format.ts",
+    "hunks": 1,
+    "reason": "Restrict upstream model identity to admins.",
+    "resolved_sha256": "2c52f627c8deb6de28a267984f07fa189349258a4a137447adeb3648d895faf0"
+  },
+  {
+    "path": "web/src/features/usage-logs/types.ts",
+    "hunks": 1,
+    "reason": "Retain private admin diagnostics types.",
+    "resolved_sha256": "09c0d68cf53cc74eb3eed9ed6a5e58d998077f42eeb6a18765756d17d01ed076"
+  },
+  {
+    "path": "web/src/features/users/components/users-columns.tsx",
+    "stage": 2,
+    "reason": "Retain ChuanAPI extension flag around legacy affiliate balance; apply upstream memo optimization explicitly.",
+    "resolved_sha256": "21f5ec8e702ff842d0807b726c63d9a71d7793e9889c7d9bb52f3f78751ebf5a"
+  },
+  {
+    "path": "web/src/features/wallet/components/dialogs/billing-history-dialog.tsx",
+    "delete": true,
+    "reason": "Do not resurrect legacy wallet dialog deliberately removed in main; current ChuanAPI account-history owns the UI and contract tests reject legacy imports.",
+    "resolved_sha256": null
+  },
+  {
+    "path": "web/vitest.config.ts",
+    "hunks": 1,
+    "reason": "Keep all script tests, not just oxlint; do not skip baseline/tooling regressions.",
+    "resolved_sha256": "b071a66d77856e1478f7350f205633ad109495eb900403bfd6ff8b2d8d21d02d"
+  },
+  {
+    "path": "web/src/i18n/locales/en.json",
+    "strategy": "Three-way per translation key; reject conflicting values",
+    "keys": 6873,
+    "resolved_sha256": "3711f08d8bd814fbc5f6eecfeb3242e537ad2c7b45ab172c72cc0efed77074bb"
+  },
+  {
+    "path": "web/src/i18n/locales/zh.json",
+    "strategy": "Three-way per translation key; reject conflicting values",
+    "keys": 6873,
+    "resolved_sha256": "f4768ba043bd486eaf630a3012a3a5febf65df0a27646f39920fba9bfe89ef3f"
+  },
+  {
+    "path": "web/src/i18n/locales/zh-TW.json",
+    "strategy": "Three-way per translation key; reject conflicting values",
+    "keys": 6873,
+    "resolved_sha256": "311f7b2b404a15de6f44775fec3b73acb78432849d0771304506424e402370a3"
+  },
+  {
+    "path": "web/src/i18n/locales/fr.json",
+    "strategy": "Three-way per translation key; reject conflicting values",
+    "keys": 6873,
+    "resolved_sha256": "5ef6ca89f229be975d14a9f7b0f794fdb552ab79d1939bf0327b742b4994b07c"
+  },
+  {
+    "path": "web/src/i18n/locales/ja.json",
+    "strategy": "Three-way per translation key; reject conflicting values",
+    "keys": 6873,
+    "resolved_sha256": "87c990451c90f1622022cd82de490a2d6e174d0a5444d0438be70592ef113d80"
+  },
+  {
+    "path": "web/src/i18n/locales/ru.json",
+    "strategy": "Three-way per translation key; reject conflicting values",
+    "keys": 6873,
+    "resolved_sha256": "2681dd625448bb3e8a5cfce50ceada3d2a28e70fdb7968af51e56b330b9ecac8"
+  },
+  {
+    "path": "web/src/i18n/locales/vi.json",
+    "strategy": "Three-way per translation key; reject conflicting values",
+    "keys": 6873,
+    "resolved_sha256": "90b3ef881ea5bc82714aa4c3886e6d93917faa75cda9b6dffe90352b52b2e0cf"
+  },
+  {
+    "path": "web/src/i18n/static-keys.ts",
+    "hunks": 1,
+    "reason": "Keep password policy translation and add task expression metadata keys.",
+    "resolved_sha256": "bf74412037df30ad9c2d5698e35a2a2ad959cf2e43c2cd800cf02df3679beb44"
+  },
+  {
+    "path": "web/public/logo.png",
+    "stage": 2,
+    "reason": "Preserve ChuanAPI brand asset, not upstream default logo.",
+    "resolved_sha256": "f23974425180fcc225ae9c9de00602df631355388aceccb32c0bb46d53173878"
+  }
+]

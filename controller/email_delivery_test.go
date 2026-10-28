@@ -249,3 +249,18 @@ func TestEmailKeyStatusIsDerivedAndReadOnly(t *testing.T) {
 	assert.Contains(t, response.Body.String(), `"success":false`)
 	assert.Contains(t, response.Body.String(), "read-only")
 }
+
+func TestResendPreservesExplicitPlainTextForTransactionalEmails(t *testing.T) {
+	configureEmailDelivery(t, map[string]string{"EmailProvider": "resend", "ResendApiKey": "test-key", "ResendFrom": "sender@example.com"})
+	http.DefaultTransport = emailHTTPTransport(func(request *http.Request) (*http.Response, error) {
+		var body struct {
+			HTML string `json:"html"`
+			Text string `json:"text"`
+		}
+		require.NoError(t, common.DecodeJson(request.Body, &body))
+		assert.Equal(t, "<p>Follow the verification link</p>", body.HTML)
+		assert.Equal(t, "Open the full verification URL: https://example.com/verify?code=test", body.Text)
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":"transactional-email"}`))}, nil
+	})
+	require.NoError(t, common.SendEmailWithPlainText("Verify your account", "recipient@example.com", "Open the full verification URL: https://example.com/verify?code=test", "<p>Follow the verification link</p>"))
+}

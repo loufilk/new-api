@@ -99,6 +99,7 @@ func goldenInfo() convmeta.Meta {
 	return &convmeta.Values{
 		ChannelMetaAttached: true,
 		UpstreamModelName:   "upstream-model",
+		OriginModelName:     "client-model",
 		ClaudeConvertInfo: &convmeta.ClaudeConvertInfo{
 			LastMessagesType: convmeta.LastMessageTypeNone,
 		},

@@ -28,7 +28,7 @@ import {
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
-import { STATUS_QUERY_KEY, type StatusData } from '@/lib/status-query'
+import { STATUS_QUERY_KEY, type StatusRecord } from '@/lib/status-query'
 
 import { ApiKeysPrimaryButtons } from '../api-keys-primary-buttons'
 import { ApiKeysProvider } from '../api-keys-provider'
@@ -48,7 +48,7 @@ afterEach(() => {
   localStorage.clear()
 })
 
-function renderAddresses(status: StatusData) {
+function renderAddresses(status: StatusRecord) {
   client.setQueryData(STATUS_QUERY_KEY, status)
   return render(
     <QueryClientProvider client={client}>

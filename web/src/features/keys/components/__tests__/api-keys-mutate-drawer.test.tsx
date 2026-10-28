@@ -16,7 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import type { ApiKey } from '../../types'
@@ -79,6 +86,9 @@ function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
     }
   }
   apiClient.post = async (url, data) => {
+    if (url === '/api/token/models') {
+      return { data: { success: true, data: [] } }
+    }
     expect(url).toBe('/api/token/')
     expect(data && typeof data === 'object').toBeTruthy()
     createdPayloads.push(data as Record<string, unknown>)
@@ -195,14 +205,16 @@ function selectComboboxOption(
   fireEvent.click(option)
 }
 
-afterEach(() => {
-  apiClient.get = originalGet
-  apiClient.post = originalPost
-  localStorage.clear()
+afterEach(async () => {
+  cleanup()
   if (renderedDrawer) {
+    await renderedDrawer.queryClient.cancelQueries()
     renderedDrawer.queryClient.clear()
     renderedDrawer = null
   }
+  apiClient.get = originalGet
+  apiClient.post = originalPost
+  localStorage.clear()
 })
 
 describe('API keys mutate drawer Auto group integration', () => {
@@ -300,8 +312,8 @@ describe('API key expiry across editing sessions', () => {
         group: 'default',
         auto_groups: [],
         cross_group_retry: false,
-        model_limits_enabled: false,
-        model_limits: '',
+        model_limits_enabled: true,
+        model_limits: 'retired-model',
         allow_ips: '',
         allow_user_quota_query: true,
       }
@@ -318,6 +330,7 @@ describe('API key expiry across editing sessions', () => {
         if (url === '/api/token/2') return detail
         return getFixture(url)
       })
+      const post = vi.spyOn(apiClient, 'post')
       const put = vi
         .spyOn(api, 'put')
         .mockResolvedValue({ data: { success: true } })
@@ -344,6 +357,13 @@ describe('API key expiry across editing sessions', () => {
         expect(findButton('Save changes', true)).toBeEnabled()
       )
       await waitFor(() => expect(screen.getByLabelText('Time')).toBeEnabled())
+      await waitFor(() =>
+        expect(post).toHaveBeenCalledWith('/api/token/models', {
+          group: 'default',
+          auto_groups_mode: 'inherit',
+          auto_groups: [],
+        })
+      )
 
       if (finish === 'save') {
         fireEvent.click(findButton('Save changes', true))
@@ -351,6 +371,7 @@ describe('API key expiry across editing sessions', () => {
         expect(put.mock.calls[0][1]).toMatchObject({
           id: 1,
           expired_time: 2000000000,
+          model_limits: 'retired-model',
         })
       } else {
         fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0])
@@ -377,9 +398,14 @@ describe('API key expiry across editing sessions', () => {
       await waitFor(() =>
         expect(put).toHaveBeenLastCalledWith(
           '/api/token/',
-          expect.objectContaining({ id: 2, expired_time: -1 })
+          expect.objectContaining({
+            id: 2,
+            expired_time: -1,
+            model_limits: 'retired-model',
+          })
         )
       )
+      expect(get).not.toHaveBeenCalledWith('/api/user/models')
     }
   )
 

@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/paymentcore"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
@@ -17,12 +18,13 @@ type PaymentComplianceRequest struct {
 	Confirmed bool `json:"confirmed"`
 }
 
+// Keep payment response shapes while carrying structured translation fields.
+func paymentError(c *gin.Context, err error) {
+	paymentcore.WriteError(c, err)
+}
+
 func requirePaymentCompliance(c *gin.Context) bool {
-	if !operation_setting.IsPaymentComplianceConfirmed() {
-		common.ApiErrorT(c, "Payment, redemption, subscription, and invitation reward features are disabled. The administrator must confirm compliance terms before enabling them.")
-		return false
-	}
-	return true
+	return paymentcore.RequireCompliance(c)
 }
 
 func ConfirmPaymentCompliance(c *gin.Context) {

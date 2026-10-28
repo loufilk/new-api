@@ -105,6 +105,32 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/user/oauth/bindings":                 accessTokenScopeRule("account_security:read"),
 	"DELETE /api/user/oauth/bindings/:provider_id": accessTokenScopeRule("account_security:write"),
 
+	// ChuanAPI routes retain host role and ownership checks in addition to scopes.
+	"GET /api/user/self/email/verification": accessTokenScopeRule("account_security:write"),
+	"GET /api/user/tokens/:id/models":       accessTokenScopeRule("api_key:read"),
+	"POST /api/token/models":                accessTokenScopeRule("api_key:read"),
+	"POST /api/option/group-rename":         accessTokenScopeRule("option:write"),
+	"GET /api/user/wallet":                  accessTokenScopeRule("wallet:read"),
+	"GET /api/user/wallet/ledger":           accessTokenScopeRule("wallet:read"),
+	"GET /api/user/referral/rewards":        accessTokenScopeRule("wallet:read"),
+	"GET /api/models/bonus_eligible/audits": accessTokenScopeRule("model:read"),
+	"POST /api/models/bonus_eligible/batch": accessTokenScopeRule("model:write"),
+	// Management PATs must not obtain inference access through the playground.
+	"GET /api/user/playground/bootstrap": accessTokenSessionRule,
+	"POST /api/user/playground/chat":     accessTokenSessionRule,
+	// Support has no dedicated PAT scope. Require login sessions rather than
+	// grant ticket access through unrelated profile or user permissions.
+	"GET /api/support/tickets":                    accessTokenSessionRule,
+	"POST /api/support/tickets":                   accessTokenSessionRule,
+	"GET /api/support/tickets/:id":                accessTokenSessionRule,
+	"POST /api/support/tickets/:id/replies":       accessTokenSessionRule,
+	"POST /api/support/tickets/:id/read":          accessTokenSessionRule,
+	"GET /api/admin/support/tickets":              accessTokenSessionRule,
+	"GET /api/admin/support/tickets/:id":          accessTokenSessionRule,
+	"POST /api/admin/support/tickets/:id/replies": accessTokenSessionRule,
+	"POST /api/admin/support/tickets/:id/read":    accessTokenSessionRule,
+	"PUT /api/admin/support/tickets/:id/status":   accessTokenSessionRule,
+
 	// router/api-router.go: /api/user (admin)
 	"GET /api/user/":                                   accessTokenScopeRule("user:read"),
 	"GET /api/user/topup":                              accessTokenScopeRule("billing:read"),
@@ -148,6 +174,9 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/option/request_policy":                             accessTokenScopeRule("option:read"),
 	"PATCH /api/option/request_policy":                           accessTokenScopeRule("option:write"),
 	"PUT /api/option/":                                           accessTokenScopeRule("option:write"),
+	"GET /api/option/model-monitor":                              accessTokenScopeRule("option:read"),
+	"GET /api/option/model-monitor/targets":                      accessTokenScopeRule("option:read"),
+	"PUT /api/option/model-monitor":                              accessTokenScopeRule("option:write"),
 	"PUT /api/option/passkey/domains":                            accessTokenScopeRule("option:write"),
 	"GET /api/option/model_pricing":                              accessTokenScopeRule("option:read"),
 	"PATCH /api/option/model_pricing":                            accessTokenScopeRule("option:write"),
@@ -215,6 +244,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/token/search":      accessTokenScopeRule("api_key:read"),
 	"GET /api/token/auto-groups": accessTokenScopeRule("api_key:read"),
 	"GET /api/token/:id":         accessTokenScopeRule("api_key:read"),
+	"GET /api/token/:id/models":  accessTokenScopeRule("api_key:read"),
 	"POST /api/token/:id/key":    accessTokenScopeRule("api_key:reveal"),
 	"POST /api/token/":           accessTokenScopeRule("api_key:write"),
 	"PUT /api/token/":            accessTokenScopeRule("api_key:write"),

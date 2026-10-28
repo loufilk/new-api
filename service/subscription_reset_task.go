@@ -44,15 +44,18 @@ func StartSubscriptionQuotaResetTask() {
 }
 
 func runSubscriptionQuotaResetOnce() {
+	runSubscriptionQuotaResetOnceContext(context.Background())
+}
+
+func runSubscriptionQuotaResetOnceContext(ctx context.Context) {
 	if !subscriptionResetRunning.CompareAndSwap(false, true) {
 		return
 	}
 	defer subscriptionResetRunning.Store(false)
 
-	ctx := context.Background()
 	totalReset := 0
 	totalExpired := 0
-	for {
+	for ctx.Err() == nil {
 		n, err := model.ExpireDueSubscriptions(subscriptionResetBatchSize)
 		if err != nil {
 			logger.LogWarn(ctx, common.LogText("subscription expire task failed: %v", err))
@@ -66,7 +69,7 @@ func runSubscriptionQuotaResetOnce() {
 			break
 		}
 	}
-	for {
+	for ctx.Err() == nil {
 		n, err := model.ResetDueSubscriptions(subscriptionResetBatchSize)
 		if err != nil {
 			logger.LogWarn(ctx, common.LogText("subscription quota reset task failed: %v", err))
@@ -79,6 +82,9 @@ func runSubscriptionQuotaResetOnce() {
 		if n < subscriptionResetBatchSize {
 			break
 		}
+	}
+	if ctx.Err() != nil {
+		return
 	}
 	lastCleanup := time.Unix(subscriptionCleanupLast.Load(), 0)
 	if time.Since(lastCleanup) >= subscriptionCleanupInterval {

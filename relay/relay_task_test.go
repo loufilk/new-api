@@ -1,11 +1,14 @@
 package relay
 
 import (
+	"context"
 	"encoding/base64"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -55,6 +58,7 @@ func setupRelayChannelDB(t *testing.T) *gorm.DB {
 
 func TestRealtimeFetchAppliesChannelHeaderOverrides(t *testing.T) {
 	database := setupRelayChannelDB(t)
+	require.NoError(t, database.AutoMigrate(&model.Task{}))
 	service.InitHttpClient()
 	requests := make(chan *http.Request, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +80,7 @@ func TestRealtimeFetchAppliesChannelHeaderOverrides(t *testing.T) {
 		},
 	}
 
+	require.NoError(t, database.Create(task).Error)
 	tryRealtimeFetch(task, true)
 
 	require.Len(t, requests, 1)
@@ -87,7 +92,7 @@ func TestRealtimeFetchAppliesChannelHeaderOverrides(t *testing.T) {
 
 func TestRealtimeFetchRefundsTaskItFindsFailed(t *testing.T) {
 	database := setupRelayChannelDB(t)
-	require.NoError(t, database.AutoMigrate(&model.Task{}, &model.User{}, &model.Log{}))
+	require.NoError(t, database.AutoMigrate(&model.Task{}, &model.User{}, &model.Token{}, &model.Log{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}))
 	previousLogDB := model.LOG_DB
 	previousFactory := service.GetTaskAdaptorFunc
 	previousRedis := common.RedisEnabled
@@ -105,19 +110,28 @@ func TestRealtimeFetchRefundsTaskItFindsFailed(t *testing.T) {
 		common.RedisEnabled = previousRedis
 	})
 	service.InitHttpClient()
+	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
 		_, _ = w.Write([]byte(`{"name":"operations/task-1","done":true,"error":{"code":3,"message":"blocked by safety"}}`))
 	}))
 	t.Cleanup(server.Close)
-	channel := &model.Channel{Name: "realtime-refund", Type: constant.ChannelTypeGemini, Key: "channel-key", BaseURL: &server.URL}
+	channel := &model.Channel{Name: "realtime-refund", Type: constant.ChannelTypeGemini, Key: "channel-key", BaseURL: &server.URL, UsedQuota: 1000}
 	require.NoError(t, database.Create(channel).Error)
-	require.NoError(t, database.Create(&model.User{Id: 7, Username: "realtime-owner", Quota: 100}).Error)
+	require.NoError(t, database.Create(&model.User{Id: 7, Username: "realtime-owner", Quota: 100, QuotaPaid: 100, UsedQuota: 1000, RequestCount: 1}).Error)
+	token := &model.Token{UserId: 7, Key: "realtime-token", RemainQuota: 1000, UsedQuota: 1000}
+	require.NoError(t, database.Create(token).Error)
+	// Known already-accounted synthetic charge, with its original source receipt.
 	task := &model.Task{
 		TaskID: "public-task", Platform: constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeGemini)),
 		UserId: 7, ChannelId: channel.Id, Quota: 1000,
 		Status: model.TaskStatusInProgress, Progress: "50%",
 		PrivateData: model.TaskPrivateData{
 			Key: "channel-key", UpstreamTaskID: base64.RawURLEncoding.EncodeToString([]byte("operations/task-1")),
+			TokenId: token.Id, BillingSource: service.BillingSourceWallet,
+			RequestId: "realtime-refund-request", FinancialVersion: 2, SubmissionAccounted: true,
+			TokenFingerprint: model.BillingTokenFingerprint(token.Key),
+			WalletDebit:      []model.LedgerShare{{Account: model.AccountBonus, Amount: 70}, {Account: model.AccountReward, Amount: 30}, {Account: model.AccountPaid, Amount: 900}},
 		},
 	}
 	require.NoError(t, database.Create(task).Error)
@@ -129,7 +143,22 @@ func TestRealtimeFetchRefundsTaskItFindsFailed(t *testing.T) {
 	assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), stored.Status)
 	assert.Equal(t, "blocked by safety", stored.FailReason)
 	assert.Zero(t, stored.Quota, "the failed task is refunded")
+	assert.Empty(t, stored.PrivateData.FinancialReviewReason)
+	assert.Nil(t, stored.PrivateData.FinancialIntent)
+	assert.NotEmpty(t, stored.PrivateData.FinancialOperationID)
 	var user model.User
+	require.NoError(t, database.First(&user, 7).Error)
+	assert.Equal(t, 1100, user.Quota)
+	assert.Equal(t, 1000, user.QuotaPaid)
+	assert.Equal(t, 70, user.QuotaBonus)
+	assert.Equal(t, 30, user.QuotaReward)
+	assert.Zero(t, user.UsedQuota)
+	assert.Equal(t, 1, user.RequestCount)
+	require.NoError(t, database.First(token, token.Id).Error)
+	assert.Equal(t, 2000, token.RemainQuota)
+	assert.Zero(t, token.UsedQuota)
+	tryRealtimeFetch(&stored, true)
+	assert.EqualValues(t, 1, calls.Load(), "a terminal query neither polls upstream nor repeats financial settlement")
 	require.NoError(t, database.First(&user, 7).Error)
 	assert.Equal(t, 1100, user.Quota)
 }
@@ -411,6 +440,43 @@ export function extractUsage(){return {old_units:2};}
 			}
 		})
 	}
+}
+
+func TestRelayTaskSubmitFreezesRequestPricingContext(t *testing.T) {
+	saveBillingConfig(t)
+	exprStr := `tier("base", 1) * (header("x-plan") == "fast" ? 2 : 1)`
+	modeJSON, err := common.Marshal(map[string]string{"declared-model": billing_setting.BillingModeTieredExpr})
+	require.NoError(t, err)
+	exprJSON, err := common.Marshal(map[string]string{"declared-model": exprStr})
+	require.NoError(t, err)
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": string(modeJSON),
+		"billing_setting.billing_expr": string(exprJSON),
+	}))
+
+	c, info := newTaskSubmitContext(t, "declared-model", "")
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"quality":"hd","secret":"do-not-store"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("X-Plan", "fast")
+	c.Request.Header.Set("Authorization", "Bearer do-not-store")
+	c.Set("group", "default")
+	info.UserGroup = "default"
+	info.UsingGroup = "default"
+	info.OriginModelName = "declared-model"
+	pinMappingOrderPlugin(t, c, billingFallbackPlugin)
+
+	_, taskErr := RelayTaskSubmit(c, info)
+	require.NotNil(t, taskErr)
+	require.NotNil(t, info.TieredBillingSnapshot)
+	require.NotNil(t, info.TieredBillingSnapshot.RequestInput)
+	assert.Equal(t, map[string]string{"x-plan": "fast"}, info.TieredBillingSnapshot.RequestInput.Headers)
+	assert.Empty(t, info.TieredBillingSnapshot.RequestInput.Body)
+	assert.Equal(t, 2*common.QuotaPerUnit, info.TieredBillingSnapshot.EstimatedQuotaBeforeGroup)
+	assert.Equal(t, info.TieredBillingSnapshot.EstimatedQuotaAfterGroup, info.PriceData.Quota)
+
+	encoded, err := common.Marshal(info.TieredBillingSnapshot)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "do-not-store")
 }
 
 func TestSharedTaskBillingExpressionSelectionAndFrozenSettlement(t *testing.T) {
@@ -766,6 +832,60 @@ export function extractUsage() { return {seconds:2}; }
 			}
 			require.NotNil(t, info.TieredBillingSnapshot)
 			assert.Equal(t, tc.expressions["retry-b::declared-model"], info.TieredBillingSnapshot.ExprString)
+		})
+	}
+}
+
+func TestTaskSubmitDeliveryEvidenceDistinguishesUnsent(t *testing.T) {
+	service.InitHttpClient()
+	for _, scenario := range []string{"cancel_before_send", "dial_refused", "accepted_then_disconnect"} {
+		t.Run(scenario, func(t *testing.T) {
+			saveBillingConfig(t)
+			require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+				"billing_setting.billing_mode": `{"declared-model":"tiered_expr"}`,
+				"billing_setting.billing_expr": `{"declared-model":"tier(\"flat\", 3)"}`,
+			}))
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				calls.Add(1)
+				conn, _, err := w.(http.Hijacker).Hijack()
+				if err == nil {
+					_ = conn.Close()
+				}
+			}))
+			t.Cleanup(server.Close)
+			if scenario == "dial_refused" {
+				server.Close()
+			}
+			c, info := newTaskSubmitContext(t, "declared-model", "")
+			if scenario == "cancel_before_send" {
+				ctx, cancel := context.WithCancel(c.Request.Context())
+				cancel()
+				c.Request = c.Request.WithContext(ctx)
+			}
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, server.URL)
+			// Prior attempts may leave these facts behind; current evidence wins.
+			common.SetContextKey(c, constant.ContextKeyUpstreamRequestAttempted, true)
+			common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, true)
+			c.Set("group", "default")
+			info.UserGroup, info.UsingGroup = "default", "default"
+			info.OriginModelName = "declared-model"
+			info.Billing = &imageReservation{limit: 1 << 30}
+			pinMappingOrderPlugin(t, c, mappingOrderSubmitPlugin)
+			_, taskErr := RelayTaskSubmit(c, info)
+			require.NotNil(t, taskErr)
+			if scenario != "cancel_before_send" {
+				assert.Equal(t, "do_request_failed", taskErr.Code)
+			}
+			unknown := scenario == "accepted_then_disconnect"
+			assert.Equal(t, unknown, taskErr.DeliveryUnknown)
+			if unknown {
+				assert.True(t, taskErr.NoRetry)
+				assert.Equal(t, int32(1), calls.Load())
+			} else {
+				assert.Zero(t, calls.Load())
+			}
 		})
 	}
 }

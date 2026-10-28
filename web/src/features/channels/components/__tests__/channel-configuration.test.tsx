@@ -34,6 +34,7 @@ import {
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
@@ -43,6 +44,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import type { TaskPluginOption } from '../../api'
 import {
+  CHANNEL_TYPE_CLINE,
   CHANNEL_TYPE_OLLAMA,
   CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_VLLM,
@@ -177,6 +179,7 @@ beforeEach(() => {
             24: 'https://gemini.server.example',
             43: 'https://deepseek.server.example',
             45: 'https://volcengine.server.example',
+            64: 'https://api.cline.bot/api/v1',
           },
         },
       }
@@ -255,6 +258,46 @@ test('changing built-in providers updates server-provided URL placeholders witho
   expect(screen.getByRole('textbox', { name: 'Base URL' })).toHaveAttribute(
     'placeholder',
     'Leave empty to use default'
+  )
+})
+
+test('Cline pre-fills its /api/v1 default address without the generic /v1 warning', async () => {
+  const warning = vi.spyOn(toast, 'warning')
+  const user = userEvent.setup()
+  render(<ConfigurationHarness />)
+
+  await user.click(screen.getByRole('option', { name: /^Cline / }))
+  expect(CHANNEL_TYPE_CLINE).toBe(64)
+  const address = screen.getByRole('textbox', { name: 'Base URL' })
+  await waitFor(() =>
+    expect(address).toHaveAttribute(
+      'placeholder',
+      'https://api.cline.bot/api/v1'
+    )
+  )
+
+  await user.type(address, 'https://api.cline.bot/api/v1')
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 700))
+  })
+  expect(warning).not.toHaveBeenCalledWith(
+    expect.stringContaining('should not end with /v1'),
+    expect.anything()
+  )
+})
+
+test('other providers still warn when the base URL ends with /v1', async () => {
+  const warning = vi.spyOn(toast, 'warning')
+  const user = userEvent.setup()
+  render(<ConfigurationHarness />)
+
+  await user.click(screen.getByRole('option', { name: /^DeepSeek / }))
+  const address = screen.getByRole('textbox', { name: 'Base URL' })
+  await user.type(address, 'https://deepseek.example/v1')
+  await waitFor(() => expect(warning).toHaveBeenCalled(), { timeout: 3000 })
+  expect(warning).toHaveBeenCalledWith(
+    expect.stringContaining('should not end with /v1'),
+    expect.anything()
   )
 })
 
@@ -1250,6 +1293,7 @@ test.each(['stacked', 'inline'])(
     editingChannel = {
       ...editingChannel,
       type: 58,
+      setting: JSON.stringify({ model_owned_by: 'fixture-owner' }),
       settings: JSON.stringify(settings),
       header_override: '{"*":true}',
     }
@@ -1289,6 +1333,7 @@ test.each(['stacked', 'inline'])(
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
     expect(JSON.parse(editingChannel.setting ?? '{}')).toMatchObject({
       pass_through_body_enabled: true,
+      model_owned_by: 'fixture-owner',
     })
     expect(JSON.parse(editingChannel.settings ?? '{}').advanced_custom).toEqual(
       settings.advanced_custom
@@ -1321,6 +1366,7 @@ test.each(['stacked', 'inline'])(
     await waitFor(() => expect(put).toHaveBeenCalledTimes(2))
     expect(JSON.parse(editingChannel.setting ?? '{}')).toMatchObject({
       pass_through_body_enabled: false,
+      model_owned_by: 'fixture-owner',
     })
     expect(JSON.parse(editingChannel.settings ?? '{}').advanced_custom).toEqual(
       settings.advanced_custom
@@ -2086,7 +2132,62 @@ test('advanced custom edits preview draft connection settings with the saved key
   )
 })
 
-test('an operator without sensitive write permission can discover saved models and update routing', async () => {
+test('a limited operator can fetch saved upstream models while the provider and key stay read-only', async () => {
+  useAuthStore.setState({
+    auth: {
+      ...originalAuth,
+      user: {
+        id: 10,
+        username: 'operator',
+        role: ROLE.ADMIN,
+        permissions: {
+          admin_permissions: {
+            channel: { read: true, write: true, operate: true },
+          },
+        },
+      },
+    },
+  })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  expect(screen.getByRole('button', { name: 'Change provider' })).toBeDisabled()
+  expect(screen.getByLabelText('API Key *')).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: 'Fetch from Upstream' }))
+  expect(
+    await screen.findByRole('checkbox', { name: 'upstream-model' })
+  ).toBeVisible()
+})
+
+test('a limited operator sees request-processing and proxy settings disabled and clicking them changes nothing', async () => {
+  useAuthStore.setState({
+    auth: {
+      ...originalAuth,
+      user: {
+        id: 10,
+        username: 'operator',
+        role: ROLE.ADMIN,
+        permissions: {
+          admin_permissions: {
+            channel: { read: true, write: true, operate: true },
+          },
+        },
+      },
+    },
+  })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  await user.click(screen.getByRole('tab', { name: /Request & Response/ }))
+  const thinking = screen.getByRole('switch', { name: 'Thinking to Content' })
+  expect(thinking).toHaveAttribute('aria-disabled', 'true')
+  await user.click(thinking)
+  expect(thinking).not.toBeChecked()
+  await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
+  expect(screen.getByLabelText('Proxy Address')).toBeDisabled()
+})
+
+test('a limited operator can save routing priority while sensitive setting and key stay omitted', async () => {
   useAuthStore.setState({
     auth: {
       ...originalAuth,
@@ -2134,12 +2235,21 @@ test('an operator without sensitive write permission can discover saved models a
   await user.click(thinking)
   expect(thinking).not.toBeChecked()
   await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
-  expect(screen.getByLabelText('Proxy Address')).toBeDisabled()
+  // Scope portal-heavy label queries to the active panel so the test stays
+  // fast and deterministic on the large drawer DOM.
+  expect(
+    within(
+      await screen.findByRole('tabpanel', { name: /Other Settings/ })
+    ).getByLabelText('Proxy Address')
+  ).toBeDisabled()
   await user.click(screen.getByRole('tab', { name: /Routing & Mapping/ }))
-  fireEvent.change(screen.getByLabelText('Priority'), {
+  const routingPanel = await screen.findByRole('tabpanel', {
+    name: /Routing & Mapping/,
+  })
+  fireEvent.change(within(routingPanel).getByLabelText('Priority'), {
     target: { value: '8' },
   })
-  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Update Channel' }))
   await waitFor(() => expect(put).toHaveBeenCalled())
   expect(put.mock.calls[0]?.[1]).toMatchObject({ id: 42, priority: 8 })
   expect(put.mock.calls[0]?.[1]).not.toHaveProperty('setting')
@@ -3027,5 +3137,110 @@ test('AWS interface selection is disabled without sensitive channel write permis
   render(<ConfigurationHarness currentRow={editingChannel} />)
   expect(
     await screen.findByRole('combobox', { name: 'AWS API' })
+  ).toBeDisabled()
+})
+
+test('Vertex project ID is disabled without sensitive channel write permission', async () => {
+  editingChannel = {
+    ...editingChannel,
+    type: 41,
+    settings:
+      '{"vertex_key_type":"api_key","vertex_project_id":"private-project"}',
+  }
+  useAuthStore.setState({
+    auth: {
+      ...originalAuth,
+      user: {
+        id: 10,
+        username: 'operator',
+        role: ROLE.ADMIN,
+        permissions: {
+          admin_permissions: { channel: { read: true, write: true } },
+        },
+      },
+    },
+  })
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+
+  expect(
+    await screen.findByRole('textbox', { name: 'Vertex AI Project ID' })
+  ).toBeDisabled()
+})
+
+test('public owner saves separately from the internal name and can be explicitly cleared', async () => {
+  editingChannel = {
+    ...editingChannel,
+    setting:
+      '{"model_owned_by":"Public label","proxy":"https://proxy.example"}',
+  }
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  const owner = await screen.findByRole('textbox', {
+    name: 'Channel model owner label',
+  })
+  await waitFor(() => expect(owner).toHaveValue('Public label'))
+  await user.clear(owner)
+  await user.type(owner, '  万川公开  ')
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const payload = put.mock.calls[0]?.[1] as { name: string; setting: string }
+  expect(payload.name).toBe('Existing channel')
+  expect(JSON.parse(payload.setting)).toMatchObject({
+    model_owned_by: '万川公开',
+    proxy: 'https://proxy.example',
+  })
+})
+
+test('using the channel name for discovery requires an explicit action and clearing removes the override', async () => {
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  const owner = await screen.findByRole('textbox', {
+    name: 'Channel model owner label',
+  })
+  await waitFor(() =>
+    expect(screen.getByRole('textbox', { name: /^Name\s*\*$/ })).toHaveValue(
+      'Existing channel'
+    )
+  )
+  expect(owner).toHaveValue('')
+  await user.click(
+    screen.getByRole('button', { name: 'Use channel name as label' })
+  )
+  expect(owner).toHaveValue('Existing channel')
+  await user.clear(owner)
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const payload = put.mock.calls[0]?.[1] as { setting: string }
+  expect(JSON.parse(payload.setting)).not.toHaveProperty('model_owned_by')
+})
+
+test('operators without sensitive write permission cannot publish a channel name', async () => {
+  useAuthStore.setState({
+    auth: {
+      ...originalAuth,
+      user: {
+        id: 10,
+        username: 'operator',
+        role: ROLE.ADMIN,
+        permissions: {
+          admin_permissions: { channel: { read: true, write: true } },
+        },
+      },
+    },
+  })
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  expect(
+    await screen.findByRole('textbox', {
+      name: 'Channel model owner label',
+    })
+  ).toBeDisabled()
+  expect(
+    screen.getByRole('button', { name: 'Use channel name as label' })
   ).toBeDisabled()
 })

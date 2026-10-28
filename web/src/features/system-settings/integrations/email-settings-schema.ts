@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import * as z from 'zod'
 
+import { parseQuotaFromDollars } from '@/lib/format'
+
 export const createEmailSchema = (t: (key: string) => string) =>
   z
     .object({
@@ -37,11 +39,18 @@ export const createEmailSchema = (t: (key: string) => string) =>
       SMTPForceAuthLogin: z.boolean(),
       QuotaRemindEnabled: z.boolean(),
       // Entered as a display amount; stored in quota units.
-      QuotaRemindThreshold: z.string().refine((value) => {
-        const trimmed = value.trim()
-        if (!trimmed) return true
-        return Number.isFinite(Number(trimmed)) && Number(trimmed) >= 0
-      }, t('Must be greater than or equal to 0')),
+      QuotaRemindThreshold: z
+        .string()
+        .refine((value) => {
+          const trimmed = value.trim()
+          if (!trimmed) return true
+          return Number.isFinite(Number(trimmed)) && Number(trimmed) >= 0
+        }, t('Must be greater than or equal to 0'))
+        .refine((value) => {
+          // Bound the converted wire value, not only the entered display amount.
+          const quota = parseQuotaFromDollars(Number(value.trim() || 0))
+          return Number.isSafeInteger(quota) && quota >= 0
+        }, t('Please enter a valid number')),
     })
     .superRefine((values, context) => {
       if (values.EmailProvider === 'resend') {

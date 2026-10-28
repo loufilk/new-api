@@ -100,3 +100,27 @@ export function toIntlLocale(value?: string | null): string | undefined {
     return undefined
   }
 }
+
+/**
+ * Convert the interface language to the locale tag understood by the backend
+ * i18n middleware. Keeping this mapping next to the other locale conversions
+ * ensures every API request follows the language currently shown in the UI.
+ */
+export function toBackendLanguage(value?: string | null): string {
+  if (!value) return 'en'
+
+  const raw = value.trim().replaceAll('_', '-').toLowerCase()
+  if (
+    raw === 'zhtw' ||
+    raw === 'zh-tw' ||
+    raw === 'zh-hk' ||
+    raw === 'zh-mo' ||
+    raw.startsWith('zh-hant')
+  ) {
+    return 'zh-TW'
+  }
+  if (raw.startsWith('zh')) return 'zh-CN'
+  if (raw.startsWith('en')) return 'en'
+
+  return normalizeInterfaceLanguage(value)
+}

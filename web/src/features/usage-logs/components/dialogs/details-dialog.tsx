@@ -546,6 +546,21 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const showAdminIp =
     !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
   const adminInfo = other?.admin_info
+  const upstreamModel = props.isAdmin
+    ? (adminInfo?.upstream_model_name ?? other?.upstream_model_name)
+    : undefined
+  const responseModel = props.isAdmin
+    ? (adminInfo?.response_model ?? other?.response_model)
+    : undefined
+  const paramOverrides = props.isAdmin
+    ? (adminInfo?.po ?? other?.po)
+    : undefined
+  const streamStatus = props.isAdmin
+    ? (adminInfo?.stream_status ?? other?.stream_status)
+    : undefined
+  const requestConversion = props.isAdmin
+    ? (adminInfo?.request_conversion ?? other?.request_conversion)
+    : undefined
   const topupAuditFields =
     isTopup && props.isAdmin && adminInfo
       ? ([
@@ -647,10 +662,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
       ].filter(Boolean) as Array<{ label: string; value: string }>)
     : []
 
-  const conversionChain =
-    other && Array.isArray(other.request_conversion)
-      ? other.request_conversion.filter(Boolean)
-      : []
+  const conversionChain = Array.isArray(requestConversion)
+    ? requestConversion.filter(Boolean)
+    : []
   const conversionLabel =
     conversionChain.length <= 1
       ? t('Native format')
@@ -704,7 +718,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
               mono
             />
           )}
-          {props.log.upstream_request_id && (
+          {props.isAdmin && props.log.upstream_request_id && (
             <DetailRow
               label={t('Upstream Request ID')}
               value={props.log.upstream_request_id}
@@ -1182,9 +1196,20 @@ export function DetailsDialog(props: DetailsDialogProps) {
           />
         )}
 
-        {other?.response_model && (
+        {responseModel && (
           <DetailSection label={t('Response Model')}>
-            <ResponseModelDetails observation={other.response_model} />
+            <ResponseModelDetails observation={responseModel} />
+          </DetailSection>
+        )}
+        {/* Model mapping for logs without response observations */}
+        {!responseModel && other?.is_model_mapped && upstreamModel && (
+          <DetailSection label={t('Model Mapping')}>
+            <DetailRow
+              label={t('Request Model')}
+              value={props.log.model_name}
+              mono
+            />
+            <DetailRow label={t('Actual Model')} value={upstreamModel} mono />
           </DetailSection>
         )}
         {/* Model mapping for logs without response observations */}
@@ -1265,41 +1290,41 @@ export function DetailsDialog(props: DetailsDialogProps) {
           )}
 
         {/* Stream status details */}
-        {other?.stream_status && other.stream_status.status !== 'ok' && (
+        {streamStatus && streamStatus.status !== 'ok' && (
           <DetailSection label={t('Stream Status')}>
             <DetailRow
               label={t('Status')}
               value={
                 <StatusBadge
-                  label={other.stream_status.status || t('Error')}
+                  label={streamStatus.status || t('Error')}
                   variant='red'
                   size='sm'
                   copyable={false}
                 />
               }
             />
-            {other.stream_status.end_reason && (
+            {streamStatus.end_reason && (
               <DetailRow
                 label={t('End Reason')}
-                value={other.stream_status.end_reason}
+                value={streamStatus.end_reason}
               />
             )}
-            {(other.stream_status.error_count ?? 0) > 0 && (
+            {(streamStatus.error_count ?? 0) > 0 && (
               <DetailRow
                 label={t('Soft Errors')}
-                value={String(other.stream_status.error_count)}
+                value={String(streamStatus.error_count)}
               />
             )}
-            {other.stream_status.end_error && (
+            {streamStatus.end_error && (
               <DetailRow
                 label={t('End Error')}
-                value={other.stream_status.end_error}
+                value={streamStatus.end_error}
               />
             )}
-            {Array.isArray(other.stream_status.errors) &&
-              other.stream_status.errors.length > 0 && (
+            {Array.isArray(streamStatus.errors) &&
+              streamStatus.errors.length > 0 && (
                 <pre className='bg-background/60 mt-1 max-h-32 overflow-y-auto rounded border p-2 font-mono text-[11px] leading-relaxed wrap-break-word whitespace-pre-wrap'>
-                  {other.stream_status.errors.join('\n')}
+                  {streamStatus.errors.join('\n')}
                 </pre>
               )}
           </DetailSection>
@@ -1354,34 +1379,36 @@ export function DetailsDialog(props: DetailsDialogProps) {
         )}
 
         {/* Param override */}
-        {other?.po && Array.isArray(other.po) && other.po.length > 0 && (
-          <DetailSection
-            icon={<Settings2 className='size-3.5' aria-hidden='true' />}
-            iconTone='chart-3'
-            label={`${t('Param Override')} (${other.po.length})`}
-          >
-            {other.po.filter(Boolean).map((line) => {
-              const parsed = parseAuditLine(line)
-              if (!parsed) return null
-              return (
-                <div
-                  key={`${parsed.action}-${parsed.content}`}
-                  className='bg-background/60 flex min-w-0 flex-col gap-1.5 rounded border p-2 sm:flex-row sm:items-start sm:gap-2'
-                >
-                  <StatusBadge
-                    variant='neutral'
-                    label={getParamOverrideActionLabel(parsed.action, t)}
-                    className='shrink-0 font-medium'
-                    copyable={false}
-                  />
-                  <span className='min-w-0 font-mono text-[11px] leading-relaxed break-all sm:wrap-break-word'>
-                    {parsed.content}
-                  </span>
-                </div>
-              )
-            })}
-          </DetailSection>
-        )}
+        {paramOverrides &&
+          Array.isArray(paramOverrides) &&
+          paramOverrides.length > 0 && (
+            <DetailSection
+              icon={<Settings2 className='size-3.5' aria-hidden='true' />}
+              iconTone='chart-3'
+              label={`${t('Param Override')} (${paramOverrides.length})`}
+            >
+              {paramOverrides.filter(Boolean).map((line) => {
+                const parsed = parseAuditLine(line)
+                if (!parsed) return null
+                return (
+                  <div
+                    key={`${parsed.action}-${parsed.content}`}
+                    className='bg-background/60 flex min-w-0 flex-col gap-1.5 rounded border p-2 sm:flex-row sm:items-start sm:gap-2'
+                  >
+                    <StatusBadge
+                      variant='neutral'
+                      label={getParamOverrideActionLabel(parsed.action, t)}
+                      className='shrink-0 font-medium'
+                      copyable={false}
+                    />
+                    <span className='min-w-0 font-mono text-[11px] leading-relaxed break-all sm:wrap-break-word'>
+                      {parsed.content}
+                    </span>
+                  </div>
+                )
+              })}
+            </DetailSection>
+          )}
 
         {/* Content */}
         {details && (

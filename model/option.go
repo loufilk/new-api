@@ -128,6 +128,7 @@ func InitOptionMap() {
 	common.OptionMap["WaffoPancakeMinTopUp"] = strconv.Itoa(setting.WaffoPancakeMinTopUp)
 	common.OptionMap["WaffoPancakeStoreID"] = setting.WaffoPancakeStoreID
 	common.OptionMap["WaffoPancakeProductID"] = setting.WaffoPancakeProductID
+	common.OptionMap["WaffoPancakeEnvironment"] = setting.WaffoPancakeEnvironment
 	common.OptionMap["TopupGroupRatio"] = common.TopupGroupRatio2JSONString()
 	common.OptionMap["Chats"] = setting.Chats2JsonString()
 	common.OptionMap["AutoGroups"] = setting.AutoGroups2JsonString()
@@ -144,8 +145,10 @@ func InitOptionMap() {
 	common.OptionMap["TurnstileSiteKey"] = ""
 	common.OptionMap["TurnstileSecretKey"] = ""
 	common.OptionMap["QuotaForNewUser"] = strconv.Itoa(common.QuotaForNewUser)
-	common.OptionMap["QuotaForInviter"] = strconv.Itoa(common.QuotaForInviter)
-	common.OptionMap["QuotaForInvitee"] = strconv.Itoa(common.QuotaForInvitee)
+	common.OptionMap["SignupBonusEnabled"] = strconv.FormatBool(common.SignupBonusEnabled)
+	common.OptionMap["QuotaForSignupBonus"] = strconv.Itoa(common.QuotaForSignupBonus)
+	common.OptionMap["AffiliateRewardEnabled"] = strconv.FormatBool(common.AffiliateRewardEnabled)
+	common.OptionMap["AffiliateRewardRate"] = strconv.FormatFloat(common.AffiliateRewardRate, 'f', -1, 64)
 	common.OptionMap["QuotaRemindEnabled"] = strconv.FormatBool(common.QuotaRemindEnabled)
 	common.OptionMap["QuotaRemindThreshold"] = strconv.Itoa(common.QuotaRemindThreshold)
 	common.OptionMap["PreConsumedQuota"] = strconv.Itoa(common.PreConsumedQuota)
@@ -184,6 +187,8 @@ func InitOptionMap() {
 	common.OptionMap["CheckSensitiveOnPromptEnabled"] = strconv.FormatBool(setting.CheckSensitiveOnPromptEnabled)
 	common.OptionMap["StopOnSensitiveEnabled"] = strconv.FormatBool(setting.StopOnSensitiveEnabled)
 	common.OptionMap["SensitiveWords"] = setting.SensitiveWordsToString()
+	common.OptionMap[setting.SensitiveCheckExemptGroupsOptionKey] = setting.SensitiveCheckExemptGroupsToString()
+	common.OptionMap[setting.PublicModelOwnedByOptionKey] = setting.GetPublicModelOwnedBy()
 	common.OptionMap["StreamCacheQueueLength"] = strconv.Itoa(setting.StreamCacheQueueLength)
 	common.OptionMap["AutomaticDisableKeywords"] = operation_setting.AutomaticDisableKeywordsToString()
 	common.OptionMap["AutomaticDisableStatusCodes"] = operation_setting.AutomaticDisableStatusCodesToString()
@@ -192,7 +197,9 @@ func InitOptionMap() {
 
 	// 自动添加所有注册的模型配置
 	modelConfigs := config.GlobalConfig.ExportAllConfigs()
-	maps.Copy(common.OptionMap, modelConfigs)
+	for k, v := range modelConfigs {
+		common.OptionMap[k] = v
+	}
 
 	common.OptionMapRWMutex.Unlock()
 	loadOptionsFromDatabase()
@@ -221,6 +228,7 @@ func loadOptionsFromDatabase() {
 		}
 	}
 	applyPasskeyDomainOptions(passkeyOptions)
+	syncGroupConfigVersionAfterOptionLoad(options)
 }
 
 func SyncOptions(frequency int) {
@@ -232,6 +240,13 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	if key == "group_ratio_setting.group_special_usable_group" {
+		return ratio_setting.ValidateGroupSpecialUsableGroupJSON(value)
+	}
+	if key == "QuotaRemindThreshold" {
+		_, err := operation_setting.ParseQuotaReminderThreshold(value)
+		return err
+	}
 	if key == legacyAccessTokenRetireAtKey {
 		return errLegacyRetireAtReadOnly
 	}
@@ -271,10 +286,17 @@ func validateOptionValue(key string, value string) error {
 	if key == "MaxTokenAutoGroups" {
 		return setting.ValidateMaxTokenAutoGroups(value)
 	}
+	if key == "WaffoPancakeEnvironment" {
+		_, err := setting.NormalizeWaffoPancakeEnvironment(value)
+		return err
+	}
 	return nil
 }
 
 func UpdateOption(key string, value string) error {
+	if key == setting.PublicModelOwnedByOptionKey {
+		return UpdateOptionsBulk(map[string]string{key: value})
+	}
 	if IsRequestPolicyOption(key) {
 		return UpdateRequestPolicyOptions(map[string]string{key: value})
 	}
@@ -284,6 +306,13 @@ func UpdateOption(key string, value string) error {
 	}
 	if IsModelPricingOption(key) {
 		return UpdateModelPricingOptions(map[string]string{key: value})
+	}
+	if isGroupRenameOptionKey(key) {
+		// Group-reference options share the rename transaction's row locks so a
+		// concurrent rename and an ordinary settings write cannot interleave, and
+		// unsafe key removal is rejected before the write.
+		_, err := ApplyGroupRename(GroupRenameApplyRequest{Options: map[string]string{key: value}})
+		return err
 	}
 	if err := validateOptionValue(key, value); err != nil {
 		return err
@@ -318,7 +347,18 @@ func UpdateOptionsBulk(values map[string]string) error {
 			return err
 		}
 	}
+	values = maps.Clone(values)
 	for key, value := range values {
+		var normalizeErr error
+		switch key {
+		case setting.PublicModelOwnedByOptionKey:
+			values[key], normalizeErr = setting.NormalizePublicModelOwnedBy(value)
+		case setting.SensitiveCheckExemptGroupsOptionKey:
+			values[key], normalizeErr = setting.NormalizeSensitiveCheckExemptGroups(value)
+		}
+		if normalizeErr != nil {
+			return normalizeErr
+		}
 		if err := validateOptionValue(key, value); err != nil {
 			return err
 		}
@@ -344,6 +384,14 @@ func UpdateOptionsBulk(values map[string]string) error {
 	}
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if _, writesGroups := values[setting.SensitiveCheckExemptGroupsOptionKey]; writesGroups {
+			if err := lockGroupNamespace(tx); err != nil {
+				return err
+			}
+			if err := validateGroupNamesForWriteTx(tx, policySnapshot.TextExemptGroups...); err != nil {
+				return err
+			}
+		}
 		for k, v := range values {
 			option := Option{Key: k}
 			if err := tx.FirstOrCreate(&option, Option{Key: k}).Error; err != nil {
@@ -371,14 +419,39 @@ func UpdateOptionsBulk(values map[string]string) error {
 }
 
 func updateOptionMap(key string, value string) (err error) {
+	var reminderThreshold int
+	if key == "QuotaRemindThreshold" {
+		reminderThreshold, err = operation_setting.ParseQuotaReminderThreshold(value)
+		if err != nil {
+			return err // Preserve the last valid runtime/default and OptionMap on legacy bad rows.
+		}
+	}
 	if key == retiredThemeOptionKey || key == legacyAccessTokenRetireAtKey {
 		common.OptionMapRWMutex.Lock()
 		delete(common.OptionMap, key)
 		common.OptionMapRWMutex.Unlock()
 		return nil
 	}
+	if key == "WaffoPancakeEnvironment" {
+		normalized, normalizeErr := setting.NormalizeWaffoPancakeEnvironment(value)
+		if normalizeErr != nil {
+			return normalizeErr
+		}
+		value = normalized
+	}
+	switch key {
+	case setting.PublicModelOwnedByOptionKey:
+		setting.LoadPublicModelOwnedBy(value)
+		value = setting.GetPublicModelOwnedBy()
+	case setting.SensitiveCheckExemptGroupsOptionKey:
+		setting.LoadSensitiveCheckExemptGroups(value)
+		value = setting.SensitiveCheckExemptGroupsToString()
+	}
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()
+	if common.OptionMap == nil {
+		common.OptionMap = make(map[string]string)
+	}
 	common.OptionMap[key] = value
 
 	// 检查是否是模型配置 - 使用更规范的方式处理
@@ -599,6 +672,8 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.WaffoPancakeStoreID = value
 	case "WaffoPancakeProductID":
 		setting.WaffoPancakeProductID = value
+	case "WaffoPancakeEnvironment":
+		setting.WaffoPancakeEnvironment = value
 	case "WaffoPancakeUnitPrice":
 		setting.WaffoPancakeUnitPrice, _ = strconv.ParseFloat(value, 64)
 	case "WaffoPancakeMinTopUp":
@@ -637,12 +712,16 @@ func updateOptionMap(key string, value string) (err error) {
 		common.TurnstileSecretKey = value
 	case "QuotaForNewUser":
 		common.QuotaForNewUser, _ = strconv.Atoi(value)
-	case "QuotaForInviter":
-		common.QuotaForInviter, _ = strconv.Atoi(value)
-	case "QuotaForInvitee":
-		common.QuotaForInvitee, _ = strconv.Atoi(value)
+	case "SignupBonusEnabled":
+		common.SignupBonusEnabled, _ = strconv.ParseBool(value)
+	case "QuotaForSignupBonus":
+		common.QuotaForSignupBonus, _ = strconv.Atoi(value)
+	case "AffiliateRewardEnabled":
+		common.AffiliateRewardEnabled, _ = strconv.ParseBool(value)
+	case "AffiliateRewardRate":
+		common.AffiliateRewardRate, _ = strconv.ParseFloat(value, 64)
 	case "QuotaRemindThreshold":
-		common.QuotaRemindThreshold, _ = strconv.Atoi(value)
+		common.QuotaRemindThreshold = reminderThreshold
 	case "PreConsumedQuota":
 		common.PreConsumedQuota, _ = strconv.Atoi(value)
 	case "ModelRequestRateLimitCount":

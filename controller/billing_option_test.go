@@ -12,8 +12,10 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/pkg/moneyport"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -191,6 +193,12 @@ export function parseTaskResult() { return {}; }
 // Covers configuration persistence, validation, reservation and reconciliation
 // through the same public entry points used by the relay.
 func TestPreConsumePolicyDatabaseMatrix(t *testing.T) {
+	registry := moneyport.NewFactoryRegistry()
+	require.NoError(t, service.RegisterHostFundingFactories(registry))
+	require.NoError(t, walletmodule.RegisterFundingFactory(registry))
+	if err := service.ConfigureFundingFactoryRegistry(registry); err != nil {
+		require.Contains(t, err.Error(), "already configured")
+	}
 	previousConfig := config.GlobalConfig.ExportAllConfigs()
 	previousUnit, previousBatch := common.QuotaPerUnit, common.BatchUpdateEnabled
 	common.QuotaPerUnit, common.BatchUpdateEnabled = 500000, false
@@ -204,7 +212,7 @@ func TestPreConsumePolicyDatabaseMatrix(t *testing.T) {
 				t.Skip("set " + dialect.env + " to run this database")
 			}
 			db := modelManagementDB(t, dialect.kind, os.Getenv(dialect.env))
-			require.NoError(t, db.AutoMigrate(&model.Token{}))
+			require.NoError(t, db.AutoMigrate(&model.Token{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}))
 			for key, value := range map[string]string{
 				"quota_setting.trust_quota_usd":        "10.5",
 				"quota_setting.pre_consume_multiplier": "1.5",
@@ -270,14 +278,14 @@ func TestPreConsumePolicyDatabaseMatrix(t *testing.T) {
 				t.Run(tc.name, func(t *testing.T) {
 					require.NoError(t, model.UpdateOption("quota_setting.trust_quota_usd", strconv.FormatFloat(tc.threshold, 'f', -1, 64)))
 					require.NoError(t, model.UpdateOption("quota_setting.pre_consume_multiplier", strconv.FormatFloat(tc.multiplier, 'f', -1, 64)))
-					user := model.User{Username: fmt.Sprintf("policy-user-%d", i), Quota: tc.wallet, Group: "default", AffCode: fmt.Sprintf("policy-aff-%d", i)}
+					user := model.User{Username: fmt.Sprintf("policy-user-%d", i), Quota: tc.wallet, QuotaPaid: tc.wallet, Group: "default", AffCode: fmt.Sprintf("policy-aff-%d", i)}
 					require.NoError(t, db.Create(&user).Error)
 					token := model.Token{UserId: user.Id, Key: fmt.Sprintf("policy-token-%d", i), RemainQuota: tc.token, UnlimitedQuota: tc.unlimited}
 					require.NoError(t, db.Create(&token).Error)
 					ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 					ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 					ctx.Set("token_quota", tc.token)
-					info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, TokenUnlimited: tc.unlimited, ForcePreConsume: tc.force, OriginModelName: "policy-model", UserGroup: "default", UsingGroup: "default", BillingRequestInput: &billingexpr.RequestInput{}}
+					info := &relaycommon.RelayInfo{RequestId: fmt.Sprintf("preconsume-policy-%s-%d", dialect.kind, i), UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, TokenUnlimited: tc.unlimited, ForcePreConsume: tc.force, OriginModelName: "policy-model", UserGroup: "default", UsingGroup: "default", BillingRequestInput: &billingexpr.RequestInput{}}
 					info.UserSetting.BillingPreference = "wallet_only"
 					price, err := helper.ModelPriceHelper(ctx, info, 1000, &types.TokenCountMeta{MaxTokens: 10000})
 					require.NoError(t, err)
@@ -285,6 +293,9 @@ func TestPreConsumePolicyDatabaseMatrix(t *testing.T) {
 					assert.Equal(t, tc.wantHeld, info.FinalPreConsumedQuota)
 					require.NoError(t, db.First(&user, user.Id).Error)
 					assert.Equal(t, tc.wallet-tc.wantHeld, user.Quota)
+					assert.Equal(t, user.Quota, user.QuotaPaid)
+					assert.Zero(t, user.QuotaBonus)
+					assert.Zero(t, user.QuotaReward)
 					if !tc.unlimited {
 						require.NoError(t, db.First(&token, token.Id).Error)
 						assert.Equal(t, tc.token-tc.wantHeld, token.RemainQuota)
@@ -295,6 +306,9 @@ func TestPreConsumePolicyDatabaseMatrix(t *testing.T) {
 					require.NoError(t, info.Billing.Settle(actual))
 					require.NoError(t, db.First(&user, user.Id).Error)
 					assert.Equal(t, tc.wallet-actual, user.Quota)
+					assert.Equal(t, user.Quota, user.QuotaPaid)
+					assert.Zero(t, user.QuotaBonus)
+					assert.Zero(t, user.QuotaReward)
 					if !tc.unlimited {
 						require.NoError(t, db.First(&token, token.Id).Error)
 						assert.Equal(t, tc.token-actual, token.RemainQuota)

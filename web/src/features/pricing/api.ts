@@ -24,8 +24,24 @@ import type { PricingData } from './types'
 // Pricing APIs
 // ----------------------------------------------------------------------------
 
-// Get model pricing data
+// Get model pricing data for the authenticated dashboard API. This endpoint
+// stays behind UserAuth and returns the caller's group ratios.
 export async function getPricing(): Promise<PricingData> {
   const res = await api.get('/api/pricing')
+  return res.data
+}
+
+// Get the anonymous public catalogue. Public pages must use this endpoint
+// instead of downgrading after an authentication failure. The request is
+// deliberately credential-free: `withCredentials: false` keeps cookies off the
+// wire, `preserveAuthorization` stops the request interceptor from attaching a
+// session bearer token, and `skipAuthRefresh` prevents a 401 from starting a
+// refresh cycle for a visitor that never authenticated.
+export async function getPublicPricing(): Promise<PricingData> {
+  const res = await api.get('/public-api/pricing', {
+    withCredentials: false,
+    preserveAuthorization: true,
+    skipAuthRefresh: true,
+  })
   return res.data
 }

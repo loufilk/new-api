@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 
@@ -32,6 +33,10 @@ const (
 )
 
 func ResponsesRequestToChatCompletionsRequest(ctx context.Context, req *dto.OpenAIResponsesRequest) (*dto.GeneralOpenAIRequest, error) {
+	return ResponsesRequestToChatCompletionsRequestWithOptions(ctx, req, nil)
+}
+
+func ResponsesRequestToChatCompletionsRequestWithOptions(ctx context.Context, req *dto.OpenAIResponsesRequest, options *convmeta.Options) (*dto.GeneralOpenAIRequest, error) {
 	if req == nil {
 		return nil, errors.New("request is nil")
 	}
@@ -42,7 +47,8 @@ func ResponsesRequestToChatCompletionsRequest(ctx context.Context, req *dto.Open
 		return nil, err
 	}
 
-	messages, err := responsesRequestMessagesToChat(ctx, req)
+	replayReasoning := options != nil && options.ReplayResponsesReasoning
+	messages, err := responsesRequestMessagesToChat(ctx, req, replayReasoning)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +149,7 @@ func ValidateRequestChatUnsupportedFields(req *dto.OpenAIResponsesRequest) error
 	return validateResponsesRequestChatUnsupportedFields(req)
 }
 
-func responsesRequestMessagesToChat(ctx context.Context, req *dto.OpenAIResponsesRequest) ([]dto.Message, error) {
+func responsesRequestMessagesToChat(ctx context.Context, req *dto.OpenAIResponsesRequest, replayReasoning bool) ([]dto.Message, error) {
 	messages := make([]dto.Message, 0)
 	if rawJSONPresent(req.Instructions) {
 		instructions, err := responsesJSONString(req.Instructions)
@@ -176,13 +182,50 @@ func responsesRequestMessagesToChat(ctx context.Context, req *dto.OpenAIResponse
 		// batch to stay contiguous, so media hoisted out of tool output items is
 		// held back and emitted as a single user message once the batch ends.
 		var pendingMedia []any
-		for _, item := range items {
+		pendingCalls := make(map[string]struct{})
+		for i, item := range items {
 			itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))
+			if replayReasoning {
+				path := fmt.Sprintf("input.%d", i)
+				switch itemType {
+				case "reasoning":
+					text, err := responsesReasoningHistoryText(ctx, item, path)
+					if err != nil {
+						return nil, err
+					}
+					if text == "" {
+						continue
+					}
+					if len(pendingCalls) > 0 && len(messages) > 0 && messages[len(messages)-1].Role == "tool" {
+						return nil, responsesHistoryError(path, "reasoning between parallel tool results cannot be represented by Chat Completions")
+					}
+					if len(pendingMedia) > 0 {
+						messages = append(messages, dto.Message{Role: "user", Content: pendingMedia})
+						pendingMedia = nil
+					}
+					if len(messages) == 0 || messages[len(messages)-1].Role != "assistant" {
+						messages = append(messages, dto.Message{Role: "assistant"})
+					}
+					last := &messages[len(messages)-1]
+					var reasoning strings.Builder
+					appendSeparatedText(&reasoning, last.GetReasoningContent())
+					appendSeparatedText(&reasoning, text)
+					last.ReasoningContent = kitutil.GetPointer(reasoning.String())
+					continue
+				case responsesInputTypeFunctionCall, responsesInputTypeCustomToolCall:
+					pendingCalls[responsesCallID(item)] = struct{}{}
+				case responsesInputTypeFunctionCallOutput, responsesInputTypeCustomToolOutput:
+					delete(pendingCalls, strings.TrimSpace(kitutil.Interface2String(item["call_id"])))
+				case "", "message":
+				default:
+					return nil, responsesHistoryError(path+".type", "input item cannot be represented by Chat Completions")
+				}
+			}
 			if len(pendingMedia) > 0 && itemType != responsesInputTypeFunctionCallOutput && itemType != responsesInputTypeCustomToolOutput {
 				messages = append(messages, dto.Message{Role: "user", Content: pendingMedia})
 				pendingMedia = nil
 			}
-			nextMessages, media, err := responsesInputItemToChatMessages(ctx, item, messages)
+			nextMessages, media, err := responsesInputItemToChatMessages(ctx, item, messages, replayReasoning)
 			if err != nil {
 				return nil, err
 			}
@@ -201,9 +244,12 @@ func responsesRequestMessagesToChat(ctx context.Context, req *dto.OpenAIResponse
 // responsesInputItemToChatMessages appends the Chat messages for one Responses input item.
 // The second result carries media content parts hoisted out of a tool output item,
 // already in Chat shape; the caller decides where that user message lands.
-func responsesInputItemToChatMessages(ctx context.Context, item map[string]any, messages []dto.Message) ([]dto.Message, []any, error) {
+func responsesInputItemToChatMessages(ctx context.Context, item map[string]any, messages []dto.Message, replayReasoning bool) ([]dto.Message, []any, error) {
 	itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))
 	switch itemType {
+	case "reasoning":
+		// Reasoning history is assistant metadata, never an empty user turn.
+		return messages, nil, nil
 	case responsesInputTypeFunctionCall:
 		toolCall, err := responsesFunctionCallItemToChatToolCall(item)
 		if err != nil {
@@ -218,7 +264,10 @@ func responsesInputItemToChatMessages(ctx context.Context, item map[string]any, 
 		return appendToolCallToLastAssistant(messages, toolCall), nil, nil
 	case responsesInputTypeFunctionCallOutput, responsesInputTypeCustomToolOutput:
 		callID := strings.TrimSpace(kitutil.Interface2String(item["call_id"]))
-		content, media := responsesToolOutputToChat(ctx, item["output"])
+		content, media, err := responsesToolOutputToChat(ctx, item["output"])
+		if err != nil {
+			return nil, nil, err
+		}
 		return append(messages, dto.Message{Role: "tool", ToolCallId: callID, Content: content}), media, nil
 	}
 
@@ -230,7 +279,92 @@ func responsesInputItemToChatMessages(ctx context.Context, item map[string]any, 
 	if err != nil {
 		return nil, nil, err
 	}
+	if replayReasoning && role == "assistant" {
+		switch content.(type) {
+		case string, []any:
+		default:
+			return nil, nil, responsesHistoryError("input.content", "expected assistant text or content parts")
+		}
+	}
+	if replayReasoning && role == "assistant" && len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
+		// Responses splits one assistant turn into reasoning, commentary and
+		// call items. Keep them on the same Chat message, including parallel
+		// calls separated by commentary; never merge across a tool/user turn.
+		last := &messages[len(messages)-1]
+		if last.Content == nil || last.Content == "" {
+			last.Content = content
+		} else if oldText, ok := last.Content.(string); ok {
+			if newText, ok := content.(string); ok {
+				var text strings.Builder
+				appendSeparatedText(&text, oldText)
+				appendSeparatedText(&text, newText)
+				last.Content = text.String()
+			} else {
+				last.Content = append([]any{map[string]any{"type": "text", "text": oldText}}, content.([]any)...)
+			}
+		} else {
+			parts := last.Content.([]any)
+			if text, ok := content.(string); ok {
+				last.Content = append(parts, map[string]any{"type": "text", "text": text})
+			} else {
+				last.Content = append(parts, content.([]any)...)
+			}
+		}
+		return messages, nil, nil
+	}
 	return append(messages, dto.Message{Role: role, Content: content}), nil, nil
+}
+
+// responsesReasoningHistoryText reads only explicit plaintext fields. A
+// reasoning summary is not a replacement for provider-specific encrypted state.
+func responsesReasoningHistoryText(ctx context.Context, item map[string]any, path string) (string, error) {
+	if encrypted := item["encrypted_content"]; encrypted != nil && encrypted != "" {
+		return "", responsesHistoryError(path+".encrypted_content", "encrypted reasoning cannot be replayed through Chat Completions; use a native Responses channel")
+	}
+	for _, field := range []string{"content", "summary"} {
+		raw := item[field]
+		if raw == nil {
+			continue
+		}
+		parts, ok := raw.([]any)
+		if !ok {
+			return "", responsesHistoryError(path+"."+field, "expected reasoning text parts")
+		}
+		partType := "reasoning_text"
+		if field == "summary" {
+			partType = "summary_text"
+		}
+		var text strings.Builder
+		for j, rawPart := range parts {
+			part, ok := rawPart.(map[string]any)
+			if !ok || part["type"] != partType {
+				return "", responsesHistoryError(fmt.Sprintf("%s.%s.%d", path, field, j), "unsupported reasoning text part")
+			}
+			value, ok := part["text"].(string)
+			if !ok {
+				return "", responsesHistoryError(fmt.Sprintf("%s.%s.%d.text", path, field, j), "expected text")
+			}
+			appendSeparatedText(&text, value)
+		}
+		if text.Len() > 0 {
+			if field == "summary" {
+				convdiag.Add(ctx, types.ConversionDiagnostic{
+					Code: "reasoning_summary_replayed", Path: path + ".summary",
+					Message:  "Reasoning summary replayed as reasoning_content; native summaries may omit reasoning state",
+					Severity: types.ConversionDiagnosticWarning,
+				})
+			}
+			return text.String(), nil
+		}
+	}
+	return "", nil
+}
+
+func responsesHistoryError(path, reason string) *types.NewAPIError {
+	return types.WithOpenAIError(types.OpenAIError{
+		Message: "Responses history conversion: " + reason,
+		Type:    "invalid_request_error", Code: "responses_history_unsupported", Param: path,
+	}, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 }
 
 func responsesInputContentToChatContent(ctx context.Context, content any) (any, error) {
@@ -278,10 +412,14 @@ func responsesContentPartsToChatContent(ctx context.Context, parts []any) (any, 
 				"text": text,
 			})
 		case "input_image":
+			imageURL, err := responsesImagePartToChatImageURL(part)
+			if err != nil {
+				return nil, err
+			}
 			onlyText = false
 			chatParts = append(chatParts, map[string]any{
 				"type":      dto.ContentTypeImageURL,
-				"image_url": responsesImagePartToChatImageURL(part),
+				"image_url": imageURL,
 			})
 		case "input_file":
 			onlyText = false
@@ -479,26 +617,46 @@ func RequestTextToChatResponseFormat(raw json.RawMessage) (*dto.ResponseFormat, 
 	return responsesRequestTextToChatResponseFormat(raw)
 }
 
-func responsesImagePartToChatImageURL(part map[string]any) any {
-	if imageURL, ok := part["image_url"]; ok {
-		// Chat Completions takes the URL inside an object. detail is left out:
-		// Chat upstreams that validate it with older OpenAI SDKs reject newer
-		// values such as "original".
-		if url, ok := imageURL.(string); ok {
-			return map[string]any{"url": url}
-		}
-		return imageURL
-	}
+// responsesImagePartToChatImageURL converts a Responses input_image part into
+// the Chat Completions wire shape. The Responses API carries image_url as a
+// plain string, while Chat Completions requires an object with a url field;
+// strict upstreams reject the bare string with "Invalid input" against
+// messages.N.content. A string URL is therefore wrapped, and an already
+// object-shaped image_url passes through unchanged.
+func responsesImagePartToChatImageURL(part map[string]any) (map[string]any, error) {
 	imageURL := map[string]any{}
-	for _, key := range []string{"url", "file_id", "detail"} {
-		if value, ok := part[key]; ok {
+	switch value := part["image_url"].(type) {
+	case string:
+		imageURL["url"] = value
+	case map[string]any:
+		for key, value := range value {
 			imageURL[key] = value
 		}
+	case nil:
+		if value, exists := part["url"]; exists {
+			imageURL["url"] = value
+		}
 	}
-	if len(imageURL) == 0 {
-		return part
+	address, ok := imageURL["url"].(string)
+	if !ok || strings.TrimSpace(address) == "" {
+		return nil, types.WithOpenAIError(types.OpenAIError{
+			Message: "Responses image requires a nonempty image_url; image file_id references cannot be converted to Chat Completions",
+			Type:    "invalid_request_error", Code: "unsupported_image_reference", Param: "input_image.image_url",
+		}, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
-	return imageURL
+	if detail, exists := part["detail"]; exists {
+		if _, nested := imageURL["detail"]; !nested {
+			imageURL["detail"] = detail
+		}
+	}
+	// Responses-only values such as "original" are rejected by strict Chat
+	// upstreams. Preserve the supported Chat detail values and omit the rest.
+	switch imageURL["detail"] {
+	case "auto", "low", "high":
+	default:
+		delete(imageURL, "detail")
+	}
+	return imageURL, nil
 }
 
 // responsesFilePartToChat maps a Responses input_file onto Chat Completions,
@@ -636,10 +794,10 @@ func responseToolOutputToChatContent(value any) any {
 // message and returns the media parts in Chat shape for the caller to hoist into a user message;
 // stringifying them instead would hand base64 image data to the upstream text tokenizer. Any
 // other payload shape (string, object, plain JSON array) keeps the historical stringified form.
-func responsesToolOutputToChat(ctx context.Context, value any) (any, []any) {
+func responsesToolOutputToChat(ctx context.Context, value any) (any, []any, error) {
 	rawParts, ok := value.([]any)
 	if !ok || len(rawParts) == 0 {
-		return responseToolOutputToChatContent(value), nil
+		return responseToolOutputToChatContent(value), nil, nil
 	}
 
 	texts := make([]string, 0, len(rawParts))
@@ -648,7 +806,7 @@ func responsesToolOutputToChat(ctx context.Context, value any) (any, []any) {
 	for _, rawPart := range rawParts {
 		part, ok := rawPart.(map[string]any)
 		if !ok {
-			return responseToolOutputToChatContent(value), nil
+			return responseToolOutputToChatContent(value), nil, nil
 		}
 		partType := strings.TrimSpace(kitutil.Interface2String(part["type"]))
 		switch partType {
@@ -663,23 +821,23 @@ func responsesToolOutputToChat(ctx context.Context, value any) (any, []any) {
 				labels = append(labels, label)
 			}
 		default:
-			return responseToolOutputToChatContent(value), nil
+			return responseToolOutputToChatContent(value), nil, nil
 		}
 	}
 	if len(mediaParts) == 0 {
-		return strings.Join(texts, "\n"), nil
+		return strings.Join(texts, "\n"), nil, nil
 	}
 
 	converted, err := responsesContentPartsToChatContent(ctx, mediaParts)
 	if err != nil {
-		return responseToolOutputToChatContent(value), nil
+		return nil, nil, err
 	}
 	media, _ := converted.([]any)
 	if len(texts) == 0 {
 		// Upstreams reject empty tool content; the media itself rides on the hoisted user message.
-		return strings.Join(labels, " "), media
+		return strings.Join(labels, " "), media, nil
 	}
-	return strings.Join(texts, "\n"), media
+	return strings.Join(texts, "\n"), media, nil
 }
 
 func responsesRawFloat(raw json.RawMessage) (*float64, error) {

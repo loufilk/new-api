@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
@@ -69,6 +70,42 @@ func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
 	require.Equal(t, "stream", info.TieredBillingSnapshot.EstimatedTier)
 	require.Equal(t, billing_setting.BillingModeTieredExpr, info.TieredBillingSnapshot.BillingMode)
 	require.Equal(t, common.QuotaPerUnit, info.TieredBillingSnapshot.QuotaPerUnit)
+}
+
+func TestModelPriceHelperFreezesRequestTimeAcrossRepricing(t *testing.T) {
+	saved := map[string]string{}
+	require.NoError(t, config.GlobalConfig.SaveToDB(func(key, value string) error {
+		saved[key] = value
+		return nil
+	}))
+	t.Cleanup(func() { require.NoError(t, config.GlobalConfig.LoadFromDB(saved)) })
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode":    `{"time-test":"tiered_expr"}`,
+		"billing_setting.billing_expr":    `{"time-test":"hour(\"UTC\") == 3 ? tier(\"request-time\", p * 4) : tier(\"later\", p)"}`,
+		"group_ratio_setting.group_ratio": `{"default":1}`,
+	}))
+	for _, preloaded := range []bool{false, true} {
+		t.Run(fmt.Sprint("preloaded=", preloaded), func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			start := time.Date(2026, time.September, 10, 3, 59, 59, 0, time.UTC)
+			info := &relaycommon.RelayInfo{OriginModelName: "time-test", UserGroup: "default", UsingGroup: "default", StartTime: start}
+			if preloaded {
+				info.BillingRequestInput = &billingexpr.RequestInput{}
+			}
+			price, err := ModelPriceHelper(ctx, info, 100, &types.TokenCountMeta{})
+			require.NoError(t, err)
+			assert.Equal(t, 200, price.QuotaToPreConsume)
+			require.NotNil(t, info.BillingRequestInput)
+			assert.Equal(t, start.Unix(), info.BillingRequestInput.Timestamp)
+			// A later retry must keep the already captured request-time rule.
+			info.StartTime = start.Add(time.Hour)
+			price, err = ModelPriceHelper(ctx, info, 100, &types.TokenCountMeta{})
+			require.NoError(t, err)
+			assert.Equal(t, 200, price.QuotaToPreConsume)
+			assert.Equal(t, "request-time", info.TieredBillingSnapshot.EstimatedTier)
+		})
+	}
 }
 
 func TestFixedPricePreConsumeAndRealtimeRejection(t *testing.T) {

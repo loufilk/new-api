@@ -457,7 +457,10 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 			written := false
 			err = model.DB.Transaction(func(tx *gorm.DB) error {
 				var err error
-				written, err = model.MigrateLegacyGitHubBindingWithTx(tx, user.Id, legacyID, oauthUser.ProviderUserID)
+				written, err = model.MigrateLegacyGitHubBindingWithTx(tx, user.Id, legacyID, oauthUser.ProviderUserID, user)
+				if err == nil && !written {
+					return model.ErrAccountBindingChanged
+				}
 				return err
 			})
 			if err != nil {
@@ -543,17 +546,29 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 		}
 
 		// Perform post-transaction tasks (logs, sidebar config, inviter rewards)
-		user.FinalizeOAuthUserCreation(inviterId)
+		user.FinalizeOAuthUserCreation(user.InviterId)
 	} else {
-		// Built-in provider: create user and update provider ID in a transaction
+		// Built-in provider: create user and update provider ID in a transaction.
 		err := model.DB.Transaction(func(tx *gorm.DB) error {
-			// Create user
-			if err := user.InsertWithTx(tx, inviterId); err != nil {
+			// Only the verified built-in provider can select the signup reward path.
+			// Existing-user login and account binding never reach this branch.
+			var err error
+			if _, linuxDO := provider.(*oauth.LinuxDOProvider); linuxDO {
+				err = user.InsertLinuxDOWithTx(tx, inviterId, oauthUser.ProviderUserID)
+			} else {
+				err = user.InsertWithTx(tx, inviterId)
+			}
+			if err != nil {
 				return err
 			}
 
 			// Set the provider user ID on the user model and update
 			provider.SetProviderUserID(user, oauthUser.ProviderUserID)
+			if user.GitHubId != "" {
+				if err := model.UpdateGitHubBindingWithTx(tx, user.Id, user.GitHubId); err != nil {
+					return err
+				}
+			}
 			if err := tx.Model(user).Updates(map[string]any{
 				"github_id":   user.GitHubId,
 				"discord_id":  user.DiscordId,
@@ -572,7 +587,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 		}
 
 		// Perform post-transaction tasks
-		user.FinalizeOAuthUserCreation(inviterId)
+		user.FinalizeOAuthUserCreation(user.InviterId)
 	}
 
 	return user, nil, nil

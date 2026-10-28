@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"sync"
 	"sync/atomic"
 
 	"github.com/QuantumNous/new-api/common"
@@ -14,6 +15,7 @@ const DefaultMaxTokenAutoGroups = 5
 var autoGroups = []string{
 	"default",
 }
+var autoGroupsMu sync.RWMutex
 
 var DefaultUseAutoGroup = false
 
@@ -24,16 +26,26 @@ func init() {
 }
 
 func ContainsAutoGroup(group string) bool {
+	autoGroupsMu.RLock()
+	defer autoGroupsMu.RUnlock()
 	return slices.Contains(autoGroups, group)
 }
 
 func UpdateAutoGroupsByJsonString(jsonString string) error {
-	autoGroups = make([]string, 0)
-	return common.Unmarshal([]byte(jsonString), &autoGroups)
+	// Decode privately so invalid or partially decoded input cannot corrupt the
+	// published routing configuration. Readers only observe complete snapshots.
+	next := make([]string, 0)
+	if err := common.Unmarshal([]byte(jsonString), &next); err != nil {
+		return err
+	}
+	autoGroupsMu.Lock()
+	autoGroups = next
+	autoGroupsMu.Unlock()
+	return nil
 }
 
 func AutoGroups2JsonString() string {
-	jsonBytes, err := common.Marshal(autoGroups)
+	jsonBytes, err := common.Marshal(GetAutoGroups())
 	if err != nil {
 		return "[]"
 	}
@@ -41,7 +53,9 @@ func AutoGroups2JsonString() string {
 }
 
 func GetAutoGroups() []string {
-	return autoGroups
+	autoGroupsMu.RLock()
+	defer autoGroupsMu.RUnlock()
+	return slices.Clone(autoGroups)
 }
 
 func GetMaxTokenAutoGroups() int {

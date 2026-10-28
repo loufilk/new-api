@@ -7,11 +7,15 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
 type ChannelSettings struct {
+	// ModelOwnedBy is an explicitly public label for model discovery, not a routing hint.
+	ModelOwnedBy              string `json:"model_owned_by,omitempty"`
 	TaskPluginKey             string `json:"task_plugin_key,omitempty"`
 	ForceFormat               bool   `json:"force_format,omitempty"`
 	ThinkingToContent         bool   `json:"thinking_to_content,omitempty"`
@@ -35,6 +39,15 @@ type ChannelSettings struct {
 	// TLSInsecureSkipVerify accepts upstream certificates that fail
 	// verification, such as self-signed ones, for this channel only.
 	TLSInsecureSkipVerify bool `json:"tls_insecure_skip_verify,omitempty"`
+}
+
+// ValidateModelOwnedBy bounds public display metadata independently of transport settings.
+func (s ChannelSettings) ValidateModelOwnedBy() error {
+	if !utf8.ValidString(s.ModelOwnedBy) || utf8.RuneCountInString(strings.TrimSpace(s.ModelOwnedBy)) > 64 ||
+		strings.ContainsFunc(s.ModelOwnedBy, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }) {
+		return fmt.Errorf("model_owned_by must contain at most 64 characters without control or formatting characters")
+	}
+	return nil
 }
 
 // BindsTaskPlugin reports whether the channel is bound to the task plugin,

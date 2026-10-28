@@ -9,6 +9,17 @@ const (
 
 	ContextKeyOriginalModel    ContextKey = "original_model"
 	ContextKeyRequestStartTime ContextKey = "request_start_time"
+	// The Responses handler owns the SSE error response, even when the client
+	// disconnected or a write failed. Do not retry or append a JSON HTTP error.
+	ContextKeyResponsesStreamErrorHandled ContextKey = "responses_stream_error_handled"
+	// A failed native non-stream response has confirmed output or usage to
+	// settle. Other adaptors may return an empty Usage alongside an error.
+	ContextKeyResponsesPartialUsage ContextKey = "responses_partial_usage"
+	// ContextKeyStreamErrorHandled marks a non-Responses SSE failure that has
+	// already emitted an in-band protocol error. The outer relay must still
+	// record the request as failed, but must not append a JSON HTTP error or retry
+	// after partial output has reached the client.
+	ContextKeyStreamErrorHandled ContextKey = "stream_error_handled"
 
 	/* token related keys */
 	ContextKeyTokenUnlimited         ContextKey = "token_unlimited_quota"
@@ -44,6 +55,18 @@ const (
 	// request, which differs from the base URL for absolute Advanced Custom routes
 	// and for adaptors that build official endpoints themselves.
 	ContextKeyUpstreamRequestOrigin ContextKey = "upstream_request_origin"
+
+	// Attempted records entry into the current HTTP transport call, not provider
+	// acceptance. Delivery may still be unknown; DNS/dial errors can prove unsent.
+	ContextKeyUpstreamRequestAttempted ContextKey = "upstream_request_attempted"
+	// Unsent retains typed DNS/dial evidence before public errors are sanitized.
+	ContextKeyUpstreamRequestUnsent ContextKey = "upstream_request_unsent"
+	// Decode failure is a local fact, distinct from a provider error with the
+	// same code. A malformed HTTP 200 body does not prove generation was unused.
+	ContextKeyUpstreamResponseDecodeFailed ContextKey = "upstream_response_decode_failed"
+	ContextKeyUpstreamExplicitRejection    ContextKey = "upstream_explicit_rejection"
+	// UsageIncomplete records observed work whose retained snapshot cannot price all of it.
+	ContextKeyUpstreamResponseUsageIncomplete ContextKey = "upstream_response_usage_incomplete"
 
 	ContextKeyAutoGroup           ContextKey = "auto_group"
 	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"
@@ -85,4 +108,9 @@ const (
 	ContextKeyTokenAuditParams ContextKey = "token_audit_params"
 	// ContextKeyTokenAuditSucceeded disambiguates token responses that exceed the audit buffer.
 	ContextKeyTokenAuditSucceeded ContextKey = "token_audit_succeeded"
+
+	// ContextKeyChannelTest marks an administrator-triggered channel test. Its
+	// synthetic request carries no end-user credential, so the client privacy
+	// boundary must not rewrite the upstream model or scrub diagnostics.
+	ContextKeyChannelTest ContextKey = "channel_test"
 )

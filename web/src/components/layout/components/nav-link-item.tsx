@@ -38,6 +38,18 @@ export function NavLinkItem({ link, className }: NavLinkItemProps) {
     className
   )
 
+  if (link.documentNavigation) {
+    return (
+      <a
+        href={link.href}
+        className={linkClassName}
+        aria-disabled={link.disabled}
+      >
+        {link.title}
+      </a>
+    )
+  }
+
   if (link.external) {
     return (
       <a
@@ -76,9 +88,9 @@ export function NavLinkList({
 }: NavLinkListProps) {
   return (
     <>
-      {links.map((link, index) => (
+      {links.map((link) => (
         <NavLinkItem
-          key={index}
+          key={link.href}
           link={link}
           className={cn(className, itemClassName)}
         />

@@ -96,6 +96,7 @@ async function searchEntriesFor(role: number, sidebarModulesAdmin = '') {
 
   await userEvent.click(await screen.findByRole('button', { name: 'Search' }))
   const options = await screen.findAllByRole('option')
+  expect(screen.getAllByRole('dialog')).toHaveLength(1)
   return options.map((option) => option.textContent)
 }
 
@@ -127,4 +128,11 @@ test('pages hidden in the sidebar settings stay out of search', async () => {
 
   expect(entries).not.toContain('Wallet')
   expect(entries).toContain('Profile')
+})
+
+test('root users find both admin and root pages in search', async () => {
+  const entries = await searchEntriesFor(ROLE.SUPER_ADMIN)
+  expect(entries).toEqual(
+    expect.arrayContaining([...adminEntries, ...superAdminEntries])
+  )
 })

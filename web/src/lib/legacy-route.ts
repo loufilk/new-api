@@ -20,8 +20,8 @@ const legacyOrigin = 'https://legacy-route.invalid'
 
 const legacyConsoleRoutes: Record<string, string> = {
   '/console': '/dashboard',
-  '/console/models': '/models',
-  '/console/deployment': '/models/deployments',
+  '/console/models': '/model-management',
+  '/console/deployment': '/model-management/deployments',
   '/console/subscription': '/subscriptions',
   '/console/channel': '/channels',
   '/console/token': '/keys',

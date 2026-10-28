@@ -23,6 +23,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  Loader2,
   Sparkles,
 } from 'lucide-react'
 import { useEffect, useState, useMemo, useCallback } from 'react'
@@ -41,6 +42,7 @@ import {
   TooltipTrigger,
   TooltipProvider,
 } from '@/components/ui/tooltip'
+import { useTurnstile } from '@/features/auth/hooks/use-turnstile'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import dayjs from '@/lib/dayjs'
 import { handleServerError } from '@/lib/handle-server-error'
@@ -52,14 +54,10 @@ import type { CheckinRecord } from '../types'
 
 interface CheckinCalendarCardProps {
   checkinEnabled: boolean
-  turnstileEnabled: boolean
-  turnstileSiteKey: string
 }
 
 export function CheckinCalendarCard({
   checkinEnabled,
-  turnstileEnabled,
-  turnstileSiteKey,
 }: CheckinCalendarCardProps) {
   const { t } = useTranslation()
   const [currentMonth, setCurrentMonth] = useState(() => {
@@ -67,10 +65,16 @@ export function CheckinCalendarCard({
     return new Date(now.getFullYear(), now.getMonth(), 1)
   })
   const [checkinLoading, setCheckinLoading] = useState(false)
-  const [turnstileModalVisible, setTurnstileModalVisible] = useState(false)
-  const [turnstileWidgetKey, setTurnstileWidgetKey] = useState(0)
   const [initialLoaded, setInitialLoaded] = useState(false)
   const [collapsed, setCollapsed] = useState<boolean>(false)
+  const [turnstileDialogOpen, setTurnstileDialogOpen] = useState(false)
+  const [turnstileWidgetKey, setTurnstileWidgetKey] = useState(0)
+  const {
+    isTurnstileEnabled,
+    turnstileSiteKey,
+    turnstileToken,
+    setTurnstileToken,
+  } = useTurnstile()
 
   const currentMonthStr = useMemo(() => {
     const y = currentMonth.getFullYear()
@@ -131,48 +135,52 @@ export function CheckinCalendarCard({
     setInitialLoaded(true)
   }, [checkinData, checkedToday, initialLoaded, isLoading])
 
-  const shouldTriggerTurnstile = useCallback(
-    (message?: string) => {
-      if (!turnstileEnabled) return false
-      if (typeof message !== 'string') return true
-      return message.includes('Turnstile')
-    },
-    [turnstileEnabled]
-  )
+  const resetTurnstile = useCallback(() => {
+    setTurnstileToken('')
+    setTurnstileWidgetKey((current) => current + 1)
+  }, [setTurnstileToken])
 
-  const doCheckin = useCallback(
-    async (token?: string) => {
+  const submitCheckin = useCallback(
+    async (turnstile?: string) => {
       setCheckinLoading(true)
       try {
-        const res = await performCheckin(token)
+        const res = await performCheckin(turnstile)
         if (res.success && res.data) {
           toast.success(
             `${t('Check-in successful! Received')} ${formatQuotaWithCurrency(res.data.quota_awarded)}`
           )
           refetch()
-          setTurnstileModalVisible(false)
-        } else {
-          if (!token && shouldTriggerTurnstile(res.message)) {
-            if (!turnstileSiteKey) {
-              toast.error(t('Turnstile is enabled but site key is empty.'))
-              return
-            }
-            setTurnstileModalVisible(true)
-            return
-          }
-          if (token && shouldTriggerTurnstile(res.message)) {
-            setTurnstileWidgetKey((v) => v + 1)
-          }
-          handleServerError(res, t('Check-in failed'))
+          return true
         }
+        handleServerError(res, t('Check-in failed'))
+        return false
       } catch (error) {
         handleServerError(error, t('Check-in failed'))
+        return false
       } finally {
         setCheckinLoading(false)
       }
     },
-    [refetch, shouldTriggerTurnstile, t, turnstileSiteKey]
+    [refetch, t]
   )
+
+  const doCheckin = useCallback(async () => {
+    if (isTurnstileEnabled) {
+      resetTurnstile()
+      setTurnstileDialogOpen(true)
+      return
+    }
+    await submitCheckin()
+  }, [isTurnstileEnabled, resetTurnstile, submitCheckin])
+
+  const confirmTurnstileCheckin = useCallback(async () => {
+    if (!turnstileToken) return
+    const submittedTurnstileToken = turnstileToken
+    resetTurnstile()
+    if (await submitCheckin(submittedTurnstileToken)) {
+      setTurnstileDialogOpen(false)
+    }
+  }, [resetTurnstile, submitCheckin, turnstileToken])
 
   const handlePrevMonth = () => {
     setCurrentMonth(
@@ -253,36 +261,6 @@ export function CheckinCalendarCard({
 
   return (
     <TooltipProvider delay={100}>
-      <Dialog
-        open={turnstileModalVisible}
-        onOpenChange={(open) => {
-          setTurnstileModalVisible(open)
-          if (!open) {
-            setTurnstileWidgetKey((v) => v + 1)
-          }
-        }}
-        title={t('Security Check')}
-        contentClassName='sm:max-w-md'
-        contentHeight='auto'
-        bodyClassName='space-y-4'
-      >
-        <div className='text-muted-foreground text-sm'>
-          {t('Please complete the security check to continue.')}
-        </div>
-        <div className='flex justify-center py-4'>
-          <Turnstile
-            key={turnstileWidgetKey}
-            siteKey={turnstileSiteKey}
-            onVerify={(token) => {
-              doCheckin(token)
-            }}
-            onExpire={() => {
-              setTurnstileWidgetKey((v) => v + 1)
-            }}
-          />
-        </div>
-      </Dialog>
-
       <Card data-card-hover='false' className='gap-0 overflow-hidden py-0'>
         {/* Header */}
         <div className='border-b p-4 sm:p-6'>
@@ -325,7 +303,7 @@ export function CheckinCalendarCard({
               </div>
             </button>
             <Button
-              onClick={() => doCheckin()}
+              onClick={() => void doCheckin()}
               disabled={checkinLoading || checkedToday}
               size='sm'
               className='w-full shrink-0 sm:w-auto'
@@ -484,6 +462,47 @@ export function CheckinCalendarCard({
           </>
         ) : null}
       </Card>
+
+      <Dialog
+        open={turnstileDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) resetTurnstile()
+          setTurnstileDialogOpen(open)
+        }}
+        title={t('Daily Check-in')}
+        description={t('Check in daily to receive random quota rewards')}
+        contentClassName='max-w-sm'
+        contentHeight='auto'
+        footer={
+          <>
+            <Button
+              type='button'
+              variant='outline'
+              onClick={() => setTurnstileDialogOpen(false)}
+            >
+              {t('Cancel')}
+            </Button>
+            <Button
+              type='button'
+              onClick={() => void confirmTurnstileCheckin()}
+              disabled={checkinLoading || !turnstileToken}
+            >
+              {checkinLoading ? <Loader2 className='animate-spin' /> : null}
+              {t('Confirm')}
+            </Button>
+          </>
+        }
+      >
+        {isTurnstileEnabled && (
+          <Turnstile
+            key={turnstileWidgetKey}
+            siteKey={turnstileSiteKey}
+            action='checkin'
+            onVerify={setTurnstileToken}
+            onExpire={() => setTurnstileToken('')}
+          />
+        )}
+      </Dialog>
     </TooltipProvider>
   )
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/privacy"
 
 	"github.com/gin-gonic/gin"
 )
@@ -38,6 +39,18 @@ func ShouldCopyUpstreamHeader(c *gin.Context, k string, v []string) bool {
 		}
 		return false
 	}
+	if privacy.Restricted(c) {
+		header := strings.ToLower(k)
+		if header == "server" || header == "via" || header == "x-powered-by" ||
+			header == "x-request-id" || header == "request-id" ||
+			strings.HasPrefix(header, "x-upstream-") || strings.HasPrefix(header, "x-provider-") ||
+			strings.HasPrefix(header, "openai-") || strings.HasPrefix(header, "anthropic-") {
+			if c != nil && len(v) > 0 && (header == "x-request-id" || header == "request-id" || strings.EqualFold(k, common.UpstreamRequestIdKey)) {
+				c.Set(common.UpstreamRequestIdKey, v[0])
+			}
+			return false
+		}
+	}
 	return true
 }
 
@@ -46,6 +59,7 @@ func IOCopyBytesGracefully(c *gin.Context, src *http.Response, data []byte) {
 		return
 	}
 
+	data = privacy.SanitizeClientPayload(c, data)
 	body := io.NopCloser(bytes.NewBuffer(data))
 
 	// We shouldn't set the header before we parse the response body, because the parse part may fail.

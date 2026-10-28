@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "stage": "merged-rc47-alignment",
+  "production_baseline": {
+    "repository": "1057300248/wanchuan-new-api",
+    "commit": "093c7197d5eac50787971fd5ff7553a414142fc7",
+    "tree": "c95f344510ce914c810f51cc8bdff5112934d038"
+  },
+  "feature_reference": {
+    "pull_request": 17,
+    "commit": "da88d8f977f8cbbd12561556344b90a0e94530e1",
+    "tree": "709f4d5c02098b7eb41b173a1271a350861d81be"
+  },
+  "upstream_reference": {
+    "repository": "QuantumNous/new-api",
+    "commit": "01da3a55f838cfa21010b05c7451c0a42cf5a173",
+    "release_tag": "v1.0.0-rc.47",
+    "release_commit": "e835b1bfc43b565d625537830dbfb19328925134",
+    "commits_after_release": 7,
+    "alignment_method": "Upstream history through 01da3a55f838cfa21010b05c7451c0a42cf5a173 was merged as the second parent of 75f57ad6018b0e732382ea6ee11457ca0a551823 on 2026-10-27. Custom repairs and dependency choices are retained.",
+    "tree": "743e1058e97f21dea680edaa1be579e3eedc36c2"
+  },
+  "version": "v1.0.0-rc.47.chuanapi.1",
+  "scope": "Records the upstream history already merged on the repair branch; production_baseline and feature_reference remain historical source pins. This manifest does not authorize a release, main-branch merge or deployment, and does not assert feature parity."
+}

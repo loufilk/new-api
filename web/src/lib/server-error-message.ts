@@ -240,3 +240,17 @@ export function requireServerSuccess<T>(response: T): T {
   }
   return response
 }
+
+/** Payment APIs may place a fallback in data; prefer their structured message. */
+export function getPaymentErrorTranslation(
+  response: unknown
+): string | undefined {
+  if (
+    !isRecord(response) ||
+    typeof response.message_key !== 'string' ||
+    !response.message_key
+  ) {
+    return undefined
+  }
+  return getServerMessage(response)
+}

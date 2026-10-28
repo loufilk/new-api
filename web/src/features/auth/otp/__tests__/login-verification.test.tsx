@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   createMemoryHistory,
   createRootRoute,
@@ -34,6 +35,8 @@ import { useAuthStore, type AuthBundle } from '@/stores/auth-store'
 import { useAuthRedirect } from '../../hooks/use-auth-redirect'
 import type { LoginResult } from '../../secure-verification/types'
 import { OtpForm } from '../components/otp-form'
+
+const queryClients: QueryClient[] = []
 
 const bundle: AuthBundle = {
   access_token: 'completed-login',
@@ -110,7 +113,15 @@ function renderLoginVerification(
       initialEntries: [primaryResult ? '/primary-login' : '/otp'],
     }),
   })
-  const view = render(<RouterProvider router={router} />)
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  queryClients.push(queryClient)
+  const view = render(
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
+  )
   return { router, ...view }
 }
 
@@ -128,10 +139,20 @@ function pendingLoginResponse() {
 
 beforeEach(() => {
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url !== '/api/status') {
+      throw new Error('Unexpected GET in login verification test')
+    }
+    return { data: { success: true, data: {} } }
+  })
 })
 
-afterEach(() => {
+afterEach(async () => {
   cleanup()
+  for (const client of queryClients.splice(0)) {
+    await client.cancelQueries()
+    client.clear()
+  }
   vi.restoreAllMocks()
   useAuthStore.getState().auth.reset('idle')
 })

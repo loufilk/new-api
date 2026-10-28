@@ -1,0 +1,62 @@
+name: Dependency upgrade resolution
+on:
+  push:
+    branches: [codex/runtime-stability-maintenance-20260924]
+    paths: [.github/workflows/dependency-resolve.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: dependency-resolve-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  resolve:
+    if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GOWORK: 'off'
+      GOTOOLCHAIN: local
+      GOPROXY: https://proxy.golang.org
+      GOSUMDB: sum.golang.org
+      SQL_DSN: ''
+      LOG_SQL_DSN: ''
+      REDIS_CONN_STRING: ''
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Resolve Gin and database driver candidates separately
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/dependency-resolution"
+          mkdir -p "$OUT/baseline" "$OUT/gin" "$OUT/gorm" "$OUT/redis"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git rev-parse HEAD > "$OUT/source-sha.txt"
+          go version > "$OUT/go-version.txt"
+          cp go.mod go.sum "$OUT/baseline/"
+          go get github.com/gin-gonic/gin@v1.12.0
+          cp go.mod go.sum "$OUT/gin/"
+          go list -m all > "$OUT/gin/modules.txt"
+          go get gorm.io/gorm@v1.31.2 gorm.io/driver/mysql@v1.6.0 gorm.io/driver/postgres@v1.6.0
+          cp go.mod go.sum "$OUT/gorm/"
+          go list -m all > "$OUT/gorm/modules.txt"
+          go get github.com/redis/go-redis/v9@v9.22.0
+          cp go.mod go.sum "$OUT/redis/"
+          go list -m all > "$OUT/redis/modules.txt"
+          go mod verify > "$OUT/module-verification.txt"
+          git archive --format=tar.gz -o "$OUT/source.tar.gz" HEAD
+          printf '%s\n' 'Resolution only. No application tests, database compatibility, source migration, commit, push or deployment are implied.' > "$OUT/SCOPE.txt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: dependency-resolution-${{ github.sha }}
+          path: ${{ runner.temp }}/dependency-resolution/
+          if-no-files-found: error
+          retention-days: 2

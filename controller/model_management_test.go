@@ -955,7 +955,8 @@ export function parseTaskResult() { return {}; }
 				require.NoError(t, db.Where("model = ? AND channel_id = ? AND enabled = ?", "matrix-hidden-unpriced", active.Id, true).First(&ability).Error)
 			})
 			t.Run("metadata_preview_selection_versions_and_transaction", func(t *testing.T) {
-				local := &model.Model{ModelName: "matrix-existing", Description: "Local description", Tags: "keep", Status: 1, SyncOfficial: 1}
+				local := &model.Model{ModelName: "matrix-existing", Description: "Local description", Tags: "keep", Status: 1, SyncOfficial: 1,
+					ContextLength: common.GetPointer(128000), Capabilities: `["vision"]`, BonusEligible: common.GetPointer(true)}
 				require.NoError(t, local.Insert())
 				blocked := &model.Model{ModelName: "matrix-blocked", Status: 1, SyncOfficial: 0}
 				require.NoError(t, blocked.Insert())
@@ -973,7 +974,8 @@ export function parseTaskResult() { return {}; }
 						payload = []upstreamVendor{{Name: "Matrix vendor", Status: 1}}
 					} else {
 						payload = []upstreamModel{
-							{ModelName: "matrix-existing", Description: fmt.Sprintf("Upstream %d", revision.Load()), VendorName: "Matrix vendor", Tags: "changed", Status: 0, Endpoints: []byte(`{"openai":{"path":"/v1/chat/completions","method":"POST"}}`)},
+							{ModelName: "matrix-existing", Description: fmt.Sprintf("Upstream %d", revision.Load()), VendorName: "Matrix vendor", Tags: "changed", Status: 0, Endpoints: []byte(`{"openai":{"path":"/v1/chat/completions","method":"POST"}}`),
+								ContextLength: common.GetPointer(0), BonusEligible: common.GetPointer(false)},
 							{ModelName: "matrix-new", Description: "New model", VendorName: "Matrix vendor", Status: 0, Endpoints: []byte(`{"openai":"/v1/chat/completions"}`)},
 							{ModelName: "matrix-blocked", Description: "Do not overwrite", Status: 1},
 							{ModelName: "matrix-catalog", Description: "Catalog only", Status: 1},
@@ -1003,11 +1005,13 @@ export function parseTaskResult() { return {}; }
 				assert.Equal(t, "site", byName["matrix-new"].Scope)
 				assert.Equal(t, "catalog", byName["matrix-catalog"].Scope)
 				assert.Equal(t, "blocked", byName["matrix-blocked"].Kind)
+				assert.Contains(t, byName["matrix-existing"].Fields, metadataSyncField{Field: "context_length", Local: float64(128000), Upstream: float64(0)})
+				assert.Contains(t, byName["matrix-existing"].Fields, metadataSyncField{Field: "bonus_eligible", Local: true, Upstream: false})
 				var count int64
 				require.NoError(t, db.Model(&model.Vendor{}).Count(&count).Error)
 				assert.Zero(t, count)
 				body := map[string]any{"locale": "zh", "source_version": preview.Data.Source.Version, "selections": []model.MetadataSyncSelection{
-					{ModelName: "matrix-existing", RecordVersion: byName["matrix-existing"].RecordVersion, Fields: []string{"description", "endpoints"}},
+					{ModelName: "matrix-existing", RecordVersion: byName["matrix-existing"].RecordVersion, Fields: []string{"description", "endpoints", "context_length", "bonus_eligible"}},
 					{ModelName: "matrix-new", RecordVersion: byName["matrix-new"].RecordVersion, Create: true},
 				}}
 				beforePricing, err := model.GetModelPricingSnapshot([]string{"matrix-priced"})
@@ -1038,6 +1042,9 @@ export function parseTaskResult() { return {}; }
 				assert.Equal(t, []string{"Matrix vendor"}, result.Data.CreatedVendors)
 				require.NoError(t, db.First(&persisted, local.Id).Error)
 				assert.Equal(t, "Upstream 0", persisted.Description)
+				assert.Equal(t, common.GetPointer(0), persisted.ContextLength)
+				assert.Equal(t, common.GetPointer(false), persisted.BonusEligible)
+				assert.Equal(t, `["vision"]`, persisted.Capabilities, "absent upstream modalities must not clear local metadata")
 				assert.Equal(t, "keep", persisted.Tags)
 				assert.Equal(t, 1, persisted.Status)
 				assert.Zero(t, persisted.VendorID)

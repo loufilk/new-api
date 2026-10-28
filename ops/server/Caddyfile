@@ -1,0 +1,202 @@
+# Tunnel-only static web origin.
+# Public traffic terminates at Cloudflare Tunnel; Caddy never binds public 80/443.
+# P0-1 (2026-08-08): chuanapi.com apex routes into this origin. New API is
+# proxied same-origin at http://127.0.0.1:3000 so relay/console/public-api
+# requests no longer loop out through the public api.chuanapi.com hostname.
+
+{
+	email admin@chuanapi.com
+
+	# Accept real-client headers only from the two actual cloudflared hops.
+	# The public connector is local; the HA connector reaches CORE over WireGuard.
+	servers 127.0.0.1:8081 {
+		trusted_proxies static 127.0.0.1/32
+		trusted_proxies_strict
+		client_ip_headers CF-Connecting-IP X-Forwarded-For
+	}
+	servers 10.77.0.1:8081 {
+		trusted_proxies static 10.77.0.2/32
+		trusted_proxies_strict
+		client_ip_headers CF-Connecting-IP X-Forwarded-For
+	}
+}
+
+(common_headers) {
+	# Keep gzip for pages and static assets. Streaming relay must stay identity:
+	# the encoder buffers SSE and delays time-to-first-token.
+	@compressible {
+		not path /v1 /v1/* /v1beta /v1beta/* /pg /pg/*
+	}
+	encode @compressible gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}
+
+http://:8081 {
+	bind 127.0.0.1 10.77.0.1
+	import common_headers
+
+	route {
+		# Dependency probes are origin-local; public callers use /public-api/status.
+		@private_probes path /api/healthz /api/readyz
+		respond @private_probes 404
+
+		@public_status {
+			method GET HEAD
+			path /public-api/status
+		}
+		handle @public_status {
+			# Product configuration is module-owned; only the internal rewrite
+			# target differs from the browser-visible /public-api/status URL.
+			rewrite * /api/chuanapi/public-config
+			reverse_proxy http://127.0.0.1:3000 {
+				header_up -Cookie
+				header_up -Authorization
+				header_down -Set-Cookie
+				header_down Cache-Control "public, max-age=15, stale-while-revalidate=30, stale-if-error=60"
+			}
+		}
+
+		@public_status_other path /public-api/status
+		handle @public_status_other {
+			respond "Method Not Allowed" 405
+		}
+
+		@public_pricing {
+			method GET HEAD
+			path /public-api/pricing
+		}
+		handle @public_pricing {
+			# Preserve /public-api/pricing for the dedicated anonymous backend route.
+			reverse_proxy http://127.0.0.1:3000 {
+				header_up -Cookie
+				header_up -Authorization
+				header_down -Set-Cookie
+				header_down Cache-Control "public, max-age=60, stale-while-revalidate=120, stale-if-error=300"
+			}
+		}
+
+		@public_pricing_other path /public-api/pricing
+		handle @public_pricing_other {
+			respond "Method Not Allowed" 405
+		}
+
+		# --- P0-1: New API same-origin proxy (http://127.0.0.1:3000) ---
+		# Matchers sit before the web-home file_server below; public web-home
+		# paths (/, /models*, /about*, /apps*, /docs*, /blog*, /status*,
+		# /terms*, /privacy*, /refund*, /_next/*,
+		# /favicon.ico, /logo.svg) are intentionally NOT captured here.
+		# /pricing*, /playground* and /image* are owned by New API (see @new_api_ui).
+
+		@new_api_static path /static/*
+		handle @new_api_static {
+			route {
+				# Retain immutable chunks across releases for already-open tabs.
+				file_server {
+					root /opt/middle/new-api-static
+					pass_thru
+				}
+				reverse_proxy http://127.0.0.1:3000 {
+					header_up Host {host}
+					header_up X-Forwarded-Host {host}
+					header_up X-Forwarded-Proto https
+				}
+			}
+			header Cache-Control "public, max-age=31536000, immutable"
+		}
+
+		# New API owns authentication, customer console, chat, management UI,
+		# model square (/pricing) and playground. Marketing routes such as
+		# /models remain web-home-owned.
+		@new_api_ui {
+			path /sign-in /sign-in/* /sign-up /sign-up/* /forgot-password /forgot-password/* /oauth /oauth/* /otp /otp/* /register /register/* /reset /reset/* /user/reset /user/reset/*
+			path /dashboard /dashboard/* /keys /keys/* /usage-logs /usage-logs/* /wallet /wallet/* /profile /profile/*
+			path /pricing /pricing/*
+			path /playground /playground/*
+			path /image /image/*
+			path /task-plugins /task-plugins/*
+			path /401 /403 /404 /500 /503
+			path /help /help/*
+			path /model-monitor /model-monitor/*
+			path /support /support/*
+			path /llms.txt /llms-full.txt
+			path /subscriptions /subscriptions/* /redemption-codes /redemption-codes/* /chat /chat/* /chat2link /chat2link/* /errors /errors/* /user-agreement /privacy-policy
+			path /channels /channels/* /model-management /model-management/* /users /users/* /system-info /system-info/* /system-settings /system-settings/* /rankings /rankings/* /setup /setup/* /auth /auth/* /billing /billing/* /content /content/* /operations /operations/* /security /security/* /site /site/*
+		}
+		handle @new_api_ui {
+			reverse_proxy http://127.0.0.1:3000 {
+				header_up Host {host}
+				header_up X-Forwarded-Host {host}
+				header_up X-Forwarded-Proto https
+			}
+			header Cache-Control "no-cache"
+			header X-Robots-Tag "noindex, nofollow"
+		}
+
+		@new_api_stream {
+			path /v1 /v1/* /v1beta /v1beta/* /pg /pg/*
+		}
+		handle @new_api_stream {
+			reverse_proxy http://127.0.0.1:3000 {
+				header_up Host {host}
+				header_up X-Forwarded-Host {host}
+				header_up X-Forwarded-Proto https
+				flush_interval -1
+			}
+			header Cache-Control "no-store"
+			header X-Accel-Buffering "no"
+		}
+
+		@new_api {
+			# backend / relay API (non-streaming)
+			path /api/* /mj/* /suno/* /kling/v1/*
+			# New API static assets
+			path /logo.png
+		}
+		handle @new_api {
+			reverse_proxy http://127.0.0.1:3000 {
+				header_up Host {host}
+				header_up X-Forwarded-Host {host}
+				header_up X-Forwarded-Proto https
+			}
+		}
+
+		# --- web-home static site (behavior unchanged) ---
+
+		root * /opt/middle/web-home/current
+
+		@immutable path /_next/static/*
+		header @immutable Cache-Control "public, max-age=31536000, immutable"
+
+		# Versioned brand mark: filename-bumped, safe for year-long immutable cache.
+		@brand path /brand/wanchuan-mark-v3-128.png
+		header @brand Cache-Control "public, max-age=31536000, immutable"
+
+		# Provider icons: one-week public cache, no immutable (filenames not versioned).
+		@providers path /providers/*
+		header @providers Cache-Control "public, max-age=604800"
+
+		@html path / /index.html /404.html */
+		header @html Cache-Control "no-cache"
+
+		@root path /
+		rewrite @root /index.html
+		try_files {path}index.html {path}/index.html {path} {path}.html =404
+		file_server
+	}
+}
+
+# P0-6: subscription management stays reachable only across the WireGuard
+# address. No public Tunnel hostname points at this listener.
+http://10.77.0.1:18080 {
+	bind 10.77.0.1
+	reverse_proxy http://127.0.0.1:8080
+}
+
+# P1 tunnel HA: the canonical route tree above also binds the WireGuard
+# address on port 8081. OPS cloudflared connects directly to it; this avoids a
+# same-process Caddy reverse-proxy hop that returned HTTP 200 with an empty body.

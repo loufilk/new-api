@@ -11,9 +11,12 @@ import (
 	"encoding/pem"
 	"errors"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/mail"
 	"net/textproto"
 	"regexp"
 	"strings"
@@ -322,16 +325,45 @@ func (mailbox *securityMailbox) receive(connection net.Conn) {
 
 func (mailbox *securityMailbox) code(t *testing.T, receiver string) string {
 	t.Helper()
-	mailbox.mutex.Lock()
-	defer mailbox.mutex.Unlock()
-	for index := len(mailbox.mail[receiver]) - 1; index >= 0; index-- {
-		match := regexp.MustCompile(`<strong>([0-9]{6})</strong>`).FindStringSubmatch(mailbox.mail[receiver][index])
+	bodies := mailbox.htmlBodies(t, receiver)
+	for index := len(bodies) - 1; index >= 0; index-- {
+		match := regexp.MustCompile(`<strong>([0-9]{6})</strong>`).FindStringSubmatch(bodies[index])
 		if len(match) == 2 {
 			return match[1]
 		}
 	}
 	t.Fatalf("no verification email delivered to %s", receiver)
 	return ""
+}
+
+func (mailbox *securityMailbox) htmlBodies(t *testing.T, receiver string) []string {
+	t.Helper()
+	mailbox.mutex.Lock()
+	defer mailbox.mutex.Unlock()
+	var bodies []string
+	for _, raw := range mailbox.mail[receiver] {
+		message, err := mail.ReadMessage(strings.NewReader(raw))
+		require.NoError(t, err)
+		mediaType, params, err := mime.ParseMediaType(message.Header.Get("Content-Type"))
+		require.NoError(t, err)
+		require.Equal(t, "multipart/alternative", mediaType)
+		reader := multipart.NewReader(message.Body, params["boundary"])
+		for {
+			part, err := reader.NextPart() // Decodes quoted-printable transfer encoding.
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			require.NoError(t, err)
+			body, err := io.ReadAll(part)
+			require.NoError(t, err)
+			partType, _, err := mime.ParseMediaType(part.Header.Get("Content-Type"))
+			require.NoError(t, err)
+			if partType == "text/html" {
+				bodies = append(bodies, string(body))
+			}
+		}
+	}
+	return bodies
 }
 
 func startSecurityEmailBinding(t *testing.T, identity service.AuthIdentity, email, method string) service.EmailBindingData {
@@ -390,7 +422,7 @@ func TestSecurityAccountPasswordRequiresCurrentPassword(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			user, identity := setupSecurityEnrollmentTest(t)
 			proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: service.VerificationScopePasswordChange}, service.VerificationMethodPassword)
-			request, err := common.Marshal(map[string]string{"password": "password123", "original_password": test.original})
+			request, err := common.Marshal(map[string]string{"password": "Cedar-river-782!quiet", "original_password": test.original})
 			require.NoError(t, err)
 			response := securityEnrollmentRequest(http.MethodPut, "/api/user/self", string(request), proof, identity, UpdateSelf)
 			var result securityEnrollmentResponse
@@ -399,7 +431,7 @@ func TestSecurityAccountPasswordRequiresCurrentPassword(t *testing.T) {
 			stored, err := model.GetUserById(user.Id, true)
 			require.NoError(t, err)
 			if test.success {
-				assert.True(t, common.ValidatePasswordAndHash("password123", stored.Password))
+				assert.True(t, common.ValidatePasswordAndHash("Cedar-river-782!quiet", stored.Password))
 				assert.True(t, strings.HasPrefix(stored.Password, "$argon2id$"))
 			} else {
 				assert.Equal(t, "CURRENT_PASSWORD_INVALID", result.Code)
@@ -514,7 +546,7 @@ func TestSecurityAccountPasswordPolicyAndHashCompatibility(t *testing.T) {
 		name, password string
 		valid          bool
 	}{
-		{"common password accepted", "password123", true},
+		{"common password rejected", "password123", false},
 		{"short", "seven77", false},
 		{"too long", strings.Repeat("界", 129), false},
 		{"long Unicode", strings.Repeat("界🔒 ", 40), true},
@@ -538,6 +570,32 @@ func TestSecurityAccountPasswordPolicyAndHashCompatibility(t *testing.T) {
 	for _, invalid := range []string{"$argon2id$", "$argon2id$v=19$m=4294967295,t=2,p=1$bad$bad", "$argon2id$v=19$m=19456,t=2,p=1$bad$bad"} {
 		assert.False(t, common.ValidatePasswordAndHash("example-password", invalid))
 	}
+}
+
+func TestSecurityAccountCommonPasswordRejectionKeepsCredentialAndConsumesProof(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: service.VerificationScopePasswordChange}, service.VerificationMethodPassword)
+	body, err := common.Marshal(map[string]string{"password": "password123", "original_password": "enrollment-password"})
+	require.NoError(t, err)
+	response := securityEnrollmentRequest(http.MethodPut, "/api/user/self", string(body), proof, identity, UpdateSelf)
+	var result securityEnrollmentResponse
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	assert.False(t, result.Success)
+	assert.Equal(t, "PASSWORD_POLICY_REJECTED", result.Code)
+	assert.Contains(t, response.Body.String(), common.ErrAccountPasswordCommon.Error())
+	stored, err := model.GetUserById(user.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, user.Password, stored.Password)
+	assert.Equal(t, user.AuthVersion, stored.AuthVersion)
+	response = securityEnrollmentRequest(http.MethodPut, "/api/user/self", string(body), proof, identity, UpdateSelf)
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	assert.Equal(t, "SECURITY_PROOF_CONSUMED", result.Code)
+	var audits []model.AuditLog
+	require.NoError(t, model.LOG_DB.Find(&audits).Error)
+	encoded, err := common.Marshal(audits)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "password123")
+	assert.NotContains(t, string(encoded), proof)
 }
 
 func TestSecurityAccountEncryptedLongPasswordLogin(t *testing.T) {
@@ -694,9 +752,7 @@ func TestSecurityAccountMailsFollowTheOwnersLanguage(t *testing.T) {
 	user, identity := setupSecurityEnrollmentTest(t)
 	mailbox := newSecurityMailbox(t)
 	mails := func(receiver string) string {
-		mailbox.mutex.Lock()
-		defer mailbox.mutex.Unlock()
-		return strings.Join(mailbox.mail[receiver], "\n")
+		return strings.Join(mailbox.htmlBodies(t, receiver), "\n")
 	}
 	saveLanguage := func(language string) {
 		setting, err := common.Marshal(dto.UserSetting{Language: language})

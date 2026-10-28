@@ -18,7 +18,7 @@ jobs:
     name: Backend vet, build, and test
     if: github.event.action != 'closed' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     env:
       GOWORK: 'off'
 
@@ -28,6 +28,7 @@ jobs:
         with:
           repository: ${{ github.event.pull_request.base.repo.full_name }}
           ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
@@ -68,11 +69,25 @@ jobs:
       - name: Test root, relaykit, and tokenkit modules
         run: make test
 
+      - name: Race tests
+        env:
+          CGO_ENABLED: '1'
+          GOMAXPROCS: '2'
+        run: |
+          # SQLite-heavy controller tests can exceed Go's default 10m under -race.
+          # Bound resource contention and runtime without reducing test coverage.
+          go test -race -p 2 -count=1 -timeout=20m ./...
+          cd relaykit
+          go test -race -p 2 -count=1 -timeout=20m ./...
+
+      - name: Release evidence gate tests
+        run: python3 -m unittest discover -s ops/server/tests -p test_release_gate.py -v
+
   frontend:
     name: Frontend typecheck and test
     if: github.event.action != 'closed' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: web
@@ -83,6 +98,7 @@ jobs:
         with:
           repository: ${{ github.event.pull_request.base.repo.full_name }}
           ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -92,8 +108,23 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Production dependency audit
+        run: bun audit --production
+
+      - name: Lint
+        run: bun run lint:ci
+
+      - name: Format check
+        run: bun run format:check
+
+      - name: Copyright check
+        run: bun run copyright:check
+
       - name: Typecheck
         run: bun check -b
 
       - name: Test
         run: bun run test
+
+      - name: Production build
+        run: bun run build

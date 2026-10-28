@@ -12,6 +12,8 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -154,6 +156,27 @@ func TestRecordTaskResultSamplesTerminalTasks(t *testing.T) {
 		outputTokens:   5000,
 		generationMs:   100000,
 	}, merged[bucketKey{model: "video-model", group: "a"}])
+}
+
+func TestAcceptedRedisSampleUsesCapturedClient(t *testing.T) {
+	ownedServer := miniredis.RunT(t)
+	otherServer := miniredis.RunT(t)
+	owned := redis.NewClient(&redis.Options{Addr: ownedServer.Addr(), Protocol: 2})
+	other := redis.NewClient(&redis.Options{Addr: otherServer.Addr(), Protocol: 2})
+	t.Cleanup(func() { require.NoError(t, owned.Close()); require.NoError(t, other.Close()) })
+	oldClient, oldEnabled := common.RDB, common.RedisEnabled
+	common.RDB, common.RedisEnabled = other, false
+	t.Cleanup(func() { common.RDB, common.RedisEnabled = oldClient, oldEnabled })
+
+	// An accepted write keeps its original destination even if a later host
+	// reconfiguration disables Redis or installs another client before execution.
+	key := bucketKey{model: "owned-client", group: "default", bucketTs: 3600}
+	recordRedis(owned, key, Sample{Success: true, LatencyMs: 40, OutputTokens: 3, GenerationMs: 20})
+	values, err := owned.HGetAll(context.Background(), redisBucketKey(key)).Result()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"req": "1", "ok": "1", "lat": "40", "out": "3", "gen_ms": "20"}, values)
+	assert.Empty(t, otherServer.Keys(), "an accepted sample must never be sent to the replacement client")
+	assert.Equal(t, time.Hour, ownedServer.TTL(redisBucketKey(key)))
 }
 
 // TEST_PERF_MYSQL_DSN / TEST_PERF_POSTGRES_DSN optionally run the aggregation

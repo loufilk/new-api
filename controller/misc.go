@@ -8,7 +8,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
@@ -229,17 +228,18 @@ func SendEmailVerification(c *gin.Context) {
 	}
 	code := common.GenerateVerificationCode(6)
 	common.RegisterVerificationCodeWithKey(email, code, common.EmailVerificationPurpose)
-	// The address may not belong to an account yet, so the mail follows the
-	// request language.
-	systemName := map[string]any{"SystemName": common.SystemName}
-	subject := i18n.T(c, i18n.MsgEmailVerificationSubject, systemName)
-	content := fmt.Sprintf("<p>%s</p>"+
-		"<p>%s</p>"+
-		"<p>%s</p>",
-		i18n.T(c, i18n.MsgEmailVerificationGreeting, systemName),
-		i18n.T(c, i18n.MsgEmailVerificationCode, map[string]any{"Code": code}),
-		i18n.T(c, i18n.MsgEmailVerificationValidity, map[string]any{"Minutes": common.VerificationValidMinutes}))
-	err = common.SendEmail(subject, email, content)
+	subject := fmt.Sprintf("【%s】邮箱验证码", common.SystemName)
+	publicHost := system_setting.PublicSiteDisplayHost()
+	plainText, content := renderAuthEmail(authEmailContent{
+		Heading:         "邮箱验证",
+		Intro:           fmt.Sprintf("您正在进行%s邮箱验证。", common.SystemName),
+		Code:            code,
+		ValidityLabel:   "验证码",
+		ValidityMinutes: common.VerificationValidMinutes,
+		SystemName:      common.SystemName,
+		PublicHost:      publicHost,
+	})
+	err = common.SendEmailWithPlainText(subject, email, plainText, content)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -257,26 +257,23 @@ func SendPasswordResetEmail(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	if user, err := model.GetUniqueUserByEmail(email); err == nil {
+	if _, err := model.GetUniqueUserByEmail(email); err == nil {
 		code := common.GenerateVerificationCode(0)
 		common.RegisterVerificationCodeWithKey(email, code, common.PasswordResetPurpose)
 		link := fmt.Sprintf("%s/user/reset?email=%s&token=%s", system_setting.ServerAddress, email, code)
-		lang := user.GetSetting().Language
-		if lang == "" {
-			lang = i18n.StatedLang(c)
-		}
-		systemName := map[string]any{"SystemName": common.SystemName}
-		linkParams := map[string]any{"Link": link}
-		subject := i18n.Translate(lang, i18n.MsgEmailPasswordResetSubject, systemName)
-		content := fmt.Sprintf("<p>%s</p>"+
-			"<p>%s</p>"+
-			"<p>%s </p>"+
-			"<p>%s</p>",
-			i18n.Translate(lang, i18n.MsgEmailPasswordResetGreeting, systemName),
-			i18n.Translate(lang, i18n.MsgEmailPasswordResetLink, linkParams),
-			i18n.Translate(lang, i18n.MsgEmailPasswordResetLinkFallback, linkParams),
-			i18n.Translate(lang, i18n.MsgEmailPasswordResetValidity, map[string]any{"Minutes": common.VerificationValidMinutes}))
-		err := common.SendEmail(subject, email, content)
+		subject := fmt.Sprintf("【%s】密码重置", common.SystemName)
+		publicHost := system_setting.PublicSiteDisplayHost()
+		plainText, content := renderAuthEmail(authEmailContent{
+			Heading:         "密码重置",
+			Intro:           fmt.Sprintf("您正在进行%s密码重置。", common.SystemName),
+			Link:            link,
+			ActionLabel:     "重置密码",
+			ValidityLabel:   "重置链接",
+			ValidityMinutes: common.VerificationValidMinutes,
+			SystemName:      common.SystemName,
+			PublicHost:      publicHost,
+		})
+		err := common.SendEmailWithPlainText(subject, email, plainText, content)
 		if err != nil {
 			logger.LogError(c.Request.Context(), common.LogText("failed to send password reset email to %s: %s", email, err.Error()))
 		}

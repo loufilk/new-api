@@ -54,7 +54,7 @@ func SanitizeURLForLog(rawURL string) string {
 
 	changed := false
 	for key := range query {
-		if isSensitiveURLQueryKey(key) {
+		if IsSensitiveURLQueryKey(key) {
 			query.Set(key, "***masked***")
 			changed = true
 		}
@@ -67,30 +67,18 @@ func SanitizeURLForLog(rawURL string) string {
 	return parsedURL.String()
 }
 
-func isSensitiveURLQueryKey(key string) bool {
+// IsSensitiveURLQueryKey classifies decoded query names for access and relay logs.
+// Callers sanitize a log copy; this must not change the original request.
+func IsSensitiveURLQueryKey(key string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(key))
+	normalized = strings.ReplaceAll(strings.ReplaceAll(normalized, "-", ""), "_", "")
 	switch normalized {
-	case "key",
-		"api_key",
-		"api-key",
-		"apikey",
-		"x-api-key",
-		"access_token",
-		"refresh_token",
-		"id_token",
-		"token",
-		"authorization",
-		"auth",
-		"client_secret",
-		"secret",
-		"password",
-		"passwd",
-		"signature",
-		"sig",
-		"awsaccesskeyid",
-		"x-amz-credential",
-		"x-amz-security-token",
-		"x-amz-signature":
+	case "key", "apikey", "xapikey", "xgoogapikey", "mjapisecret",
+		"token", "apitoken", "accesstoken", "refreshtoken", "bearertoken",
+		"authorization", "auth", "bearer", "password", "passwd",
+		"secret", "secretkey", "clientsecret", "apisecret",
+		"session", "sessionid", "sid", "signature", "sig", "sign",
+		"awsaccesskeyid", "xamzsignature", "xamzcredential", "xamzsecuritytoken":
 		return true
 	}
 	return strings.Contains(normalized, "token") ||

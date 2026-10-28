@@ -182,3 +182,33 @@ test('a time range under one day shows a field error and is not saved', async ()
   await waitFor(() => expect(days).toHaveAttribute('aria-invalid', 'true'))
   expect(api.put).not.toHaveBeenCalled()
 })
+
+test('server log cleanup requires confirmation and cancellation leaves files untouched', async () => {
+  const user = userEvent.setup()
+  const remove = vi.spyOn(api, 'delete').mockResolvedValue({
+    data: { success: true, data: { deleted_count: 2, freed_bytes: 1024 } },
+  })
+  await renderSettings()
+  const open = await screen.findByRole('button', { name: 'Clean Up Log Files' })
+  await user.click(open)
+  let dialog = await screen.findByRole('alertdialog', {
+    name: 'Confirm log file cleanup?',
+  })
+  await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  expect(remove).not.toHaveBeenCalled()
+  await user.click(open)
+  dialog = await screen.findByRole('alertdialog', {
+    name: 'Confirm log file cleanup?',
+  })
+  await user.click(
+    within(dialog).getByRole('button', { name: 'Confirm Cleanup' })
+  )
+  await waitFor(() =>
+    expect(remove).toHaveBeenCalledExactlyOnceWith(
+      '/api/performance/logs?mode=by_count&value=10'
+    )
+  )
+  await waitFor(() =>
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  )
+})

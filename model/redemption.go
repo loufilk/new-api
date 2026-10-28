@@ -147,12 +147,14 @@ func Redeem(key string, userId int) (quota int, err error) {
 		keyCol = `"key"`
 	}
 	common.RandomSleep()
+	var replayTotalAfter int
+	ledgerApplied := false
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		err := lockForUpdate(tx).Where(keyCol+" = ?", key).First(redemption).Error
 		if err != nil {
 			return errors.New("invalid redemption code")
 		}
-		if redemption.Status != common.RedemptionCodeStatusEnabled {
+		if redemption.Status != common.RedemptionCodeStatusEnabled || redemption.RedeemedTime != 0 || redemption.UsedUserId != 0 {
 			return errors.New("redemption code already used")
 		}
 		if redemption.ExpiredTime != 0 && redemption.ExpiredTime < common.GetTimestamp() {
@@ -174,13 +176,33 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if result.RowsAffected == 0 {
 			return errors.New("redemption code already used")
 		}
-		return creditTopUpQuota(tx, userId, redemption.Quota, nil)
+
+		// 兑换码入账并写账本（同一事务；幂等键 = redemption id，兑换码一次性，
+		// 数据库状态 CAS 已保证不会被重复兑换）
+		ledgerResult, err := CreditQuotaTx(tx, LedgerEntry{
+			UserId:        userId,
+			Account:       AccountPaid,
+			Delta:         redemption.Quota,
+			Reason:        LedgerReasonRedemption,
+			ReferenceType: "redemption",
+			ReferenceId:   strconv.Itoa(redemption.Id),
+		})
+		if err != nil {
+			return err
+		}
+		replayTotalAfter = ledgerResult.TotalAfter
+		ledgerApplied = true
+		return nil
+
 	})
 	if err != nil {
 		common.SysError(common.LogText("redemption failed: %s", err.Error()))
 		return 0, ErrRedeemFailed
 	}
-	syncCreditUserQuotaCache(userId, redemption.Quota, common.LogText("redemption"))
+	if ledgerApplied {
+		// 账本提交后失效用户缓存；守卫式增量与失效叠加安全（对已删除哈希跳过）。
+		RefreshUserQuotaCache(userId, replayTotalAfter)
+	}
 	RecordLog(userId, LogTypeTopup, common.NewMessage("Topped up {{quota}} with a redemption code, code ID {{id}}", map[string]any{"quota": logger.FormatQuota(redemption.Quota), "id": redemption.Id}))
 	return redemption.Quota, nil
 }
@@ -198,11 +220,13 @@ func (redemption *Redemption) Insert() error {
 }
 
 func (redemption *Redemption) SelectUpdate() error {
-	// This can update zero values
-	return DB.Model(redemption).Select("redeemed_time", "status").Updates(redemption).Error
+	if redemption.Status != common.RedemptionCodeStatusEnabled && redemption.Status != common.RedemptionCodeStatusDisabled {
+		return common.NewMessage("Invalid parameters")
+	}
+	return redemption.updateUnusedFields(map[string]any{"status": redemption.Status})
 }
 
-// Update Make sure your token's fields is completed, because this will update non-zero values
+// Update edits administrative metadata without writing a stale redemption state.
 func (redemption *Redemption) Update() error {
 	if redemption.Quota <= 0 {
 		return errors.New("redemption quota must be positive")
@@ -210,8 +234,35 @@ func (redemption *Redemption) Update() error {
 	if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
 		return err
 	}
-	var err error
-	err = DB.Model(redemption).Select("name", "status", "quota", "redeemed_time", "expired_time").Updates(redemption).Error
+	return redemption.updateUnusedFields(map[string]any{
+		"name":         redemption.Name,
+		"quota":        redemption.Quota,
+		"expired_time": redemption.ExpiredTime,
+	})
+}
+
+// updateUnusedFields serializes administrative changes with redemption. A used
+// code is terminal: neither stale full edits nor status changes may revive it or
+// rewrite the amount recorded by the wallet ledger.
+func (redemption *Redemption) updateUnusedFields(fields map[string]any) error {
+	if redemption.Id <= 0 {
+		return common.NewMessage("ID is empty")
+	}
+	var current Redemption
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockForUpdate(tx).First(&current, redemption.Id).Error; err != nil {
+			return err
+		}
+		if (current.Status != common.RedemptionCodeStatusEnabled && current.Status != common.RedemptionCodeStatusDisabled) || current.RedeemedTime != 0 || current.UsedUserId != 0 {
+			return common.NewMessage("Used redemption codes cannot be modified")
+		}
+		// MySQL may report zero changed rows for an idempotent edit. The locked
+		// read above establishes existence and eligibility independently.
+		return tx.Model(&current).Updates(fields).Error
+	})
+	if err == nil {
+		*redemption = current
+	}
 	return err
 }
 

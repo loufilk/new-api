@@ -47,6 +47,13 @@ func TestLanguageFromUserSetting(t *testing.T) {
 	}
 }
 
+func TestStatedLangWithoutHTTPRequestPreservesContextPreference(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	assert.Empty(t, StatedLang(c))
+	c.Set(string(constant.ContextKeyUserSetting), dto.UserSetting{Language: "zhTW"})
+	assert.Equal(t, LangZhTW, StatedLang(c))
+}
+
 // TokenAuth puts the user's settings into the request. A user who saved no
 // language must not be loaded again, which would cost a cache or database read
 // on every relay request; a request without loaded settings still loads them.

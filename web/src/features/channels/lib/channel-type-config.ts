@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   CHANNEL_TYPES,
+  CHANNEL_TYPE_CLINE,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
 } from '../constants'
@@ -178,6 +179,16 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       baseUrl: 'Base URL is required for this channel type',
       key: 'Enter API key for this channel',
       models: 'Models',
+    },
+  },
+  [CHANNEL_TYPE_CLINE]: {
+    id: CHANNEL_TYPE_CLINE,
+    name: CHANNEL_TYPES[CHANNEL_TYPE_CLINE],
+    icon: 'Cline',
+    hints: {
+      baseUrl: 'Cline API base URL, including /api/v1',
+      key: 'Cline API key or access token',
+      models: 'Models fetched from the Cline recommended-models catalog',
     },
   },
 }

@@ -140,6 +140,7 @@ import {
   ADD_MODE_OPTIONS,
   CLAUDE_FIELD_PASSTHROUGH_TYPES,
   CHANNEL_STATUS_LABELS,
+  CHANNEL_TYPE_CLINE,
   CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_OLLAMA,
   CHANNEL_TYPE_OPTIONS,
@@ -1119,8 +1120,10 @@ export function ChannelMutateDrawer({
     }
   }, [form, isEditing, multiKeyMode, supportsMultiKeyAddMode])
 
-  // Validate base_url - warn if it ends with /v1
+  // Validate base_url - warn if it ends with /v1, except for providers whose
+  // official base URL intentionally includes /api/v1 (Cline).
   useEffect(() => {
+    if (currentType === CHANNEL_TYPE_CLINE) return
     if (!currentBaseUrl || !currentBaseUrl.endsWith('/v1')) return
 
     // Show warning toast
@@ -1135,7 +1138,7 @@ export function ChannelMutateDrawer({
 
     return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentBaseUrl])
+  }, [currentBaseUrl, currentType])
 
   // Handle key deduplication
   const handleDeduplicateKeys = () => {
@@ -2598,6 +2601,43 @@ export function ChannelMutateDrawer({
             )}
           />
         </div>
+
+        <FormField
+          control={form.control}
+          name='model_owned_by'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t('Channel model owner label')}</FormLabel>
+              <FormControl>
+                <Input
+                  {...field}
+                  value={field.value ?? ''}
+                  disabled={sensitiveLocked}
+                />
+              </FormControl>
+              <FormDescription>
+                {t(
+                  'Stored as channel metadata. Public model lists and details use the site-wide owner setting. This label does not select a routing channel.'
+                )}
+              </FormDescription>
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                disabled={sensitiveLocked || !form.watch('name').trim()}
+                onClick={() =>
+                  form.setValue('model_owned_by', form.getValues('name'), {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  })
+                }
+              >
+                {t('Use channel name as label')}
+              </Button>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
 
         {!isEditing && (
           <FormField

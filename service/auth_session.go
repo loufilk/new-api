@@ -1,6 +1,7 @@
 package service
 
 import (
+	"crypto/hmac"
 	"errors"
 	"fmt"
 	"net/http"
@@ -310,6 +311,38 @@ func RefreshTokenSID(rawRefreshToken string) (string, bool) {
 	return sid, ok
 }
 
+// ValidateRefreshLoginSession authenticates a dashboard browser session from
+// the HttpOnly refresh cookie without rotating it. This is intentionally used
+// only by same-site console endpoints that cannot read the in-memory access
+// token (for example the standalone chuanapi.com playground).
+func ValidateRefreshLoginSession(rawRefreshToken string) (AuthIdentity, *model.UserBase, error) {
+	sid, secret, ok := splitRefreshToken(rawRefreshToken)
+	if !ok {
+		return AuthIdentity{}, nil, ErrRefreshTokenInvalid
+	}
+	session, err := model.GetUserSessionCached(sid)
+	if err != nil {
+		if errors.Is(err, model.ErrUserSessionInactive) {
+			return AuthIdentity{}, nil, ErrLoginSessionRevoked
+		}
+		return AuthIdentity{}, nil, ErrRefreshTokenInvalid
+	}
+	if !hmac.Equal([]byte(hashRefreshSecret(secret)), []byte(session.RefreshHash)) {
+		return AuthIdentity{}, nil, ErrRefreshTokenInvalid
+	}
+	identity := AuthIdentity{
+		UserID:          session.UserID,
+		SessionID:       session.SID,
+		UserAuthVersion: session.UserAuthVersion,
+		SessionVersion:  session.Version,
+	}
+	_, user, err := ValidateLoginSession(identity)
+	if err != nil {
+		return AuthIdentity{}, nil, err
+	}
+	return identity, user, nil
+}
+
 func ListLoginSessions(userID int, currentSID string) ([]LoginSessionView, error) {
 	sessions, err := model.ListActiveUserSessions(userID, currentSID, time.Now().Unix())
 	if err != nil {
@@ -329,11 +362,17 @@ func WriteRefreshCookie(c *gin.Context, rawToken string) {
 			expiresAt = time.Unix(session.ExpiresAt, 0)
 		}
 	}
-	maxAge := max(int(time.Until(expiresAt)/time.Second), 1)
+	maxAge := int(time.Until(expiresAt) / time.Second)
+	if maxAge < 1 {
+		maxAge = 1
+	}
+	// Remove the pre-rc.23 narrow-path cookie before writing the cookie shared
+	// by refresh and standalone playground endpoints.
+	expireRefreshCookie(c, "/api/user/auth")
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     RefreshCookieName,
 		Value:    rawToken,
-		Path:     "/api/user/auth",
+		Path:     "/api/user",
 		MaxAge:   maxAge,
 		Expires:  expiresAt,
 		HttpOnly: true,
@@ -344,10 +383,15 @@ func WriteRefreshCookie(c *gin.Context, rawToken string) {
 }
 
 func ClearRefreshCookie(c *gin.Context) {
+	expireRefreshCookie(c, "/api/user/auth")
+	expireRefreshCookie(c, "/api/user")
+}
+
+func expireRefreshCookie(c *gin.Context, path string) {
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     RefreshCookieName,
 		Value:    "",
-		Path:     "/api/user/auth",
+		Path:     path,
 		MaxAge:   -1,
 		Expires:  time.Unix(1, 0),
 		HttpOnly: true,

@@ -39,6 +39,36 @@ export type UpdateOptionResponse = {
   message: string
 }
 
+export type GroupRenameMapping = {
+  from: string
+  to: string
+}
+
+export type GroupRenameResult = {
+  renames: GroupRenameMapping[]
+  options: number
+  channels: number
+  abilities: number
+  users: number
+  tokens: number
+  subscription_plans: number
+  user_subscriptions: number
+  applied_options?: Record<string, string>
+}
+
+export type GroupRenameRequest = {
+  renames: GroupRenameMapping[]
+  options?: Record<string, string>
+  expected?: Record<string, string>
+}
+
+export type GroupRenameResponse = {
+  success: boolean
+  message: string
+  code?: string
+  data?: GroupRenameResult
+}
+
 export interface PasskeyDomainChange {
   rp_id: string
   legacy_rp_ids: string
@@ -227,6 +257,7 @@ export type ContentSettings = {
 }
 
 export type ModelSettings = {
+  PublicModelOwnedBy: string
   'global.pass_through_request_enabled': boolean
   'global.thinking_model_blacklist': string
   'global.chat_completions_to_responses_policy': string
@@ -272,8 +303,10 @@ export type ModelSettings = {
 
 export type BillingSettings = {
   QuotaForNewUser: number
-  QuotaForInviter: number
-  QuotaForInvitee: number
+  SignupBonusEnabled: boolean
+  QuotaForSignupBonus: number
+  AffiliateRewardEnabled: boolean
+  AffiliateRewardRate: number
   TopUpLink: string
   'quota_setting.enable_free_model_pre_consume': boolean
   'quota_setting.trust_quota_usd': number
@@ -347,6 +380,7 @@ export type BillingSettings = {
   WaffoPayMethods: string
   WaffoPancakeMerchantID: string
   WaffoPancakePrivateKey: string
+  WaffoPancakeEnvironment: 'test' | 'prod'
   WaffoPancakeReturnURL: string
   // Bound by the operator through the catalog flow in the admin Pancake
   // section (saved via /api/option/waffo-pancake/save).

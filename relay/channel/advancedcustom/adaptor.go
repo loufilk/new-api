@@ -304,6 +304,16 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		relayconvert.ConverterClaudeMessagesToOpenAIResponses,
 		relayconvert.ConverterGeminiContentToOpenAIResponses:
 		// These handlers convert the Responses upstream into info.RelayFormat.
+		// Relay helpers also set IsStream from upstream headers, so consult the
+		// original request before deciding whether the client accepts SSE.
+		clientStream := info.IsStream
+		if info.Request != nil && c.Request != nil {
+			clientStream = info.Request.IsStream(c.Request)
+		}
+		if !clientStream && strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
+			info.IsStream = false
+			return openai.OaiResponsesToChatBufferedStreamHandler(c, info, resp)
+		}
 		if info.IsStream {
 			return openai.OaiResponsesToChatStreamHandler(c, info, resp)
 		}

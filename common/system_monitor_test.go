@@ -1,14 +1,47 @@
 package common
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestManagedSystemMonitorClearsDisabledStatusAndStopsOnDrain(t *testing.T) {
+	previousConfig, previousStatus := GetPerformanceMonitorConfig(), GetSystemStatus()
+	t.Cleanup(func() {
+		SetPerformanceMonitorConfig(previousConfig)
+		latestSystemStatus.Store(previousStatus)
+	})
+	SetPerformanceMonitorConfig(PerformanceMonitorConfig{})
+	synctest.Test(t, func(t *testing.T) {
+		latestSystemStatus.Store(SystemStatus{CPUUsage: 100, CPUOverloaded: true, SampledAt: time.Now()})
+		schedule, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			RunSystemMonitor(schedule, context.Background())
+		}()
+		synctest.Wait()
+		status := GetSystemStatus()
+		assert.False(t, status.CPUOverloaded, "disabled monitoring must not retain an old overload")
+		assert.Zero(t, status.CPUUsage)
+		assert.Equal(t, time.Now(), status.SampledAt)
+		cancel()
+		synctest.Wait()
+		select {
+		case <-done:
+		default:
+			t.Fatal("the managed monitor must stop when scheduling is drained")
+		}
+	})
+}
 
 // newTestContainerUsage 在临时目录中构造 cgroup 文件，避免依赖运行环境的真实 cgroup。
 func newTestContainerUsage(t *testing.T, schedulableCPUs float64, files map[string]string) *containerUsage {

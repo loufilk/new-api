@@ -209,9 +209,12 @@ function resolutionFor(size, model) {
 }
 
 function outboundDuration(req) {
-  const n = Number(req && req.duration);
-  if (Number.isFinite(n) && n > 0) return n;
-  return 6;
+  const value = req && req.duration;
+  if (value === undefined) return 6;
+  const seconds = Number(value);
+  if ((typeof value !== "number" && typeof value !== "string") || !Number.isInteger(seconds) || seconds < 1 || seconds > 3600)
+    throw new Error("duration must be an integer between 1 and 3600");
+  return seconds;
 }
 
 function outboundResolution(req, model) {

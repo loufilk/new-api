@@ -8,9 +8,9 @@ The expression is the billing contract between the administrator and the system.
 
 ### Core Principles
 
-1. **Expression is self-contained** — The expression string alone determines billing. No external ratio tables, no implicit completion multipliers, no hidden conversion factors. Given the same token counts and request context, the same expression always produces the same cost.
+1. **Expression and documented normalization determine billing** — No external ratio tables or implicit completion multipliers are consulted. The fixed Claude 1-hour and OpenAI 12-hour cache fallbacks described below is part of token normalization, not a lookup of current provider prices. Given the same token counts and request context, the same expression always produces the same cost.
 
-2. **Variables are opt-in** — `p` (prompt) and `c` (completion) are the base. Cache (`cr`, `cc`, `cc1h`, `cc12h`), image (`img`), and audio (`ai`, `ao`) variables are optional. If omitted, those tokens are included in `p`/`c` and priced at their rate; an omitted long-lived cache write keeps its fixed multiple of the short write price. The system automatically detects which variables the expression uses (via AST introspection) and adjusts token normalization accordingly.
+2. **Variables are opt-in** — `p` (prompt) and `c` (completion) are the base. Cache (`cr`, `cc`, `cc1h`, `cc12h`), image (`img`), and audio (`ai`, `ao`) variables are optional. If omitted, those tokens are included in `p`/`c` and priced at their rate; an omitted Claude 1-hour or OpenAI 12-hour cache write keeps its fixed multiple of the short-write price, through `cc` when present or `p` otherwise. The system automatically detects which variables the expression uses (via AST introspection) and adjusts token normalization accordingly.
 
 3. **Prices are real prices** — Token coefficients are actual $/1M tokens prices as published by providers. `p * 2.5` means $2.50 per 1M prompt tokens; `fixed(0.01)` means $0.01 per request. No ratio conversion or `/2` convention is required.
 
@@ -33,7 +33,7 @@ Powered by [expr-lang/expr](https://github.com/expr-lang/expr). Expressions are 
 | `p` | 输入 token 数（**计价用**）。**自动排除**表达式中单独计价的子类别（见下方说明） |
 | `len` | 输入上下文总长度（**条件判断用**）。不受自动排除影响，始终反映完整输入长度。非 Claude：等于原始 `prompt_tokens`；Claude：等于文本输入 + 缓存读取 + 缓存创建 |
 | `cr` | 缓存命中（读取）token 数 |
-| `cc` | 缓存创建 token 数（Claude 5分钟 TTL / OpenAI 30分钟 TTL / 通用） |
+| `cc` | 缓存创建计价数量（Claude 5分钟 / OpenAI 30分钟 / 通用；省略 `cc1h` 或 `cc12h` 时包含按固定倍数折入的长效写入） |
 | `cc1h` | 缓存创建 token 数 — 1小时 TTL（Claude 专用） |
 | `cc12h` | 缓存创建 token 数 — 12小时 TTL（OpenAI 专用） |
 | `img` | 图片输入 token 数 |
@@ -71,8 +71,24 @@ Powered by [expr-lang/expr](https://github.com/expr-lang/expr). Expressions are 
 | `p * 3 + c * 15` | 500 | 没用 `ao`，音频输出包含在 `c` 里按 $15 计费 |
 | `p * 3 + c * 15 + ao * 50` | 400 | 用了 `ao`，音频 100 从 `c` 中扣除按 $50 计费 |
 
-长效缓存写入（Claude `cc1h`、OpenAI `cc12h`）没有单独计价时，按短效写入价格的固定倍数计费：
-OpenAI 12 小时为 2 倍，Claude 1 小时为 6÷3.75 倍。短效写入价格是 `cc`，`cc` 也未计价时是 `p`。
+#### Claude 缓存写入的省略变量回退
+
+Claude 1小时写入没有单独引用 `cc1h` 时，按短效写入的固定 `6 / 3.75 = 1.6` 倍折入 `cc`；
+表达式也没有引用 `cc` 时，短效写入原量与折算后的 1小时写入一起加回 `p`。
+如果引用了 `cc1h`、但未引用 `cc`，只有短效写入原量加回 `p`。
+这是已采用的固定归一化合同，不读取模型倍率表，也不修改表达式中的显式价格。
+变量是否出现由表达式 AST 决定；`cc * 0` 或 `cc1h * 0` 仍是显式计价，不触发该变量的省略回退。
+`len` 始终保留文本、缓存读取和缓存写入的未加权原量；不会被 1.6 倍折算放大。
+
+例如文本输入 100、5分钟写入 2000、1小时写入 10000、缓存读取 0：
+`p * 3` 的原始表达式结果为 54300；`p * 3 + cc * 3.75` 为 67800；
+`p * 3 + cc1h * 6` 为 66300。这些是原始表达式结果，不是实际美元金额；
+仍按既有 `/ 1,000,000` 与冻结的 quota/group 参数换算。三种表达式的 `len` 都是 12100。
+
+OpenAI 12 小时写入未显式引用 `cc12h` 时，以固定 2 倍折入 `cc`；
+若 `cc` 也省略，则其额外的一倍计入 `p`。`cc12h * 0` 是显式免费价格，不触发回退。
+`len` 保持上游输入总量，`cache_write_tokens_details` 的两个 TTL 子集不重叠。
+通用 `cc` 包含 OpenAI 30 分钟写入；未提供 TTL 明细时保持原有短效价格。
 
 #### 图片缓存与兼容性
 
@@ -161,7 +177,7 @@ OpenAI 已于 2026-05-12 下线 DALL·E 2/3；其校验、默认值和倍率保�
 （Qwen-Image-3.0 为 `usage.output_image_count`）或按各 `choices[].message.content[]` / `results[]`
 中的图片载荷数结算，任务消费日志同样记录 `image_count`。
 
-> **注意：** 自动扣除针对 GPT/OpenAI 格式的 API（prompt_tokens 包含子类别）。Claude 格式的 API 不重复扣除缓存；未独立计价的缓存读取和缓存写入加回输入。系统根据上游返回格式自动处理。
+> **注意：** 自动扣除针对 GPT/OpenAI 格式的 API（prompt_tokens 包含子类别）。Claude 格式的 API 不重复扣除缓存；未独立计价的缓存读取和缓存写入按上面的回退规则加回输入。系统根据上游返回格式自动处理。
 
 ### Built-in Functions
 
@@ -478,7 +494,7 @@ After the upstream response returns with actual token usage:
 1. `BuildTieredTokenParams(usage, isClaudeUsageSemantic, usedVars)`:
    - Reads actual token counts from `dto.Usage`
    - For GPT-format APIs (prompt_tokens includes everything): subtracts sub-categories from P/C **only when** the expression uses their variables (detected via AST introspection of the compiled expression)
-   - For Claude-format APIs: cache reads and writes omitted from the expression are added to input; separately priced cache remains separate
+   - For Claude-format APIs: omitted cache reads and writes are added to input, with omitted 1-hour writes weighted by the fixed 6/3.75 short-write multiple; separately priced cache remains separate
 
 2. `TryTieredSettle(relayInfo, params)`:
    - Uses the captured `BillingSnapshot`, whose group-dependent fields have been refreshed from the final selected group

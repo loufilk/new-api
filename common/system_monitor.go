@@ -60,29 +60,6 @@ func init() {
 	latestSystemStatus.Store(SystemStatus{})
 }
 
-// StartSystemMonitor 启动系统监控
-func StartSystemMonitor() {
-	go func() {
-		usage := newContainerUsage()
-		var detector overloadDetector
-		for {
-			config := GetPerformanceMonitorConfig()
-			if !config.Enabled {
-				detector = overloadDetector{}
-				latestSystemStatus.Store(SystemStatus{SampledAt: time.Now()})
-				time.Sleep(systemMonitorInterval)
-				continue
-			}
-
-			status := collectSystemStatus(usage)
-			detector.mark(&status, config)
-			latestSystemStatus.Store(status)
-
-			time.Sleep(systemMonitorInterval)
-		}
-	}()
-}
-
 // overloadDetector 为每项资源累计连续超阈值的采样次数：连续 overloadConsecutiveSamples 次
 // 才标记过载，任一次回落立即清零并重新累计。
 type overloadDetector struct {

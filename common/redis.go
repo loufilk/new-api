@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
@@ -31,12 +31,18 @@ func InitRedisClient() (err error) {
 		SysLog(LogText("SYNC_FREQUENCY not set, use default value 60"))
 		SyncFrequency = 60
 	}
-	SysLog(LogText("Redis is enabled"))
-	opt, err := redis.ParseURL(os.Getenv("REDIS_CONN_STRING"))
+	SysLog("Redis is enabled")
+	opt, err := parseRedisOptions(os.Getenv("REDIS_CONN_STRING"))
 	if err != nil {
 		FatalLog(LogText("failed to parse Redis connection string: %s", err.Error()))
 	}
 	opt.PoolSize = GetEnvOrDefault("REDIS_POOL_SIZE", 10)
+	if opt.PoolSize <= 0 {
+		return errors.New("REDIS_POOL_SIZE must be positive")
+	}
+	if opt.MaxActiveConns == 0 {
+		opt.MaxActiveConns = opt.PoolSize
+	}
 	RDB = redis.NewClient(opt)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -54,7 +60,7 @@ func InitRedisClient() (err error) {
 }
 
 func ParseRedisOption() *redis.Options {
-	opt, err := redis.ParseURL(os.Getenv("REDIS_CONN_STRING"))
+	opt, err := parseRedisOptions(os.Getenv("REDIS_CONN_STRING"))
 	if err != nil {
 		FatalLog(LogText("failed to parse Redis connection string: %s", err.Error()))
 	}

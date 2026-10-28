@@ -8,6 +8,11 @@ on:
         required: true
         type: string
 
+# Finish both architectures before another run advances this branch alias.
+concurrency:
+  group: docker-image-branch-${{ inputs.branch }}
+  cancel-in-progress: false
+
 jobs:
   prepare:
     name: Prepare Docker tags
@@ -17,6 +22,7 @@ jobs:
       sha: ${{ steps.version.outputs.sha }}
       tag_prefix: ${{ steps.version.outputs.tag_prefix }}
       version: ${{ steps.version.outputs.version }}
+      build_tag: ${{ steps.version.outputs.build_tag }}
     permissions:
       contents: read
     steps:
@@ -42,11 +48,13 @@ jobs:
           SHA=$(git rev-parse HEAD)
           SHORT_SHA=$(git rev-parse --short HEAD)
           VERSION="${TAG_PREFIX}-$(date +'%Y%m%d')-${SHORT_SHA}"
+          BUILD_TAG="build-${SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
           echo "branch=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "tag_prefix=$TAG_PREFIX" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_tag=$BUILD_TAG" >> "$GITHUB_OUTPUT"
           echo "Prepared Docker tags for $BRANCH_NAME at $SHORT_SHA"
 
   build_single_arch:
@@ -73,10 +81,24 @@ jobs:
           fetch-depth: 1
           ref: ${{ needs.prepare.outputs.sha }}
 
-      - name: Write VERSION
+      - name: Stamp source version and commit
+        env:
+          COMMIT_SHA: ${{ needs.prepare.outputs.sha }}
         run: |
-          echo "${{ needs.prepare.outputs.version }}" > VERSION
-          echo "Publishing version: ${{ needs.prepare.outputs.version }} for ${{ matrix.arch }}"
+          set -euo pipefail
+          SOURCE_VERSION=$(tr -d '\r' < VERSION)
+          if [[ ! "$SOURCE_VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$ ]] || [[ ! "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'Invalid source version or immutable commit SHA' >&2
+            exit 1
+          fi
+          if [[ "$SOURCE_VERSION" == *+* ]]; then
+            BINARY_VERSION="${SOURCE_VERSION}.g${COMMIT_SHA:0:12}"
+          else
+            BINARY_VERSION="${SOURCE_VERSION}+g${COMMIT_SHA:0:12}"
+          fi
+          printf '%s\n' "$BINARY_VERSION" > VERSION
+          printf 'BINARY_VERSION=%s\n' "$BINARY_VERSION" >> "$GITHUB_ENV"
+          printf 'Application version: %s\n' "$BINARY_VERSION"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -104,7 +126,14 @@ jobs:
           tags: |
             calciumion/new-api:${{ needs.prepare.outputs.tag_prefix }}-${{ matrix.arch }}
             calciumion/new-api:${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
-          labels: ${{ steps.meta.outputs.labels }}
+            calciumion/new-api:${{ needs.prepare.outputs.build_tag }}-${{ matrix.arch }}
+          labels: |
+            ${{ steps.meta.outputs.labels }}
+            org.opencontainers.image.version=${{ env.BINARY_VERSION }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.sha }}
+          build-args: |
+            SOURCE_REVISION=${{ needs.prepare.outputs.sha }}
+            RELEASE_VERSION=${{ env.BINARY_VERSION }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: mode=max
@@ -142,15 +171,15 @@ jobs:
         run: |
           docker buildx imagetools create \
             -t calciumion/new-api:${{ needs.prepare.outputs.tag_prefix }} \
-            calciumion/new-api:${{ needs.prepare.outputs.tag_prefix }}-amd64 \
-            calciumion/new-api:${{ needs.prepare.outputs.tag_prefix }}-arm64
+            calciumion/new-api:${{ needs.prepare.outputs.build_tag }}-amd64 \
+            calciumion/new-api:${{ needs.prepare.outputs.build_tag }}-arm64
 
       - name: Create & push manifest (Docker Hub - versioned)
         run: |
           docker buildx imagetools create \
             -t calciumion/new-api:${{ needs.prepare.outputs.version }} \
-            calciumion/new-api:${{ needs.prepare.outputs.version }}-amd64 \
-            calciumion/new-api:${{ needs.prepare.outputs.version }}-arm64
+            calciumion/new-api:${{ needs.prepare.outputs.build_tag }}-amd64 \
+            calciumion/new-api:${{ needs.prepare.outputs.build_tag }}-arm64
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2

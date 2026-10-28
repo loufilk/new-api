@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -127,3 +127,27 @@ test('turning the reminder off hides the default threshold and saves the switch'
   )
   expect(api.put).toHaveBeenCalledTimes(1)
 })
+
+test.each(['1e308', '18014398510'])(
+  'a converted threshold outside the safe quota range (%s) makes no write and keeps the draft',
+  async (amount) => {
+    const user = userEvent.setup()
+    renderSettings()
+    const input = screen.getByRole('spinbutton', {
+      name: 'Default reminder threshold (USD)',
+    })
+    fireEvent.change(input, { target: { value: amount } })
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    expect(await screen.findByText('Please enter a valid number')).toBeVisible()
+    expect(api.put).not.toHaveBeenCalled()
+    expect(input).toHaveValue(Number(amount))
+    fireEvent.change(input, { target: { value: '0.002' } })
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Please enter a valid number')
+      ).not.toBeInTheDocument()
+    )
+    expect(api.put).not.toHaveBeenCalled()
+  }
+)

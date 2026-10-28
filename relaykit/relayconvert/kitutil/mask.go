@@ -219,3 +219,15 @@ func MaskSensitiveInfo(str string, upstreamURLs ...string) string {
 
 	return str
 }
+
+var logDomainPattern = regexp.MustCompile(`\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b`)
+
+// MaskSensitiveLogInfo keeps production's blanket host/path redaction for
+// infrastructure logs without a selected channel. User-facing errors should
+// instead use MaskSensitiveInfo with the selected channel's addresses so public
+// provider documentation links remain readable.
+func MaskSensitiveLogInfo(str string) string {
+	addresses := maskURLPattern.FindAllString(str, -1)
+	addresses = append(addresses, logDomainPattern.FindAllString(str, -1)...)
+	return MaskSensitiveInfo(str, addresses...)
+}

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -134,7 +135,36 @@ func AdminListSubscriptionPlans(c *gin.Context) {
 }
 
 type AdminUpsertSubscriptionPlanRequest struct {
-	Plan model.SubscriptionPlan `json:"plan"`
+	Plan       model.SubscriptionPlan `json:"plan"`
+	groupPatch subscriptionPlanGroupPatch
+}
+
+type subscriptionPlanGroupPatch struct {
+	UpgradeGroup   *string `json:"upgrade_group"`
+	DowngradeGroup *string `json:"downgrade_group"`
+}
+
+// UnmarshalJSON preserves omitted versus explicitly empty/null group fields.
+// The public request shape remains {"plan": {...}} for existing clients.
+func (r *AdminUpsertSubscriptionPlanRequest) UnmarshalJSON(data []byte) error {
+	type plain AdminUpsertSubscriptionPlanRequest
+	var decoded struct {
+		Plan json.RawMessage `json:"plan"`
+	}
+	if err := common.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var value plain
+	if err := common.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*r = AdminUpsertSubscriptionPlanRequest(value)
+	if len(decoded.Plan) != 0 {
+		if err := common.Unmarshal(decoded.Plan, &r.groupPatch); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func AdminCreateSubscriptionPlan(c *gin.Context) {
@@ -279,38 +309,11 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 	}
 
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
-		// update plan (allow zero values updates with map)
-		updateMap := map[string]any{
-			"title":                      req.Plan.Title,
-			"subtitle":                   req.Plan.Subtitle,
-			"price_amount":               req.Plan.PriceAmount,
-			"currency":                   req.Plan.Currency,
-			"duration_unit":              req.Plan.DurationUnit,
-			"duration_value":             req.Plan.DurationValue,
-			"custom_seconds":             req.Plan.CustomSeconds,
-			"enabled":                    req.Plan.Enabled,
-			"sort_order":                 req.Plan.SortOrder,
-			"stripe_price_id":            req.Plan.StripePriceId,
-			"creem_product_id":           req.Plan.CreemProductId,
-			"waffo_pancake_product_id":   req.Plan.WaffoPancakeProductId,
-			"max_purchase_per_user":      req.Plan.MaxPurchasePerUser,
-			"total_amount":               req.Plan.TotalAmount,
-			"upgrade_group":              req.Plan.UpgradeGroup,
-			"downgrade_group":            req.Plan.DowngradeGroup,
-			"quota_reset_period":         req.Plan.QuotaResetPeriod,
-			"quota_reset_custom_seconds": req.Plan.QuotaResetCustomSeconds,
-			"updated_at":                 common.GetTimestamp(),
-		}
-		if req.Plan.AllowBalancePay != nil {
-			updateMap["allow_balance_pay"] = *req.Plan.AllowBalancePay
-		}
-		if req.Plan.AllowWalletOverflow != nil {
-			updateMap["allow_wallet_overflow"] = *req.Plan.AllowWalletOverflow
-		}
-		if err := tx.Model(&model.SubscriptionPlan{}).Where("id = ?", id).Updates(updateMap).Error; err != nil {
-			return err
-		}
-		return nil
+		return model.UpdateSubscriptionPlanTx(tx, id, model.SubscriptionPlanUpdate{
+			Plan:           req.Plan,
+			UpgradeGroup:   req.groupPatch.UpgradeGroup,
+			DowngradeGroup: req.groupPatch.DowngradeGroup,
+		})
 	})
 	if err != nil {
 		common.ApiError(c, err)

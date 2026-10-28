@@ -165,18 +165,51 @@ func MultimodalEmbeddingHandler(c *gin.Context, resp *http.Response, info *relay
 	// request estimate, as in compatible mode.
 	u := aliResponse.Usage
 	var usage dto.Usage
+	var prompt, text, image float64
 	if details := u.InputTokensDetails; details != nil {
-		usage.PromptTokens = u.InputTokens
-		usage.PromptTokensDetails.TextTokens = details.TextTokens
-		usage.PromptTokensDetails.ImageTokens = details.ImageTokens
+		prompt = float64(u.InputTokens)
+		text = float64(details.TextTokens)
+		image = float64(details.ImageTokens)
 	} else {
-		usage.PromptTokens = u.InputTokens + u.ImageTokens
-		usage.PromptTokensDetails.TextTokens = u.InputTokens
-		usage.PromptTokensDetails.ImageTokens = u.ImageTokens
+		// Sum only after conversion, so an untrusted pair of signed integers
+		// cannot wrap into a negative billable total.
+		text = float64(u.InputTokens)
+		image = float64(u.ImageTokens)
+		prompt = max(0, text) + max(0, image)
 	}
-	if usage.PromptTokens == 0 {
-		usage.PromptTokens = info.GetEstimatePromptTokens()
+	if prompt <= 0 {
+		if prompt < 0 {
+			common.SysError(common.LogText("Ali multimodal embedding returned negative token usage"))
+		}
+		prompt = float64(info.GetEstimatePromptTokens())
 	}
+	for _, token := range []struct {
+		value  float64
+		target *int
+	}{
+		{prompt, &usage.PromptTokens},
+		{text, &usage.PromptTokensDetails.TextTokens},
+		{image, &usage.PromptTokensDetails.ImageTokens},
+	} {
+		if token.value < 0 {
+			common.SysError(common.LogText("Ali multimodal embedding returned negative token usage"))
+			*token.target = 0
+			continue
+		}
+		count, clamp := common.QuotaFromFloatChecked(token.value)
+		*token.target = count
+		if clamp != nil && info.QuotaClamp == nil {
+			info.QuotaClamp = clamp
+		}
+	}
+	// Detail counts are a partition of the billable input, not additional
+	// tokens. Inconsistent or saturated provider details cannot exceed it.
+	if usage.PromptTokensDetails.ImageTokens > usage.PromptTokens ||
+		usage.PromptTokensDetails.TextTokens > usage.PromptTokens-min(usage.PromptTokensDetails.ImageTokens, usage.PromptTokens) {
+		common.SysError(common.LogText("Ali multimodal embedding token details exceed total input usage"))
+	}
+	usage.PromptTokensDetails.ImageTokens = min(usage.PromptTokensDetails.ImageTokens, usage.PromptTokens)
+	usage.PromptTokensDetails.TextTokens = min(usage.PromptTokensDetails.TextTokens, usage.PromptTokens-usage.PromptTokensDetails.ImageTokens)
 	usage.TotalTokens = usage.PromptTokens
 
 	embeddingResponse := dto.EmbeddingResponse{

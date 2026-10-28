@@ -128,8 +128,25 @@ var TelegramBotToken = ""
 var TelegramBotName = ""
 
 var QuotaForNewUser = 0
-var QuotaForInviter = 0
-var QuotaForInvitee = 0
+
+// ---------------------------------------------------------------------------
+// TokenMix P1：注册赠金与推荐返利配置
+//
+// LinuxDOSignupBonusUSD is granted only when a verified LinuxDO login creates
+// a new account. Legacy global signup settings are retained for stored-option
+// compatibility and no longer control registration grants.
+const LinuxDOSignupBonusUSD = 3
+
+var SignupBonusEnabled = false
+var QuotaForSignupBonus = 0
+
+// AffiliateRewardEnabled 关闭时不产生新的邀请奖励。
+// AffiliateRewardRate 为成功在线余额充值金额的奖励比例（默认 5%），每位受邀
+// 用户仅前三次成功充值产生奖励。奖励先进入待使用收益 aff_quota，用户手动
+// 划转后才成为可消费的 reward 余额。
+var AffiliateRewardEnabled = false
+var AffiliateRewardRate = 0.05
+
 var ChannelDisableThreshold = 5.0
 var AutomaticDisableChannelEnabled = false
 var AutomaticEnableChannelEnabled = false

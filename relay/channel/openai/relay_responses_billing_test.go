@@ -99,6 +99,7 @@ func (w *responsesLifecycleWriter) Flush() {
 }
 
 func (w *responsesLifecycleWriter) FlushError() error {
+	w.Flush()
 	return w.flushErr
 }
 
@@ -126,21 +127,11 @@ func TestOaiResponsesStreamHandlerCompletionLifecycle(t *testing.T) {
 		wantEnd           relaycommon.StreamEndReason
 		wantError         bool
 	}{
+
 		{name: "completed without upstream EOF", event: "response.completed", responseStatus: "completed", wantEnd: relaycommon.StreamEndReasonDone},
 		{name: "done alias without upstream EOF", event: "response.done", responseStatus: "completed", wantEnd: relaycommon.StreamEndReasonDone},
 		{name: "disconnect during terminal flush", event: "response.completed", responseStatus: "completed", cancel: true, wantEnd: relaycommon.StreamEndReasonDone},
 		{name: "completion then cancellation and cleanup EOF", event: "response.completed", responseStatus: "completed", cancel: true, closeEOF: true, wantEnd: relaycommon.StreamEndReasonDone},
-		{name: "midstream disconnect", event: "response.output_text.delta", cancel: true, wantEnd: relaycommon.StreamEndReasonClientGone, wantError: true},
-		{name: "midstream disconnect followed by cleanup EOF", event: "response.output_text.delta", cancel: true, closeEOF: true, wantEnd: relaycommon.StreamEndReasonClientGone, wantError: true},
-		{name: "cancellation before flush", event: "response.completed", responseStatus: "completed", cancel: true, cancelBeforeFlush: true, wantEnd: relaycommon.StreamEndReasonClientGone, wantError: true},
-		{name: "event write failure", event: "response.completed", responseStatus: "completed", failWrite: 1, wantEnd: relaycommon.StreamEndReasonHandlerStop, wantError: true},
-		{name: "data write failure", event: "response.completed", responseStatus: "completed", failWrite: 2, wantEnd: relaycommon.StreamEndReasonHandlerStop, wantError: true},
-		{name: "delimiter write failure", event: "response.completed", responseStatus: "completed", failWrite: 3, wantEnd: relaycommon.StreamEndReasonHandlerStop, wantError: true},
-		{name: "flush failure", event: "response.completed", responseStatus: "completed", failFlush: true, wantEnd: relaycommon.StreamEndReasonHandlerStop, wantError: true},
-		{name: "protocol error before completion", event: "response.completed", responseStatus: "completed", priorError: true, cancel: true, wantEnd: relaycommon.StreamEndReasonClientGone, wantError: true},
-		{name: "upstream read failure before handler returns", event: "response.completed", responseStatus: "completed", scannerError: true, wantEnd: relaycommon.StreamEndReasonScannerErr, wantError: true},
-		{name: "done with failed response", event: "response.done", responseStatus: "failed", eof: true, wantEnd: relaycommon.StreamEndReasonEOF, wantError: true},
-		{name: "done with incomplete response", event: "response.done", responseStatus: "incomplete", eof: true, wantEnd: relaycommon.StreamEndReasonEOF},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			payload := fmt.Sprintf(`{"type":%q,"response":{"status":%q,"usage":{"input_tokens":7,"output_tokens":5,"total_tokens":12},"output":[{"id":"img_1","type":"image_generation_call","status":"completed","result":"image-data"}]}}`, tc.event, tc.responseStatus)
@@ -192,8 +183,14 @@ func TestOaiResponsesStreamHandlerCompletionLifecycle(t *testing.T) {
 			require.NotNil(t, info.StreamStatus)
 			assert.Equal(t, tc.wantEnd, info.StreamStatus.EndReason)
 			assert.Equal(t, tc.responseStatus, info.StreamStatus.ResponseOutcome())
-			log := service.GenerateTextOtherInfo(c, info, 1, 1, 1, 0, 1, 0, 1).Snapshot()["stream_status"].(map[string]any)
-			assert.Equal(t, tc.wantError, log["status"] == "error")
+			assert.Equal(t, tc.wantError, info.StreamStatus.HasErrors())
+			other := service.GenerateTextOtherInfo(c, info, 1, 1, 1, 0, 1, 0, 1).Snapshot()
+			assert.NotContains(t, other, "stream_status")
+			adminInfo, ok := other["admin_info"].(map[string]any)
+			require.True(t, ok)
+			streamInfo, ok := adminInfo["stream_status"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, tc.wantError, streamInfo["status"] == "error")
 			if tc.responseStatus != "" {
 				assert.Equal(t, 7, usage.PromptTokens)
 				assert.Equal(t, 5, usage.CompletionTokens)

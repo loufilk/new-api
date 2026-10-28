@@ -103,6 +103,8 @@ export interface TokenAutoGroupsConfig {
   max_count: number
 }
 
+export type CCSwitchApp = 'claude' | 'codex' | 'gemini'
+
 // ============================================================================
 // Dialog Types
 // ============================================================================

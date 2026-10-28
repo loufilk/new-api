@@ -5,6 +5,7 @@ import (
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 )
 
 // StreamResult is passed to each dataHandler invocation, providing methods
@@ -29,6 +30,10 @@ func (r *StreamResult) Error(err error) {
 	r.status.RecordError(err.Error())
 	var apiErr *types.NewAPIError
 	if errors.As(err, &apiErr) {
+		if apiErr.GetErrorType() == types.ErrorTypeNewAPIError && apiErr.GetErrorCode() == service.ClientGoneErrorCode {
+			r.status.MarkCancelled()
+			return
+		}
 		r.status.MarkFailed(string(apiErr.GetErrorCode()), apiErr.ToOpenAIError().Type, apiErr.StatusCode)
 	}
 }

@@ -40,6 +40,47 @@ func GetAllEnableAbilityWithChannels() ([]AbilityWithChannel, error) {
 	return abilities, err
 }
 
+// GetEnabledAbilitiesWithChannelsForGroups returns only abilities that are
+// enabled and backed by a currently enabled channel. It is intended for
+// pre-flight capability listings, so disabled channels are never advertised.
+func GetEnabledAbilitiesWithChannelsForGroups(groups []string) ([]AbilityWithChannel, error) {
+	if len(groups) == 0 {
+		return []AbilityWithChannel{}, nil
+	}
+	values := make([]any, 0, len(groups))
+	for _, group := range groups {
+		values = append(values, group)
+	}
+	var abilities []AbilityWithChannel
+	err := DB.Table("abilities").
+		Select("abilities.*, channels.type as channel_type").
+		Joins("join channels on abilities.channel_id = channels.id").
+		Where("abilities.enabled = ? AND channels.status = ?", true, common.ChannelStatusEnabled).
+		Where(clause.IN{
+			Column: clause.Column{Table: "abilities", Name: "group"},
+			Values: values,
+		}).
+		Scan(&abilities).Error
+	return abilities, err
+}
+
+func (ability *Ability) BeforeUpdate(tx *gorm.DB) error {
+	groupSelected := len(tx.Statement.Selects) == 0
+	for _, field := range tx.Statement.Selects {
+		if field == "*" || field == "group" || field == "Group" {
+			groupSelected = true
+			break
+		}
+	}
+	if !groupSelected {
+		return nil
+	}
+	if err := lockGroupNamespace(tx); err != nil {
+		return err
+	}
+	return validateGroupNamesForWriteTx(tx, ability.Group)
+}
+
 func GetGroupEnabledModels(group string) []string {
 	var models []string
 	// Find distinct models
@@ -223,6 +264,17 @@ func identityFilterRequiresKey(filters []dto.ChannelFilter) bool {
 }
 
 func (channel *Channel) AddAbilities(tx *gorm.DB) error {
+	if tx == nil {
+		return DB.Transaction(func(inner *gorm.DB) error {
+			return channel.AddAbilities(inner)
+		})
+	}
+	if err := lockGroupNamespace(tx); err != nil {
+		return err
+	}
+	if err := validateJoinedGroupsForWriteTx(tx, channel.Group); err != nil {
+		return err
+	}
 	models_ := strings.Split(channel.Models, ",")
 	groups_ := strings.Split(channel.Group, ",")
 	abilitySet := make(map[string]struct{})
@@ -249,13 +301,8 @@ func (channel *Channel) AddAbilities(tx *gorm.DB) error {
 	if len(abilities) == 0 {
 		return nil
 	}
-	// choose DB or provided tx
-	useDB := DB
-	if tx != nil {
-		useDB = tx
-	}
 	for _, chunk := range lo.Chunk(abilities, 50) {
-		err := useDB.Clauses(clause.OnConflict{DoNothing: true}).Create(&chunk).Error
+		err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&chunk).Error
 		if err != nil {
 			return err
 		}
@@ -283,6 +330,19 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 				tx.Rollback()
 			}
 		}()
+	}
+
+	if err := lockGroupNamespace(tx); err != nil {
+		if isNewTx {
+			tx.Rollback()
+		}
+		return err
+	}
+	if err := validateJoinedGroupsForWriteTx(tx, channel.Group); err != nil {
+		if isNewTx {
+			tx.Rollback()
+		}
+		return err
 	}
 
 	// First delete all abilities of this channel

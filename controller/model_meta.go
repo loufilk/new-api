@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 )
 
 // GetAllModelsMeta 获取模型列表（分页）
@@ -141,7 +142,12 @@ func UpdateModelMeta(c *gin.Context) {
 	statusOnly := c.Query("status_only") == "true"
 
 	var m model.Model
-	if err := c.ShouldBindJSON(&m); err != nil {
+	if err := c.ShouldBindBodyWith(&m, binding.JSON); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	var present map[string]common.RawMessage
+	if err := c.ShouldBindBodyWith(&present, binding.JSON); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -156,7 +162,12 @@ func UpdateModelMeta(c *gin.Context) {
 			return
 		}
 		// 只更新状态，防止误清空其他字段
-		if err := model.DB.Model(&model.Model{}).Where("id = ?", m.Id).Update("status", m.Status).Error; err != nil {
+		err := model.DB.Model(&model.Model{}).Where("id = ?", m.Id).Update("status", m.Status).Error
+		// Status changes can remove rule-matched eligibility even if the COMMIT
+		// acknowledgement is lost. This does not change exact-name fallback.
+		model.InvalidatePricingCache()
+		model.InvalidateModelBonusEligibleCache()
+		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
@@ -178,7 +189,7 @@ func UpdateModelMeta(c *gin.Context) {
 			return
 		}
 
-		if err := m.Update(); err != nil {
+		if err := m.UpdateWithMetadataPresence(present); err != nil {
 			common.ApiError(c, err)
 			return
 		}

@@ -63,6 +63,89 @@ const preview: MetadataSyncPreview = {
 }
 
 describe('metadata sync preview', () => {
+  it('shows zero, empty arrays and disabled bonus eligibility before explicit field selection', async () => {
+    const candidate: MetadataSyncCandidate = {
+      model_name: 'optional-model',
+      scope: 'site',
+      kind: 'update',
+      record_version: 'optional-v1',
+      fields: [
+        { field: 'context_length', local: 128000, upstream: 0 },
+        { field: 'capabilities', local: ['vision'], upstream: [] },
+        { field: 'bonus_eligible', local: true, upstream: false },
+      ],
+    }
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: { ...preview, candidates: [candidate] } },
+    })
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      data: {
+        success: true,
+        data: { created_models: [], updated_models: [], created_vendors: [] },
+      },
+    })
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <SyncWizardDialog open onOpenChange={() => {}} />
+      </QueryClientProvider>
+    )
+    const user = userEvent.setup()
+    await user.click(
+      screen.getByRole('button', { name: 'Load metadata preview' })
+    )
+    await user.click(
+      await screen.findByRole('checkbox', { name: 'Select optional-model' })
+    )
+    await user.click(
+      screen.getByRole('button', { name: 'Preview selected changes' })
+    )
+    expect(screen.getByRole('cell', { name: '0' })).toBeVisible()
+    expect(screen.getByRole('cell', { name: 'Disabled' })).toBeVisible()
+    expect(screen.getByRole('cell', { name: '—' })).toBeVisible()
+    expect(
+      screen.getByText('Controls whether bonus balance can pay for this model.')
+    ).toBeVisible()
+    for (const label of [
+      'Context length',
+      'Capabilities',
+      'Bonus eligibility',
+    ]) {
+      const checkbox = screen.getByRole('checkbox', {
+        name: `Apply ${label} for optional-model`,
+      })
+      expect(checkbox).not.toBeChecked()
+      await user.click(checkbox)
+    }
+    expect(post).not.toHaveBeenCalled()
+    await user.click(
+      screen.getByRole('button', { name: 'Review confirmation' })
+    )
+    await user.click(
+      screen.getByRole('button', { name: 'Apply 1 model changes' })
+    )
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith('/api/models/sync_upstream', {
+        locale: 'en',
+        source_version: 'source-v1',
+        selections: [
+          {
+            model_name: 'optional-model',
+            record_version: 'optional-v1',
+            create: false,
+            fields: ['context_length', 'capabilities', 'bonus_eligible'],
+          },
+        ],
+      })
+    )
+    client.clear()
+  })
+
   it('shows additions and field effects and writes only after explicit confirmation', async () => {
     vi.spyOn(api, 'get').mockResolvedValue({
       data: { success: true, data: preview },

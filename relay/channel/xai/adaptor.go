@@ -39,11 +39,39 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	// xAI exposes aspect_ratio/resolution, not OpenAI pixel sizes.
+	// https://docs.x.ai/developers/model-capabilities/images/generation
+	if request.Size != "" && request.Size != "auto" {
+		return nil, types.NewErrorWithStatusCode(errors.New("xAI image size is unsupported; use aspect_ratio and resolution"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	if request.AspectRatio != nil {
+		switch *request.AspectRatio {
+		case "auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "2:1", "1:2", "19.5:9", "9:19.5", "20:9", "9:20", "21:9", "5:2":
+		default:
+			return nil, types.NewErrorWithStatusCode(errors.New("unsupported xAI image aspect_ratio"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+	}
+	if request.Resolution != nil && *request.Resolution != "1k" && *request.Resolution != "2k" {
+		return nil, types.NewErrorWithStatusCode(errors.New("xAI image resolution must be 1k or 2k"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	// https://docs.x.ai/developers/model-capabilities/images/generation
+	switch request.Quality {
+	case "", "low", "medium", "auto":
+	default:
+		return nil, types.NewErrorWithStatusCode(errors.New("xAI image quality must be low, medium or auto"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
 	xaiRequest := ImageRequest{
 		Model:          request.Model,
 		Prompt:         request.Prompt,
 		N:              int(lo.FromPtrOr(request.N, uint(1))),
 		ResponseFormat: request.ResponseFormat,
+		AspectRatio:    request.AspectRatio,
+		Resolution:     request.Resolution,
+		Image:          request.Image,
+		Images:         request.Images,
+	}
+	if request.Quality != "" {
+		xaiRequest.Quality = lo.ToPtr(request.Quality)
 	}
 	return xaiRequest, nil
 }
@@ -106,6 +134,9 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
+	if info != nil {
+		info.VendorToolUsage = xaiResponsesToolUsage
+	}
 	if request.Model == "" && info != nil {
 		request.Model = info.UpstreamModelName
 	}

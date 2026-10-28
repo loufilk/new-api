@@ -1,12 +1,14 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/rand"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -24,16 +26,78 @@ var channelsIDM map[int]*Channel                     // all channels include dis
 var channel2advancedCustomConfig map[int]*kitdto.AdvancedCustomConfig
 var channelSyncLock sync.RWMutex
 
+// Serialize refreshes, but never hold the cache read/write lock during SQL IO.
+var channelRefreshLock sync.Mutex
+var channelCacheRevision uint64 // protected by channelSyncLock
+var channelCacheLastRefresh atomic.Int64
+var channelCacheRefreshFailures atomic.Uint64
+
+// ErrChannelCacheStale means routing data is temporarily unavailable, not that
+// a channel was deleted. Existing upstream tasks must remain pending for retry.
+var ErrChannelCacheStale = errors.New("channel cache snapshot exceeded staleness budget")
+
+// ErrChannelCacheMiss is snapshot absence, not proof of database deletion.
+var ErrChannelCacheMiss = errors.New("channel is absent from cache snapshot")
+
+// ChannelCacheHealth exposes counters, not channel IDs, keys, or DSNs.
+func ChannelCacheHealth() (lastSuccess time.Time, failures uint64) {
+	if ts := channelCacheLastRefresh.Load(); ts != 0 {
+		lastSuccess = time.Unix(0, ts)
+	}
+	return lastSuccess, channelCacheRefreshFailures.Load()
+}
+
+func channelCacheExpired() bool {
+	last := channelCacheLastRefresh.Load()
+	// An uninitialized cache is handled by startup's explicit refresh. Tests and
+	// embedded hosts that seed their own cache retain the existing API contract.
+	if last == 0 {
+		return false
+	}
+	defaultSeconds := max(300, min(common.SyncFrequency, 28800)*3)
+	seconds := common.GetEnvOrDefault("CHANNEL_CACHE_MAX_STALE_SECONDS", defaultSeconds)
+	if seconds <= 0 || seconds > 86400 {
+		seconds = defaultSeconds
+	}
+	return time.Since(time.Unix(0, last)) > time.Duration(seconds)*time.Second
+}
+
 func InitChannelCache() {
+	if err := RefreshChannelCache(context.Background()); err != nil {
+		common.SysError("channel cache refresh failed; previous snapshot retained: " + common.MaskSensitiveLogInfo(err.Error()))
+	}
+}
+
+// RefreshChannelCache publishes only a fully loaded and validated snapshot.
+// On failure readers retain the previous snapshot for a bounded time, then
+// fail closed after the staleness budget instead of serving revoked routes forever.
+func RefreshChannelCache(ctx context.Context) (err error) {
+	channelRefreshLock.Lock()
+	defer channelRefreshLock.Unlock()
+	defer func() {
+		if err != nil {
+			channelCacheRefreshFailures.Add(1)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	if !common.MemoryCacheEnabled {
 		InvalidatePricingCache()
 		rebuildTaskAliasView()
-		return
+		return nil
 	}
+	if DB == nil {
+		return errors.New("channel cache database is not initialized")
+	}
+	channelSyncLock.RLock()
+	revision := channelCacheRevision
+	channelSyncLock.RUnlock()
 	newChannelId2channel := make(map[int]*Channel)
 	newChannel2advancedCustomConfig := make(map[int]*kitdto.AdvancedCustomConfig)
 	var channels []*Channel
-	DB.Find(&channels)
+	if err := DB.WithContext(ctx).Find(&channels).Error; err != nil {
+		return fmt.Errorf("load channels: %w", err)
+	}
 	for _, channel := range channels {
 		newChannelId2channel[channel.Id] = channel
 		if channel.Type == constant.ChannelTypeAdvancedCustom {
@@ -43,7 +107,9 @@ func InitChannelCache() {
 		}
 	}
 	var abilities []*Ability
-	DB.Find(&abilities)
+	if err := DB.WithContext(ctx).Find(&abilities).Error; err != nil {
+		return fmt.Errorf("load channel abilities: %w", err)
+	}
 	groups := make(map[string]bool)
 	for _, ability := range abilities {
 		groups[ability.Group] = true
@@ -56,9 +122,15 @@ func InitChannelCache() {
 		if channel.Status != common.ChannelStatusEnabled {
 			continue // skip disabled channels
 		}
+		models := channel.GetModels()
+		if len(models) == 0 {
+			continue
+		}
 		groups := strings.SplitSeq(channel.Group, ",")
 		for group := range groups {
-			models := channel.GetModels()
+			if _, ok := newGroup2model2channels[group]; !ok {
+				return fmt.Errorf("channel %d references a group absent from abilities", channel.Id)
+			}
 			for _, model := range models {
 				if _, ok := newGroup2model2channels[group][model]; !ok {
 					newGroup2model2channels[group][model] = make([]int, 0)
@@ -78,12 +150,39 @@ func InitChannelCache() {
 		}
 	}
 
-	channelSyncLock.Lock()
-	group2model2channels = newGroup2model2channels
-	//channelsIDM = newChannelId2channel
-	for i, channel := range newChannelId2channel {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Key selection locks a channel's polling mutex before channelSyncLock.
+	// Preserve that order and lock IDs in a stable order while carrying the
+	// in-memory cursor forward; no SQL or pricing-cache work occurs under them.
+	var pollingIDs []int
+	for id, channel := range newChannelId2channel {
 		if channel.ChannelInfo.IsMultiKey {
 			channel.Keys = channel.GetKeys()
+			if channel.ChannelInfo.MultiKeyMode == constant.MultiKeyModePolling {
+				pollingIDs = append(pollingIDs, id)
+			}
+		}
+	}
+	sort.Ints(pollingIDs)
+	pollingLocks := make([]*sync.Mutex, 0, len(pollingIDs))
+	for _, id := range pollingIDs {
+		lock := GetChannelPollingLock(id)
+		lock.Lock()
+		pollingLocks = append(pollingLocks, lock)
+	}
+	channelSyncLock.Lock()
+	if revision != channelCacheRevision {
+		channelSyncLock.Unlock()
+		for i := len(pollingLocks) - 1; i >= 0; i-- {
+			pollingLocks[i].Unlock()
+		}
+		return errors.New("channel state changed during refresh; retry on next reconciliation")
+	}
+	group2model2channels = newGroup2model2channels
+	for i, channel := range newChannelId2channel {
+		if channel.ChannelInfo.IsMultiKey {
 			if channel.ChannelInfo.MultiKeyMode == constant.MultiKeyModePolling {
 				if oldChannel, ok := channelsIDM[i]; ok {
 					// 存在旧的渠道，如果是多key且轮询，保留轮询索引信息
@@ -96,21 +195,46 @@ func InitChannelCache() {
 	}
 	channelsIDM = newChannelId2channel
 	channel2advancedCustomConfig = newChannel2advancedCustomConfig
+	channelCacheRevision++
+	channelCacheLastRefresh.Store(time.Now().UnixNano())
 	channelSyncLock.Unlock()
+	for i := len(pollingLocks) - 1; i >= 0; i-- {
+		pollingLocks[i].Unlock()
+	}
 	// Lock ordering: InvalidatePricingCache acquires updatePricingLock, and
 	// GetPricing (holding updatePricingLock) nests channelSyncLock.RLock via
 	// loadPricingAdvancedCustomConfigs. channelSyncLock MUST be released before
 	// invalidating the pricing cache, otherwise the reversed order deadlocks.
 	InvalidatePricingCache()
 	rebuildTaskAliasView()
-	common.SysLog(common.LogText("channels synced from database"))
+	common.SysLog("channels synced from database")
+	return nil
 }
 
 func SyncChannelCache(frequency int) {
+	RunChannelCacheSync(context.Background(), frequency)
+}
+
+func RunChannelCacheSync(ctx context.Context, frequency int) {
+	if frequency <= 0 {
+		frequency = 60
+	}
+	interval := time.Duration(frequency) * time.Second
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 	for {
-		time.Sleep(time.Duration(frequency) * time.Second)
-		common.SysLog(common.LogText("syncing channels from database"))
-		InitChannelCache()
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			if ctx.Err() != nil {
+				return
+			}
+			if err := RefreshChannelCache(ctx); err != nil && ctx.Err() == nil {
+				common.SysError("channel cache refresh failed; retaining previous snapshot: " + common.MaskSensitiveLogInfo(err.Error()))
+			}
+			timer.Reset(interval)
+		}
 	}
 }
 
@@ -123,6 +247,10 @@ func GetRandomSatisfiedChannel(
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
 		return GetChannel(group, model, retry, filters)
+	}
+
+	if channelCacheExpired() {
+		return nil, ErrChannelCacheStale
 	}
 
 	channelSyncLock.RLock()
@@ -220,12 +348,16 @@ func CacheGetChannel(id int) (*Channel, error) {
 	if !common.MemoryCacheEnabled {
 		return GetChannelById(id, true)
 	}
+	if channelCacheExpired() {
+		return nil, ErrChannelCacheStale
+	}
+
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
 
 	c, ok := channelsIDM[id]
 	if !ok {
-		return nil, fmt.Errorf("channel #%d no longer exists", id)
+		return nil, fmt.Errorf("channel #%d is absent from cache: %w", id, ErrChannelCacheMiss)
 	}
 	return c, nil
 }
@@ -238,12 +370,16 @@ func CacheGetChannelInfo(id int) (*ChannelInfo, error) {
 		}
 		return &channel.ChannelInfo, nil
 	}
+	if channelCacheExpired() {
+		return nil, ErrChannelCacheStale
+	}
+
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
 
 	c, ok := channelsIDM[id]
 	if !ok {
-		return nil, fmt.Errorf("channel #%d no longer exists", id)
+		return nil, fmt.Errorf("channel #%d is absent from cache: %w", id, ErrChannelCacheMiss)
 	}
 	return &c.ChannelInfo, nil
 }
@@ -254,6 +390,7 @@ func CacheUpdateChannelStatus(id int, status int) {
 	}
 	channelSyncLock.Lock()
 	defer channelSyncLock.Unlock()
+	channelCacheRevision++
 	if channel, ok := channelsIDM[id]; ok {
 		channel.Status = status
 	}
@@ -283,6 +420,7 @@ func CacheUpdateChannel(channel *Channel) {
 		return
 	}
 
+	channelCacheRevision++
 	if channelsIDM == nil {
 		channelsIDM = make(map[int]*Channel)
 	}

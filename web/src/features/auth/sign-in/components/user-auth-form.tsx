@@ -411,6 +411,7 @@ export function UserAuthForm({
                 <Turnstile
                   key={turnstileWidgetKey}
                   siteKey={turnstileSiteKey}
+                  action='login'
                   onVerify={setTurnstileToken}
                   onExpire={() => setTurnstileToken('')}
                 />

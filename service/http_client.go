@@ -154,6 +154,22 @@ func GetHttpClient() *http.Client {
 	return httpClient
 }
 
+// DoRequestWithoutRedirects keeps operator-configured transport, timeout and
+// cookie settings while preventing an authenticated auxiliary request from
+// forwarding custom credentials to a redirect target. The original response,
+// including a redirect status and body, remains available to the caller. Never
+// replace the redirect policy on the cached/shared client itself.
+func DoRequestWithoutRedirects(client *http.Client, request *http.Request) (*http.Response, error) {
+	if client == nil {
+		return nil, fmt.Errorf("HTTP client is not initialized")
+	}
+	requestClient := *client
+	requestClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return requestClient.Do(request)
+}
+
 // GetSSRFProtectedHTTPClient 返回带拨号时 SSRF 校验的客户端。
 // ssrfProtectedHTTPClient 由 InitHttpClient 在启动时初始化，运行期只读。
 func GetSSRFProtectedHTTPClient() *http.Client {

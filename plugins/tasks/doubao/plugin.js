@@ -789,6 +789,18 @@ export const native = {
   },
 };
 
+// Resolve the actual outbound field once for both request building and billing.
+// Nested content and opaque metadata are not recursively treated as quantities.
+function requestedVideoDuration(req) {
+  const metadata = req.metadata || {};
+  const value = req.seconds !== undefined ? req.seconds : req.duration !== undefined ? req.duration : metadata.duration;
+  if (value === undefined) return undefined;
+  const seconds = Number(value);
+  if ((typeof value !== "number" && typeof value !== "string") || !Number.isInteger(seconds) || (seconds !== -1 && (seconds < 1 || seconds > 3600)))
+    throw new Error("seconds must be -1 or an integer between 1 and 3600");
+  return seconds;
+}
+
 export function buildSubmitRequest(ctx) {
   if (imageTask(ctx)) {
     const converted = convertImage(ctx);
@@ -815,8 +827,8 @@ export function buildSubmitRequest(ctx) {
   if (trimmed(req.prompt) || !hasReference) body.content.push({ type: "text", text: req.prompt || "" });
   if (Array.isArray(body.content)) body.content = rewriteDraftTaskContent(body.content, ctx.originTasks);
   // -1 lets the model pick the length; extractUsage reserves the longest one.
-  const seconds = Number.parseInt(req.seconds || "", 10);
-  if (seconds > 0 || seconds === -1) body.duration = seconds;
+  const seconds = requestedVideoDuration(req);
+  if (seconds !== undefined) body.duration = seconds;
   body.model = ctx.upstreamModel || body.model;
   return {
     url: apiRoot(ctx) + "/api/v3/contents/generations/tasks",
@@ -863,8 +875,8 @@ export function extractUsage(ctx) {
   const profile = videoProfile(ctx);
   // A missing duration or -1 (the model picks the length; Seedance 2.5
   // defaults to it) reserves the longest duration the model can produce.
-  let seconds = Number(req.seconds || req.duration || metadata.duration || 0);
-  if (!Number.isFinite(seconds) || seconds <= 0) {
+  let seconds = requestedVideoDuration(req);
+  if (seconds === undefined || seconds === -1) {
     const frames = Number(metadata.frames);
     seconds = Number.isFinite(frames) && frames > 0 ? Math.floor(frames / 24) : profile.maxDuration;
   }

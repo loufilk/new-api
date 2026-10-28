@@ -63,11 +63,28 @@ beforeEach(() => {
   vi.spyOn(api, 'get').mockResolvedValue({
     data: { success: true, data: [], vendors: [] },
   })
+  // The editor requests an effective-price preview even when this test only
+  // changes display currency. Keep that API boundary synthetic and fail closed.
+  vi.spyOn(api, 'post').mockImplementation(async (url, body) => {
+    if (url !== '/api/option/model_pricing/preview') {
+      throw new Error('Unexpected POST in currency editor test')
+    }
+    const request = body as { pricing: Record<string, unknown> }
+    return {
+      data: {
+        success: true,
+        data: { effective: request.pricing, cache_write_mode: 'none' },
+      },
+    }
+  })
 })
 
-afterEach(() => {
+afterEach(async () => {
   cleanup()
-  clients.splice(0).forEach((client) => client.clear())
+  for (const client of clients.splice(0)) {
+    await client.cancelQueries()
+    client.clear()
+  }
   usePricingPreferencesStore.setState({ currency: 'USD' })
   useSystemConfigStore
     .getState()

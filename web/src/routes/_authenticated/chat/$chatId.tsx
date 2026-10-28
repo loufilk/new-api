@@ -39,6 +39,11 @@ export const Route = createFileRoute('/_authenticated/chat/$chatId')({
   component: ChatRouteComponent,
 })
 
+// Least-privilege chat sandbox: the framed chat app needs scripts/forms,
+// but allow-same-origin must never accompany allow-scripts.
+export const CHAT_IFRAME_SANDBOX =
+  'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox'
+
 function ChatRouteComponent() {
   const { t } = useTranslation()
   const { chatId } = Route.useParams()
@@ -159,6 +164,7 @@ function ChatRouteComponent() {
       key={iframeSrc}
       className='h-full w-full border-0'
       allow='camera; microphone'
+      sandbox={CHAT_IFRAME_SANDBOX}
       title={`Chat preset: ${preset.name}`}
     />
   )

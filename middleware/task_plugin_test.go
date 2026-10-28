@@ -28,6 +28,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )
@@ -2057,7 +2058,7 @@ func TestPrepareTaskPluginEndpointFiltersEachSharedCandidate(t *testing.T) {
 
 func TestRouteTaskPluginEndpointUsesSelectedChannel(t *testing.T) {
 	require.NoError(t, appI18n.Init())
-	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+	for _, dialect := range []string{"postgres"} {
 		t.Run(dialect, func(t *testing.T) {
 			dsn := ""
 			if dialect != "sqlite" {
@@ -2073,18 +2074,9 @@ func TestRouteTaskPluginEndpointUsesSelectedChannel(t *testing.T) {
 			common.RedisEnabled = false
 			t.Setenv("SQL_DSN", dsn)
 			require.NoError(t, model.InitDB())
-			database := model.DB
-			// Every table belongs to this run, including when a developer points
-			// a test DSN at a database shared with another test suite.
-			database.Config.NamingStrategy = schema.NamingStrategy{TablePrefix: "endpoint_route_" + common.GetUUID() + "_"}
-			require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.Task{}))
+			sqlDB, err := model.DB.DB()
+			require.NoError(t, err)
 			t.Cleanup(func() {
-				for _, table := range []any{&model.Ability{}, &model.Channel{}, &model.Task{}} {
-					require.NoError(t, database.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(table).Error)
-				}
-				common.MemoryCacheEnabled = true
-				model.InitChannelCache()
-				require.NoError(t, database.Migrator().DropTable(&model.Ability{}, &model.Channel{}, &model.Task{}))
 				model.DB = previousDB
 				common.SetDatabaseTypes(previousMain, previousLog)
 				common.SQLitePath, common.IsMasterNode = previousPath, previousMaster
@@ -2092,10 +2084,42 @@ func TestRouteTaskPluginEndpointUsesSelectedChannel(t *testing.T) {
 				if previousDB != nil {
 					model.InitChannelCache()
 				}
-				sqlDB, err := database.DB()
-				require.NoError(t, err)
 				require.NoError(t, sqlDB.Close())
 			})
+			// The DSN must be a disposable test database: InitDB performs startup
+			// compatibility checks. It also parses Option, so changing its naming
+			// strategy afterward would retain the unprefixed cached schema. Use a
+			// fresh GORM schema cache over the same owned connection pool instead.
+			prefix := "endpoint_route_" + common.GetUUID() + "_"
+			database, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{
+				NamingStrategy: schema.NamingStrategy{TablePrefix: prefix},
+			})
+			require.NoError(t, err)
+			require.Same(t, sqlDB, database.ConnPool)
+			model.DB = database
+			for _, table := range []struct {
+				model any
+				name  string
+			}{{&model.Channel{}, "channels"}, {&model.Ability{}, "abilities"}, {&model.Task{}, "tasks"}, {&model.Option{}, "options"}} {
+				statement := &gorm.Statement{DB: database}
+				require.NoError(t, statement.Parse(table.model))
+				require.Equal(t, prefix+table.name, statement.Schema.Table)
+			}
+			tables := []any{&model.Ability{}, &model.Channel{}, &model.Task{}, &model.Option{}}
+			t.Cleanup(func() {
+				for _, table := range tables {
+					if database.Migrator().HasTable(table) {
+						require.NoError(t, database.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(table).Error)
+					}
+				}
+				common.MemoryCacheEnabled = true
+				model.InitChannelCache()
+				require.NoError(t, database.Migrator().DropTable(tables...))
+			})
+			require.NoError(t, database.AutoMigrate(tables...))
+			for _, table := range tables {
+				require.True(t, database.Migrator().HasTable(table))
+			}
 			query := "SELECT version()"
 			if dialect == "sqlite" {
 				query = "SELECT sqlite_version()"

@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/privacy"
 	"github.com/QuantumNous/new-api/relay"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -50,10 +51,9 @@ func GetTask(c *gin.Context) {
 	if createdAt == 0 {
 		createdAt = task.SubmitTime
 	}
-	failReason := task.FailReason
-	if task.Status == model.TaskStatusSuccess && taskFailReasonIsLegacyResultURL(task.FailReason) {
-		failReason = ""
-	}
+	// Relay tokens never grant administrator diagnostics, even for an admin owner.
+	failReason := taskFailReasonForViewer(task, common.RoleCommonUser)
+	c.Header("Cache-Control", "private, no-store")
 	c.JSON(http.StatusOK, gin.H{
 		"task_id":     task.TaskID,
 		"platform":    task.Platform,
@@ -458,6 +458,7 @@ func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskD
 			}
 		}
 		item := relay.TaskModel2Dto(task)
+		item.FailReason = taskFailReasonForViewer(task, viewerRole)
 		item.LegacyVideoAvailable = legacyVideoAvailable(task)
 		item.ResultDiscarded = task.PrivateData.ResultDiscarded
 		if task.Status == model.TaskStatusSuccess {
@@ -511,6 +512,20 @@ func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskD
 		result[i] = item
 	}
 	return result
+}
+
+// Failure text is untrusted upstream data, not a client-safe explanation.
+// Keep it on the stored task for operator diagnostics and only project the
+// ordinary caller's safe category. Successful legacy URLs remain hidden.
+func taskFailReasonForViewer(task *model.Task, viewerRole int) string {
+	if strings.TrimSpace(task.FailReason) == "" ||
+		(task.Status == model.TaskStatusSuccess && taskFailReasonIsLegacyResultURL(task.FailReason)) {
+		return ""
+	}
+	if viewerRole >= common.RoleAdminUser {
+		return task.FailReason
+	}
+	return privacy.SafeErrorText(http.StatusBadGateway, "")
 }
 
 func taskFailReasonIsLegacyResultURL(value string) bool {

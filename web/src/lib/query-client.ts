@@ -26,9 +26,14 @@ interface ErrorNotificationMeta extends Record<string, unknown> {
   errorToast?: boolean
 }
 
+interface QueryErrorMeta extends ErrorNotificationMeta {
+  /** Optional panels may own HTTP 500 fallback without replacing the route. */
+  redirectOnInternalServerError?: boolean
+}
+
 declare module '@tanstack/react-query' {
   interface Register {
-    queryMeta: ErrorNotificationMeta
+    queryMeta: QueryErrorMeta
     mutationMeta: ErrorNotificationMeta
   }
 }
@@ -58,7 +63,12 @@ export function createAppQueryClient(
     queryCache: new QueryCache({
       onError: (error, query) => {
         if (query.meta?.errorToast !== false) handleServerError(error)
-        if (getServerErrorStatus(error) === 500) onInternalServerError?.()
+        if (
+          query.meta?.redirectOnInternalServerError !== false &&
+          getServerErrorStatus(error) === 500
+        ) {
+          onInternalServerError?.()
+        }
       },
     }),
   })

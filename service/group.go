@@ -1,6 +1,8 @@
 package service
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -44,6 +46,27 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 func GroupInUserUsableGroups(userGroup, groupName string) bool {
 	_, ok := GetUserUsableGroups(userGroup)[groupName]
 	return ok
+}
+
+var (
+	ErrTokenGroupForbidden  = errors.New("token group is unauthorized")
+	ErrTokenGroupDeprecated = errors.New("token group is unavailable")
+)
+
+// ValidateTokenGroup is the shared relay, token-editing and discovery policy.
+// Empty selections inherit the user's group. Named selections use exact keys;
+// administrators do not bypass this routing permission boundary.
+func ValidateTokenGroup(userGroup, tokenGroup string) error {
+	if tokenGroup == "" {
+		return nil
+	}
+	if !GroupInUserUsableGroups(userGroup, tokenGroup) {
+		return ErrTokenGroupForbidden
+	}
+	if tokenGroup != "auto" && !ratio_setting.ContainsGroupRatio(tokenGroup) {
+		return ErrTokenGroupDeprecated
+	}
+	return nil
 }
 
 func IsUserSelectableGroup(userGroup, groupName string) bool {
@@ -90,6 +113,39 @@ func FilterUserTokenAutoGroups(userGroup string, groups []string) []string {
 		}
 	}
 	return filtered
+}
+
+// GetTokenEffectiveGroups mirrors TokenAuth + auto-group routing for read-only
+// capability discovery. A concrete token group is authoritative; "auto" uses
+// the token snapshot when present and otherwise inherits the user's global Auto
+// order. An empty token group follows the user's own group, matching TokenAuth.
+func GetTokenEffectiveGroups(userGroup string, token *model.Token) ([]string, error) {
+	if token == nil {
+		return nil, fmt.Errorf("token is nil")
+	}
+	tokenGroup := token.Group
+	if err := ValidateTokenGroup(userGroup, tokenGroup); err != nil {
+		return []string{}, nil
+	}
+	switch tokenGroup {
+	case "":
+		return []string{userGroup}, nil
+	case "auto":
+		if token.AutoGroups == "" {
+			return GetUserAutoGroup(userGroup), nil
+		}
+		groups, err := token.GetAutoGroups()
+		if err != nil {
+			return nil, err
+		}
+		// Legacy empty JSON snapshots inherit too, as SetupContextForToken does.
+		if len(groups) == 0 {
+			return GetUserAutoGroup(userGroup), nil
+		}
+		return FilterUserTokenAutoGroups(userGroup, groups), nil
+	default:
+		return []string{tokenGroup}, nil
+	}
 }
 
 // GetRequestAutoGroups resolves the ordered Auto groups for the current token.

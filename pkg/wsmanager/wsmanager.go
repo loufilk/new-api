@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -34,9 +34,10 @@ type closeEvent struct {
 }
 
 var (
-	mu       sync.Mutex
-	nextID   uint64
-	registry = map[int]map[uint64]*entry{}
+	mu           sync.Mutex
+	nextID       uint64
+	registry     = map[int]map[uint64]*entry{}
+	shuttingDown bool
 
 	originOnce sync.Once
 	originID   string
@@ -63,6 +64,11 @@ func Register(channelID int, kind string, close func(reason string)) func() {
 	}
 
 	mu.Lock()
+	if shuttingDown {
+		mu.Unlock()
+		safeClose("server shutting down")
+		return func() {}
+	}
 	if registry[channelID] == nil {
 		registry[channelID] = map[uint64]*entry{}
 	}
@@ -115,16 +121,50 @@ func StartSubscriber(ctx context.Context) {
 	if !common.RedisEnabled || rdb == nil {
 		return
 	}
+	subscriberOnce.Do(func() { go RunSubscriber(ctx) })
+}
+
+func RunSubscriber(ctx context.Context) {
+	rdb := common.RDB
+	if !common.RedisEnabled || rdb == nil {
+		return
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	subscriberOnce.Do(func() {
-		go func() {
-			pubsub := rdb.Subscribe(ctx, channelCloseTopic(rdb.Options().DB))
-			defer pubsub.Close()
-			receiveChannelCloseEvents(ctx, pubsub.Channel(), getOriginID())
-		}()
-	})
+	pubsub := rdb.Subscribe(ctx, channelCloseTopic(rdb.Options().DB))
+	defer pubsub.Close()
+	receiveChannelCloseEvents(ctx, pubsub.Channel(), getOriginID())
+}
+
+// Shutdown closes this process's sockets only; it must not broadcast a channel
+// disable to other healthy instances. The HTTP gate separately joins handlers
+// and their accounting work, rather than treating registry deletion as drain.
+func Shutdown() {
+	mu.Lock()
+	shuttingDown = true
+	var entries []*entry
+	for _, connections := range registry {
+		for _, connection := range connections {
+			entries = append(entries, connection)
+		}
+	}
+	registry = make(map[int]map[uint64]*entry)
+	mu.Unlock()
+	var closed sync.WaitGroup
+	for _, connection := range entries {
+		closed.Add(1)
+		go func(e *entry) {
+			defer closed.Done()
+			defer func() {
+				if recover() != nil {
+					common.SysError("websocket shutdown callback panicked")
+				}
+			}()
+			e.close("server shutting down")
+		}(connection)
+	}
+	closed.Wait()
 }
 
 func PublishCloseChannels(ctx context.Context, channelIDs []int, reason string) error {

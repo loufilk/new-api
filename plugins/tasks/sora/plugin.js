@@ -86,9 +86,21 @@ function responsesVideoText(ctx) {
   return '<video controls src="' + escaped + '"></video>';
 }
 
+function requestedSeconds(req) {
+  const value = req.seconds === undefined ? req.duration : req.seconds;
+  if (value === undefined) return undefined;
+  const seconds = Number(value);
+  if ((typeof value !== "number" && typeof value !== "string") || !Number.isInteger(seconds) || seconds < 1 || seconds > 3600)
+    throw new Error("seconds must be an integer between 1 and 3600");
+  return seconds;
+}
+
 function requestValues(req, model) {
   const values = Object.assign({}, req || {});
   values.model = model;
+  const seconds = requestedSeconds(values);
+  if (seconds !== undefined) values.seconds = req.seconds === undefined ? req.duration : req.seconds;
+  delete values.duration;
   return values;
 }
 
@@ -127,9 +139,8 @@ export function parseSubmitResponse(ctx, resp) {
 export function extractUsage(ctx) {
   if (ctx.action === "remix") return {};
   const req = ctx.requestBody || {};
-  let seconds = Number(req.seconds || req.duration || 4);
-  if (!Number.isFinite(seconds) || seconds <= 0) seconds = 4;
-  return { seconds: Math.min(seconds, 3600), size: req.size || "720x1280" };
+  const seconds = requestedSeconds(req);
+  return { seconds: seconds === undefined ? 4 : seconds, size: req.size || "720x1280" };
 }
 
 export function extractUsageOnComplete(task, taskResult, body) {

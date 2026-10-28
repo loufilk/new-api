@@ -160,6 +160,12 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			return taskErr
 		}
 	}
+	// A shared-model selection or retry can replace the initial decoder. Check
+	// this provider's final normalized prompt, never the previous candidate's,
+	// before buildSubmitRequest can fetch upstream data or billing can begin.
+	if apiErr := service.CheckTaskRequestSensitiveText(c); apiErr != nil {
+		return service.TaskErrorWrapperLocal(apiErr.Err, string(apiErr.GetErrorCode()), apiErr.StatusCode)
+	}
 	if _, err := a.buildSubmit(c, info); err != nil {
 		// utils.fetch failures in the build hook name the host fetched: the
 		// channel base URL or one of the plugin's allowed hosts, which an

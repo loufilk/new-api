@@ -38,6 +38,8 @@ func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycom
 			types.ErrOptionWithSkipRetry(),
 		)
 	}
+	// A task retry keeps its reservation, but must hold the newly selected
+	// provider's full quote before it can start more billable work.
 	if relayInfo != nil && relayInfo.Billing != nil {
 		if err := relayInfo.Billing.ReserveBeforeSubmit(preConsumedQuota); err != nil {
 			var apiErr *types.NewAPIError

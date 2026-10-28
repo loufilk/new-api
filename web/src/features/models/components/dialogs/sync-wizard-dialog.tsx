@@ -58,6 +58,15 @@ const FIELD_LABELS: Record<MetadataSyncField, string> = {
   endpoints: 'Custom endpoints',
   name_rule: 'Match Type',
   status: 'Model square visibility',
+  context_length: 'Context length',
+  max_output_tokens: 'Max output',
+  knowledge_cutoff: 'Knowledge cutoff',
+  release_date: 'Release date',
+  parameter_count: 'Parameters',
+  input_modalities: 'Input modalities',
+  output_modalities: 'Output modalities',
+  capabilities: 'Capabilities',
+  bonus_eligible: 'Bonus eligibility',
 }
 const REASON_LABELS = {
   create: 'New metadata',
@@ -282,6 +291,9 @@ export function SyncWizardDialog(props: {
       return next
     })
   const impact = (field: MetadataSyncField) => {
+    if (field === 'bonus_eligible') {
+      return t('Controls whether bonus balance can pay for this model.')
+    }
     if (field === 'name_rule') {
       return t(
         'Changes which model names inherit this metadata. Prices are not inherited.'
@@ -299,7 +311,13 @@ export function SyncWizardDialog(props: {
     }
     return ''
   }
-  const display = (field: MetadataSyncField, value: string | number) => {
+  const display = (
+    field: MetadataSyncField,
+    value: string | number | boolean | string[] | null
+  ) => {
+    if (value === null || value === '') return '—'
+    if (typeof value === 'boolean') return value ? t('Enabled') : t('Disabled')
+    if (Array.isArray(value)) return value.join(', ') || '—'
     if (field === 'status') {
       return value === 1 ? t('Shown') : t('Not shown')
     }
@@ -309,7 +327,7 @@ export function SyncWizardDialog(props: {
         String(value)
       )
     }
-    return String(value || '—')
+    return String(value)
   }
 
   return (

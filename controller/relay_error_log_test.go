@@ -88,12 +88,68 @@ func TestProcessChannelErrorUsesSnapshotWithoutLeakingChannelMetadata(t *testing
 	require.NoError(t, err)
 	require.Equal(t, int64(1), total)
 	require.Len(t, logs, 1)
-	assert.Equal(t, channelSnapshot.ChannelId, logs[0].ChannelId)
+	assert.Zero(t, logs[0].ChannelId, "ordinary users must not receive channel identity")
 	assert.Empty(t, logs[0].ChannelName)
+	assert.Empty(t, logs[0].UpstreamRequestId, "ordinary users must not receive upstream request identity")
+	assert.Equal(t, "upstream request failed", logs[0].Content, "stored error diagnostics are projected to the generic category")
 	userOther, err := common.StrToMap(logs[0].Other)
 	require.NoError(t, err)
 	assert.NotContains(t, userOther, "admin_info")
+	assert.Equal(t, "bad_response_status_code", userOther["error_code"], "stable classifications remain visible")
 	for _, key := range []string{"channel_id", "channel_name", "channel_type"} {
 		assert.NotContains(t, userOther, key)
 	}
+}
+
+func TestProcessChannelErrorKeepsDiagnosticsForAdmins(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previousDB, previousLogDB := model.DB, model.LOG_DB
+	previousRedisEnabled := common.RedisEnabled
+	previousMainDatabaseType := common.MainDatabaseType()
+	previousLogDatabaseType := common.LogDatabaseType()
+	previousErrorLogEnabled := constant.ErrorLogEnabled
+
+	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := database.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, database.AutoMigrate(&model.User{}, &model.Log{}, &model.Channel{}))
+	model.DB, model.LOG_DB = database, database
+	common.RedisEnabled = false
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	constant.ErrorLogEnabled = true
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = previousDB, previousLogDB
+		common.RedisEnabled = previousRedisEnabled
+		common.SetDatabaseTypes(previousMainDatabaseType, previousLogDatabaseType)
+		constant.ErrorLogEnabled = previousErrorLogEnabled
+		require.NoError(t, sqlDB.Close())
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Set("id", 8)
+	ctx.Set("username", "admin-owner")
+	ctx.Set("token_name", "admin-token")
+	ctx.Set("token_id", 12)
+	ctx.Set("original_model", "gpt-test")
+	ctx.Set("group", "default")
+	common.SetContextKey(ctx, constant.ContextKeyRequestStartTime, time.Now().Add(-time.Second))
+
+	apiErr := types.NewOpenAIError(errors.New("upstream private-provider detail"), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway)
+
+	processChannelError(ctx, types.ChannelError{ChannelId: 303, ChannelType: 1, ChannelName: "diagnostic-channel"}, apiErr, nil)
+
+	logs, total, err := model.GetAllLogs(model.LogFilter{Type: model.LogTypeError}, 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, logs, 1)
+	assert.Equal(t, 303, logs[0].ChannelId, "administrators keep channel identity")
+	model.FormatAdminLogs(logs)
+	adminOther, err := common.StrToMap(logs[0].Other)
+	require.NoError(t, err)
+	require.Contains(t, adminOther, "admin_info")
+	assert.Contains(t, logs[0].Content, "upstream private-provider detail", "administrators keep stored diagnostics")
 }

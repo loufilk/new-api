@@ -565,6 +565,9 @@ func (r *ResponsesOutput) ArgumentsString() string {
 	if r == nil {
 		return ""
 	}
+	if r.Type == "custom_tool_call" && len(r.Input) > 0 {
+		return ResponsesArgumentsString(r.Input)
+	}
 	return ResponsesArgumentsString(r.Arguments)
 }
 

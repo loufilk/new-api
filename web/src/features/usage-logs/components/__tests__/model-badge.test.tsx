@@ -26,7 +26,7 @@ import {
 } from '@/features/channels/lib/model-categories'
 import { getLobeIconNames } from '@/lib/lobe-icon'
 
-import { ModelBadge } from '../model-badge'
+import { ModelBadge, ResponseModelDetails } from '../model-badge'
 
 const providers = [
   {
@@ -430,3 +430,24 @@ it.each([
     ).not.toBeInTheDocument()
   }
 )
+
+it.each([
+  ['Request Model', 'requested-model'],
+  ['Upstream Model', 'mapped-model'],
+  ['Response Model', 'returned-model'],
+])('copies the full %s from response details', async (label, expected) => {
+  const user = userEvent.setup()
+  const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
+  render(
+    <ResponseModelDetails
+      observation={{
+        requested_model: 'requested-model',
+        upstream_model: 'mapped-model',
+        returned_model: 'returned-model',
+      }}
+    />
+  )
+  await user.click(screen.getByRole('button', { name: `Copy ${label}` }))
+  expect(copy).toHaveBeenCalledWith(expected)
+  expect(await screen.findByRole('button', { name: 'Copied' })).toBeVisible()
+})

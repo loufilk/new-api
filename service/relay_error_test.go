@@ -231,6 +231,25 @@ func TestDecideRelayRetryReasons(t *testing.T) {
 	}
 }
 
+func TestDecideRelayRetryNeverReplaysHandledStreams(t *testing.T) {
+	for _, handled := range []constant.ContextKey{
+		constant.ContextKeyResponsesStreamErrorHandled,
+		constant.ContextKeyStreamErrorHandled,
+	} {
+		for _, code := range []types.ErrorCode{types.ErrorCodeBadResponse, types.ErrorCodeChannelNoAvailableKey} {
+			for _, budget := range []int{0, 3} {
+				t.Run(fmt.Sprintf("%s/%s/%d", handled, code, budget), func(t *testing.T) {
+					c, _ := gin.CreateTestContext(httptest.NewRecorder())
+					common.SetContextKey(c, handled, true)
+					err := types.NewOpenAIError(errors.New("partial stream already failed"), code, http.StatusBadGateway)
+					assert.Equal(t, PolicyDecision{Action: "stop", Reason: "non_retryable_error", Source: "system"}, DecideRelayRetry(c, err, budget))
+					assert.False(t, ShouldRetryRelayError(c, err, budget))
+				})
+			}
+		}
+	}
+}
+
 func TestRequestPolicyEventsReachLogAdminInfo(t *testing.T) {
 	previousAutoDisable := common.AutomaticDisableChannelEnabled
 	common.AutomaticDisableChannelEnabled = true

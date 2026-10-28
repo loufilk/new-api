@@ -1,12 +1,14 @@
 package service
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/privacy"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -21,6 +23,22 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	if err == nil {
 		return PolicyDecision{Action: "stop", Reason: "request_completed", Source: "system"}
 	}
+	// Request lifetime is a hard stop, including errors with channel precedence.
+	// Never consume another account's quota for an abandoned downstream request.
+	if stopped := RelayRequestCancellation(c); stopped != nil {
+		return PolicyDecision{Action: "stop", Reason: string(stopped.GetErrorCode()), Source: "client"}
+	}
+	if err.GetErrorType() == types.ErrorTypeNewAPIError && err.GetErrorCode() == ClientGoneErrorCode {
+		return PolicyDecision{Action: "stop", Reason: "client_gone", Source: "client"}
+	}
+	// Once an SSE failure was written, another upstream attempt would splice a
+	// second response into the existing stream and can charge the request twice.
+	// Keep this guard in the shared decision entry point, ahead of channel-error
+	// retries (which otherwise bypass the ordinary retry budget).
+	if c != nil && (common.GetContextKeyBool(c, constant.ContextKeyResponsesStreamErrorHandled) ||
+		common.GetContextKeyBool(c, constant.ContextKeyStreamErrorHandled)) {
+		return PolicyDecision{Action: "stop", Reason: "non_retryable_error", Source: "system"}
+	}
 	if ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		source := RequestPolicy(c).SessionModeSource
 		if source == "" {
@@ -31,11 +49,11 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	if GetChannelConstraints(c).SuppressesRetry() {
 		return PolicyDecision{Action: "stop", Reason: "pinned_channel", Source: "channel_constraint"}
 	}
-	if types.IsChannelError(err) {
-		return PolicyDecision{Action: "retry", Reason: "channel_error", Source: "system"}
-	}
 	if types.IsSkipRetryError(err) {
 		return PolicyDecision{Action: "stop", Reason: "non_retryable_error", Source: "system"}
+	}
+	if types.IsChannelError(err) {
+		return PolicyDecision{Action: "retry", Reason: "channel_error", Source: "system"}
 	}
 	if retryTimes <= 0 {
 		return PolicyDecision{Action: "stop", Reason: "attempt_budget_exhausted", Source: "global"}
@@ -65,15 +83,21 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		return
 	}
 	upstreamURLs := common.UpstreamAddresses(c)
-	logger.LogError(c, common.LogText("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.MaskSensitiveErrorWithStatusCode(upstreamURLs...))))
-	if ShouldDisableChannel(err) && channelError.AutoBan {
+	requestStopped := RelayRequestCancellation(c) != nil || err.GetErrorType() == types.ErrorTypeNewAPIError && err.GetErrorCode() == ClientGoneErrorCode
+	if requestStopped {
+		logger.LogInfo(c, fmt.Sprintf("relay request stopped (channel #%d): %s", channelError.ChannelId, common.LocalLogPreview(err.MaskSensitiveErrorWithStatusCode(upstreamURLs...))))
+	} else {
+		logger.LogError(c, common.LogText("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.MaskSensitiveErrorWithStatusCode(upstreamURLs...))))
+	}
+	if !requestStopped && ShouldDisableChannel(err) && channelError.AutoBan {
 		reason := err.MaskSensitiveErrorWithStatusCode(upstreamURLs...)
 		gopool.Go(func() {
 			DisableChannel(channelError, reason)
 		})
 	}
 
-	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
+	localClientGone := err.GetErrorType() == types.ErrorTypeNewAPIError && err.GetErrorCode() == ClientGoneErrorCode
+	if constant.ErrorLogEnabled && !localClientGone && types.IsRecordErrorLog(err) {
 		userId := c.GetInt("id")
 		tokenName := c.GetString("token_name")
 		modelName := c.GetString("original_model")
@@ -84,7 +108,15 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 			other.SetPublic("request_path", c.Request.URL.Path)
 		}
 		other.SetPublic("error_type", err.GetErrorType())
-		other.SetPublic("error_code", err.GetErrorCode())
+		if code := err.GetErrorCode(); code != "" {
+			if privacy.IsSafeErrorCode(string(code)) {
+				other.SetPublic("error_code", code)
+			} else {
+				// Provider-supplied codes can embed internal identities and are
+				// only ever exposed to administrators.
+				other.SetAdmin("error_code", code)
+			}
+		}
 		other.SetPublic("status_code", err.StatusCode)
 		AppendRelayLogAdminInfo(c, relayInfo, other)
 		AppendResponseModelLogInfo(relayInfo, other)

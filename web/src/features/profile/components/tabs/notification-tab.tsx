@@ -53,6 +53,15 @@ const NOTIFICATION_ICONS: Record<NotifyType, typeof Mail> = {
   gotify: Server,
 }
 
+// The shared display conversion can overflow after multiplying by quota units.
+// Keep invalid drafts local instead of sending Infinity/null or losing precision.
+function parseReminderThresholdInput(value: string): number | undefined {
+  const amount = Number(value.trim() || 0)
+  if (!Number.isFinite(amount) || amount < 0) return undefined
+  const quota = parseQuotaFromDollars(amount)
+  return Number.isSafeInteger(quota) && quota >= 0 ? quota : undefined
+}
+
 // ============================================================================
 // Settings Tab Component
 // ============================================================================
@@ -78,6 +87,12 @@ export function NotificationTab({
   const [loading, setLoading] = useState(false)
   const [settings, setSettings] = useState(() => normalizeUserSettings())
   const [thresholdInput, setThresholdInput] = useState('')
+  const thresholdInvalid =
+    parseReminderThresholdInput(thresholdInput) === undefined ||
+    // Preserve valid legacy float64 thresholds on unrelated/untouched saves.
+    !Number.isFinite(settings.quota_warning_threshold) ||
+    settings.quota_warning_threshold < 0 ||
+    settings.quota_warning_threshold > Number.MAX_SAFE_INTEGER
 
   // Update form field helper
   const updateField = useCallback(
@@ -104,6 +119,7 @@ export function NotificationTab({
   }, [profile])
 
   const handleSave = async () => {
+    if (thresholdInvalid) return
     try {
       setLoading(true)
       const { record_ip_log: _recordIpLog, ...notificationSettings } = settings
@@ -148,7 +164,12 @@ export function NotificationTab({
               onValueChange={(value) => {
                 const nextValue = value.find((item) => item !== notifyType)
                 if (nextValue) {
-                  updateField('notify_type', nextValue as NotifyType)
+                  updateField(
+                    'notify_type',
+                    NOTIFICATION_METHODS.find(
+                      (method) => method.value === nextValue
+                    )?.value ?? 'email'
+                  )
                 }
               }}
               aria-label={t('Notification Method')}
@@ -348,15 +369,17 @@ export function NotificationTab({
                         min={0}
                         step={tokensOnly ? 1 : 0.000001}
                         value={thresholdInput}
+                        aria-invalid={thresholdInvalid}
+                        aria-describedby={
+                          thresholdInvalid ? 'threshold-error' : undefined
+                        }
                         onChange={(e) => {
                           const value = e.target.value
                           setThresholdInput(value)
-                          updateField(
-                            'quota_warning_threshold',
-                            value.trim() === ''
-                              ? 0
-                              : parseQuotaFromDollars(Number(value))
-                          )
+                          const quota = parseReminderThresholdInput(value)
+                          if (quota !== undefined) {
+                            updateField('quota_warning_threshold', quota)
+                          }
                         }}
                         placeholder={String(
                           quotaUnitsToDollars(quotaRemindThreshold)
@@ -438,6 +461,15 @@ export function NotificationTab({
         </div>
       </div>
 
+      {thresholdInvalid && (
+        <p
+          id='threshold-error'
+          role='alert'
+          className='text-destructive text-sm'
+        >
+          {t('Please enter a valid number')}
+        </p>
+      )}
       {/* Save Button */}
       <div className='flex justify-end'>
         <Button onClick={handleSave} disabled={loading}>

@@ -889,3 +889,39 @@ test.each(['table', 'card'] as const)(
     )
   }
 )
+
+test.each([
+  { role: 1, write: false },
+  { role: 10, write: false },
+])(
+  'role $role without channel-write permission cannot start priority changes',
+  async ({ role, write }) => {
+    useAuthStore.getState().auth.setUser({
+      id: 1,
+      username: 'limited',
+      role,
+      permissions: { admin_permissions: { channel: { write } } },
+    })
+    await mount('table', false)
+    expect(screen.getByRole('button', { name: 'Drag mode' })).toBeDisabled()
+    expect(
+      screen.queryByRole('button', { name: 'Reorder channel 3' })
+    ).not.toBeInTheDocument()
+    expect(api.get).not.toHaveBeenCalledWith('/api/channel/priority/order')
+    expect(requests).toEqual([])
+  }
+)
+
+test('an admin explicitly granted channel-write permission can enter reorder mode without saving', async () => {
+  useAuthStore.getState().auth.setUser({
+    id: 1,
+    username: 'channel-editor',
+    role: 10,
+    permissions: { admin_permissions: { channel: { write: true } } },
+  })
+  await mount('table')
+  expect(
+    screen.getByRole('button', { name: 'Reorder channel 3' })
+  ).toBeEnabled()
+  expect(requests).toEqual([])
+})

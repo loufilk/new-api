@@ -76,6 +76,32 @@ func TestCreemWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	require.False(t, isCreemWebhookEnabled())
 }
 
+func TestEpayWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
+	confirmPaymentComplianceForTest(t)
+	originalPayAddress := operation_setting.PayAddress
+	originalEpayID := operation_setting.EpayId
+	originalEpayKey := operation_setting.EpayKey
+	originalPayMethods := operation_setting.PayMethods
+	t.Cleanup(func() {
+		operation_setting.PayAddress = originalPayAddress
+		operation_setting.EpayId = originalEpayID
+		operation_setting.EpayKey = originalEpayKey
+		operation_setting.PayMethods = originalPayMethods
+	})
+
+	operation_setting.PayAddress = "https://pay.example.com"
+	operation_setting.EpayId = "epay_id"
+	operation_setting.EpayKey = ""
+	operation_setting.PayMethods = []map[string]string{{"type": "alipay"}}
+	require.False(t, isEpayWebhookEnabled())
+
+	operation_setting.EpayKey = "epay_key"
+	require.True(t, isEpayWebhookEnabled())
+
+	operation_setting.PayMethods = nil
+	require.False(t, isEpayWebhookEnabled())
+}
+
 func TestWaffoWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	confirmPaymentComplianceForTest(t)
 	originalEnabled := setting.WaffoEnabled
@@ -126,21 +152,32 @@ func TestWaffoPancakeWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	originalMerchantID := setting.WaffoPancakeMerchantID
 	originalPrivateKey := setting.WaffoPancakePrivateKey
 	originalProductID := setting.WaffoPancakeProductID
+	originalStoreID := setting.WaffoPancakeStoreID
+	originalEnvironment := setting.WaffoPancakeEnvironment
 	t.Cleanup(func() {
 		setting.WaffoPancakeMerchantID = originalMerchantID
 		setting.WaffoPancakePrivateKey = originalPrivateKey
 		setting.WaffoPancakeProductID = originalProductID
+		setting.WaffoPancakeStoreID = originalStoreID
+		setting.WaffoPancakeEnvironment = originalEnvironment
 	})
 
-	// Presence of all three credentials enables the gateway. Webhook public
-	// keys are bundled in the SDK and there is no separate Enabled toggle —
-	// clear any of the three fields to disable.
 	setting.WaffoPancakeMerchantID = ""
 	setting.WaffoPancakePrivateKey = "private"
 	setting.WaffoPancakeProductID = "product"
+	setting.WaffoPancakeStoreID = ""
+	setting.WaffoPancakeEnvironment = setting.WaffoPancakeEnvironmentProd
 	require.False(t, isWaffoPancakeWebhookEnabled())
 
 	setting.WaffoPancakeMerchantID = "merchant"
+	require.False(t, isWaffoPancakeWebhookEnabled(), "StoreID is part of the trusted webhook binding")
+
+	setting.WaffoPancakeStoreID = "store"
+	require.True(t, isWaffoPancakeWebhookEnabled())
+
+	setting.WaffoPancakeEnvironment = "invalid"
+	require.False(t, isWaffoPancakeWebhookEnabled(), "invalid trusted environment must fail closed")
+	setting.WaffoPancakeEnvironment = setting.WaffoPancakeEnvironmentTest
 	require.True(t, isWaffoPancakeWebhookEnabled())
 
 	setting.WaffoPancakeProductID = ""
@@ -149,32 +186,6 @@ func TestWaffoPancakeWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	setting.WaffoPancakeProductID = "product"
 	setting.WaffoPancakePrivateKey = ""
 	require.False(t, isWaffoPancakeWebhookEnabled())
-}
-
-func TestEpayWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
-	confirmPaymentComplianceForTest(t)
-	originalPayAddress := operation_setting.PayAddress
-	originalEpayID := operation_setting.EpayId
-	originalEpayKey := operation_setting.EpayKey
-	originalPayMethods := operation_setting.PayMethods
-	t.Cleanup(func() {
-		operation_setting.PayAddress = originalPayAddress
-		operation_setting.EpayId = originalEpayID
-		operation_setting.EpayKey = originalEpayKey
-		operation_setting.PayMethods = originalPayMethods
-	})
-
-	operation_setting.PayAddress = "https://pay.example.com"
-	operation_setting.EpayId = "epay_id"
-	operation_setting.EpayKey = ""
-	operation_setting.PayMethods = []map[string]string{{"type": "alipay"}}
-	require.False(t, isEpayWebhookEnabled())
-
-	operation_setting.EpayKey = "epay_key"
-	require.True(t, isEpayWebhookEnabled())
-
-	operation_setting.PayMethods = nil
-	require.False(t, isEpayWebhookEnabled())
 }
 
 func TestEpayCallbacksVerifyBeforeSettlement(t *testing.T) {

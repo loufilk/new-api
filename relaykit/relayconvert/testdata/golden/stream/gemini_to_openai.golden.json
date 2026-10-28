@@ -4,7 +4,7 @@
       "id": "stream_fixed",
       "object": "chat.completion.chunk",
       "created": 0,
-      "model": "upstream-model",
+      "model": "client-model",
       "system_fingerprint": null,
       "choices": [
         {
@@ -43,7 +43,7 @@
       "id": "stream_fixed",
       "object": "chat.completion.chunk",
       "created": 0,
-      "model": "upstream-model",
+      "model": "client-model",
       "system_fingerprint": null,
       "choices": [
         {
@@ -97,7 +97,7 @@
       "id": "stream_fixed",
       "object": "chat.completion.chunk",
       "created": 0,
-      "model": "upstream-model",
+      "model": "client-model",
       "system_fingerprint": null,
       "choices": [
         {

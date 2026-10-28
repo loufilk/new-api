@@ -37,6 +37,7 @@ func TestThinkingSuffixUpstreamFields(t *testing.T) {
 		{model: "deepseek-v4-pro-none", upstream: "deepseek-v4-pro", thinking: "disabled"},
 		{model: "deepseek-v4-pro-low", upstream: "deepseek-v4-pro", thinking: "enabled", effort: "low"},
 		{model: "deepseek-v4-pro-max", upstream: "deepseek-v4-pro-max"},
+		{model: "deepseek-v4-chat-max", upstream: "deepseek-v4-chat", thinking: "enabled", effort: "max"},
 	}
 	newInfo := func(model string) *relaycommon.RelayInfo {
 		return &relaycommon.RelayInfo{OriginModelName: model, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: model}}
@@ -44,20 +45,26 @@ func TestThinkingSuffixUpstreamFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
 			chat := &dto.GeneralOpenAIRequest{Model: tt.model}
-			converted, err := (&Adaptor{}).ConvertOpenAIRequest(nil, newInfo(tt.model), chat)
+			chatInfo := newInfo(tt.model)
+			converted, err := (&Adaptor{}).ConvertOpenAIRequest(nil, chatInfo, chat)
 			require.NoError(t, err)
 			chat = converted.(*dto.GeneralOpenAIRequest)
 			assert.Equal(t, tt.upstream, chat.Model)
+			assert.Equal(t, tt.upstream, chatInfo.UpstreamModelName)
 			assert.Equal(t, tt.effort, chat.ReasoningEffort)
 
 			claude := &dto.ClaudeRequest{Model: tt.model}
-			require.NoError(t, applyDeepSeekV4ClaudeThinkingSuffix(newInfo(tt.model), claude))
+			claudeInfo := newInfo(tt.model)
+			require.NoError(t, applyDeepSeekV4ClaudeThinkingSuffix(claudeInfo, claude))
 			assert.Equal(t, tt.upstream, claude.Model)
+			assert.Equal(t, tt.upstream, claudeInfo.UpstreamModelName)
 
-			converted, err = (&Adaptor{}).ConvertOpenAIResponsesRequest(nil, newInfo(tt.model), dto.OpenAIResponsesRequest{Model: tt.model})
+			responsesInfo := newInfo(tt.model)
+			converted, err = (&Adaptor{}).ConvertOpenAIResponsesRequest(nil, responsesInfo, dto.OpenAIResponsesRequest{Model: tt.model})
 			require.NoError(t, err)
 			responses := converted.(dto.OpenAIResponsesRequest)
 			assert.Equal(t, tt.upstream, responses.Model)
+			assert.Equal(t, tt.upstream, responsesInfo.UpstreamModelName)
 
 			if tt.thinking == "" {
 				assert.Empty(t, chat.THINKING)
@@ -100,6 +107,14 @@ func TestServerSideSearchBillingKeys(t *testing.T) {
 		assert.Equal(t, SearchToolPriceKey, info.WebSearchBillingKey, tc.format)
 		assert.Equal(t, FetchToolPriceKey, info.WebFetchBillingKey, tc.format)
 		assert.Equal(t, tc.mode == constant.RelayModeResponses, info.VendorToolUsage != nil, tc.format)
+		info.RelayMode = constant.RelayModeResponses
+		info.ChannelBaseUrl = "https://provider.example"
+		_, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(nil, info, dto.OpenAIResponsesRequest{Model: "deepseek-v4-chat"})
+		require.NoError(t, err)
+		require.NotNil(t, info.VendorToolUsage, "conversion after Init must install the Responses billing reader")
+		url, err := (&Adaptor{}).GetRequestURL(info)
+		require.NoError(t, err)
+		assert.Equal(t, "https://provider.example/responses", url, "the upstream protocol takes precedence over the original client format")
 	}
 
 	const output = `[

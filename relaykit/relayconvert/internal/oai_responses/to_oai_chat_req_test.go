@@ -3,15 +3,190 @@ package oairesponses
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/convdiag"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+func TestResponsesReasoningReplayPlaintextAndSummary(t *testing.T) {
+	for _, tc := range []struct {
+		name, item, want string
+		summary          bool
+	}{
+		{"plaintext takes precedence", `{"content":[{"type":"reasoning_text","text":"full reasoning"}],"summary":[{"type":"summary_text","text":"summary"}]}`, "full reasoning", false},
+		{"legacy summary", `{"content":null,"summary":[{"type":"summary_text","text":"first"},{"type":"summary_text","text":"second"}]}`, "first\n\nsecond", true},
+		{"empty content falls back to summary", `{"content":[{"type":"reasoning_text","text":""}],"summary":[{"type":"summary_text","text":"fallback"}]}`, "fallback", true},
+		{"empty placeholder", `{"encrypted_content":"","summary":[]}`, "", false},
+		{"null placeholder", `{"encrypted_content":null,"content":null,"summary":null}`, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var item map[string]any
+			require.NoError(t, kitutil.Unmarshal([]byte(tc.item), &item))
+			item["type"] = "reasoning"
+			input := mustRawMessage(t, []any{map[string]any{"role": "user", "content": "hello"}, item, map[string]any{"role": "assistant", "content": "answer"}})
+			ctx, diagnostics := convdiag.WithCollector(context.Background())
+			got, err := ResponsesRequestToChatCompletionsRequestWithOptions(ctx, &dto.OpenAIResponsesRequest{Model: "test", Input: input}, &convmeta.Options{ReplayResponsesReasoning: true})
+			require.NoError(t, err)
+			require.Len(t, got.Messages, 2)
+			assert.Equal(t, "assistant", got.Messages[1].Role)
+			assert.Equal(t, "answer", got.Messages[1].Content)
+			assert.Equal(t, tc.want, got.Messages[1].GetReasoningContent())
+			if tc.summary {
+				require.Len(t, diagnostics.Diagnostics(), 1)
+				assert.Equal(t, "reasoning_summary_replayed", diagnostics.Diagnostics()[0].Code)
+				assert.NotContains(t, diagnostics.Diagnostics()[0].Message, tc.want)
+			} else {
+				assert.Empty(t, diagnostics.Diagnostics())
+			}
+		})
+	}
+}
+
+func TestResponsesReasoningReplayRejectsMalformedParts(t *testing.T) {
+	for _, item := range []string{
+		`{"type":"reasoning","content":"private-value"}`,
+		`{"type":"reasoning","content":[null]}`,
+		`{"type":"reasoning","content":[{"type":"output_text","text":"private-value"}]}`,
+		`{"type":"reasoning","summary":[{"type":"summary_text","text":123}]}`,
+		`{"type":"reasoning","encrypted_content":{"private-value":true}}`,
+		`{"type":"reasoning","encrypted_content":"private-value","content":[{"type":"reasoning_text","text":"plaintext cannot replace encrypted state"}]}`,
+		`{"role":"assistant","content":{"text":"private-value"}}`,
+	} {
+		t.Run(item, func(t *testing.T) {
+			_, err := ResponsesRequestToChatCompletionsRequestWithOptions(context.Background(), &dto.OpenAIResponsesRequest{Model: "test", Input: []byte("[" + item + "]")}, &convmeta.Options{ReplayResponsesReasoning: true})
+			var apiErr *types.NewAPIError
+			require.ErrorAs(t, err, &apiErr)
+			assert.Equal(t, 400, apiErr.StatusCode)
+			assert.True(t, types.IsSkipRetryError(apiErr))
+			assert.NotContains(t, err.Error(), "private-value")
+		})
+	}
+}
+
+func TestResponsesReasoningReplayKeepsAssistantPartsAndToolBatch(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequestWithOptions(context.Background(), &dto.OpenAIResponsesRequest{
+		Model: "test",
+		Input: []byte(`[
+			{"role":"user","content":"inspect"},
+			{"type":"reasoning","content":[{"type":"reasoning_text","text":"plan"}]},
+			{"role":"assistant","content":"first"},
+			{"type":"function_call","call_id":"a","name":"read","arguments":"{}"},
+			{"role":"assistant","content":[{"type":"output_text","text":"second"},{"type":"refusal","refusal":"unavailable"}]},
+			{"role":"assistant","content":"third"},
+			{"role":"assistant","content":[{"type":"refusal","refusal":"still unavailable"}]},
+			{"type":"function_call","call_id":"b","name":"read","arguments":"{}"},
+			{"type":"function_call_output","call_id":"a","output":[{"type":"input_image","image_url":"https://example.com/a.png"}]},
+			{"type":"reasoning","summary":[]},
+			{"type":"function_call_output","call_id":"b","output":"second result"},
+			{"type":"reasoning","content":[{"type":"reasoning_text","text":"new plan"}]},
+			{"role":"assistant","content":"done"},
+			{"role":"user","content":"next"}
+		]`),
+	}, &convmeta.Options{ReplayResponsesReasoning: true})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 7)
+	assert.Equal(t, "plan", got.Messages[1].GetReasoningContent())
+	assert.Len(t, got.Messages[1].ParseToolCalls(), 2)
+	encoded, err := kitutil.Marshal(got)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"type":"text","text":"first"},{"type":"text","text":"second"},{"type":"refusal","refusal":"unavailable"},{"type":"text","text":"third"},{"type":"refusal","refusal":"still unavailable"}]`, gjson.GetBytes(encoded, "messages.1.content").Raw)
+	assert.Equal(t, "a", got.Messages[2].ToolCallId)
+	assert.Equal(t, "b", got.Messages[3].ToolCallId)
+	assert.Equal(t, "user", got.Messages[4].Role)
+	assert.Equal(t, "https://example.com/a.png", gjson.GetBytes(encoded, "messages.4.content.0.image_url.url").String())
+	assert.Equal(t, "new plan", got.Messages[5].GetReasoningContent())
+	assert.Equal(t, "done", got.Messages[5].Content)
+	assert.Empty(t, got.Messages[6].GetReasoningContent())
+}
+
+func TestResponsesReasoningReplayRejectsReasoningBetweenParallelResults(t *testing.T) {
+	_, err := ResponsesRequestToChatCompletionsRequestWithOptions(context.Background(), &dto.OpenAIResponsesRequest{
+		Model: "test",
+		Input: []byte(`[
+			{"role":"user","content":"inspect"},
+			{"type":"function_call","call_id":"a","name":"read","arguments":"{}"},
+			{"type":"function_call","call_id":"b","name":"read","arguments":"{}"},
+			{"type":"function_call_output","call_id":"a","output":"first"},
+			{"type":"reasoning","content":[{"type":"reasoning_text","text":"private partial result analysis"}]},
+			{"type":"function_call_output","call_id":"b","output":"second"}
+		]`),
+	}, &convmeta.Options{ReplayResponsesReasoning: true})
+	var apiErr *types.NewAPIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, 400, apiErr.StatusCode)
+	assert.True(t, types.IsSkipRetryError(apiErr))
+	assert.NotContains(t, err.Error(), "private partial result analysis")
+}
+
+func TestResponsesReasoningReplayPreservesParallelResultOrder(t *testing.T) {
+	for _, order := range [][2]string{{"a", "b"}, {"b", "a"}} {
+		t.Run(order[0]+" then "+order[1], func(t *testing.T) {
+			got, err := ResponsesRequestToChatCompletionsRequestWithOptions(context.Background(), &dto.OpenAIResponsesRequest{
+				Model: "test",
+				Input: []byte(fmt.Sprintf(`[
+					{"role":"user","content":"inspect"},
+					{"type":"reasoning","content":[{"type":"reasoning_text","text":"plan"}]},
+					{"type":"function_call","call_id":"a","name":"read","arguments":"{}"},
+					{"type":"function_call","call_id":"b","name":"read","arguments":"{}"},
+					{"type":"function_call_output","call_id":%q,"output":"first received result"},
+					{"type":"reasoning","content":[],"summary":[]},
+					{"type":"function_call_output","call_id":%q,"output":"second received result"},
+					{"type":"reasoning","content":[{"type":"reasoning_text","text":"both results inspected"}]},
+					{"role":"assistant","content":"done"}
+				]`, order[0], order[1])),
+			}, &convmeta.Options{ReplayResponsesReasoning: true})
+			require.NoError(t, err)
+			require.Len(t, got.Messages, 5)
+			assert.Equal(t, "plan", got.Messages[1].GetReasoningContent())
+			calls := got.Messages[1].ParseToolCalls()
+			require.Len(t, calls, 2)
+			assert.Equal(t, "a", calls[0].ID)
+			assert.Equal(t, "b", calls[1].ID)
+			assert.Equal(t, dto.Message{Role: "tool", ToolCallId: order[0], Content: "first received result"}, got.Messages[2])
+			assert.Equal(t, dto.Message{Role: "tool", ToolCallId: order[1], Content: "second received result"}, got.Messages[3])
+			assert.Equal(t, "both results inspected", got.Messages[4].GetReasoningContent())
+			assert.Equal(t, "done", got.Messages[4].Content)
+		})
+	}
+}
+
+func TestResponsesReasoningHistoryDoesNotCreateUserMessages(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequest(context.Background(), &dto.OpenAIResponsesRequest{
+		Model: "test-model",
+		Input: json.RawMessage(`[
+			{"role":"user","content":"check both files"},
+			{"type":"reasoning","id":"rs_1","encrypted_content":"opaque","summary":[]},
+			{"type":"function_call","call_id":"a","name":"read_file","arguments":"{}"},
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"checking"}]},
+			{"type":"function_call","call_id":"b","name":"read_file","arguments":"{}"},
+			{"type":"function_call_output","call_id":"a","output":"first"},
+			{"type":"function_call_output","call_id":"b","output":"second"},
+			{"type":"reasoning","summary":[]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]},
+			{"role":"user","content":"continue"}
+		]`),
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 6)
+	assert.Equal(t, dto.Message{Role: "user", Content: "check both files"}, got.Messages[0])
+	assert.Equal(t, "assistant", got.Messages[1].Role)
+	require.Len(t, got.Messages[1].ParseToolCalls(), 2)
+	assert.Equal(t, "a", got.Messages[1].ParseToolCalls()[0].ID)
+	assert.Equal(t, "b", got.Messages[1].ParseToolCalls()[1].ID)
+	assert.Equal(t, dto.Message{Role: "tool", ToolCallId: "a", Content: "first"}, got.Messages[2])
+	assert.Equal(t, dto.Message{Role: "tool", ToolCallId: "b", Content: "second"}, got.Messages[3])
+	assert.Equal(t, dto.Message{Role: "assistant", Content: "done"}, got.Messages[4])
+	assert.Equal(t, dto.Message{Role: "user", Content: "continue"}, got.Messages[5])
+}
 
 func TestResponsesRequestToChatCompletionsRequestInstructionsAndScalarInput(t *testing.T) {
 	stream := true
@@ -98,6 +273,7 @@ func TestResponsesRequestToChatCompletionsRequestMultimodalInput(t *testing.T) {
 				"content": []map[string]any{
 					{"type": "input_text", "text": "look"},
 					{"type": "input_image", "image_url": "https://example.test/a.png", "detail": "low"},
+					{"type": "input_image", "image_url": map[string]any{"url": "https://example.test/b.png", "detail": "high"}},
 					{"type": "input_file", "file_id": "file_1", "filename": "a.txt"},
 					{"type": "input_audio", "input_audio": map[string]any{"data": "abc", "format": "wav"}},
 					{"type": "input_video", "video_url": map[string]any{"url": "https://example.test/v.mp4"}},
@@ -110,17 +286,28 @@ func TestResponsesRequestToChatCompletionsRequestMultimodalInput(t *testing.T) {
 	require.Len(t, got.Messages, 1)
 	assert.Equal(t, "user", got.Messages[0].Role)
 	parts := got.Messages[0].ParseContent()
-	require.Len(t, parts, 5)
+	require.Len(t, parts, 6)
 	assert.Equal(t, dto.ContentTypeText, parts[0].Type)
 	assert.Equal(t, "look", parts[0].Text)
 	assert.Equal(t, dto.ContentTypeImageURL, parts[1].Type)
 	assert.Equal(t, "https://example.test/a.png", parts[1].GetImageMedia().Url)
-	assert.Equal(t, dto.ContentTypeFile, parts[2].Type)
-	assert.Equal(t, "file_1", parts[2].GetFile().FileId)
-	assert.Equal(t, dto.ContentTypeInputAudio, parts[3].Type)
-	assert.Equal(t, "wav", parts[3].GetInputAudio().Format)
-	assert.Equal(t, dto.ContentTypeVideoUrl, parts[4].Type)
-	assert.Equal(t, "https://example.test/v.mp4", parts[4].GetVideoUrl().Url)
+	assert.Equal(t, dto.ContentTypeImageURL, parts[2].Type)
+	assert.Equal(t, "https://example.test/b.png", parts[2].GetImageMedia().Url)
+	assert.Equal(t, dto.ContentTypeFile, parts[3].Type)
+	assert.Equal(t, "file_1", parts[3].GetFile().FileId)
+	assert.Equal(t, dto.ContentTypeInputAudio, parts[4].Type)
+	assert.Equal(t, "wav", parts[4].GetInputAudio().Format)
+	assert.Equal(t, dto.ContentTypeVideoUrl, parts[5].Type)
+	assert.Equal(t, "https://example.test/v.mp4", parts[5].GetVideoUrl().Url)
+
+	// The Responses API string form must leave as the Chat Completions object
+	// form: strict upstreams reject a bare image_url string inside content.
+	encoded, err := kitutil.Marshal(got)
+	require.NoError(t, err)
+	assert.Equal(t, "https://example.test/a.png", gjson.GetBytes(encoded, "messages.0.content.1.image_url.url").String())
+	assert.Equal(t, "low", gjson.GetBytes(encoded, "messages.0.content.1.image_url.detail").String())
+	assert.Equal(t, "https://example.test/b.png", gjson.GetBytes(encoded, "messages.0.content.2.image_url.url").String())
+	assert.Equal(t, "high", gjson.GetBytes(encoded, "messages.0.content.2.image_url.detail").String())
 }
 
 func TestResponsesRequestToChatCompletionsRequestAssistantTextAndFunctionCallCoexist(t *testing.T) {

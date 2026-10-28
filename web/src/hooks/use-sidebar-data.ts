@@ -23,10 +23,11 @@ import {
   CreditCard,
   FileText,
   FlaskConical,
+  Image as ImageIcon,
   Key,
   LayoutDashboard,
+  LifeBuoy,
   ListTodo,
-  MessageSquare,
   PlugZap,
   Radio,
   ServerCog,
@@ -58,13 +59,18 @@ export function useSidebarData(): SidebarData {
         title: t('Chat'),
         items: [
           {
-            title: t('Playground'),
+            title: t('Text Generation'),
             url: '/playground',
             icon: FlaskConical,
           },
           {
-            title: t('Chat'),
-            icon: MessageSquare,
+            title: t('Image Generation'),
+            url: '/image',
+            icon: ImageIcon,
+          },
+          {
+            title: t('Third-party'),
+            icon: PlugZap,
             type: 'chat-presets',
           },
         ],
@@ -117,6 +123,11 @@ export function useSidebarData(): SidebarData {
             icon: Wallet,
           },
           {
+            title: t('Support Center'),
+            url: '/support',
+            icon: LifeBuoy,
+          },
+          {
             title: t('Profile'),
             url: '/profile',
             icon: User,
@@ -139,7 +150,7 @@ export function useSidebarData(): SidebarData {
           },
           {
             title: t('Models'),
-            url: '/models/metadata',
+            url: '/model-management/metadata',
             icon: Box,
           },
           {

@@ -17,7 +17,6 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -125,6 +124,30 @@ func TryUserAuth() func(c *gin.Context) {
 				setAccessTokenContext(c, lookup)
 			}
 		}
+		c.Next()
+	}
+}
+
+// SessionAuth accepts only the live dashboard refresh cookie. It deliberately
+// does not accept PATs or caller-supplied bearer tokens, so the standalone
+// same-site playground is bound to the user's browser login session.
+func SessionAuth() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		rawRefreshToken, err := c.Cookie(service.RefreshCookieName)
+		if err != nil || strings.TrimSpace(rawRefreshToken) == "" {
+			writeDashboardAuthError(c, service.ErrRefreshTokenInvalid)
+			return
+		}
+		identity, user, err := service.ValidateRefreshLoginSession(rawRefreshToken)
+		if err != nil {
+			writeDashboardAuthError(c, err)
+			return
+		}
+		if user.Status != common.UserStatusEnabled || user.Role < common.RoleCommonUser || !validUserInfo(user.Username, user.Role) {
+			writeDashboardAuthError(c, service.ErrLoginSessionRevoked)
+			return
+		}
+		setDashboardAuthContext(c, user, identity, false)
 		c.Next()
 	}
 }
@@ -399,7 +422,7 @@ func writeDashboardAuthError(c *gin.Context, err error) {
 		abortWithWebMessage(c, http.StatusUnauthorized, "AUTH_SESSION_REVOKED", common.NewMessage("Unauthorized, not logged in and no access token provided"))
 		return
 	}
-	if errors.Is(err, service.ErrAuthTokenInvalid) {
+	if errors.Is(err, service.ErrAuthTokenInvalid) || errors.Is(err, service.ErrRefreshTokenInvalid) {
 		abortWithWebMessage(c, http.StatusUnauthorized, "AUTH_UNAUTHORIZED", common.NewMessage("Unauthorized, invalid access token"))
 		return
 	}
@@ -621,19 +644,15 @@ func TokenAuth() func(c *gin.Context) {
 
 		userGroup := userCache.Group
 		tokenGroup := token.Group
+		if err := service.ValidateTokenGroup(userGroup, tokenGroup); err != nil {
+			message := i18n.MsgAuthTokenGroupForbidden
+			if errors.Is(err, service.ErrTokenGroupDeprecated) {
+				message = i18n.MsgAuthTokenGroupDeprecated
+			}
+			abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, message, map[string]any{"Group": tokenGroup}))
+			return
+		}
 		if tokenGroup != "" {
-			// check common.UserUsableGroups[userGroup]
-			if _, ok := service.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {
-				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgAuthTokenGroupForbidden, map[string]any{"Group": tokenGroup}))
-				return
-			}
-			// check group in common.GroupRatio
-			if !ratio_setting.ContainsGroupRatio(tokenGroup) {
-				if tokenGroup != "auto" {
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgAuthTokenGroupDeprecated, map[string]any{"Group": tokenGroup}))
-					return
-				}
-			}
 			userGroup = tokenGroup
 		}
 		common.SetContextKey(c, constant.ContextKeyUsingGroup, userGroup)

@@ -7,13 +7,13 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// Long-lived cache writes cost a fixed multiple of the short write price.
-const (
-	// https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration
-	ClaudeCacheCreation1hMultiplier = 6 / 3.75
-	// https://developers.openai.com/api/docs/guides/prompt-caching
-	OpenAICacheCreation12hMultiplier = 2
-)
+// ClaudeCacheCreation1hMultiplier is the fixed 1h-to-short-write price multiple.
+// https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration
+const ClaudeCacheCreation1hMultiplier = 6 / 3.75
+
+// OpenAICacheCreation12hMultiplier is the fixed 12h-to-30m write price multiple.
+// https://developers.openai.com/api/docs/guides/prompt-caching
+const OpenAICacheCreation12hMultiplier = 2
 
 type GroupRatioInfo struct {
 	GroupRatio        float64

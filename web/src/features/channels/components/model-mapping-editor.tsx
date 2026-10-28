@@ -161,10 +161,7 @@ export function ModelMappingEditor(props: ModelMappingEditorProps) {
         const mapped = entries.map(([from, to], index) => {
           const toString = String(to)
           const existingIndex = remainingRows.findIndex(
-            (row) =>
-              row.from === from ||
-              (row.from === from && row.to === toString) ||
-              previousRows[index]?.id === row.id
+            (row) => row.from === from || previousRows[index]?.id === row.id
           )
           if (existingIndex >= 0) {
             const [existing] = remainingRows.splice(existingIndex, 1)

@@ -16,14 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
 import { Gauge, HeartPulse, Timer } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { getPerfMetricsSummary } from '@/features/performance-metrics/api'
+import { PerformanceUnavailable } from '@/features/dashboard/components/ui/performance-unavailable'
+import { usePerformanceSummary } from '@/features/dashboard/hooks/use-performance-summary'
 import {
   formatLatency,
   formatThroughput,
@@ -32,32 +32,34 @@ import {
   getSuccessRateTextClass,
 } from '@/features/performance-metrics/lib/format'
 import type { PerfModelSummary } from '@/features/performance-metrics/types'
-import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
-const PERFORMANCE_WINDOW_HOURS = 24
 const TOP_MODEL_LIMIT = 6
 
 export function PerformanceOverview() {
   const { t } = useTranslation()
-  const metricsQuery = useQuery({
-    queryKey: ['perf-metrics-summary', PERFORMANCE_WINDOW_HOURS],
-    queryFn: async () =>
-      requireServerSuccess(
-        await getPerfMetricsSummary(PERFORMANCE_WINDOW_HOURS)
-      ),
-    staleTime: 60 * 1000,
-    retry: false,
-  })
+  const metricsQuery = usePerformanceSummary()
 
   const models = useMemo(
-    () => metricsQuery.data?.data.models ?? [],
+    () => metricsQuery.data?.models ?? [],
     [metricsQuery.data]
   )
-  const summary = metricsQuery.data?.data.summary
+  const summary = metricsQuery.data?.summary
   const topModels = useMemo(() => models.slice(0, TOP_MODEL_LIMIT), [models])
   const loading = metricsQuery.isLoading
   const hasData = models.length > 0
+
+  if (metricsQuery.panelError) {
+    return (
+      <PerformanceUnavailable
+        error={metricsQuery.panelError}
+        retrying={metricsQuery.isFetching}
+        onRetry={() => {
+          void metricsQuery.refetch()
+        }}
+      />
+    )
+  }
 
   if (!loading && !hasData) {
     return (

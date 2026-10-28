@@ -25,13 +25,17 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		return nil
 	}
 
-	if !forceFormat && !thinkToContent {
-		return helper.StringData(c, data)
-	}
-
 	var lastStreamResponse dto.ChatCompletionsStreamResponse
 	if err := common.UnmarshalJsonStr(data, &lastStreamResponse); err != nil {
 		return err
+	}
+	if info != nil && info.OriginModelName != "" {
+		info.ObserveResponseModel(lastStreamResponse.Model)
+		lastStreamResponse.Model = info.OriginModelName
+	}
+
+	if !forceFormat && !thinkToContent {
+		return helper.ObjectData(c, lastStreamResponse)
 	}
 
 	if !thinkToContent {
@@ -83,7 +87,9 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 				response.Choices[j].Delta.Reasoning = nil
 			}
 			info.ThinkingContentInfo.SendLastThinkingContent = true
-			helper.ObjectData(c, response)
+			if err := helper.ObjectData(c, response); err != nil {
+				return err
+			}
 		}
 
 		// Convert reasoning content to regular content if any
@@ -118,20 +124,37 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	var toolCount int
 	var usage = &dto.Usage{}
 	var lastStreamData string
-	var secondLastStreamData string // 保留倒数第二个stream data；部分兼容网关把完整usage放在倒数第二个事件
+	var usageFrame string
 	seenStreamToolCalls := make(map[string]struct{})
 	var streamFunctionCallNames []string
+	var streamFailure *types.NewAPIError
+	formatFailed := false
+	providerRejected := false
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
-		if lastStreamData != "" {
-			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
-				common.SysLog(common.LogText("error handling stream format: %s", err.Error()))
-				sr.Error(err)
-			}
-		}
+		pendingData := lastStreamData
 		if len(data) > 0 {
-			if lastStreamData != "" {
-				secondLastStreamData = lastStreamData
+			var streamResponse struct {
+				Usage *dto.Usage         `json:"usage"`
+				Error *types.OpenAIError `json:"error"`
+			}
+			if err := common.UnmarshalJsonStr(data, &streamResponse); err == nil {
+				if streamResponse.Usage != nil {
+					// Usage frames are cumulative snapshots, not increments. Retain
+					// them before a write fails or a later frame omits measurement.
+					applyUsagePostProcessing(info, streamResponse.Usage, common.StringToByteSlice(data))
+					usage = dto.MergeUsageNonZero(usage, streamResponse.Usage)
+					if dto.HasOpenAIUsageTokens(usage) {
+						containStreamUsage = true
+						usageFrame = data
+					}
+				}
+				if upstreamError := streamResponse.Error; upstreamError != nil &&
+					(upstreamError.Type != "" || upstreamError.Message != "" || upstreamError.Code != nil) {
+					providerRejected = true
+					common.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, true)
+					streamFailure = types.WithOpenAIError(*upstreamError, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+				}
 			}
 
 			lastStreamData = data
@@ -141,9 +164,39 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 				sr.Error(err)
 			}
 		}
+		// One frame is buffered for terminal-usage handling. Account for the
+		// newly received frame before a write of its predecessor can fail.
+		if pendingData != "" {
+			if err := HandleStreamFormat(c, info, pendingData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
+				common.SysLog(common.LogText("error handling stream format: %s", err.Error()))
+				formatFailed = true
+				streamFailure = NewStreamResponseError(info, err)
+				sr.Stop(streamFailure)
+			}
+		}
+		if providerRejected && !sr.IsStopped() {
+			sr.Stop(streamFailure)
+		}
 	})
 
 	info.StreamStatus.RequireTerminal()
+	if streamFailure == nil {
+		streamFailure = info.StreamStatus.APIError()
+	}
+	if streamFailure == nil {
+		streamFailure = service.RelayRequestCancellation(c)
+	}
+	if streamFailure == nil && info.StreamStatus.EndReason == relaycommon.StreamEndReasonClientGone {
+		streamFailure = service.NewRelayClientGoneError(info.StreamStatus.EndError)
+	}
+	if streamFailure == nil && info.StreamStatus.EndReason != relaycommon.StreamEndReasonDone &&
+		info.StreamStatus.ResponseOutcome() != string(relaycommon.ResponseOutcomeCompleted) {
+		status := http.StatusBadGateway
+		if info.StreamStatus.EndReason == relaycommon.StreamEndReasonTimeout {
+			status = http.StatusGatewayTimeout
+		}
+		streamFailure = types.NewOpenAIError(fmt.Errorf("upstream chat stream ended before a terminal event"), types.ErrorCodeBadResponse, status, types.ErrOptionWithSkipRetry())
+	}
 
 	// 处理最后的响应
 	shouldSendLastResp := true
@@ -152,38 +205,29 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		logger.LogError(c, common.LogText("error handling last response: %s, lastStreamData: [%s]", err.Error(), lastStreamData))
 	}
 
-	// 部分兼容网关把完整的累计usage附在倒数第二个事件上，随后发送一个空的最后事件。
-	// 仅当最后一个事件没有有效usage时，回退到倒数第二个事件的完整快照。
-	usageFrame := lastStreamData
-	if !containStreamUsage && secondLastStreamData != "" {
-		var streamResp struct {
-			Usage *dto.Usage `json:"usage"`
-		}
-		err := common.Unmarshal([]byte(secondLastStreamData), &streamResp)
-		if err == nil && streamResp.Usage != nil &&
-			streamResp.Usage.PromptTokens > 0 &&
-			(streamResp.Usage.CompletionTokens > 0 || streamResp.Usage.TotalTokens > 0) {
-			usage = dto.MergeUsageNonZero(usage, streamResp.Usage)
-			containStreamUsage = true
-			usageFrame = secondLastStreamData
-
-			if common.DebugEnabled {
-				logger.LogDebug(c, "usage extracted from second last SSE: PromptTokens=%d, CompletionTokens=%d, TotalTokens=%d, InputTokens=%d, OutputTokens=%d",
-					usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens,
-					usage.InputTokens, usage.OutputTokens)
-			}
-		}
+	if usageFrame == "" {
+		usageFrame = lastStreamData
 	}
 
-	if info.RelayFormat == types.RelayFormatOpenAI {
-		if shouldSendLastResp {
-			_ = sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
-		}
-	}
-
+	hasGeneratedOutput := responseTextBuilder.Len() > 0 || toolCount > 0
 	if !containStreamUsage {
-		usage = service.ResponseText2Usage(c, responseTextBuilder.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
-		usage.CompletionTokens += toolCount * 7
+		if streamFailure == nil || hasGeneratedOutput {
+			usage = service.ResponseText2Usage(c, responseTextBuilder.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
+			usage.CompletionTokens += toolCount * 7
+			usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+		} else {
+			usage = nil
+		}
+	}
+
+	if containStreamUsage && usage.CompletionTokens == 0 && (usage.PromptTokens == 0 || hasGeneratedOutput) {
+		// A terminal event or an early prompt snapshot does not measure later
+		// output. Retain every native fact, but do not settle zero or only the
+		// old prompt after observing work whose quantity is still unavailable.
+		common.SetContextKey(c, constant.ContextKeyUpstreamResponseUsageIncomplete, true)
+		if streamFailure == nil {
+			streamFailure = types.NewOpenAIError(fmt.Errorf("upstream chat usage is incomplete for observed output"), types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+		}
 	}
 
 	applyUsagePostProcessing(info, usage, common.StringToByteSlice(usageFrame))
@@ -192,7 +236,41 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		info.CountBillableToolCall(dto.BuildInCallFunctionCall, name)
 	}
 
-	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
+	if streamFailure != nil && !formatFailed && !providerRejected && !info.StreamStatus.ClientGone() && !isClientGoneStreamError(streamFailure) && service.RelayRequestCancellation(c) == nil {
+		// A provider-declared failure can arrive while a valid output frame is
+		// buffered. Flush that frame only while client delivery is still usable.
+		if lastStreamData != "" {
+			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
+				streamFailure = NewStreamResponseError(info, err)
+			}
+		}
+	}
+	if streamFailure == nil && info.RelayFormat == types.RelayFormatOpenAI && shouldSendLastResp {
+		if err := sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
+			streamFailure = NewStreamResponseError(info, err)
+		}
+	}
+	if streamFailure == nil {
+		if err := HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage); err != nil {
+			streamFailure = NewStreamResponseError(info, err)
+		}
+	}
+	if streamFailure != nil {
+		if !containStreamUsage && !hasGeneratedOutput {
+			usage = nil
+		}
+		common.SetContextKey(c, constant.ContextKeyStreamErrorHandled, true)
+		info.StreamStatus.SetAPIError(streamFailure)
+		if !info.StreamStatus.ClientGone() && !isClientGoneStreamError(streamFailure) && service.RelayRequestCancellation(c) == nil {
+			if err := HandleStreamFailure(c, info, streamFailure); err != nil {
+				info.StreamStatus.RecordError(err.Error())
+				if helper.IsStreamWriteError(err) {
+					streamFailure = NewStreamResponseError(info, err)
+				}
+			}
+		}
+		return usage, types.NewError(streamFailure, streamFailure.GetErrorCode(), types.ErrOptionWithSkipRetry())
+	}
 
 	return usage, nil
 }
@@ -264,6 +342,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		var enterpriseResponse openrouter.OpenRouterEnterpriseResponse
 		err = common.Unmarshal(responseBody, &enterpriseResponse)
 		if err != nil {
+			common.SetContextKey(c, constant.ContextKeyUpstreamResponseDecodeFailed, true)
 			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 		}
 		if enterpriseResponse.Success {
@@ -276,10 +355,12 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 
 	err = common.Unmarshal(responseBody, &simpleResponse)
 	if err != nil {
+		common.SetContextKey(c, constant.ContextKeyUpstreamResponseDecodeFailed, true)
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 
 	if oaiError := simpleResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
+		common.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, true)
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 

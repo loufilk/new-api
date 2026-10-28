@@ -667,6 +667,48 @@ func TestResponsesWSStreamIdentity(t *testing.T) {
 	}
 }
 
+// TestResponsesWSClientWriterSanitizesFrames covers both client write paths:
+// direct forwarding while a request is active and the deferred terminal frame
+// written by the request worker. Only recognized identity/error fields may
+// change; a channel-test probe keeps the upstream payload.
+func TestResponsesWSClientWriterSanitizesFrames(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		restricted bool
+		upstream   string
+		requested  string
+		expected   string
+	}{
+		{
+			name: "ordinary user error frame", restricted: true, requested: "public-model",
+			upstream: `{"type":"response.failed","response":{"id":"first","model":"private-model","status":"failed","error":{"code":"server_error","message":"upstream detail","metadata":{"trace":"private"}}}}`,
+			expected: `{"type":"response.failed","response":{"id":"first","model":"public-model","status":"failed","error":{"code":"server_error","message":"upstream request failed"}}}`,
+		},
+		{
+			name: "ordinary user success frame", restricted: true, requested: "public-model",
+			upstream: `{"type":"response.output_text.delta","sequence_number":1,"delta":"hello","vendor_field":9007199254740993,"response":{"model":"private-model"}}`,
+			expected: `{"type":"response.output_text.delta","sequence_number":1,"delta":"hello","vendor_field":9007199254740993,"response":{"model":"public-model"}}`,
+		},
+		{
+			name: "administrator channel test keeps diagnostics", restricted: false, requested: "public-model",
+			upstream: `{"type":"error","status":500,"error":{"type":"server_error","code":"private-code","message":"upstream detail"}}`,
+			expected: `{"type":"error","status":500,"error":{"type":"server_error","code":"private-code","message":"upstream detail"}}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, server, cleanupClient := newTestWebSocketPair(t)
+			defer cleanupClient()
+			s := &responsesWSSession{client: server, restricted: tc.restricted}
+			s.outputModel.Store(tc.requested)
+			require.NoError(t, s.writeClient(websocket.TextMessage, []byte(tc.upstream)))
+			require.NoError(t, client.SetReadDeadline(time.Now().Add(3*time.Second)))
+			_, message, err := client.ReadMessage()
+			require.NoError(t, err)
+			assert.JSONEq(t, tc.expected, string(message))
+		})
+	}
+}
+
 func TestResponsesWSErrorAttribution(t *testing.T) {
 	for _, tc := range []struct {
 		name, payload, control            string

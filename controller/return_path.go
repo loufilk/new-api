@@ -1,12 +1,7 @@
 package controller
 
-import (
-	"strings"
-
-	"github.com/QuantumNous/new-api/setting/system_setting"
-)
+import "github.com/QuantumNous/new-api/pkg/paymentcore"
 
 func paymentReturnPath(suffix string) string {
-	base := strings.TrimRight(system_setting.ServerAddress, "/")
-	return base + suffix
+	return paymentcore.ReturnPath(suffix)
 }

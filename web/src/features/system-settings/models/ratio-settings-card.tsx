@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -37,12 +37,19 @@ import {
 } from '@/features/model-pricing/api'
 import { pricingOptions } from '@/features/model-pricing/pricing'
 import { handleServerError } from '@/lib/handle-server-error'
+import { getServerErrorSources } from '@/lib/server-error-message'
 
+import { renameSystemGroups } from '../api'
 import { SettingsPageTitleStatusPortal } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
+import type { GroupRenameMapping } from '../types'
 import { positiveIntegerSchema } from '../utils/numeric-field'
 import { GroupRatioForm } from './group-ratio-form'
+import type {
+  GroupRatioSaveOutcome,
+  GroupRenameEditableValues,
+} from './group-rename'
 import { ModelRatioForm } from './model-ratio-form'
 import { ToolPriceSettings } from './tool-price-settings'
 import { UpstreamRatioSync } from './upstream-ratio-sync'
@@ -149,6 +156,44 @@ const createGroupSchema = (t: Translate) =>
 
 type ModelFormValues = z.infer<ReturnType<typeof createModelSchema>>
 type GroupFormValues = z.infer<ReturnType<typeof createGroupSchema>>
+
+// Canonical string form of the group settings the editor was loaded from. It is
+// the comparison base for stale-edit detection and is refreshed after a
+// successful save so later saves do not depend on a refetch completing first.
+type GroupRenameBaseline = {
+  GroupRatio: string
+  TopupGroupRatio: string
+  UserUsableGroups: string
+  GroupGroupRatio: string
+  AutoGroups: string
+  GroupSpecialUsableGroup: string
+  MaxTokenAutoGroups: string
+  DefaultUseAutoGroup: string
+}
+
+const GROUP_RENAME_STALE_CODE = 'GROUP_RENAME_STALE'
+
+function groupRenameBaselineFromDefaults(
+  defaults: GroupFormValues
+): GroupRenameBaseline {
+  return {
+    GroupRatio: defaults.GroupRatio,
+    TopupGroupRatio: defaults.TopupGroupRatio,
+    UserUsableGroups: defaults.UserUsableGroups,
+    GroupGroupRatio: defaults.GroupGroupRatio,
+    AutoGroups: defaults.AutoGroups,
+    GroupSpecialUsableGroup: defaults.GroupSpecialUsableGroup,
+    MaxTokenAutoGroups: String(defaults.MaxTokenAutoGroups),
+    DefaultUseAutoGroup: defaults.DefaultUseAutoGroup ? 'true' : 'false',
+  }
+}
+
+function isGroupRenameStale(value: unknown): boolean {
+  return getServerErrorSources(value).some(
+    (source) => source.code === GROUP_RENAME_STALE_CODE
+  )
+}
+
 type RatioTabId =
   | 'models'
   | 'unset-models'
@@ -173,6 +218,7 @@ export function RatioSettingsCard({
 }: RatioSettingsCardProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const queryClient = useQueryClient()
   const [confirmOpen, setConfirmOpen] = useState(false)
 
   const pricingQuery = useModelPricing()
@@ -241,20 +287,22 @@ export function RatioSettingsCard({
     modelNormalizedDefaults.current
   )
 
-  const groupNormalizedDefaults = useRef({
-    GroupRatio: normalizeJsonString(groupDefaults.GroupRatio),
-    TopupGroupRatio: normalizeJsonString(groupDefaults.TopupGroupRatio),
-    UserUsableGroups: normalizeJsonString(groupDefaults.UserUsableGroups),
-    GroupGroupRatio: normalizeJsonString(groupDefaults.GroupGroupRatio),
-    AutoGroups: normalizeJsonString(groupDefaults.AutoGroups),
-    MaxTokenAutoGroups: groupDefaults.MaxTokenAutoGroups,
-    DefaultUseAutoGroup: groupDefaults.DefaultUseAutoGroup,
-    GroupSpecialUsableGroup: normalizeJsonString(
-      groupDefaults.GroupSpecialUsableGroup
-    ),
-  })
+  const [groupBaseline, setGroupBaseline] = useState<GroupRenameBaseline>(() =>
+    groupRenameBaselineFromDefaults(groupDefaults)
+  )
   const modelSchema = useMemo(() => createModelSchema(t), [t])
   const groupSchema = useMemo(() => createGroupSchema(t), [t])
+  const groupRenameBaseline = useMemo<GroupRenameEditableValues>(
+    () => ({
+      GroupRatio: groupBaseline.GroupRatio,
+      TopupGroupRatio: groupBaseline.TopupGroupRatio,
+      UserUsableGroups: groupBaseline.UserUsableGroups,
+      GroupGroupRatio: groupBaseline.GroupGroupRatio,
+      AutoGroups: groupBaseline.AutoGroups,
+      GroupSpecialUsableGroup: groupBaseline.GroupSpecialUsableGroup,
+    }),
+    [groupBaseline]
+  )
 
   const modelForm = useForm<ModelFormValues>({
     resolver: zodResolver(modelSchema),
@@ -331,18 +379,7 @@ export function RatioSettingsCard({
   }, [modelDefaults, modelForm])
 
   useEffect(() => {
-    groupNormalizedDefaults.current = {
-      GroupRatio: normalizeJsonString(groupDefaults.GroupRatio),
-      TopupGroupRatio: normalizeJsonString(groupDefaults.TopupGroupRatio),
-      UserUsableGroups: normalizeJsonString(groupDefaults.UserUsableGroups),
-      GroupGroupRatio: normalizeJsonString(groupDefaults.GroupGroupRatio),
-      AutoGroups: normalizeJsonString(groupDefaults.AutoGroups),
-      MaxTokenAutoGroups: groupDefaults.MaxTokenAutoGroups,
-      DefaultUseAutoGroup: groupDefaults.DefaultUseAutoGroup,
-      GroupSpecialUsableGroup: normalizeJsonString(
-        groupDefaults.GroupSpecialUsableGroup
-      ),
-    }
+    setGroupBaseline(groupRenameBaselineFromDefaults(groupDefaults))
 
     groupForm.reset({
       ...groupDefaults,
@@ -408,40 +445,93 @@ export function RatioSettingsCard({
   )
 
   const saveGroupRatios = useCallback(
-    async (values: GroupFormValues) => {
-      const normalized = {
+    async (
+      values: GroupFormValues,
+      renames: GroupRenameMapping[]
+    ): Promise<GroupRatioSaveOutcome> => {
+      const normalized: Record<string, string> = {
         GroupRatio: normalizeJsonString(values.GroupRatio),
         TopupGroupRatio: normalizeJsonString(values.TopupGroupRatio),
         UserUsableGroups: normalizeJsonString(values.UserUsableGroups),
         GroupGroupRatio: normalizeJsonString(values.GroupGroupRatio),
         AutoGroups: normalizeJsonString(values.AutoGroups),
-        MaxTokenAutoGroups: values.MaxTokenAutoGroups,
-        DefaultUseAutoGroup: values.DefaultUseAutoGroup,
+        MaxTokenAutoGroups: String(values.MaxTokenAutoGroups),
+        DefaultUseAutoGroup: values.DefaultUseAutoGroup ? 'true' : 'false',
         GroupSpecialUsableGroup: normalizeJsonString(
           values.GroupSpecialUsableGroup
         ),
       }
-
-      // Map form field names to API keys (most are 1:1, except GroupSpecialUsableGroup)
+      const baseline: Record<string, string> = { ...groupBaseline }
+      // Map form field names to API keys (most are 1:1, except the nested
+      // special-usable-group option).
       const apiKeyMap: Record<string, string> = {
         GroupSpecialUsableGroup:
           'group_ratio_setting.group_special_usable_group',
       }
 
-      const updates = (
-        Object.keys(normalized) as Array<keyof typeof normalized>
-      ).filter(
-        (key) => normalized[key] !== groupNormalizedDefaults.current[key]
-      )
-
-      for (const key of updates) {
-        const apiKey = apiKeyMap[key] || key
-        await updateOption.mutateAsync({ key: apiKey, value: normalized[key] })
+      // Every edited option is saved in the same transaction as the renames,
+      // and Expected pins the values these edits were based on so a concurrent
+      // write cannot be silently overwritten.
+      const options: Record<string, string> = {}
+      const expected: Record<string, string> = {}
+      for (const [field, value] of Object.entries(normalized)) {
+        const current = baseline[field] ?? ''
+        if (value === current) continue
+        const apiKey = apiKeyMap[field] ?? field
+        options[apiKey] = value
+        expected[apiKey] = current
       }
 
-      groupNormalizedDefaults.current = normalized
+      if (renames.length === 0 && Object.keys(options).length === 0) {
+        toast.info(t('No changes to save'))
+        return 'saved'
+      }
+
+      // The stale conflict arrives as HTTP 409, which Axios rejects. Keep the
+      // unsaved edits and pending mappings: do not refetch (that would reset
+      // the form) and report a specific, translated conflict message.
+      const reportStaleConflict = () =>
+        toast.error(
+          t(
+            'The group settings changed on the server. Reload the page and apply your edits again.'
+          )
+        )
+
+      try {
+        const response = await renameSystemGroups({
+          renames,
+          options,
+          expected,
+        })
+        if (!response.success) {
+          if (isGroupRenameStale(response)) {
+            reportStaleConflict()
+            return 'failed'
+          }
+          handleServerError(response, t('Failed to update setting'))
+          return 'failed'
+        }
+        const applied = response.data?.applied_options ?? {}
+        const nextBaseline: GroupRenameBaseline = { ...groupBaseline }
+        for (const [field, value] of Object.entries(normalized)) {
+          const apiKey = apiKeyMap[field] ?? field
+          nextBaseline[field as keyof GroupRenameBaseline] =
+            applied[apiKey] ?? options[apiKey] ?? value
+        }
+        setGroupBaseline(nextBaseline)
+        await queryClient.invalidateQueries({ queryKey: ['system-options'] })
+        toast.success(t('Setting updated successfully'))
+        return 'saved'
+      } catch (error) {
+        if (isGroupRenameStale(error)) {
+          reportStaleConflict()
+          return 'failed'
+        }
+        handleServerError(error, t('Failed to update setting'))
+        return 'failed'
+      }
     },
-    [updateOption]
+    [queryClient, t, groupBaseline]
   )
 
   const handleResetRatios = useCallback(() => {
@@ -512,6 +602,7 @@ export function RatioSettingsCard({
       return (
         <GroupRatioForm
           form={groupForm}
+          baseline={groupRenameBaseline}
           onSave={saveGroupRatios}
           isSaving={updateOption.isPending}
         />

@@ -103,6 +103,8 @@ func RecordPolicyFailure(c *gin.Context, channelID int, err *types.NewAPIError, 
 	}
 	source := "upstream"
 	switch {
+	case err.GetErrorType() == types.ErrorTypeNewAPIError && err.GetErrorCode() == ClientGoneErrorCode:
+		source = "client"
 	case types.IsChannelError(err):
 		source = "channel"
 	case err.GetErrorCode() == types.ErrorCodeDoRequestFailed:
@@ -114,10 +116,12 @@ func RecordPolicyFailure(c *gin.Context, channelID int, err *types.NewAPIError, 
 	event := PolicyEvent{ChannelID: channelID, Status: err.StatusCode, ErrorCode: string(err.GetErrorCode()), ErrorSource: source, Decision: PolicyDecision{Action: "failure", Reason: "upstream_failure", Source: source}}
 	if source == "local" {
 		event.Decision.Reason = "local_rejection"
+	} else if source == "client" {
+		event.Decision = PolicyDecision{Action: "stop", Reason: "client_gone", Source: "client"}
 	}
 	state.AddEvent(event)
 	event.Decision, event.Health = decision, "unchanged"
-	if source != "local" && c.GetBool("auto_ban") && ShouldDisableChannel(err) {
+	if source != "local" && source != "client" && RelayRequestCancellation(c) == nil && c.GetBool("auto_ban") && ShouldDisableChannel(err) {
 		event.Health = "channel_disable_requested"
 		if common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey) {
 			event.Health = "key_disable_requested"

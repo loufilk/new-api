@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -326,7 +327,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		return nil, fmt.Errorf("get request url failed: %w", err)
 	}
 	logger.LogDebug(c, "fullRequestURL: %s", common.SanitizeURLForLog(fullRequestURL))
-	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
+	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, fullRequestURL, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
@@ -354,7 +355,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 		return nil, fmt.Errorf("get request url failed: %w", err)
 	}
 	logger.LogDebug(c, "fullRequestURL: %s", common.SanitizeURLForLog(fullRequestURL))
-	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
+	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, fullRequestURL, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
@@ -455,6 +456,14 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
 }
 
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestAttempted, false)
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, false)
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamResponseDecodeFailed, false)
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamExplicitRejection, false)
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamResponseUsageIncomplete, false)
+	if stopped := service.RelayRequestCancellation(c); stopped != nil {
+		return nil, stopped
+	}
 	client, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
 	if err != nil {
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
@@ -486,9 +495,18 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	}
 
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestOrigin, req.URL.Scheme+"://"+req.URL.Host)
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestAttempted, true)
 	resp, err := relayClient.Do(req)
 	if err != nil {
-		logger.LogError(c, common2.LogText("do request failed: %s", err.Error()))
+		var dialErr *net.OpError
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) || errors.As(err, &dialErr) && dialErr.Op == "dial" {
+			common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, true)
+		}
+		if stopped := service.RelayRequestCancellation(c); stopped != nil {
+			return nil, stopped
+		}
+		logger.LogError(c, "do request failed: "+err.Error())
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
 	}
 	if resp == nil {
@@ -514,6 +532,17 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 }
 
 func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+	// URL/header construction and cancellation before client.Do cannot submit
+	// work. Reset per-attempt facts so a previous channel cannot taint them.
+	if c != nil {
+		common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestAttempted, false)
+		common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, true)
+		defer func() {
+			if !common2.GetContextKeyBool(c, appconstant.ContextKeyUpstreamRequestAttempted) {
+				common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, true)
+			}
+		}()
+	}
 	fullRequestURL, err := a.BuildRequestURL(info)
 	if err != nil {
 		return nil, err

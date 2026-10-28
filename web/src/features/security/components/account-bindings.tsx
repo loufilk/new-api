@@ -49,6 +49,7 @@ import { api } from '@/lib/api'
 import {
   buildOAuthAuthorizationUrl,
   indexCustomOAuthBindings,
+  isOAuthAvailableOnOrigin,
   type CustomOAuthBinding,
 } from '@/lib/oauth'
 import {
@@ -96,6 +97,10 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
   const customProviders = status?.custom_oauth_providers as
     | CustomOAuthProviderInfo[]
     | undefined
+  // Provider callbacks finish on the ServerAddress origin, so binding cannot
+  // complete from another entry (for example the CN site). Unbound OAuth rows
+  // are hidden there; already-bound ones stay visible for information.
+  const oauthAvailable = isOAuthAvailableOnOrigin(status?.server_address)
   const customBindingsByProviderId = useMemo(
     () => indexCustomOAuthBindings(customBindings),
     [customBindings]
@@ -141,6 +146,7 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
   }
 
   const startOAuthBinding = async (provider: string) => {
+    if (!oauthAvailable) return
     const prepared = await security.run(async (signal) => {
       const proof = await security.verify(
         { scope: 'account.binding.bind', context: { provider } },
@@ -313,7 +319,15 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
       isEnabled: status?.linuxdo_oauth || false,
       onBind: () => void startOAuthBinding('linuxdo'),
     },
-  ].filter((binding) => binding.isEnabled)
+  ].filter(
+    (binding) =>
+      binding.isEnabled &&
+      (oauthAvailable ||
+        binding.isBound ||
+        !['github', 'discord', 'oidc', 'telegram', 'linuxdo'].includes(
+          binding.id
+        ))
+  )
 
   return (
     <>
@@ -376,6 +390,7 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
         {customProviders?.map((provider) => {
           const binding = customBindingsByProviderId.get(provider.id)
           const isBound = !!binding
+          if (!oauthAvailable && !isBound) return null
           return (
             <li
               key={provider.id}

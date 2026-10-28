@@ -15,6 +15,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,7 +69,11 @@ func TestImageExpressionUsesCompletedCountAndProtectsAbortedStreams(t *testing.T
 			info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{EstimatedImageCount: &tc.requested}
 			if tc.stream {
 				_, err := OpenaiImageStreamHandler(c, info, resp)
-				require.Nil(t, err)
+				if tc.abort {
+					require.NotNil(t, err)
+				} else {
+					require.Nil(t, err)
+				}
 			} else {
 				_, err := OpenaiImageHandler(c, info, resp)
 				require.Nil(t, err)
@@ -346,7 +351,7 @@ func TestOpenaiImageStreamHandlerClientDisconnectKeepsRequestedCount(t *testing.
 
 	usage, err := OpenaiImageStreamHandler(c, info, resp)
 
-	require.Nil(t, err)
+	require.NotNil(t, err)
 	require.NotNil(t, usage)
 	require.NotNil(t, info.StreamStatus)
 	// A client abort surfaces as client_gone (main-loop ctx watch) or
@@ -383,7 +388,7 @@ func TestOpenaiImageStreamHandlerClientDisconnectRaisesCount(t *testing.T) {
 
 	usage, err := OpenaiImageStreamHandler(c, info, resp)
 
-	require.Nil(t, err)
+	require.NotNil(t, err)
 	require.NotNil(t, usage)
 	require.NotNil(t, info.StreamStatus)
 	require.Contains(t,
@@ -595,8 +600,8 @@ func TestOpenaiImageHandlersReturnJSONError(t *testing.T) {
 }
 
 // TestOpenaiImageStreamHandlerRecordsUpstreamErrorEvent verifies that an error
-// event inside the SSE stream is recorded as a soft error while the payload is
-// still forwarded to the client.
+// event inside the SSE stream is recorded and returned as a failed outcome
+// while its sanitized payload is still forwarded exactly once to the client.
 func TestOpenaiImageStreamHandlerRecordsUpstreamErrorEvent(t *testing.T) {
 	oldMode := gin.Mode()
 	gin.SetMode(gin.TestMode)
@@ -618,16 +623,82 @@ func TestOpenaiImageStreamHandlerRecordsUpstreamErrorEvent(t *testing.T) {
 	c, recorder, resp, info := newImageTestContext(t, body, "text/event-stream", true)
 
 	usage, err := OpenaiImageStreamHandler(c, info, resp)
-	require.Nil(t, err)
+	require.NotNil(t, err)
 	require.NotNil(t, usage)
 	require.NotNil(t, info.StreamStatus)
 	require.Equal(t, relaycommon.StreamEndReasonEOF, info.StreamStatus.EndReason)
 	require.True(t, info.StreamStatus.HasErrors())
 	require.Equal(t, 1, info.StreamStatus.TotalErrorCount())
-	require.Contains(t, info.StreamStatus.Errors[0].Message, "INTERNAL_ERROR")
+	require.Contains(t, info.StreamStatus.Errors[0].Message, "INTERNAL_ERROR", "the internal diagnostic keeps the upstream failure for health and admin logs")
 	// The scanner strips the upstream "event: error" line; the event name is
-	// rebuilt from the JSON "type" field (upstream_error). The error message
-	// is still forwarded in the data: payload (stream ID 77).
+	// rebuilt from the JSON "type" field (upstream_error). The client receives
+	// the generic category instead of the upstream stream diagnostics.
 	require.Contains(t, recorder.Body.String(), `event: upstream_error`)
-	require.Contains(t, recorder.Body.String(), `stream ID 77`)
+	require.Contains(t, recorder.Body.String(), `"message":"upstream request failed"`)
+	require.NotContains(t, recorder.Body.String(), "stream ID 77")
+	require.NotContains(t, recorder.Body.String(), "INTERNAL_ERROR")
+}
+
+func TestImageStreamFailureAccountingEvidence(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+	for _, tc := range []struct {
+		name, body                  string
+		measured, rejected, unknown bool
+	}{
+		{"explicit unused failure", `data: {"type":"error","error":{"type":"server_error","message":"failed"}}` + "\n\n", false, true, false},
+		{"failure with usage", `data: {"type":"error","error":{"message":"failed"},"usage":{"input_tokens":11,"output_tokens":4,"total_tokens":15}}` + "\n\n", true, false, false},
+		{"partial output unmeasured", `data: {"type":"image_generation.partial_image","b64_json":"partial"}` + "\n\n" + `data: {"type":"error","error":{"message":"failed"}}` + "\n\n", false, false, true},
+		{"empty EOF unmeasured", "", false, false, true},
+		{"detail-only usage unpriced", `data: {"type":"error","error":{"message":"failed"},"usage":{"total_tokens":15}}` + "\n\n", false, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _, resp, info := newImageTestContext(t, tc.body, "text/event-stream", true)
+			usage, apiErr := OpenaiImageStreamHandler(c, info, resp)
+			require.NotNil(t, apiErr)
+			assert.False(t, service.ShouldRetryRelayError(c, apiErr, 2))
+			assert.Equal(t, tc.rejected, c.GetBool(string(constant.ContextKeyUpstreamExplicitRejection)))
+			assert.Equal(t, tc.unknown, c.GetBool(string(constant.ContextKeyUpstreamResponseUsageIncomplete)))
+			if tc.measured {
+				require.NotNil(t, usage)
+				assert.Equal(t, 11, usage.PromptTokens)
+				assert.Equal(t, 4, usage.CompletionTokens)
+			} else if tc.name != "detail-only usage unpriced" {
+				assert.False(t, dto.HasOpenAIUsageTokens(usage))
+			} else {
+				assert.True(t, dto.HasOpenAIUsageTokens(usage))
+			}
+		})
+	}
+}
+
+func TestImageStreamNullErrorIsNotFailure(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+	body := `data: {"type":"image_generation.completed","b64_json":"image","error":null,"usage":{"input_tokens":11,"output_tokens":4,"total_tokens":15}}` + "\n\ndata: [DONE]\n\n"
+	c, recorder, resp, info := newImageTestContext(t, body, "text/event-stream", true)
+	usage, apiErr := OpenaiImageStreamHandler(c, info, resp)
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	assert.Equal(t, 15, usage.TotalTokens)
+	assert.Contains(t, recorder.Body.String(), "data: [DONE]")
+	assert.False(t, c.GetBool(string(constant.ContextKeyStreamErrorHandled)))
+	assert.False(t, isOpenAIImageStreamErrorEvent([]byte(`{"type":"image_generation.completed","error":null}`)))
+	assert.True(t, isOpenAIImageStreamErrorEvent([]byte(`{"type":"error","error":null}`)))
+}
+
+func TestImageStreamLaterTotalOnlyRetainsMeasuredUsage(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+	body := `data: {"usage":{"input_tokens":11,"output_tokens":4,"total_tokens":15}}` + "\n\n" + `data: {"type":"error","error":{"message":"failed"},"usage":{"total_tokens":15}}` + "\n\n"
+	c, _, resp, info := newImageTestContext(t, body, "text/event-stream", true)
+	usage, apiErr := OpenaiImageStreamHandler(c, info, resp)
+	require.NotNil(t, apiErr)
+	require.NotNil(t, usage)
+	assert.Equal(t, 11, usage.PromptTokens)
+	assert.Equal(t, 4, usage.CompletionTokens)
+	assert.False(t, c.GetBool(string(constant.ContextKeyUpstreamResponseUsageIncomplete)))
 }

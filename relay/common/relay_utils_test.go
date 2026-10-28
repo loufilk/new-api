@@ -48,6 +48,25 @@ func TestSanitizeURLForLogMasksAWSAndSecretLikeQueryKeys(t *testing.T) {
 	assert.Equal(t, "gpt-test", query.Get("model"))
 }
 
+func TestSanitizeURLForLogMasksQueryCredentialAliases(t *testing.T) {
+	for _, key := range []string{
+		"session_token", "id_token", "AWSAccessKeyId", " Session-Token ",
+		"vendor_token", "upstream_secret", "request_signature",
+		"x-goog-api-key", "mj-api-secret", "bearer", "session", "session_id", "sid", "sign",
+	} {
+		t.Run(key, func(t *testing.T) {
+			rawURL := "https://example.test/v1/models?" + url.QueryEscape(key) + "=fixture-secret&apikey_hint=visible&model=fixture%2Fmodel"
+			got := SanitizeURLForLog(rawURL)
+			assert.NotContains(t, got, "fixture-secret")
+			parsedURL, err := url.Parse(got)
+			require.NoError(t, err)
+			assert.Equal(t, "***masked***", parsedURL.Query().Get(key))
+			assert.Equal(t, "visible", parsedURL.Query().Get("apikey_hint"))
+			assert.Equal(t, "fixture/model", parsedURL.Query().Get("model"))
+		})
+	}
+}
+
 func TestSanitizeURLForLogKeepsURLWithoutSensitiveQuery(t *testing.T) {
 	rawURL := "https://example.test/v1/chat/completions?api-version=2024-02-01&alt=sse"
 

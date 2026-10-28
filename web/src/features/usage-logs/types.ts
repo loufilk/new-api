@@ -116,6 +116,11 @@ export interface ToolSurchargeItem {
 
 export interface LogOtherData {
   admin_info?: {
+    upstream_model_name?: string
+    response_model?: LogOtherData['response_model']
+    po?: string[]
+    request_conversion?: string[]
+    stream_status?: LogOtherData['stream_status']
     request_policy?: PolicyEvent[]
     is_multi_key?: boolean
     multi_key_index?: number
@@ -248,6 +253,12 @@ export interface LogOtherData {
   po?: string[]
   billing_source?: string
   group?: string
+  // TokenMix P1-2: net wallet account split for this request (quota units)
+  wallet_quota_deducted?: number
+  wallet_cost?: {
+    paid?: number
+    bonus?: number
+  }
   stream_status?: {
     status?: string
     end_reason?: string

@@ -2,9 +2,12 @@ package relay
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"strings"
 
@@ -61,10 +64,32 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		}
 		if strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
 			requestBody = common.NewReplayableBodyReader(storage)
+			if request.Model != imageReq.Model {
+				original, err := storage.Bytes()
+				if err != nil {
+					return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+				}
+				mapped, err := remapImagePassThroughBody(original, c.Request.Header.Get("Content-Type"), request.Model)
+				if err != nil {
+					return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+				}
+				body, closer, err := relaycommon.NewOutboundJSONBody(mapped)
+				if err != nil {
+					return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+				}
+				defer closer.Close()
+				requestBody = body
+			}
 		} else {
 			jsonData, err = storage.Bytes()
 			if err != nil {
 				return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+			if request.Model != imageReq.Model {
+				jsonData, err = remapImagePassThroughBody(jsonData, c.Request.Header.Get("Content-Type"), request.Model)
+				if err != nil {
+					return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+				}
 			}
 		}
 	} else {
@@ -156,7 +181,11 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	if newAPIError != nil {
 		// reset status code 重置状态码
 		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
-		return newAPIError
+		partialUsage, _ := usage.(*dto.Usage)
+		if preserveUnmeasuredStreamBilling(c, info, partialUsage) || !service.ValidUsage(partialUsage) {
+			return newAPIError
+		}
+		c.Set(requestBillingUsageObservedKey, true)
 	}
 
 	// The log content shows the settled count: the count the handler derived
@@ -168,10 +197,10 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		imageN = common.QuotaRound(count)
 	}
 
-	if usage.(*dto.Usage).TotalTokens == 0 {
+	if newAPIError == nil && usage.(*dto.Usage).TotalTokens == 0 {
 		usage.(*dto.Usage).TotalTokens = 1
 	}
-	if usage.(*dto.Usage).PromptTokens == 0 {
+	if newAPIError == nil && usage.(*dto.Usage).PromptTokens == 0 {
 		usage.(*dto.Usage).PromptTokens = 1
 	}
 
@@ -193,5 +222,61 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	}
 
 	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), logContent)
-	return nil
+	return newAPIError
+}
+
+// Only rewrite the top-level model. Preserve vendor fields and the original
+// replay storage, which may be reused for a retry on a different channel.
+func remapImagePassThroughBody(data []byte, contentType, model string) ([]byte, error) {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return nil, err
+	}
+	if mediaType != "multipart/form-data" {
+		var payload map[string]json.RawMessage
+		if err := common.Unmarshal(data, &payload); err != nil {
+			return nil, err
+		}
+		if payload == nil {
+			return nil, fmt.Errorf("expected image request object")
+		}
+		value, err := common.Marshal(model)
+		if err != nil {
+			return nil, err
+		}
+		payload["model"] = value
+		return common.Marshal(payload)
+	}
+	var output bytes.Buffer
+	writer := multipart.NewWriter(&output)
+	// Keep the original boundary so retries never inherit modified headers.
+	if err := writer.SetBoundary(params["boundary"]); err != nil {
+		return nil, err
+	}
+	reader := multipart.NewReader(bytes.NewReader(data), params["boundary"])
+	for {
+		part, err := reader.NextRawPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		destination, err := writer.CreatePart(part.Header)
+		if err != nil {
+			return nil, err
+		}
+		if part.FormName() == "model" && part.FileName() == "" {
+			_, err = io.WriteString(destination, model)
+		} else {
+			_, err = io.Copy(destination, part)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
 }

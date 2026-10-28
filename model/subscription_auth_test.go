@@ -11,7 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/glebarez/sqlite"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -85,7 +85,7 @@ func TestSubscriptionGroupTransitionsPreserveAuthVersionAndSessions(t *testing.T
 	assert.Equal(t, "default", cached.Group)
 }
 
-func TestSubscriptionGroupCacheRefreshFailureDoesNotChangeCommittedResult(t *testing.T) {
+func TestSubscriptionGroupPreFenceFailureRollsBackMutation(t *testing.T) {
 	previousDB, previousLogDB := DB, LOG_DB
 	previousMainDatabaseType, previousLogDatabaseType := common.MainDatabaseType(), common.LogDatabaseType()
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
@@ -136,16 +136,17 @@ func TestSubscriptionGroupCacheRefreshFailureDoesNotChangeCommittedResult(t *tes
 		common.RedisEnabled, common.RDB = oldRedisEnabled, oldRDB
 	})
 
+	// A failure before the permission fence is established must abort SQL,
+	// unlike a best-effort cache refresh failure after a successful commit.
 	message, err := AdminBindSubscription(user.Id, plan.Id, "test")
-	require.NoError(t, err)
-	require.NotNil(t, message)
-	assert.Equal(t, "pro", message.Params["group"])
-
+	require.Error(t, err)
+	require.Nil(t, message)
 	var updated User
 	require.NoError(t, DB.First(&updated, user.Id).Error)
-	assert.Equal(t, "pro", updated.Group)
+	assert.Equal(t, "default", updated.Group)
 	assert.EqualValues(t, 1, updated.AuthVersion)
-	var subscription UserSubscription
-	require.NoError(t, DB.Where("user_id = ?", user.Id).First(&subscription).Error)
-	assert.Equal(t, "active", subscription.Status)
+	assert.EqualValues(t, 1, updated.CacheRevision)
+	var count int64
+	require.NoError(t, DB.Model(&UserSubscription{}).Where("user_id = ?", user.Id).Count(&count).Error)
+	assert.Zero(t, count)
 }

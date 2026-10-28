@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -263,6 +264,7 @@ func TestResponsesUsageAccumulatorMissingUsageEstimation(t *testing.T) {
 		events         []dto.ResponsesStreamResponse
 		wantPrompt     int
 		wantCompletion int
+		wantNil        bool
 	}{
 		{
 			name: "tool call stream cut before terminal usage",
@@ -306,14 +308,16 @@ func TestResponsesUsageAccumulatorMissingUsageEstimation(t *testing.T) {
 			wantCompletion: tokenkit.Count(model, "final answer"),
 		},
 		{
-			name: "explicit failure without usage bills nothing",
+			name:    "explicit failure without usage bills nothing",
+			wantNil: true,
 			events: []dto.ResponsesStreamResponse{
 				{Type: "response.created", Response: inProgress},
 				{Type: "response.failed", Response: &dto.OpenAIResponsesResponse{Status: []byte(`"failed"`)}},
 			},
 		},
 		{
-			name: "flat error event bills nothing",
+			name:    "flat error event bills nothing",
+			wantNil: true,
 			events: []dto.ResponsesStreamResponse{
 				{Type: "response.created", Response: inProgress},
 				{Type: "error", Code: "server_error"},
@@ -334,9 +338,87 @@ func TestResponsesUsageAccumulatorMissingUsageEstimation(t *testing.T) {
 				accumulator.Observe(&tc.events[i], nil)
 			}
 			usage := accumulator.Finish()
+			if tc.wantNil {
+				assert.Nil(t, usage, "empty provider failures bypass fixed request billing as well as token billing")
+				assert.Nil(t, accumulator.Finish())
+				return
+			}
+			require.NotNil(t, usage)
 			assert.Equal(t, tc.wantPrompt, usage.PromptTokens)
 			assert.Equal(t, tc.wantCompletion, usage.CompletionTokens)
 			assert.Equal(t, tc.wantPrompt+tc.wantCompletion, usage.TotalTokens)
 		})
+	}
+}
+
+func TestResponsesUsageAccumulatorPreservesCancellationEstimates(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		eventType  string
+		withTool   bool
+		clientGone bool
+		wantPrompt int
+	}{
+		{"created only client disconnect", "", false, true, 100},
+		{"completed tool then provider failure", "response.failed", true, false, 0},
+		{"completed tool then provider cancellation", "response.cancelled", true, false, 100},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			info := &relaycommon.RelayInfo{StreamStatus: relaycommon.NewStreamStatus()}
+			info.SetEstimatePromptTokens(100)
+			accumulator := NewResponsesUsageAccumulator(info)
+			accumulator.Observe(&dto.ResponsesStreamResponse{Type: "response.created"}, nil)
+			if tc.withTool {
+				accumulator.Observe(&dto.ResponsesStreamResponse{Type: dto.ResponsesOutputTypeItemDone, Item: &dto.ResponsesOutput{Type: dto.BuildInCallWebSearchCall, Status: "completed"}}, nil)
+			}
+			if tc.eventType != "" {
+				accumulator.Observe(&dto.ResponsesStreamResponse{Type: tc.eventType}, nil)
+			}
+			if tc.clientGone {
+				info.StreamStatus.MarkCancelled()
+			}
+			usage := accumulator.Finish()
+			require.NotNil(t, usage)
+			assert.Equal(t, tc.wantPrompt, usage.PromptTokens)
+			assert.Zero(t, usage.CompletionTokens)
+			if tc.withTool {
+				require.NotNil(t, info.ResponsesUsageInfo)
+				require.Contains(t, info.ResponsesUsageInfo.BuiltInTools, dto.BuildInToolWebSearchPreview)
+				assert.Equal(t, 1, info.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolWebSearchPreview].CallCount)
+			}
+		})
+	}
+}
+
+func TestResponsesUsageAccumulatorPreservesUnpricedEvidence(t *testing.T) {
+	for _, status := range []string{"failed", "cancelled"} {
+		for _, details := range []bool{false, true} {
+			for _, buffered := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/details_%t/buffered_%t", status, details, buffered), func(t *testing.T) {
+					info := &relaycommon.RelayInfo{StreamStatus: relaycommon.NewStreamStatus(), ChannelMeta: &relaycommon.ChannelMeta{}}
+					info.SetEstimatePromptTokens(20)
+					usage := &dto.Usage{TotalTokens: 15}
+					if details {
+						usage = &dto.Usage{InputTokensDetails: &dto.InputTokenDetails{CachedTokens: 4}}
+					}
+					event := &dto.ResponsesStreamResponse{Type: "response." + status, Response: &dto.OpenAIResponsesResponse{Usage: usage}}
+					accumulator := NewResponsesUsageAccumulator(info)
+					accumulator.Observe(event, nil)
+					var result *dto.Usage
+					if buffered {
+						result = accumulator.FinishBuffered(true, "generated output")
+					} else {
+						result = accumulator.Finish()
+					}
+					require.NotNil(t, result)
+					assert.True(t, dto.HasOpenAIUsageTokens(result), "reported work must not disappear at finalization")
+					assert.Zero(t, result.PromptTokens, "total/detail-only evidence cannot justify invented aggregate usage")
+					assert.Zero(t, result.CompletionTokens)
+					if !details {
+						assert.Equal(t, 15, result.TotalTokens)
+					}
+				})
+			}
+		}
 	}
 }

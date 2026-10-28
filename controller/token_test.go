@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -82,6 +83,15 @@ func (legacyToken) TableName() string {
 func openTokenControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
+	if os.Getenv("TEST_TASK_DB_DIALECT") == "postgres" {
+		gin.SetMode(gin.TestMode)
+		db := openGroupPermissionPostgresTestDB(t)
+		model.DB, model.LOG_DB = db, db
+		common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
+		common.RedisEnabled = false
+		return db
+	}
+
 	gin.SetMode(gin.TestMode)
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	common.RedisEnabled = false
@@ -93,6 +103,14 @@ func openTokenControllerTestDB(t *testing.T) *gorm.DB {
 	}
 	model.DB = db
 	model.LOG_DB = db
+	// Match the PostgreSQL fixture's startup-style dialect initialization.
+	// Isolated token selectors must not depend on another test warming quoting.
+	t.Setenv("LOG_SQL_DSN", "")
+	previousMaster := common.IsMasterNode
+	common.IsMasterNode = false
+	err = model.InitLogDB()
+	common.IsMasterNode = previousMaster
+	require.NoError(t, err)
 
 	t.Cleanup(func() {
 		sqlDB, err := db.DB()
@@ -521,6 +539,8 @@ func TestGetTokenMasksKeyInResponse(t *testing.T) {
 
 func TestUpdateTokenMasksKeyInResponse(t *testing.T) {
 	db := setupTokenControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.User{}))
+	require.NoError(t, db.Create(&model.User{Id: 1, Username: "mask-owner", Group: "default", Status: common.UserStatusEnabled}).Error)
 	token := seedToken(t, db, 1, "editable-token", "yzab1234cdef5678")
 
 	body := map[string]any{
@@ -607,6 +627,8 @@ func TestTokenAllowUserQuotaQueryOnCreateAndUpdate(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := setupTokenControllerTestDB(t)
+			require.NoError(t, db.AutoMigrate(&model.User{}))
+			require.NoError(t, db.Create(&model.User{Id: 1, Username: "quota-query-owner", Group: "default", Status: common.UserStatusEnabled}).Error)
 			body := map[string]any{"name": "quota-query", "expired_time": -1, "unlimited_quota": true, "status": common.TokenStatusEnabled}
 			if tc.field != nil {
 				body["allow_user_quota_query"] = tc.field
@@ -708,6 +730,11 @@ func TestGetTokenUsageFollowsTheUserQuotaSwitchAndIPWhitelist(t *testing.T) {
 }
 
 func TestAPITokenAuditDatabaseMatrix(t *testing.T) {
+	previousGroups := setting.UserUsableGroups2JSONString()
+	t.Cleanup(func() { require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(previousGroups)) })
+	// Audit success cases use Auto routing; authorize it explicitly rather than
+	// depending on another test's policy or bypassing the real permission guard.
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default group","auto":"Auto group"}`))
 	for _, database := range []struct {
 		name, env string
 		typ       common.DatabaseType
@@ -736,7 +763,9 @@ func TestAPITokenAuditDatabaseMatrix(t *testing.T) {
 				db, _ := newAuditTestDatabase(t, database.name, dsn)
 				model.DB = db
 				common.SetDatabaseTypes(database.typ, database.typ)
-				require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Token{}))
+				// Token writes resolve group aliases transactionally on real databases.
+				// Keep that production dependency present in every audit fixture.
+				require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.UserAccessToken{}, &model.Token{}, &model.Option{}))
 				// Initialize production column quoting as well as the existing audit table.
 				require.NoError(t, model.InitLogDB())
 				if separateLog {
@@ -764,9 +793,13 @@ func TestAPITokenAuditDatabaseMatrix(t *testing.T) {
 
 func verifyAPITokenAudit(t *testing.T) {
 	t.Helper()
-	pat := "api-token-audit-pat-secret"
-	user := &model.User{Username: "token-owner", Password: "placeholder", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AccessToken: &pat, AffCode: "token-owner"}
+	pat := model.AccessTokenPrefix + "api-token-audit-pat-secret"
+	user := &model.User{Username: "token-owner", Password: "placeholder", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AffCode: "token-owner"}
 	require.NoError(t, model.DB.Create(user).Error)
+	// The real-database suite must not rely on another test initializing legacy PATs.
+	accessToken := &model.UserAccessToken{UserId: user.Id, Name: "audit-fixture", TokenHash: model.AccessTokenFingerprint(pat), ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	require.NoError(t, accessToken.SetScopes([]string{"api_key:reveal"}))
+	require.NoError(t, model.DB.Create(accessToken).Error)
 	other := &model.User{Username: "other-owner", Password: "placeholder", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AffCode: "other-owner"}
 	require.NoError(t, model.DB.Create(other).Error)
 	session := &model.UserSession{SID: "token-audit-session", UserID: user.Id, Version: 1, UserAuthVersion: 1, Status: model.UserSessionStatusActive, RefreshHash: "placeholder", LoginMethod: "password", LastActiveAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Hour).Unix()}
@@ -798,6 +831,7 @@ func verifyAPITokenAudit(t *testing.T) {
 		success                          bool
 		params                           string
 		initialStatus                    int
+		initialGroup                     string
 		failWrite, rateLimit, usePAT     bool
 	}{
 		{name: "create", method: "POST", path: "/", body: `{"name":"created","expired_time":-1,"unlimited_quota":true}`, action: "token.create", success: true},
@@ -812,8 +846,10 @@ func verifyAPITokenAudit(t *testing.T) {
 		{name: "successful response exceeds audit buffer", method: "PUT", path: "/", body: `{"id":$id,"name":"owned","expired_time":-1,"remain_quota":100,"unlimited_quota":true,"group":"auto","cross_group_retry":true,"allow_ips":"","model_limits":"` + strings.Repeat("m", 64*1024-128) + `"}`, action: "token.update", success: true, params: `{"id":$id,"name":"owned","changed_fields":["model_limits"]}`},
 		{name: "update storage failure", method: "PUT", path: "/", body: `{"id":$id,"name":"failed-rename","unlimited_quota":true}`, action: "token.update", params: `{"id":$id,"name":"owned"}`, failWrite: true},
 		{name: "foreign update", method: "PUT", path: "/", body: `{"id":$other,"name":"forged-name","unlimited_quota":true}`, action: "token.update", params: `{"id":$other}`},
+		{name: "unauthorized group update", method: "PUT", path: "/", body: `{"id":$id,"name":"forged-name","unlimited_quota":true,"group":"audit-forbidden"}`, action: "token.update", params: `{"id":$id,"name":"owned"}`},
 		{name: "disable", method: "PUT", path: "/?status_only=true", body: `{"id":$id,"status":2}`, action: "token.status_update", success: true, params: `{"id":$id,"name":"owned","from":1,"to":2}`},
 		{name: "enable", method: "PUT", path: "/?status_only=true", body: `{"id":$id,"status":1}`, action: "token.status_update", success: true, params: `{"id":$id,"name":"owned","from":2,"to":1}`, initialStatus: common.TokenStatusDisabled},
+		{name: "unauthorized group enable", method: "PUT", path: "/?status_only=true", body: `{"id":$id,"status":1}`, action: "token.status_update", params: `{"id":$id,"name":"owned"}`, initialStatus: common.TokenStatusDisabled, initialGroup: "audit-forbidden"},
 		{name: "expired enable", method: "PUT", path: "/?status_only=true", body: `{"id":$id,"status":1}`, action: "token.status_update", params: `{"id":$id,"name":"owned"}`, initialStatus: common.TokenStatusExpired},
 		{name: "delete", method: "DELETE", path: "/$id", action: "token.delete", success: true, params: `{"id":$id,"name":"owned"}`},
 		{name: "foreign delete", method: "DELETE", path: "/$other", action: "token.delete", params: `{"id":$other}`},
@@ -833,6 +869,9 @@ func verifyAPITokenAudit(t *testing.T) {
 			owned := &model.Token{UserId: user.Id, Name: "owned", Key: fmt.Sprintf("owned-key-secret-%d", index), Status: common.TokenStatusEnabled, ExpiredTime: -1, RemainQuota: 100, UnlimitedQuota: true, Group: "auto", CrossGroupRetry: true, AutoGroups: `["default"]`, AllowIps: &empty}
 			if tc.initialStatus != 0 {
 				owned.Status = tc.initialStatus
+			}
+			if tc.initialGroup != "" {
+				owned.Group = tc.initialGroup
 			}
 			if owned.Status == common.TokenStatusExpired {
 				owned.ExpiredTime = 1
@@ -869,6 +908,13 @@ func verifyAPITokenAudit(t *testing.T) {
 			}
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
+			if strings.HasPrefix(tc.name, "unauthorized group") {
+				var unchanged model.Token
+				require.NoError(t, model.DB.First(&unchanged, owned.Id).Error)
+				assert.Equal(t, owned.Group, unchanged.Group)
+				assert.Equal(t, owned.Status, unchanged.Status)
+				assert.Equal(t, owned.Name, unchanged.Name)
+			}
 			if strings.Contains(tc.name, "exceeds audit buffer") {
 				assert.Greater(t, response.Body.Len(), 64*1024)
 			}

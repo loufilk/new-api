@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/privacy"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -114,9 +115,30 @@ func assignDisplayLogIds(logs []*Log, startIdx int) {
 func formatUserLogs(logs []*Log, startIdx int) {
 	for i := range logs {
 		logs[i].ChannelName = ""
+		logs[i].ChannelId = 0
+		logs[i].UpstreamRequestId = ""
+		logs[i].Content = formatUserLogContent(logs[i])
 		logs[i].Other = formatLogOtherJSON(logs[i].Other, logOtherVisibilityUser)
 	}
 	assignDisplayLogIds(logs, startIdx)
+}
+
+// formatUserLogContent replaces stored error diagnostics with the generic
+// client-facing category. Consume/topup content is local billing data and is
+// preserved; only error logs can embed upstream messages or identities.
+func formatUserLogContent(log *Log) string {
+	if log == nil {
+		return ""
+	}
+	if log.Type != LogTypeError {
+		return log.Content
+	}
+	var stored struct {
+		StatusCode int    `json:"status_code"`
+		ErrorType  string `json:"error_type"`
+	}
+	_ = common.UnmarshalJsonStr(log.Other, &stored)
+	return privacy.SafeErrorText(stored.StatusCode, stored.ErrorType)
 }
 
 // FormatAdminLogs removes root-only diagnostics while retaining operational
@@ -411,16 +433,19 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 }
 
 type RecordTaskBillingLogParams struct {
-	UserId    int
-	LogType   int
-	Content   []*common.Message
-	ChannelId int
-	ModelName string
-	Quota     int
-	TokenId   int
-	Group     string
-	Other     *LogOther
-	NodeName  string // 任务发起节点；为空时回退当前节点
+	// OperationID links this non-authoritative display log to a committed
+	// financial receipt. It never authorizes or replays a money operation.
+	OperationID string
+	UserId      int
+	LogType     int
+	Content     []*common.Message
+	ChannelId   int
+	ModelName   string
+	Quota       int
+	TokenId     int
+	Group       string
+	Other       *LogOther
+	NodeName    string // 任务发起节点；为空时回退当前节点
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
@@ -436,6 +461,12 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 	createdAt := common.GetTimestamp()
 	other := params.Other
+	if other == nil {
+		other = NewLogOther()
+	}
+	if params.OperationID != "" {
+		other.SetAdmin("financial_operation_id", params.OperationID)
+	}
 	log := &Log{
 		UserId:    params.UserId,
 		Username:  username,
@@ -449,6 +480,9 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		TokenId:   params.TokenId,
 		Group:     params.Group,
 		Other:     other.JSONString(),
+	}
+	if params.OperationID != "" {
+		log.RequestId = BillingTokenFingerprint(params.OperationID)
 	}
 	err := createLog(log)
 	if err != nil {
@@ -651,10 +685,8 @@ func StreamUserLogs(ctx context.Context, userId int, filter LogFilter, fn func(*
 	}
 	count := 0
 	return streamLogs(tx, "logs.id desc", func(log *Log) error {
+		formatUserLogs([]*Log{log}, count)
 		count++
-		log.Id = count
-		log.ChannelName = ""
-		log.Other = formatLogOtherJSON(log.Other, logOtherVisibilityUser)
 		return fn(log)
 	})
 }

@@ -527,10 +527,14 @@ func updateChannelNewAPIBalance(channel *model.Channel) (float64, error) {
 	if err := common.Unmarshal(body, &status); err != nil {
 		return 0, err
 	}
-	if status.Data.QuotaPerUnit <= 0 {
-		return 0, errors.New("New API /api/status response is missing quota_per_unit")
+	quotaPerUnit := status.Data.QuotaPerUnit
+	if quotaPerUnit <= 0 || math.IsNaN(quotaPerUnit) || math.IsInf(quotaPerUnit, 0) {
+		return 0, errors.New("New API /api/status response must include a finite positive quota_per_unit")
 	}
-	balance := remaining / status.Data.QuotaPerUnit
+	balance := remaining / quotaPerUnit
+	if math.IsNaN(balance) || math.IsInf(balance, 0) {
+		return 0, errors.New("New API quota conversion did not produce a finite balance")
+	}
 	channel.UpdateBalance(balance)
 	return balance, nil
 }

@@ -144,17 +144,28 @@ export function UsersMutateDrawer({
   // Load existing data when updating
   useEffect(() => {
     if (open && isUpdate && currentRow) {
-      // For update, fetch fresh data
+      // For update, fetch fresh data. Lifecycle: ignore stale responses
+      // after close/row switch; transport failures keep current form values
+      // so the user can retry without losing edits, while still surfacing
+      // the failure as a toast.
+      let cancelled = false
       getUser(currentRow.id)
         .then((result) => {
+          if (cancelled) return
           if (result.success && result.data) {
             loadedPermissions.current = result.data.admin_permissions
             form.reset(transformUserToFormDefaults(result.data))
           } else {
-            handleServerError(result, t('Failed to load'))
+            handleServerError(result, t(ERROR_MESSAGES.LOAD_FAILED))
           }
         })
-        .catch((error) => handleServerError(error, t('Failed to load')))
+        .catch((error) => {
+          if (cancelled) return
+          handleServerError(error, t(ERROR_MESSAGES.LOAD_FAILED))
+        })
+      return () => {
+        cancelled = true
+      }
     } else if (open && !isUpdate) {
       // For create, reset to defaults
       form.reset(USER_FORM_DEFAULT_VALUES)
@@ -261,14 +272,17 @@ export function UsersMutateDrawer({
   const refreshUserData = async () => {
     if (!currentRow) return
     try {
-      const result = requireServerSuccess(await getUser(currentRow.id))
+      const result = await getUser(currentRow.id)
       if (result.success && result.data) {
         loadedPermissions.current = result.data.admin_permissions
         form.reset(transformUserToFormDefaults(result.data))
+      } else {
+        handleServerError(result, t(ERROR_MESSAGES.LOAD_FAILED))
       }
-      triggerRefresh()
     } catch (error) {
-      handleServerError(error, t('Failed to load'))
+      handleServerError(error, t(ERROR_MESSAGES.LOAD_FAILED))
+    } finally {
+      triggerRefresh()
     }
   }
 

@@ -63,19 +63,21 @@ func TestResponseModelComparisonAndLog(t *testing.T) {
 			}
 			other := service.GenerateTextOtherInfo(c, info, 1, 1, 1, 0, 0, 0, 1)
 			var stored struct {
-				ResponseModel *relaycommon.ResponseModel `json:"response_model"`
+				AdminInfo struct {
+					ResponseModel *relaycommon.ResponseModel `json:"response_model"`
+				} `json:"admin_info"`
 			}
 			require.NoError(t, common.UnmarshalJsonStr(other.JSONString(), &stored))
 			if tc.returned == "" {
-				assert.Nil(t, stored.ResponseModel)
+				assert.Nil(t, stored.AdminInfo.ResponseModel)
 				return
 			}
-			require.NotNil(t, stored.ResponseModel)
+			require.NotNil(t, stored.AdminInfo.ResponseModel)
 			assert.Equal(t, &relaycommon.ResponseModel{
 				RequestedModel: "requested", UpstreamModel: "mapped", ReturnedModel: tc.returned,
-			}, stored.ResponseModel)
+			}, stored.AdminInfo.ResponseModel)
 			assert.NotContains(t, other.JSONString(), "mismatch")
-			assert.Equal(t, tc.mismatch, stored.ResponseModel.Mismatch())
+			assert.Equal(t, tc.mismatch, stored.AdminInfo.ResponseModel.Mismatch())
 			assert.Equal(t, "mapped", info.UpstreamModelName)
 		})
 	}
@@ -107,10 +109,11 @@ func TestResponseModelLogOmitsUnchangedModel(t *testing.T) {
 			other := service.GenerateTextOtherInfo(c, info, 1, 1, 1, 0, 0, 0, 1)
 			require.NotNil(t, info.ResponseModel)
 			assert.Equal(t, float64(1), other.Snapshot()["model_ratio"])
+			adminInfo, _ := other.Snapshot()["admin_info"].(map[string]any)
 			if tc.record {
-				assert.Equal(t, *info.ResponseModel, other.Snapshot()["response_model"])
+				assert.Equal(t, *info.ResponseModel, adminInfo["response_model"])
 			} else {
-				assert.NotContains(t, other.Snapshot(), "response_model")
+				assert.NotContains(t, adminInfo, "response_model")
 			}
 		})
 	}
@@ -232,7 +235,8 @@ func TestResponseModelHandlersCaptureBeforeConversion(t *testing.T) {
 			assert.Equal(t, &relaycommon.ResponseModel{RequestedModel: "requested", UpstreamModel: "mapped", ReturnedModel: "returned"}, info.ResponseModel)
 			assert.True(t, info.ResponseModel.Mismatch())
 			other := service.GenerateTextOtherInfo(c, info, 1, 1, 1, 0, 0, 0, 1)
-			assert.Equal(t, *info.ResponseModel, other.Snapshot()["response_model"])
+			adminInfo, _ := other.Snapshot()["admin_info"].(map[string]any)
+			assert.Equal(t, *info.ResponseModel, adminInfo["response_model"])
 		})
 	}
 }
@@ -251,15 +255,31 @@ func TestResponseModelSharedResponsesAccumulator(t *testing.T) {
 }
 
 func TestResponseModelDoesNotRecordSynthesizedModel(t *testing.T) {
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	info := &relaycommon.RelayInfo{
-		OriginModelName: "requested", RelayFormat: types.RelayFormatOpenAI,
-		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "mapped"},
+	for _, tc := range []struct {
+		name, body string
+		wantError  bool
+	}{
+		{"interrupted without model", "data: [DONE]\n\n", true},
+		{"completed without model", "data: " + `{"type":"response.completed","response":{"status":"completed"}}` + "\n\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "requested", RelayFormat: types.RelayFormatOpenAI,
+				ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "mapped"},
+			}
+			_, apiErr := openai.OaiResponsesToChatBufferedStreamHandler(c, info, &http.Response{
+				StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(tc.body)),
+			})
+			if tc.wantError {
+				require.NotNil(t, apiErr, "a bare DONE marker is not a completed Responses response")
+				assert.Empty(t, recorder.Body.String())
+			} else {
+				require.Nil(t, apiErr)
+			}
+			assert.Nil(t, info.ResponseModel, "mapped request model is not an observed upstream model")
+		})
 	}
-	_, apiErr := openai.OaiResponsesToChatBufferedStreamHandler(c, info, &http.Response{
-		StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("data: [DONE]\n\n")),
-	})
-	require.Nil(t, apiErr)
-	assert.Nil(t, info.ResponseModel)
 }

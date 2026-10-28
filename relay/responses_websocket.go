@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -20,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	appmodel "github.com/QuantumNous/new-api/model"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
+	"github.com/QuantumNous/new-api/pkg/privacy"
 	"github.com/QuantumNous/new-api/pkg/wsmanager"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -110,6 +112,14 @@ type responsesWSSession struct {
 	// clientWriteBudget is guarded by clientWriteMu.
 	clientWriteBudget helper.StreamWriteBudget
 
+	// restricted is fixed when the connection is upgraded: ordinary callers
+	// receive generic errors, while administrator sessions keep diagnostics.
+	restricted bool
+	// outputModel is the client-visible model for sanitized frames. It is
+	// written by the request worker and read by socket writers, so keep it
+	// atomic.
+	outputModel atomic.Value
+
 	// These fields belong to the serial request worker and describe the actual
 	// established connection. Per-request token/user data is never stored here.
 	lastResponseID  string
@@ -125,7 +135,8 @@ type responsesWSSession struct {
 func ResponsesWebSocketHelper(c *gin.Context, client *websocket.Conn, runner ResponsesWSRequestRunner) *types.NewAPIError {
 	ctx, cancel := context.WithCancel(c.Request.Context())
 	s := &responsesWSSession{ctx: ctx, cancel: cancel, client: client, runner: runner,
-		request: c.Request.Clone(ctx), requestID: c.GetString(common.RequestIdKey)}
+		request: c.Request.Clone(ctx), requestID: c.GetString(common.RequestIdKey),
+		restricted: privacy.Restricted(c)}
 	if s.requestID == "" {
 		s.requestID = common.NewRequestId()
 	}
@@ -204,9 +215,7 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 		s.clientWriteMu.Lock()
 		s.stateMu.Lock()
 		if outgoing != nil {
-			if err := s.client.SetWriteDeadline(s.clientWriteBudget.Deadline(time.Now(), len(outgoing.body))); err != nil {
-				state.closeCode = websocket.CloseInternalServerErr
-			} else if err := s.client.WriteMessage(outgoing.kind, outgoing.body); err != nil {
+			if err := s.writeClientLocked(outgoing.kind, outgoing.body); err != nil {
 				state.closeCode = websocket.CloseInternalServerErr
 			}
 		}
@@ -238,6 +247,9 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 }
 
 func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState, create responsesWSCreateRequest) (apiErr *types.NewAPIError) {
+	// Opening the socket does not submit a generation. Only response.create
+	// writes below can turn a failed send into unknown upstream delivery.
+	c.Set(requestBillingNotSubmittedKey, true)
 	policy := service.RequestPolicy(c)
 	modelName := create.Request.Model
 	started := time.Now()
@@ -269,6 +281,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		return apiErr
 	}
 	common.SetContextKey(c, appconstant.ContextKeyOriginalModel, modelName)
+	s.outputModel.Store(modelName)
 	common.SetContextKey(c, appconstant.ContextKeyRequestStartTime, time.Now())
 	service.GetChannelConstraints(c).AddFilter(appdto.ChannelFilter{Kind: appdto.FilterRequestPath, RequestPath: c.Request.URL.Path})
 
@@ -288,7 +301,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		if apiErr != nil {
 			return apiErr
 		}
+		c.Set(requestBillingNotSubmittedKey, false)
 		if err := s.writeTarget(websocket.TextMessage, payload); err != nil {
+			preserveUnknownRequestBilling(c, info)
 			state.closeCode = websocket.CloseInternalServerErr
 			return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 		}
@@ -301,6 +316,11 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				return apiErr
 			}
 			service.AppendUsedChannel(c, channel.Id)
+			if service.ShouldCheckRequestSensitive(c) {
+				if apiErr = service.CheckRequestSensitiveText(c, create.Request.GetTokenCountMeta().CombineText); apiErr != nil {
+					return apiErr
+				}
+			}
 			if info == nil {
 				info = relaycommon.GenRelayInfoResponses(c, &create.Request)
 				info.IsStream = true
@@ -340,7 +360,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			if !s.setTarget(target) {
 				return types.NewError(context.Canceled, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 			}
+			c.Set(requestBillingNotSubmittedKey, false)
 			if err := s.writeTarget(websocket.TextMessage, payload); err != nil {
+				preserveUnknownRequestBilling(c, info)
 				state.closeCode = websocket.CloseInternalServerErr
 				return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 			}
@@ -392,6 +414,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, incoming.err)
 				state.closeCode, state.closeReason = websocket.CloseInternalServerErr, "upstream connection closed"
 				ConsumeResponsesQuota(c, info, accumulator.Finish())
+				if c.GetBool(requestBillingDeliveryUnknownKey) {
+					return types.NewError(incoming.err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
+				}
 				return nil
 			}
 			info.SetFirstResponseTime()
@@ -448,16 +473,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 						ConsumeResponsesQuota(c, info, accumulator.Finish())
 						return nil
 					}
-					if rejection.Error == nil {
-						// An error frame without an error object still describes the
-						// rejected request; keep the client-facing type stable.
-						rejection.Error = &types.OpenAIError{Type: "invalid_request_error", Message: event.Message, Code: event.Code}
-					}
-					rejected := types.WithOpenAIError(*rejection.Error, rejection.Status, types.ErrOptionWithSkipRetry())
-					if rejected.StatusCode < 400 || rejected.StatusCode > 599 {
-						rejected.StatusCode = http.StatusBadRequest
-					}
-					return rejected
+					return newResponsesWSRequestRejection(c, info, rejection, &event.ResponsesStreamResponse)
 				}
 				if strings.HasPrefix(event.Type, "response.") {
 					if !accepted {
@@ -472,7 +488,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				accumulator.Observe(&event.ResponsesStreamResponse, incoming.body)
 			}
 			switch event.Type {
-			case "response.completed", "response.done", "response.incomplete", "response.failed", "response.cancelled", "response.canceled":
+			case "response.completed", "response.done", "response.incomplete", "response.failed", "response.cancelled", "response.canceled", "response.error":
 				if event.Response != nil {
 					s.lastResponseID = event.Response.ID
 				}
@@ -508,13 +524,35 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, context.DeadlineExceeded)
 			state.closeCode, state.closeReason = websocket.CloseInternalServerErr, "upstream response timed out"
 			ConsumeResponsesQuota(c, info, accumulator.Finish())
+			if c.GetBool(requestBillingDeliveryUnknownKey) {
+				return types.NewErrorWithStatusCode(context.DeadlineExceeded, types.ErrorCodeBadResponse, http.StatusGatewayTimeout, types.ErrOptionWithSkipRetry())
+			}
 			return nil
 		case <-s.ctx.Done():
 			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, s.ctx.Err())
 			ConsumeResponsesQuota(c, info, accumulator.Finish())
+			if c.GetBool(requestBillingDeliveryUnknownKey) {
+				return service.NewRelayClientGoneError(s.ctx.Err())
+			}
 			return nil
 		}
 	}
+}
+
+// A pre-accept provider error is an explicit rejection of response.create, not
+// missing delivery evidence. Its terminal fact must survive the failure defer.
+func newResponsesWSRequestRejection(c *gin.Context, info *relaycommon.RelayInfo, rejection responsesWSErrorEvent, event *dto.ResponsesStreamResponse) *types.NewAPIError {
+	if rejection.Error == nil {
+		rejection.Error = &types.OpenAIError{Type: "invalid_request_error", Message: event.Message, Code: event.Code}
+	}
+	rejected := types.WithOpenAIError(*rejection.Error, rejection.Status, types.ErrOptionWithSkipRetry())
+	if rejected.StatusCode < 400 || rejected.StatusCode > 599 {
+		rejected.StatusCode = http.StatusBadRequest
+	}
+	info.StreamStatus.MarkFailed(string(rejected.GetErrorCode()), rejection.Error.Type, rejected.StatusCode)
+	info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+	common.SetContextKey(c, appconstant.ContextKeyUpstreamExplicitRejection, true)
+	return rejected
 }
 
 // A single generation is active, but a cancel can fail independently. Correlate
@@ -720,9 +758,17 @@ func (s *responsesWSSession) writeTarget(kind int, message []byte) error {
 func (s *responsesWSSession) writeClient(kind int, message []byte) error {
 	s.clientWriteMu.Lock()
 	defer s.clientWriteMu.Unlock()
+	return s.writeClientLocked(kind, message)
+}
+
+// writeClientLocked applies the client privacy boundary and writes one frame.
+// Callers must hold clientWriteMu.
+func (s *responsesWSSession) writeClientLocked(kind int, message []byte) error {
 	if err := s.client.SetWriteDeadline(s.clientWriteBudget.Deadline(time.Now(), len(message))); err != nil {
 		return err
 	}
+	requested, _ := s.outputModel.Load().(string)
+	message = privacy.SanitizePayload(message, requested, s.restricted)
 	return s.client.WriteMessage(kind, message)
 }
 

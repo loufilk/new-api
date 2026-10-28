@@ -21,6 +21,10 @@ For commercial licensing, please contact support@quantumnous.com
 export const STATIC_I18N_KEYS = [
   'The adjusted price is outside the supported range.',
   'This expression cannot be adjusted automatically. Keep the source price or edit it manually.',
+  'Channel model owner label must be at most 64 characters without control or formatting characters',
+  'Public model owner must be at most 128 characters and contain no control or formatting characters',
+  'Filtering exemptions require exact group names, one per line; auto and wildcards are not allowed',
+  'This password is too common. Choose a different password.',
   'Task usage metadata is unavailable. Pricing details cannot be displayed.',
   'This expression cannot be expanded into a price table. View the original expression below.',
   'This operation is only supported for vLLM or SGLang channels',
@@ -93,6 +97,11 @@ export const STATIC_I18N_KEYS = [
   'Connect to self-hosted models served by vLLM',
   'vLLM server address, without /v1',
   'vLLM API key, or EMPTY if authentication is disabled',
+  'Cline',
+  'Connect to the Cline API with an API key or access token',
+  'Cline API base URL, including /api/v1',
+  'Cline API key or access token',
+  'Models fetched from the Cline recommended-models catalog',
 
   'Price per image',
   'Per image',
@@ -213,7 +222,9 @@ export const STATIC_I18N_KEYS = [
   'Worker instances do not run master-only background tasks.',
   'Drawing task polling',
 
-  // Pricing constants
+  // Pricing constants (legacy sort labels retained for cached views)
+  'Price: Low to High',
+  'Price: High to Low',
   'Name',
   'Input Price: Low to High',
   'Input Price: High to Low',
@@ -302,6 +313,7 @@ export const STATIC_I18N_KEYS = [
   'Failed to delete redemption code',
   'Failed to delete invalid redemption codes',
   'Failed to update redemption code status',
+  'Used redemption codes cannot be modified',
   'Name must be between {{min}} and {{max}} characters',
   'Count must be between {{min}} and {{max}}',
   'Expired time cannot be earlier than current time',
@@ -615,8 +627,26 @@ export const STATIC_I18N_KEYS = [
 
   // Sidebar modules
   'Chat Area',
-  'Playground and chat functions',
-  'Playground',
+  'Text Generation and chat functions',
+  'Text Generation',
+
+  // Image generation (variable-passed keys not caught by the t() scanner)
+  'A tranquil lake at sunrise, soft mist, photorealistic',
+  'A cozy robot reading in a library, warm light, illustration',
+  'Minimalist mountain poster, bold shapes, flat design',
+  'A futuristic city street at night, neon reflections',
+  'Low',
+  'Medium',
+  'High',
+  'HD',
+  'Vivid',
+  'Natural',
+  'This model does not support reference images',
+  'Only PNG, JPEG, or WebP images are supported',
+  'Total reference image size must not exceed 15MB',
+  'Too many reference images for this model',
+  '{{count}} of {{max}} images',
+  'No matching history.',
   'AI model testing environment',
   'Chat session management',
   'No content to copy',
@@ -830,6 +860,12 @@ export const STATIC_I18N_KEYS = [
   'Vendor name and icon must not exceed 128 characters.',
   'Shown',
   'Not shown',
+  // Optional metadata fields retained by the versioned model synchronization flow.
+  'Context length',
+  'Release date',
+  'Input modalities',
+  'Output modalities',
+  'Bonus eligibility',
   // Access token permission catalog labels and descriptions (served by the backend).
   'View',
   'Profile',
@@ -906,4 +942,13 @@ export const STATIC_I18N_KEYS = [
   'Channel priorities changed. Refresh and try again.',
   'Invalid channel priority move',
   'Channel priority is outside the sortable range',
+  // Ambiguous task delivery is never an automatic refund decision.
+  'Missing upstream task identity; delivery requires operator review',
+  'Missing channel metadata; upstream delivery requires operator review',
+  'Ambiguous upstream task identity; delivery requires operator review',
+  'Legacy task billing identity is unavailable; financial review required',
+  'Task timed out; upstream delivery requires operator review',
+  'Failed to query the upstream task status; delivery requires operator review',
+  'Upstream task not found; delivery requires operator review',
+  'Upstream task timed out; delivery requires operator review',
 ] as const

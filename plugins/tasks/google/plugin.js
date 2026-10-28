@@ -168,11 +168,21 @@ function imageInput(value, files) {
   return { inlineData: { mimeType: mime, data: value } };
 }
 
+function requestedVideoDuration(req) {
+  const value = req.duration !== undefined ? req.duration : (req.metadata || {}).durationSeconds;
+  if (value === undefined) return undefined;
+  const seconds = Number(value);
+  if ((typeof value !== "number" && typeof value !== "string") || !Number.isInteger(seconds) || seconds < 1 || seconds > 3600)
+    throw new Error("durationSeconds must be an integer between 1 and 3600");
+  return seconds;
+}
+
 function converted(ctx) {
   const req = ctx.requestBody || {};
   const metadata = Object.assign({}, req.metadata || {});
   const params = Object.assign({}, metadata);
-  if (Number(req.duration) > 0) params.durationSeconds = Number(req.duration);
+  const seconds = requestedVideoDuration(req);
+  if (seconds !== undefined) params.durationSeconds = seconds;
   if (!params.resolution && req.size) params.resolution = resolutionForSize(req.size);
   if (!params.aspectRatio && req.size) params.aspectRatio = aspectForSize(req.size);
   if (params.resolution) params.resolution = String(params.resolution).toLowerCase();
@@ -266,8 +276,8 @@ export function parseSubmitResponse(ctx, resp) {
 export function extractUsage(ctx) {
   const req = ctx.requestBody || {};
   const metadata = req.metadata || {};
-  let seconds = Number(req.duration);
-  if (!Number.isFinite(seconds) || seconds <= 0) seconds = 8;
+  const duration = requestedVideoDuration(req);
+  const seconds = duration === undefined ? 8 : duration;
   const resolution = String(metadata.resolution || resolutionForSize(req.size) || "720p").toLowerCase();
   return { seconds: seconds, resolution: resolution };
 }

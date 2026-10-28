@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -57,6 +58,22 @@ func currentFetchProtection() (*common.SSRFProtection, bool, error) {
 
 func newProtectedFetchHTTPClient() *http.Client {
 	return newProtectedFetchHTTPClientWithDialer(nil, nil, nil)
+}
+
+// NewSSRFProtectedHTTPClientWithProxy returns an SSRF-protected fetch client
+// while preserving an administrator-configured outbound proxy. Target URL
+// policy is checked before every request/redirect; direct connections also
+// validate every resolved IP immediately before dialing.
+func NewSSRFProtectedHTTPClientWithProxy(rawProxyURL string) (*http.Client, error) {
+	trimmed := strings.TrimSpace(rawProxyURL)
+	if trimmed == "" {
+		return newProtectedFetchHTTPClientWithProxy(nil, nil, nil, http.ProxyFromEnvironment), nil
+	}
+	parsedURL, _, err := common.ParseProxyURLRuntime(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	return newProtectedFetchHTTPClientWithProxy(nil, nil, nil, http.ProxyURL(parsedURL)), nil
 }
 
 func newProtectedFetchHTTPClientWithDialer(resolver ssrfResolver, dialContext func(ctx context.Context, network, address string) (net.Conn, error), getProtection func() (*common.SSRFProtection, bool, error)) *http.Client {

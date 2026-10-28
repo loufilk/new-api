@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/extension"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
@@ -33,6 +34,19 @@ var accessTokenExemptRoutes = []string{
 	"GET /api/home_page_content",
 	"GET /api/ratio_config",
 	"GET /api/user/groups",
+
+	// Public health/configuration and the refresh-cookie-authenticated probe.
+	"GET /api/healthz",
+	"HEAD /api/healthz",
+	"GET /api/readyz",
+	"HEAD /api/readyz",
+	"GET /api/chuanapi/public-config",
+	"HEAD /api/chuanapi/public-config",
+	"GET /api/user/auth/session",
+	"GET /api/model-monitor",
+	"GET /api/model-monitor/results/:id",
+	"GET /api/model-monitor/artworks/:id",
+	"GET /api/model-monitor/thumbnails/:id",
 
 	// Anonymous account entry points.
 	"GET /api/verification",
@@ -85,12 +99,17 @@ func newAccessTokenScopeTestEngine(t *testing.T) *gin.Engine {
 	engine := gin.New()
 	// A permission route that is also in the static table panics here.
 	require.NotPanics(t, func() {
-		SetApiRouter(engine)
+		scopes := SetApiRouter(engine)
 		SetDashboardRouter(engine)
 		SetRelayRouter(engine)
 		SetTaskPluginProtocolRouter(engine)
 		SetVideoRouter(engine)
 		SetTaskRouter(engine)
+		// Use production composition, including deferred payment, wallet,
+		// support and console routes. Do not remove their permission rules.
+		reg := newChuanRouteRegistry(t)
+		require.NoError(t, reg.ApplyRoutesWithScopes(scopes, extension.PriorityBeforePlugin))
+		require.NoError(t, reg.ApplyRoutesWithScopes(scopes, extension.PriorityAfterPlugin))
 	})
 	return engine
 }

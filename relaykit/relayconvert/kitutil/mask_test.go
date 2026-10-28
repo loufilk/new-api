@@ -134,3 +134,19 @@ func TestMaskSensitiveInfoMasksOnlyTheUpstreamAddress(t *testing.T) {
 		})
 	}
 }
+
+func TestMaskSensitiveLogInfoPreservesConservativeInfrastructureRedaction(t *testing.T) {
+	for _, input := range []string{
+		"dial tcp: lookup internal.db.example: no such host",
+		"fetch https://private.example/jobs/job-123?token=log-secret failed",
+		"https://user:password@private.example:443/path/secret",
+		"dial tcp [2001:db8::1]:443 api_key:log-secret",
+	} {
+		masked := MaskSensitiveLogInfo(input)
+		for _, secret := range []string{"internal.db.example", "private.example", "job-123", "log-secret", "password", "/path/secret", "2001:db8::1"} {
+			assert.NotContains(t, masked, secret, "infrastructure log retained sensitive data")
+		}
+	}
+	public := "see https://platform.claude.com/docs/en/build-with-claude/task-budgets"
+	assert.Equal(t, public, MaskSensitiveInfo(public), "public error documentation changed")
+}

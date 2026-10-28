@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { describe, expect, test } from 'vitest'
 
-import { SORT_OPTIONS } from '../constants'
+import { normalizeSortOption, SORT_OPTIONS } from '../constants'
 import { sortModels } from '../lib/filters'
 import type { PricingModel } from '../types'
 
@@ -121,6 +121,73 @@ describe('price sorting', () => {
       expect(sortModels(models, sortBy).map((m) => m.model_name)).toEqual(
         expected
       )
+    }
+  )
+})
+
+describe('sort compatibility and unavailable prices', () => {
+  test.each([
+    ['price-low', SORT_OPTIONS.INPUT_PRICE_LOW],
+    ['price-high', SORT_OPTIONS.INPUT_PRICE_HIGH],
+    [undefined, SORT_OPTIONS.NAME],
+    ['unknown-old-value', SORT_OPTIONS.NAME],
+    [SORT_OPTIONS.OUTPUT_PRICE_HIGH, SORT_OPTIONS.OUTPUT_PRICE_HIGH],
+  ])('normalizes persisted sort %s', (value, expected) => {
+    expect(normalizeSortOption(value)).toBe(expected)
+  })
+
+  test.each([
+    ['price-low', ['cheap', 'expensive']],
+    ['price-high', ['expensive', 'cheap']],
+    ['unknown-old-value', ['cheap', 'expensive']],
+  ])(
+    'handles old URLs and unknown sorting directly: %s',
+    (sortBy, expected) => {
+      const values = [
+        pricingModel('expensive', { model_ratio: 5 }),
+        pricingModel('cheap', { model_ratio: 1 }),
+      ]
+      expect(sortModels(values, sortBy).map((m) => m.model_name)).toEqual(
+        expected
+      )
+    }
+  )
+
+  test.each([
+    SORT_OPTIONS.INPUT_PRICE_LOW,
+    SORT_OPTIONS.INPUT_PRICE_HIGH,
+    SORT_OPTIONS.OUTPUT_PRICE_LOW,
+    SORT_OPTIONS.OUTPUT_PRICE_HIGH,
+    SORT_OPTIONS.REQUEST_PRICE_LOW,
+    SORT_OPTIONS.REQUEST_PRICE_HIGH,
+  ])(
+    '%s keeps missing, null, negative and non-finite prices last, not free',
+    (sortBy) => {
+      const request = sortBy.startsWith('request')
+      const output = sortBy.startsWith('output')
+      let field = 'model_ratio'
+      if (request) field = 'model_price'
+      else if (output) field = 'completion_ratio'
+      const make = (name: string, value: number | null | undefined) =>
+        pricingModel(name, {
+          quota_type: request ? 1 : 0,
+          [field]: value,
+        } as Partial<PricingModel>)
+      const invalid = [
+        make('missing', undefined),
+        make('null', null),
+        make('nan', Number.NaN),
+        make('infinite', Infinity),
+        make('negative', -1),
+      ]
+      const values = [...invalid, make('free', 0), make('paid', 2)]
+      const priced = sortBy.endsWith('high')
+        ? ['paid', 'free']
+        : ['free', 'paid']
+      expect(sortModels(values, sortBy).map((m) => m.model_name)).toEqual([
+        ...priced,
+        ...invalid.map((m) => m.model_name),
+      ])
     }
   )
 })

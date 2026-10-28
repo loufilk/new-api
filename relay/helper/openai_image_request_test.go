@@ -243,3 +243,38 @@ func TestGetAndValidOpenAIImageRequestNBounds(t *testing.T) {
 		require.Contains(t, err.Error(), boundErr)
 	})
 }
+
+func TestHighResolutionImageRequestSizes(t *testing.T) {
+	for _, size := range []string{"2048x2048", "3840x2160", "2880x2880"} {
+		t.Run(size, func(t *testing.T) {
+			body, err := common.Marshal(map[string]any{"model": "gpt-image-2", "prompt": "image", "size": size, "n": 1, "quality": "high"})
+			require.NoError(t, err)
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+			ctx.Request.Header.Set("Content-Type", "application/json")
+			request, err := GetAndValidOpenAIImageRequest(ctx, relayconstant.RelayModeImagesGenerations)
+			require.NoError(t, err)
+			assert.Equal(t, size, request.Size)
+			assert.Equal(t, "high", request.Quality)
+			require.NotNil(t, request.N)
+			assert.Equal(t, uint(1), *request.N)
+			var multipartBody bytes.Buffer
+			writer := multipart.NewWriter(&multipartBody)
+			require.NoError(t, writer.WriteField("model", "gpt-image-2"))
+			require.NoError(t, writer.WriteField("size", size))
+			require.NoError(t, writer.WriteField("quality", "high"))
+			part, err := writer.CreateFormFile("image", "reference.png")
+			require.NoError(t, err)
+			_, err = part.Write([]byte("test-image"))
+			require.NoError(t, err)
+			require.NoError(t, writer.Close())
+			ctx, _ = gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", &multipartBody)
+			ctx.Request.Header.Set("Content-Type", writer.FormDataContentType())
+			request, err = GetAndValidOpenAIImageRequest(ctx, relayconstant.RelayModeImagesEdits)
+			require.NoError(t, err)
+			assert.Equal(t, size, request.Size)
+			assert.Equal(t, "high", request.Quality)
+		})
+	}
+}
