@@ -1,0 +1,147 @@
+name: Agent PostgreSQL acceptance
+
+on:
+  push:
+    branches: ['dot/agent-upstream-align-20261029']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-postgres-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres:
+    name: Agent, migration, and wallet regressions (PostgreSQL 18.6)
+    if: github.ref == 'refs/heads/dot/agent-upstream-align-20261029'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_USER: postgres
+          # Disposable service fixture only; never use a deployment secret here.
+          POSTGRES_PASSWORD: agent-postgres-fixture
+          POSTGRES_DB: newapi_agent_ci
+        ports:
+          - 55438:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d newapi_agent_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      GOWORK: 'off'
+      GOTOOLCHAIN: local
+      CGO_ENABLED: '1'
+      GOMAXPROCS: '4'
+      TEST_SECURITY_DIALECT: postgres
+      TEST_MANAGE_USER_DIALECT: postgres
+      TEST_TASK_DB_DIALECT: postgres
+      TEST_MODEL_POSTGRES_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_model_ci?sslmode=disable
+      TEST_SERVICE_POSTGRES_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_service_ci?sslmode=disable
+      TEST_POSTGRES_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_agent_ci?sslmode=disable
+      TEST_AGENT_POSTGRES_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_agent_ci?sslmode=disable
+    steps:
+      - name: Checkout exact event commit
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up declared Go version
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+            tokenkit/go.sum
+
+      - name: Verify PostgreSQL version and create isolated fixture databases
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          mkdir -p acceptance-evidence web/dist
+          touch web/dist/index.html
+          git rev-parse HEAD | tee acceptance-evidence/source.txt
+          go version | tee acceptance-evidence/go-version.txt
+          version=$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d newapi_agent_ci -Atc 'SHOW server_version_num')
+          test "$version" = 180006
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -d newapi_agent_ci -Atc 'SELECT version()' | tee acceptance-evidence/postgres-version.txt
+          docker exec "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -d newapi_agent_ci -c 'CREATE DATABASE newapi_model_ci'
+          docker exec "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -d newapi_agent_ci -c 'CREATE DATABASE newapi_service_ci'
+
+      - name: Agent authorization, invitation, budget, and migration regressions
+        run: |
+          set -euo pipefail
+          go test -race -p 1 -count=1 -timeout=10m -json ./model ./middleware ./controller \
+            -run '^(TestAgent|TestRedeem|TestRedemption(Quota|DuplicateCallback)|TestSearchRedemption|TestMainAutoMigrate|TestInsertPersistsValidatedInviter|TestInsertWithTxRejectsDisabled|TestInsertLinuxDOWithTx|TestInsertIgnoresLegacyGlobal|TestInsertWithTxOAuthRollback|TestInviteUser|TestLinuxDOSignup|TestAdminUser|TestCreateUser|TestManageUser(Disable|Demote|Delete)|TestFailedRedemptionDoesNotLogSubmittedCode)' \
+            | tee acceptance-evidence/agent.jsonl
+
+      - name: Upstream redemption lifecycle on PostgreSQL only
+        run: |
+          set -euo pipefail
+          go test -race -p 1 -count=1 -timeout=10m -json ./controller \
+            -run '^TestRedemptionLifecycleDatabaseMatrix$/^postgres$' \
+            | tee acceptance-evidence/redemption.jsonl
+
+      - name: Wallet buckets, bonus eligibility, and atomic ledger regressions
+        run: |
+          set -euo pipefail
+          go test -race -p 1 -count=1 -timeout=10m -json ./model \
+            -run '^Test(BackfillLegacyQuotaAccounts|ReconcileQuotaAccounts|CreditQuota|DebitQuota|OverrideQuota|TransferQuota|LedgerInvalidEntries|Idempotency|ExplicitIdempotencyKey|ConcurrentDebits|ConcurrentSameIdempotencyKey|LedgerInsertFailure|BalanceUpdateFailure|TopupDuplicateCallback|GetUserQuotaReadsMirror|IsModelBonusEligible|BatchUpdateModelBonusEligible|TransferAffQuota)' \
+            | tee acceptance-evidence/wallet-model.jsonl
+
+      - name: Wallet reservation and unknown-held no-refund regressions
+        run: |
+          set -euo pipefail
+          go test -race -p 1 -count=1 -timeout=10m -json ./service \
+            -run '^Test(WalletFunding|PostConsumeQuotaWalletRefundUsesPaidAccount|BillingUnownedHoldRequiresReview|BillingUnknownDeliveryObservability|InitialReservationRecoveryPostgres|FinancialConsistencyUnknownMetadataNeverBlindRefunds)' \
+            | tee acceptance-evidence/wallet-service.jsonl
+
+      - name: Immediate task metrics require atomic financial ownership
+        run: |
+          set -euo pipefail
+          go test -race -p 1 -count=1 -timeout=10m -json ./controller \
+            -run '^TestImmediateTaskMetricsRequireAtomicFinancialHandoff$' \
+            | tee acceptance-evidence/task-metrics.jsonl
+
+      - name: Require executed, passing, unskipped acceptance tests
+        run: |
+          python3 - <<'PY'
+          import collections
+          import json
+          from pathlib import Path
+
+          required = {
+              'agent': {'TestAgentRedemptionPostgresLegacyUpgradeRepeatedMigrationAndForwardRecovery', 'TestAgentDashboardAuthorizationPostgres', 'TestAgentInvitationConcurrentDuplicateRegistrationHasOneGrant'},
+              'redemption': {'TestRedemptionLifecycleDatabaseMatrix/postgres'},
+              'wallet-model': {'TestCreditQuotaShares', 'TestIsModelBonusEligibleFailClosed'},
+              'wallet-service': {'TestBillingUnknownDeliveryObservability', 'TestInitialReservationRecoveryPostgres'},
+              'task-metrics': {'TestImmediateTaskMetricsRequireAtomicFinancialHandoff'},
+          }
+          for name, expected in required.items():
+              events = [json.loads(line) for line in Path(f'acceptance-evidence/{name}.jsonl').read_text().splitlines()]
+              counts = collections.Counter(event['Action'] for event in events if event.get('Test'))
+              passed = {event['Test'] for event in events if event.get('Test') and event['Action'] == 'pass'}
+              assert expected <= passed, (name, 'missing acceptance tests', expected - passed)
+              assert not counts['skip'] and not counts['fail'], (name, counts)
+              assert counts['run'] == counts['pass'] > 0, (name, counts)
+              assert not any(event['Action'] == 'fail' for event in events), (name, 'package failed')
+              print(f'{name}: {counts["pass"]} passed; 0 skipped; 0 failed')
+          print('PostgreSQL-only acceptance; MySQL and SQLite were not exercised by this workflow.')
+          PY
+
+      - name: Retain exact-commit acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agent-postgres-${{ github.sha }}
+          path: acceptance-evidence/
+          if-no-files-found: error
+          retention-days: 14
