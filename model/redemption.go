@@ -269,9 +269,6 @@ func (redemption *Redemption) Delete() error { return DeleteRedemptionById(redem
 
 func DeleteRedemptionById(id int) error {
 	_, err := DeleteRedemptionsScoped(RedemptionScope{Role: common.RoleRootUser, system: true}, []int{id}, false)
-	if err == nil {
-		*redemption = *updated
-	}
 	return err
 }
 
