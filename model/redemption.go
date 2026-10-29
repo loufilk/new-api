@@ -248,14 +248,20 @@ func (redemption *Redemption) Insert() error {
 }
 
 func (redemption *Redemption) SelectUpdate() error {
-	_, err := UpdateRedemptionScoped(RedemptionScope{Role: common.RoleRootUser, system: true}, RedemptionUpdateRequest{ID: redemption.Id, Status: redemption.Status}, true)
+	updated, err := UpdateRedemptionScoped(RedemptionScope{Role: common.RoleRootUser, system: true}, RedemptionUpdateRequest{ID: redemption.Id, Status: redemption.Status}, true)
+	if err == nil {
+		*redemption = *updated
+	}
 	return err
 }
 
 // Update preserves use markers and runs value edits through budget accounting.
 // Status transitions must use SelectUpdate or the scoped status-only API.
 func (redemption *Redemption) Update() error {
-	_, err := UpdateRedemptionScoped(RedemptionScope{Role: common.RoleRootUser, system: true}, RedemptionUpdateRequest{ID: redemption.Id, Name: redemption.Name, Quota: redemption.Quota, ExpiredTime: redemption.ExpiredTime}, false)
+	updated, err := UpdateRedemptionScoped(RedemptionScope{Role: common.RoleRootUser, system: true}, RedemptionUpdateRequest{ID: redemption.Id, Name: redemption.Name, Quota: redemption.Quota, ExpiredTime: redemption.ExpiredTime}, false)
+	if err == nil {
+		*redemption = *updated
+	}
 	return err
 }
 
@@ -263,6 +269,9 @@ func (redemption *Redemption) Delete() error { return DeleteRedemptionById(redem
 
 func DeleteRedemptionById(id int) error {
 	_, err := DeleteRedemptionsScoped(RedemptionScope{Role: common.RoleRootUser, system: true}, []int{id}, false)
+	if err == nil {
+		*redemption = *updated
+	}
 	return err
 }
 

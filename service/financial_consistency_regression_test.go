@@ -478,9 +478,10 @@ func TestFinancialConsistencyTaskSubmitNetReceipt(t *testing.T) {
 				if scenario == "submit_lost_ack" {
 					mode = 2
 				}
-				taskFinancialCommitFault(t, mode)
+				fault := taskFinancialCommitFault(t, mode)
 				err := PersistTaskBilling(info, task)
 				require.Error(t, err)
+				require.Zero(t, fault.Load(), "the actual task handoff COMMIT boundary must be faulted")
 				var rows int64
 				require.NoError(t, model.DB.Model(&model.Task{}).Where("user_id = ?", user.Id).Count(&rows).Error)
 				if mode == 1 {

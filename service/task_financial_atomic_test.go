@@ -27,7 +27,7 @@ type taskFinancialCommitPool struct {
 
 func (p *taskFinancialCommitPool) GetDBConn() (*sql.DB, error) { return p.db, nil }
 
-func taskFinancialCommitFault(t *testing.T, mode int32) {
+func taskFinancialCommitFault(t *testing.T, mode int32) *atomic.Int32 {
 	t.Helper()
 	original := model.DB
 	db, err := original.DB()
@@ -37,10 +37,11 @@ func taskFinancialCommitFault(t *testing.T, mode int32) {
 	wrapped := original.Session(&gorm.Session{NewDB: true, Context: context.Background()})
 	config := *wrapped.Config
 	wrapped.Config = &config
-	pool := &taskFinancialCommitPool{terminalCommitPool: &terminalCommitPool{ConnPool: original.ConnPool, mode: flag}, db: db}
+	pool := &taskFinancialCommitPool{terminalCommitPool: &terminalCommitPool{ConnPool: original.ConnPool, mode: flag, skip: &atomic.Int32{}}, db: db}
 	wrapped.Config.ConnPool, wrapped.Statement.ConnPool = pool, pool
 	model.DB = wrapped
 	t.Cleanup(func() { model.DB = original })
+	return flag
 }
 
 func seedAtomicFinancialTask(t *testing.T, refund bool) (*model.Task, *model.User, *model.Token, *model.Channel) {
@@ -150,9 +151,10 @@ func runTaskFinancialAtomicCases(t *testing.T) {
 				if refund {
 					actual = 0
 				}
-				taskFinancialCommitFault(t, mode)
+				fault := taskFinancialCommitFault(t, mode)
 				applied, err := ApplyTaskQuota(t.Context(), task, actual, refund)
 				require.Error(t, err)
+				require.Zero(t, fault.Load(), "the actual money COMMIT boundary must be faulted")
 				assert.False(t, applied)
 				var persisted model.Task
 				require.NoError(t, model.DB.First(&persisted, task.ID).Error)

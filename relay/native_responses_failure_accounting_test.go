@@ -90,47 +90,52 @@ func TestNativeResponsesFailureFixedAccountingDatabaseMatrix(t *testing.T) {
 			db, logDB := convertedStreamAccountingDB(t, dialect.kind, dialect.mainEnv, dialect.logEnv)
 			for _, transport := range []string{"http_sse", "websocket_accumulator"} {
 				for _, tc := range []struct {
-					name      string
-					events    []string
-					wantQuota int
+					name        string
+					events      []string
+					wantQuota   int
+					wantUnknown bool
 				}{
-					{"leading failed", []string{`{"type":"response.failed","response":{"status":"failed"}}`}, 0},
-					{"leading error", []string{`{"type":"error","code":"server_error","message":"failed"}`}, 0},
-					{"error request echo is not output", []string{`{"type":"error","text":"echoed request","arguments":"echoed arguments","input":"echoed input"}`}, 0},
-					{"created then response error", []string{`{"type":"response.created"}`, `{"type":"response.error","message":"failed"}`}, 0},
-					{"completed with failed status", []string{`{"type":"response.completed","response":{"status":"failed"}}`}, 0},
-					{"done with cancelled status", []string{`{"type":"response.done","response":{"status":"cancelled"}}`}, 0},
-					{"partial text failure", []string{`{"type":"response.output_text.delta","delta":"partial answer"}`, `{"type":"response.failed"}`}, 5000},
-					{"reported usage failure", []string{`{"type":"response.failed","response":{"usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12}}}`}, 5000},
-					{"cached usage failure", []string{`{"type":"response.failed","response":{"usage":{"input_tokens_details":{"cached_tokens":3}}}}`}, 5000},
-					{"completed tool failure", []string{`{"type":"response.output_item.done","output_index":0,"item":{"id":"search-1","type":"web_search_call","status":"completed"}}`, `{"type":"response.failed"}`}, 5500},
-					{"completed tool cancellation", []string{`{"type":"response.output_item.done","output_index":0,"item":{"id":"search-1","type":"web_search_call","status":"completed"}}`, `{"type":"response.cancelled"}`}, 5500},
-					{"done only function arguments failure", []string{`{"type":"response.output_item.done","item":{"id":"fn-1","type":"function_call","name":"unpriced_fn","arguments":"{}"}}`, `{"type":"response.failed"}`}, 5000},
-					{"completed function without arguments failure", []string{`{"type":"response.output_item.done","item":{"id":"fn-1","type":"function_call","name":"unpriced_fn","status":"completed","arguments":""}}`, `{"type":"response.failed"}`}, 5000},
-					{"completed computer action failure", []string{`{"type":"response.output_item.done","item":{"id":"computer-1","type":"computer_call","status":"completed","action":{"type":"click","x":1,"y":2}}}`, `{"type":"response.failed"}`}, 5000},
-					{"partial computer action failure", []string{`{"type":"response.output_item.added","item":{"id":"computer-1","type":"computer_call","status":"in_progress","action":{"type":"click","x":1,"y":2}}}`, `{"type":"response.failed"}`}, 5000},
-					{"partial patch operation failure", []string{`{"type":"response.output_item.added","item":{"id":"patch-1","type":"apply_patch_call","status":"in_progress","operation":{"type":"update_file","path":"test.txt","diff":"generated patch"}}}`, `{"type":"response.failed"}`}, 5000},
-					{"empty action shell is not output", []string{`{"type":"response.output_item.added","item":{"id":"computer-1","type":"computer_call","status":"in_progress","action":{}}}`, `{"type":"response.failed"}`}, 0},
-					{"failed empty tool is not output", []string{`{"type":"response.output_item.done","item":{"id":"fn-1","type":"function_call","name":"unpriced_fn","status":"failed","arguments":""}}`, `{"type":"response.failed"}`}, 0},
-					{"in progress empty tool is not output", []string{`{"type":"response.output_item.added","item":{"id":"fn-1","type":"function_call","name":"unpriced_fn","status":"in_progress","arguments":""}}`, `{"type":"response.failed"}`}, 0},
-					{"created response tool shell is not completed", []string{`{"type":"response.created","response":{"status":"in_progress","output":[{"id":"fn-1","type":"function_call","name":"unpriced_fn"}]}}`, `{"type":"response.failed"}`}, 0},
-					{"custom tool input delta failure", []string{`{"type":"response.custom_tool_call_input.delta","delta":"generated tool input"}`, `{"type":"response.failed"}`}, 5000},
-					{"mcp arguments done failure", []string{`{"type":"response.mcp_call_arguments.done","arguments":"{}"}`, `{"type":"response.failed"}`}, 5000},
-					{"code interpreter delta failure", []string{`{"type":"response.code_interpreter_call_code.delta","delta":"print(1)"}`, `{"type":"response.failed"}`}, 5000},
-					{"code interpreter done failure", []string{`{"type":"response.code_interpreter_call_code.done","code":"print(1)"}`, `{"type":"response.failed"}`}, 5000},
-					{"generated audio delta failure", []string{`{"type":"response.audio.delta","delta":"YXVkaW8="}`, `{"type":"response.failed"}`}, 5000},
-					{"audio transcript delta failure", []string{`{"type":"response.audio_transcript.delta","delta":"partial transcript"}`, `{"type":"response.failed"}`}, 5000},
-					{"terminal function arguments failure", []string{`{"type":"response.failed","response":{"output":[{"type":"function_call","name":"unpriced_fn","arguments":"{}"}]}}`}, 5000},
-					{"terminal reasoning failure", []string{`{"type":"response.failed","response":{"output":[{"type":"reasoning","summary":[{"type":"summary_text","text":"partial reasoning"}]}]}}`}, 5000},
-					{"encrypted reasoning failure", []string{`{"type":"response.failed","response":{"output":[{"type":"reasoning","summary":[],"encrypted_content":"opaque-generated-reasoning"}]}}`}, 5000},
-					{"terminal refusal failure", []string{`{"type":"response.failed","response":{"output":[{"type":"message","content":[{"type":"refusal","refusal":"I cannot answer"}]}]}}`}, 5000},
-					{"done only message failure", []string{`{"type":"response.output_item.done","item":{"type":"message","content":[{"type":"output_text","text":"partial answer"}]}}`, `{"type":"response.failed"}`}, 5000},
-					{"successful missing usage", []string{`{"type":"response.completed","response":{"status":"completed"}}`}, 5000},
-					{"created only disconnect", []string{`{"type":"response.created","response":{"status":"in_progress"}}`}, 5000},
-					{"successful nil usage dispatch", nil, 5000},
+					{"leading failed", []string{`{"type":"response.failed","response":{"status":"failed"}}`}, 0, false},
+					{"leading error", []string{`{"type":"error","code":"server_error","message":"failed"}`}, 0, false},
+					{"error request echo is not output", []string{`{"type":"error","text":"echoed request","arguments":"echoed arguments","input":"echoed input"}`}, 0, false},
+					{"created then response error", []string{`{"type":"response.created"}`, `{"type":"response.error","message":"failed"}`}, 0, false},
+					{"completed with failed status", []string{`{"type":"response.completed","response":{"status":"failed"}}`}, 0, false},
+					{"done with cancelled status", []string{`{"type":"response.done","response":{"status":"cancelled"}}`}, 0, false},
+					{"partial text failure", []string{`{"type":"response.output_text.delta","delta":"partial answer"}`, `{"type":"response.failed"}`}, 5000, false},
+					{"reported usage failure", []string{`{"type":"response.failed","response":{"usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12}}}`}, 5000, false},
+					{"cached usage failure", []string{`{"type":"response.failed","response":{"usage":{"input_tokens_details":{"cached_tokens":3}}}}`}, 5000, true},
+					{"completed tool failure", []string{`{"type":"response.output_item.done","output_index":0,"item":{"id":"search-1","type":"web_search_call","status":"completed"}}`, `{"type":"response.failed"}`}, 5500, false},
+					{"completed tool cancellation", []string{`{"type":"response.output_item.done","output_index":0,"item":{"id":"search-1","type":"web_search_call","status":"completed"}}`, `{"type":"response.cancelled"}`}, 5500, false},
+					{"done only function arguments failure", []string{`{"type":"response.output_item.done","item":{"id":"fn-1","type":"function_call","name":"unpriced_fn","arguments":"{}"}}`, `{"type":"response.failed"}`}, 5000, false},
+					{"completed function without arguments failure", []string{`{"type":"response.output_item.done","item":{"id":"fn-1","type":"function_call","name":"unpriced_fn","status":"completed","arguments":""}}`, `{"type":"response.failed"}`}, 5000, false},
+					{"completed computer action failure", []string{`{"type":"response.output_item.done","item":{"id":"computer-1","type":"computer_call","status":"completed","action":{"type":"click","x":1,"y":2}}}`, `{"type":"response.failed"}`}, 5000, false},
+					{"partial computer action failure", []string{`{"type":"response.output_item.added","item":{"id":"computer-1","type":"computer_call","status":"in_progress","action":{"type":"click","x":1,"y":2}}}`, `{"type":"response.failed"}`}, 5000, false},
+					{"partial patch operation failure", []string{`{"type":"response.output_item.added","item":{"id":"patch-1","type":"apply_patch_call","status":"in_progress","operation":{"type":"update_file","path":"test.txt","diff":"generated patch"}}}`, `{"type":"response.failed"}`}, 5000, false},
+					{"empty action shell is not output", []string{`{"type":"response.output_item.added","item":{"id":"computer-1","type":"computer_call","status":"in_progress","action":{}}}`, `{"type":"response.failed"}`}, 0, false},
+					{"failed empty tool is not output", []string{`{"type":"response.output_item.done","item":{"id":"fn-1","type":"function_call","name":"unpriced_fn","status":"failed","arguments":""}}`, `{"type":"response.failed"}`}, 0, false},
+					{"in progress empty tool is not output", []string{`{"type":"response.output_item.added","item":{"id":"fn-1","type":"function_call","name":"unpriced_fn","status":"in_progress","arguments":""}}`, `{"type":"response.failed"}`}, 0, false},
+					{"created response tool shell is not completed", []string{`{"type":"response.created","response":{"status":"in_progress","output":[{"id":"fn-1","type":"function_call","name":"unpriced_fn"}]}}`, `{"type":"response.failed"}`}, 0, false},
+					{"custom tool input delta failure", []string{`{"type":"response.custom_tool_call_input.delta","delta":"generated tool input"}`, `{"type":"response.failed"}`}, 5000, false},
+					{"mcp arguments done failure", []string{`{"type":"response.mcp_call_arguments.done","arguments":"{}"}`, `{"type":"response.failed"}`}, 5000, false},
+					{"code interpreter delta failure", []string{`{"type":"response.code_interpreter_call_code.delta","delta":"print(1)"}`, `{"type":"response.failed"}`}, 5000, false},
+					{"code interpreter done failure", []string{`{"type":"response.code_interpreter_call_code.done","code":"print(1)"}`, `{"type":"response.failed"}`}, 5000, false},
+					{"generated audio delta failure", []string{`{"type":"response.audio.delta","delta":"YXVkaW8="}`, `{"type":"response.failed"}`}, 5000, false},
+					{"audio transcript delta failure", []string{`{"type":"response.audio_transcript.delta","delta":"partial transcript"}`, `{"type":"response.failed"}`}, 5000, false},
+					{"terminal function arguments failure", []string{`{"type":"response.failed","response":{"output":[{"type":"function_call","name":"unpriced_fn","arguments":"{}"}]}}`}, 5000, false},
+					{"terminal reasoning failure", []string{`{"type":"response.failed","response":{"output":[{"type":"reasoning","summary":[{"type":"summary_text","text":"partial reasoning"}]}]}}`}, 5000, false},
+					{"encrypted reasoning failure", []string{`{"type":"response.failed","response":{"output":[{"type":"reasoning","summary":[],"encrypted_content":"opaque-generated-reasoning"}]}}`}, 5000, false},
+					{"terminal refusal failure", []string{`{"type":"response.failed","response":{"output":[{"type":"message","content":[{"type":"refusal","refusal":"I cannot answer"}]}]}}`}, 5000, false},
+					{"done only message failure", []string{`{"type":"response.output_item.done","item":{"type":"message","content":[{"type":"output_text","text":"partial answer"}]}}`, `{"type":"response.failed"}`}, 5000, false},
+					{"successful missing usage", []string{`{"type":"response.completed","response":{"status":"completed"}}`}, 5000, false},
+					{"created only disconnect", []string{`{"type":"response.created","response":{"status":"in_progress"}}`}, 5000, true},
+					{"successful nil usage dispatch", nil, 5000, false},
 				} {
 					t.Run(transport+"/"+tc.name, func(t *testing.T) {
 						c, info, user, token := nativeResponsesBillingReservation(t, db)
+						var completion *nativeResponsesRefundCompletion
+						if tc.wantUnknown {
+							completion = observeNativeResponsesRefund(t, db, info.RequestId, false)
+						}
 						var usage *dto.Usage
 						if len(tc.events) > 0 {
 							if transport == "http_sse" {
@@ -149,6 +154,9 @@ func TestNativeResponsesFailureFixedAccountingDatabaseMatrix(t *testing.T) {
 									require.NoError(t, common.UnmarshalJsonStr(raw, &event))
 									accumulator.Observe(&event, []byte(raw))
 								}
+								// The transport closes after the supplied events, as in the
+								// real WebSocket handler before it asks for final usage.
+								info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonEOF, io.EOF)
 								usage = accumulator.Finish()
 								assert.Equal(t, usage, accumulator.Finish(), "finishing a call twice must not add tool usage")
 							}
@@ -157,7 +165,9 @@ func TestNativeResponsesFailureFixedAccountingDatabaseMatrix(t *testing.T) {
 						assertNativeResponsesBillingBalance(t, db, user, token, tc.wantQuota)
 						var logs []model.Log
 						require.NoError(t, logDB.Where("user_id = ? AND type = ?", user.Id, model.LogTypeConsume).Find(&logs).Error)
-						if tc.wantQuota == 0 {
+						if tc.wantUnknown {
+							assert.Empty(t, logs, "unpriced usage is held for review, never successful consumption")
+						} else if tc.wantQuota == 0 {
 							assert.Empty(t, logs, "an empty explicit failure must not record a successful fixed-fee consumption")
 						} else {
 							require.Len(t, logs, 1)
@@ -173,12 +183,50 @@ func TestNativeResponsesFailureFixedAccountingDatabaseMatrix(t *testing.T) {
 							net += row.Delta
 						}
 						assert.Equal(t, -tc.wantQuota, net)
-						require.NoError(t, info.Billing.Settle(tc.wantQuota))
+						if tc.wantUnknown {
+							var owner model.BillingFinalization
+							require.NoError(t, db.Where("request_id = ?", info.RequestId).First(&owner).Error)
+							assert.Equal(t, model.BillingDeliveryUnknown, owner.State)
+							assert.Equal(t, "upstream_delivery_unknown", owner.LastErrorCode)
+							assert.Equal(t, user.Id, owner.UserID)
+							assert.Equal(t, token.Id, owner.TokenID)
+							assert.Equal(t, model.BillingTokenFingerprint(token.Key), owner.TokenFingerprint)
+							assert.Equal(t, 5000, owner.SourceHeld)
+							assert.Equal(t, 5000, owner.TokenHeld)
+							assert.Zero(t, owner.ActualQuota)
+							assert.Zero(t, owner.NextRetryAt)
+							assert.False(t, info.Billing.NeedsRefund())
+							require.ErrorIs(t, info.Billing.Settle(0), model.ErrBillingFinalized)
+							require.ErrorIs(t, info.Billing.Settle(tc.wantQuota), model.ErrBillingFinalized)
+							// Repeated finalizers cannot turn unknown delivery into a
+							// guessed charge, refund, or successful consumption log.
+							relay.ConsumeResponsesQuota(c, info, usage)
+							service.PreserveUnknownBillingDelivery(info)
+							var replay model.BillingFinalization
+							require.NoError(t, db.Where("request_id = ?", info.RequestId).First(&replay).Error)
+							assert.Equal(t, owner, replay)
+						} else {
+							require.NoError(t, info.Billing.Settle(tc.wantQuota))
+						}
 						info.Billing.Refund(c)
+						if completion != nil {
+							completion.join(t)
+							completion.mu.Lock()
+							admitted := completion.admitted
+							completion.mu.Unlock()
+							assert.False(t, admitted, "unknown delivery cannot admit a refund worker")
+						}
 						assertNativeResponsesBillingBalance(t, db, user, token, tc.wantQuota)
 						var ledgerAfter int64
 						require.NoError(t, db.Model(&model.BalanceLedger{}).Where("user_id = ?", user.Id).Count(&ledgerAfter).Error)
 						assert.Equal(t, int64(len(ledger)), ledgerAfter, "settlement replay and outer refund must not move money twice")
+						if tc.wantUnknown {
+							require.NoError(t, db.First(&user, user.Id).Error)
+							assert.Zero(t, user.UsedQuota, "a held reservation is not measured consumption")
+							var logsAfter int64
+							require.NoError(t, logDB.Model(&model.Log{}).Where("user_id = ? AND type = ?", user.Id, model.LogTypeConsume).Count(&logsAfter).Error)
+							assert.Zero(t, logsAfter)
+						}
 					})
 				}
 			}
@@ -233,16 +281,49 @@ func TestNativeResponsesFailureFixedAccountingDatabaseMatrix(t *testing.T) {
 					}
 				}))
 				t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove(callback)) })
-				completion := observeNativeResponsesRefund(t, db, info.RequestId, true)
+				// Even a zero actual amount freezes settlement intent. The outer
+				// refund path must not admit a competing financial owner.
+				completion := observeNativeResponsesRefund(t, db, info.RequestId, false)
 				relay.ConsumeResponsesQuota(c, info, nil)
 				require.True(t, failed.Load(), "the real wallet/token settlement must encounter the injected rollback")
+				assertNativeResponsesBillingBalance(t, db, user, token, 5000)
+				var owner model.BillingFinalization
+				require.NoError(t, db.Where("request_id = ?", info.RequestId).First(&owner).Error)
+				assert.Equal(t, model.BillingSettlementReview, owner.State)
+				assert.Zero(t, owner.ActualQuota)
+				assert.Equal(t, 5000, owner.SourceHeld)
+				assert.Equal(t, 5000, owner.TokenHeld)
+				assert.Equal(t, token.Id, owner.TokenID)
+				assert.Equal(t, model.BillingTokenFingerprint(token.Key), owner.TokenFingerprint)
+				assert.Positive(t, owner.Attempts)
+				assert.Zero(t, owner.NextRetryAt)
+				assert.False(t, info.Billing.NeedsRefund())
+				info.Billing.Refund(c)
 				completion.join(t)
-				assertNativeResponsesBillingBalance(t, db, user, token, 0)
+				completion.mu.Lock()
+				admitted := completion.admitted
+				completion.mu.Unlock()
+				assert.False(t, admitted, "frozen settlement cannot admit a competing refund worker")
+				require.ErrorContains(t, info.Billing.Settle(1), "replay amount mismatch")
+				assertNativeResponsesBillingBalance(t, db, user, token, 5000)
+				var ledger []model.BalanceLedger
+				require.NoError(t, db.Where("user_id = ?", user.Id).Find(&ledger).Error)
+				require.Len(t, ledger, 1, "the failed adjustment must roll back before manual same-amount recovery")
+				assert.Equal(t, -5000, ledger[0].Delta)
+
+				require.NoError(t, info.Billing.Settle(0))
+				require.NoError(t, info.Billing.Settle(0), "recovery replay cannot credit twice")
 				info.Billing.Refund(c)
 				assertNativeResponsesBillingBalance(t, db, user, token, 0)
+				require.NoError(t, db.Where("request_id = ?", info.RequestId).First(&owner).Error)
+				assert.Equal(t, model.BillingSettled, owner.State)
+				assert.Zero(t, owner.ActualQuota)
 				var net int
 				require.NoError(t, db.Model(&model.BalanceLedger{}).Where("user_id = ?", user.Id).Select("SUM(delta)").Scan(&net).Error)
-				assert.Zero(t, net, "the failed adjustment must roll back before the ordinary refund")
+				assert.Zero(t, net)
+				var logs int64
+				require.NoError(t, logDB.Model(&model.Log{}).Where("user_id = ? AND type = ?", user.Id, model.LogTypeConsume).Count(&logs).Error)
+				assert.Zero(t, logs)
 			})
 		})
 	}

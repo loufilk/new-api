@@ -6,7 +6,7 @@ go 1.27.3
 require (
 	github.com/Azure/go-ntlmssp v0.1.1
 	github.com/Calcium-Ion/go-epay v0.0.5
-	github.com/Calcium-Ion/moejs v0.1.0-alpha.6
+	github.com/Calcium-Ion/moejs v0.1.0-alpha.7
 	github.com/ClickHouse/clickhouse-go/v2 v2.46.0
 	github.com/QuantumNous/new-api/relaykit v0.0.0
 	github.com/QuantumNous/new-api/tokenkit v0.0.0

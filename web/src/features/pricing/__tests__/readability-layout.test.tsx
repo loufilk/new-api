@@ -36,11 +36,20 @@ const model: PricingModel = {
 }
 
 describe('pricing readability layout', () => {
-  it('keeps all six category controls large and able to wrap on narrow screens', () => {
+  it('keeps all seven category controls large and able to wrap on narrow screens', () => {
     render(<ModelCategories models={[model]} value='all' onChange={vi.fn()} />)
     const categories = screen.getAllByRole('button')
-    expect(categories).toHaveLength(6)
-    for (const category of categories) {
+    expect(categories).toHaveLength(7)
+    for (const name of [
+      'Text 1',
+      'Image Generation 0',
+      'Video 0',
+      'Audio 0',
+      'Vectors 0',
+      'Decision Models 0',
+      'All 1',
+    ]) {
+      const category = screen.getByRole('button', { name })
       expect(category).toHaveClass('h-10', 'px-4', 'text-base')
       expect(within(category).getByText(/^[01]$/)).toHaveClass('text-sm')
     }

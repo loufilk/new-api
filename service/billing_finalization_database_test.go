@@ -53,9 +53,11 @@ func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 			oldMain, oldLog := common.MainDatabaseType(), common.LogDatabaseType()
 			model.DB, model.LOG_DB = db, db
 			common.SetDatabaseTypes(dialect.name, dialect.name)
+			require.NoError(t, initServiceTestDatabaseDialect())
 			t.Cleanup(func() {
 				model.DB, model.LOG_DB = oldDB, oldLogDB
 				common.SetDatabaseTypes(oldMain, oldLog)
+				require.NoError(t, initServiceTestDatabaseDialect())
 				model.InvalidateModelBonusEligibleCache()
 			})
 			require.NoError(t, db.AutoMigrate(&model.Option{}, &model.BillingFinalization{}, &model.Task{}, &model.User{}, &model.Token{}, &model.Log{}, &model.Channel{}, &model.Ability{}, &model.Midjourney{}, &model.TopUp{}, &model.UserSubscription{}, &model.SystemTask{}, &model.SystemTaskLock{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Model{}, &model.Vendor{}, &model.ModelBonusEligibleAudit{}, &model.ReferralCommission{}, &model.Redemption{}, &model.SubscriptionPlan{}, &model.SubscriptionOrder{}, &model.SubscriptionPreConsumeRecord{}))

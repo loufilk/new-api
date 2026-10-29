@@ -31,6 +31,18 @@ export type ReferenceValidationError = {
   messageKey: string
 }
 
+export function getReferenceImageMimeType(file: {
+  name: string
+  type: string
+}): string {
+  if (file.type) return file.type.toLowerCase()
+  const extension = file.name.split('.').at(-1)?.toLowerCase()
+  if (extension === 'png') return 'image/png'
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg'
+  if (extension === 'webp') return 'image/webp'
+  return ''
+}
+
 export function validateReferenceFiles(params: {
   files: { name: string; size: number; type: string }[]
   existingTotalBytes: number

@@ -54,6 +54,12 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	if request.Resolution != nil && *request.Resolution != "1k" && *request.Resolution != "2k" {
 		return nil, types.NewErrorWithStatusCode(errors.New("xAI image resolution must be 1k or 2k"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
+	// https://docs.x.ai/developers/model-capabilities/images/generation
+	switch request.Quality {
+	case "", "low", "medium", "auto":
+	default:
+		return nil, types.NewErrorWithStatusCode(errors.New("xAI image quality must be low, medium or auto"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
 	xaiRequest := ImageRequest{
 		Model:          request.Model,
 		Prompt:         request.Prompt,
@@ -61,6 +67,11 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		ResponseFormat: request.ResponseFormat,
 		AspectRatio:    request.AspectRatio,
 		Resolution:     request.Resolution,
+		Image:          request.Image,
+		Images:         request.Images,
+	}
+	if request.Quality != "" {
+		xaiRequest.Quality = lo.ToPtr(request.Quality)
 	}
 	return xaiRequest, nil
 }

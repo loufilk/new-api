@@ -231,9 +231,9 @@ func UpdateRedemptionScoped(scope RedemptionScope, request RedemptionUpdateReque
 		if err := lockForUpdate(scope.query(tx)).Where("id = ?", request.ID).First(&redemption).Error; err != nil {
 			return err
 		}
-		// Check durable use markers too: this closes legacy enabled-after-use
-		// state resurrection without relying only on the mutable status field.
-		if redemption.Status == common.RedemptionCodeStatusUsed || redemption.UsedUserId != 0 || redemption.RedeemedTime != 0 {
+		// Fail closed for unknown legacy states, and check durable use markers
+		// to prevent enabled-after-use resurrection of a redeemed code.
+		if (redemption.Status != common.RedemptionCodeStatusEnabled && redemption.Status != common.RedemptionCodeStatusDisabled) || redemption.UsedUserId != 0 || redemption.RedeemedTime != 0 {
 			return ErrRedemptionUsedImmutable
 		}
 		status, quota, expired := redemption.Status, redemption.Quota, redemption.ExpiredTime

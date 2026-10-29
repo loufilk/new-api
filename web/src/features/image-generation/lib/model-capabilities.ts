@@ -29,6 +29,16 @@ const DALLE3_STYLES = ['vivid', 'natural']
 const DALLE_SIZES = ['256x256', '512x512', '1024x1024']
 
 const GPT_IMAGE_QUALITY = ['auto', 'low', 'medium', 'high']
+const GROK_IMAGE_RATIOS = [
+  'auto',
+  '1:1',
+  '16:9',
+  '9:16',
+  '4:3',
+  '3:4',
+  '3:2',
+  '2:3',
+]
 
 function emptyCapability(
   overrides: Partial<ImageModelCapability> & { maxN: number }
@@ -45,16 +55,36 @@ function emptyCapability(
 
 export function getModelCapability(model: string): ImageModelCapability {
   const name = model.trim().toLowerCase()
-  // Dedicated Console route: do not apply these capabilities to the Web model.
-  if (name === 'grok-imagine-image-2.0-console') {
+  if (
+    name === 'grok-imagine-image-2.0' ||
+    name === 'grok-imagine-image-2.0-console'
+  ) {
     return {
-      sizes: ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3'],
+      sizes: [...GROK_IMAGE_RATIOS],
       qualities: ['low', 'medium'],
       styles: [],
       maxN: 4,
       maxReferenceImages: 3,
       supportsResponseFormat: true,
-      requestFormat: 'grok-console',
+      requestFormat: 'grok',
+      responseFormat: 'b64_json',
+    }
+  }
+  if (
+    name === 'grok-imagine-image' ||
+    name === 'grok-imagine-image-quality' ||
+    name === 'grok-imagine-image-edit'
+  ) {
+    const isEdit = name === 'grok-imagine-image-edit'
+    return {
+      sizes: [...GROK_IMAGE_RATIOS],
+      qualities: [],
+      styles: [],
+      maxN: isEdit ? 1 : 4,
+      maxReferenceImages: isEdit ? 8 : 3,
+      requiresReferenceImage: isEdit,
+      supportsResponseFormat: true,
+      requestFormat: 'grok',
       responseFormat: 'b64_json',
     }
   }

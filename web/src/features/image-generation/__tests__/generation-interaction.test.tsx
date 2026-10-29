@@ -21,6 +21,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 
 import { GenerationForm } from '../components/GenerationForm'
+import { getModelCapability } from '../lib/model-capabilities'
 
 const baseValue = {
   prompt: 'a lake at sunrise',
@@ -70,6 +71,69 @@ function renderForm(
 }
 
 describe('generation form protects key interactions', () => {
+  test('edit-only mode blocks click and keyboard submission until a reference is added', async () => {
+    const onGenerate = vi.fn()
+    const view = renderForm({
+      requiresReferenceImage: true,
+      maxReferenceImages: 8,
+      onGenerate,
+    })
+    const user = userEvent.setup()
+    expect(screen.getByRole('button', { name: 'Generate' })).toBeDisabled()
+    await user.click(screen.getByLabelText('Prompt'))
+    await user.keyboard('{Control>}{Enter}{/Control}')
+    expect(onGenerate).not.toHaveBeenCalled()
+    view.unmount()
+    renderForm({
+      requiresReferenceImage: true,
+      maxReferenceImages: 8,
+      onGenerate,
+      references: [
+        {
+          id: 'reference',
+          file: new File(['image'], 'reference.png', { type: 'image/png' }),
+          previewUrl: 'https://example.com/reference.png',
+          name: 'reference.png',
+          size: 5,
+          mime: 'image/png',
+        },
+      ],
+    })
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    expect(onGenerate).toHaveBeenCalledOnce()
+  })
+
+  test('Grok 2.0 enables references, ratios and supported quality choices', async () => {
+    const capability = getModelCapability('grok-imagine-image-2.0')
+    const onChange = vi.fn()
+    renderForm({
+      value: {
+        ...baseValue,
+        model: 'grok-imagine-image-2.0',
+        size: 'auto',
+        quality: 'low',
+      },
+      sizes: capability.sizes,
+      qualities: capability.qualities,
+      maxCount: capability.maxN,
+      maxReferenceImages: capability.maxReferenceImages,
+      onChange,
+    })
+    expect(
+      screen.getByRole('button', { name: 'Add reference images' })
+    ).toBeEnabled()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Size' }))
+    await user.click(screen.getByRole('button', { name: 'Landscape 16:9' }))
+    expect(onChange).toHaveBeenCalledWith({ size: '16:9' })
+    await user.click(screen.getByRole('button', { name: 'Quality' }))
+    await user.click(screen.getByRole('button', { name: 'Medium' }))
+    expect(onChange).toHaveBeenCalledWith({ quality: 'medium' })
+    expect(
+      screen.queryByRole('button', { name: 'High' })
+    ).not.toBeInTheDocument()
+  })
+
   test('async switch changes the submission mode and is locked while generating', async () => {
     const onAsyncModeChange = vi.fn()
     const view = renderForm({ asyncMode: false, onAsyncModeChange })

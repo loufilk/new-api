@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { t } from 'i18next'
 
+import { getReferenceImageMimeType } from './reference-validation'
+
 // JSON image-edit APIs require inline image URLs rather than multipart files.
 export function readReferenceImageDataUrl(
   file: File,
@@ -53,13 +55,7 @@ export function readReferenceImageDataUrl(
     )
     signal?.addEventListener('abort', abort, { once: true })
     // The uploader accepts files with an empty MIME type when the extension is known.
-    let mime = file.type
-    if (!mime) {
-      const extension = file.name.split('.').at(-1)?.toLowerCase()
-      if (extension === 'png') mime = 'image/png'
-      else if (extension === 'webp') mime = 'image/webp'
-      else mime = 'image/jpeg'
-    }
+    const mime = getReferenceImageMimeType(file)
     try {
       reader.readAsDataURL(file.slice(0, file.size, mime))
     } catch (error) {

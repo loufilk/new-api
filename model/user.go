@@ -1434,11 +1434,6 @@ func GetUserSetting(id int, fromDB bool) (settingMap dto.UserSetting, err error)
 //	return email
 //}
 
-func GetRootUser() (user *User) {
-	DB.Where("role = ?", common.RoleRootUser).First(&user)
-	return user
-}
-
 func UpdateUserLastLoginAt(id int) {
 	if err := DB.Model(&User{}).Where("id = ?", id).Update("last_login_at", common.GetTimestamp()).Error; err != nil {
 		common.SysLog(common.LogText("failed to update user last_login_at: %s", err.Error()))

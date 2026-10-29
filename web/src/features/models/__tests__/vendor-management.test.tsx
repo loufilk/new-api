@@ -258,7 +258,7 @@ describe('vendor management', () => {
     let finishPage: ((value: unknown) => void) | undefined
     const get = vi
       .spyOn(api, 'get')
-      .mockImplementation(async (_url, config: ApiRequestConfig = {}) => {
+      .mockImplementation(async (_url, config?: ApiRequestConfig) => {
         if (config?.params?.p === 2) {
           return new Promise((resolve) => {
             finishPage = resolve

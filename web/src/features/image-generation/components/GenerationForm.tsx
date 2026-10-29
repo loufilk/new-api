@@ -82,6 +82,7 @@ type GenerationFormProps = {
   styles: string[]
   maxCount: number
   maxReferenceImages: number
+  requiresReferenceImage?: boolean
   references: ReferenceImageItem[]
   referenceErrorKey: string | null
   onAddReferenceFiles: (files: File[]) => void
@@ -116,6 +117,7 @@ export function GenerationForm(props: GenerationFormProps) {
     !props.isGenerating &&
     !props.isInitializing &&
     !promptInvalid &&
+    (!props.requiresReferenceImage || props.references.length > 0) &&
     props.value.apiKeyId !== null &&
     props.value.model !== ''
 

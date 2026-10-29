@@ -27,6 +27,7 @@ import {
   getModelCapability,
   resolveSettingsForModel,
 } from './model-capabilities'
+import { getReferenceImageMimeType } from './reference-validation'
 
 export type GenerationsRequestBody = {
   model: string
@@ -84,11 +85,11 @@ export function buildGenerationsBody(params: {
   if (capability.supportsResponseFormat) {
     body.response_format = capability.responseFormat ?? 'url'
   }
-  if (capability.requestFormat === 'grok-console') {
+  if (capability.requestFormat === 'grok') {
     const settings = resolveSettingsForModel(params.model, params)
     body.aspect_ratio = settings.size
     body.resolution = '1k'
-    body.quality = settings.quality
+    if (settings.quality) body.quality = settings.quality
     return body
   }
   if (capability.sizes.length > 0 && params.size) body.size = params.size
@@ -114,12 +115,11 @@ export function buildEditsFormData(params: {
   const form = new FormData()
   form.append('model', params.model)
   form.append('prompt', params.prompt)
-  if (limited.length === 1) {
-    form.append('image', limited[0], limited[0].name)
-  } else {
-    for (const file of limited) {
-      form.append('image[]', file, file.name)
-    }
+  for (const file of limited) {
+    const image = file.type
+      ? file
+      : file.slice(0, file.size, getReferenceImageMimeType(file))
+    form.append(limited.length === 1 ? 'image' : 'image[]', image, file.name)
   }
   form.append('n', String(count))
   if (capability.qualities.length > 0 && params.quality) {

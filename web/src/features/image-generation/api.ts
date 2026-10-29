@@ -136,14 +136,16 @@ export async function requestImageGeneration(params: {
   const headers = { Authorization: `Bearer ${params.fullKey}` }
 
   params.signal?.throwIfAborted()
+  const capability = getModelCapability(params.model)
+  if (capability.requiresReferenceImage && !hasReference) {
+    throw new Error(t('Add reference images'))
+  }
   let body:
     | (ReturnType<typeof buildGenerationsBody> & { images?: { url: string }[] })
     | FormData
   if (!hasReference) {
     body = buildGenerationsBody(params)
-  } else if (
-    getModelCapability(params.model).requestFormat === 'grok-console'
-  ) {
+  } else if (capability.requestFormat === 'grok') {
     const validation = validateReferenceFiles({
       files: params.images,
       existingCount: 0,
