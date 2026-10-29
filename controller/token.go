@@ -558,7 +558,7 @@ func AddToken(c *gin.Context) {
 		AutoGroups:         token.AutoGroups,
 	}
 	cleanToken.AllowUserQuotaQuery = request.AllowUserQuotaQuery == nil || *request.AllowUserQuotaQuery
-	err = cleanToken.Insert()
+	err = cleanToken.Insert(c.GetInt64("auth_version"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -670,7 +670,7 @@ func UpdateToken(c *gin.Context) {
 			}
 		}
 	}
-	err = cleanToken.Update()
+	err = cleanToken.Update(c.GetInt64("auth_version"))
 	if err != nil {
 		common.ApiError(c, err)
 		return

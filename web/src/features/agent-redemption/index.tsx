@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -33,42 +51,171 @@ export function AgentRedemption() {
   const [adjusting, setAdjusting] = useState<AgentAccount | null>(null)
   const scopedAgentId = isAgent ? user.id : agentId
   const query = useQuery({
-    queryKey: ['agent-redemption', user?.id, user?.role, 'accounts', scopedAgentId, pagination],
-    queryFn: ({ signal }) => getAgentAccounts({ p: pagination.pageIndex + 1, page_size: pagination.pageSize, agent_user_id: scopedAgentId }, signal),
+    queryKey: [
+      'agent-redemption',
+      user?.id,
+      user?.role,
+      'accounts',
+      scopedAgentId,
+      pagination,
+    ],
+    queryFn: ({ signal }) =>
+      getAgentAccounts(
+        {
+          p: pagination.pageIndex + 1,
+          page_size: pagination.pageSize,
+          agent_user_id: scopedAgentId,
+        },
+        signal
+      ),
   })
-  const account = query.data?.items.find((item) => item.agent_user_id === user?.id)
-  const selectedAccount = query.data?.items.find((item) => item.agent_user_id === selected?.agent_user_id) ?? selected
+  const account = query.data?.items.find(
+    (item) => item.agent_user_id === user?.id
+  )
+  const selectedAccount =
+    query.data?.items.find(
+      (item) => item.agent_user_id === selected?.agent_user_id
+    ) ?? selected
 
-  return <SectionPageLayout>
-    <SectionPageLayout.Title>{isAgent ? t('Quota & Invitations') : t('Agent Management')}</SectionPageLayout.Title>
-    <SectionPageLayout.Content>
-      <div className='space-y-5'>
-        <p className='text-muted-foreground text-sm'>{t('Creating codes reserves quota. Redemption spends it. Disabling, deleting, or expiring unused codes releases the reservation.')}</p>
-        {!isAgent && <form className='flex flex-wrap items-end gap-2' onSubmit={(event) => { event.preventDefault(); setAgentId(filter ? Number(filter) : undefined); setPagination((previous) => ({ ...previous, pageIndex: 0 })) }}>
-          <div className='space-y-1'><Label htmlFor='agent-account-filter'>{t('Agent ID')}</Label><Input id='agent-account-filter' type='number' min={1} step={1} value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={t('All agents')} /></div>
-          <Button type='submit' variant='outline'>{t('Filter')}</Button>
-          {agentId !== undefined && <Button type='button' variant='ghost' onClick={() => { setFilter(''); setAgentId(undefined); setPagination((previous) => ({ ...previous, pageIndex: 0 })) }}>{t('Clear')}</Button>}
-        </form>}
-        {query.isError && <ErrorState onRetry={() => { void query.refetch() }} />}
-        {isAgent && query.isLoading && <LoadingState />}
-        {isAgent && account && <QuotaSummary account={account} />}
-        <Tabs defaultValue={isAgent ? 'ledger' : 'accounts'}>
-          <TabsList className='h-auto max-w-full flex-wrap' aria-label={t('Agent management sections')}>
-            {!isAgent && <TabsTrigger value='accounts'>{t('Agent accounts')}</TabsTrigger>}
-            {isAgent && <TabsTrigger value='ledger'>{t('Quota ledger')}</TabsTrigger>}
-            <TabsTrigger value='invitations'>{t('Invitations')}</TabsTrigger>
-            {user?.role === ROLE.SUPER_ADMIN && <TabsTrigger value='policy'>{t('Invitation policy')}</TabsTrigger>}
-          </TabsList>
-          {!isAgent && <TabsContent value='accounts'>{!query.isError && <AccountsTable data={query.data} isLoading={query.isLoading} isFetching={query.isFetching} pagination={pagination} onPaginationChange={setPagination} onSelect={setSelected} onAdjust={setAdjusting} />}</TabsContent>}
-          {isAgent && user && <TabsContent value='ledger'><LedgerTable agentId={user.id} /></TabsContent>}
-          <TabsContent value='invitations'><InvitationsTable key={scopedAgentId ?? 'all'} agentId={scopedAgentId} /></TabsContent>
-          {user?.role === ROLE.SUPER_ADMIN && <TabsContent value='policy'><InvitationPolicySettings /></TabsContent>}
-        </Tabs>
-      </div>
-      {!isAgent && adjusting && <AllocationDialog account={adjusting} onClose={() => setAdjusting(null)} />}
-      {!isAgent && selectedAccount && <Dialog open onOpenChange={(open) => { if (!open) setSelected(null) }} title={t('Quota ledger')} description={`${t('Agent')} #${selectedAccount.agent_user_id}`} contentClassName='sm:max-w-6xl'>
-        <div className='space-y-4'><QuotaSummary account={selectedAccount} /><LedgerTable key={selectedAccount.agent_user_id} agentId={selectedAccount.agent_user_id} /></div>
-      </Dialog>}
-    </SectionPageLayout.Content>
-  </SectionPageLayout>
+  return (
+    <SectionPageLayout>
+      <SectionPageLayout.Title>
+        {isAgent ? t('Quota & Invitations') : t('Agent Management')}
+      </SectionPageLayout.Title>
+      <SectionPageLayout.Content>
+        <div className='space-y-5'>
+          <p className='text-muted-foreground text-sm'>
+            {t(
+              'Creating codes reserves quota. Redemption spends it. Disabling, deleting, or expiring unused codes releases the reservation.'
+            )}
+          </p>
+          {!isAgent && (
+            <form
+              className='flex flex-wrap items-end gap-2'
+              onSubmit={(event) => {
+                event.preventDefault()
+                setAgentId(filter ? Number(filter) : undefined)
+                setPagination((previous) => ({ ...previous, pageIndex: 0 }))
+              }}
+            >
+              <div className='space-y-1'>
+                <Label htmlFor='agent-account-filter'>{t('Agent ID')}</Label>
+                <Input
+                  id='agent-account-filter'
+                  type='number'
+                  min={1}
+                  step={1}
+                  value={filter}
+                  onChange={(event) => setFilter(event.target.value)}
+                  placeholder={t('All agents')}
+                />
+              </div>
+              <Button type='submit' variant='outline'>
+                {t('Filter')}
+              </Button>
+              {agentId !== undefined && (
+                <Button
+                  type='button'
+                  variant='ghost'
+                  onClick={() => {
+                    setFilter('')
+                    setAgentId(undefined)
+                    setPagination((previous) => ({ ...previous, pageIndex: 0 }))
+                  }}
+                >
+                  {t('Clear')}
+                </Button>
+              )}
+            </form>
+          )}
+          {query.isError && (
+            <ErrorState
+              onRetry={() => {
+                void query.refetch()
+              }}
+            />
+          )}
+          {isAgent && query.isLoading && <LoadingState />}
+          {isAgent && account && <QuotaSummary account={account} />}
+          <Tabs defaultValue={isAgent ? 'ledger' : 'accounts'}>
+            <TabsList
+              className='h-auto max-w-full flex-wrap'
+              aria-label={t('Agent management sections')}
+            >
+              {!isAgent && (
+                <TabsTrigger value='accounts'>
+                  {t('Agent accounts')}
+                </TabsTrigger>
+              )}
+              {isAgent && (
+                <TabsTrigger value='ledger'>{t('Quota ledger')}</TabsTrigger>
+              )}
+              <TabsTrigger value='invitations'>{t('Invitations')}</TabsTrigger>
+              {user?.role === ROLE.SUPER_ADMIN && (
+                <TabsTrigger value='policy'>
+                  {t('Invitation policy')}
+                </TabsTrigger>
+              )}
+            </TabsList>
+            {!isAgent && (
+              <TabsContent value='accounts'>
+                {!query.isError && (
+                  <AccountsTable
+                    data={query.data}
+                    isLoading={query.isLoading}
+                    isFetching={query.isFetching}
+                    pagination={pagination}
+                    onPaginationChange={setPagination}
+                    onSelect={setSelected}
+                    onAdjust={setAdjusting}
+                  />
+                )}
+              </TabsContent>
+            )}
+            {isAgent && user && (
+              <TabsContent value='ledger'>
+                <LedgerTable agentId={user.id} />
+              </TabsContent>
+            )}
+            <TabsContent value='invitations'>
+              <InvitationsTable
+                key={scopedAgentId ?? 'all'}
+                agentId={scopedAgentId}
+              />
+            </TabsContent>
+            {user?.role === ROLE.SUPER_ADMIN && (
+              <TabsContent value='policy'>
+                <InvitationPolicySettings />
+              </TabsContent>
+            )}
+          </Tabs>
+        </div>
+        {!isAgent && adjusting && (
+          <AllocationDialog
+            account={adjusting}
+            onClose={() => setAdjusting(null)}
+          />
+        )}
+        {!isAgent && selectedAccount && (
+          <Dialog
+            open
+            onOpenChange={(open) => {
+              if (!open) setSelected(null)
+            }}
+            title={t('Quota ledger')}
+            description={`${t('Agent')} #${selectedAccount.agent_user_id}`}
+            contentClassName='sm:max-w-6xl'
+          >
+            <div className='space-y-4'>
+              <QuotaSummary account={selectedAccount} />
+              <LedgerTable
+                key={selectedAccount.agent_user_id}
+                agentId={selectedAccount.agent_user_id}
+              />
+            </div>
+          </Dialog>
+        )}
+      </SectionPageLayout.Content>
+    </SectionPageLayout>
+  )
 }

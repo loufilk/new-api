@@ -202,18 +202,45 @@ it('disabling a user from the row menu binds the proof to the user and action', 
 it.each([
   { role: 1, label: 'Grant agent role', action: 'set_agent' },
   { role: 5, label: 'Remove agent role', action: 'unset_agent' },
-])('$label requires proof bound to the target and exact role action', async ({ role, label, action }) => {
-  const proof = mockVerification('admin.user.manage', 'agent-role-proof')
-  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
-    if (url === '/api/verify') return proof
-    if (url === '/api/user/manage') return { data: { success: true } }
-    throw new Error(`Unexpected POST ${url}`)
-  })
-  renderInProvider(<DataTableRowActions row={{ original: { ...target, role } } as Row<User>} />)
-  await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
-  await userEvent.click(await screen.findByRole('menuitem', { name: label }))
-  expect(post).not.toHaveBeenCalledWith('/api/user/manage', expect.anything(), expect.anything())
-  await completeTwoFactorVerification()
-  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/user/manage', { id: 2, action }, expect.objectContaining({ headers: { 'X-Security-Proof': 'agent-role-proof' }, singleUseAuthorization: true })))
-  expect(post).toHaveBeenCalledWith('/api/verify', expect.objectContaining({ scope: 'admin.user.manage', context: { user_id: 2, action } }), expect.anything())
-})
+])(
+  '$label requires proof bound to the target and exact role action',
+  async ({ role, label, action }) => {
+    const proof = mockVerification('admin.user.manage', 'agent-role-proof')
+    const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+      if (url === '/api/verify') return proof
+      if (url === '/api/user/manage') return { data: { success: true } }
+      throw new Error(`Unexpected POST ${url}`)
+    })
+    renderInProvider(
+      <DataTableRowActions
+        row={{ original: { ...target, role } } as Row<User>}
+      />
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: label }))
+    expect(post).not.toHaveBeenCalledWith(
+      '/api/user/manage',
+      expect.anything(),
+      expect.anything()
+    )
+    await completeTwoFactorVerification()
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith(
+        '/api/user/manage',
+        { id: 2, action },
+        expect.objectContaining({
+          headers: { 'X-Security-Proof': 'agent-role-proof' },
+          singleUseAuthorization: true,
+        })
+      )
+    )
+    expect(post).toHaveBeenCalledWith(
+      '/api/verify',
+      expect.objectContaining({
+        scope: 'admin.user.manage',
+        context: { user_id: 2, action },
+      }),
+      expect.anything()
+    )
+  }
+)

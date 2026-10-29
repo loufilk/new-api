@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// This is the exact AutoMigrate argument sequence before M4 replaced the five
-// trailing ChuanAPI models with registry expansion. A changed index is a schema
+// This explicitly tracks core AutoMigrate order, including the six additive
+// agent-system models after redemptions and the ChuanAPI registry tail. A changed index is a schema
 // ordering change and must be reviewed explicitly rather than hidden inside a
 // composition refactor.
 func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
@@ -39,6 +39,12 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 		&Option{},
 		&LoginEncryptionKey{},
 		&Redemption{},
+		&AgentRedemptionAccount{},
+		&AgentRedemptionLedger{},
+		&AgentRedemptionOperation{},
+		&AgentInvitation{},
+		&AgentInvitationPolicy{},
+		&AgentInvitationPolicyAudit{},
 		&Ability{},
 		&Log{},
 		&Midjourney{},
@@ -80,7 +86,7 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 
 func TestMainAutoMigrateModelsWithoutRegistryKeepsCoreModels(t *testing.T) {
 	models := mainAutoMigrateModels(nil)
-	require.Len(t, models, 37)
+	require.Len(t, models, 43)
 	assert.IsType(t, &Channel{}, models[0])
 	assert.IsType(t, &BillingFinalization{}, models[len(models)-1])
 }

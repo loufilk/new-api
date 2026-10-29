@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -115,6 +116,15 @@ func TestAdminUserRiskOperationsRequireProofBeforeMutation(t *testing.T) {
 			},
 		},
 		{
+			name: "create agent administrator", method: http.MethodPost, path: "/api/user/", handler: CreateUser,
+			body: func(*model.User) string { return `{"username":"new-agent","password":"agent-password-1","role":5}` },
+			unchanged: func(t *testing.T, _ *model.User) {
+				var count int64
+				require.NoError(t, model.DB.Model(&model.User{}).Where("username = ?", "new-agent").Count(&count).Error)
+				assert.Zero(t, count)
+			},
+		},
+		{
 			name: "create administrator", method: http.MethodPost, path: "/api/user/", handler: CreateUser,
 			body: func(*model.User) string { return `{"username":"new-admin","password":"admin-password-1","role":10}` },
 			unchanged: func(t *testing.T, _ *model.User) {
@@ -217,7 +227,7 @@ func TestCreateUserRejectsNonStandardRole(t *testing.T) {
 		role         int
 		operatorRole int
 	}{
-		{"between common and admin", 5, common.RoleAdminUser},
+		{"unassigned role below agent", 4, common.RoleAdminUser},
 		{"negative", -1, common.RoleAdminUser},
 		{"between admin and root", 99, common.RoleRootUser},
 	} {
@@ -386,4 +396,40 @@ func TestAdminUserVerificationPolicy(t *testing.T) {
 		require.NoError(t, model.DB.Model(&model.AuthFlow{}).Count(&flows).Error)
 		assert.Zero(t, flows)
 	})
+}
+
+func TestAgentUserCreationAndLifecycleRequireBoundProof(t *testing.T) {
+	_, identity, target := setupAdminUserTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Token{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.AgentInvitation{}, &model.AgentInvitationPolicy{}, &model.AgentInvitationPolicyAudit{}))
+	previousMaster := common.IsMasterNode
+	common.IsMasterNode = false
+	t.Cleanup(func() { common.IsMasterNode = previousMaster })
+	require.NoError(t, authz.Init(model.DB))
+	create := service.VerificationOperation{Scope: service.VerificationScopeAdminUserCreate, Context: []byte(`{"role":5}`)}
+	proof := issueSecurityEnrollmentProof(t, identity, create, service.VerificationMethodPassword)
+	response := adminUserRequest(http.MethodPost, "/api/user/", `{"username":"created-agent","password":"synthetic-agent-password","role":5}`, proof, identity, common.RoleRootUser, nil, CreateUser)
+	var result securityEnrollmentResponse
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	require.True(t, result.Success, response.Body.String())
+	var created model.User
+	require.NoError(t, model.DB.Where("username = ?", "created-agent").First(&created).Error)
+	require.Equal(t, common.RoleAgentUser, created.Role)
+	for _, action := range []string{"set_agent", "unset_agent"} {
+		operation := service.VerificationOperation{Scope: service.VerificationScopeAdminUserManage, Context: []byte(fmt.Sprintf(`{"user_id":%d,"action":%q}`, target.Id, action))}
+		proof = issueSecurityEnrollmentProof(t, identity, operation, service.VerificationMethodPassword)
+		body := fmt.Sprintf(`{"id":%d,"action":%q}`, target.Id, action)
+		response = adminUserRequest(http.MethodPost, "/api/user/manage", body, proof, identity, common.RoleRootUser, nil, ManageUser)
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		require.True(t, result.Success, response.Body.String())
+		var updated model.User
+		require.NoError(t, model.DB.First(&updated, target.Id).Error)
+		if action == "set_agent" {
+			require.Equal(t, common.RoleAgentUser, updated.Role)
+		} else {
+			require.Equal(t, common.RoleCommonUser, updated.Role)
+		}
+		response = adminUserRequest(http.MethodPost, "/api/user/manage", body, proof, identity, common.RoleRootUser, nil, ManageUser)
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		require.False(t, result.Success, "consumed proof cannot repeat role mutation")
+	}
 }

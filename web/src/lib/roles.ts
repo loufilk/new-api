@@ -47,7 +47,10 @@ export function getRoleLabel(role?: number): string {
 }
 
 /** UI navigation guard only; every management API enforces the same scope server-side. */
-export function canAccessAgentRoute(role: number | undefined, pathname: string): boolean {
+export function canAccessAgentRoute(
+  role: number | undefined,
+  pathname: string
+): boolean {
   if (role !== ROLE.AGENT) return true
   return /^\/(redemption-codes|agent-redemption)\/?$/.test(pathname)
 }

@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMutation } from '@tanstack/react-query'
 import type { Table } from '@tanstack/react-table'
 import { Trash2 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -46,6 +46,7 @@ type DataTableBulkActionsProps = {
 export function DataTableBulkActions(props: DataTableBulkActionsProps) {
   const { t } = useTranslation()
   const { triggerRefresh } = useRedemptions()
+  const submitting = useRef(false)
   const [deleteTargets, setDeleteTargets] = useState<Redemption[] | null>(null)
   const selectedRows = props.table.getFilteredSelectedRowModel().rows
 
@@ -76,6 +77,9 @@ export function DataTableBulkActions(props: DataTableBulkActionsProps) {
       })
       setDeleteTargets(null)
       triggerRefresh()
+    },
+    onSettled: () => {
+      submitting.current = false
     },
     onError: (_error, targets) => {
       handleServerError(
@@ -135,7 +139,8 @@ export function DataTableBulkActions(props: DataTableBulkActionsProps) {
         isLoading={deletion.isPending}
         disabled={!deleteTargets?.length}
         handleConfirm={() => {
-          if (deleteTargets?.length && !deletion.isPending) {
+          if (deleteTargets?.length && !submitting.current) {
+            submitting.current = true
             deletion.mutate(deleteTargets)
           }
         }}

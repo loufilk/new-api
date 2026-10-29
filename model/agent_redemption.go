@@ -13,6 +13,10 @@ import (
 	gormlogger "gorm.io/gorm/logger"
 )
 
+// MaxRedemptionDeleteBatchSize bounds both selected and invalid-code cleanup.
+// Each request commits at most this many code transitions and budget refunds.
+const MaxRedemptionDeleteBatchSize = 1000
+
 var (
 	ErrRedemptionUsedImmutable  = errors.New("Used redemption codes cannot be changed or re-enabled")
 	ErrRedemptionInvalidStatus  = errors.New("Invalid redemption code status")
@@ -36,13 +40,14 @@ type RedemptionUpdateRequest struct {
 }
 
 func validateRedemptionValue(name string, quota int, expiredTime int64) error {
-	if utf8.RuneCountInString(strings.TrimSpace(name)) == 0 || utf8.RuneCountInString(name) > 20 || quota <= 0 || expiredTime < 0 || (expiredTime != 0 && expiredTime < common.GetTimestamp()) {
+	if utf8.RuneCountInString(strings.TrimSpace(name)) == 0 || utf8.RuneCountInString(name) > 20 || quota <= 0 || expiredTime < 0 {
 		return ErrRedemptionInvalidRequest
 	}
 	return common.ValidateWalletQuota(quota)
 }
 
 func GetRedemptionsScoped(scope RedemptionScope, agentID int, keyword, status string, start, count int) ([]*Redemption, int64, error) {
+	start, count = min(max(start, 0), 100_000_000), min(max(count, 1), 100)
 	if !scope.valid() {
 		return nil, 0, ErrAgentRedemptionPermission
 	}
@@ -136,6 +141,9 @@ func CreateRedemptionsScoped(scope RedemptionScope, request RedemptionCreateRequ
 				keys = append(keys, row.Key)
 			}
 			return nil
+		}
+		if request.ExpiredTime != 0 && request.ExpiredTime < common.GetTimestamp() {
+			return ErrRedemptionInvalidRequest
 		}
 		if budgetAgentID != 0 {
 			account, err := lockAgentRedemptionAccount(tx, budgetAgentID, true)
@@ -275,11 +283,11 @@ func UpdateRedemptionScoped(scope RedemptionScope, request RedemptionUpdateReque
 	return &redemption, err
 }
 
-func DeleteRedemptionsScoped(scope RedemptionScope, ids []int, invalidOnly bool) (int64, error) {
+func DeleteRedemptionsScoped(scope RedemptionScope, ids []int, invalidOnly bool, agentFilter ...int) (int64, error) {
 	if !scope.valid() {
 		return 0, ErrAgentRedemptionPermission
 	}
-	if !invalidOnly && (len(ids) == 0 || len(ids) > 1000) {
+	if !invalidOnly && (len(ids) == 0 || len(ids) > MaxRedemptionDeleteBatchSize) {
 		return 0, ErrRedemptionInvalidRequest
 	}
 	for _, id := range ids {
@@ -290,8 +298,11 @@ func DeleteRedemptionsScoped(scope RedemptionScope, ids []int, invalidOnly bool)
 	var deleted int64
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		query := scope.query(tx.Model(&Redemption{}))
+		if scope.IsAdmin() && len(agentFilter) > 0 && agentFilter[0] > 0 {
+			query = query.Where("budget_agent_id = ?", agentFilter[0])
+		}
 		if invalidOnly {
-			query = query.Where("(status IN ? OR (status = ? AND expired_time != 0 AND expired_time < ?))", []int{common.RedemptionCodeStatusUsed, common.RedemptionCodeStatusDisabled}, common.RedemptionCodeStatusEnabled, common.GetTimestamp())
+			query = query.Where("(status IN ? OR (status = ? AND expired_time != 0 AND expired_time < ?))", []int{common.RedemptionCodeStatusUsed, common.RedemptionCodeStatusDisabled}, common.RedemptionCodeStatusEnabled, common.GetTimestamp()).Limit(MaxRedemptionDeleteBatchSize)
 		} else {
 			query = query.Where("id IN ?", ids)
 		}
@@ -314,8 +325,9 @@ func DeleteRedemptionsScoped(scope RedemptionScope, ids []int, invalidOnly bool)
 		if err := requireRedemptionActorTx(tx, scope, 0); err != nil {
 			return err
 		}
-		// One transaction makes bulk cleanup all-or-none. Foreign IDs are never
-		// returned; matching own rows only are affected, like a scoped DELETE.
+		// One bounded transaction makes this batch all-or-none. Additional invalid
+		// rows require another request, never an unbounded loop in this transaction.
+		// Foreign IDs are never returned; only matching own rows are affected.
 		for i := range rows {
 			row := &rows[i]
 			if row.Status == common.RedemptionCodeStatusUsed || row.UsedUserId != 0 || row.RedeemedTime != 0 {

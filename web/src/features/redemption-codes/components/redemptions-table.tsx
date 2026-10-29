@@ -27,13 +27,13 @@ import {
   DataTablePage,
   useDataTable,
 } from '@/components/data-table'
-import { useMediaQuery } from '@/hooks'
-import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useMediaQuery } from '@/hooks'
+import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { ROLE } from '@/lib/roles'
-import { useAuthStore } from '@/stores/auth-store'
 import { createServerError } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { getRedemptions, searchRedemptions } from '../api'
 import {
@@ -135,7 +135,6 @@ export function RedemptionsTable() {
         total: result.data?.total || 0,
       }
     },
-    placeholderData: (previousData) => previousData,
   })
 
   const redemptions = data?.items || []
@@ -171,37 +170,62 @@ export function RedemptionsTable() {
 
   return (
     <>
-    {user && user.role >= ROLE.ADMIN && <div className='mb-3 max-w-xs space-y-1'><Label htmlFor='redemption-agent-filter'>{t('Agent ID')}</Label><Input id='redemption-agent-filter' type='number' min={1} step={1} value={search.agent_user_id ?? ''} placeholder={t('All agents')} onChange={(event) => { const value = Number(event.target.value); void navigate({ search: (previous) => ({ ...previous, page: 1, agent_user_id: Number.isSafeInteger(value) && value > 0 ? value : undefined }) }) }} /></div>}
-    <DataTablePage
-      table={table}
-      columns={columns}
-      isLoading={isLoading}
-      isFetching={isFetching}
-      emptyTitle={t('No Redemption Codes Found')}
-      emptyDescription={t(
-        'No redemption codes available. Create your first redemption code to get started.'
+      {user && user.role >= ROLE.ADMIN && (
+        <div className='mb-3 max-w-xs space-y-1'>
+          <Label htmlFor='redemption-agent-filter'>{t('Agent ID')}</Label>
+          <Input
+            id='redemption-agent-filter'
+            type='number'
+            min={1}
+            step={1}
+            value={search.agent_user_id ?? ''}
+            placeholder={t('All agents')}
+            onChange={(event) => {
+              const value = Number(event.target.value)
+              void navigate({
+                search: (previous) => ({
+                  ...previous,
+                  page: 1,
+                  agent_user_id:
+                    Number.isSafeInteger(value) && value > 0
+                      ? value
+                      : undefined,
+                }),
+              })
+            }}
+          />
+        </div>
       )}
-      skeletonKeyPrefix='redemptions-skeleton'
-      applyHeaderSize
-      toolbarProps={{
-        searchPlaceholder: t('Filter by name or ID...'),
-        searchDebounceMs: 500,
-        filters: [
-          {
-            columnId: 'status',
-            title: t('Status'),
-            options: redemptionStatusOptions,
-            singleSelect: true,
-          },
-        ],
-      }}
-      mobile={<RedemptionsMobileList table={table} isLoading={isLoading} />}
-      getRowClassName={(row, { isMobile }) => {
-        if (!isDisabledRedemptionRow(row.original)) return undefined
-        return isMobile ? DISABLED_ROW_MOBILE : DISABLED_ROW_DESKTOP
-      }}
-      bulkActions={<DataTableBulkActions table={table} />}
-    />
+      <DataTablePage
+        table={table}
+        columns={columns}
+        isLoading={isLoading}
+        isFetching={isFetching}
+        emptyTitle={t('No Redemption Codes Found')}
+        emptyDescription={t(
+          'No redemption codes available. Create your first redemption code to get started.'
+        )}
+        skeletonKeyPrefix='redemptions-skeleton'
+        applyHeaderSize
+        toolbarProps={{
+          searchPlaceholder: t('Filter by name or ID...'),
+          searchDebounceMs: 500,
+          filters: [
+            {
+              columnId: 'status',
+              title: t('Status'),
+              options: redemptionStatusOptions,
+              singleSelect: true,
+            },
+          ],
+        }}
+        mobile={<RedemptionsMobileList table={table} isLoading={isLoading} />}
+        getRowClassName={(row, { isMobile }) => {
+          if (!isDisabledRedemptionRow(row.original)) return undefined
+          return isMobile ? DISABLED_ROW_MOBILE : DISABLED_ROW_DESKTOP
+        }}
+        bulkActions={<DataTableBulkActions table={table} />}
+      />
     </>
   )
 }

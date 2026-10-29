@@ -19,6 +19,26 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  'Only common users can become agent administrators',
+  'User is not an agent administrator',
+  'User permissions changed; reload and try again',
+  'Agent Invitation Test Bonus',
+  // Agent role and server-enforced budget errors.
+  'Verify to grant agent role',
+  'Verify to remove agent role',
+  'Agent role granted successfully',
+  'Agent role removed successfully',
+  'Agent redemption permission denied',
+  'Agent account must be active before issuing redemption codes',
+  'Invalid agent quota request',
+  'Insufficient available agent redemption quota',
+  'Agent redemption request conflicts with an earlier operation',
+  'Used redemption codes cannot be changed or re-enabled',
+  'Invalid redemption code status',
+  'Invalid redemption code request',
+  'Redemption code not found',
+  'Redemption operation failed, please try again later',
+
   'The adjusted price is outside the supported range.',
   'This expression cannot be adjusted automatically. Keep the source price or edit it manually.',
   'Channel model owner label must be at most 64 characters without control or formatting characters',

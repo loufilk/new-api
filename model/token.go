@@ -329,9 +329,40 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 	return token, nil
 }
 
-func (token *Token) Insert() error {
+var ErrCredentialWriteUnauthorized = errors.New("Unauthorized, insufficient privileges")
+
+// Credential writes serialize with role changes on the owner's users row. HTTP
+// callers must pass the auth version from their authenticated request, including
+// when that value is zero (which is rejected). The optional form is retained for
+// trusted internal callers; it still checks the live owner's role and status.
+// Token metadata uses namespace -> owner -> token order, matching group rename
+// and wallet settlement, while role changes use owner -> token.
+func lockCredentialOwnerForWriteTx(tx *gorm.DB, userID int, expectedAuthVersion ...int64) error {
+	if tx == nil || userID <= 0 || len(expectedAuthVersion) > 1 ||
+		(len(expectedAuthVersion) == 1 && expectedAuthVersion[0] <= 0) {
+		return ErrCredentialWriteUnauthorized
+	}
+	var user User
+	if err := lockForUpdate(tx).Select("id", "role", "status", "auth_version").First(&user, userID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrCredentialWriteUnauthorized
+		}
+		return err
+	}
+	if user.Status != common.UserStatusEnabled || user.AuthVersion <= 0 ||
+		(user.Role != common.RoleCommonUser && user.Role != common.RoleAdminUser && user.Role != common.RoleRootUser) ||
+		(len(expectedAuthVersion) == 1 && user.AuthVersion != expectedAuthVersion[0]) {
+		return ErrCredentialWriteUnauthorized
+	}
+	return nil
+}
+
+func (token *Token) Insert(expectedAuthVersion ...int64) error {
 	return DB.Transaction(func(tx *gorm.DB) error {
 		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
+		if err := lockCredentialOwnerForWriteTx(tx, token.UserId, expectedAuthVersion...); err != nil {
 			return err
 		}
 		if err := validateTokenGroupsForWriteTx(tx, token); err != nil {
@@ -342,9 +373,16 @@ func (token *Token) Insert() error {
 }
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
-func (token *Token) Update() (err error) {
+func (token *Token) Update(expectedAuthVersion ...int64) (err error) {
 	return DB.Transaction(func(tx *gorm.DB) error {
 		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
+		if err := lockCredentialOwnerForWriteTx(tx, token.UserId, expectedAuthVersion...); err != nil {
+			return err
+		}
+		var current Token
+		if err := lockForUpdate(tx).Select("id", "user_id").Where("id = ? AND user_id = ?", token.Id, token.UserId).First(&current).Error; err != nil {
 			return err
 		}
 		if err := validateTokenGroupsForWriteTx(tx, token); err != nil {
@@ -361,6 +399,15 @@ func (token *Token) Update() (err error) {
 
 func (token *Token) SelectUpdate() error {
 	return DB.Transaction(func(tx *gorm.DB) error {
+		var current Token
+		if err := lockForUpdate(tx).Select("id", "user_id", "cache_revision").First(&current, token.Id).Error; err != nil {
+			return err
+		}
+		// A delayed expiry/exhaustion write must not overwrite a newer disabled
+		// state, which would make the old credential usable by read-only auth.
+		if current.UserId != token.UserId || token.CacheRevision <= 0 || current.CacheRevision != token.CacheRevision {
+			return ErrPermissionCacheStale
+		}
 		if err := advanceTokenPermissionRevisionTx(tx, token.Id); err != nil {
 			return err
 		}

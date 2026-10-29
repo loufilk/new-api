@@ -14,6 +14,7 @@ import (
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 const UserNameMaxLength = 20
@@ -992,13 +993,29 @@ func DeleteUserForSession(identity AuthSessionIdentity) (int64, error) {
 	return user.delete(&identity)
 }
 
-func (user *User) delete(identity *AuthSessionIdentity) (int64, error) {
+// DeleteUserByAdministrator rechecks the actor and target inside the same
+// transaction as deletion, including requests that were already in flight.
+func DeleteUserByAdministrator(identity AuthSessionIdentity, expected User, hard bool) (int64, error) {
+	guard := &AdminUserMutationGuard{Identity: identity, Expected: expected}
+	if hard {
+		return expected.hardDelete(guard)
+	}
+	return expected.delete(nil, guard)
+}
+
+func (user *User) delete(identity *AuthSessionIdentity, guards ...*AdminUserMutationGuard) (int64, error) {
 	if user.Id == 0 {
 		return 0, common.NewMessage("ID is empty!")
 	}
 	var nextAuthVersion int64
 	var revokedAccessTokens int64
 	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if len(guards) > 0 && guards[0] != nil {
+			guard := guards[0]
+			if _, _, err := lockAdminUserMutationTx(tx, guard.Identity.UserID, guard.Expected, guard.Identity); err != nil {
+				return err
+			}
+		}
 		if identity != nil {
 			if err := ValidateAuthSessionWithTx(tx, *identity); err != nil {
 				return err
@@ -1033,7 +1050,9 @@ func (user *User) delete(identity *AuthSessionIdentity) (int64, error) {
 	return revokedAccessTokens, invalidateUserCache(user.Id)
 }
 
-func (user *User) HardDelete() (int64, error) {
+func (user *User) HardDelete() (int64, error) { return user.hardDelete(nil) }
+
+func (user *User) hardDelete(guard *AdminUserMutationGuard) (int64, error) {
 	if user.Id == 0 {
 		return 0, common.NewMessage("ID is empty!")
 	}
@@ -1041,6 +1060,11 @@ func (user *User) HardDelete() (int64, error) {
 	var deletedAuthVersion int64
 	var revokedAccessTokens int64
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if guard != nil {
+			if _, _, err := lockAdminUserMutationTx(tx, guard.Identity.UserID, guard.Expected, guard.Identity); err != nil {
+				return err
+			}
+		}
 		var err error
 		deletedAuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)
 		if err != nil {
@@ -1291,7 +1315,8 @@ func ValidateAccessToken(token string) (*User, error) {
 	}
 	token = strings.Replace(token, "Bearer ", "", 1)
 	user := &User{}
-	err := DB.Where("access_token = ?", token).First(user).Error
+	// A failed credential lookup must not log the usable token in SQL.
+	err := DB.Session(&gorm.Session{Logger: DB.Logger.LogMode(gormlogger.Silent)}).Where("access_token = ?", token).First(user).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil

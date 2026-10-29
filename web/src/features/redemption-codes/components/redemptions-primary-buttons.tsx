@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Plus, Trash2 } from 'lucide-react'
-import { useState } from 'react'
-import { Trans, useTranslation } from 'react-i18next'
+import { useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
@@ -29,30 +29,41 @@ import { deleteInvalidRedemptions } from '../api'
 import { ERROR_MESSAGES } from '../constants'
 import { useRedemptions } from './redemptions-provider'
 
-export function RedemptionsPrimaryButtons() {
+export function RedemptionsPrimaryButtons(props: { agentId?: number }) {
   const { t } = useTranslation()
   const { setOpen, triggerRefresh } = useRedemptions()
   const [showDeleteInvalidConfirm, setShowDeleteInvalidConfirm] =
     useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const submitting = useRef(false)
 
   const handleDeleteInvalid = async () => {
+    if (submitting.current) return
+    submitting.current = true
     setIsDeleting(true)
     try {
-      const result = await deleteInvalidRedemptions()
+      const result = await deleteInvalidRedemptions(props.agentId)
       if (result.success) {
         const count = result.data || 0
         toast.success(
           t('Successfully deleted {{count}} invalid redemption codes', {
             count,
-          })
+          }),
+          {
+            description: t(
+              'Each cleanup removes up to 1,000 used, disabled, or expired codes. Repeat cleanup if invalid codes remain.'
+            ),
+          }
         )
         triggerRefresh()
         setShowDeleteInvalidConfirm(false)
       } else {
         handleServerError(result, t(ERROR_MESSAGES.DELETE_INVALID_FAILED))
       }
+    } catch (error) {
+      handleServerError(error, t(ERROR_MESSAGES.DELETE_INVALID_FAILED))
     } finally {
+      submitting.current = false
       setIsDeleting(false)
     }
   }
@@ -77,18 +88,26 @@ export function RedemptionsPrimaryButtons() {
       <ConfirmDialog
         destructive
         open={showDeleteInvalidConfirm}
-        onOpenChange={setShowDeleteInvalidConfirm}
+        onOpenChange={(nextOpen) => {
+          if (!submitting.current) setShowDeleteInvalidConfirm(nextOpen)
+        }}
         handleConfirm={handleDeleteInvalid}
         isLoading={isDeleting}
         className='max-w-md'
         title={t('Delete Invalid Redemption Codes?')}
         desc={
           <>
-            <Trans
-              t={t}
-              i18nKey='This will delete all <strong>used</strong>, <strong>disabled</strong>, and <strong>expired</strong> redemption codes.'
-              components={{ strong: <strong /> }}
-            />
+            {props.agentId && (
+              <p>
+                {t(
+                  'Only invalid codes belonging to agent #{{id}} will be deleted.',
+                  { id: props.agentId }
+                )}
+              </p>
+            )}
+            {t(
+              'Each cleanup removes up to 1,000 used, disabled, or expired codes. Repeat cleanup if invalid codes remain.'
+            )}
             <br />
             {t('This action cannot be undone.')}
           </>

@@ -37,7 +37,9 @@ export async function getRedemptions(
 ): Promise<GetRedemptionsResponse> {
   const { p = 1, page_size = 10, agent_user_id } = params
   const scope = agent_user_id ? `&agent_user_id=${agent_user_id}` : ''
-  const res = await api.get(`/api/redemption/?p=${p}&page_size=${page_size}${scope}`)
+  const res = await api.get(
+    `/api/redemption/?p=${p}&page_size=${page_size}${scope}`
+  )
   return res.data
 }
 
@@ -45,7 +47,13 @@ export async function getRedemptions(
 export async function searchRedemptions(
   params: SearchRedemptionsParams
 ): Promise<GetRedemptionsResponse> {
-  const { keyword = '', status = '', p = 1, page_size = 10, agent_user_id } = params
+  const {
+    keyword = '',
+    status = '',
+    p = 1,
+    page_size = 10,
+    agent_user_id,
+  } = params
   const queryParams = new URLSearchParams()
   queryParams.set('keyword', keyword)
   if (agent_user_id) queryParams.set('agent_user_id', String(agent_user_id))
@@ -96,8 +104,11 @@ export async function deleteRedemption(id: number): Promise<ApiResponse> {
 }
 
 // Delete invalid redemption codes (used, disabled, expired)
-export async function deleteInvalidRedemptions(): Promise<ApiResponse<number>> {
-  const res = await api.delete('/api/redemption/invalid')
+export async function deleteInvalidRedemptions(
+  agentId?: number
+): Promise<ApiResponse<number>> {
+  const scope = agentId ? `?agent_user_id=${agentId}` : ''
+  const res = await api.delete(`/api/redemption/invalid${scope}`)
   return res.data
 }
 

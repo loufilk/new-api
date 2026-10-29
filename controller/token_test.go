@@ -219,6 +219,7 @@ func newAuthenticatedContext(t *testing.T, method string, target string, body an
 		ctx.Request.Header.Set("Content-Type", "application/json")
 	}
 	ctx.Set("id", userID)
+	ctx.Set("auth_version", int64(1))
 	return ctx, recorder
 }
 
@@ -916,7 +917,7 @@ func verifyAPITokenAudit(t *testing.T) {
 				assert.Equal(t, 429, response.Code)
 			} else {
 				assert.Equal(t, 200, response.Code)
-				assert.Equal(t, tc.success, decodeAPIResponse(t, response).Success)
+				assert.Equal(t, tc.success, decodeAPIResponse(t, response).Success, response.Body.String())
 			}
 			assert.Equal(t, user.Id, operation.UserId)
 			assert.Equal(t, user.Username, operation.Username)

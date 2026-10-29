@@ -22,6 +22,9 @@ import { ledgerReasonLabelKey } from '../ledger'
 
 describe('ledgerReasonLabelKey', () => {
   test('maps known backend reasons to i18n keys', () => {
+    expect(ledgerReasonLabelKey('agent_invitation_bonus')).toBe(
+      'Agent Invitation Test Bonus'
+    )
     expect(ledgerReasonLabelKey('signup_bonus')).toBe('Signup Bonus')
     expect(ledgerReasonLabelKey('billing_pre_consume')).toBe(
       'Billing Pre-consumed'

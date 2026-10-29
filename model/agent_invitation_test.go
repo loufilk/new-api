@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -36,6 +38,10 @@ func TestAgentInvitationComplianceGateDoesNotGrantRetroactively(t *testing.T) {
 	_, err := UpdateAgentInvitationPolicy(root.Id, true, 800)
 	require.NoError(t, err)
 	operation_setting.GetPaymentSetting().ComplianceConfirmed = false
+	policy, err := GetAgentInvitationPolicy(root.Id)
+	require.NoError(t, err)
+	assert.False(t, policy.PaymentComplianceConfirmed)
+	assert.True(t, policy.Enabled, "the root policy and effective payment gate are independent")
 	user := &User{Username: "compliance-invitee"}
 	require.NoError(t, user.Insert(agent.Id))
 	var invitation AgentInvitation
@@ -107,6 +113,60 @@ func TestAgentInvitationPolicyAuditFailureRollsBackChange(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 100, policy.Quota)
 	assert.EqualValues(t, 1, policy.Revision)
+}
+
+func TestAgentInvitationPolicyRejectsConcurrentLogoutAndRoleCycle(t *testing.T) {
+	if !common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		t.Skip("requires PostgreSQL row locks and concurrent connections")
+	}
+	for _, scenario := range []string{"logout", "role_cycle"} {
+		t.Run(scenario, func(t *testing.T) {
+			root, _ := setupAgentInvitationTest(t)
+			_, err := UpdateAgentInvitationPolicy(root.Id, false, 10)
+			require.NoError(t, err)
+			session := newTestUserSession("agent-policy-race-"+scenario, root.Id, time.Now().Unix())
+			require.NoError(t, CreateUserSession(session))
+			identity := AuthSessionIdentity{UserID: root.Id, SessionID: session.SID, UserAuthVersion: root.AuthVersion, SessionVersion: session.Version}
+			require.NoError(t, DB.Transaction(func(tx *gorm.DB) error { return ValidateAuthSessionWithTx(tx, identity) }))
+			// The request has passed middleware with this identity. Suspend it
+			// before the model's authoritative read, then commit revocation.
+			beforeRead, resumeRead := make(chan struct{}), make(chan struct{})
+			resume := sync.OnceFunc(func() { close(resumeRead) })
+			defer resume()
+			var intercepted atomic.Bool
+			callback := "agent-invitation-policy-identity-barrier"
+			require.NoError(t, DB.Callback().Query().Before("gorm:query").Register(callback, func(tx *gorm.DB) {
+				if tx.Statement.Table == "users" && intercepted.CompareAndSwap(false, true) {
+					close(beforeRead)
+					<-resumeRead
+				}
+			}))
+			t.Cleanup(func() { _ = DB.Callback().Query().Remove(callback) })
+			done := make(chan error, 1)
+			go func() { _, err := UpdateAgentInvitationPolicy(root.Id, true, 999, identity); done <- err }()
+			<-beforeRead
+			if scenario == "logout" {
+				revoked, err := RevokeUserSession(root.Id, session.SID, "test_logout")
+				require.NoError(t, err)
+				require.True(t, revoked)
+			} else {
+				// A role cycle back to root must not restore an old request's
+				// authority merely because the current numeric role matches.
+				require.NoError(t, DB.Model(&User{}).Where("id = ?", root.Id).Updates(map[string]any{"role": common.RoleCommonUser, "auth_version": root.AuthVersion + 1}).Error)
+				require.NoError(t, DB.Model(&User{}).Where("id = ?", root.Id).Updates(map[string]any{"role": common.RoleRootUser, "auth_version": root.AuthVersion + 2}).Error)
+			}
+			resume()
+			require.ErrorIs(t, <-done, ErrAgentInvitationPermission)
+			policy, err := GetAgentInvitationPolicy(root.Id)
+			require.NoError(t, err)
+			assert.False(t, policy.Enabled)
+			assert.Equal(t, 10, policy.Quota)
+			assert.EqualValues(t, 1, policy.Revision)
+			var count int64
+			require.NoError(t, DB.Model(&AgentInvitationPolicyAudit{}).Count(&count).Error)
+			assert.EqualValues(t, 1, count, "rejected stale requests create no policy audit")
+		})
+	}
 }
 
 func TestAgentInvitationValidatesInviterAndPolicyAtCreation(t *testing.T) {

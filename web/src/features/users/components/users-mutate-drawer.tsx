@@ -233,10 +233,16 @@ export function UsersMutateDrawer({
         const proof = await requestVerification({
           scope: 'admin.user.create',
           context: { role: payload.role ?? ROLE.ADMIN },
-          title: payload.role === ROLE.AGENT ? t('Verify to create agent') : t('Verify to create administrator'),
-          description: payload.role === ROLE.AGENT ? t('Confirm your identity before creating an agent account.') : t(
-            'Confirm your identity before creating an administrator account.'
-          ),
+          title:
+            payload.role === ROLE.AGENT
+              ? t('Verify to create agent')
+              : t('Verify to create administrator'),
+          description:
+            payload.role === ROLE.AGENT
+              ? t('Confirm your identity before creating an agent account.')
+              : t(
+                  'Confirm your identity before creating an administrator account.'
+                ),
         })
         if (!proof) return
         proofToken = proof.proof_token

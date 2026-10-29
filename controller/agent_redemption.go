@@ -6,13 +6,36 @@ import (
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
+// Every HTTP scope carries the authenticated receipt. Internal model callers
+// may omit one, but controllers cannot accidentally fall back to role-only auth.
 func redemptionScope(c *gin.Context) model.RedemptionScope {
-	return model.RedemptionScope{UserID: c.GetInt("id"), Role: c.GetInt("role")}
+	c.Header("Cache-Control", "no-store")
+	identity, ok := middleware.GetStepUpIdentity(c)
+	if !ok || identity.UserID != c.GetInt("id") {
+		return model.RedemptionScope{}
+	}
+	scope, err := model.ResolveRedemptionScope(identity.UserID)
+	if err != nil {
+		return model.RedemptionScope{}
+	}
+	scope.Identity = &identity
+	c.Set("role", scope.Role)
+	return scope
+}
+
+// Normalize before PageInfo computes (page-1)*size. Negative GORM limits
+// otherwise remove pagination entirely; bounding the page also prevents overflow.
+func redemptionPage(c *gin.Context) *common.PageInfo {
+	page := common.GetPageQuery(c)
+	page.Page = min(max(page.Page, 1), 1_000_000)
+	page.PageSize = min(max(page.PageSize, 1), 100)
+	return page
 }
 
 // Never expose raw database errors from code creation/lookup: unique violations
@@ -31,7 +54,7 @@ func redemptionAPIError(c *gin.Context, err error) {
 }
 
 func GetAgentRedemptionAccounts(c *gin.Context) {
-	page := common.GetPageQuery(c)
+	page := redemptionPage(c)
 	agentID, _ := strconv.Atoi(c.Query("agent_user_id"))
 	rows, total, err := model.GetAgentRedemptionAccounts(redemptionScope(c), agentID, page.GetStartIdx(), page.GetPageSize())
 	if err != nil {
@@ -49,7 +72,7 @@ func GetAgentRedemptionLedger(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	page := common.GetPageQuery(c)
+	page := redemptionPage(c)
 	rows, total, err := model.GetAgentRedemptionLedger(redemptionScope(c), agentID, page.GetStartIdx(), page.GetPageSize())
 	if err != nil {
 		redemptionAPIError(c, err)

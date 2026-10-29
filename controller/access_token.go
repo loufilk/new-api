@@ -168,7 +168,7 @@ func CreateAccessToken(c *gin.Context) {
 		writeSecurityOperationError(c, err)
 		return
 	}
-	if err := model.CreateUserAccessToken(identity.UserID, token, service.AccessTokenMaxPerUser); err != nil {
+	if err := model.CreateUserAccessToken(identity.UserID, token, service.AccessTokenMaxPerUser, identity.UserAuthVersion); err != nil {
 		if errors.Is(err, model.ErrAccessTokenLimit) {
 			writeAccessTokenError(c, http.StatusBadRequest, "ACCESS_TOKEN_LIMIT", "You can create at most {{count}} access tokens", map[string]any{"count": service.AccessTokenMaxPerUser})
 			return

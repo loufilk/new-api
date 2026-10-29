@@ -181,6 +181,13 @@ func TestAgentRedemptionScopeAndHistoricAccounts(t *testing.T) {
 	require.EqualValues(t, 1, total)
 	assert.Equal(t, 400, accounts[0].AvailableQuota)
 	assertAgentBudget(t, agent.UserID, 400, 0, 0, 400)
+	require.NoError(t, DB.Unscoped().Delete(&User{}, agent.UserID).Error)
+	accounts, total, err = GetAgentRedemptionAccounts(admin, agent.UserID, 0, 10)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total, "hard-deleted identities must not hide outstanding budgets")
+	assert.Equal(t, 400, accounts[0].AvailableQuota)
+	allocateAgentTestQuota(t, admin, agent.UserID, -100, "reclaim-after-hard-delete")
+	assertAgentBudget(t, agent.UserID, 300, 0, 0, 300)
 }
 
 func TestAgentRedemptionAllocationReplayConflictAndRollback(t *testing.T) {
@@ -439,4 +446,170 @@ func TestAgentRedemptionPostgresConcurrentRefundAndCrossAccountDelete(t *testing
 	var refundEvents int64
 	require.NoError(t, DB.Model(&AgentRedemptionLedger{}).Where("redemption_id = ? AND delta > 0", row.Id).Count(&refundEvents).Error)
 	assert.EqualValues(t, 1, refundEvents, "delete, disable and expiry must share the same reservation receipt")
+}
+
+func TestAgentRedemptionPostgresIssuanceSerializesWithRoleRevocation(t *testing.T) {
+	if !common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		t.Skip("requires PostgreSQL 18.6 TEST_MODEL_POSTGRES_DSN")
+	}
+	admin, agent := setupAgentRedemptionTest(t)
+	allocateAgentTestQuota(t, admin, agent.UserID, 100, "role-race-budget")
+	// The callback is only a deterministic barrier, not a fake database: both
+	// operations execute real PostgreSQL row locks on separate connections.
+	issuingAtIdentityCheck := make(chan struct{})
+	var once sync.Once
+	const callbackName = "test-agent-redemption-role-barrier"
+	require.NoError(t, DB.Callback().Query().Before("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table == "users" && len(tx.Statement.Selects) == 3 && tx.Statement.Selects[0] == "id" {
+			once.Do(func() { close(issuingAtIdentityCheck) })
+		}
+	}))
+	t.Cleanup(func() { require.NoError(t, DB.Callback().Query().Remove(callbackName)) })
+	result := make(chan error, 1)
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var user User
+		if err := lockForUpdate(tx).Where("id = ?", agent.UserID).First(&user).Error; err != nil {
+			return err
+		}
+		go func() {
+			_, err := CreateRedemptionsScoped(agent, RedemptionCreateRequest{Name: "role race", Quota: 100, Count: 1, RequestID: "role-race-create"})
+			result <- err
+		}()
+		<-issuingAtIdentityCheck
+		return tx.Model(&User{}).Where("id = ?", agent.UserID).Update("role", common.RoleCommonUser).Error
+	})
+	require.NoError(t, err)
+	require.ErrorIs(t, <-result, ErrAgentRedemptionPermission)
+	assertAgentBudget(t, agent.UserID, 100, 0, 0, 100)
+	var codes int64
+	require.NoError(t, DB.Model(&Redemption{}).Count(&codes).Error)
+	assert.Zero(t, codes, "a transaction waiting behind a committed downgrade cannot issue codes")
+}
+
+func TestAgentRedemptionFinancialReceiptSurvivesNoRoleCycleBypass(t *testing.T) {
+	admin, agent := setupAgentRedemptionTest(t)
+	allocateAgentTestQuota(t, admin, agent.UserID, 200, "receipt-cycle-initial")
+	user := getUserBalances(t, agent.UserID)
+	identity := AuthSessionIdentity{UserID: agent.UserID, SessionID: "agent-budget-role-cycle", UserAuthVersion: user.AuthVersion, SessionVersion: 1}
+	require.NoError(t, DB.Create(&UserSession{SID: identity.SessionID, UserID: identity.UserID, Version: identity.SessionVersion, UserAuthVersion: identity.UserAuthVersion, Status: UserSessionStatusActive, RefreshHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", LoginMethod: "password", ExpiresAt: common.GetTimestamp() + 3600}).Error)
+	agent.Identity = &identity
+	_, err := CreateRedemptionsScoped(agent, RedemptionCreateRequest{Name: "valid receipt", Quota: 100, Count: 1, RequestID: "receipt-valid-create"})
+	require.NoError(t, err)
+	// Commit a downgrade and a later re-promotion: final role/status match the
+	// old request but its immutable authentication revision no longer matches.
+	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+		return tx.Model(&User{}).Where("id = ?", agent.UserID).Updates(map[string]any{"role": common.RoleCommonUser, "auth_version": user.AuthVersion + 1}).Error
+	}))
+	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+		return tx.Model(&User{}).Where("id = ?", agent.UserID).Updates(map[string]any{"role": common.RoleAgentUser, "auth_version": user.AuthVersion + 2}).Error
+	}))
+	_, err = CreateRedemptionsScoped(agent, RedemptionCreateRequest{Name: "stale receipt", Quota: 100, Count: 1, RequestID: "receipt-stale-create"})
+	require.ErrorIs(t, err, ErrAgentRedemptionPermission)
+	assertAgentBudget(t, agent.UserID, 100, 100, 0, 200)
+}
+
+func TestAgentRedemptionPostgresInvalidCleanupHasBoundedRefundBatches(t *testing.T) {
+	if !common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		t.Skip("requires PostgreSQL 18.6 TEST_MODEL_POSTGRES_DSN")
+	}
+	admin, agent := setupAgentRedemptionTest(t)
+	const codeCount, quotaPerCode = 1001, 7
+	allocateAgentTestQuota(t, admin, agent.UserID, codeCount*quotaPerCode, "bounded-cleanup-budget")
+	remaining, batch := codeCount, 0
+	for remaining > 0 {
+		count := min(remaining, 100)
+		_, err := CreateRedemptionsScoped(agent, RedemptionCreateRequest{Name: "bounded cleanup", Quota: quotaPerCode, Count: count, RequestID: fmt.Sprintf("bounded-cleanup-create-%d", batch)})
+		require.NoError(t, err)
+		remaining -= count
+		batch++
+	}
+	var lastCode Redemption
+	require.NoError(t, DB.Where("budget_agent_id = ?", agent.UserID).Order("id DESC").First(&lastCode).Error)
+	require.NoError(t, DB.Model(&Redemption{}).Where("budget_agent_id = ?", agent.UserID).Update("expired_time", common.GetTimestamp()-1).Error)
+	other := RedemptionScope{UserID: agentTestOtherID, Role: common.RoleAgentUser}
+	allocateAgentTestQuota(t, admin, other.UserID, 11, "bounded-cleanup-other-budget")
+	_, err := CreateRedemptionsScoped(other, RedemptionCreateRequest{Name: "other expired", Quota: 11, Count: 1, RequestID: "bounded-cleanup-other-code"})
+	require.NoError(t, err)
+	require.NoError(t, DB.Model(&Redemption{}).Where("budget_agent_id = ?", other.UserID).Update("expired_time", common.GetTimestamp()-1).Error)
+
+	// An agent-supplied foreign filter cannot expand the scope. Exactly the
+	// earliest 1000 owned IDs are processed; the 1001st receipt stays reserved.
+	deleted, err := DeleteRedemptionsScoped(agent, nil, true, other.UserID)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1000, deleted)
+	assertAgentBudget(t, agent.UserID, 7000, 7, 0, 7007)
+	assertAgentBudget(t, other.UserID, 0, 11, 0, 11)
+	var stillOwned []Redemption
+	require.NoError(t, DB.Where("budget_agent_id = ?", agent.UserID).Find(&stillOwned).Error)
+	require.Len(t, stillOwned, 1)
+	assert.Equal(t, lastCode.Id, stillOwned[0].Id)
+	assert.True(t, stillOwned[0].BudgetReserved)
+	var refundEvents int64
+	require.NoError(t, DB.Model(&AgentRedemptionLedger{}).Where("agent_user_id = ? AND kind = ?", agent.UserID, "delete").Count(&refundEvents).Error)
+	assert.EqualValues(t, 1000, refundEvents)
+
+	// A subsequent filtered administrator request finishes just the remainder.
+	// A third replay is a no-op and cannot reclaim the already-refunded value.
+	for _, expectedCount := range []int64{1, 0} {
+		deleted, err = DeleteRedemptionsScoped(admin, nil, true, agent.UserID)
+		require.NoError(t, err)
+		assert.Equal(t, expectedCount, deleted)
+		assertAgentBudget(t, agent.UserID, 7007, 0, 0, 7007)
+		assertAgentBudget(t, other.UserID, 0, 11, 0, 11)
+	}
+	require.NoError(t, DB.Model(&AgentRedemptionLedger{}).Where("agent_user_id = ? AND kind = ?", agent.UserID, "delete").Count(&refundEvents).Error)
+	assert.EqualValues(t, 1001, refundEvents)
+	var remainingCodes int64
+	require.NoError(t, DB.Model(&Redemption{}).Count(&remainingCodes).Error)
+	assert.EqualValues(t, 1, remainingCodes, "the foreign account's expired code must remain untouched")
+	assert.Zero(t, getUserBalances(t, agent.UserID).Quota, "budget cleanup never credits a personal wallet")
+}
+
+func TestAgentRedemptionPostgresModelPaginationBounds(t *testing.T) {
+	if !common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		t.Skip("requires PostgreSQL 18.6 TEST_MODEL_POSTGRES_DSN")
+	}
+	admin, agent := setupAgentRedemptionTest(t)
+	allocateAgentTestQuota(t, admin, agent.UserID, 1000, "pagination-initial-budget")
+	for i, count := range []int{100, 1} {
+		_, err := CreateRedemptionsScoped(agent, RedemptionCreateRequest{Name: "pagination", Quota: 1, Count: count, RequestID: fmt.Sprintf("pagination-create-%d", i)})
+		require.NoError(t, err)
+	}
+	// Exactly one row beyond the public 100-item page limit in each list. These
+	// are real allocations so the audit page also retains accounting invariants.
+	for i := range 98 {
+		allocateAgentTestQuota(t, admin, agent.UserID, 1, fmt.Sprintf("pagination-allocation-%d", i))
+	}
+	users := make([]User, 99)
+	for i := range users {
+		users[i] = User{Id: 79000 + i, Username: fmt.Sprintf("page-agent-%d", i), AffCode: fmt.Sprintf("page-agent-%d", i), Role: common.RoleAgentUser, Status: common.UserStatusEnabled}
+	}
+	require.NoError(t, DB.Create(&users).Error)
+	maxInt := int(^uint(0) >> 1)
+	for _, tc := range []struct {
+		name               string
+		start, count, want int
+	}{
+		{"negative_limit", -1, -1, 1},
+		{"zero_limit", 0, 0, 1},
+		{"oversized_limit", 0, maxInt, 100},
+		{"oversized_offset", maxInt, maxInt, 0},
+		{"minimum_offset", -maxInt - 1, -maxInt - 1, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			codes, total, err := GetRedemptionsScoped(admin, agent.UserID, "", "", tc.start, tc.count)
+			require.NoError(t, err)
+			assert.EqualValues(t, 101, total)
+			assert.Len(t, codes, tc.want)
+			accounts, total, err := GetAgentRedemptionAccounts(admin, 0, tc.start, tc.count)
+			require.NoError(t, err)
+			assert.EqualValues(t, 101, total)
+			assert.Len(t, accounts, tc.want)
+			ledger, total, err := GetAgentRedemptionLedger(admin, agent.UserID, tc.start, tc.count)
+			require.NoError(t, err)
+			assert.EqualValues(t, 101, total)
+			assert.Len(t, ledger, tc.want)
+		})
+	}
+	assertAgentBudget(t, agent.UserID, 997, 101, 0, 1098)
 }

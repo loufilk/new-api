@@ -117,13 +117,12 @@ func ListUserAccessTokens(userID int) ([]UserAccessToken, error) {
 
 // CreateUserAccessToken inserts a token while holding the owner's users row, so
 // concurrent creates cannot exceed limit. Expired rows awaiting cleanup count.
-func CreateUserAccessToken(userID int, token *UserAccessToken, limit int) error {
+func CreateUserAccessToken(userID int, token *UserAccessToken, limit int, expectedAuthVersion ...int64) error {
 	if userID <= 0 || token == nil || token.TokenHash == "" {
 		return ErrAccessTokenNotFound
 	}
 	return DB.Transaction(func(tx *gorm.DB) error {
-		var user User
-		if err := lockForUpdate(tx).Select("id").First(&user, userID).Error; err != nil {
+		if err := lockCredentialOwnerForWriteTx(tx, userID, expectedAuthVersion...); err != nil {
 			return err
 		}
 		var count int64

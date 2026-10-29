@@ -13,7 +13,7 @@ import (
 )
 
 func GetAllRedemptions(c *gin.Context) {
-	pageInfo := common.GetPageQuery(c)
+	pageInfo := redemptionPage(c)
 	redemptions, total, err := model.GetRedemptionsScoped(redemptionScope(c), redemptionAgentFilter(c), "", "", pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		redemptionAPIError(c, err)
@@ -28,7 +28,7 @@ func GetAllRedemptions(c *gin.Context) {
 func SearchRedemptions(c *gin.Context) {
 	keyword := c.Query("keyword")
 	status := c.Query("status")
-	pageInfo := common.GetPageQuery(c)
+	pageInfo := redemptionPage(c)
 	redemptions, total, err := model.GetRedemptionsScoped(redemptionScope(c), redemptionAgentFilter(c), keyword, status, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		redemptionAPIError(c, err)
@@ -122,7 +122,7 @@ func UpdateRedemption(c *gin.Context) {
 }
 
 func DeleteInvalidRedemption(c *gin.Context) {
-	rows, err := model.DeleteRedemptionsScoped(redemptionScope(c), nil, true)
+	rows, err := model.DeleteRedemptionsScoped(redemptionScope(c), nil, true, redemptionAgentFilter(c))
 	if err != nil {
 		redemptionAPIError(c, err)
 		return
@@ -133,13 +133,6 @@ func DeleteInvalidRedemption(c *gin.Context) {
 		"data":    rows,
 	})
 	return
-}
-
-func validateExpiredTime(expired int64) error {
-	if expired != 0 && expired < common.GetTimestamp() {
-		return common.NewMessage("Expiration time cannot be earlier than current time")
-	}
-	return nil
 }
 
 func DeleteRedemptionBatch(c *gin.Context) {

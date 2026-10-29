@@ -104,10 +104,12 @@ export function ProfileDropdown() {
 
           <DropdownMenuSeparator />
 
-          {!isAgent && <DropdownMenuItem onClick={() => navigate({ to: '/profile' })}>
-            <User className='size-4' />
-            {t('Profile')}
-          </DropdownMenuItem>}
+          {!isAgent && (
+            <DropdownMenuItem onClick={() => navigate({ to: '/profile' })}>
+              <User className='size-4' />
+              {t('Profile')}
+            </DropdownMenuItem>
+          )}
 
           {isSecurityVisible && (
             <DropdownMenuItem onClick={() => navigate({ to: '/security' })}>

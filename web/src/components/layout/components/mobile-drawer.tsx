@@ -195,14 +195,16 @@ function MobileUserProfile(props: MobileUserProfileProps) {
       </div>
 
       {/* Navigation links - same style as top nav */}
-      {!isAgent && <Link
-        to='/profile'
-        onClick={props.onNavigate}
-        className='text-primary/60 hover:text-primary/80 border-border flex items-center gap-2.5 border-b p-2.5 transition-colors'
-      >
-        <User className='size-4' />
-        {t('Profile')}
-      </Link>}
+      {!isAgent && (
+        <Link
+          to='/profile'
+          onClick={props.onNavigate}
+          className='text-primary/60 hover:text-primary/80 border-border flex items-center gap-2.5 border-b p-2.5 transition-colors'
+        >
+          <User className='size-4' />
+          {t('Profile')}
+        </Link>
+      )}
 
       {!isAgent && isSecurityVisible && (
         <Link
@@ -215,14 +217,16 @@ function MobileUserProfile(props: MobileUserProfileProps) {
         </Link>
       )}
 
-      {!isAgent && <Link
-        to='/wallet'
-        onClick={props.onNavigate}
-        className='text-primary/60 hover:text-primary/80 border-border flex items-center gap-2.5 border-b p-2.5 transition-colors'
-      >
-        <Wallet className='size-4' />
-        {t('Wallet')}
-      </Link>}
+      {!isAgent && (
+        <Link
+          to='/wallet'
+          onClick={props.onNavigate}
+          className='text-primary/60 hover:text-primary/80 border-border flex items-center gap-2.5 border-b p-2.5 transition-colors'
+        >
+          <Wallet className='size-4' />
+          {t('Wallet')}
+        </Link>
+      )}
 
       {/* Sign out - consistent style */}
       <Button

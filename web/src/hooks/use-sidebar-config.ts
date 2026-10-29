@@ -334,5 +334,8 @@ export function useIsSidebarModuleVisible(url: string): boolean {
       ? null
       : parseUserSidebarConfig(auth?.user?.sidebar_modules)
 
-  return canAccessAgentRoute(auth?.user?.role, url) && isModuleEnabled(url, adminConfig, userConfig)
+  return (
+    canAccessAgentRoute(auth?.user?.role, url) &&
+    isModuleEnabled(url, adminConfig, userConfig)
+  )
 }

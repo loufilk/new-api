@@ -1,20 +1,25 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/oauth"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func setupAgentInvitationControllerTest(t *testing.T) []model.User {
@@ -42,7 +47,7 @@ func setupAgentInvitationControllerTest(t *testing.T) []model.User {
 		common.RedisEnabled = previousRedis
 		*operation_setting.GetPaymentSetting() = previousPayment
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.AgentInvitation{}, &model.AgentInvitationPolicy{}, &model.AgentInvitationPolicyAudit{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AgentInvitation{}, &model.AgentInvitationPolicy{}, &model.AgentInvitationPolicyAudit{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}))
 	users := []model.User{
 		{Username: "invite-common", Role: common.RoleCommonUser},
 		{Username: "invite-agent-a", Role: common.RoleAgentUser},
@@ -54,6 +59,12 @@ func setupAgentInvitationControllerTest(t *testing.T) []model.User {
 		users[i].Status = common.UserStatusEnabled
 		users[i].AffCode = fmt.Sprintf("invitation-api-%d", i)
 		require.NoError(t, db.Create(&users[i]).Error)
+		require.NoError(t, model.CreateUserSession(&model.UserSession{
+			SID: fmt.Sprintf("invitation-api-session-%d", users[i].Id), UserID: users[i].Id,
+			UserAuthVersion: users[i].AuthVersion, Version: 1,
+			RefreshHash: fmt.Sprintf("synthetic-invitation-session-hash-%d", i),
+			LoginMethod: "password", ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		}))
 	}
 	return users
 }
@@ -67,6 +78,11 @@ func performAgentInvitationRequest(t *testing.T, user model.User, method, target
 	c.Set("id", user.Id)
 	// Deliberately stale/forged context role: model authorization must reread DB.
 	c.Set("role", common.RoleRootUser)
+	if user.Id > 0 {
+		c.Set("session_id", fmt.Sprintf("invitation-api-session-%d", user.Id))
+		c.Set("auth_version", user.AuthVersion)
+		c.Set("session_version", int64(1))
+	}
 	handler(c)
 	return recorder
 }
@@ -137,6 +153,34 @@ func TestAgentInvitationPolicyAPIRootOnlyAndBounds(t *testing.T) {
 	assert.Equal(t, 400, policy.Quota)
 }
 
+func TestAgentInvitationPolicyAPIRequiresLiveBrowserIdentity(t *testing.T) {
+	users := setupAgentInvitationControllerTest(t)
+	root := users[4]
+	for _, sessionID := range []string{"", "pat:99"} {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest("PUT", "/api/agent-redemption/invitation-policy", strings.NewReader(`{"enabled":true,"quota":100}`))
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Set("id", root.Id)
+		c.Set("role", root.Role)
+		c.Set("session_id", sessionID)
+		c.Set("auth_version", root.AuthVersion)
+		c.Set("session_version", int64(1))
+		UpdateAgentInvitationPolicy(c)
+		assert.Equal(t, http.StatusForbidden, recorder.Code)
+	}
+	revoked, err := model.RevokeUserSession(root.Id, fmt.Sprintf("invitation-api-session-%d", root.Id), "test_logout")
+	require.NoError(t, err)
+	require.True(t, revoked)
+	response := performAgentInvitationRequest(t, root, "PUT", "/api/agent-redemption/invitation-policy", `{"enabled":true,"quota":100}`, UpdateAgentInvitationPolicy)
+	assert.Equal(t, http.StatusForbidden, response.Code)
+	policy, err := model.GetAgentInvitationPolicy(root.Id)
+	require.NoError(t, err)
+	assert.False(t, policy.Enabled)
+	assert.Zero(t, policy.Quota)
+	assert.Zero(t, policy.Revision)
+}
+
 func TestAgentInvitationPasswordRegistrationIgnoresForgedFields(t *testing.T) {
 	users := setupAgentInvitationControllerTest(t)
 	previousRegister, previousPassword, previousVerification := common.RegisterEnabled, common.PasswordRegisterEnabled, common.EmailVerificationEnabled
@@ -173,4 +217,139 @@ func TestAgentInvitationPasswordRegistrationIgnoresForgedFields(t *testing.T) {
 	var count int64
 	require.NoError(t, model.DB.Model(&model.AgentInvitation{}).Where("user_id = ?", user.Id).Count(&count).Error)
 	assert.EqualValues(t, 1, count)
+}
+
+func TestAgentInvitationOAuthFlowGrantsOnlyOnVerifiedNewAccount(t *testing.T) {
+	if os.Getenv("TEST_POSTGRES_DSN") == "" {
+		t.Skip("requires disposable loopback PostgreSQL 18.6 TEST_POSTGRES_DSN")
+	}
+	t.Setenv("TEST_SECURITY_DIALECT", "postgres")
+	root, _ := setupLinuxDOSignupTest(t)
+	var version string
+	require.NoError(t, model.DB.Raw("SHOW server_version_num").Scan(&version).Error)
+	require.Equal(t, "180006", version)
+	require.NoError(t, model.DB.AutoMigrate(&model.AgentInvitation{}, &model.AgentInvitationPolicy{}, &model.AgentInvitationPolicyAudit{}))
+	require.NoError(t, model.DB.Model(root).Update("role", common.RoleRootUser).Error)
+	agent := model.User{Username: "oauth-agent", AffCode: "oauth-agent-aff", Role: common.RoleAgentUser, Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(&agent).Error)
+	previousPayment := *operation_setting.GetPaymentSetting()
+	operation_setting.GetPaymentSetting().ComplianceConfirmed = true
+	operation_setting.GetPaymentSetting().ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
+	t.Cleanup(func() { *operation_setting.GetPaymentSetting() = previousPayment })
+	_, err := model.UpdateAgentInvitationPolicy(root.Id, true, 123)
+	require.NoError(t, err)
+	response := securityEnrollmentRequest("POST", "/api/oauth/state", fmt.Sprintf(`{"provider":"linuxdo","intent":"login","aff":%q}`, agent.AffCode), "", service.AuthIdentity{}, GenerateOAuthCode)
+	var stateBody struct {
+		Success bool `json:"success"`
+		Data    struct {
+			FlowToken string `json:"flow_token"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &stateBody))
+	require.True(t, stateBody.Success, response.Body.String())
+	state := stateBody.Data.FlowToken
+	require.NotEmpty(t, state)
+	response = linuxDOSignupCallback(state, service.AuthIdentity{})
+	var body struct {
+		Success bool `json:"success"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
+	require.True(t, body.Success, response.Body.String())
+	var user model.User
+	require.NoError(t, model.DB.Where("linux_do_id = ?", "77101").First(&user).Error)
+	assert.Equal(t, agent.Id, user.InviterId)
+	assert.Equal(t, 1500123, user.QuotaBonus)
+	assert.Equal(t, http.StatusForbidden, linuxDOSignupCallback(state, service.AuthIdentity{}).Code)
+	// A fresh, valid login flow carrying a different invitation cannot rewrite
+	// an existing account or earn another test grant.
+	response = securityEnrollmentRequest("POST", "/api/oauth/state", fmt.Sprintf(`{"provider":"linuxdo","intent":"login","aff":%q}`, root.AffCode), "", service.AuthIdentity{}, GenerateOAuthCode)
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &stateBody))
+	require.True(t, stateBody.Success)
+	response = linuxDOSignupCallback(stateBody.Data.FlowToken, service.AuthIdentity{})
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
+	require.True(t, body.Success, response.Body.String())
+	require.NoError(t, model.DB.First(&user, user.Id).Error)
+	assert.Equal(t, agent.Id, user.InviterId)
+	assert.Equal(t, 1500123, user.QuotaBonus)
+	var invitations []model.AgentInvitation
+	require.NoError(t, model.DB.Find(&invitations).Error)
+	require.Len(t, invitations, 1)
+	assert.Equal(t, model.InvitationSourceLinuxDO, invitations[0].Source)
+	assert.Equal(t, 123, invitations[0].BonusQuota)
+	var count int64
+	require.NoError(t, model.DB.Model(&model.BalanceLedger{}).Where("reason = ?", model.LedgerReasonAgentInvitationBonus).Count(&count).Error)
+	assert.EqualValues(t, 1, count)
+}
+
+func TestAgentInvitationLookupFailureCannotCreateUnattributedUser(t *testing.T) {
+	for _, source := range []string{"password", "email", "oauth"} {
+		t.Run(source, func(t *testing.T) {
+			users := setupAgentInvitationControllerTest(t)
+			require.NoError(t, model.DB.AutoMigrate(&model.ExternalIdentityClaim{}))
+			previousRegister, previousPassword, previousVerification := common.RegisterEnabled, common.PasswordRegisterEnabled, common.EmailVerificationEnabled
+			previousDefaultToken := constant.GenerateDefaultToken
+			common.RegisterEnabled, common.PasswordRegisterEnabled, common.EmailVerificationEnabled = true, true, source == "email"
+			constant.GenerateDefaultToken = false
+			t.Cleanup(func() {
+				common.RegisterEnabled, common.PasswordRegisterEnabled, common.EmailVerificationEnabled = previousRegister, previousPassword, previousVerification
+				constant.GenerateDefaultToken = previousDefaultToken
+			})
+			_, err := model.UpdateAgentInvitationPolicy(users[4].Id, true, 222)
+			require.NoError(t, err)
+			failure := errors.New("synthetic invitation lookup outage")
+			callback := "agent-invitation-aff-lookup-failure"
+			require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register(callback, func(tx *gorm.DB) {
+				if tx.Statement.Table == "users" && strings.Contains(fmt.Sprint(tx.Statement.Clauses["WHERE"].Expression), "aff_code =") {
+					tx.AddError(failure)
+				}
+			}))
+			t.Cleanup(func() { _ = model.DB.Callback().Query().Remove(callback) })
+			username := "lookup-" + source
+			body := fmt.Sprintf(`{"username":%q,"password":"Test-only-password-782!","aff_code":%q}`, username, users[1].AffCode)
+			if source == "email" {
+				email, code := "invitation-lookup@example.test", "synthetic-email-code"
+				common.RegisterVerificationCodeWithKey(email, code, common.EmailVerificationPurpose)
+				t.Cleanup(func() { common.DeleteKey(email, common.EmailVerificationPurpose) })
+				body = fmt.Sprintf(`{"username":%q,"password":"Test-only-password-782!","aff_code":%q,"email":%q,"verification_code":%q}`, username, users[1].AffCode, email, code)
+			}
+			context, _ := gin.CreateTestContext(httptest.NewRecorder())
+			context.Request = httptest.NewRequest("GET", "/api/oauth/linuxdo", nil)
+			providerUser := &oauth.OAuthUser{ProviderUserID: "992001", Username: username}
+			if source != "oauth" {
+				response := performAgentInvitationRequest(t, model.User{}, "POST", "/api/user/register", body, Register)
+				var payload struct {
+					Success bool `json:"success"`
+				}
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
+				assert.False(t, payload.Success, response.Body.String())
+			} else {
+				user, _, err := findOrCreateOAuthUser(context, &oauth.LinuxDOProvider{}, providerUser, nil, users[1].AffCode)
+				require.ErrorIs(t, err, failure)
+				assert.Nil(t, user)
+			}
+			var count int64
+			require.NoError(t, model.DB.Model(&model.User{}).Where("username = ?", username).Count(&count).Error)
+			assert.Zero(t, count)
+			for _, entity := range []any{&model.AgentInvitation{}, &model.BalanceLedger{}} {
+				require.NoError(t, model.DB.Model(entity).Count(&count).Error)
+				assert.Zero(t, count)
+			}
+			require.NoError(t, model.DB.Callback().Query().Remove(callback))
+			if source != "oauth" {
+				response := performAgentInvitationRequest(t, model.User{}, "POST", "/api/user/register", body, Register)
+				var payload struct {
+					Success bool `json:"success"`
+				}
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
+				require.True(t, payload.Success, response.Body.String())
+			} else {
+				_, _, err := findOrCreateOAuthUser(context, &oauth.LinuxDOProvider{}, providerUser, nil, users[1].AffCode)
+				require.NoError(t, err)
+			}
+			var invitation model.AgentInvitation
+			require.NoError(t, model.DB.First(&invitation).Error)
+			assert.Equal(t, users[1].Id, invitation.InviterId)
+			assert.Equal(t, 222, invitation.BonusQuota)
+		})
+	}
 }

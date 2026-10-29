@@ -336,6 +336,10 @@ test('an agent can sign out but cannot navigate to wallet, profile or security',
   renderDrawer({ user: { ...user, role: 5 } })
   expect(await screen.findByRole('button', { name: 'Sign out' })).toBeEnabled()
   expect(screen.queryByRole('link', { name: 'Wallet' })).not.toBeInTheDocument()
-  expect(screen.queryByRole('link', { name: 'Profile' })).not.toBeInTheDocument()
-  expect(screen.queryByRole('link', { name: 'Security & Access' })).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('link', { name: 'Profile' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('link', { name: 'Security & Access' })
+  ).not.toBeInTheDocument()
 })

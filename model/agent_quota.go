@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 var (
@@ -26,6 +27,9 @@ var (
 // AllocatedQuota is net lifetime allocation, including already-spent issuance.
 // It always equals AvailableQuota + ReservedQuota + SpentQuota.
 type AgentRedemptionAccount struct {
+	UserRole       int    `json:"user_role,omitempty" gorm:"->;-:migration"`
+	UserStatus     int    `json:"user_status,omitempty" gorm:"->;-:migration"`
+	UserDeleted    bool   `json:"user_deleted,omitempty" gorm:"->;-:migration"`
 	AgentUserID    int    `json:"agent_user_id" gorm:"primaryKey;autoIncrement:false"`
 	Username       string `json:"username,omitempty" gorm:"->;-:migration"`
 	DisplayName    string `json:"display_name,omitempty" gorm:"->;-:migration"`
@@ -93,6 +97,7 @@ type AgentQuotaAllocationResult struct {
 // RedemptionScope must be derived from authenticated server-side identity.
 // Agent role is an exact role, not a minimum privilege threshold.
 type RedemptionScope struct {
+	Identity     *AuthSessionIdentity `json:"-"`
 	UserID, Role int
 	system       bool
 }
@@ -111,6 +116,23 @@ func (s RedemptionScope) query(tx *gorm.DB) *gorm.DB {
 		return tx.Where("budget_agent_id = ?", s.UserID)
 	}
 	return tx
+}
+
+// ResolveRedemptionScope derives access from current persisted identity rather
+// than a client field or a cached role. Mutations repeat this check under lock.
+func ResolveRedemptionScope(userID int) (RedemptionScope, error) {
+	var user User
+	if userID <= 0 {
+		return RedemptionScope{}, ErrAgentRedemptionPermission
+	}
+	if err := DB.Select("id", "role", "status").Where("id = ?", userID).First(&user).Error; err != nil {
+		return RedemptionScope{}, ErrAgentRedemptionPermission
+	}
+	scope := RedemptionScope{UserID: user.Id, Role: user.Role}
+	if !scope.valid() || user.Status != common.UserStatusEnabled {
+		return RedemptionScope{}, ErrAgentRedemptionPermission
+	}
+	return scope, nil
 }
 
 func validateAgentRequestID(requestID string) error {
@@ -184,10 +206,13 @@ func validateAgentAccount(account *AgentRedemptionAccount) error {
 // issuance owner are locked in numeric order, making live authorization atomic
 // with role changes without relying on session/cache role snapshots.
 func requireRedemptionActorTx(tx *gorm.DB, scope RedemptionScope, activeAgentID int) error {
-	if scope.system {
+	if scope.system && activeAgentID == 0 {
 		return nil
 	} // internal legacy model methods, never HTTP
-	ids := []int{scope.UserID}
+	ids := make([]int, 0, 2)
+	if !scope.system {
+		ids = append(ids, scope.UserID)
+	}
 	if activeAgentID > 0 && activeAgentID != scope.UserID {
 		ids = append(ids, activeAgentID)
 	}
@@ -195,7 +220,7 @@ func requireRedemptionActorTx(tx *gorm.DB, scope RedemptionScope, activeAgentID 
 	if err := lockForUpdate(tx).Select("id", "role", "status").Where("id IN ?", ids).Order("id ASC").Find(&users).Error; err != nil {
 		return err
 	}
-	actorValid, agentValid := false, activeAgentID == 0
+	actorValid, agentValid := scope.system, activeAgentID == 0
 	for _, user := range users {
 		if user.Id == scope.UserID {
 			actorValid = user.Role == scope.Role && user.Status == common.UserStatusEnabled
@@ -209,6 +234,17 @@ func requireRedemptionActorTx(tx *gorm.DB, scope RedemptionScope, activeAgentID 
 	}
 	if !agentValid {
 		return ErrAgentRedemptionUnavailable
+	}
+	if scope.Identity != nil {
+		if scope.Identity.UserID != scope.UserID {
+			return ErrAgentRedemptionPermission
+		}
+		// Actor is already locked above; validation next locks its session or PAT
+		// receipt. Never log SQL containing a session identifier on failure.
+		privateTx := tx.Session(&gorm.Session{Logger: tx.Logger.LogMode(gormlogger.Silent)})
+		if err := ValidateAuthSessionWithTx(privateTx, *scope.Identity); err != nil {
+			return ErrAgentRedemptionPermission
+		}
 	}
 	return nil
 }
@@ -262,7 +298,7 @@ func AllocateAgentRedemptionQuota(scope RedemptionScope, request AgentQuotaAlloc
 		return nil, ErrAgentQuotaInvalid
 	}
 	var result AgentQuotaAllocationResult
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err := DB.Session(&gorm.Session{Logger: DB.Logger.LogMode(gormlogger.Silent)}).Transaction(func(tx *gorm.DB) error {
 		operation, replayed, err := claimAgentRedemptionOperation(tx, "allocation", request.RequestID, scope, request.AgentUserID, request)
 		if err != nil {
 			return err
@@ -304,31 +340,36 @@ func AllocateAgentRedemptionQuota(scope RedemptionScope, request AgentQuotaAlloc
 }
 
 func GetAgentRedemptionAccounts(scope RedemptionScope, agentID, start, count int) ([]*AgentRedemptionAccount, int64, error) {
+	start, count = min(max(start, 0), 100_000_000), min(max(count, 1), 100)
 	if !scope.valid() {
 		return nil, 0, ErrAgentRedemptionPermission
 	}
-	// Users are soft-deleted. Reading the unscoped identity table retains budgets
-	// after disable, downgrade or deletion, and shows unallocated agents as zero.
-	query := DB.Table("users AS agent_users").Joins("LEFT JOIN agent_redemption_accounts AS budgets ON budgets.agent_user_id = agent_users.id").Where("(agent_users.role = ? OR budgets.agent_user_id IS NOT NULL)", common.RoleAgentUser)
+	// The UNION also retains an orphaned budget after a hard user deletion.
+	// FULL OUTER JOIN is not portable; this standard UNION works on existing
+	// supported dialects while exposing all zero-budget agent identities.
+	query := DB.Table("(SELECT agent_user_id FROM agent_redemption_accounts UNION SELECT id AS agent_user_id FROM users WHERE role = ?) AS agent_ids", common.RoleAgentUser).
+		Joins("LEFT JOIN users AS agent_users ON agent_users.id = agent_ids.agent_user_id").
+		Joins("LEFT JOIN agent_redemption_accounts AS budgets ON budgets.agent_user_id = agent_ids.agent_user_id")
 	if !scope.IsAdmin() {
 		agentID = scope.UserID
 	}
 	if agentID > 0 {
-		query = query.Where("agent_users.id = ?", agentID)
+		query = query.Where("agent_ids.agent_user_id = ?", agentID)
 	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 	accounts := make([]*AgentRedemptionAccount, 0)
-	selectColumns := "agent_users.id AS agent_user_id, agent_users.username, agent_users.display_name, COALESCE(budgets.available_quota, 0) AS available_quota, COALESCE(budgets.reserved_quota, 0) AS reserved_quota, COALESCE(budgets.spent_quota, 0) AS spent_quota, COALESCE(budgets.allocated_quota, 0) AS allocated_quota, COALESCE(budgets.created_at, 0) AS created_at, COALESCE(budgets.updated_at, 0) AS updated_at"
-	if err := query.Select(selectColumns).Order("agent_users.id ASC").Offset(start).Limit(count).Scan(&accounts).Error; err != nil {
+	selectColumns := "agent_ids.agent_user_id, COALESCE(agent_users.role, 0) AS user_role, COALESCE(agent_users.status, 0) AS user_status, (agent_users.id IS NULL OR agent_users.deleted_at IS NOT NULL) AS user_deleted, COALESCE(agent_users.username, '') AS username, COALESCE(agent_users.display_name, '') AS display_name, COALESCE(budgets.available_quota, 0) AS available_quota, COALESCE(budgets.reserved_quota, 0) AS reserved_quota, COALESCE(budgets.spent_quota, 0) AS spent_quota, COALESCE(budgets.allocated_quota, 0) AS allocated_quota, COALESCE(budgets.created_at, 0) AS created_at, COALESCE(budgets.updated_at, 0) AS updated_at"
+	if err := query.Select(selectColumns).Order("agent_ids.agent_user_id ASC").Offset(start).Limit(count).Scan(&accounts).Error; err != nil {
 		return nil, 0, err
 	}
 	return accounts, total, nil
 }
 
 func GetAgentRedemptionLedger(scope RedemptionScope, agentID, start, count int) ([]*AgentRedemptionLedger, int64, error) {
+	start, count = min(max(start, 0), 100_000_000), min(max(count, 1), 100)
 	if !scope.valid() || agentID <= 0 || (!scope.IsAdmin() && agentID != scope.UserID) {
 		return nil, 0, ErrAgentRedemptionPermission
 	}

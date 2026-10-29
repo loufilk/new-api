@@ -653,7 +653,7 @@ func TokenAuth() func(c *gin.Context) {
 		}
 		userEnabled := userCache.Status == common.UserStatusEnabled
 		if userCache.Role == common.RoleAgentUser {
-			abortWithOpenAiMessage(c, http.StatusForbidden, "Agent administrators cannot use inference tokens", types.ErrorCodeAccessDenied)
+			abortWithOpenAiMessage(c, http.StatusForbidden, common.TranslateMessage(c, i18n.MsgAuthInsufficientPrivilege), types.ErrorCodeAccessDenied)
 			return
 		}
 		if !userEnabled {

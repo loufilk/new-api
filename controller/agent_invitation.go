@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 )
@@ -43,6 +44,12 @@ func GetAgentInvitationPolicy(c *gin.Context) {
 }
 
 func UpdateAgentInvitationPolicy(c *gin.Context) {
+	identity, ok := middleware.GetStepUpIdentity(c)
+	_, accessToken := model.ParseAccessTokenSessionID(identity.SessionID)
+	if !ok || accessToken || identity.UserID != c.GetInt("id") {
+		writeAgentInvitationError(c, model.ErrAgentInvitationPermission)
+		return
+	}
 	// Bind only these fields, never a model, actor ID, role or ledger entry.
 	var request struct {
 		Enabled *bool `json:"enabled"`
@@ -52,7 +59,7 @@ func UpdateAgentInvitationPolicy(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
 		return
 	}
-	policy, err := model.UpdateAgentInvitationPolicy(c.GetInt("id"), *request.Enabled, *request.Quota)
+	policy, err := model.UpdateAgentInvitationPolicy(c.GetInt("id"), *request.Enabled, *request.Quota, identity)
 	if err != nil {
 		writeAgentInvitationError(c, err)
 		return

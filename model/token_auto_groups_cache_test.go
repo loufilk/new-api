@@ -43,7 +43,8 @@ func TestTokenAllowUserQuotaQueryRoundTripsThroughRedisHashCache(t *testing.T) {
 func TestTokenUpdateRevokesCachedUserQuotaQueryPermission(t *testing.T) {
 	truncateTables(t)
 	useUserCacheMiniRedis(t)
-	token := Token{UserId: 7, Key: "token-user-quota-revoked-key", Name: "user-quota-revoked", Status: common.TokenStatusEnabled, ExpiredTime: -1, UnlimitedQuota: true, Group: "default", AllowUserQuotaQuery: true}
+	owner := createAccessTokenTestUser(t, "token-quota-cache-owner")
+	token := Token{UserId: owner.Id, Key: "token-user-quota-revoked-key", Name: "user-quota-revoked", Status: common.TokenStatusEnabled, ExpiredTime: -1, UnlimitedQuota: true, Group: "default", AllowUserQuotaQuery: true}
 	require.NoError(t, token.Insert())
 	require.NoError(t, cacheSetTokenForTest(token))
 	preheated, err := cacheGetTokenByKey(token.Key)
@@ -63,8 +64,9 @@ func TestTokenUpdateRevokesCachedUserQuotaQueryPermission(t *testing.T) {
 func TestTokenUpdateSynchronouslyNarrowsPreheatedAutoGroupsCache(t *testing.T) {
 	truncateTables(t)
 	useUserCacheMiniRedis(t)
+	owner := createAccessTokenTestUser(t, "token-auto-cache-owner")
 	token := Token{
-		UserId:          7,
+		UserId:          owner.Id,
 		Key:             "token-auto-groups-update-cache-key",
 		Name:            "auto-cache-update",
 		Status:          common.TokenStatusEnabled,

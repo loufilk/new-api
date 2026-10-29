@@ -68,7 +68,7 @@ func testGroupNamespaceConcurrentWriters(t *testing.T) {
 				token := Token{UserId: user.Id, Key: "stale-token", Name: "stale", Status: common.TokenStatusEnabled, Group: "old", AutoGroups: `["old"]`}
 				require.NoError(t, DB.Create(&token).Error)
 				stale := token
-				return stale.Update, func(t *testing.T) {
+				return func() error { return stale.Update() }, func(t *testing.T) {
 					var stored Token
 					require.NoError(t, DB.First(&stored, token.Id).Error)
 					assert.Equal(t, "new", stored.Group)

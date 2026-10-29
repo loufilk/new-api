@@ -77,6 +77,7 @@ export function useSidebarView(): ResolvedSidebarView {
   return {
     key: ROOT_VIEW_KEY,
     view: null,
-    navGroups: userRole === ROLE.AGENT ? rootSidebarData.navGroups : rootNavGroups,
+    navGroups:
+      userRole === ROLE.AGENT ? rootSidebarData.navGroups : rootNavGroups,
   }
 }

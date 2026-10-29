@@ -517,7 +517,13 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 	// Handle affiliate code
 	inviterId := 0
 	if affiliateCode != "" {
-		inviterId, _ = model.GetUserIdByAffCode(affiliateCode)
+		var err error
+		inviterId, err = model.GetUserIdByAffCode(affiliateCode)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			// A lookup outage must not silently create an unattributed account:
+			// registration attribution and its one-time grant cannot be backfilled.
+			return nil, nil, err
+		}
 	}
 
 	// Use transaction to ensure user creation and OAuth binding are atomic

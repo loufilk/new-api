@@ -1,4 +1,3 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -17,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   fireEvent,
   render,
@@ -97,13 +97,19 @@ function deferred<T>() {
 function drawerTree(currentRow: Redemption, open = true) {
   return (
     <I18nextProvider i18n={i18n}>
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><RedemptionsProvider>
-        <RedemptionsMutateDrawer
-          open={open}
-          currentRow={currentRow}
-          onOpenChange={() => undefined}
-        />
-      </RedemptionsProvider></QueryClientProvider>
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <RedemptionsProvider>
+          <RedemptionsMutateDrawer
+            open={open}
+            currentRow={currentRow}
+            onOpenChange={() => undefined}
+          />
+        </RedemptionsProvider>
+      </QueryClientProvider>
       <Toaster duration={60_000} />
     </I18nextProvider>
   )

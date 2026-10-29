@@ -238,9 +238,15 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         {!isAdmin && (
           <DropdownMenuItem
             disabled={verificationActive}
-            onClick={() => handleManage(user.role === USER_ROLE.AGENT ? 'unset_agent' : 'set_agent')}
+            onClick={() =>
+              handleManage(
+                user.role === USER_ROLE.AGENT ? 'unset_agent' : 'set_agent'
+              )
+            }
           >
-            {user.role === USER_ROLE.AGENT ? t('Remove agent role') : t('Grant agent role')}
+            {user.role === USER_ROLE.AGENT
+              ? t('Remove agent role')
+              : t('Grant agent role')}
           </DropdownMenuItem>
         )}
 

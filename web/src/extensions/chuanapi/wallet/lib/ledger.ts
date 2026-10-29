@@ -34,6 +34,7 @@ const REASON_LABEL_KEYS: Record<string, string> = {
   task_settle: 'Task Settlement',
   task_refund: 'Task Refund',
   new_user_gift: 'New User Gift',
+  agent_invitation_bonus: 'Agent Invitation Test Bonus',
   signup_bonus: 'Signup Bonus',
   referral_transfer: 'Referral Reward Transfer',
   legacy_backfill: 'Legacy Backfill',

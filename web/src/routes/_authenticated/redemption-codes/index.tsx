@@ -36,7 +36,10 @@ export const Route = createFileRoute('/_authenticated/redemption-codes/')({
   beforeLoad: () => {
     const { auth } = useAuthStore.getState()
 
-    if (!auth.user || (auth.user.role !== ROLE.AGENT && auth.user.role < ROLE.ADMIN)) {
+    if (
+      !auth.user ||
+      (auth.user.role !== ROLE.AGENT && auth.user.role < ROLE.ADMIN)
+    ) {
       throw redirect({
         to: '/403',
       })

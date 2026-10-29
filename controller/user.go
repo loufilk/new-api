@@ -272,7 +272,14 @@ func Register(c *gin.Context) {
 		return
 	}
 	affCode := user.AffCode // this code is the inviter's code, not the user's own code
-	inviterId, _ := model.GetUserIdByAffCode(affCode)
+	inviterId := 0
+	if affCode != "" {
+		inviterId, err = model.GetUserIdByAffCode(affCode)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			common.ApiErrorT(c, "Database error, please contact the administrator")
+			return
+		}
+	}
 	cleanUser := model.User{
 		Username:    user.Username,
 		Password:    user.Password,
@@ -322,7 +329,7 @@ func Register(c *gin.Context) {
 		if setting.DefaultUseAutoGroup {
 			token.Group = "auto"
 		}
-		if err := token.Insert(); err != nil {
+		if err := token.Insert(insertedUser.AuthVersion); err != nil {
 			common.ApiErrorT(c, "Failed to create default token")
 			return
 		}
@@ -926,7 +933,7 @@ func DeleteUser(c *gin.Context) {
 	if authorization == nil {
 		return
 	}
-	revokedAccessTokens, err := model.HardDeleteUserById(id)
+	revokedAccessTokens, err := model.DeleteUserByAdministrator(authorization.AuthSessionIdentity, *originUser, true)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -1017,8 +1024,16 @@ func CreateUser(c *gin.Context) {
 		DisplayName: user.DisplayName,
 		Role:        user.Role, // 保持管理员设置的角色
 	}
+	identity, ok := middleware.GetStepUpIdentity(c)
+	if !ok || identity.UserID != c.GetInt("id") {
+		writeSecurityOperationError(c, service.ErrAuthTokenInvalid)
+		return
+	}
 	authzTouched := false
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := model.ValidateAdminUserCreationTx(tx, identity, cleanUser.Role); err != nil {
+			return err
+		}
 		if err := cleanUser.InsertWithTx(tx, 0); err != nil {
 			return err
 		}
@@ -1129,7 +1144,7 @@ func ManageUser(c *gin.Context) {
 		if authorization == nil {
 			return
 		}
-		revokedAccessTokens, err := user.Delete()
+		revokedAccessTokens, err := model.DeleteUserByAdministrator(authorization.AuthSessionIdentity, expectedUser, false)
 		if err != nil {
 			common.ApiError(c, err)
 			return
@@ -1194,7 +1209,7 @@ func ManageUser(c *gin.Context) {
 	}
 	roleChanged := expectedUser.Role != user.Role
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
-		changed, err := model.ApplyUserManagementActionTx(tx, c.GetInt("id"), expectedUser, req.Action)
+		changed, err := model.ApplyUserManagementActionTx(tx, c.GetInt("id"), expectedUser, req.Action, authorization.AuthSessionIdentity)
 		if err != nil {
 			return err
 		}

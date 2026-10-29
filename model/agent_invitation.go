@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/gorm/logger"
 )
 
 const (
@@ -50,12 +51,13 @@ func (*AgentInvitation) BeforeDelete(*gorm.DB) error { return ErrAgentInvitation
 // administrators cannot change the root-only test-balance policy indirectly.
 // An absent singleton means disabled / zero, without a registration-time write.
 type AgentInvitationPolicy struct {
-	Id        int   `json:"-" gorm:"primaryKey;autoIncrement:false"`
-	Enabled   bool  `json:"enabled" gorm:"not null"`
-	Quota     int   `json:"quota" gorm:"type:bigint;not null"`
-	Revision  int64 `json:"revision" gorm:"type:bigint;not null"`
-	UpdatedBy int   `json:"updated_by" gorm:"not null"`
-	UpdatedAt int64 `json:"updated_at" gorm:"type:bigint;not null"`
+	Id                         int   `json:"-" gorm:"primaryKey;autoIncrement:false"`
+	Enabled                    bool  `json:"enabled" gorm:"not null"`
+	Quota                      int   `json:"quota" gorm:"type:bigint;not null"`
+	Revision                   int64 `json:"revision" gorm:"type:bigint;not null"`
+	UpdatedBy                  int   `json:"updated_by" gorm:"not null"`
+	UpdatedAt                  int64 `json:"updated_at" gorm:"type:bigint;not null"`
+	PaymentComplianceConfirmed bool  `json:"payment_compliance_confirmed" gorm:"-:all"`
 }
 
 // AgentInvitationPolicyAudit commits with its policy change in the main DB.
@@ -85,7 +87,7 @@ type AgentInvitationSummary struct {
 }
 
 func readAgentInvitationPolicy(tx *gorm.DB) (*AgentInvitationPolicy, error) {
-	policy := &AgentInvitationPolicy{Id: 1}
+	policy := &AgentInvitationPolicy{Id: 1, PaymentComplianceConfirmed: operation_setting.IsPaymentComplianceConfirmed()}
 	err := tx.First(policy, 1).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return policy, nil
@@ -115,7 +117,7 @@ func GetAgentInvitationPolicy(actorID int) (*AgentInvitationPolicy, error) {
 	return policy, err
 }
 
-func UpdateAgentInvitationPolicy(actorID int, enabled bool, quota int) (*AgentInvitationPolicy, error) {
+func UpdateAgentInvitationPolicy(actorID int, enabled bool, quota int, identities ...AuthSessionIdentity) (*AgentInvitationPolicy, error) {
 	if actorID <= 0 {
 		return nil, ErrAgentInvitationPermission
 	}
@@ -124,6 +126,26 @@ func UpdateAgentInvitationPolicy(actorID int, enabled bool, quota int) (*AgentIn
 	}
 	var policy AgentInvitationPolicy
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if len(identities) > 1 {
+			return ErrAgentInvitationPermission
+		}
+		if len(identities) == 1 {
+			identity := identities[0]
+			_, accessToken := ParseAccessTokenSessionID(identity.SessionID)
+			if identity.UserID != actorID || accessToken {
+				return ErrAgentInvitationPermission
+			}
+			// HTTP always supplies a browser identity. Lock user/session until
+			// commit so logout and role-version changes cannot race a stale
+			// middleware authorization. Internal model callers may omit it.
+			identityTx := tx.Session(&gorm.Session{Logger: tx.Logger.LogMode(logger.Silent)})
+			if err := ValidateAuthSessionWithTx(identityTx, identity); err != nil {
+				if errors.Is(err, ErrUserSessionInactive) || errors.Is(err, gorm.ErrRecordNotFound) {
+					return ErrAgentInvitationPermission
+				}
+				return err
+			}
+		}
 		var actor User
 		if err := lockForUpdate(tx).Select("id", "role", "status").First(&actor, actorID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -163,6 +185,7 @@ func UpdateAgentInvitationPolicy(actorID int, enabled bool, quota int) (*AgentIn
 			"updated_by": policy.UpdatedBy, "updated_at": policy.UpdatedAt,
 		}).Error
 	})
+	policy.PaymentComplianceConfirmed = operation_setting.IsPaymentComplianceConfirmed()
 	return &policy, err
 }
 
