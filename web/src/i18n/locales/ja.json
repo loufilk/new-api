@@ -5175,6 +5175,7 @@
     "Provide per-model header overrides as JSON. Useful for enabling beta features such as expanded context windows.": "モデルごとのヘッダーオーバーライドをJSONとして提供します。拡張コンテキストウィンドウなどのベータ機能を有効にするのに役立ちます。",
     "Provider": "プロバイダ",
     "Provider & data privacy": "プロバイダーとデータ保護",
+    "Provider agent ID": "プロバイダーのエージェントID",
     "Provider created successfully": "プロバイダーの作成に成功しました",
     "Provider deleted successfully": "プロバイダーの削除に成功しました",
     "Provider ID": "プロバイダ ID",

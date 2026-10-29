@@ -5175,6 +5175,7 @@
     "Provide per-model header overrides as JSON. Useful for enabling beta features such as expanded context windows.": "以 JSON 格式提供按模型劃分的標頭覆蓋。可用於啟用測試功能，例如擴展上下文窗口。",
     "Provider": "供應商",
     "Provider & data privacy": "廠商與數據私隱",
+    "Provider agent ID": "供應商智慧代理 ID",
     "Provider created successfully": "供應商建立成功",
     "Provider deleted successfully": "供應商刪除成功",
     "Provider ID": "供應商 ID",

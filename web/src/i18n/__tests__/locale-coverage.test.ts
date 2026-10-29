@@ -43,6 +43,10 @@ describe('locale coverage after upstream integration', () => {
         'System updates',
         'Use a Passkey from another website',
         'Used redemption codes cannot be modified',
+        'Agent ID',
+        'Provider agent ID',
+        'Available quota',
+        'Invitation policy',
       ]) {
         expect(i18n.exists(key), `${language}: ${key}`).toBe(true)
         expect(i18n.t(key)).not.toBe('')
@@ -65,5 +69,20 @@ describe('locale coverage after upstream integration', () => {
     expect(i18n.t('Used redemption codes cannot be modified')).toBe(
       '已使用的兑换码不能修改'
     )
+  })
+
+  test('switching languages keeps reseller accounts distinct from provider agents', async () => {
+    const i18n = createInstance()
+    await i18n.init({ lng: 'en', fallbackLng: false, resources })
+    expect(i18n.t('Agent ID')).toBe('Agent ID')
+    expect(i18n.t('Provider agent ID')).toBe('Provider agent ID')
+
+    await i18n.changeLanguage('zhCN')
+    expect(i18n.t('Agent ID')).toBe('代理用户 ID')
+    expect(i18n.t('Provider agent ID')).toBe('服务商智能体 ID')
+
+    await i18n.changeLanguage('zhTW')
+    expect(i18n.t('Agent ID')).toBe('代理使用者 ID')
+    expect(i18n.t('Provider agent ID')).toBe('供應商智慧代理 ID')
   })
 })

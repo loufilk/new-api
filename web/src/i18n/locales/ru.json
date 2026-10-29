@@ -5175,6 +5175,7 @@
     "Provide per-model header overrides as JSON. Useful for enabling beta features such as expanded context windows.": "Предоставьте переопределения заголовков для каждой модели в формате JSON. Полезно для включения бета-функций, таких как расширенные окна контекста.",
     "Provider": "Провайдер",
     "Provider & data privacy": "Поставщик и конфиденциальность",
+    "Provider agent ID": "ID агента провайдера",
     "Provider created successfully": "Поставщик успешно создан",
     "Provider deleted successfully": "Поставщик успешно удален",
     "Provider ID": "ID провайдера",

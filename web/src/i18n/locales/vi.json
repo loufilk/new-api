@@ -5175,6 +5175,7 @@
     "Provide per-model header overrides as JSON. Useful for enabling beta features such as expanded context windows.": "Cung cấp các ghi đè tiêu đề theo từng mô hình dưới dạng JSON. Hữu ích để bật các tính năng beta như cửa sổ ngữ cảnh mở rộng.",
     "Provider": "Nhà cung cấp",
     "Provider & data privacy": "Nhà cung cấp & quyền riêng tư",
+    "Provider agent ID": "ID tác tử của nhà cung cấp",
     "Provider created successfully": "Đã tạo nhà cung cấp thành công",
     "Provider deleted successfully": "Đã xóa nhà cung cấp thành công",
     "Provider ID": "ID nhà cung cấp",

@@ -5175,6 +5175,7 @@
     "Provide per-model header overrides as JSON. Useful for enabling beta features such as expanded context windows.": "Fournir des remplacements d'en-tête par modèle au format JSON. Utile pour activer des fonctionnalités bêta telles que les fenêtres de contexte étendues.",
     "Provider": "Fournisseur",
     "Provider & data privacy": "Fournisseur & confidentialité",
+    "Provider agent ID": "ID de l’agent du fournisseur",
     "Provider created successfully": "Fournisseur créé avec succès",
     "Provider deleted successfully": "Fournisseur supprimé avec succès",
     "Provider ID": "ID du fournisseur",

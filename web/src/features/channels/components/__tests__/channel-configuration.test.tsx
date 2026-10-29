@@ -228,6 +228,20 @@ function useWideScreen() {
   } as DOMRect)
 }
 
+test('Coze identifies its provider agent separately from a reseller account', async () => {
+  const user = userEvent.setup()
+  render(<ConfigurationHarness />)
+
+  await user.click(screen.getByRole('option', { name: /^Coze / }))
+  const agentID = screen.getByRole('textbox', { name: /^Provider agent ID/ })
+  await user.type(agentID, '7342866812345')
+
+  expect(agentID).toHaveValue('7342866812345')
+  expect(
+    screen.queryByRole('textbox', { name: /^Agent ID/ })
+  ).not.toBeInTheDocument()
+})
+
 test('changing built-in providers updates server-provided URL placeholders without replacing the draft address', async () => {
   const user = userEvent.setup()
   render(<ConfigurationHarness />)

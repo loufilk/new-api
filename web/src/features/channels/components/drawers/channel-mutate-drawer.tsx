@@ -4209,7 +4209,7 @@ export function ChannelMutateDrawer({
                 name='other'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel required>{t('Agent ID')}</FormLabel>
+                    <FormLabel required>{t('Provider agent ID')}</FormLabel>
                     <FormControl>
                       <Input
                         placeholder={t('e.g., 7342866812345')}
