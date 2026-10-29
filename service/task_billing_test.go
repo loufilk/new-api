@@ -71,6 +71,10 @@ func TestMain(m *testing.M) {
 	}
 
 	if err := db.AutoMigrate(
+		// Isolated billing subtrees still execute subscription group hooks and
+		// funding capability lookups; never depend on another test's migrations.
+		&model.Option{},
+		&model.Ability{},
 		&model.Task{},
 		&model.BillingFinalization{},
 		&model.User{},

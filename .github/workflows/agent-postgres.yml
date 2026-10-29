@@ -49,6 +49,7 @@ jobs:
       TEST_FIXED_POSTGRES_LOG_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_fixed_log_ci?sslmode=disable
       TEST_PERF_POSTGRES_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_perf_ci?sslmode=disable
       TEST_FINALIZATION_REALTIME_POSTGRES_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_realtime_ci?sslmode=disable
+      AUDIT_POSTGRES_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_audit_ci?sslmode=disable
     steps:
       - name: Checkout exact event commit
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -83,6 +84,7 @@ jobs:
           docker exec "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -d newapi_agent_ci -c 'CREATE DATABASE newapi_fixed_log_ci'
           docker exec "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -d newapi_agent_ci -c 'CREATE DATABASE newapi_perf_ci'
           docker exec "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -d newapi_agent_ci -c 'CREATE DATABASE newapi_realtime_ci'
+          docker exec "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -d newapi_agent_ci -c 'CREATE DATABASE newapi_audit_ci'
 
       - name: Agent authorization, invitation, budget, and migration regressions
         run: |
@@ -154,6 +156,13 @@ jobs:
             -run '^TestRealtimeFinancialConsistencyDatabaseMatrix$/^postgres$' \
             | tee acceptance-evidence/realtime-postgres.jsonl
 
+      - name: API token audit with shared and separate PostgreSQL log databases
+        run: |
+          set -euo pipefail
+          go test -race -p 1 -count=1 -timeout=10m -json ./controller \
+            -run '^TestAPITokenAuditDatabaseMatrix$/^postgres$' \
+            | tee acceptance-evidence/token-audit.jsonl
+
       - name: Require executed, passing, unskipped acceptance tests
         run: |
           python3 - <<'PY'
@@ -172,6 +181,7 @@ jobs:
               'native-responses': {'TestNativeResponsesFailureFixedAccountingDatabaseMatrix/postgres'},
               'performance-postgres': {'TestPerformanceAggregationAndFlush/postgres', 'TestRuntimeFinalFlushRetainsFailedSamplesAndPersistsCurrentBucket/postgres'},
               'realtime-postgres': {'TestRealtimeFinancialConsistencyDatabaseMatrix/postgres'},
+              'token-audit': {'TestAPITokenAuditDatabaseMatrix/postgres/separate_log=false', 'TestAPITokenAuditDatabaseMatrix/postgres/separate_log=true'},
           }
           for name, expected in required.items():
               events = [json.loads(line) for line in Path(f'acceptance-evidence/{name}.jsonl').read_text().splitlines()]
