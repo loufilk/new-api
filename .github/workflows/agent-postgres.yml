@@ -45,6 +45,8 @@ jobs:
       TEST_SERVICE_POSTGRES_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_service_ci?sslmode=disable
       TEST_POSTGRES_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_agent_ci?sslmode=disable
       TEST_AGENT_POSTGRES_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_agent_ci?sslmode=disable
+      TEST_FIXED_POSTGRES_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_fixed_ci?sslmode=disable
+      TEST_FIXED_POSTGRES_LOG_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_fixed_log_ci?sslmode=disable
     steps:
       - name: Checkout exact event commit
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -75,6 +77,8 @@ jobs:
           docker exec "$POSTGRES_CONTAINER" psql -U postgres -d newapi_agent_ci -Atc 'SELECT version()' | tee acceptance-evidence/postgres-version.txt
           docker exec "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -d newapi_agent_ci -c 'CREATE DATABASE newapi_model_ci'
           docker exec "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -d newapi_agent_ci -c 'CREATE DATABASE newapi_service_ci'
+          docker exec "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -d newapi_agent_ci -c 'CREATE DATABASE newapi_fixed_ci'
+          docker exec "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -d newapi_agent_ci -c 'CREATE DATABASE newapi_fixed_log_ci'
 
       - name: Agent authorization, invitation, budget, and migration regressions
         run: |
@@ -111,6 +115,27 @@ jobs:
             -run '^TestImmediateTaskMetricsRequireAtomicFinancialHandoff$' \
             | tee acceptance-evidence/task-metrics.jsonl
 
+      - name: Upstream priority and cross-group routing on PostgreSQL only
+        run: |
+          set -euo pipefail
+          go test -race -p 1 -count=1 -timeout=10m -json ./controller \
+            -run '^(TestChannelAffinityRetryPriorities|TestRequestPolicyRoutingDatabaseMatrix)$/^postgres$' \
+            | tee acceptance-evidence/upstream-routing.jsonl
+
+      - name: Upstream provider parameter compatibility
+        run: |
+          set -euo pipefail
+          go test -race -p 1 -count=1 -timeout=10m -json ./controller \
+            -run '^(TestChannelTestOpenAIChatCompatibility|TestOpenAIChatSamplingCompatibility|TestOpenAIChatTokenLimitCompatibility|TestDirectOpenAIResponsesKeepsExistingParameters|TestCloudflareEmbeddingResponseCompatibility)$' \
+            | tee acceptance-evidence/upstream-adaptors.jsonl
+
+      - name: Native Responses accounting with separate PostgreSQL log database
+        run: |
+          set -euo pipefail
+          go test -race -p 1 -count=1 -timeout=10m -json ./relay \
+            -run '^TestNativeResponsesFailureFixedAccountingDatabaseMatrix$/^postgres$' \
+            | tee acceptance-evidence/native-responses.jsonl
+
       - name: Require executed, passing, unskipped acceptance tests
         run: |
           python3 - <<'PY'
@@ -124,6 +149,9 @@ jobs:
               'wallet-model': {'TestCreditQuotaShares', 'TestIsModelBonusEligibleFailClosed'},
               'wallet-service': {'TestBillingUnknownDeliveryObservability', 'TestInitialReservationRecoveryPostgres'},
               'task-metrics': {'TestImmediateTaskMetricsRequireAtomicFinancialHandoff'},
+              'upstream-routing': {'TestChannelAffinityRetryPriorities/postgres', 'TestRequestPolicyRoutingDatabaseMatrix/postgres'},
+              'upstream-adaptors': {'TestChannelTestOpenAIChatCompatibility', 'TestOpenAIChatSamplingCompatibility', 'TestOpenAIChatTokenLimitCompatibility', 'TestDirectOpenAIResponsesKeepsExistingParameters', 'TestCloudflareEmbeddingResponseCompatibility'},
+              'native-responses': {'TestNativeResponsesFailureFixedAccountingDatabaseMatrix/postgres'},
           }
           for name, expected in required.items():
               events = [json.loads(line) for line in Path(f'acceptance-evidence/{name}.jsonl').read_text().splitlines()]

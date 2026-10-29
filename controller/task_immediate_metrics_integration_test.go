@@ -47,7 +47,7 @@ func TestImmediateTaskMetricsRequireAtomicFinancialHandoff(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, f.db.Migrator().DropTable(&model.PerfMetric{})) })
 			f.info.StartTime = time.Now()
 
-			before, err := perfmetrics.Query(perfmetrics.QueryParams{Model: modelName, Group: "default", Hours: 1})
+			before, err := perfmetrics.Query(perfmetrics.QueryParams{Model: modelName, Hours: 1})
 			require.NoError(t, err)
 			require.Nil(t, before.Summary)
 
@@ -99,7 +99,7 @@ func TestImmediateTaskMetricsRequireAtomicFinancialHandoff(t *testing.T) {
 				f.assertTaskCount(t, 1)
 			}
 
-			after, err := perfmetrics.Query(perfmetrics.QueryParams{Model: modelName, Group: "default", Hours: 1})
+			after, err := perfmetrics.Query(perfmetrics.QueryParams{Model: modelName, Hours: 1})
 			require.NoError(t, err)
 			if scenario != "success" {
 				assert.Nil(t, after.Summary, "uncommitted or non-successful submissions must not become health samples")
@@ -108,7 +108,9 @@ func TestImmediateTaskMetricsRequireAtomicFinancialHandoff(t *testing.T) {
 			}
 			require.NotNil(t, after.Summary)
 			assert.Equal(t, 100.0, after.Summary.SuccessRate)
-			summary, err := perfmetrics.QuerySummaryAll(1, []string{"default"})
+			require.Len(t, after.Groups, 1)
+			assert.Equal(t, "default", after.Groups[0].Group)
+			summary, err := perfmetrics.QuerySummaryAll(1, nil)
 			require.NoError(t, err)
 			var count int64
 			for _, item := range summary.Models {
