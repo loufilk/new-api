@@ -73,7 +73,20 @@ export function CommonLogsStats() {
         ? result.data || DEFAULT_LOG_STATS
         : DEFAULT_LOG_STATS
     },
-    placeholderData: (previousData) => previousData,
+    placeholderData: (previousData, previousQuery) => {
+      const previousSearch = previousQuery?.queryKey[2] as
+        | typeof searchParams
+        | undefined
+      if (
+        previousQuery?.queryKey[1] === isAdmin &&
+        (!isAdmin ||
+          (previousSearch?.userId === searchParams.userId &&
+            previousSearch?.username === searchParams.username))
+      ) {
+        return previousData
+      }
+      return undefined
+    },
   })
 
   if (isLoading) {

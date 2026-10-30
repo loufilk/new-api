@@ -23,6 +23,7 @@ import {
   createRoute,
   createRouter,
   RouterProvider,
+  stringifySearchWith,
 } from '@tanstack/react-router'
 import {
   cleanup,
@@ -94,13 +95,11 @@ function renderExport(options: {
     ),
     validateSearch: (search: Record<string, unknown>) => search,
   })
-  const query = new URLSearchParams(
-    Object.entries(options.search).map(([key, value]) => [key, String(value)])
-  )
+  const query = stringifySearchWith(JSON.stringify, JSON.parse)(options.search)
   const router = createRouter({
     routeTree: root.addChildren([auth.addChildren([logs])]),
     history: createMemoryHistory({
-      initialEntries: [`/usage-logs/common?${query}`],
+      initialEntries: [`/usage-logs/common${query}`],
     }),
   })
   render(
@@ -274,4 +273,49 @@ it('treats a stream that ends without the success line as a failed export', asyn
     expect(error).toHaveBeenCalledWith('Failed to export logs')
   )
   expect(createObjectURL).not.toHaveBeenCalled()
+})
+
+it('exports the exact user ID together with the existing username filter for administrators', async () => {
+  const fetchSpy = mockExportResponse([
+    { success: true, message: '', data: { count: 0 } },
+  ])
+  renderExport({
+    role: ROLE.ADMIN,
+    search: {
+      ...recentRange(),
+      userId: '9007199254740993',
+      username: '123',
+      group: 'default',
+    },
+  })
+  await userEvent.click(await screen.findByRole('button', { name: 'Export' }))
+  await userEvent.click(
+    within(screen.getByRole('dialog')).getByRole('button', { name: 'Export' })
+  )
+  await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
+  const request = new URL(String(fetchSpy.mock.calls[0][0]), 'http://localhost')
+  expect(request.pathname).toBe('/api/log/export')
+  expect(request.searchParams.get('user_id')).toBe('9007199254740993')
+  expect(request.searchParams.get('username')).toBe('123')
+  expect(request.searchParams.get('group')).toBe('default')
+  expect(request.searchParams.has('p')).toBe(false)
+})
+
+it('omits administrator user filters from personal exports even when present in the URL', async () => {
+  const fetchSpy = mockExportResponse([
+    { success: true, message: '', data: { count: 0 } },
+  ])
+  renderExport({
+    role: ROLE.USER,
+    search: { ...recentRange(), userId: '42', username: 'other' },
+  })
+  await userEvent.click(await screen.findByRole('button', { name: 'Export' }))
+  await userEvent.click(
+    within(screen.getByRole('dialog')).getByRole('button', { name: 'Export' })
+  )
+  await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
+  const request = new URL(String(fetchSpy.mock.calls[0][0]), 'http://localhost')
+  expect(request.pathname).toBe('/api/log/self/export')
+  expect(request.searchParams.has('user_id')).toBe(false)
+  expect(request.searchParams.has('username')).toBe(false)
 })

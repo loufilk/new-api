@@ -2,7 +2,7 @@ name: Agent PostgreSQL acceptance
 
 on:
   push:
-    branches: ['dot/agent-upstream-align-20261029']
+    branches: ['dot/agent-upstream-align-20261029', 'dot/upstream-user-id-search-20261029']
   workflow_dispatch:
 
 permissions:
@@ -15,7 +15,7 @@ concurrency:
 jobs:
   postgres:
     name: Agent, migration, and wallet regressions (PostgreSQL 18.6)
-    if: github.ref == 'refs/heads/dot/agent-upstream-align-20261029'
+    if: github.ref == 'refs/heads/dot/agent-upstream-align-20261029' || github.ref == 'refs/heads/dot/upstream-user-id-search-20261029'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     services:
@@ -163,6 +163,16 @@ jobs:
             -run '^TestAPITokenAuditDatabaseMatrix$/^postgres$' \
             | tee acceptance-evidence/token-audit.jsonl
 
+      - name: Exact usage-log user IDs and self isolation on PostgreSQL only
+        run: |
+          set -euo pipefail
+          go test -race -p 1 -count=1 -timeout=10m -json ./controller \
+            -run '^TestUsageLog' \
+            | tee acceptance-evidence/usage-log-user-id.jsonl
+          go test -race -p 1 -count=1 -timeout=10m -json ./controller \
+            -run '^TestLogExportDatabaseMatrix$/^postgres$' \
+            | tee acceptance-evidence/usage-log-export.jsonl
+
       - name: Require executed, passing, unskipped acceptance tests
         run: |
           python3 - <<'PY'
@@ -182,6 +192,8 @@ jobs:
               'performance-postgres': {'TestPerformanceAggregationAndFlush/postgres', 'TestRuntimeFinalFlushRetainsFailedSamplesAndPersistsCurrentBucket/postgres'},
               'realtime-postgres': {'TestRealtimeFinancialConsistencyDatabaseMatrix/postgres'},
               'token-audit': {'TestAPITokenAuditDatabaseMatrix/postgres/separate_log=false', 'TestAPITokenAuditDatabaseMatrix/postgres/separate_log=true'},
+              'usage-log-user-id': {'TestUsageLogUserIDPostgres/separate_log_db=false', 'TestUsageLogUserIDPostgres/separate_log_db=true', 'TestUsageLogSelfRejectsMissingIdentity', 'TestUsageLogRouteAuthorizationPostgres'},
+              'usage-log-export': {'TestLogExportDatabaseMatrix/postgres'},
           }
           for name, expected in required.items():
               events = [json.loads(line) for line in Path(f'acceptance-evidence/{name}.jsonl').read_text().splitlines()]

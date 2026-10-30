@@ -53,6 +53,7 @@ export interface CommonLogFilters extends CommonFilters {
   token?: string
   group?: string
   username?: string
+  userId?: string
   requestId?: string
   upstreamRequestId?: string
 }
@@ -438,6 +439,7 @@ export interface TaskArtifactsResponse {
 // ============================================================================
 
 export interface GetLogsParams {
+  user_id?: string
   p?: number
   page_size?: number
   type?: number
@@ -464,6 +466,7 @@ export interface GetLogsResponse {
 }
 
 export interface GetLogStatsParams {
+  user_id?: string
   type?: number
   username?: string
   token_name?: string

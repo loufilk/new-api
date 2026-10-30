@@ -7381,6 +7381,7 @@
     "User has been deleted": "用户已注销",
     "User ID": "用户 ID",
     "User ID Field": "用户ID字段",
+    "User ID must be a positive integer no greater than 9223372036854775807": "用户 ID 必须是不大于 9223372036854775807 的正整数",
     "User ID:": "用户 ID：",
     "User Info Endpoint": "用户信息端点",
     "User Info Endpoint (Optional)": "用户信息端点（可选）",

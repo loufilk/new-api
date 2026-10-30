@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 /**
  * Utility functions for usage logs feature
  */
+import { createServerError } from '@/lib/server-error-message'
+
 import {
   getAllLogs,
   getUserLogs,
@@ -39,6 +41,7 @@ import type {
   GetMidjourneyLogsParams,
   GetTaskLogsParams,
 } from '../types'
+import { LOG_USER_ID_ERROR, logUserIdSearchSchema } from './filter'
 
 export { buildQueryParams } from './query-params'
 
@@ -179,10 +182,18 @@ export function buildApiParams(config: {
     return undefined
   }
 
+  const userId = logUserIdSearchSchema.safeParse(
+    isAdmin ? searchParams.userId : undefined
+  )
+  if (!userId.success) {
+    throw createServerError({ message_key: LOG_USER_ID_ERROR })
+  }
+
   // Build base params from search params
   const params: GetLogsParams = {
     p: page,
     page_size: pageSize,
+    ...(userId.data ? { user_id: userId.data } : {}),
     ...(searchParams.type ? { type: processType(searchParams.type) } : {}),
     ...(searchParams.model ? { model_name: String(searchParams.model) } : {}),
     ...(searchParams.token ? { token_name: String(searchParams.token) } : {}),

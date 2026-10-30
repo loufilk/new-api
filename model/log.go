@@ -507,13 +507,15 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
-// LogFilter is the usage-log search shared by the log list and the log export.
-// Username and Channel are administrator filters.
+// LogFilter is the usage-log search shared by lists, exports and statistics.
+// UserId is an exact ID filter, independent of Username (both intersect).
+// Self endpoints bind UserId from authentication and omit Username/Channel.
 type LogFilter struct {
 	Type              int
 	StartTimestamp    int64
 	EndTimestamp      int64
 	ModelName         string
+	UserId            int
 	Username          string
 	TokenName         string
 	Channel           int
@@ -524,6 +526,9 @@ type LogFilter struct {
 
 func (f LogFilter) apply(tx *gorm.DB) (*gorm.DB, error) {
 	var err error
+	if f.UserId != 0 {
+		tx = tx.Where("logs.user_id = ?", f.UserId)
+	}
 	if f.Type != LogTypeUnknown {
 		tx = tx.Where("logs.type = ?", f.Type)
 	}
@@ -718,48 +723,24 @@ type Stat struct {
 	Tpm   int `json:"tpm"`
 }
 
-func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {
-	tx := LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota")
-
-	// 为rpm和tpm创建单独的查询
-	rpmTpmQuery := LOG_DB.Table("logs").Select("count(*) rpm, COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) tpm")
-
-	if tx, err = applyExplicitLogTextFilter(tx, "username", username); err != nil {
+func SumUsedQuota(filter LogFilter) (stat Stat, err error) {
+	// Preserve the existing usage-stat contract: consume rows only, irrespective
+	// of the displayed log type. All identity and request filters still apply.
+	filter.Type = LogTypeConsume
+	tx, err := filter.apply(LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota"))
+	if err != nil {
 		return stat, err
 	}
-	if rpmTpmQuery, err = applyExplicitLogTextFilter(rpmTpmQuery, "username", username); err != nil {
-		return stat, err
-	}
-	if tokenName != "" {
-		tx = tx.Where("token_name = ?", tokenName)
-		rpmTpmQuery = rpmTpmQuery.Where("token_name = ?", tokenName)
-	}
-	if startTimestamp != 0 {
-		tx = tx.Where("created_at >= ?", startTimestamp)
-	}
-	if endTimestamp != 0 {
-		tx = tx.Where("created_at <= ?", endTimestamp)
-	}
-	if tx, err = applyExplicitLogTextFilter(tx, "model_name", modelName); err != nil {
-		return stat, err
-	}
-	if rpmTpmQuery, err = applyExplicitLogTextFilter(rpmTpmQuery, "model_name", modelName); err != nil {
-		return stat, err
-	}
-	if channel != 0 {
-		tx = tx.Where("channel_id = ?", channel)
-		rpmTpmQuery = rpmTpmQuery.Where("channel_id = ?", channel)
-	}
-	if group != "" {
-		tx = tx.Where(logGroupCol+" = ?", group)
-		rpmTpmQuery = rpmTpmQuery.Where(logGroupCol+" = ?", group)
-	}
 
-	tx = tx.Where("type = ?", LogTypeConsume)
-	rpmTpmQuery = rpmTpmQuery.Where("type = ?", LogTypeConsume)
-
-	// 只统计最近60秒的rpm和tpm
-	rpmTpmQuery = rpmTpmQuery.Where("created_at >= ?", time.Now().Add(-60*time.Second).Unix())
+	// RPM/TPM describe the rolling last minute, not the selected historical
+	// time range. Reuse the same identity/request filters for both queries.
+	rateFilter := filter
+	rateFilter.StartTimestamp = time.Now().Add(-60 * time.Second).Unix()
+	rateFilter.EndTimestamp = 0
+	rpmTpmQuery, err := rateFilter.apply(LOG_DB.Table("logs").Select("count(*) rpm, COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) tpm"))
+	if err != nil {
+		return stat, err
+	}
 
 	// 执行查询
 	if err := tx.Scan(&stat).Error; err != nil {

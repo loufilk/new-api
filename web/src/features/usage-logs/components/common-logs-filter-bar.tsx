@@ -20,12 +20,13 @@ import { useQueryClient, useIsFetching, useQuery } from '@tanstack/react-query'
 import { useNavigate, getRouteApi } from '@tanstack/react-router'
 import type { Table } from '@tanstack/react-table'
 import { Eye, EyeOff } from 'lucide-react'
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useId } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
+import { FieldError } from '@/components/ui/field'
 import {
   Select,
   SelectContent,
@@ -45,7 +46,7 @@ import { getUserGroups } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { LOG_TYPE_ALL_VALUE, LOG_TYPE_FILTERS } from '../constants'
-import { buildSearchParams } from '../lib/filter'
+import { buildSearchParams, isValidLogUserId } from '../lib/filter'
 import { getDefaultTimeRange } from '../lib/utils'
 import type { CommonLogFilters } from '../types'
 import { CommonLogsStats } from './common-logs-stats'
@@ -92,6 +93,7 @@ function buildSearchSourceKey(values: {
   token?: unknown
   group?: unknown
   username?: unknown
+  userId?: unknown
   requestId?: unknown
   upstreamRequestId?: unknown
   type?: unknown
@@ -104,6 +106,7 @@ function buildSearchSourceKey(values: {
     values.token,
     values.group,
     values.username,
+    values.userId,
     values.requestId,
     values.upstreamRequestId,
     Array.isArray(values.type) ? values.type.join(',') : values.type,
@@ -120,6 +123,7 @@ export function CommonLogsFilterBar<TData>(
   props: CommonLogsFilterBarProps<TData>
 ) {
   const { t } = useTranslation()
+  const userIdErrorId = useId()
   const isMobile = useMediaQuery('(max-width: 640px)')
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -156,6 +160,7 @@ export function CommonLogsFilterBar<TData>(
       token: searchParams.token,
       group: searchParams.group,
       username: searchParams.username,
+      userId: searchParams.userId,
       requestId: searchParams.requestId,
       upstreamRequestId: searchParams.upstreamRequestId,
       type: searchParams.type,
@@ -170,6 +175,7 @@ export function CommonLogsFilterBar<TData>(
       token: searchParams.token || undefined,
       group: searchParams.group || undefined,
       username: searchParams.username || undefined,
+      userId: searchParams.userId || undefined,
       requestId: searchParams.requestId || undefined,
       upstreamRequestId: searchParams.upstreamRequestId || undefined,
     }
@@ -186,15 +192,20 @@ export function CommonLogsFilterBar<TData>(
     searchParams.token,
     searchParams.group,
     searchParams.username,
+    searchParams.userId,
     searchParams.requestId,
     searchParams.upstreamRequestId,
     searchParams.type,
   ])
   const [draft, setDraft] = useState<CommonLogDraft>(() => searchState)
+  // A draft belongs to one URL state. Discard it after navigation so Back or
+  // Forward cannot resurrect an edit made before the previous search.
+  if (draft.sourceKey !== searchState.sourceKey) setDraft(searchState)
   const activeDraft =
     draft.sourceKey === searchState.sourceKey ? draft : searchState
   const filters = activeDraft.filters
   const logType = activeDraft.logType
+  const userIdInvalid = isAdmin && !isValidLogUserId(filters.userId)
 
   const handleChange = useCallback(
     (field: keyof CommonLogFilters, value: Date | string | undefined) => {
@@ -213,6 +224,7 @@ export function CommonLogsFilterBar<TData>(
 
   const handleApply = useCallback(
     (nextFilters: CommonLogFilters = filters) => {
+      if (isAdmin && !isValidLogUserId(nextFilters.userId)) return false
       const filterParams = buildSearchParams(nextFilters, 'common')
       navigate({
         to: '/usage-logs/$section',
@@ -225,8 +237,9 @@ export function CommonLogsFilterBar<TData>(
       })
       queryClient.invalidateQueries({ queryKey: ['logs'] })
       queryClient.invalidateQueries({ queryKey: ['usage-logs-stats'] })
+      return true
     },
-    [filters, logType, navigate, queryClient]
+    [filters, isAdmin, logType, navigate, queryClient]
   )
 
   const handleReset = useCallback(() => {
@@ -265,6 +278,7 @@ export function CommonLogsFilterBar<TData>(
   const hasExpandedFilters =
     !!filters.token ||
     !!filters.username ||
+    (isAdmin && !!filters.userId) ||
     !!filters.channel ||
     !!filters.requestId ||
     !!filters.upstreamRequestId
@@ -276,6 +290,7 @@ export function CommonLogsFilterBar<TData>(
   const expandedFilterCount = [
     filters.token,
     isAdmin ? filters.username : undefined,
+    isAdmin ? filters.userId : undefined,
     isAdmin ? filters.channel : undefined,
     filters.requestId,
     filters.upstreamRequestId,
@@ -453,6 +468,28 @@ export function CommonLogsFilterBar<TData>(
             onChange={(e) => handleChange('username', e.target.value)}
             onKeyDown={handleKeyDown}
           />
+        </LogsFilterField>
+      )}
+      {isAdmin && (
+        <LogsFilterField>
+          <LogsFilterInput
+            placeholder={t('User ID')}
+            aria-label={t('User ID')}
+            aria-invalid={userIdInvalid}
+            aria-describedby={userIdInvalid ? userIdErrorId : undefined}
+            inputMode='numeric'
+            className={sensitiveInputClass}
+            value={filters.userId || ''}
+            onChange={(e) => handleChange('userId', e.target.value)}
+            onKeyDown={handleKeyDown}
+          />
+          {userIdInvalid && (
+            <FieldError id={userIdErrorId} className='mt-1'>
+              {t(
+                'User ID must be a positive integer no greater than 9223372036854775807'
+              )}
+            </FieldError>
+          )}
         </LogsFilterField>
       )}
       {isAdmin && (
