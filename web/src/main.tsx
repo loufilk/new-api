@@ -22,6 +22,7 @@ import { StrictMode } from 'react'
 import ReactDOM from 'react-dom/client'
 
 import './extensions/bootstrap'
+import { setupStatusQueryOptions } from '@/features/setup/api'
 import { installBuildMetadata } from '@/lib/build-metadata'
 import { applyFaviconToDom } from '@/lib/dom-utils'
 import '@/lib/dayjs'
@@ -47,6 +48,12 @@ installBuildMetadata()
 const queryClient = createAppQueryClient(() => {
   void router.navigate({ to: '/500' })
 })
+
+// Start this public read alongside the locale chunks, rather than adding a
+// network round trip after they finish. The root guard consumes the result.
+if (!window.location.pathname.startsWith('/setup')) {
+  void queryClient.prefetchQuery(setupStatusQueryOptions)
+}
 
 // Create a new router instance
 const router = createRouter({

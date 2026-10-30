@@ -47,6 +47,107 @@
   </head>
 
   <body>
+    <!-- This shell cannot depend on the JS/CSS/locale chunks it is waiting for.
+         Keep it outside #root: the application only mounts into an empty root. -->
+    <style>
+      #app-bootstrap {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        background: var(--background, #fff);
+        color: var(--foreground, #171717);
+        font:
+          14px/1.5 system-ui,
+          sans-serif;
+      }
+      html.dark #app-bootstrap {
+        background: var(--background, #0a0a0a);
+        color: var(--foreground, #fafafa);
+      }
+      #app-bootstrap-spinner {
+        width: 28px;
+        height: 28px;
+        border: 3px solid #a3a3a3;
+        border-top-color: transparent;
+        border-radius: 50%;
+        animation: app-bootstrap-spin 1s linear infinite;
+      }
+      #app-bootstrap-retry {
+        padding: 8px 20px;
+        border: 1px solid currentColor;
+        border-radius: 6px;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+        font: inherit;
+      }
+      @keyframes app-bootstrap-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #app-bootstrap-spinner {
+          animation: none;
+        }
+      }
+    </style>
+    <div id="app-bootstrap" role="status" aria-live="polite">
+      <span id="app-bootstrap-spinner" aria-hidden="true"></span>
+      <span id="app-bootstrap-message">Loading...</span>
+      <button id="app-bootstrap-retry" type="button" hidden>Retry</button>
+    </div>
     <div id="root" translate="no" class="notranslate"></div>
+    <script>
+      ;(function () {
+        var shell = document.getElementById('app-bootstrap')
+        var root = document.getElementById('root')
+        var message = document.getElementById('app-bootstrap-message')
+        var retry = document.getElementById('app-bootstrap-retry')
+        var language = navigator.language || 'en'
+        try {
+          language = localStorage.getItem('i18nextLng') || language
+        } catch (e) {}
+        var normalize = <%= bootstrapLanguage %>
+        var messages = <%= bootstrapMessages %>
+        var key = normalize(language).split('-')[0].toLowerCase()
+        var text = messages[key] || messages.en
+        message.textContent = text.loading
+        retry.textContent = text.retry
+
+        function showRecovery() {
+          message.textContent = text.failed
+          retry.hidden = false
+          shell.setAttribute('role', 'alert')
+        }
+        function resourceFailed(event) {
+          var target = event.target
+          if (
+            (target instanceof HTMLScriptElement && target.src.indexOf('/static/js/') !== -1) ||
+            (target instanceof HTMLLinkElement && target.href.indexOf('/static/css/') !== -1)
+          ) {
+            showRecovery()
+          }
+        }
+        retry.onclick = function () { window.location.reload() }
+        // Recovery is user-triggered: never loop or replay a login automatically.
+        var timer = window.setTimeout(showRecovery, 15000)
+        window.addEventListener('error', resourceFailed, true)
+        window.addEventListener('unhandledrejection', showRecovery)
+        var observer = new MutationObserver(function () {
+          if (!root.hasChildNodes()) return
+          window.clearTimeout(timer)
+          window.removeEventListener('error', resourceFailed, true)
+          window.removeEventListener('unhandledrejection', showRecovery)
+          observer.disconnect()
+          shell.remove()
+        })
+        observer.observe(root, { childList: true })
+      })()
+    </script>
   </body>
 </html>
