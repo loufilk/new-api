@@ -325,6 +325,13 @@ func TaskArtifactContent(c *gin.Context) {
 		writeTaskArtifactError(c, http.StatusNotFound, "artifact_not_found", "Task or artifact not found")
 		return
 	}
+	identityKind := ""
+	if middleware.IsTaskArtifactAccess(c) {
+		identityKind = service.CallIdentityArtifactCapability
+	}
+	if service.InterceptUserArtifact(c, task.UserId, identityKind) {
+		return
+	}
 	artifactKey := strings.TrimSpace(c.Param("artifact_key"))
 	if !taskArtifactKeyPattern.MatchString(artifactKey) || !task.ResultRetrievable() {
 		writeTaskArtifactError(c, http.StatusNotFound, "artifact_not_found", "Task or artifact not found")

@@ -35,6 +35,9 @@ func RelayMidjourneyImage(c *gin.Context) {
 		})
 		return
 	}
+	if service.InterceptUserArtifact(c, midjourneyTask.UserId, service.CallIdentityPublicArtifact) {
+		return
+	}
 	var httpClient *http.Client
 	var proxy string
 	if channel, err := model.CacheGetChannel(midjourneyTask.ChannelId); err == nil {

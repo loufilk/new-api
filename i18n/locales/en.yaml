@@ -352,3 +352,6 @@ custom_oauth.has_bindings: Cannot delete provider with existing user bindings
 custom_oauth.binding_not_found: OAuth binding not found
 custom_oauth.provider_id_field_invalid: Could not extract user ID from provider response
 task.image_still_processing: Image generation is still processing. Do not submit it again; query the existing task for its status.
+
+relay.user_call_intercepted: Calls for this user are intercepted. This endpoint cannot carry a text reply. Contact the administrator.
+relay.user_call_interception_unavailable: Call interception is temporarily unavailable. The request was not forwarded.

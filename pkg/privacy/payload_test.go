@@ -8,6 +8,19 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestSanitizePayloadPreservesStableInterceptionCodesWithoutProviderText(t *testing.T) {
+	for _, code := range []string{"user_call_intercepted", "user_call_interception_unavailable"} {
+		payload := []byte(`{"type":"error","status":403,"event_id":"local-event","error":{"type":"` + code + `","code":"` + code + `","message":"secret upstream or custom reply","metadata":{"credential":"private"}}}`)
+		result := SanitizePayload(payload, "", true)
+		assert.Equal(t, code, stringValue(t, result, "error.code"))
+		assert.Equal(t, code, stringValue(t, result, "error.type"))
+		assert.Equal(t, safeCategoryText(code), stringValue(t, result, "error.message"))
+		assert.Equal(t, "local-event", stringValue(t, result, "event_id"))
+		assert.NotContains(t, string(result), "secret")
+		assert.NotContains(t, string(result), "credential")
+	}
+}
+
 func TestSanitizePayloadRewritesOnlyRecognizedModelFields(t *testing.T) {
 	payload := `{"model":"private-upstream","vendor_extension":{"integer":9007199254740993,"nullable":null},"output":[{"type":"function_call","arguments":"{\"model\":\"user-content\"}"}],"user_text":"model: private-upstream"}`
 	result := SanitizePayload([]byte(payload), "requested-model", false)

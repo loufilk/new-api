@@ -36,6 +36,7 @@ var responsesWSRequestEngine = sync.OnceValue(func() *gin.Engine {
 	engine.POST("/v1/responses", func(c *gin.Context) {
 		state := c.Request.Context().Value(responsesWSRequestContextKey{}).(*responsesWSRequestState)
 		c.Set(common.RequestIdKey, state.requestID)
+		c.Set(middleware.ContextKeyUserCallWebSocket, true)
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 		c.Next()
 	}, middleware.BodyStorageCleanup(), middleware.TokenAuth(), middleware.ModelRequestRateLimit(), func(c *gin.Context) {

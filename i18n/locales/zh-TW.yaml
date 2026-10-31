@@ -320,3 +320,6 @@ custom_oauth.has_bindings: 無法刪除已有使用者綁定的供應者
 custom_oauth.binding_not_found: OAuth 綁定不存在
 custom_oauth.provider_id_field_invalid: 無法從供應者響應中提取使用者 ID
 task.image_still_processing: 圖片仍在處理中，請勿重複提交；請查詢既有任務的狀態。
+
+relay.user_call_intercepted: 該使用者的呼叫已被攔截。此介面無法承載文字回覆，請聯絡管理員。
+relay.user_call_interception_unavailable: 呼叫攔截服務暫時無法使用，本請求未轉送。

@@ -32,6 +32,9 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 		&Channel{},
 		&Token{},
 		&User{},
+		&UserCallInterception{},
+		&UserCallInterceptionHit{},
+		&UserCallInterceptionAudit{},
 		&UserSession{},
 		&AuthFlow{},
 		&ExternalIdentityClaim{},
@@ -86,7 +89,7 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 
 func TestMainAutoMigrateModelsWithoutRegistryKeepsCoreModels(t *testing.T) {
 	models := mainAutoMigrateModels(nil)
-	require.Len(t, models, 43)
+	require.Len(t, models, 46)
 	assert.IsType(t, &Channel{}, models[0])
 	assert.IsType(t, &BillingFinalization{}, models[len(models)-1])
 }

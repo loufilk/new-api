@@ -87,6 +87,7 @@ import {
   getGroups,
   getPermissionCatalog,
 } from '../api'
+import { UserCallInterceptionSection } from '../call-interception/section'
 import { BINDING_FIELDS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
   userFormSchema,
@@ -562,6 +563,14 @@ export function UsersMutateDrawer({
                     )}
                   </SideDrawerSection>
                 )}
+
+              {open && currentRow && (
+                <UserCallInterceptionSection
+                  key={currentRow.id}
+                  userId={currentRow.id}
+                  targetRole={currentRow.role}
+                />
+              )}
 
               {/* Binding Information (Read-only) */}
               {isUpdate && (

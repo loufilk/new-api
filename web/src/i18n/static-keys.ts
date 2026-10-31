@@ -19,6 +19,15 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  // User-call interception schema and backend permission catalog.
+  'A custom reply is required when call interception is enabled',
+  'Custom reply must not exceed 16000 UTF-8 bytes',
+  'Custom reply must not contain null characters',
+  'View call interception configuration and logs',
+  'Update call interception configuration',
+  'View interception configuration, hits, and configuration audits for manageable users.',
+  'Enable, edit, or disable custom replies for manageable users.',
+
   'Only common users can become agent administrators',
   'User is not an agent administrator',
   'User permissions changed; reload and try again',

@@ -89,8 +89,12 @@ var accessTokenExemptRoutes = []string{
 // accessTokenHelperRoutes are declared through handlePermissionRoute outside
 // channelPermissionRoutes.
 var accessTokenHelperRoutes = map[string]authz.Permission{
-	"GET /api/task_plugin_options": authz.TaskPluginBind,
-	"GET /api/audit":               authz.AuditRead,
+	"GET /api/user/:id/call-interception":        authz.UserCallInterceptionRead,
+	"PUT /api/user/:id/call-interception":        authz.UserCallInterceptionUpdate,
+	"GET /api/user/:id/call-interception/hits":   authz.UserCallInterceptionRead,
+	"GET /api/user/:id/call-interception/audits": authz.UserCallInterceptionRead,
+	"GET /api/task_plugin_options":               authz.TaskPluginBind,
+	"GET /api/audit":                             authz.AuditRead,
 }
 
 func newAccessTokenScopeTestEngine(t *testing.T) *gin.Engine {
@@ -179,6 +183,20 @@ func TestAccessTokenCatalogCoversEveryPermission(t *testing.T) {
 	}
 	for resource, count := range resources {
 		assert.Equal(t, 1, count, "resource %s appears in more than one catalog entry", resource)
+	}
+}
+
+func TestAgentPlatformAccessTokenRulesRequireBrowserSessionsForEveryRoute(t *testing.T) {
+	engine := newAccessTokenScopeTestEngine(t)
+	for _, route := range engine.Routes() {
+		if !strings.HasPrefix(route.Path, "/api/agent-platform/") {
+			continue
+		}
+		key := route.Method + " " + route.Path
+		rule, exists := middleware.AccessTokenRouteRule(key)
+		require.True(t, exists, key)
+		assert.Equal(t, "session", rule.Kind(), key)
+		assert.Empty(t, rule.Scope(), "financial routes must never acquire a PAT grant: %s", key)
 	}
 }
 

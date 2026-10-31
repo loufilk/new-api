@@ -772,8 +772,17 @@ func AdminClearUserBinding(c *gin.Context) {
 	})
 }
 
+// This allowlisted DTO is intentionally not model.User: adding a privileged
+// persistence field must never make it writable through the profile endpoint.
+type updateSelfProfileRequest struct {
+	Username         string `json:"username" validate:"max=20"`
+	Password         string `json:"password" validate:"min=8,max=128"`
+	OriginalPassword string `json:"original_password"`
+	DisplayName      string `json:"display_name" validate:"max=20"`
+}
+
 func UpdateSelf(c *gin.Context) {
-	var requestData map[string]interface{}
+	var requestData map[string]any
 	if err := common.DecodeJson(c.Request.Body, &requestData); err != nil {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
@@ -843,7 +852,7 @@ func UpdateSelf(c *gin.Context) {
 	}
 
 	// 原有的用户信息更新逻辑
-	var user model.User
+	var user updateSelfProfileRequest
 	requestDataBytes, err := common.Marshal(requestData)
 	if err != nil {
 		common.ApiErrorT(c, "Invalid parameters")

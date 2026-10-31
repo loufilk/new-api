@@ -170,7 +170,7 @@ func runApplication() error {
 	}
 
 	srv := &http.Server{
-		Addr:              ":" + port,
+		Addr:              httpListenAddress(port),
 		Handler:           app.gate.Wrap(server),
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -219,6 +219,12 @@ func runApplication() error {
 	}
 	common.SysLog("server exited")
 	return runErr
+}
+
+// Preserve the existing wildcard default, but allow an explicit loopback bind
+// for local tools and isolated acceptance without exposing a fresh setup page.
+func httpListenAddress(port string) string {
+	return net.JoinHostPort(os.Getenv("HTTP_BIND_ADDRESS"), port)
 }
 
 func InjectUmamiAnalytics() {

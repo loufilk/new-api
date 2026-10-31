@@ -6,6 +6,8 @@ import "github.com/QuantumNous/new-api/relaykit/types"
 // They are either protocol-standard classifications or new-api's own stable
 // classifications, never free-form provider text.
 var clientSafeErrorTypes = map[string]struct{}{
+	"user_call_intercepted":                {},
+	"user_call_interception_unavailable":   {},
 	string(types.ErrorTypeNewAPIError):     {},
 	string(types.ErrorTypeOpenAIError):     {},
 	string(types.ErrorTypeClaudeError):     {},
@@ -32,6 +34,8 @@ var clientSafeErrorTypes = map[string]struct{}{
 // new-api protocols. Provider-specific codes such as organization ids or
 // request identifiers are not listed and are therefore dropped.
 var clientSafeErrorCodes = map[string]struct{}{
+	"user_call_intercepted":              {},
+	"user_call_interception_unavailable": {},
 	// new-api internal classifications.
 	string(types.ErrorCodeInvalidRequest):               {},
 	string(types.ErrorCodeSensitiveWordsDetected):       {},

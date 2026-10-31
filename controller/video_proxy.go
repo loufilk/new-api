@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
@@ -77,6 +78,13 @@ func VideoProxy(c *gin.Context) {
 	}
 	if !exists || task == nil {
 		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Task not found")
+		return
+	}
+	identityKind := ""
+	if middleware.IsTaskArtifactAccess(c) {
+		identityKind = service.CallIdentityArtifactCapability
+	}
+	if service.InterceptUserArtifact(c, task.UserId, identityKind) {
 		return
 	}
 	if task.Status != model.TaskStatusSuccess {

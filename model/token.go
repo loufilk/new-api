@@ -224,6 +224,17 @@ func SearchUserTokens(userId int, keyword string, token string, offset int, limi
 }
 
 func ValidateUserToken(key string) (token *Token, err error) {
+	token, err = ValidateUserTokenIdentity(key)
+	if err != nil {
+		return token, err
+	}
+	return token, ValidateUserTokenQuota(token)
+}
+
+// ValidateUserTokenIdentity retains credential status and expiry checks while
+// separating the budget decision. A zero-budget enabled key can receive a local
+// administrative reply, but a disabled/exhausted/expired key is never revived.
+func ValidateUserTokenIdentity(key string) (token *Token, err error) {
 	if key == "" {
 		return nil, ErrTokenNotProvided
 	}
@@ -244,16 +255,6 @@ func ValidateUserToken(key string) (token *Token, err error) {
 			}
 			return token, ErrTokenInvalid
 		}
-		if !token.UnlimitedQuota && token.RemainQuota <= 0 {
-			if !common.RedisEnabled {
-				token.Status = common.TokenStatusExhausted
-				err := token.SelectUpdate()
-				if err != nil {
-					common.SysLog(common.LogText("failed to update token status%s", err.Error()))
-				}
-			}
-			return token, ErrTokenInvalid
-		}
 		return token, nil
 	}
 	common.SysLog(common.LogText("ValidateUserToken: failed to get token: %s", err.Error()))
@@ -261,6 +262,22 @@ func ValidateUserToken(key string) (token *Token, err error) {
 		return nil, ErrTokenInvalid
 	}
 	return nil, fmt.Errorf("%w: %v", ErrDatabase, err)
+}
+
+func ValidateUserTokenQuota(token *Token) error {
+	if token == nil {
+		return ErrTokenInvalid
+	}
+	if token.UnlimitedQuota || token.RemainQuota > 0 {
+		return nil
+	}
+	if !common.RedisEnabled {
+		token.Status = common.TokenStatusExhausted
+		if err := token.SelectUpdate(); err != nil {
+			common.SysLog(common.LogText("failed to update token status%s", err.Error()))
+		}
+	}
+	return ErrTokenInvalid
 }
 
 func GetTokenByIds(id int, userId int) (*Token, error) {

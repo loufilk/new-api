@@ -188,6 +188,10 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 				adminRoute.DELETE("/:id/oauth/bindings/:provider_id", controller.UnbindCustomOAuthByAdmin)
 				adminRoute.DELETE("/:id/bindings/:binding_type", controller.AdminClearUserBinding)
 				adminRoute.GET("/:id", controller.GetUser)
+				handlePermissionRoute(adminRoute, http.MethodGet, "/:id/call-interception", authz.UserCallInterceptionRead, middleware.DisableCache(), controller.GetUserCallInterception)
+				handlePermissionRoute(adminRoute, http.MethodPut, "/:id/call-interception", authz.UserCallInterceptionUpdate, middleware.DisableCache(), controller.UpdateUserCallInterception)
+				handlePermissionRoute(adminRoute, http.MethodGet, "/:id/call-interception/hits", authz.UserCallInterceptionRead, middleware.DisableCache(), controller.GetUserCallInterceptionHits)
+				handlePermissionRoute(adminRoute, http.MethodGet, "/:id/call-interception/audits", authz.UserCallInterceptionRead, middleware.DisableCache(), controller.GetUserCallInterceptionAudits)
 				adminRoute.POST("/", controller.CreateUser)
 				adminRoute.POST("/manage", controller.ManageUser)
 				adminRoute.PUT("/", controller.UpdateUser)
@@ -486,6 +490,6 @@ func registerPlaygroundRoutes(apiRouter *gin.RouterGroup) {
 	playgroundRoute.Use(middleware.UserAuth())
 	{
 		playgroundRoute.GET("/bootstrap", controller.PlaygroundBootstrap)
-		playgroundRoute.POST("/chat", middleware.SystemPerformanceCheck(), middleware.Distribute(), controller.Playground)
+		playgroundRoute.POST("/chat", middleware.SystemPerformanceCheck(), middleware.UserCallInterception(), middleware.Distribute(), controller.Playground)
 	}
 }

@@ -320,3 +320,6 @@ custom_oauth.has_bindings: 无法删除已有用户绑定的提供商
 custom_oauth.binding_not_found: OAuth 绑定不存在
 custom_oauth.provider_id_field_invalid: 无法从提供商响应中提取用户 ID
 task.image_still_processing: 图片仍在处理中，请勿重复提交；请查询已有任务的状态。
+
+relay.user_call_intercepted: 该用户的调用已被拦截。此接口无法承载文本回复，请联系管理员。
+relay.user_call_interception_unavailable: 调用拦截服务暂时不可用，本请求未转发。

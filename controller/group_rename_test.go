@@ -27,6 +27,7 @@ func setupGroupRenameControllerTest(t *testing.T) *gorm.DB {
 		&model.Option{}, &model.User{}, &model.Token{}, &model.Channel{},
 		&model.Ability{}, &model.SubscriptionPlan{}, &model.UserSubscription{},
 		&model.Log{}, &model.AuditLog{},
+		&model.UserCallInterception{}, &model.UserCallInterceptionHit{}, &model.UserCallInterceptionAudit{},
 	))
 	originalGroupRatio := ratio_setting.GroupRatio2JSONString()
 	originalGroupGroupRatio := ratio_setting.GroupGroupRatio2JSONString()

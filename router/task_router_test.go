@@ -88,7 +88,7 @@ func TestTaskSubmissionRateLimitDoesNotBlockTaskReads(t *testing.T) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-	fixtures := []any{&model.User{}, &model.Token{}, &model.Task{}, &model.Option{}}
+	fixtures := []any{&model.User{}, &model.Token{}, &model.Task{}, &model.Option{}, &model.UserCallInterception{}, &model.UserCallInterceptionHit{}, &model.UserCallInterceptionAudit{}}
 	for _, fixture := range fixtures {
 		require.False(t, db.Migrator().HasTable(fixture), "fixture refuses existing tables")
 	}

@@ -218,6 +218,10 @@ func safeErrorCode(code any) any {
 
 func safeCategoryText(category string) string {
 	switch category {
+	case "user_call_intercepted":
+		return "user calls are intercepted; this endpoint cannot return a text reply"
+	case "user_call_interception_unavailable":
+		return "call interception is unavailable; the request was not forwarded"
 	case "invalid_request_error", "invalid_request", "bad_request_body",
 		"context_length_exceeded", "invalid_value", "missing_required_parameter",
 		"unknown_parameter", "string_above_max_length", "unsupported_model",
