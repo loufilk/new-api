@@ -10,17 +10,29 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/logger"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/gin-gonic/gin"
 )
 
+// submitEventStream is how one SSE submission is read: client, when set, is
+// the client of a native route, which receives every upstream event as it
+// arrives, and frameLimit bounds each event.
+type submitEventStream struct {
+	client     *gin.Context
+	frameLimit int64
+}
+
 // readSubmitEvents owns only SSE framing and bounded JSON state. The plugin
-// interprets data, accumulates provider output and decides when it is complete.
-// No response bytes are written to the client at this boundary.
-func (a *TaskAdaptor) readSubmitEvents(parent context.Context, resp *http.Response, driverContext map[string]any) (any, error) {
+// interprets data, accumulates provider output and decides when it is
+// complete. Native clients receive the vendor's frames, but receiving a
+// heartbeat or partial payload is not completion evidence. Any unfinished
+// stream remains an unknown delivery for financial reconciliation.
+func (a *TaskAdaptor) readSubmitEvents(parent context.Context, resp *http.Response, driverContext map[string]any, stream submitEventStream) (_ any, stopped bool, _ error) {
 	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if err != nil || mediaType != "text/event-stream" {
-		return nil, fmt.Errorf("expected a text/event-stream submit response")
+		return nil, false, fmt.Errorf("expected a text/event-stream submit response")
 	}
 	ctx, cancel := context.WithCancelCause(parent)
 	defer cancel(nil)
@@ -33,7 +45,7 @@ func (a *TaskAdaptor) readSubmitEvents(parent context.Context, resp *http.Respon
 	timer := time.AfterFunc(idleTimeout, func() { cancel(fmt.Errorf("task submit stream idle timeout")) })
 	defer timer.Stop()
 
-	scanner := helper.NewStreamScanner(resp.Body, maxTaskPluginPersistedJSONBytes+1)
+	scanner := helper.NewStreamScanner(resp.Body, int(stream.frameLimit)+1)
 	hook := "parseSubmitEvent"
 	var accumulated *pluginruntime.JSONState
 	if pluginruntime.UsesSubmitEventDelta(a.plugin.Meta, a.plugin.Engine) {
@@ -43,11 +55,14 @@ func (a *TaskAdaptor) readSubmitEvents(parent context.Context, resp *http.Respon
 	var state any
 	var data []string
 	var eventName, lastID string
+	var frame strings.Builder
+	relayed, completed := false, false
+	var readErr error
 	frameBytes := 0
 	firstLine := true
 	for scanner.Scan() {
-		if err := context.Cause(ctx); err != nil {
-			return nil, err
+		if readErr = context.Cause(ctx); readErr != nil {
+			break
 		}
 		timer.Reset(idleTimeout)
 		line := scanner.Text()
@@ -56,8 +71,13 @@ func (a *TaskAdaptor) readSubmitEvents(parent context.Context, resp *http.Respon
 			firstLine = false
 		}
 		frameBytes += len(line) + 1
-		if frameBytes > maxTaskPluginPersistedJSONBytes {
-			return nil, fmt.Errorf("task submit SSE event exceeds size limit")
+		if int64(frameBytes) > stream.frameLimit {
+			readErr = fmt.Errorf("task submit SSE event exceeds size limit")
+			break
+		}
+		if stream.client != nil {
+			frame.WriteString(line)
+			frame.WriteByte('\n')
 		}
 		if line != "" {
 			field, value, _ := strings.Cut(line, ":")
@@ -75,6 +95,11 @@ func (a *TaskAdaptor) readSubmitEvents(parent context.Context, resp *http.Respon
 			continue
 		}
 		frameBytes = 0
+		if stream.client != nil {
+			relaySubmitEvent(stream.client, frame.String())
+			frame.Reset()
+			relayed = true
+		}
 		if len(data) == 0 {
 			eventName = ""
 			continue
@@ -85,35 +110,44 @@ func (a *TaskAdaptor) readSubmitEvents(parent context.Context, resp *http.Respon
 		event := map[string]any{"event": eventName, "id": lastID, "data": strings.Join(data, "\n")}
 		value, err := a.plugin.Engine.Call(ctx, hook, driverContext, event, state)
 		if err != nil {
-			return nil, err
+			readErr = err
+			break
 		}
 		result, ok := value.(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("%s must return an object", hook)
+			readErr = fmt.Errorf("%s must return an object", hook)
+			break
 		}
 		nextState, hasState := result["state"]
 		done, hasDone := result["done"].(bool)
 		if !hasState || !hasDone {
-			return nil, fmt.Errorf("%s must return state and a boolean done", hook)
+			readErr = fmt.Errorf("%s must return state and a boolean done", hook)
+			break
 		}
 		encoded, err := common.Marshal(nextState)
 		if err != nil {
-			return nil, fmt.Errorf("invalid submit stream state: %w", err)
+			readErr = fmt.Errorf("invalid submit stream state: %w", err)
+			break
 		}
 		if len(encoded) > maxTaskPluginPersistedJSONBytes {
-			return nil, fmt.Errorf("task submit stream state exceeds size limit")
+			readErr = fmt.Errorf("task submit stream state exceeds size limit")
+			break
 		}
 		if accumulated != nil {
 			if len(result) != 3 {
-				return nil, fmt.Errorf("parseSubmitEventDelta must return only changes, state and done")
+				readErr = fmt.Errorf("parseSubmitEventDelta must return only changes, state and done")
+				break
 			}
 			// Control state is separate from the full result and is the only
 			// snapshot passed back to JS on the next event.
 			if len(encoded) > 64<<10 {
-				return nil, fmt.Errorf("task submit stream control state exceeds size limit")
+				readErr = fmt.Errorf("task submit stream control state exceeds size limit")
+				break
 			}
 			if err = accumulated.Apply(ctx, result["changes"]); err != nil {
-				return nil, fmt.Errorf("invalid submit stream changes: %w", err)
+				readErr = fmt.Errorf("invalid submit stream changes: %w", err)
+				accumulated, state = nil, nil
+				break
 			}
 		}
 		// Keep the exact encoded-byte limit above. Plain JSON state goes back
@@ -124,24 +158,51 @@ func (a *TaskAdaptor) readSubmitEvents(parent context.Context, resp *http.Respon
 		} else {
 			var decoded any
 			if err = common.Unmarshal(encoded, &decoded); err != nil {
-				return nil, err
+				readErr = err
+				break
 			}
 			state = decoded
 		}
 		if done {
-			if accumulated != nil {
-				return accumulated.Value()
-			}
-			return state, nil
+			completed = true
+			break
 		}
 		data = nil
 		eventName = ""
 	}
-	if err := context.Cause(ctx); err != nil {
-		return nil, err
+	if !completed && readErr == nil {
+		readErr = context.Cause(ctx)
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read task submit stream: %w", err)
+	if !completed && readErr == nil && scanner.Err() != nil {
+		readErr = fmt.Errorf("read task submit stream: %w", scanner.Err())
 	}
-	return nil, fmt.Errorf("task submit stream ended before the plugin reported completion")
+	result := state
+	if accumulated != nil {
+		var valueErr error
+		if result, valueErr = accumulated.Value(); valueErr != nil && readErr == nil {
+			readErr = valueErr
+		}
+	}
+	if readErr == nil && completed {
+		return result, false, nil
+	}
+	if readErr == nil {
+		readErr = fmt.Errorf("task submit stream ended before the plugin reported completion")
+	}
+	if relayed {
+		logger.LogWarn(stream.client, common.LogText("task plugin %s could not complete a relayed submit stream; preserving delivery-unknown hold: %s", a.plugin.Meta.Key, readErr.Error()))
+		// Downstream gateways must not mistake an interrupted upstream for
+		// a clean end that authorizes settlement of partial usage.
+		_ = http.NewResponseController(stream.client.Writer).SetWriteDeadline(time.Now())
+	}
+	return nil, relayed, readErr
+}
+
+// relaySubmitEvent writes one upstream SSE event, as the vendor framed it, to
+// the client of a native route. The first event commits a 200 event-stream
+// response; a client that has left only misses the rest.
+func relaySubmitEvent(c *gin.Context, frame string) {
+	helper.SetEventStreamHeaders(c)
+	_, _ = c.Writer.WriteString(frame)
+	c.Writer.Flush()
 }

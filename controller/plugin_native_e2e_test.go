@@ -6,8 +6,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -74,7 +77,7 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 	common.DataExportEnabled = false
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	previousModelRatios := ratio_setting.ModelRatio2JSONString()
-	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"kling-v1":1}`))
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"kling-v3":1}`))
 	t.Cleanup(func() {
 		model.DB = previousDB
 		model.LOG_DB = previousLogDB
@@ -99,7 +102,7 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 
 	token := model.Token{UserId: 7, Key: "native-route-original-token", Name: "native-route-token", Status: common.TokenStatusEnabled, RemainQuota: 1_000_000}
 	require.NoError(t, database.Create(&token).Error)
-	require.NoError(t, database.Create(&model.Model{ModelName: "kling-v1", BonusEligible: common.GetPointer(false), Status: 1}).Error)
+	require.NoError(t, database.Create(&model.Model{ModelName: "kling-v3", BonusEligible: common.GetPointer(false), Status: 1}).Error)
 	model.InvalidatePricingCache()
 	model.InvalidateModelBonusEligibleCache()
 	t.Cleanup(func() { waitTaskSubmissionFixtureQuiescence(t) })
@@ -116,7 +119,7 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 				http.Error(w, "read request", http.StatusInternalServerError)
 				return
 			}
-			assert.Contains(t, string(body), `"model_name":"kling-v1"`)
+			assert.Contains(t, string(body), `"model_name":"kling-v3"`)
 			_, _ = io.WriteString(w, `{"code":0,"message":"","data":{"task_id":"kling-private-1","task_status":"submitted"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/kling/v1/videos/text2video/kling-private-1":
 			queryCalls.Add(1)
@@ -133,7 +136,7 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 		Key:     "sk-test",
 		BaseURL: &upstream.URL,
 		Status:  common.ChannelStatusEnabled,
-		Models:  "kling-v1",
+		Models:  "kling-v3",
 		Group:   "default",
 	}
 	require.NoError(t, database.Create(&channel).Error)
@@ -149,7 +152,7 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 	submitContext.Request = httptest.NewRequest(
 		http.MethodPost,
 		"/kling/v1/videos/text2video",
-		bytes.NewBufferString(`{"model_name":"kling-v1","prompt":"a lighthouse"}`),
+		bytes.NewBufferString(`{"model_name":"kling-v3","prompt":"a lighthouse"}`),
 	)
 	submitContext.Request.Header.Set("Content-Type", "application/json")
 	submitContext.Set(pluginruntime.ContextKeyPinnedRoute, pluginruntime.PinnedRoute{
@@ -169,9 +172,9 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 
 	middleware.PrepareTaskPluginRoute()(submitContext)
 	require.False(t, submitContext.IsAborted(), submitRecorder.Body.String())
-	require.Equal(t, "kling-v1", submitContext.GetString("resolved_task_model"))
+	require.Equal(t, "kling-v3", submitContext.GetString("resolved_task_model"))
 	require.Equal(t, "text_to_video", submitContext.GetString("task_action"))
-	require.Nil(t, middleware.SetupContextForSelectedChannel(submitContext, &channel, "kling-v1"))
+	require.Nil(t, middleware.SetupContextForSelectedChannel(submitContext, &channel, "kling-v3"))
 
 	relayInfo := &relaycommon.RelayInfo{
 		UserId:          7,
@@ -179,13 +182,13 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 		UsingGroup:      "default",
 		UserQuota:       1_000_000,
 		TokenGroup:      "default",
-		OriginModelName: "kling-v1",
+		OriginModelName: "kling-v3",
 		RequestId:       "native-kling-financial-request",
 		TokenId:         token.Id,
 		TokenKey:        token.Key,
 		ForcePreConsume: true,
 		UserSetting:     kitdto.UserSetting{BillingPreference: "wallet_only", QuotaWarningEnabled: common.GetPointer(false)},
-		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channel.Id, ChannelType: channel.Type, UpstreamModelName: "kling-v1"},
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channel.Id, ChannelType: channel.Type, UpstreamModelName: "kling-v3"},
 		TaskRelayInfo: &relaycommon.TaskRelayInfo{
 			Action:        submitContext.GetString("task_action"),
 			PublicTaskID:  "task_kling_public",
@@ -316,7 +319,8 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 	queryRecorder := httptest.NewRecorder()
 	queryContext, _ := gin.CreateTestContext(queryRecorder)
 	queryContext.Request = httptest.NewRequest(http.MethodGet, "/kling/v1/videos/text2video/task_kling_public", nil)
-	queryContext.Params = gin.Params{{Key: "task_id", Value: "task_kling_public"}}
+	// The inner plugin router names wildcards by position.
+	queryContext.Params = gin.Params{{Key: "s4", Value: "task_kling_public"}}
 	queryContext.Set(pluginruntime.ContextKeyPinnedRoute, pluginruntime.PinnedRoute{
 		Generation: generation,
 		Plugin:     queryBinding.Plugin,
@@ -332,4 +336,150 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 	assert.Contains(t, queryRecorder.Body.String(), `"task_status":"succeed"`)
 	assert.NotContains(t, queryRecorder.Body.String(), "kling-private-1")
 	assert.NotContains(t, queryRecorder.Body.String(), upstream.URL)
+}
+
+// This added native SSE path uses a real PostgreSQL funding session. The old
+// Kling fixture above remains independent and is not run by the PG-only matrix.
+func TestDoubaoRelayedImageStreamSettlement(t *testing.T) {
+	if os.Getenv("TEST_TASK_DB_DIALECT") != "postgres" || os.Getenv("TEST_POSTGRES_DSN") == "" {
+		t.Skip("requires disposable PostgreSQL 18.6 TEST_POSTGRES_DSN and TEST_TASK_DB_DIALECT=postgres")
+	}
+	oldGinMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(oldGinMode) })
+	service.InitHttpClient()
+	previousDeadline := constant.TaskPluginProtocolTimeoutSeconds
+	constant.TaskPluginProtocolTimeoutSeconds = 1
+	const seedream = "doubao-seedream-5-0-lite-260128"
+	previousPrices := ratio_setting.ModelPrice2JSONString()
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"`+seedream+`":0.02}`))
+	t.Cleanup(func() {
+		constant.TaskPluginProtocolTimeoutSeconds = previousDeadline
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(previousPrices))
+	})
+	const image = `data: {"type":"image_generation.partial_succeeded","model":"` + seedream + `","created":1,"image_index":0,"url":"https://cdn.example/0.png","size":"2048x2048"}` + "\n\n"
+	const completed = `data: {"type":"image_generation.completed","model":"` + seedream + `","created":1,"usage":{"generated_images":1,"output_tokens":16384,"total_tokens":16384}}` + "\n\n"
+	const done = "data: [DONE]\n\n"
+	const rejected = `data: {"error":{"code":"AuthenticationError","message":"rejected"}}` + "\n\n"
+	var submitCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		submitCalls.Add(1)
+		var request struct {
+			Prompt string `json:"prompt"`
+		}
+		_ = common.DecodeJson(r.Body, &request)
+		w.Header().Set("Content-Type", "text/event-stream")
+		write := func(frame string) { _, _ = io.WriteString(w, frame); w.(http.Flusher).Flush() }
+		switch request.Prompt {
+		case "finished":
+			write(image + completed + done)
+		case "rejected":
+			write(rejected + done)
+		case "missing_payload":
+			write(completed + done)
+		case "broken":
+			write(image)
+			panic(http.ErrAbortHandler)
+		case "eof":
+			write(image)
+		case "unreadable":
+			write(": heartbeat\n\ndata: {\"type\":\n\n")
+		case "stalled":
+			write(": heartbeat\n\n")
+			for {
+				select {
+				case <-r.Context().Done():
+					return
+				case <-time.After(100 * time.Millisecond):
+					write(": keep-alive\n\n")
+				}
+			}
+		}
+	}))
+	defer upstream.Close()
+	generation := pluginruntime.DefaultRegistry.Generation()
+	require.NotNil(t, generation)
+	binding, found := generation.LookupDeclaredRoute(http.MethodPost, "/api/v3/images/generations")
+	require.True(t, found)
+	require.Equal(t, "doubao", binding.Plugin.Meta.Key)
+	for _, tc := range []struct {
+		prompt, firstFrame string
+		charge             int
+		unknown            bool
+	}{
+		{"finished", image, 10_000, false}, {"rejected", rejected, 0, false},
+		{"missing_payload", completed, 30_000, true}, {"broken", image, 30_000, true},
+		{"eof", image, 30_000, true}, {"unreadable", ": heartbeat\n\n", 30_000, true},
+		{"stalled", ": heartbeat\n\n", 30_000, true},
+	} {
+		t.Run(tc.prompt, func(t *testing.T) {
+			f := newTaskSubmissionFinancialFixtureForModel(t, "native-stream-"+tc.prompt, 1_000_000, 30_000, seedream)
+			var version string
+			require.NoError(t, f.db.Raw("SHOW server_version_num").Scan(&version).Error)
+			require.Equal(t, "180006", version)
+			f.channel.Type, f.channel.Name, f.channel.Key, f.channel.BaseURL = constant.ChannelTypeDoubaoVideo, "ark-native-stream", "synthetic-ark-key", &upstream.URL
+			f.channel.Status, f.channel.Models, f.channel.Group = common.ChannelStatusEnabled, seedream, "default"
+			require.NoError(t, f.db.Save(&f.channel).Error)
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			f.c = c
+			c.Request = httptest.NewRequest(http.MethodPost, "/api/v3/images/generations", strings.NewReader(`{"model":"`+seedream+`","prompt":"`+tc.prompt+`","stream":true,"sequential_image_generation":"auto","sequential_image_generation_options":{"max_images":3}}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Set(pluginruntime.ContextKeyPinnedRoute, pluginruntime.PinnedRoute{Generation: generation, Plugin: binding.Plugin, Route: binding.Route})
+			common.SetContextKey(c, constant.ContextKeyUserId, f.user.Id)
+			common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+			common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+			common.SetContextKey(c, constant.ContextKeyTokenGroup, "default")
+			common.SetContextKey(c, constant.ContextKeyUserQuota, 1_000_000)
+			common.SetContextKey(c, constant.ContextKeyTokenId, f.token.Id)
+			common.SetContextKey(c, constant.ContextKeyTokenKey, f.token.Key)
+			c.Set(common.RequestIdKey, f.info.RequestId)
+			c.Set("token_name", f.token.Name)
+			middleware.PrepareTaskPluginRoute()(c)
+			require.False(t, c.IsAborted(), recorder.Body.String())
+			require.Nil(t, middleware.SetupContextForSelectedChannel(c, &f.channel, seedream))
+			f.info.Action, f.info.PublicTaskID = c.GetString("task_action"), "task_"+tc.prompt
+			f.info.ChannelMeta = &relaycommon.ChannelMeta{ChannelId: f.channel.Id, ChannelType: f.channel.Type, UpstreamModelName: seedream}
+			beforeCalls := submitCalls.Load()
+			outcome, taskErr := executeTaskSubmissionWith(c, f.info, relay.RelayTaskSubmit)
+			waitTaskSubmissionFixtureQuiescence(t)
+			assert.Equal(t, beforeCalls+1, submitCalls.Load(), "unknown delivery cannot retry the paid submit")
+			assert.True(t, strings.HasPrefix(recorder.Body.String(), tc.firstFrame), recorder.Body.String())
+			if tc.unknown {
+				require.NotNil(t, taskErr)
+				assert.True(t, taskErr.NoRetry)
+				assert.True(t, taskErr.DeliveryUnknown)
+				assert.Nil(t, outcome)
+				f.assertFinancial(t, model.BillingDeliveryUnknown, 30_000, 0, 0, 1)
+				f.assertTaskCount(t, 0)
+				f.assertUnknownCannotRefund(t)
+				relayed := recorder.Body.String()
+				respondTaskSubmissionError(c, taskErr)
+				assert.Equal(t, relayed, recorder.Body.String(), "no JSON error is appended to native SSE")
+				return
+			}
+			require.Nil(t, taskErr)
+			require.NotNil(t, outcome)
+			assert.Equal(t, tc.charge, outcome.Task.Quota)
+			status := model.TaskStatusSuccess
+			if tc.prompt == "rejected" {
+				status = model.TaskStatusFailure
+			}
+			assert.Equal(t, model.TaskStatus(status), outcome.Task.Status)
+			state := captureTaskSubmissionFinancialState(t, f.db, f.info)
+			assert.Equal(t, f.initial-tc.charge, state.User.Quota)
+			assert.Equal(t, f.initial-tc.charge, state.User.QuotaPaid)
+			assert.Equal(t, f.initial-tc.charge, state.Token.RemainQuota)
+			assert.Equal(t, tc.charge, state.Token.UsedQuota)
+			require.Len(t, state.Owners, 1)
+			assert.Equal(t, model.BillingTaskOwned, state.Owners[0].State)
+			assert.Equal(t, tc.charge, state.Owners[0].ActualQuota)
+			f.info.Billing.Refund(c)
+			assert.ErrorIs(t, f.info.Billing.Settle(tc.charge), model.ErrBillingFinalized)
+			assert.Equal(t, state, captureTaskSubmissionFinancialState(t, f.db, f.info), "terminal replay cannot alter funds")
+			relayed := recorder.Body.String()
+			presentTaskSubmission(c, outcome)
+			assert.Equal(t, relayed, recorder.Body.String(), "no JSON is appended to native SSE")
+		})
+	}
 }
