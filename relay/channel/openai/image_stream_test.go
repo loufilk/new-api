@@ -76,7 +76,11 @@ func TestImageExpressionUsesCompletedCountAndProtectsAbortedStreams(t *testing.T
 				}
 			} else {
 				_, err := OpenaiImageHandler(c, info, resp)
-				require.Nil(t, err)
+				if openaiImageResponseCount([]byte(tc.body)) == 0 {
+					require.NotNil(t, err)
+				} else {
+					require.Nil(t, err)
+				}
 			}
 			count := info.RequestedImageCount()
 			if info.BillingImageCount != nil {
@@ -487,9 +491,14 @@ func TestOpenaiImageHandlerUsesPositiveActualCountForFixedPrice(t *testing.T) {
 
 			_, err := OpenaiImageHandler(c, info, resp)
 
-			require.Nil(t, err)
-			require.Equal(t, tt.wantCount, info.PriceData.OtherRatios()["n"])
-			require.Equal(t, tt.body, recorder.Body.String())
+			if openaiImageResponseCount([]byte(tt.body)) == 0 {
+				require.NotNil(t, err)
+				assert.Empty(t, recorder.Body.String(), "do not report an empty batch as success")
+			} else {
+				require.Nil(t, err)
+				assert.Equal(t, tt.body, recorder.Body.String())
+			}
+			assert.Equal(t, tt.wantCount, info.PriceData.OtherRatios()["n"])
 		})
 	}
 }
@@ -537,6 +546,12 @@ func TestOpenaiImageStreamHandlerWrapsNonStandardDataShapes(t *testing.T) {
 			info.PriceData.AddOtherRatio("n", 3)
 
 			_, err := OpenaiImageStreamHandler(c, info, resp)
+			if tc.wantEvents == 0 {
+				require.NotNil(t, err)
+				assert.Empty(t, recorder.Body.String(), "no success-only DONE frame for an empty batch")
+				assert.Equal(t, tc.wantCount, info.PriceData.OtherRatios()["n"])
+				return
+			}
 			require.Nil(t, err)
 			out := recorder.Body.String()
 			assert.Equal(t, tc.wantEvents, strings.Count(out, "event: image_generation.completed"))
@@ -566,7 +581,7 @@ func TestOpenaiImageHandlersReturnJSONError(t *testing.T) {
 		usage, err := OpenaiImageHandler(c, info, resp)
 		require.Nil(t, usage)
 		require.NotNil(t, err)
-		require.Equal(t, http.StatusOK, err.StatusCode)
+		require.Equal(t, http.StatusBadGateway, err.StatusCode)
 		oaiError := err.ToOpenAIError()
 		require.Equal(t, "content moderation failed", oaiError.Message)
 		require.Equal(t, "upstream_error", oaiError.Type)
@@ -580,7 +595,7 @@ func TestOpenaiImageHandlersReturnJSONError(t *testing.T) {
 		usage, err := OpenaiImageStreamHandler(c, info, resp)
 		require.Nil(t, usage)
 		require.NotNil(t, err)
-		require.Equal(t, http.StatusOK, err.StatusCode)
+		require.Equal(t, http.StatusBadGateway, err.StatusCode)
 		require.Equal(t, "content moderation failed", err.ToOpenAIError().Message)
 		require.Empty(t, recorder.Body.String())
 	})

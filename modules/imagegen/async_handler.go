@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/lifecycle"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/gin-gonic/gin"
@@ -60,6 +61,11 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		c.JSON(400, gin.H{"error": gin.H{"message": "Streaming is not supported for asynchronous image tasks"}})
 		return
 	}
+	count, err := request.ImageCount(false)
+	if err != nil || count > AsyncImageMaxCount {
+		c.JSON(400, gin.H{"error": gin.H{"message": "Async image tasks support at most 4 images per request", "code": "async_image_count_unsupported"}})
+		return
+	}
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
 		c.JSON(400, gin.H{"error": gin.H{"message": "Failed to read image request"}})
@@ -80,7 +86,7 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		c.JSON(429, gin.H{"error": gin.H{"message": "Async image queue is full"}})
 		return
 	}
-	task, err := h.store.Create(c.Request.Context(), userID)
+	task, err := h.store.Create(c.Request.Context(), userID, count)
 	if err != nil {
 		<-h.slots
 		status := 503
@@ -94,6 +100,7 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 	// checks, model rate limits, channel selection, precharge and settlement run
 	// unchanged. No Gin context or body storage survives its original lifetime.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), AsyncImageTimeout)
+	ctx = relaycommon.WithAsyncImageCountLimit(ctx, count)
 	upstream := c.Request.Clone(ctx)
 	upstream.URL.Path, upstream.URL.RawPath, upstream.URL.RawQuery = path, "", ""
 	upstream.RequestURI = path
@@ -141,7 +148,7 @@ func (h *AsyncImageHandler) run(request *http.Request, cancel context.CancelFunc
 			_ = request.MultipartForm.RemoveAll()
 		}
 	}()
-	writer := &asyncImageResponse{header: make(http.Header), status: 200}
+	writer := &asyncImageResponse{header: make(http.Header), status: 200, limit: task.ResultLimit}
 	defer func() {
 		if recover() != nil {
 			writer.status = 500
@@ -150,12 +157,17 @@ func (h *AsyncImageHandler) run(request *http.Request, cancel context.CancelFunc
 		}
 		task.Status, task.HTTPStatus = "failed", writer.status
 		task.RequestID = writer.Header().Get(common.RequestIdKey)
-		var parsed map[string]any
-		if writer.overflow || common.Unmarshal(writer.body.Bytes(), &parsed) != nil {
+		if writer.Header().Get("X-New-Api-Billing-State") == "review" {
+			task.BillingState = "review"
+		}
+		// Validate the envelope without allocating another copy of every base64
+		// image string. The normal relay already validates provider semantics.
+		var parsed struct{}
+		if writer.overflow || common.GetJsonType(writer.body.Bytes()) != "object" || common.Unmarshal(writer.body.Bytes(), &parsed) != nil {
 			task.HTTPStatus = 502
-			task.Result = []byte(`{"error":{"message":"Image task response is invalid or exceeds 8 MiB; check usage before submitting again.","code":"async_image_result_invalid"}}`)
+			task.Result = []byte(`{"error":{"message":"Image task response is invalid or exceeds its reserved result limit; check usage before submitting again.","code":"async_image_result_invalid"}}`)
 		} else {
-			task.Result = bytes.Clone(writer.body.Bytes())
+			task.Result = writer.body.Bytes()
 			if writer.status >= 200 && writer.status < 300 {
 				task.Status = "succeeded"
 			}
@@ -190,6 +202,7 @@ type asyncImageResponse struct {
 	header            http.Header
 	body              bytes.Buffer
 	status            int
+	limit             int
 	written, overflow bool
 }
 
@@ -202,7 +215,7 @@ func (w *asyncImageResponse) WriteHeader(status int) {
 }
 func (w *asyncImageResponse) Write(data []byte) (int, error) {
 	w.written = true
-	if w.body.Len()+len(data) > AsyncImageMaxResult {
+	if w.overflow || w.limit <= 0 || len(data) > w.limit-w.body.Len() {
 		w.overflow = true
 		return 0, io.ErrShortBuffer
 	}

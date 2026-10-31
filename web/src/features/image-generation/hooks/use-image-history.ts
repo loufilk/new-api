@@ -60,6 +60,7 @@ function toHistoryEntry(params: {
   prompt: string
   model: string
   size: string
+  resolution?: string
   quality: string
   style: string
   count: number
@@ -80,6 +81,7 @@ function toHistoryEntry(params: {
           tempObjectUrls[id] = objectUrl
           return {
             id,
+            ...(image.billingState ? { billingState: image.billingState } : {}),
             type: 'b64' as const,
             source: objectUrl,
             width: image.width,
@@ -94,6 +96,7 @@ function toHistoryEntry(params: {
     }
     return {
       id,
+      ...(image.billingState ? { billingState: image.billingState } : {}),
       type: image.source,
       source: image.url,
       width: image.width,
@@ -109,6 +112,7 @@ function toHistoryEntry(params: {
       model: params.model,
       settings: {
         size: params.size,
+        ...(params.resolution ? { resolution: params.resolution } : {}),
         quality: params.quality,
         style: params.style,
         count: params.count,
@@ -230,6 +234,7 @@ export function useImageHistory() {
       prompt: string
       model: string
       size: string
+      resolution?: string
       quality: string
       style: string
       count: number

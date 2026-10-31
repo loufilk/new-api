@@ -322,3 +322,71 @@ describe('isAbortError detects cancellation', () => {
     expect(isAbortError(new Error('boom'))).toBe(false)
   })
 })
+
+test('official Grok forwards selected native 2K resolution without splitting a batch', () => {
+  expect(
+    buildGenerationsBody({
+      model: 'grok-imagine-image',
+      prompt: 'A lake',
+      count: 4,
+      size: '16:9',
+      quality: '',
+      style: '',
+      resolution: '2k',
+    })
+  ).toMatchObject({
+    model: 'grok-imagine-image',
+    n: 4,
+    aspect_ratio: '16:9',
+    resolution: '2k',
+  })
+})
+
+test('custom Grok aliases cannot silently downgrade a requested 2K resolution', () => {
+  expect(() =>
+    buildGenerationsBody({
+      model: 'grok-imagine-image-2.0-console',
+      prompt: 'A lake',
+      count: 2,
+      size: '16:9',
+      quality: 'low',
+      style: '',
+      resolution: '2k',
+    })
+  ).toThrow('Unsupported image resolution for this model')
+})
+
+test.each([
+  ['gpt-image-2', '2048x2048'],
+  ['gpt-image-2', '3840x2160'],
+  ['gpt-image-2-2k', '2560x1440'],
+  ['gpt-image-2-4k', '2880x2880'],
+])(
+  'GPT size and quality stay identical in generation and edit requests (%s, %s)',
+  (model, size) => {
+    const params = {
+      model,
+      size,
+      quality: 'high',
+      prompt: 'A lake',
+      count: 3,
+      style: '',
+    }
+    expect(buildGenerationsBody(params)).toEqual({
+      model,
+      size,
+      quality: 'high',
+      prompt: 'A lake',
+      n: 3,
+    })
+    const form = buildEditsFormData({
+      ...params,
+      images: [new File(['x'], 'reference.png', { type: 'image/png' })],
+    })
+    expect(form.get('size')).toBe(size)
+    expect(form.get('quality')).toBe('high')
+    expect(form.get('n')).toBe('3')
+    expect(form.has('response_format')).toBe(false)
+    expect(form.has('resolution')).toBe(false)
+  }
+)

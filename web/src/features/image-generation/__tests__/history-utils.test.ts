@@ -386,3 +386,35 @@ describe('filterHistoryEntries supports search and orientation filters', () => {
     expect(filterHistoryEntries([sized, unsized], '', 'square')).toEqual([])
   })
 })
+
+test('history accepts optional string resolution but rejects malformed resolution metadata', () => {
+  const entry = makeEntry()
+  expect(
+    isValidHistoryEntry({
+      ...entry,
+      settings: { ...entry.settings, resolution: '2k' },
+    })
+  ).toBe(true)
+  expect(
+    isValidHistoryEntry({
+      ...entry,
+      settings: { ...entry.settings, resolution: 2048 },
+    })
+  ).toBe(false)
+})
+
+test('history billing review is an optional known snapshot, not arbitrary settlement data', () => {
+  const entry = makeEntry()
+  expect(
+    isValidHistoryEntry({
+      ...entry,
+      results: [{ ...entry.results[0], billingState: 'review' }],
+    })
+  ).toBe(true)
+  expect(
+    isValidHistoryEntry({
+      ...entry,
+      results: [{ ...entry.results[0], billingState: 'refunded' }],
+    })
+  ).toBe(false)
+})

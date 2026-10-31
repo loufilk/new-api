@@ -31,6 +31,7 @@ export type ImageGenerationSettings = {
   apiKeyId: number | null
   model: string
   size: string
+  resolution?: string
   quality: string
   style: string
   count: number
@@ -38,6 +39,7 @@ export type ImageGenerationSettings = {
 
 export type ImageModelCapability = {
   sizes: string[]
+  resolutions?: string[]
   qualities: string[]
   styles: string[]
   maxN: number
@@ -49,6 +51,7 @@ export type ImageModelCapability = {
 }
 
 export type GeneratedImage = {
+  billingState?: 'review'
   id: string
   url: string
   source: 'url' | 'b64'
@@ -60,6 +63,8 @@ export type GeneratedImage = {
 }
 
 export type HistoryResultRecord = {
+  // Snapshot at generation time; this is not the current settlement status.
+  billingState?: 'review'
   id: string
   type: 'url' | 'b64' | 'blob'
   source: string
@@ -78,6 +83,7 @@ export type ImageHistoryEntry = {
   model: string
   settings: {
     size: string
+    resolution?: string
     quality: string
     style: string
     count: number

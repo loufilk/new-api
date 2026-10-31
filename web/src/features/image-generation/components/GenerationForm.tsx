@@ -65,6 +65,7 @@ export type GenerationFormValue = {
   apiKeyId: number | null
   model: string
   size: string
+  resolution?: string
   quality: string
   style: string
   count: number
@@ -78,6 +79,7 @@ type GenerationFormProps = {
   keys: ImageApiKeyOption[]
   models: string[]
   sizes: string[]
+  resolutions?: string[]
   qualities: string[]
   styles: string[]
   maxCount: number
@@ -89,6 +91,7 @@ type GenerationFormProps = {
   onRemoveReference: (id: string) => void
   isGenerating: boolean
   formError: string | null
+  formNotice?: string | null
   isInitializing: boolean
   onGenerate: () => void
   onCancel: () => void
@@ -288,6 +291,35 @@ export function GenerationForm(props: GenerationFormProps) {
             disabled={props.isGenerating || props.isInitializing}
             onChange={(size) => props.onChange({ size })}
           />
+          {props.resolutions && props.resolutions.length > 1 ? (
+            <div>
+              <Label className='sr-only' htmlFor='image-resolution'>
+                {t('Output resolution')}
+              </Label>
+              <Select
+                value={props.value.resolution || '1k'}
+                onValueChange={(next) => {
+                  if (next !== null) props.onChange({ resolution: next })
+                }}
+                disabled={props.isGenerating || props.isInitializing}
+              >
+                <SelectTrigger id='image-resolution'>
+                  <SelectValue>
+                    {(props.value.resolution || '1k').toUpperCase()}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {props.resolutions.map((resolution) => (
+                      <SelectItem key={resolution} value={resolution}>
+                        {resolution.toUpperCase()}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
           {(['size', 'quality'] as const).map((parameter) => {
             const options = parameter === 'size' ? props.sizes : props.qualities
             const label = parameter === 'size' ? t('Size') : t('Quality')
@@ -485,9 +517,21 @@ export function GenerationForm(props: GenerationFormProps) {
             )}
           </p>
         ) : null}
+        {props.formNotice ? (
+          <Alert role='status'>
+            <AlertDescription>{props.formNotice}</AlertDescription>
+          </Alert>
+        ) : null}
         {props.formError ? (
           <Alert variant='destructive'>
-            <AlertDescription role='alert'>{props.formError}</AlertDescription>
+            <AlertDescription role='alert'>
+              <p>{props.formError}</p>
+              <p>
+                {t(
+                  'A failed wait does not confirm a refund. Check request status and billing before submitting again.'
+                )}
+              </p>
+            </AlertDescription>
           </Alert>
         ) : null}
 

@@ -21,12 +21,14 @@ func CORS() gin.HandlerFunc {
 			"Origin", "Accept", "Authorization", "Content-Type", "Cache-Control", "New-Api-User", "X-Auth-Session", "X-Security-Proof", "Idempotency-Key",
 		},
 		AllowCredentials: true,
+		ExposeHeaders:    []string{"X-New-Api-Billing-State"},
 		MaxAge:           12 * time.Hour,
 	})
 	publicCors := cors.New(cors.Config{
 		AllowAllOrigins: true,
 		AllowMethods:    []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:    []string{"*"},
+		ExposeHeaders:   []string{"X-New-Api-Billing-State"},
 		MaxAge:          12 * time.Hour,
 	})
 	return func(c *gin.Context) {

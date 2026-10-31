@@ -31,6 +31,7 @@ type GenerateInput = {
   prompt: string
   count: number
   size: string
+  resolution?: string
   quality: string
   style: string
   images: File[]
@@ -94,6 +95,7 @@ export function useImageGeneration() {
           prompt: input.prompt.trim(),
           count: input.count,
           size: input.size,
+          resolution: input.resolution,
           quality: input.quality,
           style: input.style,
           images: input.images,

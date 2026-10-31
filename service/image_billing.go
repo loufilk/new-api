@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -13,9 +14,33 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// ImageUsageRequiresReview prevents a delivered token-priced image from being
+// settled using the synthetic one-token placeholder used by per-image prices.
+// Explicit flat prices remain the administrator's contract; no token usage is
+// required or invented for them.
+func ImageUsageRequiresReview(info *relaycommon.RelayInfo, usage *dto.Usage) bool {
+	if info == nil {
+		return false
+	}
+	if snap := info.TieredBillingSnapshot; snap != nil {
+		// A mixed expression can estimate a fixed branch at c=0 and select
+		// token pricing later. Only token-independent expressions are exempt.
+		used := billingexpr.UsedVarsByHash(snap.ExprString, snap.ExprHash)
+		needsInput := used["p"] || used["len"] || used["img"] || used["img_cr"] || used["cr"] || used["cc"] || used["cc1h"] || used["cc12h"]
+		needsOutput := used["c"] || used["img_o"]
+		return usage == nil && (needsInput || needsOutput) || usage != nil &&
+			(needsInput && usage.PromptTokens <= 0 || needsOutput && usage.CompletionTokens <= 0)
+	}
+	if info.PriceData.UsePrice || !strings.HasPrefix(info.OriginModelName, "gpt-image-") {
+		return false
+	}
+	return usage == nil || usage.PromptTokens <= 0 || usage.CompletionTokens <= 0
+}
+
 // PrepareImageBillingForRequest reserves the effective outbound image quantity
 // before each attempt, including channel retries and parameter overrides. The
-// client request body stays frozen; only the independent quantity is refreshed.
+// replayable client body stays frozen; pricing uses the validated outbound
+// scalar snapshot and the independent quantity for this attempt.
 func PrepareImageBillingForRequest(c *gin.Context, info *relaycommon.RelayInfo, count int) *types.NewAPIError {
 	if count < 1 || count > dto.MaxImageN {
 		return types.NewErrorWithStatusCode(fmt.Errorf("image_count must be an integer between 1 and %d", dto.MaxImageN), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -24,10 +49,9 @@ func PrepareImageBillingForRequest(c *gin.Context, info *relaycommon.RelayInfo, 
 	var quota int
 	var err error
 	if snap := info.TieredBillingSnapshot; snap != nil && snap.BillingMode == "tiered_expr" {
-		// Token-only image expressions must not acquire a quantity multiplier.
-		if snap.EstimatedImageCount == nil {
-			return nil
-		}
+		// Reevaluate all image expressions: resolution, quality or size may
+		// change even when the expression does not use image_count. The
+		// expression alone decides whether quantity is a multiplier.
 		request := billingexpr.RequestInput{}
 		if info.BillingRequestInput != nil {
 			request = *info.BillingRequestInput

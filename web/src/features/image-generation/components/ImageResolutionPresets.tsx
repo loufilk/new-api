@@ -97,6 +97,23 @@ export function ImageResolutionPresets(props: Props) {
           'High-resolution generation requires upstream support and may cost more. 4K uses up to 3840×2160 pixels; square output is 2880×2880. This is not upscaling.'
         )}
       </p>
+      {props.model.trim().toLowerCase() !== 'gpt-image-2' &&
+      props.model.trim().toLowerCase() !== 'gpt-image-2-2026-04-21' ? (
+        <p className='text-muted-foreground text-xs'>
+          {t(
+            'This model name is a platform alias. Its mapping, native output size and pricing must be confirmed by the administrator.'
+          )}
+        </p>
+      ) : null}
+      {current.width &&
+      current.height &&
+      current.width * current.height > 2560 * 1440 ? (
+        <p className='text-muted-foreground text-xs'>
+          {t(
+            'GPT Image 2 sizes above 2560×1440 total pixels are experimental, including 2048×2048.'
+          )}
+        </p>
+      ) : null}
     </div>
   )
 }

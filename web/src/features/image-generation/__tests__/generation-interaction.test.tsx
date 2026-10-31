@@ -168,6 +168,11 @@ describe('generation form protects key interactions', () => {
   test('failed generation shows an inline error alongside the toast path', () => {
     renderForm({ formError: 'Image generation failed' })
     expect(screen.getByText('Image generation failed')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'A failed wait does not confirm a refund. Check request status and billing before submitting again.'
+      )
+    ).toBeInTheDocument()
   })
 
   test('cancelling while generating calls onCancel instead of onGenerate', async () => {
@@ -296,4 +301,26 @@ test('long token and model labels stay clipped within non-shrinking toolbar cont
       trigger.querySelector('[data-slot="select-value"] > span')
     ).toHaveClass('truncate')
   }
+})
+
+test('native resolution selection is separate from the aspect ratio and locked while generating', async () => {
+  const onChange = vi.fn()
+  const props = {
+    value: {
+      ...baseValue,
+      model: 'grok-imagine-image',
+      size: '16:9',
+      resolution: '1k',
+    },
+    resolutions: ['1k', '2k'],
+    onChange,
+  }
+  const view = renderForm(props)
+  const user = userEvent.setup()
+  await user.click(screen.getByLabelText('Output resolution'))
+  await user.click(screen.getByRole('option', { name: '2K' }))
+  expect(onChange).toHaveBeenCalledWith({ resolution: '2k' })
+  view.unmount()
+  renderForm({ ...props, isGenerating: true })
+  expect(screen.getByLabelText('Output resolution')).toBeDisabled()
 })

@@ -81,6 +81,9 @@ function isValidResult(value: unknown): boolean {
     return false
   }
   if (typeof value.keptLocally !== 'boolean') return false
+  if (value.billingState !== undefined && value.billingState !== 'review') {
+    return false
+  }
   if (value.width !== undefined && !isFinitePositiveNumber(value.width)) {
     return false
   }
@@ -145,7 +148,9 @@ export function isValidHistoryEntry(
   if (
     typeof settings.size !== 'string' ||
     typeof settings.quality !== 'string' ||
-    typeof settings.style !== 'string'
+    typeof settings.style !== 'string' ||
+    (settings.resolution !== undefined &&
+      typeof settings.resolution !== 'string')
   ) {
     return false
   }

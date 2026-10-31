@@ -11,10 +11,12 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -284,6 +286,8 @@ func TestHTTP200DecodeFailureDoesNotBecomeUnusedRequest(t *testing.T) {
 		handler func(*gin.Context, *relaycommon.RelayInfo, *http.Response) (*dto.Usage, *types.NewAPIError)
 	}{
 		{"chat", openai.OpenaiHandler},
+		{"image", openai.OpenaiImageHandler},
+		{"image JSON as SSE", openai.OpenaiImageStreamHandler},
 		{"responses", openai.OaiResponsesHandler},
 		{"responses to chat", openai.OaiResponsesToChatHandler},
 		{"chat to responses", openai.OaiChatToResponsesHandler},
@@ -324,6 +328,76 @@ func TestHTTP200DecodeFailureDoesNotBecomeUnusedRequest(t *testing.T) {
 				assert.Empty(t, billing.settled, "neither unmeasured delivery nor explicit rejection is a zero-usage settlement")
 			})
 		}
+	}
+}
+
+func TestImageTokenUsageMissingPreservesDeliveredImagesAndHold(t *testing.T) {
+	service.InitHttpClient()
+	for _, usage := range []string{"", `,"usage":{"input_tokens":20,"total_tokens":20}`, `,"usage":{"output_tokens":40,"total_tokens":40}`} {
+		t.Run(usage, func(t *testing.T) {
+			body := `{"size":"2048x2048","data":[{"b64_json":"image-payload"}]` + usage + `}`
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, body)
+			}))
+			t.Cleanup(server.Close)
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-2","n":2,"size":"2048x2048"}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+			common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, server.URL)
+			request, err := helper.GetAndValidOpenAIImageRequest(c, relayconstant.RelayModeImagesGenerations)
+			require.NoError(t, err)
+			billing := &recordedSettlement{}
+			expr := `tier("tokens", p * 5 + c * 30)`
+			info := &relaycommon.RelayInfo{Request: request, OriginModelName: "gpt-image-2", RelayFormat: types.RelayFormatOpenAIImage,
+				RelayMode: relayconstant.RelayModeImagesGenerations, RequestURLPath: c.Request.URL.Path, Billing: billing,
+				TieredBillingSnapshot: &billingexpr.BillingSnapshot{BillingMode: "tiered_expr", ExprString: expr, ExprHash: billingexpr.ExprHashString(expr), EstimatedBillingUnit: billingexpr.BillingUnitToken, QuotaPerUnit: common.QuotaPerUnit, GroupRatio: 1},
+				BillingRequestInput:   &billingexpr.RequestInput{},
+			}
+			info.PriceData.GroupRatioInfo.GroupRatio = 1
+			require.Nil(t, ImageHelper(c, info))
+			assert.JSONEq(t, body, recorder.Body.String(), "do not discard images whose token cost needs reconciliation")
+			assert.Equal(t, "review", recorder.Result().Header.Get("X-New-Api-Billing-State"))
+			assert.True(t, c.GetBool(requestBillingDeliveryUnknownKey))
+			assert.Empty(t, billing.settled, "never substitute synthetic one-token usage for generated image tokens")
+			assert.False(t, billing.refunded)
+			apiErr := types.NewOpenAIError(fmt.Errorf("client interrupted after delivery"), types.ErrorCodeReadResponseBodyFailed, http.StatusBadGateway)
+			apiErr = RefundFailedRequestBilling(c, info, apiErr)
+			assert.True(t, types.IsSkipRetryError(apiErr))
+			assert.False(t, billing.refunded, "later failure cannot release an unmeasured generated-image hold")
+		})
+	}
+}
+
+func TestImageEmptyAndCostOnlyResponsesNeverBecomeFreeRetries(t *testing.T) {
+	for _, body := range []string{
+		`{"data":[]}`,
+		`{"data":[{"revised_prompt":"no payload"}]}`,
+		`{"status":"pending","request_id":"upstream-task"}`,
+		`{"status":"failed","error":{"message":"partial work failed"},"usage":{"cost_in_usd_ticks":400000000}}`,
+		`{"error":{"message":"batch partially failed"},"data":[{"url":"https://example.invalid/generated.png"}]}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+			common.SetContextKey(c, constant.ContextKeyUpstreamRequestAttempted, true)
+			billing := &recordedSettlement{}
+			info := &relaycommon.RelayInfo{Billing: billing, ChannelMeta: &relaycommon.ChannelMeta{}}
+			response := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}
+			usage, apiErr := openai.OpenaiImageHandler(c, info, response)
+			require.NotNil(t, apiErr)
+			assert.Nil(t, usage)
+			assert.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+			apiErr = RefundFailedRequestBilling(c, info, apiErr)
+			assert.True(t, types.IsSkipRetryError(apiErr))
+			assert.True(t, c.GetBool(requestBillingDeliveryUnknownKey))
+			assert.Empty(t, billing.settled)
+			assert.False(t, billing.refunded)
+		})
 	}
 }
 

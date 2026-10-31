@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { AxiosHeaders } from 'axios'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
@@ -484,3 +485,139 @@ test('image model discovery rejects a malformed scope instead of accepting cache
 
   await expect(loadImageTokenModels(7)).rejects.toThrow('Failed to load models')
 })
+
+test.each([
+  [false, false],
+  [false, true],
+  [true, false],
+  [true, true],
+])(
+  'native 2K batch uses one request and keeps returned partial output (async=%s, edit=%s)',
+  async (asyncMode, edit) => {
+    const id = 'd'.repeat(48)
+    const payload = {
+      data: [
+        { url: 'https://example.com/partial.png' },
+        { revised_prompt: 'No image' },
+      ],
+    }
+    postMock.mockResolvedValue(
+      asyncMode
+        ? { status: 202, data: { id, status: 'running' } }
+        : { status: 200, data: payload }
+    )
+    vi.mocked(api.get).mockResolvedValue({
+      data: { id, status: 'succeeded', result: payload },
+    })
+    const result = await requestImageGeneration({
+      fullKey: 'fixture',
+      model: 'grok-imagine-image',
+      prompt: 'A lake',
+      count: 3,
+      size: '16:9',
+      resolution: '2k',
+      quality: '',
+      style: '',
+      images: edit
+        ? [new File(['hello'], 'reference.png', { type: 'image/png' })]
+        : [],
+      asyncMode,
+    })
+    expect(postMock).toHaveBeenCalledTimes(1)
+    expect(postMock.mock.calls[0][0]).toBe(
+      `/v1/images/${asyncMode ? 'tasks/' : ''}${edit ? 'edits' : 'generations'}`
+    )
+    expect(postMock.mock.calls[0][1]).toMatchObject({
+      n: 3,
+      aspect_ratio: '16:9',
+      resolution: '2k',
+    })
+    expect(result).toHaveLength(1)
+    expect(result[0].width).toBeUndefined()
+    expect(result[0].height).toBeUndefined()
+  }
+)
+
+test.each([false, true])(
+  'rejected multi-image requests are not split or retried (async=%s)',
+  async (asyncMode) => {
+    postMock.mockRejectedValue(new Error('Provider rejected this image count'))
+    await expect(
+      requestImageGeneration({
+        fullKey: 'fixture',
+        model: 'gpt-image-2',
+        prompt: 'A lake',
+        count: 4,
+        size: '2048x2048',
+        quality: 'high',
+        style: '',
+        images: [],
+        asyncMode,
+      })
+    ).rejects.toThrow('Provider rejected this image count')
+    expect(postMock).toHaveBeenCalledTimes(1)
+    expect(api.get).not.toHaveBeenCalled()
+  }
+)
+
+test('multipart edits reject excess reference images instead of silently dropping them', async () => {
+  postMock.mockResolvedValue({ data: { data: [] } })
+  await expect(
+    requestImageGeneration({
+      fullKey: 'fixture',
+      model: 'gpt-image-2',
+      prompt: 'A lake',
+      count: 2,
+      size: '2048x2048',
+      quality: 'high',
+      style: '',
+      images: [1, 2, 3, 4, 5].map(
+        (i) => new File(['x'], `${i}.png`, { type: 'image/png' })
+      ),
+    })
+  ).rejects.toThrow('Too many reference images for this model')
+  expect(postMock).not.toHaveBeenCalled()
+})
+
+test.each([false, true])(
+  'keeps delivered images and exposes billing review without retry (async=%s)',
+  async (asyncMode) => {
+    const id = 'e'.repeat(48)
+    const payload = { data: [{ url: 'https://example.com/delivered.png' }] }
+    postMock.mockResolvedValue(
+      asyncMode
+        ? { status: 202, data: { id, status: 'running' } }
+        : {
+            status: 200,
+            headers: new AxiosHeaders({ 'X-New-Api-Billing-State': 'review' }),
+            data: payload,
+          }
+    )
+    vi.mocked(api.get).mockResolvedValue({
+      data: {
+        id,
+        status: 'succeeded',
+        billing_state: 'review',
+        result: payload,
+      },
+    })
+    const images = await requestImageGeneration({
+      fullKey: 'fixture',
+      model: 'gpt-image-2',
+      prompt: 'A lake',
+      count: 2,
+      size: '2048x2048',
+      quality: 'high',
+      style: '',
+      images: [],
+      asyncMode,
+    })
+    expect(images).toEqual([
+      expect.objectContaining({
+        url: 'https://example.com/delivered.png',
+        billingState: 'review',
+      }),
+    ])
+    expect(postMock).toHaveBeenCalledTimes(1)
+  }
+)

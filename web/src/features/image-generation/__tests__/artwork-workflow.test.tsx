@@ -199,7 +199,7 @@ test('reusing with reference images requires confirmation before clearing them',
   vi.unstubAllGlobals()
 })
 
-test('empty upstream response retains prompt and previous artwork with a retry hint', async () => {
+test('empty upstream response retains artwork and warns that a retry can be billable', async () => {
   vi.spyOn(api, 'post').mockImplementation(async (url) => {
     if (url === '/api/token/7/key') {
       return { data: { success: true, data: { key: 'fixture' } } }
@@ -210,7 +210,9 @@ test('empty upstream response retains prompt and previous artwork with a retry h
   const user = userEvent.setup()
   await user.type(screen.getByLabelText('Prompt'), 'New landscape')
   await user.click(screen.getByRole('button', { name: 'Generate' }))
-  await screen.findByText('No images were returned. Try adjusting your prompt.')
+  await screen.findByText(
+    'No usable images were returned. Check request status and billing before submitting again.'
+  )
   expect(screen.getByLabelText('Prompt')).toHaveValue('New landscape')
   expect(screen.getByAltText('Previous landscape')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Generate' })).toBeEnabled()
@@ -226,4 +228,125 @@ test('changing the authenticated account clears the editor and historical previe
   expect(screen.queryByAltText('Previous landscape')).not.toBeInTheDocument()
   act(() => signInHistoryOwner(101))
   expect(await screen.findByAltText('Previous landscape')).toBeInTheDocument()
+})
+
+test('a partial batch preserves its artwork and warns before another billable submission', async () => {
+  tokenModels = ['gpt-image-2']
+  client.setQueryData(['image-generation-bootstrap'], {
+    keys: [
+      {
+        id: 7,
+        name: 'Current key',
+        status: 1,
+        group: 'test',
+        model_limits_enabled: false,
+        model_limits: '',
+      },
+    ],
+    pricingModels: [
+      {
+        model_name: 'gpt-image-2',
+        supported_endpoint_types: ['image-generation'],
+      },
+    ],
+  })
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url === '/api/token/7/key') {
+      return { data: { success: true, data: { key: 'fixture' } } }
+    }
+    return {
+      headers: { 'x-new-api-billing-state': 'review' },
+      data: {
+        data: [
+          { url: 'https://example.com/partial.png' },
+          { revised_prompt: 'No image' },
+        ],
+      },
+    }
+  })
+  renderPage()
+  const user = userEvent.setup()
+  await waitFor(() =>
+    expect(screen.getByLabelText('Model')).toHaveTextContent('gpt-image-2')
+  )
+  await user.click(screen.getByLabelText('Count'))
+  await user.click(screen.getByRole('option', { name: '3' }))
+  await user.type(screen.getByLabelText('Prompt'), 'Partial landscape')
+  await user.click(screen.getByRole('button', { name: 'Generate' }))
+  await screen.findByAltText('Partial landscape')
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'Returned 1 of 3 requested images. Results are kept; generating again creates a new billable request.'
+  )
+  expect(
+    post.mock.calls.filter(([url]) => url === '/v1/images/generations')
+  ).toHaveLength(1)
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'Images are kept, but billing is under review. Check request status and billing before submitting again; this is not a free retry.'
+  )
+  expect(
+    screen.getByText(
+      'Billing was under review at generation. Check the latest request and billing status.'
+    )
+  ).toBeInTheDocument()
+  await waitFor(() =>
+    expect(
+      JSON.parse(localStorage.getItem(HISTORY_OWNER_KEY) || '[]')[0]?.results[0]
+        ?.billingState
+    ).toBe('review')
+  )
+  expect(screen.getByAltText('Previous landscape')).toBeInTheDocument()
+})
+
+test('native resolution survives history storage and reuse without silently making another request', async () => {
+  localStorage.clear()
+  tokenModels = ['grok-imagine-image']
+  client.setQueryData(['image-generation-bootstrap'], {
+    keys: [
+      {
+        id: 7,
+        name: 'Current key',
+        status: 1,
+        group: 'test',
+        model_limits_enabled: false,
+        model_limits: '',
+      },
+    ],
+    pricingModels: [
+      {
+        model_name: 'grok-imagine-image',
+        supported_endpoint_types: ['image-generation'],
+      },
+    ],
+  })
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url === '/api/token/7/key') {
+      return { data: { success: true, data: { key: 'fixture' } } }
+    }
+    return { data: { data: [{ url: 'https://example.com/2k.png' }] } }
+  })
+  renderPage()
+  const user = userEvent.setup()
+  await waitFor(() =>
+    expect(screen.getByLabelText('Model')).toHaveTextContent(
+      'grok-imagine-image'
+    )
+  )
+  await user.click(screen.getByLabelText('Output resolution'))
+  await user.click(screen.getByRole('option', { name: '2K' }))
+  await user.type(screen.getByLabelText('Prompt'), 'Native landscape')
+  await user.click(screen.getByRole('button', { name: 'Generate' }))
+  await screen.findByAltText('Native landscape')
+  await waitFor(() =>
+    expect(
+      JSON.parse(localStorage.getItem(HISTORY_OWNER_KEY) || '[]')[0]?.settings
+        .resolution
+    ).toBe('2k')
+  )
+  await user.click(screen.getByLabelText('Output resolution'))
+  await user.click(screen.getByRole('option', { name: '1K' }))
+  await user.click(screen.getByRole('button', { name: 'Reuse' }))
+  expect(screen.getByLabelText('Output resolution')).toHaveTextContent('2K')
+  expect(
+    post.mock.calls.filter(([url]) => url === '/v1/images/generations')
+  ).toHaveLength(1)
 })

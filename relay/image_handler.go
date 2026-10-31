@@ -54,10 +54,15 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
 
+	if info.ApiType == constant.APITypeXai && strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
+		return types.NewErrorWithStatusCode(fmt.Errorf("xAI image edits require JSON image or images references, not multipart files"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
 	var requestBody io.Reader
 	var jsonData []byte
+	openaiRequestShape := info.ApiType == constant.APITypeOpenAI || info.ApiType == constant.APITypeXai
 
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+		openaiRequestShape = true
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -105,6 +110,10 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed)
 		}
 		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
+		switch convertedRequest.(type) {
+		case dto.ImageRequest, *dto.ImageRequest:
+			openaiRequestShape = true
+		}
 
 		switch convertedRequest.(type) {
 		case *bytes.Buffer:
@@ -128,19 +137,30 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	if jsonData != nil {
 		// This is a different trust boundary from ingress: channel overrides
 		// and pass-through bodies can change the quantity actually submitted.
-		var outbound struct {
-			N *uint `json:"n"`
-		}
+		var outbound dto.ImageRequest
 		if err := common.Unmarshal(jsonData, &outbound); err != nil {
 			return types.NewErrorWithStatusCode(fmt.Errorf("invalid image billing parameters: %w", err), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
-		quantityRequest := dto.ImageRequest{N: outbound.N}
-		if quantityRequest.N == nil {
-			quantityRequest.N = common.GetPointer(uint(imageCount))
+		if raw, exists := outbound.Extra["parameters"]; exists {
+			outbound.BillingParameters = &dto.ImageBillingParameters{}
+			if err := common.Unmarshal(raw, outbound.BillingParameters); err != nil {
+				return types.NewErrorWithStatusCode(fmt.Errorf("invalid image billing parameters: %w", err), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
 		}
-		imageCount, err = quantityRequest.ImageCount(false)
+		if !openaiRequestShape && outbound.N == nil {
+			// Native providers can encode quantity as sampleCount/batch_size.
+			// Do not replace their existing validated estimate with a missing
+			// OpenAI n field as part of the GPT/xAI compatibility change.
+			outbound.N = common.GetPointer(uint(imageCount))
+		}
+		imageCount, err = outbound.ImageCount(false)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		if openaiRequestShape {
+			request = &outbound
+		} else {
+			request.N = outbound.N
 		}
 		logger.LogDebug(c, "image request body: %s", jsonData)
 		body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
@@ -149,6 +169,22 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		}
 		defer closer.Close()
 		requestBody = body
+	}
+	if err := helper.ValidateImageModelRequest(request, info.ApiType == constant.APITypeXai); err != nil {
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	if _, err := helper.ImageRequestReferenceCount(c, request); err != nil {
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	if limit, async := relaycommon.AsyncImageCountLimit(c.Request.Context()); async && imageCount > limit {
+		return types.NewErrorWithStatusCode(fmt.Errorf("outbound image count exceeds the asynchronous result reservation"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	if info.TieredBillingSnapshot != nil && info.BillingRequestInput != nil {
+		input, err := helper.ResolveImageBillingInputForRequest(c, request, *info.BillingRequestInput)
+		if err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		info.BillingRequestInput = &input
 	}
 	if billingErr := service.PrepareImageBillingForRequest(c, info, imageCount); billingErr != nil {
 		return billingErr
@@ -178,6 +214,14 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	}
 
 	usage, newAPIError := adaptor.DoResponse(c, httpResp, info)
+	imageUsage, _ := usage.(*dto.Usage)
+	if newAPIError == nil && service.ImageUsageRequiresReview(info, imageUsage) {
+		// Images have already been delivered. Keep their existing hold under
+		// the durable review owner, without appending a second error body or
+		// inviting another paid generation with an automatic retry.
+		preserveUnknownRequestBilling(c, info)
+		return nil
+	}
 	if newAPIError != nil {
 		// reset status code 重置状态码
 		service.ResetStatusCode(newAPIError, statusCodeMappingStr)

@@ -218,6 +218,11 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			formData := url.Values(form.Value)
 			c.Request.MultipartForm = form
 			c.Request.PostForm = formData
+			for _, key := range []string{"model", "n", "size", "quality", "resolution", "aspect_ratio", "response_format", "input_fidelity", "parameters"} {
+				if len(formData[key]) > 1 {
+					return nil, fmt.Errorf("duplicate image parameter: %s", key)
+				}
+			}
 			imageRequest.Prompt = formData.Get("prompt")
 			imageRequest.Model = formData.Get("model")
 			if nValue := strings.TrimSpace(formData.Get("n")); nValue != "" {
@@ -229,6 +234,16 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			}
 			imageRequest.Quality = formData.Get("quality")
 			imageRequest.Size = formData.Get("size")
+			imageRequest.ResponseFormat = formData.Get("response_format")
+			if value := formData.Get("input_fidelity"); value != "" {
+				imageRequest.InputFidelity, _ = common.Marshal(value)
+			}
+			if formData.Has("resolution") {
+				imageRequest.Resolution = common.GetPointer(formData.Get("resolution"))
+			}
+			if formData.Has("aspect_ratio") {
+				imageRequest.AspectRatio = common.GetPointer(formData.Get("aspect_ratio"))
+			}
 			if parameters := formData.Get("parameters"); parameters != "" {
 				imageRequest.Extra = map[string]json.RawMessage{"parameters": json.RawMessage(parameters)}
 			}
@@ -245,8 +260,11 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 
 			if imageRequest.Model == "gpt-image-1" {
 				if imageRequest.Quality == "" {
-					imageRequest.Quality = "standard"
+					imageRequest.Quality = "auto"
 				}
+			}
+			if err := ValidateImageModelRequest(imageRequest, false); err != nil {
+				return nil, err
 			}
 			if imageRequest.N == nil || *imageRequest.N == 0 {
 				imageRequest.N = common.GetPointer(uint(1))
@@ -291,6 +309,9 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 		//	return nil, errors.New("prompt is required")
 		//}
 
+		if err := ValidateImageModelRequest(imageRequest, false); err != nil {
+			return nil, err
+		}
 		if imageRequest.N == nil || *imageRequest.N == 0 {
 			imageRequest.N = common.GetPointer(uint(1))
 		}
@@ -306,7 +327,10 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 		}
 		imageRequest.BillingParameters = parameters
 	}
-	if _, err := imageRequest.ImageCount(false); err != nil {
+	if err := ValidateImageModelRequest(imageRequest, false); err != nil {
+		return nil, err
+	}
+	if _, err := ImageRequestReferenceCount(c, imageRequest); err != nil {
 		return nil, err
 	}
 	return imageRequest, nil

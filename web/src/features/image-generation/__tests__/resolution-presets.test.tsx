@@ -155,3 +155,25 @@ test('actual size stays unverified until image decode and reports downgraded out
   fireEvent.error(screen.getByAltText('image'))
   expect(screen.getByText(/Not yet verified/)).toBeInTheDocument()
 })
+
+test('a custom high-resolution alias shows a mapping warning without claiming official model support', () => {
+  render(
+    <ImageResolutionPresets
+      model='gpt-image-2-2k'
+      size='2048x2048'
+      sizes={getModelCapability('gpt-image-2-2k').sizes}
+      disabled={false}
+      onChange={vi.fn()}
+    />
+  )
+  expect(
+    screen.getByText(
+      'This model name is a platform alias. Its mapping, native output size and pricing must be confirmed by the administrator.'
+    )
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText(
+      'GPT Image 2 sizes above 2560×1440 total pixels are experimental, including 2048×2048.'
+    )
+  ).toBeInTheDocument()
+})

@@ -183,6 +183,44 @@ func TestImageHelperJSONModelMapping(t *testing.T) {
 	}
 }
 
+func TestImageFinalOverridesAndPassthroughCannotBypassModelContract(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, mapped string
+		override           map[string]any
+		passthrough        bool
+	}{
+		{name: "GPT count override", body: `{"model":"gpt-image-2","n":1}`, override: map[string]any{"n": 11}},
+		{name: "GPT invalid 4K override", body: `{"model":"gpt-image-2","size":"2048x2048"}`, override: map[string]any{"size": "4096x4096"}},
+		{name: "Grok impossible resolution override", body: `{"model":"grok-imagine-image","resolution":"1k"}`, override: map[string]any{"resolution": "4k"}},
+		{name: "Grok incompatible quality override", body: `{"model":"grok-imagine-image"}`, override: map[string]any{"quality": "high"}},
+		{name: "provider count override remains bounded", body: `{"model":"gpt-image-2"}`, override: map[string]any{"parameters": map[string]any{"n": 129}}},
+		{name: "passthrough alias maps to invalid GPT size", body: `{"model":"private-alias","n":2,"size":"4096x4096"}`, mapped: "gpt-image-2", passthrough: true},
+		{name: "passthrough alias maps to invalid Grok count", body: `{"model":"private-alias","n":11,"resolution":"2k"}`, mapped: "grok-imagine-image", passthrough: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, info, captured := newImageRelayFixture(t, "/v1/images/generations", "application/json", []byte(tc.body), tc.mapped)
+			if tc.mapped != "" {
+				mapping, err := common.Marshal(map[string]string{"private-alias": tc.mapped})
+				require.NoError(t, err)
+				c.Set("model_mapping", string(mapping))
+			}
+			common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{PassThroughBodyEnabled: tc.passthrough})
+			if tc.override != nil {
+				operations := []any{}
+				for name, value := range tc.override {
+					operations = append(operations, map[string]any{"path": name, "mode": "set", "value": value})
+				}
+				common.SetContextKey(c, constant.ContextKeyChannelParamOverride, map[string]any{"operations": operations})
+			}
+			apiErr := ImageHelper(c, info)
+			require.NotNil(t, apiErr)
+			assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+			assert.True(t, types.IsSkipRetryError(apiErr))
+			assert.Empty(t, captured, "reject before upstream send or any new reservation")
+		})
+	}
+}
+
 type imageMultipartPart struct {
 	header textproto.MIMEHeader
 	body   []byte

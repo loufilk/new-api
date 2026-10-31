@@ -188,3 +188,24 @@ test('a failed or undecodable thumbnail stays unverified', () => {
     screen.getByText(/Actual image size.*Not yet verified/)
   ).toBeInTheDocument()
 })
+
+test('Grok resolution is shown as a requested setting rather than verified output dimensions', async () => {
+  const entry = makeEntry('grok')
+  entry.model = 'grok-imagine-image'
+  entry.results[0].billingState = 'review'
+  entry.settings = { ...entry.settings, size: '16:9', resolution: '2k' }
+  renderPanel({ entries: [entry], totalCount: 1 })
+  const user = userEvent.setup()
+  await user.click(
+    screen.getByRole('button', { name: 'Preview image for prompt grok' })
+  )
+  const dialog = within(screen.getByRole('dialog'))
+  expect(dialog.getByText('Output resolution')).toBeInTheDocument()
+  expect(dialog.getByText('2K')).toBeInTheDocument()
+  expect(
+    dialog.getByText(
+      'Billing was under review at generation. Check the latest request and billing status.'
+    )
+  ).toBeInTheDocument()
+  expect(dialog.getByText(/Not yet verified/)).toBeInTheDocument()
+})

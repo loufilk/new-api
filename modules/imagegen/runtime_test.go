@@ -120,7 +120,7 @@ func TestAsyncImageDrainRejectsAdmissionWithoutLeavingActiveSlot(t *testing.T) {
 	assert.Contains(t, response.Body.String(), "async_image_draining")
 	assert.Empty(t, response.Header().Get("Location"))
 	assert.False(t, server.Exists("image-async:{tasks}:active:1"))
-	_, err := handler.store.Create(context.Background(), 1)
+	_, err := handler.store.Create(context.Background(), 1, 1)
 	require.NoError(t, err, "the user must be able to retry on a healthy instance")
 }
 

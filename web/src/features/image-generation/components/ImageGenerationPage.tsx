@@ -55,6 +55,8 @@ function ImageGenerationWorkspace() {
 
   const [prompt, setPrompt] = useState('')
   const [size, setSize] = useState('')
+  const [resolution, setResolution] = useState('1k')
+  const [completionNotice, setCompletionNotice] = useState<string | null>(null)
   const [quality, setQuality] = useState('')
   const [style, setStyle] = useState('')
   const [count, setCount] = useState(1)
@@ -85,6 +87,9 @@ function ImageGenerationWorkspace() {
     if (resolved.quality !== quality) setQuality(resolved.quality)
     if (resolved.style !== style) setStyle(resolved.style)
     if (resolved.count !== count) setCount(resolved.count)
+    if (!getModelCapability(data.model).resolutions?.includes(resolution)) {
+      setResolution('1k')
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.model])
 
@@ -105,16 +110,21 @@ function ImageGenerationWorkspace() {
     setQuality(resolved.quality)
     setStyle(resolved.style)
     setCount(resolved.count)
+    if (!getModelCapability(nextModel).resolutions?.includes(resolution)) {
+      setResolution('1k')
+    }
   }
 
   const handleGenerate = async () => {
     if (generation.isGenerating) return
+    setCompletionNotice(null)
     const images = await generation.generate({
       apiKeyId: data.apiKeyId,
       model: data.model,
       prompt,
       count,
       size,
+      resolution,
       quality,
       style,
       images: references.items.map((item) => item.file),
@@ -122,11 +132,30 @@ function ImageGenerationWorkspace() {
     })
     if (images?.length === 0) {
       generation.setError(
-        t('No images were returned. Try adjusting your prompt.')
+        t(
+          'No usable images were returned. Check request status and billing before submitting again.'
+        )
       )
       return
     }
     if (images && images.length > 0) {
+      const notices: string[] = []
+      if (images.length < count) {
+        notices.push(
+          t(
+            'Returned {{returned}} of {{requested}} requested images. Results are kept; generating again creates a new billable request.',
+            { returned: images.length, requested: count }
+          )
+        )
+      }
+      if (images.some((image) => image.billingState === 'review')) {
+        notices.push(
+          t(
+            'Images are kept, but billing is under review. Check request status and billing before submitting again; this is not a free retry.'
+          )
+        )
+      }
+      setCompletionNotice(notices.length ? notices.join(' ') : null)
       history.setQuery('')
       history.setOrientation('all')
       setCompleted((value) => value + 1)
@@ -134,6 +163,7 @@ function ImageGenerationWorkspace() {
         prompt: prompt.trim(),
         model: data.model,
         size,
+        resolution: capability.resolutions ? resolution : undefined,
         quality,
         style,
         count,
@@ -154,6 +184,13 @@ function ImageGenerationWorkspace() {
     setQuality(resolved.quality)
     setStyle(resolved.style)
     setCount(resolved.count)
+    const savedResolution = entry.settings.resolution || '1k'
+    setResolution(
+      getModelCapability(nextModel).resolutions?.includes(savedResolution)
+        ? savedResolution
+        : '1k'
+    )
+    setCompletionNotice(null)
     references.clear()
     generation.setError(null)
     setReuseEntry(null)
@@ -303,6 +340,7 @@ function ImageGenerationWorkspace() {
             apiKeyId: data.apiKeyId,
             model: data.model,
             size,
+            resolution,
             quality,
             style,
             count,
@@ -312,6 +350,7 @@ function ImageGenerationWorkspace() {
             if (patch.apiKeyId !== undefined) data.setApiKeyId(patch.apiKeyId)
             if (patch.model !== undefined) handleModelChange(patch.model)
             if (patch.size !== undefined) setSize(patch.size)
+            if (patch.resolution !== undefined) setResolution(patch.resolution)
             if (patch.quality !== undefined) setQuality(patch.quality)
             if (patch.style !== undefined) setStyle(patch.style)
             if (patch.count !== undefined) setCount(patch.count)
@@ -319,6 +358,7 @@ function ImageGenerationWorkspace() {
           keys={data.keys}
           models={data.availableModels}
           sizes={capability.sizes}
+          resolutions={capability.resolutions}
           qualities={capability.qualities}
           styles={capability.styles}
           maxCount={capability.maxN}
@@ -330,10 +370,18 @@ function ImageGenerationWorkspace() {
           onRemoveReference={references.removeItem}
           isGenerating={generation.isGenerating}
           formError={generation.error}
+          formNotice={completionNotice}
           isInitializing={data.isLoadingTokenModels}
           onGenerate={() => void handleGenerate()}
           onCancel={generation.cancel}
         />
+        {capability.resolutions?.length ? (
+          <p className='text-muted-foreground text-sm'>
+            {t(
+              'This page limits batches to 4 images. Native resolution is not upscaling; available options also depend on configured upstream pricing.'
+            )}
+          </p>
+        ) : null}
         {data.model.toLowerCase() === 'grok-imagine-image-2.0-console' ? (
           <p className='text-muted-foreground text-sm'>
             {t(

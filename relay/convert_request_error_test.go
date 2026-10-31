@@ -50,7 +50,7 @@ func TestImageRequestReservesFinalQuantityBeforeUpstream(t *testing.T) {
 		name, body                                    string
 		tiered, passThrough, insufficient, retryReset bool
 		override                                      any
-		count, status                                 int
+		count, status, asyncLimit                     int
 	}{
 		{name: "top-level count", body: `{"model":"gpt-image-2","n":2,"parameters":{}}`, count: 2},
 		{name: "legacy channel quantity override", body: `{"model":"gpt-image-2","n":1}`, override: 4, count: 4},
@@ -58,6 +58,8 @@ func TestImageRequestReservesFinalQuantityBeforeUpstream(t *testing.T) {
 		{name: "pass-through quantity", body: `{"model":"gpt-image-2","n":2,"parameters":{}}`, count: 2, passThrough: true},
 		{name: "oversized override rejected", body: `{"model":"gpt-image-2","n":1}`, override: 129, status: http.StatusBadRequest},
 		{name: "insufficient reservation blocks upstream", body: `{"model":"gpt-image-2","n":1}`, override: 4, count: 4, insufficient: true, status: http.StatusForbidden},
+		{name: "async capacity rejects increased override before billing", body: `{"model":"gpt-image-2","n":1}`, override: 4, asyncLimit: 1, status: http.StatusBadRequest},
+		{name: "async capacity allows matching override", body: `{"model":"gpt-image-2","n":1}`, override: 4, asyncLimit: 4, count: 4},
 		{name: "retry drops the previous attempt's quantity", body: `{"model":"gpt-image-2","n":1}`, count: 1, retryReset: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -75,6 +77,9 @@ func TestImageRequestReservesFinalQuantityBeforeUpstream(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(tc.body))
 			c.Request.Header.Set("Content-Type", "application/json")
+			if tc.asyncLimit != 0 {
+				c.Request = c.Request.WithContext(relaycommon.WithAsyncImageCountLimit(c.Request.Context(), tc.asyncLimit))
+			}
 			common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
 			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, upstream.URL)
 			common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{PassThroughBodyEnabled: tc.passThrough})
@@ -117,9 +122,93 @@ func TestImageRequestReservesFinalQuantityBeforeUpstream(t *testing.T) {
 			assert.GreaterOrEqual(t, reservation.held, info.PriceData.QuotaToPreConsume)
 			assert.Nil(t, info.BillingImageCount)
 			if tc.tiered {
-				assert.Equal(t, tc.body, string(info.BillingRequestInput.Body))
-				assert.Equal(t, 1, *info.BillingRequestInput.ImageCount)
+				assert.Equal(t, int64(tc.count), gjson.GetBytes(info.BillingRequestInput.Body, "n").Int())
+				assert.Equal(t, tc.count, *info.BillingRequestInput.ImageCount)
 			}
+		})
+	}
+}
+
+func TestImageFinalGeometryControlsReservationAndSettlement(t *testing.T) {
+	service.InitHttpClient()
+	for _, tc := range []struct {
+		name, model, mapped, body, expression string
+		channel                               int
+		overrides                             map[string]any
+		wantQuota                             int
+	}{
+		{
+			name: "GPT 4K and high quality", model: "gpt-image-2", channel: constant.ChannelTypeOpenAI,
+			body:       `{"model":"gpt-image-2","n":1,"size":"1024x1024","quality":"low"}`,
+			expression: `(param("size") == "3840x2160" && param("quality") == "high" ? tier("high", fixed(0.08)) : tier("base", fixed(0.02))) * image_count`,
+			overrides:  map[string]any{"size": "3840x2160", "quality": "high", "n": 2}, wantQuota: 80000,
+		},
+		{
+			name: "Grok resolution and quality", model: "grok-imagine-image-2.0", channel: constant.ChannelTypeXai,
+			body:       `{"model":"grok-imagine-image-2.0","n":1,"resolution":"1k","quality":"low"}`,
+			expression: `(param("resolution") == "2k" && param("quality") == "medium" ? tier("high", fixed(0.08)) : tier("base", fixed(0.04))) * image_count`,
+			overrides:  map[string]any{"resolution": "2k", "quality": "medium", "n": 2}, wantQuota: 80000,
+		},
+		{
+			name: "alias billing identity survives route mapping", model: "gpt-image-2-4k", mapped: "gpt-image-2", channel: constant.ChannelTypeOpenAI,
+			body:       `{"model":"gpt-image-2-4k","n":1,"size":"2880x2880","quality":"high"}`,
+			expression: `(param("model") == "gpt-image-2-4k" ? tier("alias", fixed(0.08)) : tier("base", fixed(0.01))) * image_count`,
+			overrides:  map[string]any{"size": "3840x2160", "n": 2}, wantQuota: 80000,
+		},
+		{
+			name: "provider parameters in final snapshot", model: "gpt-image-2", channel: constant.ChannelTypeOpenAI,
+			body:       `{"model":"gpt-image-2","n":1,"parameters":{"prompt_extend":true}}`,
+			expression: `(param("parameters.prompt_extend") == false ? tier("override", fixed(0.08)) : tier("base", fixed(0.02))) * image_count`,
+			overrides:  map[string]any{"parameters": map[string]any{"n": 2, "prompt_extend": false}, "n": 2}, wantQuota: 80000,
+		},
+		{
+			name: "flat expression without quantity still refreshes geometry", model: "grok-imagine-image-2.0", channel: constant.ChannelTypeXai,
+			body:       `{"model":"grok-imagine-image-2.0","n":1,"resolution":"1k"}`,
+			expression: `param("resolution") == "2k" ? tier("high", fixed(0.08)) : tier("base", fixed(0.04))`,
+			overrides:  map[string]any{"resolution": "2k", "n": 2}, wantQuota: 40000,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := tc.model
+			if tc.mapped != "" {
+				target = tc.mapped
+			}
+			c, info, captured := newImageRelayFixture(t, "/v1/images/generations", "application/json", []byte(tc.body), target)
+			if tc.mapped != "" {
+				mapping, err := common.Marshal(map[string]string{tc.model: tc.mapped})
+				require.NoError(t, err)
+				c.Set("model_mapping", string(mapping))
+			}
+			common.SetContextKey(c, constant.ContextKeyChannelType, tc.channel)
+			operations := []any{}
+			for key, value := range tc.overrides {
+				operations = append(operations, map[string]any{"path": key, "mode": "set", "value": value})
+			}
+			common.SetContextKey(c, constant.ContextKeyChannelParamOverride, map[string]any{"operations": operations})
+			reservation := &imageReservation{limit: 500000}
+			info.Billing = reservation
+			info.PriceData.GroupRatioInfo.GroupRatio = 1
+			info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{BillingMode: "tiered_expr", ExprString: tc.expression, ExprHash: billingexpr.ExprHashString(tc.expression), GroupRatio: 1, QuotaPerUnit: common.QuotaPerUnit}
+			if strings.Contains(tc.expression, "image_count") {
+				info.TieredBillingSnapshot.EstimatedImageCount = common.GetPointer(1)
+			}
+			info.BillingRequestInput = &billingexpr.RequestInput{Body: []byte(tc.body), ImageCount: common.GetPointer(1)}
+			apiErr := ImageHelper(c, info)
+			require.NotNil(t, apiErr)
+			require.Equal(t, http.StatusUnprocessableEntity, apiErr.StatusCode, "%v", apiErr)
+			require.Len(t, captured, 1)
+			outbound := <-captured
+			for key, value := range tc.overrides {
+				assert.Equal(t, gjson.GetBytes(outbound.body, key).Value(), gjson.GetBytes(info.BillingRequestInput.Body, key).Value(), "%s=%v", key, value)
+			}
+			assert.Equal(t, tc.model, gjson.GetBytes(info.BillingRequestInput.Body, "model").String())
+			assert.Equal(t, target, gjson.GetBytes(info.BillingRequestInput.Body, "upstream_model").String())
+			assert.Equal(t, tc.wantQuota, reservation.held)
+			info.UpdateImageCount(1)
+			ok, settled, _ := service.TryTieredSettle(info, billingexpr.TokenParams{})
+			require.True(t, ok)
+			assert.Equal(t, 40000, settled, "actual count changes quantity, not the final price dimensions")
+			assert.Equal(t, uint(1), *info.Request.(*dto.ImageRequest).N, "do not mutate the original request on retry")
 		})
 	}
 }

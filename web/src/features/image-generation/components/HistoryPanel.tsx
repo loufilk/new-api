@@ -249,6 +249,9 @@ export function HistoryPanel(props: HistoryPanelProps) {
                     >
                       {entry.model} · {t('Requested image size')}:{' '}
                       {entry.settings.size || t('Default size')}
+                      {entry.settings.resolution
+                        ? ` · ${entry.settings.resolution.toUpperCase()}`
+                        : ''}
                     </p>
                     <p className='text-muted-foreground text-xs'>
                       {t('Actual image size')}:{' '}
@@ -256,6 +259,13 @@ export function HistoryPanel(props: HistoryPanelProps) {
                         ? `${result.width}×${result.height}`
                         : t('Not yet verified')}
                     </p>
+                    {result.billingState === 'review' ? (
+                      <p className='text-sm'>
+                        {t(
+                          'Billing was under review at generation. Check the latest request and billing status.'
+                        )}
+                      </p>
+                    ) : null}
                     <div className='flex flex-wrap gap-1'>
                       <Button
                         type='button'
@@ -351,6 +361,13 @@ export function HistoryPanel(props: HistoryPanelProps) {
                 )
               }
             />
+            {previewResult.billingState === 'review' ? (
+              <p className='text-sm'>
+                {t(
+                  'Billing was under review at generation. Check the latest request and billing status.'
+                )}
+              </p>
+            ) : null}
             <p className='text-sm break-words whitespace-pre-wrap'>
               {previewEntry.prompt}
             </p>
@@ -359,6 +376,12 @@ export function HistoryPanel(props: HistoryPanelProps) {
               <dd>{previewEntry.model}</dd>
               <dt>{t('Requested image size')}</dt>
               <dd>{previewEntry.settings.size || t('Default size')}</dd>
+              {previewEntry.settings.resolution ? (
+                <>
+                  <dt>{t('Output resolution')}</dt>
+                  <dd>{previewEntry.settings.resolution.toUpperCase()}</dd>
+                </>
+              ) : null}
               <dt>{t('Quality')}</dt>
               <dd>{previewEntry.settings.quality || '—'}</dd>
               <dt>{t('Style')}</dt>

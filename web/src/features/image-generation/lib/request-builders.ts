@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { t } from 'i18next'
+
 import type { GeneratedImage } from '../types'
 import {
   isBlobSchemeUrl,
@@ -71,6 +73,7 @@ export function buildGenerationsBody(params: {
   prompt: string
   count: number
   size: string
+  resolution?: string
   quality: string
   style: string
 }): GenerationsRequestBody {
@@ -88,7 +91,11 @@ export function buildGenerationsBody(params: {
   if (capability.requestFormat === 'grok') {
     const settings = resolveSettingsForModel(params.model, params)
     body.aspect_ratio = settings.size
-    body.resolution = '1k'
+    const resolution = params.resolution || '1k'
+    if (!capability.resolutions?.includes(resolution)) {
+      throw new Error(t('Unsupported image resolution for this model'))
+    }
+    body.resolution = resolution
     if (settings.quality) body.quality = settings.quality
     return body
   }

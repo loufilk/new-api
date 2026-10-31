@@ -126,6 +126,7 @@ export async function requestImageGeneration(params: {
   prompt: string
   count: number
   size: string
+  resolution?: string
   quality: string
   style: string
   images: File[]
@@ -140,12 +141,7 @@ export async function requestImageGeneration(params: {
   if (capability.requiresReferenceImage && !hasReference) {
     throw new Error(t('Add reference images'))
   }
-  let body:
-    | (ReturnType<typeof buildGenerationsBody> & { images?: { url: string }[] })
-    | FormData
-  if (!hasReference) {
-    body = buildGenerationsBody(params)
-  } else if (capability.requestFormat === 'grok') {
+  if (hasReference) {
     const validation = validateReferenceFiles({
       files: params.images,
       existingCount: 0,
@@ -153,6 +149,13 @@ export async function requestImageGeneration(params: {
       model: params.model,
     })
     if (validation) throw new Error(t(validation.messageKey))
+  }
+  let body:
+    | (ReturnType<typeof buildGenerationsBody> & { images?: { url: string }[] })
+    | FormData
+  if (!hasReference) {
+    body = buildGenerationsBody(params)
+  } else if (capability.requestFormat === 'grok') {
     const urls = await Promise.all(
       params.images.map((file) =>
         readReferenceImageDataUrl(file, params.signal)
@@ -181,6 +184,13 @@ export async function requestImageGeneration(params: {
     }
   )
   let result = res.data
+  let billingState: 'review' | undefined
+  const billingHeader =
+    typeof res.headers?.get === 'function'
+      ? res.headers.get('X-New-Api-Billing-State')
+      : (res.headers?.['x-new-api-billing-state'] ??
+        res.headers?.['X-New-Api-Billing-State'])
+  if (billingHeader === 'review') billingState = 'review'
   if (params.asyncMode) {
     const id = res.data?.id
     if (
@@ -204,6 +214,7 @@ export async function requestImageGeneration(params: {
       const task = response.data
       if (task?.status === 'succeeded') {
         result = task.result
+        billingState = task.billing_state === 'review' ? 'review' : undefined
         break
       }
       if (task?.status === 'failed') {
@@ -217,12 +228,16 @@ export async function requestImageGeneration(params: {
       await waitForImageTask(params.signal)
     }
   }
-  return normalizeImageResponse({
+  const images = normalizeImageResponse({
     data: result,
     prompt: params.prompt,
     model: params.model,
     size: params.size,
   })
+  if (billingState === 'review') {
+    return images.map((image) => ({ ...image, billingState }))
+  }
+  return images
 }
 
 function waitForImageTask(signal?: AbortSignal): Promise<void> {

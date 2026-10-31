@@ -35,21 +35,56 @@ func OpenaiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 	var usageResp dto.SimpleResponse
 	err = common.Unmarshal(responseBody, &usageResp)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		common.SetContextKey(c, constant.ContextKeyUpstreamResponseDecodeFailed, true)
+		common.SetContextKey(c, constant.ContextKeyUpstreamResponseUsageIncomplete, true)
+		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
 	}
-
-	if oaiError := usageResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+	if apiErr := validateImageResponseEvidence(c, responseBody, &usageResp, resp.StatusCode); apiErr != nil {
+		return nil, apiErr
 	}
 
 	info.UpdateImageCount(openaiImageResponseCount(responseBody))
 
-	// 写入新的 response body
-	service.IOCopyBytesGracefully(c, resp, responseBody)
-
 	normalizeOpenAIUsage(&usageResp.Usage)
 	applyUsagePostProcessing(info, &usageResp.Usage, responseBody)
+	if service.ImageUsageRequiresReview(info, &usageResp.Usage) {
+		c.Header("X-New-Api-Billing-State", "review")
+	}
+	// Preserve the delivered images even when their token price is unmeasured.
+	service.IOCopyBytesGracefully(c, resp, responseBody)
+
 	return &usageResp.Usage, nil
+}
+
+// A 200 status with no delivered image is not a successful billable batch.
+// Keep the reservation for review rather than charging the requested n or
+// refunding/retrying work whose final disposition is unknown. Only an explicit
+// provider rejection with no image/usage evidence proves unused delivery.
+func validateImageResponseEvidence(c *gin.Context, body []byte, response *dto.SimpleResponse, status int) *types.NewAPIError {
+	count := openaiImageResponseCount(body)
+	normalizeOpenAIUsage(&response.Usage)
+	if providerErr := response.GetOpenAIError(); providerErr != nil && (providerErr.Type != "" || providerErr.Message != "" || providerErr.Code != nil) {
+		// xAI can report cost without OpenAI token aggregates. This is
+		// evidence of charged work, never an instruction to trust that cost
+		// as the gateway's bill or to refund it as an unused rejection.
+		costEvidence := gjson.GetBytes(body, "usage.cost_in_usd_ticks").Float() > 0
+		if count == 0 && !dto.HasOpenAIUsageTokens(&response.Usage) && !costEvidence {
+			common.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, true)
+		} else {
+			common.SetContextKey(c, constant.ContextKeyUpstreamResponseDecodeFailed, true)
+			common.SetContextKey(c, constant.ContextKeyUpstreamResponseUsageIncomplete, true)
+		}
+		if status >= http.StatusOK && status < http.StatusMultipleChoices {
+			status = http.StatusBadGateway
+		}
+		return types.WithOpenAIError(*providerErr, status, types.ErrOptionWithSkipRetry())
+	}
+	if count == 0 || count > int64(dto.MaxImageN) {
+		common.SetContextKey(c, constant.ContextKeyUpstreamResponseDecodeFailed, true)
+		common.SetContextKey(c, constant.ContextKeyUpstreamResponseUsageIncomplete, true)
+		return types.NewOpenAIError(fmt.Errorf("upstream image response has no verifiable image count; check usage before submitting again"), types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+	}
+	return nil
 }
 
 // openaiImageResponseCount counts billable images in an OpenAI-format image
@@ -88,7 +123,7 @@ func openaiImageResponseCount(responseBody []byte) int64 {
 // non-empty string value for field.
 func openaiImageDataHasField(item gjson.Result, field string) bool {
 	value := item.Get(field)
-	return value.Type == gjson.String && value.Raw != `""`
+	return value.Type == gjson.String && strings.TrimSpace(value.String()) != ""
 }
 
 // normalizeOpenAIUsage maps the OpenAI Images usage shape (input_tokens /
@@ -301,15 +336,21 @@ func openaiImageJSONAsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo,
 	// re-marshaled for each SSE event.
 	var usageResp dto.SimpleResponse
 	if err := common.Unmarshal(responseBody, &usageResp); err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		common.SetContextKey(c, constant.ContextKeyUpstreamResponseDecodeFailed, true)
+		common.SetContextKey(c, constant.ContextKeyUpstreamResponseUsageIncomplete, true)
+		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
 	}
-	if oaiError := usageResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+	if apiErr := validateImageResponseEvidence(c, responseBody, &usageResp, resp.StatusCode); apiErr != nil {
+		return nil, apiErr
 	}
 	normalizeOpenAIUsage(&usageResp.Usage)
 	applyUsagePostProcessing(info, &usageResp.Usage, responseBody)
 
 	info.UpdateImageCount(openaiImageResponseCount(responseBody))
+
+	if service.ImageUsageRequiresReview(info, &usageResp.Usage) {
+		c.Header("X-New-Api-Billing-State", "review")
+	}
 
 	helper.SetEventStreamHeaders(c)
 	c.Status(http.StatusOK)

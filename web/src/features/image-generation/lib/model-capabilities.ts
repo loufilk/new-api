@@ -61,6 +61,7 @@ export function getModelCapability(model: string): ImageModelCapability {
   ) {
     return {
       sizes: [...GROK_IMAGE_RATIOS],
+      resolutions: ['1k'],
       qualities: ['low', 'medium'],
       styles: [],
       maxN: 4,
@@ -76,8 +77,11 @@ export function getModelCapability(model: string): ImageModelCapability {
     name === 'grok-imagine-image-edit'
   ) {
     const isEdit = name === 'grok-imagine-image-edit'
+    // Only the official legacy base model has a verified, unchanged 1K/2K price.
+    const resolutions = name === 'grok-imagine-image' ? ['1k', '2k'] : ['1k']
     return {
       sizes: [...GROK_IMAGE_RATIOS],
+      resolutions,
       qualities: [],
       styles: [],
       maxN: isEdit ? 1 : 4,
