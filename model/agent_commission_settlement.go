@@ -344,6 +344,9 @@ func ExecuteAgentCommissionConversion(authorization AgentTransactionAuthorizatio
 		if err := ConsumeAgentTransactionAuthorizationTx(tx, authorization, agentCommissionQuoteContext(&quote)); err != nil {
 			return err
 		}
+		if err := ConsumeAgentGovernanceRiskTx(tx, actor.UserID, AgentGovernanceRiskOperationID("commission.convert."+quote.Target, input.RequestID), "transfer", int64(quote.Quota)); err != nil {
+			return err
+		}
 		if err := saveAgentCommissionAccount(tx, before, account, "conversion", "conversion", strconv.FormatInt(result.ID, 10), input.RequestID, actor.UserID); err != nil {
 			return err
 		}

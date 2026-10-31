@@ -479,7 +479,7 @@ func newResponsesWSBillingTest(t *testing.T, expression string, handle func(*web
 	// which the extension registry normally contributes to AutoMigrate. Wallet
 	// pre-consume validates the split account columns directly, so fund paid
 	// alongside the legacy quota mirror.
-	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.Log{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}))
+	require.NoError(t, model.DB.AutoMigrate(append([]any{&model.Channel{}, &model.Ability{}, &model.Log{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}}, model.BonusSourceModels()...)...))
 	require.NoError(t, model.DB.Model(user).Updates(map[string]any{"quota": 100000, "quota_paid": 100000, "setting": `{"billing_preference":"wallet_only"}`}).Error)
 	require.NoError(t, model.DB.Model(token).Update("remain_quota", 3000).Error)
 

@@ -57,7 +57,13 @@ func TestIsModelBonusEligibleFailClosed(t *testing.T) {
 func TestCreditQuotaShares(t *testing.T) {
 	setupLedgerTestState(t)
 
-	createLedgerTestUser(t, 201, 5000)
+	// Seed the original debit: a billing refund restores prior source lots,
+	// rather than manufacturing an unrelated noncash grant.
+	createLedgerTestUser(t, 201, 5030)
+	_, seedErr := CreditQuota(LedgerEntry{UserId: 201, Account: AccountBonus, Delta: 70, Reason: LedgerReasonSignupBonus, IdempotencyKey: "credit-shares-seed"})
+	require.NoError(t, seedErr)
+	_, seedErr = DebitQuota(LedgerEntry{UserId: 201, Delta: 100, Reason: LedgerReasonBillingPreConsume, ReferenceType: "relay", ReferenceId: "credit-shares-1", RequestId: "credit-shares-1", IdempotencyKey: "billing:preconsume:credit-shares-1"}, AccountBonus, AccountPaid)
+	require.NoError(t, seedErr)
 
 	result, err := CreditQuotaShares(LedgerEntry{
 		UserId:         201,

@@ -32,6 +32,7 @@ type AgentCommissionWithdrawal struct {
 	Version            int64                             `json:"version" gorm:"not null"`
 	RequestedBy        int                               `json:"requested_by" gorm:"not null"`
 	ApprovedBy         int                               `json:"approved_by" gorm:"not null"`
+	SubmittedAt        int64                             `json:"submitted_at"`
 	SubmittedBy        int                               `json:"submitted_by" gorm:"not null"`
 	PolicyVersion      int64                             `json:"policy_version" gorm:"not null"`
 	PayoutReceiptID    int64                             `json:"payout_receipt_id" gorm:"index"`
@@ -204,6 +205,7 @@ type AgentCommissionWithdrawalAction struct {
 	PayoutReference        string `json:"payout_reference"`
 	PayoutMerchantScope    string `json:"payout_merchant_scope"`
 	PayoutEnvironment      string `json:"payout_environment"`
+	PayoutPaidAt           int64  `json:"payout_paid_at"`
 }
 
 func withdrawalActionContext(tx *gorm.DB, policy *AgentPolicy, w *AgentCommissionWithdrawal, action string, input AgentCommissionWithdrawalAction) (AgentTransactionContext, error) {
@@ -214,10 +216,10 @@ func withdrawalActionContext(tx *gorm.DB, policy *AgentPolicy, w *AgentCommissio
 		return AgentTransactionContext{}, ErrAgentCommissionInvalid
 	}
 	if action == "commission.withdraw.resolve" && input.Status == "succeeded" {
-		if input.PayoutProvider == "" || input.PayoutReference == "" || input.PayoutMerchantScope == "" || input.PayoutEnvironment != "live" {
+		if input.PayoutProvider == "" || input.PayoutReference == "" || input.PayoutMerchantScope == "" || input.PayoutEnvironment != "live" || input.PayoutPaidAt <= 0 || input.PayoutPaidAt < max(w.CreatedAt, w.SubmittedAt) || input.PayoutPaidAt > common.GetTimestamp() {
 			return AgentTransactionContext{}, ErrAgentCommissionInvalid
 		}
-	} else if input.PayoutProvider != "" || input.PayoutReference != "" || input.PayoutMerchantScope != "" || input.PayoutEnvironment != "" {
+	} else if input.PayoutProvider != "" || input.PayoutReference != "" || input.PayoutMerchantScope != "" || input.PayoutEnvironment != "" || input.PayoutPaidAt != 0 {
 		return AgentTransactionContext{}, ErrAgentCommissionInvalid
 	}
 	switch action {
@@ -316,6 +318,9 @@ func ActOnAgentCommissionWithdrawal(authorization AgentTransactionAuthorization,
 		if actor.UserID == result.RequestedBy || actor.UserID == result.UserID {
 			return ErrAgentProfilePermission
 		}
+		if action == "commission.withdraw.resolve" && input.Status != "unknown" && actor.UserID == result.SubmittedBy {
+			return ErrAgentPurchaseReview
+		}
 		context, err := withdrawalActionContext(tx, policy, &result, action, input)
 		if err != nil {
 			return err
@@ -349,6 +354,7 @@ func ActOnAgentCommissionWithdrawal(authorization AgentTransactionAuthorization,
 			}
 			result.Status = "paying"
 			result.SubmittedBy = actor.UserID
+			result.SubmittedAt = common.GetTimestamp()
 		case "commission.withdraw.resolve":
 			result.Status = input.Status
 			if result.Status == "succeeded" {
@@ -356,7 +362,7 @@ func ActOnAgentCommissionWithdrawal(authorization AgentTransactionAuthorization,
 				if err != nil {
 					return err
 				}
-				receipt, err := ClaimAgentOutboundPaymentReceiptTx(tx, &AgentOutboundPaymentReceipt{Provider: input.PayoutProvider, ProviderReference: input.PayoutReference, MerchantScope: input.PayoutMerchantScope, Environment: input.PayoutEnvironment, Purpose: "withdrawal", BusinessKey: result.BusinessNo, OwnerUserID: result.UserID, Currency: result.Currency, CurrencyExponent: result.CurrencyExponent, PaidMinor: result.NetMinor, VerifiedBy: actor.UserID, EvidenceHash: hash})
+				receipt, err := ClaimAgentOutboundPaymentReceiptTx(tx, &AgentOutboundPaymentReceipt{Provider: input.PayoutProvider, ProviderReference: input.PayoutReference, MerchantScope: input.PayoutMerchantScope, Environment: input.PayoutEnvironment, Purpose: "withdrawal", BusinessKey: result.BusinessNo, OwnerUserID: result.UserID, Currency: result.Currency, CurrencyExponent: result.CurrencyExponent, PaidMinor: result.NetMinor, BeneficiaryDigest: result.RecipientDigest, PaidAt: input.PayoutPaidAt, VerifiedBy: actor.UserID, EvidenceHash: hash})
 				if err != nil {
 					return err
 				}

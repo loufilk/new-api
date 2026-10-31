@@ -22,7 +22,7 @@ import (
 func setupLinuxDOSignupTest(t *testing.T) (*model.User, service.AuthIdentity) {
 	t.Helper()
 	user, identity := setupSecurityEnrollmentTest(t)
-	require.NoError(t, model.DB.AutoMigrate(&model.BalanceLedgerOperation{}, &model.BalanceLedger{}))
+	require.NoError(t, model.DB.AutoMigrate(append([]any{&model.BalanceLedgerOperation{}, &model.BalanceLedger{}}, model.BonusSourceModels()...)...))
 	require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}))
 	previousEnabled, previousRegister := common.LinuxDOOAuthEnabled, common.RegisterEnabled
 	previousTrust, previousUnit := common.LinuxDOMinimumTrustLevel, common.QuotaPerUnit

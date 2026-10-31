@@ -45,7 +45,7 @@ func PrepareAgentPurchaseOperation(identity AuthSessionIdentity, action, request
 		}
 		command.RequestID = requestID
 		err = DB.Transaction(func(tx *gorm.DB) error {
-			policy, err := ReadCurrentAgentPolicyTx(tx)
+			policy, err := LockCurrentAgentPolicyTx(tx)
 			if err != nil {
 				return err
 			}

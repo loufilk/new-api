@@ -292,6 +292,9 @@ describe('procurement and financial controls', () => {
     ).toBeDisabled()
   })
   test('an unknown refund exposes reconciliation only and never a new submission', async () => {
+    useAuthStore
+      .getState()
+      .auth.setUser({ id: 43, username: 'finance', role: 10 })
     vi.mocked(api.get).mockResolvedValue(ok(page([refund])))
     await mount(<PurchaseRefunds finance />)
     expect(

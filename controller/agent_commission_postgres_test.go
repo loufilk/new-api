@@ -44,7 +44,7 @@ func setupCommissionHTTPPostgres(t *testing.T) commissionHTTPFixture {
 		common.SessionSecret = oldSecret
 		common.SetDatabaseTypes(oldMain, oldLogType)
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.TopUp{}, &model.SubscriptionOrder{}, &model.Log{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.ReferralCommission{}, &model.AuthFlow{}, &model.UserSession{}, &model.UserAccessToken{}, &model.TwoFA{}, &model.PasskeyCredential{}))
+	require.NoError(t, db.AutoMigrate(append([]any{&model.User{}, &model.TopUp{}, &model.SubscriptionOrder{}, &model.Log{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.ReferralCommission{}, &model.AuthFlow{}, &model.UserSession{}, &model.UserAccessToken{}, &model.TwoFA{}, &model.PasskeyCredential{}}, model.BonusSourceModels()...)...))
 	require.NoError(t, db.AutoMigrate(model.AgentPlatformModels()...))
 	f := commissionHTTPFixture{}
 	f.root = model.User{Username: "http-finance-root", AffCode: "http-finance-root", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1}

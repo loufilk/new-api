@@ -27,6 +27,7 @@ func tokenMutationFixture(t *testing.T, tokenHeld int) BillingFinalization {
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	t.Cleanup(func() { DB, common.RedisEnabled = oldDB, oldRedis; common.SetDatabaseTypes(oldMain, oldLog) })
 	require.NoError(t, db.AutoMigrate(&User{}, &Token{}, &BalanceLedgerOperation{}, &BalanceLedger{}, &BillingFinalization{}))
+	require.NoError(t, db.AutoMigrate(BonusSourceModels()...))
 	require.NoError(t, db.Create(&User{Id: 93001, Username: "token-mutation", AffCode: "token-mutation", Quota: 1000, QuotaPaid: 1000}).Error)
 	_, err = DebitQuota(LedgerEntry{UserId: 93001, Delta: 100, Reason: LedgerReasonBillingPreConsume, ReferenceType: "relay", ReferenceId: "token-mutation", RequestId: "token-mutation", IdempotencyKey: "billing:preconsume:token-mutation"}, AccountPaid)
 	require.NoError(t, err)

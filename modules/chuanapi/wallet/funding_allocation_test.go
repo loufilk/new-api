@@ -1,6 +1,7 @@
 package wallet
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"testing"
@@ -152,14 +153,42 @@ func TestFundingAllocationUnknownAndOvercreditedHistoryFailsClosed(t *testing.T)
 				_, err := model.DebitQuota(model.LedgerEntry{UserId: request.UserID, Delta: 1, Reason: model.LedgerReasonBillingSettle, ReferenceType: "relay", ReferenceId: request.RequestID, RequestId: request.RequestID, IdempotencyKey: "unknown-historical-fee"}, model.AccountPaid)
 				require.NoError(t, err)
 			} else {
-				_, err := model.CreditQuotaShares(model.LedgerEntry{UserId: request.UserID, Account: model.AccountPaid, Reason: model.LedgerReasonBillingSettle, ReferenceType: "relay", ReferenceId: request.RequestID, RequestId: request.RequestID, IdempotencyKey: fmt.Sprintf("billing:settle_refund:%s:2", request.RequestID)}, []model.LedgerShare{{Account: model.AccountBonus, Amount: 2}})
-				require.NoError(t, err)
+				entry := model.LedgerEntry{UserId: request.UserID, Account: model.AccountPaid, Reason: model.LedgerReasonBillingSettle, ReferenceType: "relay", ReferenceId: request.RequestID, RequestId: request.RequestID, IdempotencyKey: fmt.Sprintf("billing:settle_refund:%s:2", request.RequestID)}
+				var liveBefore, liveAfter model.User
+				require.NoError(t, db.First(&liveBefore, request.UserID).Error)
+				var ledgerBefore, operationsBefore, ledgerAfter, operationsAfter int64
+				require.NoError(t, db.Model(&model.BalanceLedger{}).Count(&ledgerBefore).Error)
+				require.NoError(t, db.Model(&model.BalanceLedgerOperation{}).Count(&operationsBefore).Error)
+				_, err := model.CreditQuotaShares(entry, []model.LedgerShare{{Account: model.AccountBonus, Amount: 2}})
+				require.ErrorIs(t, err, ErrMissingDebitReceipt, "the live source guard must reject bonus 2 refunded against bonus 1")
+				require.NoError(t, db.First(&liveAfter, request.UserID).Error)
+				require.Equal(t, liveBefore, liveAfter)
+				require.NoError(t, db.Model(&model.BalanceLedger{}).Count(&ledgerAfter).Error)
+				require.NoError(t, db.Model(&model.BalanceLedgerOperation{}).Count(&operationsAfter).Error)
+				require.Equal(t, ledgerBefore, ledgerAfter)
+				require.Equal(t, operationsBefore, operationsAfter)
+
+				// Reproduce the corrupt history a pre-cutover binary could leave,
+				// using direct records ONLY inside this disposable fixture. Never
+				// weaken the live API to manufacture an impossible new overcredit.
+				// All canonical identities and row totals remain valid: only the
+				// historical bonus refund exceeds its original one-unit debit.
+				signature := sha256.Sum256([]byte(fmt.Sprintf("op=credit|user=%d|account=paid|target=|delta=2|order=|shares=bonus:2|reason=%s|ref_type=relay|ref_id=%s|operator=0", request.UserID, entry.Reason, request.RequestID)))
+				operation := model.BalanceLedgerOperation{IdempotencyKey: entry.IdempotencyKey, UserId: request.UserID, Operation: "credit", OperationSignature: fmt.Sprintf("%x", signature), TotalBefore: liveBefore.Quota, TotalAfter: liveBefore.Quota + 2}
+				require.NoError(t, db.Create(&operation).Error)
+				require.NoError(t, db.Create(&model.BalanceLedger{OperationId: operation.Id, UserId: request.UserID, Account: string(model.AccountBonus), Delta: 2, BalanceBefore: liveBefore.QuotaBonus, BalanceAfter: liveBefore.QuotaBonus + 2, TotalBefore: operation.TotalBefore, TotalAfter: operation.TotalAfter, Reason: entry.Reason, ReferenceType: entry.ReferenceType, ReferenceId: entry.ReferenceId, RequestId: entry.RequestId, IdempotencyKey: entry.IdempotencyKey}).Error)
+				require.NoError(t, db.Model(&model.User{}).Where("id = ?", request.UserID).Updates(map[string]any{"quota": operation.TotalAfter, "quota_bonus": liveBefore.QuotaBonus + 2}).Error)
+				requireAllocationBalances(t, db, request.UserID, 2, 0, 1)
 			}
 			var before model.User
 			require.NoError(t, db.First(&before, request.UserID).Error)
 			var rowsBefore int64
 			require.NoError(t, db.Model(&model.BalanceLedger{}).Count(&rowsBefore).Error)
-			require.ErrorIs(t, funding.Refund(), ErrMissingDebitReceipt)
+			err := funding.Refund()
+			require.ErrorIs(t, err, ErrMissingDebitReceipt)
+			if history == "legacy_overcredit" {
+				require.ErrorContains(t, err, "historical wallet refund exceeds source")
+			}
 			var after model.User
 			require.NoError(t, db.First(&after, request.UserID).Error)
 			require.Equal(t, before, after)

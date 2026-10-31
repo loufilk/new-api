@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import type { AgentTransactionContext } from '@/features/auth/secure-verification/types'
 import type { AgentProfile } from '@/stores/auth-store'
 
+import type { ExpansionPolicy } from './expansion-types'
+
 export interface PlatformPage<T> {
   items: T[]
   total: number
@@ -92,6 +94,7 @@ export interface OperationStatus {
 }
 
 export interface PurchaseQuote extends OriginalMoney {
+  price_snapshot?: string
   id: number
   agent_user_id: number
   quota: number
@@ -101,6 +104,7 @@ export interface PurchaseQuote extends OriginalMoney {
   expires_at: number
 }
 export interface PurchaseOrder extends PurchaseQuote {
+  payer_digest?: string
   quote_id: number
   status: 'awaiting_payment' | 'evidence_submitted' | 'verified' | 'credited'
   version: number
@@ -114,7 +118,7 @@ export interface PurchaseOrder extends PurchaseQuote {
   allowed_actions?: string[]
 }
 
-export interface AgentPolicy {
+export interface AgentPolicy extends ExpansionPolicy {
   id: number
   request_id: string
   created_by: number
@@ -160,7 +164,12 @@ export interface FundBatch extends OriginalMoney {
   id: number
   source_key: string
   agent_user_id: number
-  source_kind: 'purchase' | 'commission_transfer' | 'legacy' | 'promotion'
+  source_kind:
+    | 'purchase'
+    | 'commission_transfer'
+    | 'legacy'
+    | 'promotion'
+    | 'credit'
   purchase_order_id: number
   original_quota: number
   original_paid_minor: string
@@ -199,6 +208,7 @@ export interface PurchaseRefund extends OriginalMoney {
   requested_by: number
   approved_by: number
   submitted_by: number
+  submitted_at?: number
   resolved_by: number
   evidence_reference: string
   external_reference: string
@@ -307,6 +317,7 @@ export interface CommissionWithdrawal extends OriginalMoney {
   version: number
   requested_by: number
   approved_by: number
+  submitted_by?: number
   policy_version: number
   evidence_reference: string
   reason: string

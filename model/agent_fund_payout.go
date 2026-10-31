@@ -26,6 +26,8 @@ type AgentOutboundPaymentReceipt struct {
 	Currency          string `json:"currency" gorm:"type:varchar(3);not null"`
 	CurrencyExponent  int    `json:"currency_exponent"`
 	PaidMinor         int64  `json:"paid_minor,string" gorm:"not null"`
+	BeneficiaryDigest string `json:"beneficiary_digest" gorm:"type:varchar(64)"`
+	PaidAt            int64  `json:"paid_at"`
 	VerifiedBy        int    `json:"verified_by" gorm:"not null"`
 	EvidenceHash      string `json:"evidence_hash" gorm:"type:char(64);not null"`
 	CreatedAt         int64  `json:"created_at" gorm:"autoCreateTime"`
@@ -34,7 +36,16 @@ type AgentOutboundPaymentReceipt struct {
 func (*AgentOutboundPaymentReceipt) BeforeUpdate(*gorm.DB) error { return ErrAgentLedgerImmutable }
 func (*AgentOutboundPaymentReceipt) BeforeDelete(*gorm.DB) error { return ErrAgentLedgerImmutable }
 func ClaimAgentOutboundPaymentReceiptTx(tx *gorm.DB, receipt *AgentOutboundPaymentReceipt) (*AgentOutboundPaymentReceipt, error) {
-	if receipt == nil || (receipt.Purpose != "purchase_refund" && receipt.Purpose != "withdrawal") || receipt.OwnerUserID <= 0 || receipt.VerifiedBy <= 0 || receipt.PaidMinor <= 0 || receipt.PaidMinor > int64(common.MaxWalletQuota) || !validAgentCurrency(receipt.Currency, receipt.CurrencyExponent) || (receipt.Environment != "live" && receipt.Environment != "test") {
+	if receipt == nil || (receipt.Purpose != "purchase_refund" && receipt.Purpose != "withdrawal" && receipt.Purpose != "deposit_refund") || receipt.OwnerUserID <= 0 || receipt.VerifiedBy <= 0 || receipt.PaidMinor <= 0 || receipt.PaidMinor > int64(common.MaxWalletQuota) || !validAgentCurrency(receipt.Currency, receipt.CurrencyExponent) || (receipt.Environment != "live" && receipt.Environment != "test") {
+		return nil, ErrAgentOutboundPaymentConflict
+	}
+	if receipt.BeneficiaryDigest != "" {
+		decoded, err := hex.DecodeString(receipt.BeneficiaryDigest)
+		if err != nil || len(decoded) != 32 || strings.ToLower(receipt.BeneficiaryDigest) != receipt.BeneficiaryDigest {
+			return nil, ErrAgentOutboundPaymentConflict
+		}
+	}
+	if receipt.PaidAt < 0 || receipt.PaidAt > common.GetTimestamp() {
 		return nil, ErrAgentOutboundPaymentConflict
 	}
 	switch receipt.Provider {
@@ -85,7 +96,7 @@ func ClaimAgentOutboundPaymentReceiptTx(tx *gorm.DB, receipt *AgentOutboundPayme
 		}
 		return nil, err
 	}
-	if existing.Provider != copy.Provider || existing.ProviderReference != copy.ProviderReference || existing.MerchantScope != copy.MerchantScope || existing.Environment != copy.Environment || existing.Purpose != copy.Purpose || existing.BusinessKey != copy.BusinessKey || existing.OwnerUserID != copy.OwnerUserID || existing.Currency != copy.Currency || existing.CurrencyExponent != copy.CurrencyExponent || existing.PaidMinor != copy.PaidMinor {
+	if existing.Provider != copy.Provider || existing.ProviderReference != copy.ProviderReference || existing.MerchantScope != copy.MerchantScope || existing.Environment != copy.Environment || existing.Purpose != copy.Purpose || existing.BusinessKey != copy.BusinessKey || existing.OwnerUserID != copy.OwnerUserID || existing.Currency != copy.Currency || existing.CurrencyExponent != copy.CurrencyExponent || existing.PaidMinor != copy.PaidMinor || existing.BeneficiaryDigest != copy.BeneficiaryDigest || existing.PaidAt != copy.PaidAt {
 		return nil, ErrAgentOutboundPaymentConflict
 	}
 	return &existing, nil

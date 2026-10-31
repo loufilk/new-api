@@ -62,14 +62,13 @@ func setupWalletTestDB(t *testing.T) *gorm.DB {
 	}
 
 	model.DB, model.LOG_DB = db, db
-	require.NoError(t, db.AutoMigrate(
+	require.NoError(t, db.AutoMigrate(append([]any{
 		&model.User{},
 		&model.BalanceLedgerOperation{},
 		&model.BalanceLedger{},
 		&model.ReferralCommission{},
 		&model.Log{},
-		&model.AuthFlow{}, &model.UserSession{}, &model.UserAccessToken{}, &model.TwoFA{}, &model.PasskeyCredential{},
-	))
+		&model.AuthFlow{}, &model.UserSession{}, &model.UserAccessToken{}, &model.TwoFA{}, &model.PasskeyCredential{}}, model.BonusSourceModels()...)...))
 	require.NoError(t, db.AutoMigrate(model.AgentPlatformModels()...))
 
 	t.Cleanup(func() {

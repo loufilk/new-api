@@ -52,7 +52,7 @@ func TestMidjourneyPreSendHoldPostgres(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
 	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.Model{}, &model.Vendor{}, &model.Ability{}, &model.Option{}, &model.Midjourney{}, &model.BillingFinalization{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.Log{}))
+	require.NoError(t, db.AutoMigrate(append([]any{&model.User{}, &model.Token{}, &model.Channel{}, &model.Model{}, &model.Vendor{}, &model.Ability{}, &model.Option{}, &model.Midjourney{}, &model.BillingFinalization{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.Log{}}, model.BonusSourceModels()...)...))
 	oldDB, oldLog := model.DB, model.LOG_DB
 	oldMain, oldLogType := common.MainDatabaseType(), common.LogDatabaseType()
 	oldRedis, oldMemory, oldBatch := common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled

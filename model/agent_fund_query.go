@@ -284,6 +284,18 @@ func ReconcileAgentFundsPage(scope RedemptionScope, agentID, afterAgentID, limit
 			anomalies = append(anomalies, AgentFundAnomaly{AgentUserID: slice.AgentUserID, Code: "orphan_slice", Detail: "Funding slice " + strconv.Itoa(slice.ID) + " has no provenance batch"})
 		}
 
+		// Cash/AR economics are distinct from immutable interval provenance.
+		// Audit both; a book-cost sum alone cannot detect split-rounding abuse.
+		for _, owner := range ownerIDs {
+			findings, err := ReconcileAgentFundEconomicsTx(tx, owner)
+			if err != nil {
+				return err
+			}
+			for _, finding := range findings {
+				anomalies = append(anomalies, AgentFundAnomaly{AgentUserID: owner, Code: finding.Code, Detail: "Funding valuation resource " + finding.ResourceID + " requires independent review"})
+			}
+		}
+
 		return nil
 	})
 	page.Anomalies = anomalies

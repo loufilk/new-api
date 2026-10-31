@@ -64,7 +64,7 @@ export function FundLedgerTable() {
     },
     {
       accessorKey: 'cost_minor',
-      header: t('Original source cost'),
+      header: t('Interval source book cost'),
       cell: ({ row }) =>
         row.original.currency ? (
           <Money
@@ -97,7 +97,18 @@ export function FundLedgerTable() {
       cell: ({ row }) => <BusinessDate value={row.original.created_at} />,
     },
   ]
-  return <ResourceTable resource='/fund-ledger' columns={columns} />
+  return (
+    <div className='space-y-4'>
+      <Alert>
+        <AlertDescription>
+          {t(
+            'This ledger preserves interval source book cost only. Actual cash refunds and credit receivables use their own confirmed cumulative totals; never treat this book cost as payable cash or debt.'
+          )}
+        </AlertDescription>
+      </Alert>
+      <ResourceTable resource='/fund-ledger' columns={columns} />
+    </div>
+  )
 }
 interface FundAudit {
   anomalies: {

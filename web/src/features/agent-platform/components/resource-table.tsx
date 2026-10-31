@@ -29,24 +29,25 @@ export function ResourceTable<T>(props: {
   columns: ColumnDef<T>[]
   filters?: Record<string, string | number | undefined>
   enabled?: boolean
+  rows?: T[]
   toolbar?: React.ReactNode
 }) {
   const { t } = useTranslation()
   const { query, pagination, setPagination } = usePlatformList<T>(
     props.resource,
     props.filters,
-    props.enabled
+    props.rows === undefined && props.enabled !== false
   )
   const { table } = useDataTable({
-    data: query.data?.items ?? [],
+    data: props.rows ?? query.data?.items ?? [],
     columns: props.columns,
     pagination,
     onPaginationChange: setPagination,
-    manualPagination: true,
-    totalCount: query.data?.total ?? 0,
+    manualPagination: props.rows === undefined,
+    totalCount: props.rows?.length ?? query.data?.total ?? 0,
     enableSorting: false,
   })
-  if (query.isError) {
+  if (props.rows === undefined && query.isError) {
     return (
       <ErrorState
         onRetry={() => {
@@ -59,8 +60,8 @@ export function ResourceTable<T>(props: {
     <DataTablePage
       table={table}
       columns={props.columns}
-      isLoading={query.isPending}
-      isFetching={query.isFetching}
+      isLoading={props.rows === undefined && query.isPending}
+      isFetching={props.rows === undefined && query.isFetching}
       emptyTitle={t('No records found')}
       toolbar={props.toolbar ?? null}
       paginationInFooter={false}

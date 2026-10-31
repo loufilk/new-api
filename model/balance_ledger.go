@@ -388,6 +388,8 @@ func CreditWalletRefundTx(tx *gorm.DB, entry LedgerEntry, amount int) (*LedgerRe
 //
 // 对 OverrideQuota，Delta 表示目标绝对余额（覆盖值）而非变动量。
 type LedgerEntry struct {
+	bonusGrant     *bonusSourceGrant
+	bonusExpireLot int64
 	UserId         int
 	Account        LedgerAccount
 	Delta          int
@@ -578,6 +580,7 @@ func validateCreditSharesEntry(entry LedgerEntry, shares []LedgerShare) error {
 	if len(shares) == 0 {
 		return fmt.Errorf("%w: empty credit shares", ErrLedgerInvalidEntry)
 	}
+	total := 0
 	seen := make(map[LedgerAccount]struct{}, len(shares))
 	for _, share := range shares {
 		if !validAccount(share.Account) {
@@ -590,6 +593,10 @@ func validateCreditSharesEntry(entry LedgerEntry, shares []LedgerShare) error {
 		if share.Amount <= 0 {
 			return fmt.Errorf("%w: non-positive credit share for %q", ErrLedgerInvalidEntry, share.Account)
 		}
+		if share.Amount > common.MaxWalletQuota-total {
+			return ErrWalletQuotaLimitExceeded
+		}
+		total += share.Amount
 	}
 	return nil
 }
@@ -795,6 +802,9 @@ func validateTransferEntry(entry LedgerEntry, target LedgerAccount) error {
 	if entry.UserId <= 0 || !validAccount(entry.Account) || !validAccount(target) || entry.Reason == "" {
 		return ErrLedgerInvalidEntry
 	}
+	if entry.Account == AccountBonus {
+		return fmt.Errorf("%w: noncash bonus cannot change wallet class", ErrLedgerInvalidEntry)
+	}
 	if entry.Account == target {
 		return fmt.Errorf("%w: transfer between the same account", ErrLedgerInvalidEntry)
 	}
@@ -890,6 +900,9 @@ func ledgerOperationSignature(entry LedgerEntry, op ledgerOpKind) string {
 		entry.ReferenceId,
 		entry.OperatorId,
 	)
+	if grant := entry.bonusGrant; grant != nil {
+		payload += fmt.Sprintf("|bonus_source=%d:%d:%d:%t", grant.CampaignID, grant.ClaimID, grant.ExpiresAt, grant.Revocable)
+	}
 	sum := sha256.Sum256([]byte(payload))
 	return hex.EncodeToString(sum[:])
 }
@@ -1021,6 +1034,15 @@ func applyLedgerTx(tx *gorm.DB, entry LedgerEntry, key string, op ledgerOpKind, 
 		return nil, err
 	}
 
+	if err := ensureBonusSourceAccountTx(tx, &user); err != nil {
+		return nil, err
+	}
+	if entry.bonusExpireLot == 0 {
+		if err := expireBonusSourcesTx(tx, &user, bonusSourceNow()); err != nil {
+			return nil, err
+		}
+	}
+
 	deltas, err := plan(tx, &user)
 	if err != nil {
 		return nil, err
@@ -1032,12 +1054,18 @@ func applyLedgerTx(tx *gorm.DB, entry LedgerEntry, key string, op ledgerOpKind, 
 	balanceBefore := map[LedgerAccount]int{}
 	for _, d := range deltas {
 		balanceBefore[d.account] = user.AccountBalance(d.account)
+		if d.delta < -balanceBefore[d.account] {
+			return nil, ErrLedgerInsufficientBalance
+		}
+		if d.delta > common.MaxWalletQuota-balanceBefore[d.account] {
+			return nil, ErrWalletQuotaLimitExceeded
+		}
 		updates[ledgerAccountColumn[d.account]] = balanceBefore[d.account] + d.delta
 		totalAfter += d.delta
 	}
 	// rc.26 对齐 wallet 上限：任何入账后用户三账户总额不得超过 JS 安全整数域。
-	// 负向（扣款/结算退款为负 delta 场景由 debit 路径处理）不受此约束。
-	if op == ledgerOpCredit && totalAfter > common.MaxWalletQuota {
+	// Every operation kind, including overrides and transfers, retains the same bound.
+	if totalAfter < 0 || totalAfter > common.MaxWalletQuota {
 		return nil, fmt.Errorf("%w: max %d", ErrWalletQuotaLimitExceeded, common.MaxWalletQuota)
 	}
 	createdAt := common.GetTimestamp()
@@ -1087,6 +1115,9 @@ func applyLedgerTx(tx *gorm.DB, entry LedgerEntry, key string, op ledgerOpKind, 
 			CreatedAt:      createdAt,
 		}
 		if err := tx.Create(&row).Error; err != nil {
+			return nil, err
+		}
+		if err := applyBonusSourceLedgerTx(tx, &user, entry, op, row); err != nil {
 			return nil, err
 		}
 		rows = append(rows, row)

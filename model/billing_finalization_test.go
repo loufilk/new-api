@@ -52,6 +52,7 @@ func TestBillingFinalizationDatabaseMatrix(t *testing.T) {
 			t.Cleanup(func() { DB = oldDB; common.SetDatabaseTypes(oldType, oldLogType) })
 			// Representative previous-schema database, then additive migration.
 			require.NoError(t, db.AutoMigrate(&Option{}, &User{}, &Token{}, &BalanceLedgerOperation{}, &BalanceLedger{}, &UserSubscription{}, &SubscriptionPreConsumeRecord{}, &Task{}))
+			require.NoError(t, db.AutoMigrate(BonusSourceModels()...))
 			require.False(t, db.Migrator().HasTable(&BillingFinalization{}))
 			require.NoError(t, db.AutoMigrate(&BillingFinalization{}))
 			serial := 0

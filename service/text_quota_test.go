@@ -88,6 +88,7 @@ func TestFixedPriceBillingDatabaseMatrix(t *testing.T) {
 				&model.BalanceLedgerOperation{}, &model.BillingFinalization{},
 				&model.BalanceLedger{},
 			))
+			require.NoError(t, db.AutoMigrate(model.BonusSourceModels()...))
 			require.NoError(t, logDB.AutoMigrate(&model.Log{}))
 			versionQuery := "select version()"
 			if dialect.name == common.DatabaseTypeSQLite {

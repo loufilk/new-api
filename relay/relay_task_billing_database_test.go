@@ -87,7 +87,7 @@ export function extractUsage(){return {seconds:2};}
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := setupRelayChannelDB(t)
-			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Model{}, &model.Ability{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}))
+			require.NoError(t, db.AutoMigrate(append([]any{&model.User{}, &model.Token{}, &model.Model{}, &model.Ability{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}}, model.BonusSourceModels()...)...))
 			eligible := !tc.ineligible
 			require.NoError(t, db.Create(&model.Model{ModelName: "declared-model", Status: 1, BonusEligible: &eligible}).Error)
 			model.InvalidateModelBonusEligibleCache()

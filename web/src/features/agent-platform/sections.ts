@@ -18,6 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 export const portalSections = [
   'overview',
+  'governance',
+  'campaigns',
+  'contributions',
+  'credit',
+  'deposits',
   'purchases',
   'batches',
   'ledger',
@@ -30,6 +35,13 @@ export const portalSections = [
 export type PortalSection = (typeof portalSections)[number]
 
 export const financeSections = [
+  'governance',
+  'contributions',
+  'credit',
+  'deposits',
+  'campaigns',
+  'agreements',
+  'statements',
   'purchases',
   'refunds',
   'withdrawals',

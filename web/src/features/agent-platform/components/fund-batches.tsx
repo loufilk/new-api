@@ -34,6 +34,7 @@ export function FundBatches(props: {
   settlementEnabled: boolean
   salesEnabled: boolean
   refundEnabled: boolean
+  creditSelfUseEnabled?: boolean
   selfUseEnabled: boolean
 }) {
   const { t } = useTranslation()
@@ -130,9 +131,13 @@ export function FundBatches(props: {
               !props.salesEnabled ||
               !props.settlementEnabled ||
               !props.selfUseEnabled ||
-              !['purchase', 'commission_transfer'].includes(
+              (!['purchase', 'commission_transfer'].includes(
                 row.original.source_kind
-              ) ||
+              ) &&
+                !(
+                  row.original.source_kind === 'credit' &&
+                  props.creditSelfUseEnabled
+                )) ||
               row.original.available_quota <= 0
             }
             onClick={() =>
@@ -168,7 +173,7 @@ export function FundBatches(props: {
                   'Only eligible unused original-batch quota can be refunded. Commission conversions, free budgets and grants never become refundable principal.'
                 )
               : t(
-                  'Self-use is an explicit ledger transfer. Paid procurement enters paid balance; converted commissions enter reward balance.'
+                  'Self-use is an explicit ledger transfer. Paid procurement enters paid balance; commissions and credit enter noncash reward balance. Credit self-use recognizes the original receivable.'
                 )
           }
           fields={[

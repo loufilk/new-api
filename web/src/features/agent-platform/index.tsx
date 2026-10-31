@@ -35,10 +35,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { getPlatform } from './api'
+import { CampaignPanel } from './components/campaign'
 import { Commissions } from './components/commissions'
+import { ContributionsPanel } from './components/contributions'
+import { CreditPanel } from './components/credit'
 import { Deliveries } from './components/deliveries'
+import { DepositPanel } from './components/deposits'
 import { FundLedgerTable } from './components/fund-accounting'
 import { FundBatches } from './components/fund-batches'
+import { GovernancePanel } from './components/governance'
 import { PendingOperations } from './components/pending-operations'
 import { PolicyPanel } from './components/policy-panel'
 import { PurchaseRefunds } from './components/purchase-refunds'
@@ -79,6 +84,11 @@ export function AgentPortal(props: {
   const current = policy.data
   const labels: Record<PortalSection, string> = {
     overview: t('Overview'),
+    governance: t('Qualification dossier'),
+    campaigns: t('Campaigns'),
+    contributions: t('Invitation contributions'),
+    credit: t('Credit and receivables'),
+    deposits: t('Deposits'),
     purchases: t('Procurement'),
     batches: t('Funding batches'),
     ledger: t('Procurement ledger'),
@@ -91,7 +101,15 @@ export function AgentPortal(props: {
   const sections = portalSections.filter(
     (section) =>
       account.capabilities.history ||
-      ['overview', 'commissions', 'withdrawals', 'policy'].includes(section)
+      [
+        'overview',
+        'governance',
+        'campaigns',
+        'contributions',
+        'commissions',
+        'withdrawals',
+        'policy',
+      ].includes(section)
   )
   const selected = sections.includes(props.section) ? props.section : 'overview'
   return (
@@ -230,8 +248,28 @@ export function AgentPortal(props: {
                 </Alert>
               </div>
             </TabsContent>
+            <TabsContent value='governance'>
+              <GovernancePanel />
+            </TabsContent>
+            <TabsContent value='campaigns'>
+              <CampaignPanel />
+            </TabsContent>
+            <TabsContent value='contributions'>
+              <ContributionsPanel />
+            </TabsContent>
             {account.capabilities.history && (
               <>
+                <TabsContent value='credit'>
+                  <CreditPanel
+                    salesEnabled={account.capabilities.sales}
+                    settlementEnabled={account.capabilities.settlement}
+                  />
+                </TabsContent>
+                <TabsContent value='deposits'>
+                  <DepositPanel
+                    settlementEnabled={account.capabilities.settlement}
+                  />
+                </TabsContent>
                 <TabsContent value='purchases'>
                   <Purchases
                     salesEnabled={account.capabilities.sales}
@@ -243,6 +281,9 @@ export function AgentPortal(props: {
                     settlementEnabled={account.capabilities.settlement}
                     salesEnabled={account.capabilities.sales}
                     refundEnabled={current.purchase_refund_enabled}
+                    creditSelfUseEnabled={
+                      current.credit_enabled && current.credit_self_use_enabled
+                    }
                     selfUseEnabled={current.procurement_self_use_enabled}
                   />
                 </TabsContent>

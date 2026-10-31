@@ -19,6 +19,10 @@ func StartRuntimeWorkers(workers *lifecycle.Group) {
 	}
 	startAccountingWorker(workers, "agent-commission-outbox", 10*time.Second, model.ProcessAgentCommissionOutbox)
 	startAccountingWorker(workers, "agent-commission-maturity", time.Minute, model.MatureAgentCommissionAccounts)
+	startAccountingWorker(workers, "agent-campaign-maintenance", time.Minute, func(ctx context.Context, limit int) (int, error) {
+		report, err := model.RunAgentCampaignMaintenance(ctx, limit)
+		return report.ExpiredLots + report.ExpiredClaims, err
+	})
 }
 
 func startAccountingWorker(workers *lifecycle.Group, name string, interval time.Duration, process func(context.Context, int) (int, error)) {

@@ -2,7 +2,6 @@ package model
 
 import (
 	"errors"
-	"math/big"
 	"strconv"
 	"strings"
 
@@ -19,6 +18,8 @@ var (
 )
 
 type AgentPurchaseQuote struct {
+	PriceSnapshot    string `json:"price_snapshot" gorm:"type:text"`
+	ProfileVersion   int64  `json:"profile_version"`
 	ID               int    `json:"id" gorm:"primaryKey"`
 	OperationID      int    `json:"-" gorm:"not null;uniqueIndex"`
 	AgentUserID      int    `json:"agent_user_id" gorm:"not null;index"`
@@ -37,6 +38,10 @@ func (*AgentPurchaseQuote) BeforeUpdate(*gorm.DB) error { return ErrAgentLedgerI
 func (*AgentPurchaseQuote) BeforeDelete(*gorm.DB) error { return ErrAgentLedgerImmutable }
 
 type AgentPurchaseOrder struct {
+	PayerReference       string `json:"-" gorm:"type:varchar(128)"`
+	PayerDigest          string `json:"payer_digest" gorm:"type:varchar(64)"`
+	PriceSnapshot        string `json:"price_snapshot" gorm:"type:text"`
+	ProfileVersion       int64  `json:"profile_version"`
 	ID                   int    `json:"id" gorm:"primaryKey"`
 	OperationID          int    `json:"-" gorm:"not null;uniqueIndex"`
 	AgentUserID          int    `json:"agent_user_id" gorm:"not null;index"`
@@ -72,6 +77,7 @@ type AgentPurchaseCreateRequest struct {
 // AgentPurchaseCommand is shared by preparation and execution; the server
 // derives amount, owner and target version from the locked persisted order.
 type AgentPurchaseCommand struct {
+	PayerReference    string `json:"payer_reference,omitempty"`
 	RequestID         string `json:"request_id"`
 	OrderID           int    `json:"order_id"`
 	Version           int64  `json:"version"`
@@ -104,18 +110,11 @@ func agentPurchaseQuotePrice(policy *AgentPolicy, quota int) (string, error) {
 	if quota < policy.PurchaseMinimumQuota || quota > policy.PurchaseMaximumQuota || quota <= 0 || quota > common.MaxWalletQuota || policy.PurchaseQuotaNumerator <= 0 || policy.PurchaseQuotaDenominator <= 0 || policy.PurchaseRateBPS <= 0 {
 		return "", ErrAgentPurchaseInvalid
 	}
-	numerator := new(big.Int).Mul(big.NewInt(int64(quota)), big.NewInt(policy.PurchaseRateBPS))
-	numerator.Mul(numerator, big.NewInt(policy.PurchaseQuotaDenominator))
-	denominator := new(big.Int).Mul(big.NewInt(10000), big.NewInt(policy.PurchaseQuotaNumerator))
-	amount, remainder := new(big.Int), new(big.Int)
-	amount.QuoRem(numerator, denominator, remainder)
-	if remainder.Sign() > 0 {
-		amount.Add(amount, big.NewInt(1))
+	amount, err := agentPriceMinor(quota, policy.PurchaseQuotaNumerator, policy.PurchaseQuotaDenominator, policy.PurchaseRateBPS)
+	if err != nil {
+		return "", err
 	}
-	if !amount.IsInt64() || amount.Sign() <= 0 || amount.Int64() > int64(common.MaxWalletQuota) {
-		return "", ErrWalletQuotaLimitExceeded
-	}
-	return amount.String(), nil
+	return strconv.FormatInt(amount, 10), nil
 }
 
 func CreateAgentPurchaseQuote(identity AuthSessionIdentity, request AgentPurchaseQuoteRequest) (*AgentPurchaseQuote, error) {
@@ -139,7 +138,7 @@ func CreateAgentPurchaseQuote(identity AuthSessionIdentity, request AgentPurchas
 		if replay {
 			return tx.Where("operation_id = ?", operation.ID).First(&quote).Error
 		}
-		paid, err := agentPurchaseQuotePrice(policy, request.Quota)
+		price, err := ResolveAgentPurchasePriceTx(tx, policy, identity.UserID, request.Quota, common.GetTimestamp())
 		if err != nil {
 			return err
 		}
@@ -147,7 +146,11 @@ func CreateAgentPurchaseQuote(identity AuthSessionIdentity, request AgentPurchas
 		if err != nil {
 			return err
 		}
-		quote = AgentPurchaseQuote{OperationID: operation.ID, AgentUserID: identity.UserID, Quota: request.Quota, PaidMinor: paid, Currency: policy.PurchaseCurrency, CurrencyExponent: policy.PurchaseCurrencyExponent, RateBPS: policy.PurchaseRateBPS, PolicyVersion: policy.ID, PolicySnapshot: string(snapshot), ExpiresAt: common.GetTimestamp() + policy.QuoteLifetimeSeconds}
+		priceJSON, err := common.Marshal(price)
+		if err != nil {
+			return err
+		}
+		quote = AgentPurchaseQuote{PriceSnapshot: string(priceJSON), ProfileVersion: price.ProfileVersion, OperationID: operation.ID, AgentUserID: identity.UserID, Quota: request.Quota, PaidMinor: price.PaidMinor, Currency: policy.PurchaseCurrency, CurrencyExponent: policy.PurchaseCurrencyExponent, RateBPS: price.RateBPS, PolicyVersion: policy.ID, PolicySnapshot: string(snapshot), ExpiresAt: common.GetTimestamp() + policy.QuoteLifetimeSeconds}
 		return tx.Create(&quote).Error
 	})
 	return &quote, err
@@ -181,13 +184,26 @@ func CreateAgentPurchaseOrder(identity AuthSessionIdentity, request AgentPurchas
 		if !policy.PurchaseEnabled || !policy.RiskPolicyApproved {
 			return ErrAgentFeatureDisabled
 		}
-		if quote.ExpiresAt < common.GetTimestamp() {
+		if quote.ExpiresAt <= common.GetTimestamp() {
 			return ErrAgentPurchaseExpired
 		}
 		if quote.PolicyVersion != policy.ID {
 			return ErrAgentPolicyChanged
 		}
-		order = AgentPurchaseOrder{OperationID: operation.ID, AgentUserID: identity.UserID, QuoteID: quote.ID, Quota: quote.Quota, PaidMinor: quote.PaidMinor, Currency: quote.Currency, CurrencyExponent: quote.CurrencyExponent, RateBPS: quote.RateBPS, PolicyVersion: quote.PolicyVersion, PolicySnapshot: quote.PolicySnapshot, Status: "awaiting_payment", Version: 1}
+		if quote.PriceSnapshot != "" {
+			price, err := ResolveAgentPurchasePriceTx(tx, policy, identity.UserID, quote.Quota, common.GetTimestamp())
+			if err != nil {
+				return err
+			}
+			current, err := common.Marshal(price)
+			if err != nil {
+				return err
+			}
+			if string(current) != quote.PriceSnapshot {
+				return ErrAgentAgreementConflict
+			}
+		}
+		order = AgentPurchaseOrder{PriceSnapshot: quote.PriceSnapshot, ProfileVersion: quote.ProfileVersion, OperationID: operation.ID, AgentUserID: identity.UserID, QuoteID: quote.ID, Quota: quote.Quota, PaidMinor: quote.PaidMinor, Currency: quote.Currency, CurrencyExponent: quote.CurrencyExponent, RateBPS: quote.RateBPS, PolicyVersion: quote.PolicyVersion, PolicySnapshot: quote.PolicySnapshot, Status: "awaiting_payment", Version: 1}
 		return tx.Create(&order).Error
 	})
 	order.VerificationEvidence = ""
@@ -296,8 +312,18 @@ func RecordAgentPurchasePayment(auth AgentTransactionAuthorization, request Agen
 		if request.Environment != "live" || err != nil || strconv.FormatInt(paid, 10) != request.PaidMinor || request.PaidMinor != order.PaidMinor || request.Currency != order.Currency || request.PaidAt < order.CreatedAt || request.PaidAt > common.GetTimestamp() || len(strings.TrimSpace(request.EvidenceReference)) == 0 || len(request.EvidenceReference) > 255 {
 			return ErrAgentPurchaseInvalid
 		}
+		if request.PayerReference != "" && !validAgentDossierReference(request.PayerReference) {
+			return ErrAgentPurchaseInvalid
+		}
+		if policy.ManualReconciliationEnabled && request.Provider == "bank_transfer" && request.PayerReference == "" {
+			return ErrAgentPurchaseInvalid
+		}
+		payerDigest := ""
+		if request.PayerReference != "" {
+			payerDigest = agentStatementDigest([]byte(request.PayerReference))
+		}
 		digest, _ := AgentTransactionParametersHash(request.EvidenceReference)
-		receipt := AgentPaymentReceipt{Provider: request.Provider, ProviderReference: request.ExternalReference, MerchantScope: request.MerchantScope, Environment: request.Environment, Purpose: "purchase", LocalOrderKey: "purchase:" + strconv.Itoa(order.ID), OwnerUserID: order.AgentUserID, Currency: order.Currency, CurrencyExponent: order.CurrencyExponent, PaidMinor: paid, VerifiedAt: common.GetTimestamp(), VerifiedBy: auth.Identity().UserID, EvidenceHash: digest, PaidAt: request.PaidAt}
+		receipt := AgentPaymentReceipt{Provider: request.Provider, ProviderReference: request.ExternalReference, MerchantScope: request.MerchantScope, Environment: request.Environment, Purpose: "purchase", LocalOrderKey: "purchase:" + strconv.Itoa(order.ID), OwnerUserID: order.AgentUserID, Currency: order.Currency, CurrencyExponent: order.CurrencyExponent, PaidMinor: paid, VerifiedAt: common.GetTimestamp(), VerifiedBy: auth.Identity().UserID, EvidenceHash: digest, PaidAt: request.PaidAt, CounterpartyDigest: payerDigest}
 		claimed, err := ClaimAgentPaymentReceiptTx(tx, &receipt)
 		if err != nil {
 			return err
@@ -308,12 +334,14 @@ func RecordAgentPurchasePayment(auth AgentTransactionAuthorization, request Agen
 		if err := ConsumeAgentTransactionAuthorizationTx(tx, auth, context); err != nil {
 			return err
 		}
+		order.PayerReference = request.PayerReference
+		order.PayerDigest = payerDigest
 		order.PaymentReceiptID = claimed.ID
 		order.VerifiedBy = auth.Identity().UserID
 		order.VerificationEvidence = request.EvidenceReference
 		order.Status = "verified"
 		order.Version++
-		if err := tx.Model(&order).Select("payment_receipt_id", "verified_by", "verification_evidence", "status", "version").Updates(&order).Error; err != nil {
+		if err := tx.Model(&order).Select("payer_reference", "payer_digest", "payment_receipt_id", "verified_by", "verification_evidence", "status", "version").Updates(&order).Error; err != nil {
 			return err
 		}
 		if err := appendAgentPurchaseAuditTx(tx, AgentPurchaseAudit{EventKey: operation.OperationKey, ResourceType: "purchase", ResourceID: order.ID, AgentUserID: order.AgentUserID, ActorUserID: auth.Identity().UserID, Action: "purchase.payment.record", FromState: "evidence_submitted", ToState: order.Status, Currency: order.Currency, AmountMinor: order.PaidMinor, Quota: order.Quota, EvidenceReference: request.EvidenceReference}); err != nil {
@@ -361,6 +389,9 @@ func ConfirmAgentPurchasePayment(auth AgentTransactionAuthorization, request Age
 			return err
 		}
 		if receipt.Environment != "live" || receipt.Purpose != "purchase" || receipt.LocalOrderKey != "purchase:"+strconv.Itoa(order.ID) || receipt.OwnerUserID != order.AgentUserID || receipt.Currency != order.Currency || strconv.FormatInt(receipt.PaidMinor, 10) != order.PaidMinor || receipt.VerifiedBy != order.VerifiedBy || receipt.PaidAt < order.CreatedAt {
+			return ErrAgentPaymentReceiptConflict
+		}
+		if order.PayerDigest != "" && (request.PayerReference != order.PayerReference || agentStatementDigest([]byte(request.PayerReference)) != order.PayerDigest || receipt.CounterpartyDigest != order.PayerDigest) {
 			return ErrAgentPaymentReceiptConflict
 		}
 		account, err := lockAgentRedemptionAccount(tx, order.AgentUserID, true)
@@ -429,18 +460,34 @@ func buildAgentSelfUseContextTx(tx *gorm.DB, policy *AgentPolicy, batch *AgentFu
 	if !policy.ProcurementSelfUseEnabled || !policy.RiskPolicyApproved {
 		return AgentTransactionContext{}, 0, ErrAgentFeatureDisabled
 	}
-	if batch.SourceKind != AgentFundPurchase && batch.SourceKind != AgentFundCommission {
+	if batch.SourceKind != AgentFundPurchase && batch.SourceKind != AgentFundCommission && batch.SourceKind != AgentFundCredit {
 		return AgentTransactionContext{}, 0, ErrAgentPurchaseInvalid
+	}
+	if batch.SourceKind == AgentFundCredit && !policy.CreditSelfUseEnabled {
+		return AgentTransactionContext{}, 0, ErrAgentFeatureDisabled
 	}
 	selection, cost, err := previewAgentFundSelectionTx(tx, batch, request.Quota)
 	if err != nil {
 		return AgentTransactionContext{}, 0, err
 	}
-	context, err := agentBusinessContextTx(tx, policy, batch.AgentUserID, "procurement.self_use", request.RequestID, batch.Currency, strconv.FormatInt(cost, 10), request.Quota, "fund_batch", strconv.Itoa(batch.ID), 1, struct {
+	var economics *AgentFundEconomicPreview
+	version := int64(0)
+	if batch.SourceKind == AgentFundPurchase || batch.SourceKind == AgentFundCredit {
+		economics, err = PreviewAgentFundEconomicSpendTx(tx, batch, request.Quota)
+		if err != nil {
+			return AgentTransactionContext{}, 0, err
+		}
+		cost = economics.ChargedDeltaMinor
+		version = economics.Version
+	}
+	// Earned commission remains a noncash reward source, not refundable cash
+	// principal or a credit receivable. Preserve its historical book valuation.
+	context, err := agentBusinessContextTx(tx, policy, batch.AgentUserID, "procurement.self_use", request.RequestID, batch.Currency, strconv.FormatInt(cost, 10), request.Quota, "fund_batch", strconv.Itoa(batch.ID), version, struct {
 		Request       AgentProcurementSelfUseRequest `json:"request"`
 		Selection     []agentFundSelection           `json:"selection"`
 		WalletAccount LedgerAccount                  `json:"wallet_account"`
-	}{request, selection, batch.WalletAccount})
+		Economic      *AgentFundEconomicPreview      `json:"economic"`
+	}{request, selection, batch.WalletAccount, economics})
 	return context, cost, err
 }
 
@@ -488,6 +535,9 @@ func AgentProcurementSelfUse(auth AgentTransactionAuthorization, request AgentPr
 		}
 
 		if err := ConsumeAgentTransactionAuthorizationTx(tx, auth, context); err != nil {
+			return err
+		}
+		if err := ConsumeAgentGovernanceRiskTx(tx, owner, AgentGovernanceRiskOperationID("procurement.self_use", request.RequestID), "transfer", int64(request.Quota)); err != nil {
 			return err
 		}
 		if err := applyAgentQuotaChangeTx(tx, account, AgentRedemptionLedger{OperationKey: operation.OperationKey, ActorUserID: owner, Kind: "self_use", Delta: -request.Quota, SpentDelta: request.Quota, RequestID: request.RequestID, Reason: "Explicit procurement quota transfer to consumption wallet"}); err != nil {

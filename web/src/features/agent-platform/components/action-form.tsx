@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import {
   useForm,
   useFormContext,
@@ -54,8 +54,12 @@ export interface ActionField {
     | 'select'
     | 'textarea'
     | 'datetime'
+    | 'csv'
   description?: string
+  placeholder?: string
   required?: boolean
+  mustBeTrue?: boolean
+  validate?: (value: string | boolean) => string | undefined
   readOnly?: boolean
   min?: number
   max?: number
@@ -110,13 +114,17 @@ export function ActionForm(props: {
         if (field.kind !== 'integer') {
           invalid ||= text.length > (field.max ?? 255)
         }
-        if (invalid) {
+        if (field.mustBeTrue && value !== true) invalid = true
+        const customError = field.validate?.(value ?? '')
+        if (invalid || customError) {
           context.addIssue({
             code: 'custom',
             path: [field.name],
-            message: t('Enter a valid value for {{field}}', {
-              field: t(field.label),
-            }),
+            message:
+              customError ??
+              t('Enter a valid value for {{field}}', {
+                field: t(field.label),
+              }),
           })
         }
       }
@@ -214,6 +222,13 @@ function ActionControl({
 }) {
   const { t } = useTranslation()
   const { setValue } = useFormContext<ActionValues>()
+  const fileRead = useRef(0)
+  useEffect(
+    () => () => {
+      fileRead.current += 1
+    },
+    []
+  )
   if (definition.kind === 'checkbox') {
     return (
       <Checkbox
@@ -257,6 +272,48 @@ function ActionControl({
       </NativeSelect>
     )
   }
+  if (definition.kind === 'csv') {
+    return (
+      <div className='flex flex-col gap-3'>
+        <Input
+          type='file'
+          accept='.csv,text/csv'
+          aria-label={t('Choose statement CSV file')}
+          disabled={busy}
+          onChange={(event) => {
+            const sequence = ++fileRead.current
+            const file = event.target.files?.[0]
+            event.target.value = ''
+            if (!file) return
+            if (file.size > 49152) {
+              handleServerError(
+                new Error(t('Statement CSV must not exceed 48 KiB.'))
+              )
+              return
+            }
+            void file
+              .text()
+              .then((text) => {
+                if (sequence === fileRead.current) field.onChange(text)
+              })
+              .catch((error: unknown) => handleServerError(error))
+          }}
+        />
+        <Textarea
+          {...controlProps}
+          {...field}
+          onChange={(event) => {
+            fileRead.current += 1
+            field.onChange(event)
+          }}
+          value={String(field.value)}
+          maxLength={49152}
+          disabled={busy}
+          className='min-h-48 font-mono text-xs'
+        />
+      </div>
+    )
+  }
   if (definition.kind === 'textarea') {
     return (
       <Textarea
@@ -273,6 +330,7 @@ function ActionControl({
       {...controlProps}
       {...field}
       value={String(field.value)}
+      placeholder={definition.placeholder}
       type={definition.kind === 'datetime' ? 'datetime-local' : 'text'}
       inputMode={
         definition.kind === 'integer' || definition.kind === 'minor'

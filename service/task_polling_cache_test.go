@@ -215,4 +215,5 @@ func openTaskPollingSQLFixture(t *testing.T, dialect string) {
 	}
 	t.Cleanup(func() { model.DB, model.LOG_DB = oldDB, oldLogDB; common.SetDatabaseTypes(oldType, oldLogType) })
 	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.Task{}, &model.User{}, &model.Token{}, &model.Channel{}, &model.UserSubscription{}, &model.SubscriptionPreConsumeRecord{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}))
+	require.NoError(t, db.AutoMigrate(model.BonusSourceModels()...))
 }

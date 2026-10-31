@@ -33,11 +33,13 @@ import { useRequestId } from '../hooks/use-request-id'
 import { currencyOptions, validCurrencyExponent } from '../lib/currencies'
 import type { AgentPolicy, OperationDraft, OperationPayload } from '../types'
 import { ActionForm, type ActionField } from './action-form'
+import { expansionPolicyFields } from './expansion-policy-fields'
 import { OperationDialog } from './operation-dialog'
 import { ResourceTable } from './resource-table'
 import { BusinessDate } from './values'
 
 const policyFields: ActionField[] = [
+  ...expansionPolicyFields,
   {
     name: 'legacy_purchase_reclassification_enabled',
     label: 'Enable verified legacy purchase reclassification',
@@ -304,7 +306,7 @@ export function PolicyPanel(props: { finance?: boolean }) {
       </dl>
       <p className='text-muted-foreground text-sm'>
         {t(
-          'Credit facilities, automatic payouts, a universal 0.88 price and new public signup gifts are not enabled by this module.'
+          'All external payouts require manual review and offline human payment. There is no automatic payout API. New credit, pricing and promotional terms require explicit approval.'
         )}
       </p>
       {props.finance && user?.role === ROLE.SUPER_ADMIN && (
@@ -347,7 +349,12 @@ export function PolicyPanel(props: { finance?: boolean }) {
               }
               next[field.name] = value
             }
-            for (const prefix of ['purchase', 'commission']) {
+            for (const prefix of [
+              'purchase',
+              'commission',
+              'credit',
+              'deposit',
+            ]) {
               const currency = String(next[`${prefix}_currency`])
               if (
                 currency &&

@@ -95,7 +95,7 @@ func newInitialReservationHTTPFixture(t *testing.T, source string) *initialReser
 	}
 	require.Zero(t, gopool.WorkerCount(), "no previous fixture may retain a worker")
 	db, _ := newAuditTestDatabase(t, "postgres", dsn)
-	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.User{}, &model.Token{}, &model.Channel{}, &model.Task{}, &model.Log{}, &model.Model{}, &model.Ability{}, &model.Vendor{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.SubscriptionPlan{}, &model.UserSubscription{}, &model.SubscriptionPreConsumeRecord{}))
+	require.NoError(t, db.AutoMigrate(append([]any{&model.Option{}, &model.User{}, &model.Token{}, &model.Channel{}, &model.Task{}, &model.Log{}, &model.Model{}, &model.Ability{}, &model.Vendor{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.SubscriptionPlan{}, &model.UserSubscription{}, &model.SubscriptionPreConsumeRecord{}}, model.BonusSourceModels()...)...))
 	var version string
 	require.NoError(t, db.Raw("SHOW server_version").Scan(&version).Error)
 	t.Logf("initial reservation HTTP database: PostgreSQL %s", version)

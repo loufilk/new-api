@@ -38,6 +38,7 @@ func settlementDeadlineSession(t *testing.T, request string, withToken bool, sou
 		require.NoError(t, err)
 		sqlDB.SetMaxOpenConns(1)
 		require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.BillingFinalization{}, &model.Model{}, &model.Vendor{}, &model.ModelBonusEligibleAudit{}, &model.Option{}, &model.Ability{}, &model.Channel{}, &model.UserSubscription{}, &model.SubscriptionPlan{}, &model.SubscriptionPreConsumeRecord{}))
+		require.NoError(t, db.AutoMigrate(model.BonusSourceModels()...))
 		original := model.DB
 		model.DB = db
 		t.Cleanup(func() { model.DB = original; require.NoError(t, sqlDB.Close()) })

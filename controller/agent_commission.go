@@ -29,6 +29,10 @@ func commissionIdentity(c *gin.Context) (model.AuthSessionIdentity, bool) {
 
 func commissionAPIError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, model.ErrAgentGovernanceRequired), errors.Is(err, model.ErrAgentGovernanceReview), errors.Is(err, model.ErrAgentGovernanceConflict), errors.Is(err, model.ErrAgentGovernanceRiskLimit), errors.Is(err, model.ErrAgentGovernanceInvalid):
+		writeAgentProfileError(c, err)
+	case errors.Is(err, model.ErrAgentPurchaseReview):
+		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage(err.Error()))
 	case errors.Is(err, model.ErrAgentProfilePermission), errors.Is(err, model.ErrAgentTransactionProof), errors.Is(err, model.ErrUserSessionInactive):
 		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Financial authorization is invalid or no longer matches this transaction"))
 	case errors.Is(err, model.ErrAgentCommissionConflict), errors.Is(err, model.ErrAgentPolicyChanged), errors.Is(err, model.ErrAgentProfileConflict), errors.Is(err, model.ErrAgentPaymentReceiptConflict), errors.Is(err, model.ErrAgentOutboundPaymentConflict):

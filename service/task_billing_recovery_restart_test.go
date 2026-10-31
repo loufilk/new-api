@@ -34,6 +34,7 @@ func migrateRecoveryFixture(t *testing.T, db *gorm.DB) {
 	require.NoError(t, err)
 	require.Empty(t, tables, "refusing a nonempty disposable recovery database")
 	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.User{}, &model.Token{}, &model.Channel{}, &model.Log{}, &model.BillingFinalization{}, &model.SystemTask{}, &model.SystemTaskLock{}, &model.Midjourney{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.UserSubscription{}, &model.SubscriptionPreConsumeRecord{}))
+	require.NoError(t, db.AutoMigrate(model.BonusSourceModels()...))
 }
 
 func bindRecoveryFixture(t *testing.T, db *gorm.DB, dialect common.DatabaseType) {

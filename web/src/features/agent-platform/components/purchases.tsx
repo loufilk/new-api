@@ -22,6 +22,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { Dialog } from '@/components/dialog'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/stores/auth-store'
@@ -32,6 +33,7 @@ import { minorMoneyInput, parseMinorMoney } from '../lib/money'
 import type { OperationDraft, PurchaseOrder } from '../types'
 import { ActionForm, type ActionField, type ActionValues } from './action-form'
 import { OperationDialog } from './operation-dialog'
+import { PriceSnapshot } from './price-snapshot'
 import { PurchaseCreate } from './purchase-create'
 import { ResourceTable } from './resource-table'
 import { BusinessDate, BusinessState, Money, Quota } from './values'
@@ -46,7 +48,9 @@ export function Purchases(props: {
   const client = useQueryClient()
   const requestId = useRequestId()
   const [create, setCreate] = useState(false)
+  const [price, setPrice] = useState<PurchaseOrder | null>(null)
   const [evidence, setEvidence] = useState<PurchaseOrder | null>(null)
+  const [confirmPayer, setConfirmPayer] = useState<PurchaseOrder | null>(null)
   const [verify, setVerify] = useState<PurchaseOrder | null>(null)
   const [draft, setDraft] = useState<OperationDraft | null>(null)
   const path = props.finance ? '/finance/purchases' : '/purchases'
@@ -78,6 +82,22 @@ export function Purchases(props: {
       ),
     },
     { accessorKey: 'policy_version', header: t('Policy version') },
+    {
+      id: 'price_snapshot',
+      header: t('Frozen pricing snapshot'),
+      cell: ({ row }) =>
+        row.original.price_snapshot ? (
+          <Button
+            size='sm'
+            variant='outline'
+            onClick={() => setPrice(row.original)}
+          >
+            {t('View pricing snapshot')}
+          </Button>
+        ) : (
+          <span>—</span>
+        ),
+    },
     {
       accessorKey: 'evidence_reference',
       header: t('Payment evidence reference'),
@@ -131,6 +151,10 @@ export function Purchases(props: {
               variant='outline'
               disabled={order.verified_by === userId}
               onClick={() => {
+                if (order.payer_digest) {
+                  setConfirmPayer(order)
+                  return
+                }
                 const payload = { order_id: order.id, version: order.version }
                 setDraft({
                   action: 'purchase.payment.confirm',
@@ -150,6 +174,13 @@ export function Purchases(props: {
     },
   ]
   const verificationFields: ActionField[] = [
+    {
+      name: 'payer_reference',
+      label: 'Verified original payer dossier ID',
+      required: false,
+      description:
+        'Required for new bank receipts when manual reconciliation is enabled. Use a controlled dossier reference, never bank account details.',
+    },
     {
       name: 'provider',
       label: 'Payment provider',
@@ -199,6 +230,7 @@ export function Purchases(props: {
       order_id: verify.id,
       version: verify.version,
       provider: String(values.provider),
+      payer_reference: String(values.payer_reference ?? '').trim(),
       merchant_scope: String(values.merchant_scope),
       environment: String(values.environment),
       external_reference: String(values.external_reference),
@@ -245,6 +277,17 @@ export function Purchases(props: {
           )}
         </p>
       )}
+      {price && (
+        <Dialog
+          open
+          title={t('Frozen pricing snapshot')}
+          onOpenChange={(open) => {
+            if (!open) setPrice(null)
+          }}
+        >
+          <PriceSnapshot value={price.price_snapshot} />
+        </Dialog>
+      )}
       <ResourceTable resource={path} columns={columns} />
       {create && <PurchaseCreate onClose={() => setCreate(false)} />}
       {evidence && (
@@ -289,6 +332,42 @@ export function Purchases(props: {
           }}
           onClose={() => setVerify(null)}
           onSubmit={prepareVerification}
+        />
+      )}
+      {confirmPayer && (
+        <ActionForm
+          title={t('Independent review')}
+          description={t(
+            'Independently verify and re-enter the original payer dossier. The recorded digest must match; never copy unverified recipient details.'
+          )}
+          fields={[
+            {
+              name: 'payer_reference',
+              label: 'Verified original payer dossier ID',
+            },
+          ]}
+          onClose={() => setConfirmPayer(null)}
+          onSubmit={(values) => {
+            const payload = {
+              order_id: confirmPayer.id,
+              version: confirmPayer.version,
+              payer_reference: String(values.payer_reference).trim(),
+            }
+            setDraft({
+              action: 'purchase.payment.confirm',
+              request_id: requestId(payload),
+              payload,
+              endpoint: `${path}/${confirmPayer.id}/review`,
+              resource: path,
+              review: [
+                {
+                  label: 'Verified payer digest',
+                  after: confirmPayer.payer_digest ?? '',
+                },
+              ],
+            })
+            setConfirmPayer(null)
+          }}
         />
       )}
       {draft && (

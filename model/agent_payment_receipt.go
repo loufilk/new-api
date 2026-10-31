@@ -20,23 +20,24 @@ var ErrAgentPaymentReceiptConflict = errors.New("Payment evidence is already ass
 // Uniqueness deliberately excludes merchant/environment aliases: relabeling the
 // same provider payment must never make it reusable for another purpose.
 type AgentPaymentReceipt struct {
-	ID                int64  `json:"id" gorm:"primaryKey"`
-	ReceiptKey        string `json:"-" gorm:"type:char(64);not null;uniqueIndex"`
-	Provider          string `json:"provider" gorm:"type:varchar(32);not null"`
-	ProviderReference string `json:"-" gorm:"type:varchar(255);not null"`
-	MerchantScope     string `json:"merchant_scope" gorm:"type:varchar(128);not null"`
-	Environment       string `json:"environment" gorm:"type:varchar(16);not null"`
-	Purpose           string `json:"purpose" gorm:"type:varchar(24);not null;uniqueIndex:idx_agent_payment_purpose_order,priority:1"`
-	LocalOrderKey     string `json:"local_order_key" gorm:"type:varchar(128);not null;uniqueIndex:idx_agent_payment_purpose_order,priority:2"`
-	OwnerUserID       int    `json:"owner_user_id" gorm:"not null;index"`
-	Currency          string `json:"currency" gorm:"type:varchar(3);not null"`
-	CurrencyExponent  int    `json:"currency_exponent" gorm:"not null"`
-	PaidMinor         int64  `json:"paid_minor,string" gorm:"not null"`
-	PaidAt            int64  `json:"paid_at" gorm:"not null"`
-	VerifiedAt        int64  `json:"verified_at" gorm:"not null"`
-	VerifiedBy        int    `json:"verified_by"`
-	EvidenceHash      string `json:"evidence_hash" gorm:"type:varchar(64)"`
-	CreatedAt         int64  `json:"created_at" gorm:"autoCreateTime"`
+	ID                 int64  `json:"id" gorm:"primaryKey"`
+	ReceiptKey         string `json:"-" gorm:"type:char(64);not null;uniqueIndex"`
+	Provider           string `json:"provider" gorm:"type:varchar(32);not null"`
+	ProviderReference  string `json:"-" gorm:"type:varchar(255);not null"`
+	MerchantScope      string `json:"merchant_scope" gorm:"type:varchar(128);not null"`
+	Environment        string `json:"environment" gorm:"type:varchar(16);not null"`
+	Purpose            string `json:"purpose" gorm:"type:varchar(24);not null;uniqueIndex:idx_agent_payment_purpose_order,priority:1"`
+	LocalOrderKey      string `json:"local_order_key" gorm:"type:varchar(128);not null;uniqueIndex:idx_agent_payment_purpose_order,priority:2"`
+	OwnerUserID        int    `json:"owner_user_id" gorm:"not null;index"`
+	Currency           string `json:"currency" gorm:"type:varchar(3);not null"`
+	CurrencyExponent   int    `json:"currency_exponent" gorm:"not null"`
+	PaidMinor          int64  `json:"paid_minor,string" gorm:"not null"`
+	CounterpartyDigest string `json:"counterparty_digest" gorm:"type:varchar(64)"`
+	PaidAt             int64  `json:"paid_at" gorm:"not null"`
+	VerifiedAt         int64  `json:"verified_at" gorm:"not null"`
+	VerifiedBy         int    `json:"verified_by"`
+	EvidenceHash       string `json:"evidence_hash" gorm:"type:varchar(64)"`
+	CreatedAt          int64  `json:"created_at" gorm:"autoCreateTime"`
 }
 
 func (*AgentPaymentReceipt) BeforeUpdate(*gorm.DB) error { return ErrAgentLedgerImmutable }
@@ -54,7 +55,7 @@ func ValidateAgentPaymentReceipt(receipt *AgentPaymentReceipt) error {
 	if receipt.Provider == PaymentProviderStripe && !strings.HasPrefix(receipt.ProviderReference, "pi_") {
 		return ErrAgentPaymentReceiptConflict
 	}
-	if receipt.Purpose != "topup" && receipt.Purpose != "purchase" {
+	if receipt.Purpose != "topup" && receipt.Purpose != "purchase" && receipt.Purpose != "credit_repayment" && receipt.Purpose != "deposit" {
 		return ErrAgentPaymentReceiptConflict
 	}
 	if receipt.Environment != "live" && receipt.Environment != "test" {
@@ -74,6 +75,11 @@ func ValidateAgentPaymentReceipt(receipt *AgentPaymentReceipt) error {
 			if ch < 32 || ch == 127 {
 				return ErrAgentPaymentReceiptConflict
 			}
+		}
+	}
+	if receipt.CounterpartyDigest != "" {
+		if decoded, err := hex.DecodeString(receipt.CounterpartyDigest); err != nil || len(decoded) != 32 || strings.ToLower(receipt.CounterpartyDigest) != receipt.CounterpartyDigest {
+			return ErrAgentPaymentReceiptConflict
 		}
 	}
 	if receipt.EvidenceHash != "" {
@@ -107,7 +113,7 @@ func ClaimAgentPaymentReceiptTx(tx *gorm.DB, receipt *AgentPaymentReceipt) (*Age
 	if err := tx.Where("receipt_key = ?", copy.ReceiptKey).First(&existing).Error; err != nil {
 		return nil, ErrAgentPaymentReceiptConflict
 	}
-	if existing.Provider != copy.Provider || existing.ProviderReference != copy.ProviderReference || existing.MerchantScope != copy.MerchantScope || existing.Environment != copy.Environment || existing.Purpose != copy.Purpose || existing.LocalOrderKey != copy.LocalOrderKey || existing.OwnerUserID != copy.OwnerUserID || existing.Currency != copy.Currency || existing.CurrencyExponent != copy.CurrencyExponent || existing.PaidMinor != copy.PaidMinor {
+	if existing.Provider != copy.Provider || existing.ProviderReference != copy.ProviderReference || existing.MerchantScope != copy.MerchantScope || existing.Environment != copy.Environment || existing.Purpose != copy.Purpose || existing.LocalOrderKey != copy.LocalOrderKey || existing.OwnerUserID != copy.OwnerUserID || existing.Currency != copy.Currency || existing.CurrencyExponent != copy.CurrencyExponent || existing.PaidMinor != copy.PaidMinor || existing.CounterpartyDigest != copy.CounterpartyDigest {
 		return nil, ErrAgentPaymentReceiptConflict
 	}
 	return &existing, nil

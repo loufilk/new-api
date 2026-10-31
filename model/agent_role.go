@@ -68,6 +68,11 @@ func lockAdminUserMutationTx(tx *gorm.DB, actorID int, expected User, identities
 // user snapshot over a concurrent balance, referral or profile change.
 // HTTP callers must pass the authenticated receipt; internal callers may omit it.
 func ApplyUserManagementActionTx(tx *gorm.DB, actorID int, expected User, action string, identities ...AuthSessionIdentity) (*User, error) {
+	if action == "set_agent" || action == "unset_agent" {
+		if _, err := LockCurrentAgentPolicyTx(tx); err != nil {
+			return nil, err
+		}
+	}
 	actor, target, err := lockAdminUserMutationTx(tx, actorID, expected, identities...)
 	if err != nil {
 		return nil, err

@@ -30,7 +30,7 @@ type agentFinanceBrowser struct {
 	bearer   string
 }
 
-func agentFinanceRouterFixture(t *testing.T) (*gin.Engine, agentFinanceBrowser, agentFinanceBrowser) {
+func agentFinanceRouterFixture(t *testing.T) (*gin.Engine, agentFinanceBrowser, agentFinanceBrowser, agentFinanceBrowser) {
 	t.Helper()
 	dsn := os.Getenv("TEST_AGENT_MIGRATION_POSTGRES_DSN")
 	if dsn == "" {
@@ -70,8 +70,8 @@ func agentFinanceRouterFixture(t *testing.T) (*gin.Engine, agentFinanceBrowser, 
 		require.NoError(t, adminPool.Close())
 	})
 	require.NoError(t, db.AutoMigrate(append([]any{&model.User{}, &model.UserSession{}, &model.AuthFlow{}, &model.TwoFA{}, &model.PasskeyCredential{}, &model.UserAccessToken{}, &model.TopUp{}, &model.SubscriptionOrder{}, &model.ReferralCommission{}, &model.Log{}, &model.AuditLog{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}}, model.AgentPlatformModels()...)...))
-	browsers := make([]agentFinanceBrowser, 2)
-	users := []model.User{{Username: "router-finance-root", AffCode: "router-finance-root", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1}, {Username: "router-inviter", AffCode: "router-inviter", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1}}
+	browsers := make([]agentFinanceBrowser, 3)
+	users := []model.User{{Username: "router-finance-root", AffCode: "router-finance-root", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1}, {Username: "router-inviter", AffCode: "router-inviter", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1}, {Username: "router-finance-checker", AffCode: "router-finance-checker", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, AuthVersion: 1}}
 	for i := range users {
 		require.NoError(t, db.Create(&users[i]).Error)
 		identity := model.AuthSessionIdentity{UserID: users[i].Id, SessionID: "synthetic-routed-" + users[i].Username, UserAuthVersion: 1, SessionVersion: 1}
@@ -99,7 +99,7 @@ func agentFinanceRouterFixture(t *testing.T) (*gin.Engine, agentFinanceBrowser, 
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
 	require.NoError(t, RegisterAgentPlatformRoutes(extension.RouteScopes{Engine: engine, API: engine.Group("/api")}))
-	return engine, browsers[0], browsers[1]
+	return engine, browsers[0], browsers[1], browsers[2]
 }
 
 func agentFinanceRequest(t *testing.T, engine *gin.Engine, browser agentFinanceBrowser, path string, input any, proof string, target any) *httptest.ResponseRecorder {
@@ -144,7 +144,7 @@ func agentFinanceSubmit(t *testing.T, engine *gin.Engine, browser agentFinanceBr
 }
 
 func TestAgentPlatformRoutedWithdrawalApprovalUnknownFailureAndRejectPostgres(t *testing.T) {
-	engine, finance, owner := agentFinanceRouterFixture(t)
+	engine, finance, owner, checker := agentFinanceRouterFixture(t)
 	recipientInput := model.AgentCommissionRecipientRequest{RequestID: "router-recipient-create", Label: "Synthetic beneficiary", RecipientReference: "synthetic-offline-bank-reference"}
 	var recipient model.AgentCommissionRecipient
 	agentFinanceSubmit(t, engine, owner, "recipient.change", recipientInput.RequestID, "/commission-recipients", recipientInput, &recipient)
@@ -163,7 +163,11 @@ func TestAgentPlatformRoutedWithdrawalApprovalUnknownFailureAndRejectPostgres(t 
 		if suffix == "resolve" {
 			input.EvidenceReference = "synthetic-observation-" + status
 		}
-		agentFinanceSubmit(t, engine, finance, action, input.RequestID, fmt.Sprintf("/finance/withdrawals/%d/%s", withdrawal.ID, suffix), input, &withdrawal)
+		actor := finance
+		if failed {
+			actor = checker
+		}
+		agentFinanceSubmit(t, engine, actor, action, input.RequestID, fmt.Sprintf("/finance/withdrawals/%d/%s", withdrawal.ID, suffix), input, &withdrawal)
 	}
 	transition("approve", "commission.withdraw.approve", "approve", "", false)
 	assert.Equal(t, "approved", withdrawal.Status)
@@ -175,6 +179,17 @@ func TestAgentPlatformRoutedWithdrawalApprovalUnknownFailureAndRejectPostgres(t 
 	require.NoError(t, model.DB.Where("user_id = ?", owner.identity.UserID).First(&account).Error)
 	assert.EqualValues(t, 100, account.HeldMinor)
 	assert.EqualValues(t, 400, account.AvailableMinor)
+	// A maker cannot certify that their own offline payout definitively failed.
+	selfFailure := model.AgentCommissionWithdrawalAction{RequestID: "router-self-failure-denied", WithdrawalID: withdrawal.ID, Version: withdrawal.Version, Status: "failed", Reason: "Synthetic failure review", EvidenceReference: "synthetic-confirmed-unpaid", FailureConfirmedUnpaid: true}
+	f := agentPrepaidRouterFixture{engine: engine}
+	proof := agentPrepaidProof(t, f, finance, "commission.withdraw.resolve", selfFailure.RequestID, selfFailure)
+	agentPrepaidRoute(t, f, finance, http.MethodPost, fmt.Sprintf("/finance/withdrawals/%d/resolve", withdrawal.ID), selfFailure, proof, http.StatusForbidden, nil)
+	var unchanged model.AgentCommissionWithdrawal
+	require.NoError(t, model.DB.First(&unchanged, withdrawal.ID).Error)
+	assert.Equal(t, withdrawal.Version, unchanged.Version)
+	assert.Equal(t, "unknown", unchanged.Status)
+	require.NoError(t, model.DB.First(&account, account.ID).Error)
+	assert.EqualValues(t, 100, account.HeldMinor)
 	transition("resolve", "commission.withdraw.resolve", "", "failed", true)
 	assert.Equal(t, "failed", withdrawal.Status)
 	require.NoError(t, model.DB.First(&account, account.ID).Error)

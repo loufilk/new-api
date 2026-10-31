@@ -194,6 +194,11 @@ func CreateRedemptionsScoped(scope RedemptionScope, request RedemptionCreateRequ
 		if err := requireRedemptionActorTx(tx, scope, budgetAgentID); err != nil {
 			return err
 		}
+		if budgetAgentID > 0 {
+			if err := ConsumeAgentGovernanceRiskTx(tx, budgetAgentID, AgentGovernanceRiskOperationID("redemption.create", request.RequestID), "issuance", int64(request.Quota)*int64(request.Count)); err != nil {
+				return err
+			}
+		}
 
 		if scope.Identity != nil {
 			if err := ConsumeAgentTransactionAuthorizationTx(tx, *scope.Authorization, authorizationContext); err != nil {
@@ -362,11 +367,22 @@ func UpdateRedemptionScoped(scope RedemptionScope, request RedemptionUpdateReque
 				kind = "disable"
 			}
 		}
+		previousReserve := 0
+		if redemption.BudgetReserved {
+			previousReserve = redemption.Quota
+		}
 		if err := updateRedemptionBudgetTx(tx, &redemption, scope.UserID, desiredReserve, false, kind); err != nil {
 			return err
 		}
 		if err := requireRedemptionActorTx(tx, scope, activeAgentID); err != nil {
 			return err
+		}
+		if redemption.BudgetAgentID > 0 && desiredReserve > previousReserve {
+			// Durable budget revision also identifies legacy non-HTTP updates.
+			riskKey := fmt.Sprintf("redemption-risk:%d:%d", redemption.Id, redemption.BudgetVersion)
+			if err := ConsumeAgentGovernanceRiskTx(tx, redemption.BudgetAgentID, riskKey, "issuance", int64(desiredReserve-previousReserve)); err != nil {
+				return err
+			}
 		}
 
 		if scope.Identity != nil {

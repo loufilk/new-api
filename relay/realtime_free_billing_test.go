@@ -46,7 +46,7 @@ func TestPrepareFreeRealtimeBilling(t *testing.T) {
 		for _, freeBy := range []string{"model", "group"} {
 			t.Run(preference+"/"+freeBy, func(t *testing.T) {
 				db := setupRelayChannelDB(t)
-				require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Log{}, &model.Ability{}, &model.Model{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.UserSubscription{}, &model.SubscriptionPlan{}, &model.SubscriptionPreConsumeRecord{}))
+				require.NoError(t, db.AutoMigrate(append([]any{&model.User{}, &model.Token{}, &model.Log{}, &model.Ability{}, &model.Model{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.UserSubscription{}, &model.SubscriptionPlan{}, &model.SubscriptionPreConsumeRecord{}}, model.BonusSourceModels()...)...))
 				oldLog, oldLogType := model.LOG_DB, common.LogDatabaseType()
 				oldRedis, oldBatch, oldConsume, oldMaster := common.RedisEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.IsMasterNode
 				common.RedisEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.IsMasterNode = false, false, true, false

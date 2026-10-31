@@ -63,6 +63,24 @@ func PrepareAgentPlatformOperation(c *gin.Context) {
 		prepared, err = model.PrepareAgentPolicyOperation(identity, request.Action, request.RequestID, request.Payload)
 	case request.Action == "profile.update", request.Action == "invitation.policy.update":
 		prepared, err = model.PrepareAgentProfileOperation(identity, request.Action, request.RequestID, request.Payload)
+	case strings.HasPrefix(request.Action, "governance."):
+		writeError = writeAgentGovernanceError
+		prepared, err = model.PrepareAgentGovernanceOperation(identity, request.Action, request.RequestID, request.Payload)
+	case strings.HasPrefix(request.Action, "credit."):
+		writeError = writeAgentCreditError
+		prepared, err = model.PrepareAgentCreditOperation(identity, request.Action, request.RequestID, request.Payload)
+	case strings.HasPrefix(request.Action, "deposit."):
+		writeError = writeAgentCreditError
+		prepared, err = model.PrepareAgentDepositOperation(identity, request.Action, request.RequestID, request.Payload)
+	case strings.HasPrefix(request.Action, "agreement."):
+		writeError = writeAgentAgreementError
+		prepared, err = model.PrepareAgentAgreementOperation(identity, request.Action, request.RequestID, request.Payload)
+	case strings.HasPrefix(request.Action, "statement."):
+		writeError = writeAgentAgreementError
+		prepared, err = model.PrepareAgentStatementOperation(identity, request.Action, request.RequestID, request.Payload)
+	case strings.HasPrefix(request.Action, "campaign."):
+		writeError = campaignError
+		prepared, err = model.PrepareAgentCampaignOperation(identity, request.Action, request.RequestID, request.Payload)
 	case strings.HasPrefix(request.Action, "commission."), request.Action == "recipient.change":
 		writeError = commissionAPIError
 		prepared, err = model.PrepareAgentCommissionOperation(identity, request.Action, request.RequestID, request.Payload)
@@ -112,7 +130,7 @@ func GetAgentPlatformOperation(c *gin.Context) {
 	for _, lookup := range []struct {
 		find       func(model.AuthSessionIdentity, string) (*model.AgentOperationStatus, error)
 		writeError func(*gin.Context, error)
-	}{{model.FindAgentPolicyOperation, writeAgentPlatformError}, {model.FindAgentProfileOperation, writeAgentPlatformError}, {model.FindAgentPurchaseOperation, writeAgentPurchaseError}, {model.FindAgentCommissionOperation, commissionAPIError}} {
+	}{{model.FindAgentPolicyOperation, writeAgentPlatformError}, {model.FindAgentProfileOperation, writeAgentPlatformError}, {model.FindAgentPurchaseOperation, writeAgentPurchaseError}, {model.FindAgentCommissionOperation, commissionAPIError}, {model.FindAgentCreditOperation, writeAgentCreditError}, {model.FindAgentAgreementOperation, writeAgentAgreementError}, {model.FindAgentStatementOperation, writeAgentAgreementError}, {model.FindAgentCampaignOperation, campaignError}, {model.FindAgentGovernanceOperation, writeAgentGovernanceError}} {
 		status, err := lookup.find(identity, requestID)
 		if err != nil {
 			lookup.writeError(c, err)

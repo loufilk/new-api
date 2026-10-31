@@ -396,6 +396,16 @@ func TestPostConsumeQuotaIneligibleClearError(t *testing.T) {
 // 退款/结算按任务记录的原始份额落入对应账户。
 // ---------------------------------------------------------------------------
 
+// seedBonusTaskSource mirrors a real accounted submission so refunds retain
+// original lot evidence rather than treating an in-memory receipt as a grant.
+func seedBonusTaskSource(t *testing.T, task *model.Task) {
+	t.Helper()
+	_, err := model.CreditQuotaShares(model.LedgerEntry{UserId: task.UserId, Reason: model.LedgerReasonSystem, IdempotencyKey: "fixture-source:" + task.TaskID}, task.PrivateData.WalletDebit)
+	require.NoError(t, err)
+	_, err = model.DebitQuota(model.LedgerEntry{UserId: task.UserId, Delta: task.Quota, Reason: model.LedgerReasonBillingPreConsume, ReferenceType: "relay", ReferenceId: task.PrivateData.RequestId, RequestId: task.PrivateData.RequestId, IdempotencyKey: "billing:preconsume:" + task.PrivateData.RequestId}, model.AccountBonus, model.AccountPaid)
+	require.NoError(t, err)
+}
+
 func TestTaskRefundSplitsToOriginalAccounts(t *testing.T) {
 	truncate(t)
 	const userID = 913
@@ -406,6 +416,7 @@ func TestTaskRefundSplitsToOriginalAccounts(t *testing.T) {
 		{Account: model.AccountBonus, Amount: 700},
 		{Account: model.AccountPaid, Amount: 300},
 	}
+	seedBonusTaskSource(t, task)
 	require.NoError(t, model.DB.Create(task).Error)
 
 	require.True(t, RefundTaskQuota(t.Context(), task, "test failure"))
@@ -424,7 +435,9 @@ func TestTaskAdjustFundingSettleAndRefundPrecise(t *testing.T) {
 		{Account: model.AccountBonus, Amount: 700},
 		{Account: model.AccountPaid, Amount: 300},
 	}
+	seedBonusTaskSource(t, task)
 
+	require.NoError(t, model.DB.Create(task).Error)
 	// 差额结算退款（退 600）：bonus 退 420 / paid 退 180
 	_, err := taskAdjustFunding(task, -600, nil)
 	require.NoError(t, err)
@@ -446,6 +459,7 @@ func TestTaskRefundIdempotent(t *testing.T) {
 		{Account: model.AccountBonus, Amount: 700},
 		{Account: model.AccountPaid, Amount: 300},
 	}
+	seedBonusTaskSource(t, task)
 	require.NoError(t, model.DB.Create(task).Error)
 
 	require.True(t, RefundTaskQuota(t.Context(), task, "failure 1"))

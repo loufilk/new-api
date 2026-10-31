@@ -23,7 +23,7 @@ type agentPrepaidRouterFixture struct {
 
 func newAgentPrepaidRouterFixture(t *testing.T) agentPrepaidRouterFixture {
 	t.Helper()
-	engine, finance, _ := agentFinanceRouterFixture(t)
+	engine, finance, _, _ := agentFinanceRouterFixture(t)
 	// Match host startup's dialect-specific quoted columns. The finance-only
 	// fixture does not call initialization because it never queries a code key.
 	// Empty log DSN explicitly reuses this disposable schema, never an external DB.
@@ -119,7 +119,7 @@ func agentPrepaidCreditThroughRouter(t *testing.T, f agentPrepaidRouterFixture) 
 	agentFinanceRequest(t, f.engine, f.owner, "/purchases", model.AgentPurchaseCreateRequest{RequestID: "router-prepaid-order", QuoteID: quote.ID}, "", &order)
 	evidence := model.AgentPurchaseCommand{RequestID: "router-prepaid-evidence", OrderID: order.ID, Version: order.Version, EvidenceReference: "synthetic-buyer-document"}
 	agentFinanceRequest(t, f.engine, f.owner, fmt.Sprintf("/purchases/%d/evidence", order.ID), evidence, "", &order)
-	payment := model.AgentPurchaseCommand{RequestID: "router-prepaid-verify", OrderID: order.ID, Version: order.Version, EvidenceReference: "synthetic-bank-statement", Provider: "bank_transfer", MerchantScope: "synthetic-merchant", Environment: "live", ExternalReference: "synthetic-prepaid-transaction", PaidMinor: order.PaidMinor, Currency: order.Currency, PaidAt: common.GetTimestamp()}
+	payment := model.AgentPurchaseCommand{RequestID: "router-prepaid-verify", OrderID: order.ID, Version: order.Version, EvidenceReference: "synthetic-bank-statement", Provider: "bank_transfer", MerchantScope: "synthetic-merchant", Environment: "live", ExternalReference: "synthetic-prepaid-transaction", PaidMinor: order.PaidMinor, Currency: order.Currency, PaidAt: common.GetTimestamp(), PayerReference: "dossier:synthetic-routed-payer"}
 	path := fmt.Sprintf("/finance/purchases/%d/verify", order.ID)
 	agentPrepaidRoute(t, f, f.owner, http.MethodPost, path, payment, "", http.StatusForbidden, nil)
 	agentPrepaidRoute(t, f, f.finance, http.MethodPost, path, payment, "", http.StatusForbidden, nil)
@@ -127,7 +127,7 @@ func agentPrepaidCreditThroughRouter(t *testing.T, f agentPrepaidRouterFixture) 
 	var batches int64
 	require.NoError(t, model.DB.Model(&model.AgentFundBatch{}).Where("agent_user_id = ?", f.owner.identity.UserID).Count(&batches).Error)
 	assert.Zero(t, batches, "recorded evidence is not yet spendable procurement")
-	review := model.AgentPurchaseCommand{RequestID: "router-prepaid-review", OrderID: order.ID, Version: order.Version}
+	review := model.AgentPurchaseCommand{RequestID: "router-prepaid-review", OrderID: order.ID, Version: order.Version, PayerReference: payment.PayerReference}
 	path = fmt.Sprintf("/finance/purchases/%d/review", order.ID)
 	proof := agentPrepaidProof(t, f, f.finance, "purchase.payment.confirm", review.RequestID, review)
 	agentPrepaidRoute(t, f, f.finance, http.MethodPost, path, review, proof, http.StatusForbidden, nil)
@@ -243,15 +243,26 @@ func TestAgentPlatformRoutedPurchaseRefundRejectAndUnknownFailurePostgres(t *tes
 		{"purchase.refund.resolve", "resolve", "explicit_failed"},
 	} {
 		input := model.AgentPurchaseRefundCommand{RequestID: "router-prepaid-deny-" + invalid.suffix, RefundID: refund.ID, Version: refund.Version, BusinessKey: refund.BusinessKey, Outcome: invalid.outcome, EvidenceReference: "synthetic-inconclusive-observation"}
-		proof := agentPrepaidProof(t, f, f.finance, invalid.action, input.RequestID, input)
-		agentPrepaidRoute(t, f, f.finance, http.MethodPost, fmt.Sprintf("/finance/purchase-refunds/%d/%s", refund.ID, invalid.suffix), input, proof, http.StatusBadRequest, nil)
+		actor := f.finance
+		if invalid.outcome == "explicit_failed" {
+			actor = f.reviewer // Preserve the independent checker's missing-evidence gate.
+		}
+		proof := agentPrepaidProof(t, f, actor, invalid.action, input.RequestID, input)
+		agentPrepaidRoute(t, f, actor, http.MethodPost, fmt.Sprintf("/finance/purchase-refunds/%d/%s", refund.ID, invalid.suffix), input, proof, http.StatusBadRequest, nil)
 		assertAgentPrepaidBudget(t, f.owner.identity.UserID, 500, 500, 0)
 	}
 	failure := model.AgentPurchaseRefundCommand{RequestID: "router-prepaid-explicit-failure", RefundID: refund.ID, Version: refund.Version, BusinessKey: refund.BusinessKey, Outcome: "explicit_failed", EvidenceReference: "synthetic-bank-confirmed-unpaid", NoPaymentConfirmed: true}
 	path := fmt.Sprintf("/finance/purchase-refunds/%d/resolve", refund.ID)
-	agentFinanceSubmit(t, f.engine, f.finance, "purchase.refund.resolve", failure.RequestID, path, failure, &refund)
+	proof := agentPrepaidProof(t, f, f.finance, "purchase.refund.resolve", failure.RequestID, failure)
+	agentPrepaidRoute(t, f, f.finance, http.MethodPost, path, failure, proof, http.StatusForbidden, nil)
+	var unchanged model.AgentPurchaseRefund
+	require.NoError(t, model.DB.First(&unchanged, refund.ID).Error)
+	assert.Equal(t, refund.Version, unchanged.Version)
+	assert.Equal(t, "payment_unknown", unchanged.State)
+	assertAgentPrepaidBudget(t, f.owner.identity.UserID, 500, 500, 0)
+	agentFinanceSubmit(t, f.engine, f.reviewer, "purchase.refund.resolve", failure.RequestID, path, failure, &refund)
 	assert.Equal(t, "failed", refund.State)
-	agentFinanceRequest(t, f.engine, f.finance, path, failure, "", &refund)
+	agentFinanceRequest(t, f.engine, f.reviewer, path, failure, "", &refund)
 	assertAgentPrepaidBudget(t, f.owner.identity.UserID, 1000, 0, 0)
 	for _, before := range original {
 		var after model.AgentFundSlice

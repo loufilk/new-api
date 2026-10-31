@@ -117,6 +117,9 @@ func CreateAgentDelivery(auth AgentTransactionAuthorization, request AgentDelive
 		if err := ConsumeAgentTransactionAuthorizationTx(tx, auth, context); err != nil {
 			return err
 		}
+		if err := ConsumeAgentGovernanceRiskTx(tx, owner, AgentGovernanceRiskOperationID("delivery.create", request.RequestID), "issuance", int64(request.Quota)); err != nil {
+			return err
+		}
 		if err := applyAgentQuotaChangeTx(tx, account, AgentRedemptionLedger{OperationKey: operation.OperationKey, ActorUserID: owner, RedemptionID: code.Id, Kind: "delivery_reserve", Delta: -request.Quota, ReservedDelta: request.Quota, RequestID: request.RequestID, Reason: "Quota reserved for protected customer delivery"}); err != nil {
 			return err
 		}

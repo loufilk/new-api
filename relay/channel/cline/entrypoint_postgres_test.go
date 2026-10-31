@@ -58,7 +58,7 @@ func TestClineResponsesFailureAccountingPostgres(t *testing.T) {
 		common.SetDatabaseTypes(oldType, oldLogType)
 		common.RedisEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled = oldRedis, oldBatch, oldConsume
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Log{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}))
+	require.NoError(t, db.AutoMigrate(append([]any{&model.User{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Log{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}}, model.BonusSourceModels()...)...))
 	require.NoError(t, walletmodule.RegisterRuntime())
 	factories := moneyport.NewFactoryRegistry()
 	require.NoError(t, service.RegisterHostFundingFactories(factories))

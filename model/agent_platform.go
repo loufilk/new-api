@@ -39,7 +39,7 @@ type AgentOperationStatus struct {
 // AgentPlatformModels is the compatibility boundary for the platform's additive
 // schema. Wallet and legacy redemption tables remain their original owners.
 func AgentPlatformModels() []any {
-	return []any{
+	models := []any{
 		&AgentPolicyState{}, &AgentPolicy{}, &AgentPolicyChange{},
 		&AgentProfile{}, &AgentProfileAudit{}, &AgentProfileOperation{}, &AgentInvitationPolicyOperation{}, &AgentMigrationIssue{},
 		&AgentPaymentReceipt{}, &AgentOutboundPaymentReceipt{}, &AgentFundBatch{}, &AgentFundSlice{}, &AgentFundLedger{}, &AgentFundAnomaly{}, &AgentFundReclassification{},
@@ -49,4 +49,12 @@ func AgentPlatformModels() []any {
 		&AgentCommissionOperation{}, &AgentCommissionRecipient{}, &AgentCommissionQuote{}, &AgentCommissionConversion{}, &AgentCommissionAllocation{},
 		&AgentCommissionWithdrawal{}, &AgentCommissionWithdrawalAudit{}, &AgentCommissionPayoutEvidence{},
 	}
+	models = append(models, AgentFundEconomicsModels()...)
+	models = append(models, BonusSourceModels()...)
+	models = append(models, AgentCampaignModels()...)
+	models = append(models, AgentCreditModels()...)
+	models = append(models, AgentDepositModels()...)
+	models = append(models, AgentAgreementModels()...)
+	models = append(models, AgentStatementModels()...)
+	return append(models, AgentGovernanceModels()...)
 }

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "stage": "agent-platform-upstream-alignment",
+  "stage": "agent-platform-existing-site-expansion",
   "production_baseline": {
     "repository": "1057300248/wanchuan-new-api",
     "commit": "093c7197d5eac50787971fd5ff7553a414142fc7",
@@ -22,7 +22,7 @@
     "pinned_at": "2026-10-31T09:09:00Z",
     "verified_at": "2026-10-31T09:47:00Z"
   },
-  "version": "v1.0.0-rc.47.chuanapi.agent.1",
+  "version": "v1.0.0-rc.47.chuanapi.agent.2",
   "scope": "Records source history only. production_baseline and feature_reference remain historical pins, not evidence of the currently deployed version. This manifest does not authorize a release, main-branch merge or deployment, and does not assert feature parity.",
   "integrated_feature_baseline": {
     "repository": "loufilk/new-api",

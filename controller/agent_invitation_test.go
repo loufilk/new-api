@@ -47,7 +47,7 @@ func setupAgentInvitationControllerTest(t *testing.T) []model.User {
 		common.RedisEnabled = previousRedis
 		*operation_setting.GetPaymentSetting() = previousPayment
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AgentInvitation{}, &model.AgentInvitationPolicy{}, &model.AgentInvitationPolicyAudit{}, &model.AgentProfile{}, &model.AgentProfileOperation{}, &model.AgentPolicy{}, &model.AgentPolicyState{}, &model.AgentInvitationPolicyOperation{}, &model.TwoFA{}, &model.PasskeyCredential{}, &model.AuthFlow{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}))
+	require.NoError(t, db.AutoMigrate(append([]any{&model.User{}, &model.UserSession{}, &model.AgentInvitation{}, &model.AgentInvitationPolicy{}, &model.AgentInvitationPolicyAudit{}, &model.AgentProfile{}, &model.AgentProfileOperation{}, &model.AgentPolicy{}, &model.AgentPolicyState{}, &model.AgentInvitationPolicyOperation{}, &model.TwoFA{}, &model.PasskeyCredential{}, &model.AuthFlow{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}}, model.BonusSourceModels()...)...))
 	users := []model.User{
 		{Username: "invite-common", Role: common.RoleCommonUser},
 		{Username: "invite-agent-a", Role: common.RoleAgentUser},

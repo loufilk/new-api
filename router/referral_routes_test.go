@@ -43,15 +43,14 @@ func setupReferralRouteTest(t *testing.T) (*gin.Engine, *gorm.DB) {
 	sqlDB.SetMaxOpenConns(1)
 	model.DB, model.LOG_DB = db, db
 
-	require.NoError(t, db.AutoMigrate(
+	require.NoError(t, db.AutoMigrate(append([]any{
 		&model.User{},
 		&model.BalanceLedgerOperation{},
 		&model.BalanceLedger{},
 		&model.ReferralCommission{},
 		&model.Log{},
 		&model.AuditLog{},
-		&model.UserAccessToken{},
-	))
+		&model.UserAccessToken{}}, model.BonusSourceModels()...)...))
 
 	t.Cleanup(func() {
 		model.DB, model.LOG_DB = previousDB, previousLogDB

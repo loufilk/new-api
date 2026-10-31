@@ -353,7 +353,7 @@ func convertedStreamAccountingDB(t *testing.T, kind common.DatabaseType, mainEnv
 		model.DB, model.LOG_DB = oldDB, oldLogDB
 		common.SetDatabaseTypes(oldType, oldLogType)
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Option{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.BalanceLedger{}))
+	require.NoError(t, db.AutoMigrate(append([]any{&model.User{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Option{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.BalanceLedger{}}, model.BonusSourceModels()...)...))
 	require.NoError(t, logDB.AutoMigrate(&model.Log{}))
 	versionQuery := "select version()"
 	if kind == common.DatabaseTypeSQLite {

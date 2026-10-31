@@ -23,16 +23,23 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { AgreementPanel } from './components/agreements'
+import { CampaignPanel } from './components/campaign'
+import { ContributionsPanel } from './components/contributions'
+import { CreditPanel } from './components/credit'
+import { DepositPanel } from './components/deposits'
 import {
   FundReconciliation,
   FundReclassifications,
 } from './components/fund-accounting'
+import { GovernancePanel } from './components/governance'
 import { PendingOperations } from './components/pending-operations'
 import { PolicyPanel } from './components/policy-panel'
 import { Profiles } from './components/profiles'
 import { PurchaseRefunds } from './components/purchase-refunds'
 import { Purchases } from './components/purchases'
 import { ReconciliationPanel } from './components/reconciliation'
+import { StatementPanel } from './components/statements'
 import { Withdrawals } from './components/withdrawals'
 import { financeSections, type FinanceSection } from './sections'
 
@@ -43,6 +50,13 @@ export function AgentFinance(props: {
   const { t } = useTranslation()
   const userId = useAuthStore((state) => state.auth.user?.id)
   const labels: Record<FinanceSection, string> = {
+    governance: t('Qualification dossiers'),
+    contributions: t('Invitation contributions'),
+    credit: t('Credit and receivables'),
+    deposits: t('Deposits'),
+    campaigns: t('Campaigns'),
+    agreements: t('Pricing agreements'),
+    statements: t('Manual bank reconciliation'),
     purchases: t('Receipt verification'),
     refunds: t('Purchase refunds'),
     withdrawals: t('Commission withdrawals'),
@@ -83,6 +97,27 @@ export function AgentFinance(props: {
                 </TabsTrigger>
               ))}
             </TabsList>
+            <TabsContent value='governance'>
+              <GovernancePanel finance />
+            </TabsContent>
+            <TabsContent value='contributions'>
+              <ContributionsPanel finance />
+            </TabsContent>
+            <TabsContent value='credit'>
+              <CreditPanel finance />
+            </TabsContent>
+            <TabsContent value='deposits'>
+              <DepositPanel finance />
+            </TabsContent>
+            <TabsContent value='campaigns'>
+              <CampaignPanel finance />
+            </TabsContent>
+            <TabsContent value='agreements'>
+              <AgreementPanel />
+            </TabsContent>
+            <TabsContent value='statements'>
+              <StatementPanel />
+            </TabsContent>
             <TabsContent value='purchases'>
               <Purchases finance />
             </TabsContent>

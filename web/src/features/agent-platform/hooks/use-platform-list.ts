@@ -24,7 +24,10 @@ import { useAuthStore } from '@/stores/auth-store'
 import { getPlatform } from '../api'
 import type { PlatformPage } from '../types'
 
-export function usePlatformList<T>(
+export function usePlatformList<
+  T,
+  Metadata extends object = Record<never, never>,
+>(
   resource: string,
   filters: Record<string, string | number | undefined> = {},
   enabled = true
@@ -42,7 +45,7 @@ export function usePlatformList<T>(
       pagination,
     ],
     queryFn: ({ signal }) =>
-      getPlatform<PlatformPage<T>>(
+      getPlatform<PlatformPage<T> & Metadata>(
         resource,
         {
           ...filters,

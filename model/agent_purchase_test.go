@@ -69,12 +69,13 @@ func prepaidOrder(t *testing.T, f prepaidFixture, quota int, suffix string) *Age
 func prepaidCredit(t *testing.T, f prepaidFixture, quota int, suffix string) *AgentPurchaseOrder {
 	t.Helper()
 	order := prepaidOrder(t, f, quota, suffix)
-	command := AgentPurchaseCommand{RequestID: "verify-" + suffix, OrderID: order.ID, Version: order.Version, EvidenceReference: "bank-statement-" + suffix, Provider: "bank_transfer", MerchantScope: "fixture-merchant", Environment: "live", ExternalReference: "statement-" + suffix, PaidMinor: order.PaidMinor, Currency: order.Currency, PaidAt: common.GetTimestamp()}
+	payerReference := "dossier:synthetic-payer"
+	command := AgentPurchaseCommand{PayerReference: payerReference, RequestID: "verify-" + suffix, OrderID: order.ID, Version: order.Version, EvidenceReference: "bank-statement-" + suffix, Provider: "bank_transfer", MerchantScope: "fixture-merchant", Environment: "live", ExternalReference: "statement-" + suffix, PaidMinor: order.PaidMinor, Currency: order.Currency, PaidAt: common.GetTimestamp()}
 	auth := prepaidProof(t, f.Finance, "purchase.payment.record", command.RequestID, command)
 	var err error
 	order, err = RecordAgentPurchasePayment(auth, command)
 	require.NoError(t, err)
-	command = AgentPurchaseCommand{RequestID: "review-" + suffix, OrderID: order.ID, Version: order.Version}
+	command = AgentPurchaseCommand{PayerReference: payerReference, RequestID: "review-" + suffix, OrderID: order.ID, Version: order.Version}
 	auth = prepaidProof(t, f.Reviewer, "purchase.payment.confirm", command.RequestID, command)
 	order, err = ConfirmAgentPurchasePayment(auth, command)
 	require.NoError(t, err)
@@ -260,7 +261,11 @@ func prepaidRefundAdvance(t *testing.T, f prepaidFixture, refund *AgentPurchaseR
 	command.RequestID = "refund-" + suffix
 	command.RefundID = refund.ID
 	command.Version = refund.Version
-	result, err := TransitionAgentPurchaseRefund(prepaidProof(t, f.Finance, action, command.RequestID, command), action, command)
+	actor := f.Finance
+	if action == "purchase.refund.resolve" && command.Outcome != "unknown" {
+		actor = f.Reviewer
+	}
+	result, err := TransitionAgentPurchaseRefund(prepaidProof(t, actor, action, command.RequestID, command), action, command)
 	require.NoError(t, err)
 	return result
 }
@@ -281,9 +286,9 @@ func TestAgentPurchaseRefundUnknownFreezesAndOriginalCostSuccess(t *testing.T) {
 	_, err := TransitionAgentPurchaseRefund(prepaidProof(t, f.Finance, "purchase.refund.submit", resubmit.RequestID, resubmit), "purchase.refund.submit", resubmit)
 	require.ErrorIs(t, err, ErrAgentRefundUnknown)
 	bad := AgentPurchaseRefundCommand{RequestID: "refund-failure-no-confirm", RefundID: refund.ID, Version: refund.Version, BusinessKey: refund.BusinessKey, Outcome: "explicit_failed", EvidenceReference: "no-final-evidence"}
-	_, err = TransitionAgentPurchaseRefund(prepaidProof(t, f.Finance, "purchase.refund.resolve", bad.RequestID, bad), "purchase.refund.resolve", bad)
+	_, err = TransitionAgentPurchaseRefund(prepaidProof(t, f.Reviewer, "purchase.refund.resolve", bad.RequestID, bad), "purchase.refund.resolve", bad)
 	require.ErrorIs(t, err, ErrAgentRefundUnknown)
-	refund = prepaidRefundAdvance(t, f, refund, "purchase.refund.resolve", "resolve-success", AgentPurchaseRefundCommand{BusinessKey: refund.BusinessKey, Outcome: "success", EvidenceReference: "verified-bank-receipt", ExternalReference: "refund-bank-transaction"})
+	refund = prepaidRefundAdvance(t, f, refund, "purchase.refund.resolve", "resolve-success", AgentPurchaseRefundCommand{BusinessKey: refund.BusinessKey, Outcome: "success", PayoutPaidAt: common.GetTimestamp(), EvidenceReference: "verified-bank-receipt", ExternalReference: "refund-bank-transaction"})
 	assert.Equal(t, "succeeded", refund.State)
 	assertAgentBudget(t, f.Owner.UserID, 500, 0, 0, 500)
 	assertPrepaidReconciled(t)

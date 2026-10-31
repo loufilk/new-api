@@ -93,8 +93,8 @@ type AgentFundAnomaly struct {
 	CreatedAt   int64  `json:"created_at" gorm:"autoCreateTime"`
 }
 
-// Integer interval differences conserve every minor unit even after arbitrary
-// splits and releases. Never recompute a slice using the current sale price.
+// Interval differences retain immutable provenance, not economic refund/AR
+// authority. Actual economics use cumulative spent/released carry instead.
 func AgentFundSliceCost(batch *AgentFundBatch, start, quota int) (int64, error) {
 	paid, ok := new(big.Int).SetString(batch.OriginalPaidMinor, 10)
 	if !ok || paid.Sign() < 0 || !paid.IsInt64() || paid.Int64() > int64(common.MaxWalletQuota) || paid.String() != batch.OriginalPaidMinor || batch.OriginalQuota <= 0 || batch.OriginalQuota > common.MaxWalletQuota || start < 0 || quota <= 0 || start > batch.OriginalQuota || quota > batch.OriginalQuota-start {
@@ -106,12 +106,23 @@ func AgentFundSliceCost(batch *AgentFundBatch, start, quota int) (int64, error) 
 	return endCost.Sub(endCost, startCost).Int64(), nil
 }
 
-func appendAgentFundLedgerTx(tx *gorm.DB, batch *AgentFundBatch, slice *AgentFundSlice, from, operation string) error {
-	cost, err := AgentFundSliceCost(batch, slice.StartQuota, slice.Quota)
+func appendAgentFundLedgerTx(tx *gorm.DB, batch *AgentFundBatch, slice *AgentFundSlice, from, operation string) (int64, error) {
+	book, err := AgentFundSliceCost(batch, slice.StartQuota, slice.Quota)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return tx.Create(&AgentFundLedger{EventKey: fmt.Sprintf("%s:%d:%d", operation, batch.ID, slice.StartQuota), AgentUserID: batch.AgentUserID, Currency: batch.Currency, CurrencyExponent: batch.CurrencyExponent, BatchID: batch.ID, StartQuota: slice.StartQuota, Quota: slice.Quota, CostMinor: strconv.FormatInt(cost, 10), FromState: from, ToState: slice.State, RedemptionID: slice.RedemptionID, RefundID: slice.RefundID, ReclassificationID: slice.ReclassificationID}).Error
+	actual := book
+	if from != "" {
+		actual, err = applyAgentFundEconomicTransitionTx(tx, batch, slice, from, operation)
+		if err != nil {
+			return 0, err
+		}
+		if err := applyAgentCreditSourceTransitionTx(tx, batch, slice, from, operation, actual); err != nil {
+			return 0, err
+		}
+	}
+	err = tx.Create(&AgentFundLedger{EventKey: fmt.Sprintf("%s:%d:%d", operation, batch.ID, slice.StartQuota), AgentUserID: batch.AgentUserID, Currency: batch.Currency, CurrencyExponent: batch.CurrencyExponent, BatchID: batch.ID, StartQuota: slice.StartQuota, Quota: slice.Quota, CostMinor: strconv.FormatInt(book, 10), FromState: from, ToState: slice.State, RedemptionID: slice.RedemptionID, RefundID: slice.RefundID, ReclassificationID: slice.ReclassificationID}).Error
+	return actual, err
 }
 
 func createAgentFundBatchTx(tx *gorm.DB, batch *AgentFundBatch) error {
@@ -124,6 +135,10 @@ func createAgentFundBatchTx(tx *gorm.DB, batch *AgentFundBatch) error {
 	switch batch.SourceKind {
 	case AgentFundPurchase:
 		if batch.OriginalPaidMinor == "0" || batch.PaymentReceiptID <= 0 || batch.WalletAccount != AccountPaid || !validAgentCurrency(batch.Currency, batch.CurrencyExponent) {
+			return ErrAgentFundInvariant
+		}
+	case AgentFundCredit:
+		if batch.CashRefundable || batch.PaymentReceiptID != 0 || batch.WalletAccount != AccountReward || batch.OriginalPaidMinor == "0" || !validAgentCurrency(batch.Currency, batch.CurrencyExponent) {
 			return ErrAgentFundInvariant
 		}
 	case AgentFundCommission:
@@ -145,7 +160,11 @@ func createAgentFundBatchTx(tx *gorm.DB, batch *AgentFundBatch) error {
 	if err := tx.Create(&slice).Error; err != nil {
 		return err
 	}
-	return appendAgentFundLedgerTx(tx, batch, &slice, "", batch.SourceKey+":create")
+	if _, err := ensureAgentFundEconomicsTx(tx, batch); err != nil {
+		return err
+	}
+	_, err := appendAgentFundLedgerTx(tx, batch, &slice, "", batch.SourceKey+":create")
+	return err
 }
 
 // ensureAgentFundSourcesTx only supplements previously unsourced budgets. It
@@ -199,7 +218,7 @@ func ensureAgentFundSourcesTx(tx *gorm.DB, account *AgentRedemptionAccount) erro
 		if err := tx.Create(slice).Error; err != nil {
 			return err
 		}
-		if err := appendAgentFundLedgerTx(tx, &batch, slice, "", batch.SourceKey+":migrate"); err != nil {
+		if _, err := appendAgentFundLedgerTx(tx, &batch, slice, "", batch.SourceKey+":migrate"); err != nil {
 			return err
 		}
 	}
@@ -237,6 +256,24 @@ func takeAgentFundSlicesTx(tx *gorm.DB, owner, quota, batchID int, kinds []strin
 		if err := tx.First(&batch, original.BatchID).Error; err != nil {
 			return nil, err
 		}
+		economics, err := ensureAgentFundEconomicsTx(tx, &batch)
+		if err != nil {
+			return nil, err
+		}
+		if economics != nil && economics.Scheme != AgentFundEconomicCumulative {
+			if batchID == 0 {
+				continue
+			}
+			return nil, ErrAgentFundEconomicReview
+		}
+		if batch.SourceKind == AgentFundCredit && (state == AgentSliceReserved || state == AgentSliceSpent) {
+			if err := agentCreditSourceSelectableTx(tx, &batch, state); err != nil {
+				if batchID == 0 && (errors.Is(err, ErrAgentCreditRisk) || errors.Is(err, ErrAgentFeatureDisabled)) {
+					continue
+				}
+				return nil, err
+			}
+		}
 		changed := original
 		changed.Quota = take
 		changed.State = state
@@ -258,7 +295,7 @@ func takeAgentFundSlicesTx(tx *gorm.DB, owner, quota, batchID int, kinds []strin
 				return nil, err
 			}
 		}
-		if err := appendAgentFundLedgerTx(tx, &batch, &changed, AgentSliceAvailable, operation); err != nil {
+		if _, err := appendAgentFundLedgerTx(tx, &batch, &changed, AgentSliceAvailable, operation); err != nil {
 			return nil, err
 		}
 		result = append(result, changed)
@@ -293,20 +330,20 @@ func transitionAgentFundSlicesTx(tx *gorm.DB, owner, redemptionID, refundID int,
 		if err := tx.First(&batch, slice.BatchID).Error; err != nil {
 			return 0, 0, err
 		}
-		value, err := AgentFundSliceCost(&batch, slice.StartQuota, slice.Quota)
+		if _, err := ensureAgentFundEconomicsTx(tx, &batch); err != nil {
+			return 0, 0, err
+		}
+		slice.State = to
+		// Book provenance and actual economics have separate immutable journals.
+		value, err := appendAgentFundLedgerTx(tx, &batch, slice, from, operation)
 		if err != nil {
 			return 0, 0, err
 		}
-		if slice.Quota > common.MaxWalletQuota-quota || value > int64(^uint64(0)>>1)-cost {
+		if slice.Quota > common.MaxWalletQuota-quota || value < 0 || value > int64(^uint64(0)>>1)-cost {
 			return 0, 0, ErrAgentFundInvariant
 		}
 		quota += slice.Quota
 		cost += value
-		slice.State = to
-		// Record the original responsibility in the immutable journal before release.
-		if err := appendAgentFundLedgerTx(tx, &batch, slice, from, operation); err != nil {
-			return 0, 0, err
-		}
 		updates := map[string]any{"state": to}
 		if to == AgentSliceAvailable {
 			updates["redemption_id"] = 0
@@ -404,7 +441,7 @@ func reserveRedemptionFundSourcesTx(tx *gorm.DB, redemption *Redemption, operati
 		if err := tx.First(&batch, slice.BatchID).Error; err != nil {
 			return err
 		}
-		if batch.SourceKind == AgentFundPurchase || batch.SourceKind == AgentFundCommission {
+		if batch.SourceKind == AgentFundPurchase || batch.SourceKind == AgentFundCommission || batch.SourceKind == AgentFundCredit {
 			redemption.SourceProtected = true
 		}
 	}

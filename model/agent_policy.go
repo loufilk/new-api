@@ -62,6 +62,38 @@ type AgentPolicy struct {
 	WithdrawalCalendarMonthLimit          int    `json:"withdrawal_calendar_month_limit"`
 	ConversionQuotaNumerator              int64  `json:"conversion_quota_numerator"`
 	ConversionQuotaDenominator            int64  `json:"conversion_quota_denominator"`
+
+	// Expansion products require explicit approved terms; zero values do not
+	// enable credit, deposits, agreement pricing, campaigns or reconciliation.
+	CreditEnabled                   bool   `json:"credit_enabled"`
+	CreditTermsApproved             bool   `json:"credit_terms_approved"`
+	CreditRecognitionMode           string `json:"credit_recognition_mode"`
+	CreditInterestMode              string `json:"credit_interest_mode"`
+	CreditCurrency                  string `json:"credit_currency" gorm:"type:varchar(3)"`
+	CreditCurrencyExponent          int    `json:"credit_currency_exponent"`
+	CreditMaximumLimitMinor         int64  `json:"credit_maximum_limit_minor,string"`
+	CreditTermSeconds               int64  `json:"credit_term_seconds"`
+	CreditMaximumTermSeconds        int64  `json:"credit_maximum_term_seconds"`
+	CreditQuotaNumerator            int64  `json:"credit_quota_numerator"`
+	CreditQuotaDenominator          int64  `json:"credit_quota_denominator"`
+	CreditRateBPS                   int64  `json:"credit_rate_bps"`
+	CreditSelfUseEnabled            bool   `json:"credit_self_use_enabled"`
+	DepositEnabled                  bool   `json:"deposit_enabled"`
+	DepositTermsApproved            bool   `json:"deposit_terms_approved"`
+	DepositOffsetEnabled            bool   `json:"deposit_offset_enabled"`
+	DepositRefundEnabled            bool   `json:"deposit_refund_enabled"`
+	DepositCurrency                 string `json:"deposit_currency" gorm:"type:varchar(3)"`
+	DepositCurrencyExponent         int    `json:"deposit_currency_exponent"`
+	DepositMaximumMinor             int64  `json:"deposit_maximum_minor,string"`
+	CampaignEnabled                 bool   `json:"campaign_enabled"`
+	CampaignTermsApproved           bool   `json:"campaign_terms_approved"`
+	AgreementPricingEnabled         bool   `json:"agreement_pricing_enabled"`
+	AgreementMinimumRateBPS         int64  `json:"agreement_minimum_rate_bps"`
+	ManualReconciliationEnabled     bool   `json:"manual_reconciliation_enabled"`
+	GovernanceEnabled               bool   `json:"governance_enabled"`
+	GovernanceRequiredForActivation bool   `json:"governance_required_for_activation"`
+	CreditGovernanceRequired        bool   `json:"credit_governance_required"`
+	GovernanceInactivitySeconds     int64  `json:"governance_inactivity_seconds"`
 }
 
 // AgentPolicyState is only a pointer to an immutable version, not a balance.
@@ -126,12 +158,50 @@ func ValidateAgentPolicy(policy *AgentPolicy) error {
 	if policy.CommissionCurrency != "" && !validAgentCurrency(policy.CommissionCurrency, policy.CommissionCurrencyExponent) {
 		return ErrAgentPolicyInvalid
 	}
-	if policy.LegacyPurchaseReclassificationEnabled || policy.PurchaseEnabled || policy.DeliveryEnabled || policy.PurchaseRefundEnabled || policy.ProcurementSelfUseEnabled || policy.CommissionEnabled || policy.WithdrawalEnabled || policy.CommissionConversionEnabled {
+	if policy.LegacyPurchaseReclassificationEnabled || policy.PurchaseEnabled || policy.DeliveryEnabled || policy.PurchaseRefundEnabled || policy.ProcurementSelfUseEnabled || policy.CommissionEnabled || policy.WithdrawalEnabled || policy.CommissionConversionEnabled || policy.CreditEnabled || policy.DepositEnabled || policy.CampaignEnabled || policy.AgreementPricingEnabled || policy.ManualReconciliationEnabled || policy.GovernanceEnabled {
 		if !policy.RiskPolicyApproved {
 			return ErrAgentPolicyInvalid
 		}
 	}
 	if (policy.LegacyPurchaseReclassificationEnabled || policy.PurchaseEnabled || policy.PurchaseRefundEnabled) && !policy.PurchaseRefundTermsApproved {
+		return ErrAgentPolicyInvalid
+	}
+	if (policy.GovernanceRequiredForActivation || policy.CreditGovernanceRequired) && !policy.GovernanceEnabled || policy.GovernanceInactivitySeconds < 0 || policy.GovernanceInactivitySeconds > 10*366*24*60*60 {
+		return ErrAgentPolicyInvalid
+	}
+	if policy.CreditRecognitionMode != "" && policy.CreditRecognitionMode != "source_spend" || policy.CreditInterestMode != "" && policy.CreditInterestMode != "none" {
+		return ErrAgentPolicyInvalid
+	}
+	for _, value := range []int64{policy.CreditMaximumLimitMinor, policy.CreditQuotaNumerator, policy.CreditQuotaDenominator, policy.DepositMaximumMinor} {
+		if value < 0 || value > int64(common.MaxWalletQuota) {
+			return ErrAgentPolicyInvalid
+		}
+	}
+	if policy.CreditRateBPS < 0 || policy.CreditRateBPS > 10000 || policy.CreditTermSeconds < 0 || policy.CreditMaximumTermSeconds < 0 || policy.CreditMaximumTermSeconds > 10*366*24*60*60 || policy.CreditTermSeconds > policy.CreditMaximumTermSeconds {
+		return ErrAgentPolicyInvalid
+	}
+	if policy.CreditCurrency != "" && !validAgentCurrency(policy.CreditCurrency, policy.CreditCurrencyExponent) || policy.DepositCurrency != "" && !validAgentCurrency(policy.DepositCurrency, policy.DepositCurrencyExponent) {
+		return ErrAgentPolicyInvalid
+	}
+	if policy.CreditEnabled && (!policy.CreditTermsApproved || policy.CreditRecognitionMode != "source_spend" || policy.CreditInterestMode != "none" || !validAgentCurrency(policy.CreditCurrency, policy.CreditCurrencyExponent) || policy.CreditMaximumLimitMinor <= 0 || policy.CreditTermSeconds <= 0 || policy.CreditMaximumTermSeconds < policy.CreditTermSeconds || policy.CreditQuotaNumerator <= 0 || policy.CreditQuotaDenominator <= 0 || policy.CreditRateBPS <= 0) {
+		return ErrAgentPolicyInvalid
+	}
+	if ValidateAgentCreditPolicy(policy) != nil || ValidateAgentDepositPolicy(policy) != nil {
+		return ErrAgentPolicyInvalid
+	}
+	if policy.CreditSelfUseEnabled && !policy.CreditEnabled {
+		return ErrAgentPolicyInvalid
+	}
+	if policy.DepositEnabled && (!policy.DepositTermsApproved || !validAgentCurrency(policy.DepositCurrency, policy.DepositCurrencyExponent) || policy.DepositMaximumMinor <= 0) {
+		return ErrAgentPolicyInvalid
+	}
+	if (policy.DepositOffsetEnabled || policy.DepositRefundEnabled) && !policy.DepositEnabled {
+		return ErrAgentPolicyInvalid
+	}
+	if policy.CampaignEnabled && !policy.CampaignTermsApproved {
+		return ErrAgentPolicyInvalid
+	}
+	if policy.AgreementMinimumRateBPS < 0 || policy.AgreementMinimumRateBPS > 10000 || policy.AgreementPricingEnabled && (!policy.PurchaseEnabled || policy.AgreementMinimumRateBPS <= 0) {
 		return ErrAgentPolicyInvalid
 	}
 	if policy.PurchaseEnabled {

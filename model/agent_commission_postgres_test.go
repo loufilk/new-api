@@ -315,8 +315,10 @@ func TestAgentCommissionUnknownWithdrawalFreezeRefundAndFailureRecoveryPostgres(
 				resolve.PayoutReference = "synthetic-outbound-transfer"
 				resolve.PayoutMerchantScope = "synthetic-settlement-bank"
 				resolve.PayoutEnvironment = "live"
+				resolve.PayoutPaidAt = common.GetTimestamp()
 			}
-			resolveAuth := commissionProof(t, f.rootIdentity, "commission.withdraw.resolve", resolve.RequestID, resolve)
+			_, independent := campaignBrowser(t, "withdrawal-independent", common.RoleAdminUser)
+			resolveAuth := commissionProof(t, independent, "commission.withdraw.resolve", resolve.RequestID, resolve)
 			w, err = ActOnAgentCommissionWithdrawal(resolveAuth, "commission.withdraw.resolve", resolve)
 			require.NoError(t, err)
 			assert.Equal(t, businessNo, w.BusinessNo)

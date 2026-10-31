@@ -77,6 +77,8 @@ func writeAgentPurchaseError(c *gin.Context, err error) {
 		message = err.Error()
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		status, code, message = http.StatusNotFound, "AGENT_RESOURCE_NOT_FOUND", "Agent resource not found"
+	case errors.Is(err, model.ErrAgentStatementUnresolved), errors.Is(err, model.ErrAgentFundEconomicReview):
+		status, code, message = http.StatusConflict, "AGENT_PAYMENT_EVIDENCE_REQUIRED", err.Error()
 	case errors.Is(err, model.ErrAgentFundInvariant), errors.Is(err, model.ErrAgentQuotaInvariant):
 		status, code, message = http.StatusConflict, "AGENT_RECONCILIATION_REQUIRED", "Agent funds require reconciliation; no balance was changed"
 	default:

@@ -28,6 +28,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { useRequestId } from '../hooks/use-request-id'
 import type { OperationDraft, OperationPayload, PurchaseRefund } from '../types'
 import { ActionForm, type ActionField } from './action-form'
+import { ManualRefundInstructionsButton } from './manual-refund-instructions'
 import { OperationDialog } from './operation-dialog'
 import { ResourceTable } from './resource-table'
 import { BusinessDate, BusinessState, Money, Quota } from './values'
@@ -108,7 +109,7 @@ export function PurchaseRefunds(props: { finance?: boolean }) {
       id: 'actions',
       header: t('Actions'),
       cell: ({ row }) => {
-        if (!props.finance) return null
+        if (!props.finance || row.original.agent_user_id === userId) return null
         const refund = row.original
         if (refund.state === 'requested') {
           return (
@@ -125,15 +126,35 @@ export function PurchaseRefunds(props: { finance?: boolean }) {
             </Button>
           )
         }
+        const instructions = (
+          <ManualRefundInstructionsButton
+            kind='purchase'
+            target={{ ...refund, amount_minor: refund.net_minor }}
+          />
+        )
         if (refund.state === 'approved') {
           return (
-            <Button
-              size='sm'
-              variant='outline'
-              onClick={() => setAction({ refund, kind: 'submit' })}
-            >
-              {t('Record payment submission')}
-            </Button>
+            <div className='flex flex-wrap gap-2'>
+              {instructions}
+              {refund.submitted_by === 0 &&
+                refund.submitted_at === 0 &&
+                refund.requested_by !== userId && (
+                  <Button
+                    size='sm'
+                    variant='outline'
+                    onClick={() => setAction({ refund, kind: 'approve' })}
+                  >
+                    {t('Reject')}
+                  </Button>
+                )}
+              <Button
+                size='sm'
+                variant='outline'
+                onClick={() => setAction({ refund, kind: 'submit' })}
+              >
+                {t('Record payment submission')}
+              </Button>
+            </div>
           )
         }
         if (
@@ -141,13 +162,16 @@ export function PurchaseRefunds(props: { finance?: boolean }) {
           refund.state === 'payment_unknown'
         ) {
           return (
-            <Button
-              size='sm'
-              variant='outline'
-              onClick={() => setAction({ refund, kind: 'resolve' })}
-            >
-              {t('Reconcile payment result')}
-            </Button>
+            <div className='flex flex-wrap gap-2'>
+              {instructions}
+              <Button
+                size='sm'
+                variant='outline'
+                onClick={() => setAction({ refund, kind: 'resolve' })}
+              >
+                {t('Reconcile payment result')}
+              </Button>
+            </div>
           )
         }
         return null
@@ -162,7 +186,9 @@ export function PurchaseRefunds(props: { finance?: boolean }) {
         label: 'Review decision',
         kind: 'select',
         options: [
-          { value: 'approve', label: 'Approve' },
+          ...(action.refund.state === 'requested'
+            ? [{ value: 'approve', label: 'Approve' }]
+            : []),
           { value: 'reject', label: 'Reject' },
         ],
       },
@@ -186,6 +212,12 @@ export function PurchaseRefunds(props: { finance?: boolean }) {
   if (action?.kind === 'resolve') {
     fields = [
       {
+        name: 'payout_paid_at',
+        label: 'Actual offline payment time (successful result only)',
+        kind: 'datetime',
+        required: false,
+      },
+      {
         name: 'outcome',
         label: 'Actual payment result',
         kind: 'select',
@@ -194,6 +226,13 @@ export function PurchaseRefunds(props: { finance?: boolean }) {
           { value: 'explicit_failed', label: 'Confirmed unpaid' },
           { value: 'unknown', label: 'Unknown; keep funds held' },
         ],
+      },
+      {
+        name: 'original_payment_reference',
+        label: 'Original provider payment reference',
+        description:
+          'For non-bank refunds only, independently copy the original payment reference from restricted instructions. Leave blank for bank transfers.',
+        required: false,
       },
       {
         name: 'external_reference',
@@ -260,6 +299,21 @@ export function PurchaseRefunds(props: { finance?: boolean }) {
               }
               payload.business_key = action.refund.business_key
               payload.outcome = String(values.outcome)
+              if (values.outcome === 'success') {
+                if (!values.payout_paid_at) {
+                  throw new Error(
+                    t('Enter the independently verified actual payment time.')
+                  )
+                }
+                if (String(values.original_payment_reference ?? '').trim()) {
+                  payload.original_payment_reference = String(
+                    values.original_payment_reference
+                  ).trim()
+                }
+                payload.payout_paid_at = Math.floor(
+                  Date.parse(String(values.payout_paid_at)) / 1000
+                )
+              }
               payload.external_reference = String(values.external_reference)
               payload.evidence_reference = String(values.evidence_reference)
               payload.no_payment_confirmed =

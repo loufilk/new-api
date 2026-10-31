@@ -182,6 +182,9 @@ func (*AgentProfileAudit) BeforeDelete(*gorm.DB) error { return ErrAgentProfileI
 // UpdateAgentProfileTx does not acquire financial locks or modify any balance,
 // account status, user auth version, model key, PAT, or existing delivery.
 func UpdateAgentProfileTx(tx *gorm.DB, identity AuthSessionIdentity, userID int, request AgentProfileMutation) (*AgentProfile, error) {
+	if _, err := LockCurrentAgentPolicyTx(tx); err != nil {
+		return nil, err
+	}
 	if _, err := RequireAgentCapabilityTx(tx, identity, userID, request.ExpectedVersion, AgentCapabilityAdmin); err != nil {
 		return nil, err
 	}
@@ -221,6 +224,13 @@ func updateAgentProfileTx(tx *gorm.DB, actorID, userID int, request AgentProfile
 	}
 	if previous.Version > 0 && previous.Status == request.Status && previous.SalesFrozen == request.SalesFrozen && previous.SettlementFrozen == request.SettlementFrozen && previous.Reason == request.Reason {
 		return previous, nil
+	}
+	// Migration (actor 0) preserves existing qualification; only explicitly
+	// enabling new business is subject to the approved onboarding policy.
+	if actorID > 0 && request.Status == AgentProfileActive && previous.Status != AgentProfileActive {
+		if err := RequireAgentGovernanceActivationTx(tx, userID); err != nil {
+			return nil, err
+		}
 	}
 	profile := AgentProfile{UserID: userID, Status: request.Status, SalesFrozen: request.SalesFrozen, SettlementFrozen: request.SettlementFrozen, Version: previous.Version + 1, CreatedAt: previous.CreatedAt, UpdatedBy: actorID, Reason: request.Reason}
 	if previous.Version == 0 {

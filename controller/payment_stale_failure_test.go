@@ -189,7 +189,7 @@ func stalePaymentFixture(t *testing.T) *gorm.DB {
 		require.NoError(t, err)
 		require.NoError(t, pool.Close())
 	})
-	require.NoError(t, db.AutoMigrate(&model.TopUp{}, &model.SubscriptionOrder{}, &model.Option{}, &paymentcore.PaymentOrderBinding{}, &model.User{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}, &model.SubscriptionPlan{}, &model.UserSubscription{}))
+	require.NoError(t, db.AutoMigrate(append([]any{&model.TopUp{}, &model.SubscriptionOrder{}, &model.Option{}, &paymentcore.PaymentOrderBinding{}, &model.User{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}, &model.SubscriptionPlan{}, &model.UserSubscription{}}, model.BonusSourceModels()...)...))
 	confirmPaymentComplianceForTest(t)
 	oldLog, oldRedis := model.LOG_DB, common.RedisEnabled
 	oldKind, oldLogKind, oldMaster := common.MainDatabaseType(), common.LogDatabaseType(), common.IsMasterNode

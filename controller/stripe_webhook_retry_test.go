@@ -20,7 +20,7 @@ func TestStripePaidWebhookRetriesUntilCommittedAndAcknowledgesReplay(t *testing.
 		for _, eventType := range []string{"checkout.session.completed", "checkout.session.async_payment_succeeded"} {
 			t.Run(kind+"/"+eventType, func(t *testing.T) {
 				db := withPaymentBindingDB(t)
-				require.NoError(t, db.AutoMigrate(&model.User{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}, &model.SubscriptionPlan{}, &model.UserSubscription{}))
+				require.NoError(t, db.AutoMigrate(append([]any{&model.User{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}, &model.SubscriptionPlan{}, &model.UserSubscription{}}, model.BonusSourceModels()...)...))
 				confirmPaymentComplianceForTest(t)
 				oldAPI, oldSecret, oldPrice := setting.StripeApiSecret, setting.StripeWebhookSecret, setting.StripePriceId
 				oldRedis, oldLog := common.RedisEnabled, model.LOG_DB

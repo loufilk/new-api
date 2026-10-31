@@ -65,6 +65,7 @@ func TestTaskWalletReceiptsDatabaseMatrix(t *testing.T) {
 				model.InvalidateModelBonusEligibleCache()
 			})
 			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.Option{}, &model.Task{}, &model.Midjourney{}, &model.UserSubscription{}, &model.SubscriptionPlan{}, &model.SubscriptionPreConsumeRecord{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}))
+			require.NoError(t, db.AutoMigrate(model.BonusSourceModels()...))
 			require.NoError(t, logDB.AutoMigrate(&model.Log{}))
 			query := "SELECT version()"
 			if dialect.name == common.DatabaseTypeSQLite {
@@ -119,7 +120,7 @@ func seedReceiptTask(t *testing.T, user *model.User, token *model.Token, channel
 	var receipt *model.LedgerResult
 	require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
 		var err error
-		receipt, err = model.DebitQuotaTx(tx, model.LedgerEntry{UserId: user.Id, Delta: quota, Reason: model.LedgerReasonBillingPreConsume, IdempotencyKey: fmt.Sprintf("receipt-preconsume-%d", user.Id)}, order...)
+		receipt, err = model.DebitQuotaTx(tx, model.LedgerEntry{UserId: user.Id, Delta: quota, Reason: model.LedgerReasonBillingPreConsume, ReferenceType: "relay", ReferenceId: fmt.Sprintf("receipt-preconsume-%d", user.Id), RequestId: fmt.Sprintf("receipt-preconsume-%d", user.Id), IdempotencyKey: fmt.Sprintf("receipt-preconsume-%d", user.Id)}, order...)
 		if err != nil {
 			return err
 		}
@@ -127,6 +128,7 @@ func seedReceiptTask(t *testing.T, user *model.User, token *model.Token, channel
 	}))
 	task := makeTask(user.Id, channel.Id, quota, token.Id, BillingSourceWallet, 0)
 	task.TaskID = fmt.Sprintf("receipt-task-%d", user.Id)
+	task.PrivateData.RequestId = fmt.Sprintf("receipt-preconsume-%d", user.Id)
 	task.Status = model.TaskStatusSuccess
 	task.PrivateData.WalletDebit = appendTaskShares(nil, receipt)
 	task.PrivateData.TokenFingerprint = model.BillingTokenFingerprint(token.Key)

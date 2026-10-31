@@ -119,7 +119,7 @@ func realtimeFinancialFixture(t *testing.T) (*gin.Context, context.CancelFunc, *
 		common.RedisEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled = oldRedis, oldBatch, oldConsume
 		model.InvalidateModelBonusEligibleCache()
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.Log{}, &model.Ability{}, &model.BillingFinalization{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Model{}, &model.Vendor{}, &model.ModelBonusEligibleAudit{}, &model.ReferralCommission{}, &model.SubscriptionPlan{}, &model.UserSubscription{}, &model.SubscriptionPreConsumeRecord{}))
+	require.NoError(t, db.AutoMigrate(append([]any{&model.User{}, &model.Token{}, &model.Channel{}, &model.Log{}, &model.Ability{}, &model.BillingFinalization{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Model{}, &model.Vendor{}, &model.ModelBonusEligibleAudit{}, &model.ReferralCommission{}, &model.SubscriptionPlan{}, &model.UserSubscription{}, &model.SubscriptionPreConsumeRecord{}}, model.BonusSourceModels()...)...))
 	for _, ratio := range []struct {
 		get func() string
 		set func(string) error

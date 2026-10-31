@@ -146,6 +146,12 @@ func executeAgentProfileUpdate(c *gin.Context, requestID string, command model.A
 func writeAgentProfileError(c *gin.Context, err error) {
 	status, code, message := http.StatusInternalServerError, "AGENT_INTERNAL_ERROR", "Agent operation failed, please try again later"
 	switch {
+	case errors.Is(err, model.ErrAgentGovernanceRequired), errors.Is(err, model.ErrAgentGovernanceReview):
+		status, code, message = http.StatusForbidden, "AGENT_GOVERNANCE_REQUIRED", err.Error()
+	case errors.Is(err, model.ErrAgentGovernanceConflict), errors.Is(err, model.ErrAgentGovernanceRiskLimit):
+		status, code, message = http.StatusConflict, "AGENT_GOVERNANCE_CHANGED", err.Error()
+	case errors.Is(err, model.ErrAgentGovernanceInvalid):
+		status, code, message = http.StatusBadRequest, "AGENT_REQUEST_INVALID", err.Error()
 	case errors.Is(err, model.ErrAgentProfilePermission), errors.Is(err, service.ErrVerificationForbidden):
 		status, code, message = http.StatusForbidden, "AGENT_PERMISSION_DENIED", model.ErrAgentProfilePermission.Error()
 	case errors.Is(err, model.ErrAgentProfileConflict):

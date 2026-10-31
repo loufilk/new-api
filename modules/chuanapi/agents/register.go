@@ -37,7 +37,10 @@ func migrateLegacy(db *gorm.DB) error {
 	if err := model.MigrateLegacyAgentProfiles(db); err != nil {
 		return err
 	}
-	return model.MigrateLegacyAgentFundsWithDB(db)
+	if err := model.MigrateLegacyAgentFundsWithDB(db); err != nil {
+		return err
+	}
+	return model.MigrateAgentFundEconomicsWithDB(db)
 }
 
 func registerRoutes(scopes extension.RouteScopes) error {

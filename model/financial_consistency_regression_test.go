@@ -177,7 +177,16 @@ func runFinancialWalletReceiptCases(t *testing.T) {
 			full := LedgerEntry{UserId: user.Id, Reason: LedgerReasonBillingRefund, ReferenceType: "relay", ReferenceId: request, RequestId: request, IdempotencyKey: "billing:refund:" + request}
 			if scenario == "legacy_overcredit_rejected" {
 				_, err = CreditQuotaShares(partial, []LedgerShare{{Account: AccountBonus, Amount: 2}})
-				require.NoError(t, err)
+				require.ErrorIs(t, err, ErrMissingWalletDebitReceipt, "current source accounting must reject the historical overcredit")
+				// Deliberately reproduce corrupt pre-cutover history without
+				// asking the current financial API to authorize its creation.
+				historical := partial
+				historical.Delta = 2
+				historical.CreditShares = []LedgerShare{{Account: AccountBonus, Amount: 2}}
+				operation := BalanceLedgerOperation{IdempotencyKey: partial.IdempotencyKey, UserId: user.Id, Operation: string(ledgerOpCredit), OperationSignature: ledgerOperationSignature(historical, ledgerOpCredit), TotalBefore: 0, TotalAfter: 2}
+				require.NoError(t, DB.Create(&operation).Error)
+				require.NoError(t, DB.Create(&BalanceLedger{OperationId: operation.Id, UserId: user.Id, Account: string(AccountBonus), Delta: 2, BalanceBefore: 0, BalanceAfter: 2, TotalBefore: 0, TotalAfter: 2, Reason: partial.Reason, ReferenceType: partial.ReferenceType, ReferenceId: partial.ReferenceId, RequestId: partial.RequestId, IdempotencyKey: partial.IdempotencyKey}).Error)
+				require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]any{"quota": 2, "quota_bonus": 2}).Error)
 				var before User
 				require.NoError(t, DB.First(&before, user.Id).Error)
 				err = DB.Transaction(func(tx *gorm.DB) error { _, _, err := CreditWalletRefundTx(tx, full, 0); return err })

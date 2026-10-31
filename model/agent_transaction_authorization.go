@@ -55,6 +55,18 @@ type agentTransactionRule struct {
 
 func agentTransactionActionRule(action string) (agentTransactionRule, bool) {
 	switch action {
+	case "credit.limit.request", "credit.draw":
+		return agentTransactionRule{capability: AgentCapabilitySales}, true
+	case "credit.release", "deposit.offset.request", "deposit.refund.request":
+		return agentTransactionRule{capability: AgentCapabilitySettlement}, true
+	case "credit.limit.approve", "credit.limit.reject", "credit.invoice.issue", "credit.repayment.record", "credit.repayment.confirm", "credit.repayment.reallocate", "credit.adjustment.request", "credit.adjustment.approve", "credit.adjustment.reject", "deposit.receipt.record", "deposit.receipt.confirm", "deposit.offset.approve", "deposit.offset.reject", "deposit.refund.approve", "deposit.refund.reject", "deposit.refund.submit", "deposit.refund.resolve":
+		return agentTransactionRule{capability: AgentCapabilityAdmin, administrator: true, optionalProfile: true}, true
+	case "campaign.propose", "governance.override":
+		return agentTransactionRule{capability: AgentCapabilityAdmin, administrator: true, root: true, optionalProfile: true}, true
+	case "campaign.approve", "campaign.review.approve", "campaign.review.reject", "campaign.revoke", "agreement.propose", "agreement.approve", "agreement.reject", "agreement.revoke", "statement.import", "statement.match.propose", "statement.match.confirm", "statement.match.reject", "statement.exception.resolve", "statement.period.create", "statement.period.close", "statement.period.reopen", "statement.evidence.propose", "statement.evidence.confirm", "statement.evidence.reject", "governance.review":
+		return agentTransactionRule{capability: AgentCapabilityAdmin, administrator: true, optionalProfile: true}, true
+	case "governance.submit":
+		return agentTransactionRule{capability: AgentCapabilityHistory, optionalProfile: true}, true
 	case "purchase.legacy.record", "purchase.legacy.confirm":
 		return agentTransactionRule{capability: AgentCapabilityAdmin, administrator: true}, true
 	case "purchase.payment.record", "purchase.payment.confirm":

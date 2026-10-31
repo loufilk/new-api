@@ -49,7 +49,7 @@ func runPancakeRetryWebhook(t *testing.T, req *http.Request) *httptest.ResponseR
 
 func TestPancakeWebhookRetriesTransientBindingWriteFailureAndCompletesOnce(t *testing.T) {
 	db := withPaymentBindingDB(t)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}))
+	require.NoError(t, db.AutoMigrate(append([]any{&model.User{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}}, model.BonusSourceModels()...)...))
 	withPancakeBindingConfig(t, "STORE_SITE")
 	confirmPaymentComplianceForTest(t)
 

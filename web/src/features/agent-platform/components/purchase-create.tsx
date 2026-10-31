@@ -28,6 +28,7 @@ import { postPlatform } from '../api'
 import { useRequestId } from '../hooks/use-request-id'
 import type { PurchaseQuote } from '../types'
 import { ActionForm } from './action-form'
+import { PriceSnapshot } from './price-snapshot'
 import { BusinessDate, Money, Quota } from './values'
 
 export function PurchaseCreate(props: { onClose: () => void }) {
@@ -138,6 +139,7 @@ export function PurchaseCreate(props: { onClose: () => void }) {
               </dd>
             </div>
           </dl>
+          <PriceSnapshot value={quote.price_snapshot} />
         </ConfirmDialog>
       )}
     </>

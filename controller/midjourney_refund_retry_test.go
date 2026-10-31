@@ -18,7 +18,7 @@ import (
 func midjourneyRefundDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db := withPaymentBindingDB(t)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Midjourney{}, &model.Channel{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.BillingFinalization{}, &model.Log{}))
+	require.NoError(t, db.AutoMigrate(append([]any{&model.User{}, &model.Token{}, &model.Midjourney{}, &model.Channel{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.BillingFinalization{}, &model.Log{}}, model.BonusSourceModels()...)...))
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)

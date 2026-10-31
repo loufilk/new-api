@@ -204,12 +204,22 @@ function WithdrawalReview(props: {
     if (action === 'commission.withdraw.resolve') {
       fields.push(
         {
+          name: 'payout_paid_at',
+          label: 'Actual offline payment time (successful result only)',
+          kind: 'datetime',
+          required: false,
+        },
+        {
           name: 'status',
           label: 'Actual payment result',
           kind: 'select',
           options: [
-            { value: 'succeeded', label: 'Confirmed successful' },
-            { value: 'failed', label: 'Confirmed unpaid' },
+            ...(withdrawal.submitted_by !== userId
+              ? [
+                  { value: 'succeeded', label: 'Confirmed successful' },
+                  { value: 'failed', label: 'Confirmed unpaid' },
+                ]
+              : []),
             { value: 'unknown', label: 'Unknown; keep funds held' },
           ],
         },
@@ -234,10 +244,7 @@ function WithdrawalReview(props: {
           label: 'Payout environment (successful result only)',
           kind: 'select',
           required: false,
-          options: [
-            { value: 'live', label: 'Live' },
-            { value: 'test', label: 'Test' },
-          ],
+          options: [{ value: 'live', label: 'Live' }],
         },
         {
           name: 'payout_reference',
@@ -276,6 +283,16 @@ function WithdrawalReview(props: {
           if (action === 'commission.withdraw.resolve') {
             endpoint = 'resolve'
             payload.status = String(values.status)
+            if (payload.status === 'succeeded') {
+              if (!values.payout_paid_at) {
+                throw new Error(
+                  t('Enter the independently verified actual payment time.')
+                )
+              }
+              payload.payout_paid_at = Math.floor(
+                Date.parse(String(values.payout_paid_at)) / 1000
+              )
+            }
             payload.failure_confirmed_unpaid =
               values.failure_confirmed_unpaid === true
             for (const field of [

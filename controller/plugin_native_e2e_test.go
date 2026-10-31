@@ -58,7 +58,7 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-	require.NoError(t, database.AutoMigrate(
+	require.NoError(t, database.AutoMigrate(append([]any{
 		&model.User{},
 		&model.Token{},
 		&model.BillingFinalization{},
@@ -69,8 +69,7 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 		&model.Task{},
 		&model.Log{},
 		&model.BalanceLedgerOperation{},
-		&model.BalanceLedger{},
-	))
+		&model.BalanceLedger{}}, model.BonusSourceModels()...)...))
 	model.DB = database
 	model.LOG_DB = database
 	common.MemoryCacheEnabled = false

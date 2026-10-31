@@ -34,7 +34,7 @@ func setupWalletDatabase(t *testing.T, dialect, dsn string) *gorm.DB {
 	// Reuse the loopback-only fixture: every case gets a newly created database,
 	// never tables in the database named by the caller's DSN.
 	db, _ := newAuditTestDatabase(t, dialect, dsn)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}, &model.Setup{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.BalanceLedger{}))
+	require.NoError(t, db.AutoMigrate(append([]any{&model.User{}, &model.Option{}, &model.Setup{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.BalanceLedger{}}, model.BonusSourceModels()...)...))
 	var version string
 	query := "SELECT version()"
 	if dialect == "sqlite" {
