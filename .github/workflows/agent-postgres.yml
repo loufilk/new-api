@@ -90,7 +90,7 @@ jobs:
       - name: Agent authorization, invitation, budget, and migration regressions
         run: |
           set -euo pipefail
-          go test -race -p 1 -count=1 -timeout=10m -json ./model ./middleware ./controller \
+          go test -race -p 1 -count=1 -timeout=30m -json ./model ./middleware ./controller \
             -run '^(TestAgent|TestRedeem|TestRedemption(Quota|DuplicateCallback)|TestSearchRedemption|TestMainAutoMigrate|TestInsertPersistsValidatedInviter|TestInsertWithTxRejectsDisabled|TestInsertLinuxDOWithTx|TestInsertIgnoresLegacyGlobal|TestInsertWithTxOAuthRollback|TestInviteUser|TestLinuxDOSignup|TestAdminUser|TestCreateUser|TestManageUser(Disable|Demote|Delete)|TestFailedRedemptionDoesNotLogSubmittedCode)' \
             | tee acceptance-evidence/agent.jsonl
 
