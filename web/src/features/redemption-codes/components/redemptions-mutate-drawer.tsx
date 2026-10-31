@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { type FormEvent, useEffect, useRef, useState } from 'react'
+import { type FormEvent, useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -51,11 +51,17 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { OperationDialog } from '@/features/agent-platform/components/operation-dialog'
+import type {
+  OperationDraft,
+  OperationPayload,
+} from '@/features/agent-platform/types'
 import { useAgentAccount } from '@/features/agent-redemption/hooks/use-agent-account'
 import {
   canReserveQuota,
   getBatchQuota,
 } from '@/features/agent-redemption/lib/quota'
+import { isAgentWorkspaceUser } from '@/lib/agent-permissions'
 import {
   formatQuotaWithCurrency,
   getCurrencyDisplay,
@@ -67,11 +73,10 @@ import {
   parseQuotaFromDollars,
 } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
-import { ROLE } from '@/lib/roles'
 import { addTimeToDate } from '@/lib/time'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { createRedemption, updateRedemption, getRedemption } from '../api'
+import { getRedemption } from '../api'
 import { REDEMPTION_STATUS, SUCCESS_MESSAGES } from '../constants'
 import {
   getRedemptionFormSchema,
@@ -80,6 +85,7 @@ import {
   transformFormDataToPayload,
   transformRedemptionToFormDefaults,
 } from '../lib'
+import { isProtectedRedemption, redemptionOperation } from '../lib/transaction'
 import type { Redemption } from '../types'
 import {
   RedemptionsExportDialog,
@@ -99,14 +105,14 @@ export function RedemptionsMutateDrawer({
   currentRow,
 }: RedemptionsMutateDrawerProps) {
   const { t } = useTranslation()
-  const isAgent = useAuthStore((state) => state.auth.user?.role === ROLE.AGENT)
+  const isAgent = useAuthStore((state) => isAgentWorkspaceUser(state.auth.user))
   const accountQuery = useAgentAccount(open)
-  const submitting = useRef(false)
-  const request = useRef<{ signature: string; id: string } | null>(null)
+  const role = useAuthStore((state) => state.auth.user?.role)
+  const [draft, setDraft] = useState<OperationDraft | null>(null)
   const isUpdate = !!currentRow
   const redemptionId = currentRow?.id
   const { triggerRefresh } = useRedemptions()
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const isSubmitting = draft !== null
   const [createdCodes, setCreatedCodes] = useState<RedemptionExportData | null>(
     null
   )
@@ -177,12 +183,15 @@ export function RedemptionsMutateDrawer({
   const isUpdateReady =
     !isUpdate ||
     (redemptionLoadState === 'ready' &&
+      loadedRedemption !== null &&
       loadedRedemption?.id === redemptionId &&
+      Number.isSafeInteger(loadedRedemption?.version) &&
+      !isProtectedRedemption(loadedRedemption) &&
       loadedRedemption?.status !== REDEMPTION_STATUS.USED)
   const isLoadingRedemption = redemptionLoadState === 'loading'
 
-  const onSubmit = async (data: RedemptionFormValues) => {
-    if (submitting.current) return
+  const onSubmit = (data: RedemptionFormValues) => {
+    if (draft) return
     if (isUpdate && (!currentRow || !loadedRedemption || !isUpdateReady)) {
       return
     }
@@ -225,66 +234,91 @@ export function RedemptionsMutateDrawer({
         return
       }
     }
-    submitting.current = true
-    setIsSubmitting(true)
-    try {
-      if (isUpdate && currentRow && loadedRedemption) {
-        const quota = form.getFieldState('quota_dollars').isDirty
-          ? basePayload.quota
-          : loadedRedemption.quota
-        const result = await updateRedemption({
-          ...basePayload,
-          quota,
-          id: currentRow.id,
-        })
-        if (result.success) {
-          toast.success(t(SUCCESS_MESSAGES.REDEMPTION_UPDATED))
-          onOpenChange(false)
-          triggerRefresh()
-        } else {
-          handleServerError(result)
-        }
-      } else {
-        // Create mode
-        const signature = JSON.stringify(basePayload)
-        if (request.current?.signature !== signature) {
-          request.current = { signature, id: crypto.randomUUID() }
-        }
-        const result = await createRedemption({
-          ...basePayload,
-          request_id: request.current.id,
-        })
-        if (result.success) {
-          request.current = null
-          const count = result.data?.length || 0
-          toast.success(
-            count > 1
-              ? t('Successfully created {{count}} redemption codes', {
-                  count,
-                })
-              : t(SUCCESS_MESSAGES.REDEMPTION_CREATED)
-          )
-          if (result.data?.length) {
-            setCreatedCodes({
-              keys: result.data,
-              name: basePayload.name,
-              quota: formatQuotaWithCurrency(basePayload.quota, {
-                abbreviate: false,
-              }),
-            })
+    // Freeze the exact reviewed values; edits after cancellation require a new review.
+    const payload: OperationPayload =
+      isUpdate && loadedRedemption
+        ? {
+            id: loadedRedemption.id,
+            version: Number(loadedRedemption.version),
+            name: basePayload.name,
+            quota: basePayload.quota,
+            expired_time: basePayload.expired_time,
+            status: 0,
+            status_only: false,
           }
-          onOpenChange(false)
-          triggerRefresh()
-        } else {
-          handleServerError(result)
-        }
+        : {
+            name: basePayload.name,
+            quota: basePayload.quota,
+            expired_time: basePayload.expired_time,
+            count: basePayload.count ?? 1,
+          }
+    setDraft(
+      redemptionOperation(
+        isUpdate ? 'update' : 'create',
+        role,
+        payload,
+        '/api/redemption/',
+        [
+          {
+            label: 'Name',
+            before: loadedRedemption?.name,
+            after: basePayload.name,
+          },
+          {
+            label: 'Quota',
+            before: loadedRedemption
+              ? formatQuotaWithCurrency(loadedRedemption.quota, {
+                  abbreviate: false,
+                })
+              : undefined,
+            after: formatQuotaWithCurrency(basePayload.quota, {
+              abbreviate: false,
+            }),
+          },
+          {
+            label: 'Quantity',
+            after: String(isUpdate ? 1 : (basePayload.count ?? 1)),
+          },
+          {
+            label: 'Expiration time',
+            after: data.expired_time
+              ? data.expired_time.toISOString()
+              : t('Never expires'),
+          },
+        ]
+      )
+    )
+  }
+
+  const completeOperation = (result?: unknown) => {
+    if (!draft) return
+    if (
+      draft.action.endsWith('.create') &&
+      Array.isArray(result) &&
+      result.every((code) => typeof code === 'string')
+    ) {
+      toast.success(
+        result.length > 1
+          ? t('Successfully created {{count}} redemption codes', {
+              count: result.length,
+            })
+          : t(SUCCESS_MESSAGES.REDEMPTION_CREATED)
+      )
+      if (result.length) {
+        setCreatedCodes({
+          keys: result,
+          name: String(draft.payload.name),
+          quota: formatQuotaWithCurrency(Number(draft.payload.quota), {
+            abbreviate: false,
+          }),
+        })
       }
-    } catch (error) {
-      handleServerError(error)
-    } finally {
-      submitting.current = false
-      setIsSubmitting(false)
+    } else if (draft.action.endsWith('.update')) {
+      toast.success(t(SUCCESS_MESSAGES.REDEMPTION_UPDATED))
     }
+    setDraft(null)
+    onOpenChange(false)
+    triggerRefresh()
   }
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -331,7 +365,7 @@ export function RedemptionsMutateDrawer({
       <Sheet
         open={open}
         onOpenChange={(nextOpen) => {
-          if (!submitting.current) onOpenChange(nextOpen)
+          if (!draft) onOpenChange(nextOpen)
         }}
       >
         <SheetContent
@@ -352,6 +386,11 @@ export function RedemptionsMutateDrawer({
               {t('Click save when you&apos;re done.')}
             </SheetDescription>
           </SheetHeader>
+          {loadedRedemption && isProtectedRedemption(loadedRedemption) && (
+            <p role='status' className='text-muted-foreground px-6 text-sm'>
+              {t('Customer rights protected')}
+            </p>
+          )}
           {loadedRedemption?.status === REDEMPTION_STATUS.USED && (
             <p role='status' className='text-muted-foreground px-6 text-sm'>
               {t('Used redemption codes cannot be changed or re-enabled')}
@@ -561,6 +600,14 @@ export function RedemptionsMutateDrawer({
           </SheetFooter>
         </SheetContent>
       </Sheet>
+      {draft && (
+        <OperationDialog
+          key={draft.request_id}
+          draft={draft}
+          onClose={() => setDraft(null)}
+          onComplete={completeOperation}
+        />
+      )}
       {createdCodes && (
         <RedemptionsExportDialog
           data={createdCodes}

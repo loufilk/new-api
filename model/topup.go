@@ -13,16 +13,23 @@ import (
 )
 
 type TopUp struct {
-	Id              int     `json:"id"`
-	UserId          int     `json:"user_id" gorm:"index"`
-	Amount          int64   `json:"amount"`
-	Money           float64 `json:"money"`
-	TradeNo         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod   string  `json:"payment_method" gorm:"type:varchar(50)"`
-	PaymentProvider string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	CreateTime      int64   `json:"create_time"`
-	CompleteTime    int64   `json:"complete_time"`
-	Status          string  `json:"status"`
+	PaymentReceiptID      int64   `json:"payment_receipt_id"`
+	PaidProviderReference string  `json:"-" gorm:"type:varchar(255)"`
+	PaidMerchantScope     string  `json:"-" gorm:"type:varchar(128)"`
+	PaidEnvironment       string  `json:"-" gorm:"type:varchar(16)"`
+	PaidCurrency          string  `json:"paid_currency" gorm:"type:varchar(3)"`
+	PaidCurrencyExponent  int     `json:"paid_currency_exponent"`
+	PaidAmountMinor       int64   `json:"paid_amount_minor,string"`
+	Id                    int     `json:"id"`
+	UserId                int     `json:"user_id" gorm:"index"`
+	Amount                int64   `json:"amount"`
+	Money                 float64 `json:"money"`
+	TradeNo               string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod         string  `json:"payment_method" gorm:"type:varchar(50)"`
+	PaymentProvider       string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	CreateTime            int64   `json:"create_time"`
+	CompleteTime          int64   `json:"complete_time"`
+	Status                string  `json:"status"`
 }
 
 const (
@@ -108,11 +115,9 @@ func creditTopUpQuota(tx *gorm.DB, entry LedgerEntry) (*LedgerResult, error) {
 	if result.Replayed {
 		return result, nil
 	}
-	// 邀请奖励：在同一结算事务内按成功在线余额充值订单计次（前三次），
-	// 生成返佣凭证并增加邀请人的 aff_quota/aff_history。只有真实在线支付
-	// 结算（LedgerReasonTopup）合格；管理员补单的 admin_topup 直接跳过。
-	// 奖励/邀请人余额异常会返回错误并整体回滚本事务。
-	if err := RecordReferralCommissionForTopUpTx(tx, entry.UserId, entry.Delta, entry.ReferenceType, entry.ReferenceId, entry.Reason); err != nil {
+	// Principal and its durable event commit together. Reward calculation and
+	// inviter accounting run later, so their failure cannot undo this payment.
+	if err := EnqueueAgentCommissionTopUpTx(tx, entry); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -183,7 +188,7 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 // 在同一个事务内完成，因此同一订单的并发/重复回调（包括多实例部署下）最多充值一次。
 // alreadyDone=true 表示订单此前已完成，本次为幂等重复回调。
 // 进程内的 LockOrder 只是优化，正确性由本函数的数据库行锁保证。
-func RechargeEpay(tradeNo string, actualPaymentMethod string, actualMoney string, callerIp string) (alreadyDone bool, err error) {
+func RechargeEpay(tradeNo string, actualPaymentMethod string, actualMoney string, callerIp string, facts ...AgentVerifiedPaymentFacts) (alreadyDone bool, err error) {
 	if tradeNo == "" {
 		return false, errors.New("payment order number not provided")
 	}
@@ -230,6 +235,9 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, actualMoney string
 		if quotaErr != nil || quotaToAdd <= 0 {
 			return errors.New("无效的充值额度")
 		}
+		if err := applyAgentVerifiedPaymentTx(tx, topUp, facts); err != nil {
+			return err
+		}
 		topUp.CompleteTime = common.GetTimestamp()
 		topUp.Status = common.TopUpStatusSuccess
 		if err := tx.Save(topUp).Error; err != nil {
@@ -267,7 +275,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, actualMoney string
 	return false, nil
 }
 
-func Recharge(referenceId string, customerId string, callerIp string) (err error) {
+func Recharge(referenceId string, customerId string, callerIp string, facts ...AgentVerifiedPaymentFacts) (err error) {
 	if referenceId == "" {
 		return errors.New("payment order number not provided")
 	}
@@ -300,6 +308,9 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 			return errors.New("invalid top-up order status")
 		}
 
+		if err := applyAgentVerifiedPaymentTx(tx, topUp, facts); err != nil {
+			return err
+		}
 		topUp.CompleteTime = common.GetTimestamp()
 		topUp.Status = common.TopUpStatusSuccess
 		err = tx.Save(topUp).Error
@@ -599,7 +610,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	RecordTopupLog(userId, common.NewMessage("Administrator completed the order, amount added: {{quota}}, payment amount: {{amount}}", map[string]any{"quota": logger.FormatQuota(quotaToAdd), "amount": fmt.Sprintf("%f", payMoney)}), callerIp, paymentMethod, "admin")
 	return nil
 }
-func RechargeCreem(referenceId string, customerEmail string, customerName string, callerIp string) (err error) {
+func RechargeCreem(referenceId string, customerEmail string, customerName string, callerIp string, facts ...AgentVerifiedPaymentFacts) (err error) {
 	if referenceId == "" {
 		return errors.New("payment order number not provided")
 	}
@@ -623,10 +634,16 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 			return ErrPaymentMethodMismatch
 		}
 
+		if topUp.Status == common.TopUpStatusSuccess {
+			return nil
+		}
 		if topUp.Status != common.TopUpStatusPending {
 			return errors.New("invalid top-up order status")
 		}
 
+		if err := applyAgentVerifiedPaymentTx(tx, topUp, facts); err != nil {
+			return err
+		}
 		topUp.CompleteTime = common.GetTimestamp()
 		topUp.Status = common.TopUpStatusSuccess
 		err = tx.Save(topUp).Error
@@ -686,7 +703,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 	return nil
 }
 
-func RechargeWaffo(tradeNo string, callerIp string) (err error) {
+func RechargeWaffo(tradeNo string, callerIp string, facts ...AgentVerifiedPaymentFacts) (err error) {
 	if tradeNo == "" {
 		return errors.New("payment order number not provided")
 	}
@@ -725,6 +742,9 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 			return errors.New("无效的充值额度")
 		}
 
+		if err := applyAgentVerifiedPaymentTx(tx, topUp, facts); err != nil {
+			return err
+		}
 		topUp.CompleteTime = common.GetTimestamp()
 		topUp.Status = common.TopUpStatusSuccess
 		if err := tx.Save(topUp).Error; err != nil {
@@ -761,7 +781,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 	return nil
 }
 
-func RechargeWaffoPancake(tradeNo string) (err error) {
+func RechargeWaffoPancake(tradeNo string, facts ...AgentVerifiedPaymentFacts) (err error) {
 	if tradeNo == "" {
 		return errors.New("payment order number not provided")
 	}
@@ -800,6 +820,9 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 			return errors.New("无效的充值额度")
 		}
 
+		if err := applyAgentVerifiedPaymentTx(tx, topUp, facts); err != nil {
+			return err
+		}
 		topUp.CompleteTime = common.GetTimestamp()
 		topUp.Status = common.TopUpStatusSuccess
 		if err := tx.Save(topUp).Error; err != nil {

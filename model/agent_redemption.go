@@ -32,6 +32,8 @@ type RedemptionCreateRequest struct {
 }
 
 type RedemptionUpdateRequest struct {
+	RequestID   string `json:"request_id"`
+	Version     int64  `json:"version"`
 	ID          int    `json:"id"`
 	Name        string `json:"name"`
 	Quota       int    `json:"quota"`
@@ -120,6 +122,10 @@ func CreateRedemptionsScoped(scope RedemptionScope, request RedemptionCreateRequ
 	// include plaintext INSERT values or replay responses.
 	db := DB.Session(&gorm.Session{Logger: DB.Logger.LogMode(gormlogger.Silent)})
 	err := db.Transaction(func(tx *gorm.DB) error {
+		policy, err := LockCurrentAgentPolicyTx(tx)
+		if err != nil {
+			return err
+		}
 		operation, replayed, err := claimAgentRedemptionOperation(tx, "create", request.RequestID, scope, budgetAgentID, request)
 		if err != nil {
 			return err
@@ -142,6 +148,17 @@ func CreateRedemptionsScoped(scope RedemptionScope, request RedemptionCreateRequ
 			}
 			return nil
 		}
+		var authorizationContext AgentTransactionContext
+		if scope.Identity != nil {
+			if scope.Authorization == nil || scope.Authorization.Identity() != *scope.Identity {
+				return ErrAgentTransactionProof
+			}
+			authorizationContext, err = buildAgentLegacyCreateContextTx(tx, policy, scope, request)
+			if err != nil {
+				return err
+			}
+		}
+
 		if request.ExpiredTime != 0 && request.ExpiredTime < common.GetTimestamp() {
 			return ErrRedemptionInvalidRequest
 		}
@@ -150,16 +167,11 @@ func CreateRedemptionsScoped(scope RedemptionScope, request RedemptionCreateRequ
 			if err != nil {
 				return err
 			}
-			if err := requireRedemptionActorTx(tx, scope, budgetAgentID); err != nil {
+			if err := ensureAgentFundSourcesTx(tx, account); err != nil {
 				return err
 			}
 			total := request.Quota * request.Count // bounded before multiplication
 			if err := applyAgentQuotaChangeTx(tx, account, AgentRedemptionLedger{OperationKey: operation.OperationKey, ActorUserID: scope.UserID, Kind: "reserve", Delta: -total, ReservedDelta: total, RequestID: request.RequestID, Reason: "Redemption code batch created"}); err != nil {
-				return err
-			}
-		}
-		if budgetAgentID == 0 {
-			if err := requireRedemptionActorTx(tx, scope, 0); err != nil {
 				return err
 			}
 		}
@@ -169,7 +181,27 @@ func CreateRedemptionsScoped(scope RedemptionScope, request RedemptionCreateRequ
 			rows = append(rows, Redemption{UserId: scope.UserID, Name: request.Name, Key: key, Status: common.RedemptionCodeStatusEnabled, CreatedTime: common.GetTimestamp(), Quota: request.Quota, ExpiredTime: request.ExpiredTime, BudgetAgentID: budgetAgentID, BudgetReserved: budgetAgentID != 0, BudgetVersion: 1, CreationOperationID: operation.ID})
 			keys = append(keys, key)
 		}
-		return tx.Create(&rows).Error
+		if err := tx.Create(&rows).Error; err != nil {
+			return err
+		}
+		if budgetAgentID > 0 {
+			for i := range rows {
+				if err := reserveRedemptionFundSourcesTx(tx, &rows[i], fmt.Sprintf("%s:%d", operation.OperationKey, rows[i].Id)); err != nil {
+					return err
+				}
+			}
+		}
+		if err := requireRedemptionActorTx(tx, scope, budgetAgentID); err != nil {
+			return err
+		}
+
+		if scope.Identity != nil {
+			if err := ConsumeAgentTransactionAuthorizationTx(tx, *scope.Authorization, authorizationContext); err != nil {
+				return err
+			}
+		}
+
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -198,12 +230,43 @@ func updateRedemptionBudgetTx(tx *gorm.DB, redemption *Redemption, actorID, desi
 	if err != nil {
 		return err
 	}
+	if err := ensureAgentFundSourcesTx(tx, account); err != nil {
+		return err
+	}
 	redemption.BudgetVersion++
 	entry := AgentRedemptionLedger{OperationKey: fmt.Sprintf("redemption:%d:%d", redemption.Id, redemption.BudgetVersion), ActorUserID: actorID, RedemptionID: redemption.Id, Kind: kind, Reason: "Redemption code " + kind}
 	if spend {
 		entry.ReservedDelta, entry.SpentDelta = -oldReserve, oldReserve
 	} else {
 		entry.Delta, entry.ReservedDelta = oldReserve-desiredReserve, desiredReserve-oldReserve
+	}
+	if spend {
+		actual, _, err := transitionAgentFundSlicesTx(tx, redemption.BudgetAgentID, redemption.Id, 0, AgentSliceReserved, AgentSliceSpent, entry.OperationKey)
+		if err != nil {
+			return err
+		}
+		if actual != oldReserve {
+			return ErrAgentFundInvariant
+		}
+	} else {
+		if oldReserve > 0 {
+			actual, _, err := transitionAgentFundSlicesTx(tx, redemption.BudgetAgentID, redemption.Id, 0, AgentSliceReserved, AgentSliceAvailable, entry.OperationKey+":release")
+			if err != nil {
+				return err
+			}
+			if actual != oldReserve {
+				return ErrAgentFundInvariant
+			}
+		}
+		if desiredReserve > 0 {
+			oldQuota := redemption.Quota
+			redemption.Quota = desiredReserve
+			err := reserveRedemptionFundSourcesTx(tx, redemption, entry.OperationKey+":reserve")
+			redemption.Quota = oldQuota
+			if err != nil {
+				return err
+			}
+		}
 	}
 	if err := applyAgentQuotaChangeTx(tx, account, entry); err != nil {
 		return err
@@ -228,8 +291,39 @@ func UpdateRedemptionScoped(scope RedemptionScope, request RedemptionUpdateReque
 	}
 	var redemption Redemption
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		policy, err := LockCurrentAgentPolicyTx(tx)
+		if err != nil {
+			return err
+		}
+		var operation *AgentRedemptionOperation
+		replay := false
+		if scope.Identity != nil {
+			operation, replay, err = claimAgentRedemptionOperation(tx, "legacy_update", request.RequestID, scope, scope.UserID, AgentLegacyRedemptionUpdateRequest{RedemptionUpdateRequest: request, StatusOnly: statusOnly})
+			if err != nil {
+				return err
+			}
+		}
+
 		if err := lockForUpdate(scope.query(tx)).Where("id = ?", request.ID).First(&redemption).Error; err != nil {
 			return err
+		}
+		if replay {
+			return requireRedemptionActorTx(tx, scope, 0)
+		}
+
+		var authorizationContext AgentTransactionContext
+		if scope.Identity != nil {
+			if scope.Authorization == nil || scope.Authorization.Identity() != *scope.Identity {
+				return ErrAgentTransactionProof
+			}
+			authorizationContext, err = buildAgentLegacyUpdateContextTx(tx, policy, scope, &redemption, request, statusOnly)
+			if err != nil {
+				return err
+			}
+		}
+
+		if redemption.CustomerUserID > 0 || redemption.DeliveryID > 0 || redemption.SourceProtected {
+			return ErrAgentDeliveryProtected
 		}
 		// Fail closed for unknown legacy states, and check durable use markers
 		// to prevent enabled-after-use resurrection of a redeemed code.
@@ -260,9 +354,6 @@ func UpdateRedemptionScoped(scope RedemptionScope, request RedemptionUpdateReque
 		if status == common.RedemptionCodeStatusEnabled {
 			activeAgentID = redemption.BudgetAgentID
 		}
-		if err := requireRedemptionActorTx(tx, scope, activeAgentID); err != nil {
-			return err
-		}
 		kind := "edit"
 		if statusOnly {
 			if status == common.RedemptionCodeStatusEnabled {
@@ -274,11 +365,27 @@ func UpdateRedemptionScoped(scope RedemptionScope, request RedemptionUpdateReque
 		if err := updateRedemptionBudgetTx(tx, &redemption, scope.UserID, desiredReserve, false, kind); err != nil {
 			return err
 		}
+		if err := requireRedemptionActorTx(tx, scope, activeAgentID); err != nil {
+			return err
+		}
+
+		if scope.Identity != nil {
+			if err := ConsumeAgentTransactionAuthorizationTx(tx, *scope.Authorization, authorizationContext); err != nil {
+				return err
+			}
+		}
+
 		redemption.Status, redemption.Quota, redemption.ExpiredTime = status, quota, expired
 		if !statusOnly {
 			redemption.Name = request.Name
 		}
-		return tx.Model(&redemption).Select("name", "status", "quota", "expired_time", "budget_reserved", "budget_version").Updates(&redemption).Error
+		if err := tx.Model(&redemption).Select("name", "status", "quota", "expired_time", "budget_reserved", "budget_version").Updates(&redemption).Error; err != nil {
+			return err
+		}
+		if operation != nil {
+			return storeAgentOperationResultTx(tx, operation, "redemption", redemption.Id, "updated")
+		}
+		return nil
 	})
 	return &redemption, err
 }
@@ -297,12 +404,36 @@ func DeleteRedemptionsScoped(scope RedemptionScope, ids []int, invalidOnly bool,
 	}
 	var deleted int64
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		policy, err := LockCurrentAgentPolicyTx(tx)
+		if err != nil {
+			return err
+		}
+		var operation *AgentRedemptionOperation
+		filter := 0
+		if len(agentFilter) > 0 {
+			filter = agentFilter[0]
+		}
+		if scope.Identity != nil {
+			var replay bool
+			operation, replay, err = claimAgentRedemptionOperation(tx, "legacy_delete", scope.RequestID, scope, scope.UserID, AgentLegacyRedemptionDeleteRequest{RequestID: scope.RequestID, IDs: ids, InvalidOnly: invalidOnly, AgentUserID: filter})
+			if err != nil {
+				return err
+			}
+			if replay {
+				if err := requireRedemptionActorTx(tx, scope, 0); err != nil {
+					return err
+				}
+				deleted, err = strconv.ParseInt(operation.Result, 10, 64)
+				return err
+			}
+		}
+
 		query := scope.query(tx.Model(&Redemption{}))
 		if scope.IsAdmin() && len(agentFilter) > 0 && agentFilter[0] > 0 {
 			query = query.Where("budget_agent_id = ?", agentFilter[0])
 		}
 		if invalidOnly {
-			query = query.Where("(status IN ? OR (status = ? AND expired_time != 0 AND expired_time < ?))", []int{common.RedemptionCodeStatusUsed, common.RedemptionCodeStatusDisabled}, common.RedemptionCodeStatusEnabled, common.GetTimestamp()).Limit(MaxRedemptionDeleteBatchSize)
+			query = query.Where("customer_user_id = 0 AND delivery_id = 0 AND source_protected = false").Where("(status IN ? OR (status = ? AND expired_time != 0 AND expired_time < ?))", []int{common.RedemptionCodeStatusUsed, common.RedemptionCodeStatusDisabled}, common.RedemptionCodeStatusEnabled, common.GetTimestamp()).Limit(MaxRedemptionDeleteBatchSize)
 		} else {
 			query = query.Where("id IN ?", ids)
 		}
@@ -310,6 +441,21 @@ func DeleteRedemptionsScoped(scope RedemptionScope, ids []int, invalidOnly bool,
 		if err := lockForUpdate(query).Order("id ASC").Find(&rows).Error; err != nil {
 			return err
 		}
+		var authorizationContext AgentTransactionContext
+		if scope.Identity != nil {
+			if scope.Authorization == nil || scope.Authorization.Identity() != *scope.Identity {
+				return ErrAgentTransactionProof
+			}
+			filter := 0
+			if len(agentFilter) > 0 {
+				filter = agentFilter[0]
+			}
+			authorizationContext, err = buildAgentLegacyDeleteContextTx(tx, policy, scope, rows, AgentLegacyRedemptionDeleteRequest{RequestID: scope.RequestID, IDs: ids, InvalidOnly: invalidOnly, AgentUserID: filter})
+			if err != nil {
+				return err
+			}
+		}
+
 		accountIDs := make([]int, 0)
 		for _, row := range rows {
 			if row.BudgetAgentID > 0 {
@@ -322,14 +468,17 @@ func DeleteRedemptionsScoped(scope RedemptionScope, ids []int, invalidOnly bool,
 				return err
 			}
 		}
-		if err := requireRedemptionActorTx(tx, scope, 0); err != nil {
-			return err
-		}
 		// One bounded transaction makes this batch all-or-none. Additional invalid
 		// rows require another request, never an unbounded loop in this transaction.
 		// Foreign IDs are never returned; only matching own rows are affected.
 		for i := range rows {
 			row := &rows[i]
+			if row.CustomerUserID > 0 || row.DeliveryID > 0 || row.SourceProtected {
+				if invalidOnly {
+					continue
+				}
+				return ErrAgentDeliveryProtected
+			}
 			if row.Status == common.RedemptionCodeStatusUsed || row.UsedUserId != 0 || row.RedeemedTime != 0 {
 				if row.BudgetReserved {
 					return ErrAgentQuotaInvariant
@@ -346,6 +495,20 @@ func DeleteRedemptionsScoped(scope RedemptionScope, ids []int, invalidOnly bool,
 			}
 			deleted += result.RowsAffected
 		}
+		if err := requireRedemptionActorTx(tx, scope, 0); err != nil {
+			return err
+		}
+
+		if scope.Identity != nil {
+			if err := ConsumeAgentTransactionAuthorizationTx(tx, *scope.Authorization, authorizationContext); err != nil {
+				return err
+			}
+		}
+
+		if operation != nil {
+			return tx.Model(operation).Update("result", strconv.FormatInt(deleted, 10)).Error
+		}
+
 		return nil
 	})
 	if err != nil {
@@ -363,19 +526,25 @@ func ReleaseExpiredAgentRedemptions(limit int) (int64, error) {
 		limit = 100
 	}
 	var ids []int
-	if err := DB.Model(&Redemption{}).Where("budget_agent_id > 0 AND budget_reserved = ? AND expired_time != 0 AND expired_time < ?", true, common.GetTimestamp()).Order("id ASC").Limit(limit).Pluck("id", &ids).Error; err != nil {
+	if err := DB.Model(&Redemption{}).Where("budget_agent_id > 0 AND budget_reserved = ? AND customer_user_id = 0 AND delivery_id = 0 AND source_protected = false AND expired_time != 0 AND expired_time < ?", true, common.GetTimestamp()).Order("id ASC").Limit(limit).Pluck("id", &ids).Error; err != nil {
 		return 0, err
 	}
 	var released int64
 	for _, id := range ids {
 		changed := false
 		err := DB.Transaction(func(tx *gorm.DB) error {
+			if _, err := LockCurrentAgentPolicyTx(tx); err != nil {
+				return err
+			}
 			var row Redemption
 			if err := lockForUpdate(tx).Where("id = ?", id).First(&row).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					return nil
 				}
 				return err
+			}
+			if row.CustomerUserID > 0 || row.DeliveryID > 0 || row.SourceProtected {
+				return nil
 			}
 			if !row.BudgetReserved || row.ExpiredTime == 0 || row.ExpiredTime >= common.GetTimestamp() {
 				return nil

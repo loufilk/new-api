@@ -17,11 +17,13 @@ import (
 
 	"github.com/QuantumNous/new-api/extension"
 	affiliatemodule "github.com/QuantumNous/new-api/modules/chuanapi/affiliate"
+	agentmodule "github.com/QuantumNous/new-api/modules/chuanapi/agents"
 	consolemodule "github.com/QuantumNous/new-api/modules/chuanapi/console"
 	paymentmodule "github.com/QuantumNous/new-api/modules/chuanapi/payment"
 	supportmodule "github.com/QuantumNous/new-api/modules/chuanapi/support"
 	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
 	walletroutes "github.com/QuantumNous/new-api/modules/chuanapi/wallet/routes"
+	"github.com/QuantumNous/new-api/pkg/lifecycle"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
 )
 
@@ -40,6 +42,9 @@ const (
 	PaymentRoutesName       = paymentmodule.RoutesName
 	SupportModelsName       = supportmodule.ModelsName
 	SupportRoutesName       = supportmodule.RoutesName
+	AgentModelsName         = agentmodule.ModelsName
+	AgentMigrationName      = agentmodule.MigrationName
+	AgentRoutesName         = agentmodule.RoutesName
 )
 
 // WalletModels remains as a compatibility accessor for migration tests and any
@@ -83,5 +88,11 @@ func Register(reg *extension.Registry) error {
 	if err := consolemodule.Register(reg); err != nil {
 		return err
 	}
-	return supportmodule.Register(reg)
+	if err := supportmodule.Register(reg); err != nil {
+		return err
+	}
+	return agentmodule.Register(reg)
 }
+
+// StartRuntimeWorkers starts module-owned, drain-aware accounting workers.
+func StartRuntimeWorkers(workers *lifecycle.Group) { agentmodule.StartRuntimeWorkers(workers) }

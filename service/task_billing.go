@@ -27,6 +27,14 @@ import (
 // LogTaskConsumption 记录任务消费日志和统计信息（仅记录，不涉及实际扣费）。
 // 实际扣费已由 BillingSession（PreConsumeBilling + SettleBilling）完成。
 func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model.Task) {
+	params := taskConsumptionLogParams(c, info, task)
+	if info.BillingSource == BillingSourceWallet {
+		FillWalletCostLogInfo(params.Other, info.UserId, RelayWalletCostRefs(info))
+	}
+	model.RecordConsumeLog(c, info.UserId, params)
+}
+
+func taskConsumptionLogParams(c *gin.Context, info *relaycommon.RelayInfo, task *model.Task) model.RecordConsumeLogParams {
 	tokenName := c.GetString("token_name")
 	logContent := []*common.Message{common.NewMessage("Action {{action}}", map[string]any{"action": info.Action})}
 	// 支持任务仅按次计费
@@ -81,13 +89,8 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 	}
 	appendTaskLogInfo(task, other)
 	attachQuotaSaturation(c, info, other)
-	// P1-2：钱包计费任务在提交日志中记录账户净份额（此时反映预扣+提交结算；
-	// 异步差额结算另行记录 task 引用账本与差额日志）。
-	if info.BillingSource == BillingSourceWallet {
-		refs := RelayWalletCostRefs(info)
-		FillWalletCostLogInfo(other, info.UserId, refs)
-	}
-	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
+
+	return model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
 		ModelName: info.GetBillingModelName(),
 		TokenName: tokenName,
@@ -96,7 +99,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 		TokenId:   info.TokenId,
 		Group:     info.UsingGroup,
 		Other:     other,
-	})
+	}
 }
 
 // ---------------------------------------------------------------------------

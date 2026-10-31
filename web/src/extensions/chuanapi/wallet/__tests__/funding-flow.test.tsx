@@ -30,8 +30,13 @@ import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 
+import type {
+  OperationDraft,
+  PreparedOperation,
+} from '@/features/agent-platform/types'
 import en from '@/i18n/locales/en.json'
-import { getSelf } from '@/lib/api'
+import { api, getSelf } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 
 import {
   calculateAmount,
@@ -41,11 +46,9 @@ import {
   getWalletSummary,
   redeemTopupCode,
   requestPayment,
-  transferAffiliateQuota,
 } from '../api'
 import { Wallet } from '../index'
 import type {
-  AffiliateTransferResponse,
   ReferralCommissionPage,
   TopupInfo,
   UserWalletData,
@@ -82,7 +85,6 @@ vi.mock('../api', async (importOriginal) => ({
   getWalletSummary: vi.fn(),
   getAffiliateCode: vi.fn(),
   getReferralRewards: vi.fn(),
-  transferAffiliateQuota: vi.fn(),
 }))
 
 vi.mock('../components/ledger-table', () => ({
@@ -169,6 +171,80 @@ function renderWallet() {
 
 describe('wallet funding flow', () => {
   beforeEach(() => {
+    sessionStorage.clear()
+    useAuthStore.getState().auth.setUser({ ...walletUser, role: 1 })
+    vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+      data: {
+        success: true,
+        data:
+          url === '/api/verify/methods'
+            ? {
+                scope: 'agent.transaction',
+                methods: [{ method: '2fa', available: true }],
+                oauth_providers: [],
+                password_encryption_enabled: false,
+              }
+            : {
+                status: 'not_observed',
+                request_id: String(url).split('/').at(-1),
+              },
+      },
+    }))
+    vi.spyOn(api, 'post').mockImplementation(async (url) => ({
+      data: {
+        success: true,
+        data:
+          url === '/api/verify'
+            ? {
+                proof_token: 'legacy-one-use',
+                scope: 'agent.transaction',
+                method: '2fa',
+                expires_at: Math.floor(Date.now() / 1000) + 60,
+              }
+            : { quota: 500000 },
+      },
+    }))
+    vi.spyOn(api, 'request').mockImplementation(async (config) => {
+      const data = config.data as {
+        action: string
+        request_id: string
+        payload: OperationDraft['payload']
+      }
+      const context = {
+        action: data.action,
+        request_id: data.request_id,
+        agent_user_id: 7,
+        profile_version: 0,
+        policy_version: 0,
+        currency: '',
+        amount_minor: '0',
+        quota: Number(data.payload.quota),
+        target_type: 'legacy_affiliate',
+        target_id: '7',
+        target_version: 0,
+        recipient_version: 0,
+        recipient_digest: '',
+        parameters_hash: 'legacy-params-hash',
+      }
+      const result: PreparedOperation = {
+        verification_context: context,
+        summary: {
+          action: data.action,
+          agent_user_id: 7,
+          currency: '',
+          currency_exponent: 0,
+          amount_minor: '0',
+          fee_minor: '0',
+          net_minor: '0',
+          quota: context.quota,
+          target_label: 'Legacy reward wallet',
+          recipient_label: '',
+          policy_version: 0,
+        },
+        status_url: `/api/agent-platform/operations/${data.request_id}`,
+      }
+      return { data: { success: true, data: result } }
+    })
     vi.mocked(getSelf).mockResolvedValue({ success: true, data: walletUser })
     vi.mocked(getWalletSummary).mockResolvedValue({
       success: true,
@@ -413,221 +489,236 @@ describe('wallet funding flow', () => {
     ).toBeInTheDocument()
   })
 
-  test('transfers pending rewards with an idempotency key and refreshes balances', async () => {
+  async function openLegacyTransfer() {
     vi.mocked(getTopupInfo).mockResolvedValue({
       success: true,
       data: onlineTopupInfo,
     })
-    vi.mocked(transferAffiliateQuota).mockResolvedValue({
-      success: true,
-      message: 'Transfer successful',
-    })
-
     renderWallet()
-
-    const transferButton = await screen.findByRole('button', {
-      name: 'Transfer to Balance',
-    })
-    await userEvent.setup().click(transferButton)
-
-    const dialog = await screen.findByRole('dialog')
-    const selfCallsBeforeTransfer = vi.mocked(getSelf).mock.calls.length
-    const summaryCallsBeforeTransfer =
-      vi.mocked(getWalletSummary).mock.calls.length
-
-    await userEvent
-      .setup()
-      .click(within(dialog).getByRole('button', { name: 'Transfer' }))
-
-    await waitFor(() => {
-      expect(transferAffiliateQuota).toHaveBeenCalledTimes(1)
-      const [request, idempotencyKey] = vi.mocked(transferAffiliateQuota).mock
-        .calls[0]
-      expect(request).toEqual({ quota: 500000 })
-      expect(typeof idempotencyKey).toBe('string')
-      expect(idempotencyKey.length).toBeGreaterThan(0)
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-      expect(vi.mocked(getSelf).mock.calls.length).toBeGreaterThan(
-        selfCallsBeforeTransfer
-      )
-      expect(vi.mocked(getWalletSummary).mock.calls.length).toBeGreaterThan(
-        summaryCallsBeforeTransfer
-      )
-    })
-  })
-
-  test('keeps the transfer dialog open when the transfer request fails', async () => {
-    vi.mocked(getTopupInfo).mockResolvedValue({
-      success: true,
-      data: onlineTopupInfo,
-    })
-    vi.mocked(transferAffiliateQuota).mockResolvedValue({
-      success: false,
-      message: '待使用邀请奖励不足',
-    })
-
-    renderWallet()
-
-    const transferButton = await screen.findByRole('button', {
-      name: 'Transfer to Balance',
-    })
-    await userEvent.setup().click(transferButton)
-
-    const dialog = await screen.findByRole('dialog')
-    await userEvent
-      .setup()
-      .click(within(dialog).getByRole('button', { name: 'Transfer' }))
-
-    await waitFor(() => {
-      expect(transferAffiliateQuota).toHaveBeenCalledTimes(1)
-      expect(screen.getByRole('dialog')).toBeInTheDocument()
-    })
-  })
-
-  test('retries the same amount with the same idempotency key after a lost response', async () => {
-    vi.mocked(getTopupInfo).mockResolvedValue({
-      success: true,
-      data: onlineTopupInfo,
-    })
-    vi.mocked(transferAffiliateQuota)
-      .mockRejectedValueOnce(new Error('connection lost'))
-      .mockResolvedValueOnce({ success: true, message: 'Transfer successful' })
-
-    renderWallet()
-
-    const user = userEvent.setup()
-    await user.click(
+    await userEvent.click(
       await screen.findByRole('button', { name: 'Transfer to Balance' })
     )
     const dialog = await screen.findByRole('dialog')
-
-    await user.click(within(dialog).getByRole('button', { name: 'Transfer' }))
-    await waitFor(() => expect(transferAffiliateQuota).toHaveBeenCalledTimes(1))
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
-
-    await user.click(within(dialog).getByRole('button', { name: 'Transfer' }))
-    await waitFor(() => expect(transferAffiliateQuota).toHaveBeenCalledTimes(2))
-
-    const [firstCall, secondCall] = vi.mocked(transferAffiliateQuota).mock.calls
-    expect(firstCall[0]).toEqual({ quota: 500000 })
-    expect(secondCall[0]).toEqual({ quota: 500000 })
-    expect(firstCall[1]).toBe(secondCall[1])
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Transfer' })
+    )
     await waitFor(() =>
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: 'Authorize transaction' })
+      ).toBeEnabled()
+    )
+  }
+  async function authorizeLegacyTransfer() {
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Authorize transaction' })
+    )
+    await userEvent.type(
+      await screen.findByRole('textbox', { name: 'Authenticator code' }),
+      '123456'
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Verify' }))
+  }
+  const transferCalls = () =>
+    vi
+      .mocked(api.post)
+      .mock.calls.filter(([url]) => url === '/api/user/aff_transfer')
+  test('transfers pending rewards only after transaction MFA with a stable idempotency key and refreshes balances', async () => {
+    await openLegacyTransfer()
+    expect(transferCalls()).toHaveLength(0)
+    await authorizeLegacyTransfer()
+    await waitFor(() => expect(transferCalls()).toHaveLength(1))
+    expect(transferCalls()[0]).toEqual([
+      '/api/user/aff_transfer',
+      { quota: 500000 },
+      expect.objectContaining({
+        headers: {
+          'Idempotency-Key': expect.any(String),
+          'X-Security-Proof': 'legacy-one-use',
+        },
+        singleUseAuthorization: true,
+        skipAuthRefresh: true,
+      }),
+    ])
+    await waitFor(() =>
+      expect(vi.mocked(getWalletSummary).mock.calls.length).toBeGreaterThan(1)
     )
   })
-
-  test('uses a new idempotency key when the transfer amount changes after a failure', async () => {
-    vi.mocked(getTopupInfo).mockResolvedValue({
-      success: true,
-      data: onlineTopupInfo,
+  test('interrupted transfer remains uncertain and does not automatically obtain another proof', async () => {
+    vi.mocked(api.post).mockImplementation(async (url) => {
+      if (url === '/api/user/aff_transfer') throw new Error('connection lost')
+      return {
+        data: {
+          success: true,
+          data: {
+            proof_token: 'legacy-one-use',
+            scope: 'agent.transaction',
+            method: '2fa',
+            expires_at: Math.floor(Date.now() / 1000) + 60,
+          },
+        },
+      }
     })
-    vi.mocked(transferAffiliateQuota)
-      .mockRejectedValueOnce(new Error('connection lost'))
-      .mockResolvedValueOnce({ success: true, message: 'Transfer successful' })
-
-    renderWallet()
-
-    const user = userEvent.setup()
-    await user.click(
-      await screen.findByRole('button', { name: 'Transfer to Balance' })
+    await openLegacyTransfer()
+    await authorizeLegacyTransfer()
+    await screen.findByText('Do not submit a new request')
+    expect(
+      screen.getByRole('button', { name: 'Authorize transaction' })
+    ).toBeDisabled()
+    expect(transferCalls()).toHaveLength(1)
+    expect(
+      vi.mocked(api.post).mock.calls.filter(([url]) => url === '/api/verify')
+    ).toHaveLength(1)
+  })
+  test('reopening the same transfer after a lost response recovers the same business ID instead of paying twice', async () => {
+    vi.mocked(api.post).mockImplementation(async (url) => {
+      if (url === '/api/user/aff_transfer') throw new Error('connection lost')
+      return {
+        data: {
+          success: true,
+          data: {
+            proof_token: 'legacy-one-use',
+            scope: 'agent.transaction',
+            method: '2fa',
+            expires_at: Math.floor(Date.now() / 1000) + 60,
+          },
+        },
+      }
+    })
+    await openLegacyTransfer()
+    await authorizeLegacyTransfer()
+    await screen.findByText('Do not submit a new request')
+    const first = transferCalls()[0][2]?.headers?.['Idempotency-Key']
+    await userEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', {
+        name: 'Cancel',
+      })
+    )
+    await userEvent.click(
+      within(await screen.findByRole('dialog')).getByRole('button', {
+        name: 'Transfer',
+      })
+    )
+    expect(
+      await screen.findByText('Do not submit a new request')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Authorize transaction' })
+    ).toBeDisabled()
+    await userEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', {
+        name: 'Check request status',
+      })
+    )
+    await waitFor(() =>
+      expect(api.get).toHaveBeenCalledWith(
+        `/api/agent-platform/operations/${String(first)}`,
+        expect.anything()
+      )
+    )
+    expect(transferCalls()).toHaveLength(1)
+  })
+  test('changing the amount cannot bypass an unresolved transfer', async () => {
+    vi.mocked(api.post).mockImplementation(async (url) => {
+      if (url === '/api/user/aff_transfer') throw new Error('connection lost')
+      return {
+        data: {
+          success: true,
+          data: {
+            proof_token: 'legacy-one-use',
+            scope: 'agent.transaction',
+            method: '2fa',
+            expires_at: Math.floor(Date.now() / 1000) + 60,
+          },
+        },
+      }
+    })
+    await openLegacyTransfer()
+    await authorizeLegacyTransfer()
+    await screen.findByText('Do not submit a new request')
+    await userEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', {
+        name: 'Cancel',
+      })
     )
     const dialog = await screen.findByRole('dialog')
-
-    await user.click(within(dialog).getByRole('button', { name: 'Transfer' }))
-    await waitFor(() => expect(transferAffiliateQuota).toHaveBeenCalledTimes(1))
-
-    const amountInput = within(dialog).getByLabelText('Transfer Amount')
-    await user.clear(amountInput)
-    await user.type(amountInput, '2')
-    await user.click(within(dialog).getByRole('button', { name: 'Transfer' }))
-
-    await waitFor(() => expect(transferAffiliateQuota).toHaveBeenCalledTimes(2))
-    const [firstCall, secondCall] = vi.mocked(transferAffiliateQuota).mock.calls
-    expect(firstCall[0]).toEqual({ quota: 500000 })
-    expect(secondCall[0]).toEqual({ quota: 1000000 })
-    expect(firstCall[1]).not.toBe(secondCall[1])
-  })
-
-  test('disables the transfer dialog while the transfer request is pending', async () => {
-    vi.mocked(getTopupInfo).mockResolvedValue({
-      success: true,
-      data: onlineTopupInfo,
+    fireEvent.change(within(dialog).getByLabelText('Transfer Amount'), {
+      target: { value: '2' },
     })
-    let resolveTransfer: (value: AffiliateTransferResponse) => void = () =>
-      undefined
-    vi.mocked(transferAffiliateQuota).mockImplementation(
-      () =>
-        new Promise<AffiliateTransferResponse>((resolve) => {
-          resolveTransfer = resolve
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Transfer' })
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Authorize transaction' })
+      ).toBeEnabled()
+    )
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Authorize transaction' })
+    )
+    expect(transferCalls()).toHaveLength(1)
+    expect(
+      vi.mocked(api.post).mock.calls.filter(([url]) => url === '/api/verify')
+    ).toHaveLength(1)
+  })
+  test('duplicate clicks cannot submit a pending authorized transfer twice', async () => {
+    let finish!: (value: { data: { success: boolean } }) => void
+    vi.mocked(api.post).mockImplementation(async (url) => {
+      if (url === '/api/user/aff_transfer') {
+        return new Promise((resolve) => {
+          finish = resolve
         })
-    )
-
-    renderWallet()
-
-    const user = userEvent.setup()
-    await user.click(
-      await screen.findByRole('button', { name: 'Transfer to Balance' })
-    )
-    const dialog = await screen.findByRole('dialog')
-    const transferButton = within(dialog).getByRole('button', {
-      name: 'Transfer',
+      }
+      return {
+        data: {
+          success: true,
+          data: {
+            proof_token: 'legacy-one-use',
+            scope: 'agent.transaction',
+            method: '2fa',
+            expires_at: Math.floor(Date.now() / 1000) + 60,
+          },
+        },
+      }
     })
-
-    await user.click(transferButton)
-    await waitFor(() => expect(transferButton).toBeDisabled())
-    await user.click(transferButton)
-    expect(transferAffiliateQuota).toHaveBeenCalledTimes(1)
-
-    await act(async () => {
-      resolveTransfer({ success: true, message: 'Transfer successful' })
-    })
-    await waitFor(() =>
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    )
+    await openLegacyTransfer()
+    await authorizeLegacyTransfer()
+    await waitFor(() => expect(transferCalls()).toHaveLength(1))
+    const button = screen.getByRole('button', { name: 'Authorize transaction' })
+    expect(button).toBeDisabled()
+    fireEvent.click(button)
+    expect(transferCalls()).toHaveLength(1)
+    await act(async () => finish({ data: { success: true } }))
   })
-
-  test('bounds the transfer amount between the minimum and the available quota', async () => {
+  test('bounds the transfer before requesting an exact quota transaction review', async () => {
     vi.mocked(getTopupInfo).mockResolvedValue({
       success: true,
       data: onlineTopupInfo,
     })
-    vi.mocked(transferAffiliateQuota).mockResolvedValue({
-      success: true,
-      message: 'Transfer successful',
-    })
-
     renderWallet()
-
-    const user = userEvent.setup()
-    await user.click(
+    await userEvent.click(
       await screen.findByRole('button', { name: 'Transfer to Balance' })
     )
-    const dialog = await screen.findByRole('dialog')
-    const amountInput = within(dialog).getByLabelText('Transfer Amount')
-    const transferButton = within(dialog).getByRole('button', {
-      name: 'Transfer',
-    })
-
-    expect(amountInput).toHaveAttribute('min', '1')
-    expect(amountInput).toHaveAttribute('max', '2')
-
-    fireEvent.change(amountInput, { target: { value: '0.5' } })
-    expect(transferButton).toBeDisabled()
-
-    fireEvent.change(amountInput, { target: { value: '3' } })
-    expect(transferButton).toBeDisabled()
-
-    fireEvent.change(amountInput, { target: { value: '2' } })
-    expect(transferButton).toBeEnabled()
-
-    await user.click(transferButton)
+    const dialog = await screen.findByRole('dialog'),
+      input = within(dialog).getByLabelText('Transfer Amount'),
+      button = within(dialog).getByRole('button', { name: 'Transfer' })
+    expect(input).toHaveAttribute('min', '1')
+    expect(input).toHaveAttribute('max', '2')
+    fireEvent.change(input, { target: { value: '0.5' } })
+    expect(button).toBeDisabled()
+    fireEvent.change(input, { target: { value: '3' } })
+    expect(button).toBeDisabled()
+    fireEvent.change(input, { target: { value: '2' } })
+    expect(button).toBeEnabled()
+    await userEvent.click(button)
     await waitFor(() =>
-      expect(transferAffiliateQuota).toHaveBeenCalledWith(
-        { quota: 1000000 },
-        expect.any(String)
+      expect(api.request).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: '/api/agent-platform/operations/prepare',
+          data: expect.objectContaining({ payload: { quota: 1000000 } }),
+        })
       )
     )
+    expect(transferCalls()).toHaveLength(0)
   })
 
   test('copies the real sign-up link generated from the affiliate code', async () => {

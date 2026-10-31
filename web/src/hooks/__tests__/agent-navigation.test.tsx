@@ -26,7 +26,7 @@ import { useSidebarData } from '../use-sidebar-data'
 
 afterEach(() => useAuthStore.getState().auth.reset())
 
-it('shows agents only the two dedicated workspace entries', () => {
+it('retains wallet, API keys, models and security navigation for legacy agents', () => {
   useAuthStore
     .getState()
     .auth.setUser({ id: 7, username: 'agent', role: ROLE.AGENT })
@@ -35,7 +35,17 @@ it('shows agents only the two dedicated workspace entries', () => {
     result.current.navGroups.flatMap((group) =>
       group.items.map((item) => 'url' in item && item.url)
     )
-  ).toEqual(['/redemption-codes', '/agent-redemption'])
+  ).toEqual(
+    expect.arrayContaining([
+      '/wallet',
+      '/keys',
+      '/playground',
+      '/profile',
+      '/security',
+      '/redemption-codes',
+      '/agent-redemption',
+    ])
+  )
 })
 
 it('preserves administrator workspace navigation including agent management', () => {

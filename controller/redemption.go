@@ -66,11 +66,21 @@ func AddRedemption(c *gin.Context) {
 	}
 
 	var redemption model.RedemptionCreateRequest
-	if err := c.ShouldBindJSON(&redemption); err != nil {
+	if err := common.DecodeJsonStrict(c.Request.Body, &redemption); err != nil {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	keys, err := model.CreateRedemptionsScoped(redemptionScope(c), redemption)
+	scope := redemptionScope(c)
+	action := "redemption.create"
+	if scope.IsAdmin() {
+		action = "redemption.admin.create"
+	}
+	auth, ok := agentPurchaseAuthorization(c, action, redemption.RequestID, redemption)
+	if !ok {
+		return
+	}
+	scope.Authorization = &auth
+	keys, err := model.CreateRedemptionsScoped(scope, redemption)
 	if err != nil {
 		redemptionAPIError(c, err)
 		return
@@ -90,7 +100,19 @@ func AddRedemption(c *gin.Context) {
 
 func DeleteRedemption(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
-	_, err := model.DeleteRedemptionsScoped(redemptionScope(c), []int{id}, false)
+	scope := redemptionScope(c)
+	scope.RequestID = c.Query("request_id")
+	action := "redemption.delete"
+	if scope.IsAdmin() {
+		action = "redemption.admin.delete"
+	}
+	command := model.AgentLegacyRedemptionDeleteRequest{RequestID: scope.RequestID, IDs: []int{id}}
+	auth, ok := agentPurchaseAuthorization(c, action, scope.RequestID, command)
+	if !ok {
+		return
+	}
+	scope.Authorization = &auth
+	_, err := model.DeleteRedemptionsScoped(scope, []int{id}, false)
 	if err != nil {
 		redemptionAPIError(c, err)
 		return
@@ -104,11 +126,23 @@ func DeleteRedemption(c *gin.Context) {
 
 func UpdateRedemption(c *gin.Context) {
 	var redemption model.RedemptionUpdateRequest
-	if err := c.ShouldBindJSON(&redemption); err != nil {
+	if err := common.DecodeJsonStrict(c.Request.Body, &redemption); err != nil {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	cleanRedemption, err := model.UpdateRedemptionScoped(redemptionScope(c), redemption, c.Query("status_only") != "")
+	scope := redemptionScope(c)
+	action := "redemption.update"
+	if scope.IsAdmin() {
+		action = "redemption.admin.update"
+	}
+	statusOnly := c.Query("status_only") != ""
+	command := model.AgentLegacyRedemptionUpdateRequest{RedemptionUpdateRequest: redemption, StatusOnly: statusOnly}
+	auth, ok := agentPurchaseAuthorization(c, action, redemption.RequestID, command)
+	if !ok {
+		return
+	}
+	scope.Authorization = &auth
+	cleanRedemption, err := model.UpdateRedemptionScoped(scope, redemption, statusOnly)
 	if err != nil {
 		redemptionAPIError(c, err)
 		return
@@ -122,7 +156,19 @@ func UpdateRedemption(c *gin.Context) {
 }
 
 func DeleteInvalidRedemption(c *gin.Context) {
-	rows, err := model.DeleteRedemptionsScoped(redemptionScope(c), nil, true, redemptionAgentFilter(c))
+	scope := redemptionScope(c)
+	scope.RequestID = c.Query("request_id")
+	action := "redemption.delete"
+	if scope.IsAdmin() {
+		action = "redemption.admin.delete"
+	}
+	command := model.AgentLegacyRedemptionDeleteRequest{RequestID: scope.RequestID, InvalidOnly: true, AgentUserID: redemptionAgentFilter(c)}
+	auth, ok := agentPurchaseAuthorization(c, action, scope.RequestID, command)
+	if !ok {
+		return
+	}
+	scope.Authorization = &auth
+	rows, err := model.DeleteRedemptionsScoped(scope, nil, true, redemptionAgentFilter(c))
 	if err != nil {
 		redemptionAPIError(c, err)
 		return
@@ -137,13 +183,26 @@ func DeleteInvalidRedemption(c *gin.Context) {
 
 func DeleteRedemptionBatch(c *gin.Context) {
 	var request struct {
-		Ids []int `json:"ids" binding:"required,min=1,max=1000,dive,gt=0"`
+		RequestID string `json:"request_id"`
+		Ids       []int  `json:"ids" binding:"required,min=1,max=1000,dive,gt=0"`
 	}
-	if err := c.ShouldBindJSON(&request); err != nil {
+	if err := common.DecodeJsonStrict(c.Request.Body, &request); err != nil {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	count, err := model.DeleteRedemptionsScoped(redemptionScope(c), request.Ids, false)
+	scope := redemptionScope(c)
+	scope.RequestID = request.RequestID
+	action := "redemption.delete"
+	if scope.IsAdmin() {
+		action = "redemption.admin.delete"
+	}
+	command := model.AgentLegacyRedemptionDeleteRequest{RequestID: scope.RequestID, IDs: request.Ids}
+	auth, ok := agentPurchaseAuthorization(c, action, scope.RequestID, command)
+	if !ok {
+		return
+	}
+	scope.Authorization = &auth
+	count, err := model.DeleteRedemptionsScoped(scope, request.Ids, false)
 	if err != nil {
 		redemptionAPIError(c, err)
 		return

@@ -33,8 +33,8 @@ func RecordTaskBillingLogTx(tx *gorm.DB, params RecordTaskBillingLogParams) (boo
 	if err := tx.Select("id", "username").First(&user, params.UserId).Error; err != nil {
 		return false, err
 	}
-	tokenName := ""
-	if params.TokenId > 0 {
+	tokenName := params.TokenName
+	if tokenName == "" && params.TokenId > 0 {
 		var token Token
 		err := tx.Unscoped().Select("id", "name").First(&token, params.TokenId).Error
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -55,9 +55,12 @@ func RecordTaskBillingLogTx(tx *gorm.DB, params RecordTaskBillingLogParams) (boo
 		ModelName: params.ModelName, Quota: params.Quota, ChannelId: params.ChannelId,
 		TokenId: params.TokenId, Group: params.Group, Other: other.JSONString(),
 	}
-	if params.OperationID != "" {
+	if params.RequestID != "" {
+		log.RequestId = params.RequestID
+	} else if params.OperationID != "" {
 		log.RequestId = BillingTokenFingerprint(params.OperationID)
 	}
+	log.UpstreamRequestId, log.Ip = params.UpstreamRequestID, params.IP
 	ensureLogRequestId(log)
 	return true, tx.Create(log).Error
 }

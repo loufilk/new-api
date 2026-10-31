@@ -399,9 +399,7 @@ func TestKling4(t *testing.T) {
 		assert.Equal(t, "https://cdn.example/out.mp4", content["url"])
 	})
 
-	// Kling reports the units it deducted from resource packages; a task paid
-	// in cash, wholly or in part, is settled on the durations Kling reports at
-	// the resolution it was sent at.
+	// Settles on deducted units (package amount, cash list_price), else on the reported durations.
 	t.Run("settlement", func(t *testing.T) {
 		for _, tc := range []struct {
 			name       string
@@ -421,6 +419,26 @@ func TestKling4(t *testing.T) {
 			}}, 18.0},
 			{"cash, input longer than the output", "1080p", map[string]any{"usage": map[string]any{"input_duration": 25}, "billing": []any{map[string]any{"charge_type": "cash", "amount": "31.5", "currency": "CNY"}}}, 31.5},
 			{"cash at 720p with an input video", "720p", map[string]any{"usage": map[string]any{"input_duration": "10"}}, 12.0},
+			{"mixed package and cash list price", "720p", map[string]any{"billing": []any{
+				map[string]any{"charge_type": "unit", "amount": "2.5"},
+				map[string]any{"charge_type": "cash", "amount": "1.25", "list_price": "3"},
+			}}, 5.5},
+			{"explicit zero list price", "720p", map[string]any{"billing": []any{map[string]any{"charge_type": "cash", "list_price": 0}}}, 0.0},
+			{"malformed cash price does not parse as free", "720p", map[string]any{"billing": []any{map[string]any{"charge_type": "cash", "list_price": "0invalid"}}}, 10.0},
+			{"malformed package amount falls back", "720p", map[string]any{"billing": []any{map[string]any{"charge_type": "unit", "amount": "3invalid"}}}, 10.0},
+			{"negative cash price falls back", "720p", map[string]any{"billing": []any{map[string]any{"charge_type": "cash", "list_price": -3}}}, 10.0},
+			{"empty cash price falls back", "720p", map[string]any{"billing": []any{map[string]any{"charge_type": "cash", "list_price": ""}}}, 10.0},
+			{"boolean cash price falls back", "720p", map[string]any{"billing": []any{map[string]any{"charge_type": "cash", "list_price": false}}}, 10.0},
+			{"null cash price falls back", "720p", map[string]any{"billing": []any{map[string]any{"charge_type": "cash", "list_price": nil}}}, 10.0},
+			{"nonfinite cash price falls back", "720p", map[string]any{"billing": []any{map[string]any{"charge_type": "cash", "list_price": "Infinity"}}}, 10.0},
+			{"one invalid deduction rejects the whole sum", "720p", map[string]any{"billing": []any{
+				map[string]any{"charge_type": "unit", "amount": "2.5"},
+				map[string]any{"charge_type": "cash", "list_price": "0invalid"},
+			}}, 10.0},
+			{"balance at its list price, not the reported duration", "720p", map[string]any{
+				"outputs": []any{map[string]any{"type": "video", "url": "https://cdn.example/out.mp4", "duration": "3.041"}},
+				"billing": []any{map[string]any{"charge_type": "cash", "cash_type": "balance", "amount": "2.55", "list_price": "3", "currency": "CNY"}},
+			}, 3.0},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				entry := map[string]any{"id": "kling_4", "status": "succeeded", "outputs": []any{map[string]any{"type": "video", "url": "https://cdn.example/out.mp4", "duration": "10"}}}

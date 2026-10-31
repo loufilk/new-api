@@ -21,6 +21,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 
+import {
+  authorizeTransaction,
+  transactionNetwork,
+} from '@/features/redemption-codes/components/__tests__/transaction-fixture'
 import { api } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
@@ -41,6 +45,7 @@ function setup(role: number) {
       usdExchangeRate: 1,
     },
   })
+  const network = transactionNetwork()
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -50,11 +55,13 @@ function setup(role: number) {
       <InvitationPolicySettings />
     </QueryClientProvider>
   )
+  return network
 }
 afterEach(() => {
   for (const client of clients) client.clear()
   clients.length = 0
   useAuthStore.getState().auth.reset()
+  sessionStorage.clear()
   vi.restoreAllMocks()
 })
 
@@ -108,14 +115,14 @@ it('saves root policy in integer quota units and disables repeat submission', as
       },
     },
   })
-  let finish!: (value: unknown) => void
-  const put = vi.spyOn(api, 'put').mockImplementation(
+  let finish!: (value: { data: unknown }) => void
+  const { mutations: put, prepare } = setup(ROLE.SUPER_ADMIN)
+  put.mockImplementationOnce(
     () =>
       new Promise((resolve) => {
         finish = resolve
       })
   )
-  setup(ROLE.SUPER_ADMIN)
   await userEvent.click(
     await screen.findByRole('switch', { name: 'Enable invitation test quota' })
   )
@@ -124,12 +131,29 @@ it('saves root policy in integer quota units and disables repeat submission', as
     { target: { value: '0.25' } }
   )
   await userEvent.dblClick(screen.getByRole('button', { name: 'Save changes' }))
-  expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled()
-  expect(put).toHaveBeenCalledTimes(1)
-  expect(put).toHaveBeenCalledWith('/api/agent-redemption/invitation-policy', {
-    enabled: true,
-    quota: 125000,
-  })
+  expect(put).not.toHaveBeenCalled()
+  await authorizeTransaction()
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+  expect(prepare).toHaveBeenCalledWith(
+    expect.objectContaining({
+      action: 'invitation.policy.update',
+      payload: { expected_revision: 0, enabled: true, quota: 125000 },
+    })
+  )
+  expect(put).toHaveBeenCalledWith(
+    expect.objectContaining({
+      url: '/api/agent-redemption/invitation-policy',
+      method: 'put',
+      data: {
+        expected_revision: 0,
+        enabled: true,
+        quota: 125000,
+        request_id: prepare.mock.calls[0][0].request_id,
+      },
+      headers: { 'X-Security-Proof': 'test-single-use-proof' },
+      skipAuthRefresh: true,
+    })
+  )
   finish({ data: { success: true, data: { enabled: true, quota: 125000 } } })
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled()

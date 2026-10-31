@@ -38,6 +38,10 @@ func setupAgentRedemptionTest(t *testing.T) (RedemptionScope, RedemptionScope) {
 	} {
 		require.NoError(t, DB.Create(&user).Error)
 	}
+
+	for _, id := range []int{agentTestOwnerID, agentTestOtherID} {
+		require.NoError(t, DB.Create(&AgentProfile{UserID: id, Status: AgentProfileActive, Version: 1, Reason: "test business eligibility"}).Error)
+	}
 	return RedemptionScope{UserID: agentTestAdminID, Role: common.RoleAdminUser}, RedemptionScope{UserID: agentTestOwnerID, Role: common.RoleAgentUser}
 }
 
@@ -171,6 +175,9 @@ func TestAgentRedemptionScopeAndHistoricAccounts(t *testing.T) {
 	require.NoError(t, DB.Model(&User{}).Where("id = ?", agent.UserID).Update("role", common.RoleCommonUser).Error)
 	_, err = CreateRedemptionsScoped(agent, RedemptionCreateRequest{Name: "stale role", Quota: 100, Count: 1, RequestID: "stale-role-create"})
 	require.ErrorIs(t, err, ErrAgentRedemptionPermission)
+	// Ordinary user role no longer revokes business eligibility; an explicit
+	// sales freeze is the business permission change being tested here.
+	require.NoError(t, DB.Model(&AgentProfile{}).Where("user_id = ?", agent.UserID).Updates(map[string]any{"sales_frozen": true, "version": 2}).Error)
 	_, err = UpdateRedemptionScoped(admin, RedemptionUpdateRequest{ID: code.Id, Status: common.RedemptionCodeStatusDisabled}, true)
 	require.NoError(t, err)
 	_, err = UpdateRedemptionScoped(admin, RedemptionUpdateRequest{ID: code.Id, Status: common.RedemptionCodeStatusEnabled}, true)
@@ -493,8 +500,15 @@ func TestAgentRedemptionFinancialReceiptSurvivesNoRoleCycleBypass(t *testing.T) 
 	identity := AuthSessionIdentity{UserID: agent.UserID, SessionID: "agent-budget-role-cycle", UserAuthVersion: user.AuthVersion, SessionVersion: 1}
 	require.NoError(t, DB.Create(&UserSession{SID: identity.SessionID, UserID: identity.UserID, Version: identity.SessionVersion, UserAuthVersion: identity.UserAuthVersion, Status: UserSessionStatusActive, RefreshHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", LoginMethod: "password", ExpiresAt: common.GetTimestamp() + 3600}).Error)
 	agent.Identity = &identity
-	_, err := CreateRedemptionsScoped(agent, RedemptionCreateRequest{Name: "valid receipt", Quota: 100, Count: 1, RequestID: "receipt-valid-create"})
+	require.NoError(t, DB.Create(&TwoFA{UserId: agent.UserID, IsEnabled: true, Secret: "fixture-only-not-real"}).Error)
+	initial := RedemptionCreateRequest{Name: "valid receipt", Quota: 100, Count: 1, RequestID: "receipt-valid-create"}
+	initialProof := prepaidProof(t, identity, "redemption.create", initial.RequestID, initial)
+	agent.Authorization = &initialProof
+	_, err := CreateRedemptionsScoped(agent, initial)
 	require.NoError(t, err)
+	stale := RedemptionCreateRequest{Name: "stale receipt", Quota: 100, Count: 1, RequestID: "receipt-stale-create"}
+	staleProof := prepaidProof(t, identity, "redemption.create", stale.RequestID, stale)
+	agent.Authorization = &staleProof
 	// Commit a downgrade and a later re-promotion: final role/status match the
 	// old request but its immutable authentication revision no longer matches.
 	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
@@ -503,7 +517,7 @@ func TestAgentRedemptionFinancialReceiptSurvivesNoRoleCycleBypass(t *testing.T) 
 	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
 		return tx.Model(&User{}).Where("id = ?", agent.UserID).Updates(map[string]any{"role": common.RoleAgentUser, "auth_version": user.AuthVersion + 2}).Error
 	}))
-	_, err = CreateRedemptionsScoped(agent, RedemptionCreateRequest{Name: "stale receipt", Quota: 100, Count: 1, RequestID: "receipt-stale-create"})
+	_, err = CreateRedemptionsScoped(agent, stale)
 	require.ErrorIs(t, err, ErrAgentRedemptionPermission)
 	assertAgentBudget(t, agent.UserID, 100, 100, 0, 200)
 }

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sync"
@@ -58,6 +59,13 @@ func settleOnlineTopUp(t *testing.T, tradeNo string, amount int64) {
 	alreadyDone, err := model.RechargeEpay(tradeNo, "alipay", fmt.Sprintf("%d.00", amount), "127.0.0.1")
 	require.NoError(t, err)
 	require.False(t, alreadyDone)
+	drainReferralOutbox(t)
+}
+
+func drainReferralOutbox(t *testing.T) {
+	t.Helper()
+	_, err := model.ProcessAgentCommissionOutbox(context.Background(), 200)
+	require.NoError(t, err)
 }
 
 func countReferralCommissions(t *testing.T, inviterId int) int64 {
@@ -330,50 +338,46 @@ func TestReferralCommissionDisabledOrZeroRateProducesNothing(t *testing.T) {
 	assert.Zero(t, getUserBalances(t, 615).AffQuota)
 }
 
-// 开关开启且本次应发奖励时，非法比例（非有限、越界、负值）必须让订单、充值、
-// 返佣整体回滚，而不是静默漏发奖励后完成付款。每个比例使用独立用户对，避免
-// 累计计次达到第四次后自动跳过发奖造成假通过。
-func TestReferralCommissionInvalidRateRollsBackTopUp(t *testing.T) {
+// Invalid reward policy is a durable worker exception, never a reason to
+// discard a separately verified customer payment. Its original snapshot remains
+// unchanged and cannot silently adopt a later commercial rate.
+func TestReferralCommissionInvalidRateKeepsPrincipalAndRetryableEvent(t *testing.T) {
 	truncate(t)
-	previousEnabled, previousRate := common.AffiliateRewardEnabled, common.AffiliateRewardRate
-	common.AffiliateRewardEnabled = true
-	t.Cleanup(func() {
-		common.AffiliateRewardEnabled, common.AffiliateRewardRate = previousEnabled, previousRate
-	})
-
-	cases := []struct {
-		name string
-		rate float64
-	}{
-		{"nan", math.NaN()},
-		{"positive_infinity", math.Inf(1)},
-		{"negative_infinity", math.Inf(-1)},
-		{"above_one", 1.5},
-		{"negative", -0.05},
+	setReferralRewardConfig(t, true, 0.05)
+	for i, rate := range []float64{math.NaN(), math.Inf(1), math.Inf(-1), 1.5, -0.05} {
+		common.AffiliateRewardRate = rate
+		inviterID := 660 + i*2
+		buyerID := inviterID + 1
+		seedReferralUser(t, inviterID, 0, common.UserStatusEnabled)
+		seedReferralUser(t, buyerID, inviterID, common.UserStatusEnabled)
+		trade := fmt.Sprintf("REF-INVALID-RATE-%d", i)
+		seedPendingOnlineTopUp(t, buyerID, 2, trade)
+		done, err := model.RechargeEpay(trade, "alipay", "2.00", "127.0.0.1")
+		require.NoError(t, err)
+		assert.False(t, done)
+		_, err = model.ProcessAgentCommissionOutbox(context.Background(), 200)
+		require.Error(t, err)
+		assertReferralPrincipalPreserved(t, buyerID, inviterID, trade)
 	}
-	for i, tc := range cases {
-		common.AffiliateRewardRate = tc.rate
-		inviterId := 660 + i*2
-		inviteeId := inviterId + 1
-		seedReferralUser(t, inviterId, 0, common.UserStatusEnabled)
-		seedReferralUser(t, inviteeId, inviterId, common.UserStatusEnabled)
+}
 
-		tradeNo := fmt.Sprintf("REF-INVALID-RATE-%d", i)
-		seedPendingOnlineTopUp(t, inviteeId, 2, tradeNo)
-		alreadyDone, err := model.RechargeEpay(tradeNo, "alipay", "2.00", "127.0.0.1")
-		require.Error(t, err, "rate=%s 必须整体回滚", tc.name)
-		require.False(t, alreadyDone, "rate=%s", tc.name)
-
-		var topUp model.TopUp
-		require.NoError(t, model.DB.Where("trade_no = ?", tradeNo).First(&topUp).Error)
-		assert.Equal(t, common.TopUpStatusPending, topUp.Status, "rate=%s 订单必须保持待支付", tc.name)
-		assert.Zero(t, getUserBalances(t, inviteeId).QuotaPaid, "rate=%s 充值不得入账", tc.name)
-		var ledgerRows int64
-		require.NoError(t, model.DB.Model(&model.BalanceLedger{}).Where("reference_id = ?", tradeNo).Count(&ledgerRows).Error)
-		assert.Zero(t, ledgerRows, "rate=%s 不得留下账本", tc.name)
-		assert.Zero(t, countReferralCommissions(t, inviterId), "rate=%s 不得生成返佣", tc.name)
-		assert.Zero(t, getUserBalances(t, inviterId).AffQuota, "rate=%s 邀请人收益不得变化", tc.name)
-	}
+func assertReferralPrincipalPreserved(t *testing.T, buyerID, inviterID int, trade string) {
+	t.Helper()
+	var order model.TopUp
+	require.NoError(t, model.DB.Where("trade_no = ?", trade).First(&order).Error)
+	assert.Equal(t, common.TopUpStatusSuccess, order.Status)
+	assert.Equal(t, 1_000_000, getUserBalances(t, buyerID).QuotaPaid)
+	var ledgerRows int64
+	require.NoError(t, model.DB.Model(&model.BalanceLedger{}).Where("reference_id = ?", trade).Count(&ledgerRows).Error)
+	assert.EqualValues(t, 1, ledgerRows)
+	assert.Zero(t, countReferralCommissions(t, inviterID))
+	var event model.AgentCommissionOutbox
+	require.NoError(t, model.DB.Where("reference_id = ?", trade).First(&event).Error)
+	assert.Equal(t, "failed", event.Status)
+	assert.Positive(t, event.Attempts)
+	var inbox int64
+	require.NoError(t, model.DB.Model(&model.AgentCommissionInbox{}).Where("event_id = ?", event.ID).Count(&inbox).Error)
+	assert.Zero(t, inbox, "failed reward has no success receipt")
 }
 
 func TestReferralCommissionSkipsInvalidInviter(t *testing.T) {
@@ -394,112 +398,55 @@ func TestReferralCommissionSkipsInvalidInviter(t *testing.T) {
 	assert.EqualValues(t, 0, countReferralCommissions(t, 620))
 }
 
-// 邀请人待使用收益达到上限时必须让整笔充值回滚：订单保持待支付、无账本、
-// 无返佣凭证，而不是静默放弃奖励后把充值做成成功。
-func TestReferralCommissionAffQuotaOverflowRollsBackTopUp(t *testing.T) {
+func TestReferralCommissionInvalidBalancesDoNotRollBackPrincipal(t *testing.T) {
 	truncate(t)
 	setReferralRewardConfig(t, true, 0.05)
-	seedReferralUser(t, 621, 0, common.UserStatusEnabled)
-	seedReferralUser(t, 622, 621, common.UserStatusEnabled)
-	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", 621).
-		Updates(map[string]interface{}{"aff_quota": common.MaxWalletQuota, "aff_history": common.MaxWalletQuota}).Error)
-
-	seedPendingOnlineTopUp(t, 622, 2, "REF-OVERFLOW-1")
-	alreadyDone, err := model.RechargeEpay("REF-OVERFLOW-1", "alipay", "2.00", "127.0.0.1")
-	require.Error(t, err, "超限必须整体回滚而不是静默放弃返佣")
-	require.False(t, alreadyDone)
-
-	var topUp model.TopUp
-	require.NoError(t, model.DB.Where("trade_no = ?", "REF-OVERFLOW-1").First(&topUp).Error)
-	assert.Equal(t, common.TopUpStatusPending, topUp.Status, "订单状态必须回滚为待支付")
-	assert.Zero(t, getUserBalances(t, 622).QuotaPaid, "充值账本必须回滚")
-	var ledgerRows int64
-	require.NoError(t, model.DB.Model(&model.BalanceLedger{}).Where("reference_id = ?", "REF-OVERFLOW-1").Count(&ledgerRows).Error)
-	assert.Zero(t, ledgerRows, "失败充值不得留下账本")
-	assert.Zero(t, countReferralCommissions(t, 621))
-	assert.Equal(t, common.MaxWalletQuota, getUserBalances(t, 621).AffQuota)
+	for i, balances := range [][2]int{{common.MaxWalletQuota, 0}, {0, common.MaxWalletQuota}, {-1, 0}} {
+		inviterID := 620 + i*2
+		buyerID := inviterID + 1
+		seedReferralUser(t, inviterID, 0, common.UserStatusEnabled)
+		seedReferralUser(t, buyerID, inviterID, common.UserStatusEnabled)
+		require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", inviterID).Updates(map[string]any{"aff_quota": balances[0], "aff_history": balances[1]}).Error)
+		trade := fmt.Sprintf("REF-BAD-BALANCE-%d", i)
+		seedPendingOnlineTopUp(t, buyerID, 2, trade)
+		_, err := model.RechargeEpay(trade, "alipay", "2.00", "127.0.0.1")
+		require.NoError(t, err)
+		_, err = model.ProcessAgentCommissionOutbox(context.Background(), 200)
+		require.Error(t, err)
+		assertReferralPrincipalPreserved(t, buyerID, inviterID, trade)
+		user := getUserBalances(t, inviterID)
+		assert.Equal(t, balances[0], user.AffQuota)
+		assert.Equal(t, balances[1], user.AffHistoryQuota)
+	}
 }
 
-// aff_history 同样必须加上限：仅 aff_quota 有余量、累计收益已满时也必须回滚。
-func TestReferralCommissionAffHistoryOverflowRollsBackTopUp(t *testing.T) {
-	truncate(t)
-	setReferralRewardConfig(t, true, 0.05)
-	seedReferralUser(t, 623, 0, common.UserStatusEnabled)
-	seedReferralUser(t, 624, 623, common.UserStatusEnabled)
-	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", 623).
-		Updates(map[string]interface{}{"aff_quota": 0, "aff_history": common.MaxWalletQuota}).Error)
-
-	seedPendingOnlineTopUp(t, 624, 2, "REF-HISTORY-OVERFLOW")
-	_, err := model.RechargeEpay("REF-HISTORY-OVERFLOW", "alipay", "2.00", "127.0.0.1")
-	require.Error(t, err, "累计收益超限必须整体回滚")
-
-	var topUp model.TopUp
-	require.NoError(t, model.DB.Where("trade_no = ?", "REF-HISTORY-OVERFLOW").First(&topUp).Error)
-	assert.Equal(t, common.TopUpStatusPending, topUp.Status)
-	assert.Zero(t, getUserBalances(t, 624).QuotaPaid)
-	assert.Zero(t, countReferralCommissions(t, 623))
-	assert.Equal(t, common.MaxWalletQuota, getUserBalances(t, 623).AffHistoryQuota)
-}
-
-// 邀请人存在负值脏数据时属于非法余额：必须返回错误整体回滚。
-func TestReferralCommissionNegativeAffBalanceRollsBackTopUp(t *testing.T) {
-	truncate(t)
-	setReferralRewardConfig(t, true, 0.05)
-	seedReferralUser(t, 625, 0, common.UserStatusEnabled)
-	seedReferralUser(t, 626, 625, common.UserStatusEnabled)
-	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", 625).
-		Updates(map[string]interface{}{"aff_quota": -1}).Error)
-
-	seedPendingOnlineTopUp(t, 626, 2, "REF-NEGATIVE-AFF")
-	_, err := model.RechargeEpay("REF-NEGATIVE-AFF", "alipay", "2.00", "127.0.0.1")
-	require.Error(t, err, "负值非法余额必须整体回滚")
-	assert.Zero(t, getUserBalances(t, 626).QuotaPaid)
-	assert.Zero(t, countReferralCommissions(t, 625))
-}
-
-// 两个不同被邀请人并发充值，同一邀请人的 aff_quota 正好到边界：行锁串行化后
-// 只有一笔成功，另一笔因超限回滚，两个字段都不得越界。
 func TestReferralCommissionConcurrentInviteesAtAffBoundary(t *testing.T) {
 	truncate(t)
 	setReferralRewardConfig(t, true, 0.05)
 	seedReferralUser(t, 641, 0, common.UserStatusEnabled)
 	seedReferralUser(t, 642, 641, common.UserStatusEnabled)
 	seedReferralUser(t, 643, 641, common.UserStatusEnabled)
-	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", 641).
-		Updates(map[string]interface{}{"aff_quota": common.MaxWalletQuota - 50_000}).Error)
-
-	seedPendingOnlineTopUp(t, 642, 2, "REF-BOUNDARY-1")
-	seedPendingOnlineTopUp(t, 643, 2, "REF-BOUNDARY-2")
-
-	users := []int{642, 643}
-	errs := make([]error, len(users))
-	var wg sync.WaitGroup
-	wg.Add(len(users))
-	for i, userId := range users {
-		go func(idx, uid int) {
-			defer wg.Done()
-			_, errs[idx] = model.RechargeEpay(fmt.Sprintf("REF-BOUNDARY-%d", idx+1), "alipay", "2.00", "127.0.0.1")
-		}(i, userId)
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", 641).Update("aff_quota", common.MaxWalletQuota-50_000).Error)
+	errs := make(chan error, 2)
+	for i := range 2 {
+		trade := fmt.Sprintf("REF-BOUNDARY-%d", i)
+		seedPendingOnlineTopUp(t, 642+i, 2, trade)
+		go func() { _, err := model.RechargeEpay(trade, "alipay", "2.00", "127.0.0.1"); errs <- err }()
 	}
-	wg.Wait()
-
-	successes := 0
-	for i, userId := range users {
-		if errs[i] == nil {
-			successes++
-			assert.Equal(t, 1_000_000, getUserBalances(t, userId).QuotaPaid)
-			continue
-		}
-		assert.Zero(t, getUserBalances(t, userId).QuotaPaid, "失败方充值必须回滚")
-		var topUp model.TopUp
-		require.NoError(t, model.DB.Where("trade_no = ?", fmt.Sprintf("REF-BOUNDARY-%d", i+1)).First(&topUp).Error)
-		assert.Equal(t, common.TopUpStatusPending, topUp.Status)
+	for range 2 {
+		require.NoError(t, <-errs)
 	}
-	assert.Equal(t, 1, successes, "边界上只允许一笔返佣成功")
+	_, err := model.ProcessAgentCommissionOutbox(context.Background(), 200)
+	require.Error(t, err, "one award remains retryable at the upper bound")
+	assert.Equal(t, 1_000_000, getUserBalances(t, 642).QuotaPaid)
+	assert.Equal(t, 1_000_000, getUserBalances(t, 643).QuotaPaid)
 	assert.EqualValues(t, 1, countReferralCommissions(t, 641))
 	inviter := getUserBalances(t, 641)
 	assert.Equal(t, common.MaxWalletQuota, inviter.AffQuota)
 	assert.Equal(t, 50_000, inviter.AffHistoryQuota)
+	var pending int64
+	require.NoError(t, model.DB.Model(&model.AgentCommissionOutbox{}).Where("status = ?", "failed").Count(&pending).Error)
+	assert.EqualValues(t, 1, pending)
 }
 
 // 管理员人工完成订单使用 admin_topup：不得产生返佣，也不得占用用户的前三次
@@ -590,6 +537,7 @@ func TestReferralCommissionConcurrentTopUpsCapAtThree(t *testing.T) {
 		require.NoError(t, err, "event %d", i)
 	}
 
+	drainReferralOutbox(t)
 	assert.EqualValues(t, 3, countReferralCommissions(t, 623), "并发下第四次及以后不得返佣")
 	assert.Equal(t, 150_000, getUserBalances(t, 623).AffQuota)
 }

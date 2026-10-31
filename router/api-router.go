@@ -55,6 +55,7 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 	// URL/middleware contract are preserved without the module importing the
 	// host controller/service packages.
 	scopes.PaymentRoutes = RegisterPaymentRoutes
+	scopes.AgentPlatformRoutes = RegisterAgentPlatformRoutes
 	{
 		apiRouter.GET("/setup", controller.GetSetup)
 		apiRouter.POST("/setup", anonymousRequestBodyLimit, controller.PostSetup)

@@ -28,6 +28,7 @@ import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { RedemptionsMutateDrawer } from '../redemptions-mutate-drawer'
 import { RedemptionsProvider } from '../redemptions-provider'
+import { authorizeTransaction, transactionNetwork } from './transaction-fixture'
 
 const clients: QueryClient[] = []
 const availableQuota = 1500000
@@ -68,6 +69,7 @@ afterEach(() => {
   clients.forEach((client) => client.clear())
   clients.length = 0
   useAuthStore.getState().auth.reset()
+  sessionStorage.clear()
   vi.restoreAllMocks()
 })
 
@@ -76,6 +78,7 @@ async function setup() {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   clients.push(client)
+  const network = transactionNetwork()
   const close = vi.fn()
   render(
     <QueryClientProvider client={client}>
@@ -90,7 +93,7 @@ async function setup() {
   fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), {
     target: { value: 'customer' },
   })
-  return { close, user: userEvent.setup() }
+  return { close, user: userEvent.setup(), ...network }
 }
 
 function enterBatch(amount: string, count: string) {
@@ -128,57 +131,77 @@ it('rejects fractional batch quantities rather than truncating them', async () =
   expect(post).not.toHaveBeenCalled()
 })
 
-it('reserves an exact-budget batch once and blocks cancel and repeat clicks while pending', async () => {
-  let resolve!: (value: unknown) => void
-  const post = vi.spyOn(api, 'post').mockImplementation(
-    () =>
-      new Promise((done) => {
-        resolve = done
+it.each([ROLE.AGENT, ROLE.USER])(
+  'legacy or migrated agent role %s issues an exact-budget batch only after MFA and cannot duplicate submission',
+  async (role) => {
+    useAuthStore.getState().auth.setUser({
+      id: 7,
+      username: 'agent',
+      role,
+      permissions: { agent_history: true, agent_sales: true },
+    })
+    let finish!: (value: { data: unknown }) => void
+    const { close, mutations, prepare } = await setup()
+    mutations.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    enterBatch('1', '3')
+    await userEvent.dblClick(
+      screen.getByRole('button', { name: 'Save changes' })
+    )
+    expect(mutations).not.toHaveBeenCalled()
+    await authorizeTransaction()
+    await waitFor(() => expect(mutations).toHaveBeenCalledOnce())
+    expect(
+      screen.getByRole('button', { name: 'Authorize transaction' })
+    ).toBeDisabled()
+    await userEvent.keyboard('{Escape}')
+    expect(close).not.toHaveBeenCalled()
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'redemption.create',
+        payload: { name: 'customer', quota: 500000, count: 3, expired_time: 0 },
       })
-  )
-  const { close, user } = await setup()
-  enterBatch('1', '3')
-  await user.dblClick(screen.getByRole('button', { name: 'Save changes' }))
-  expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled()
-  const closeButtons = screen.getAllByRole('button', { name: 'Close' })
-  for (const button of closeButtons) {
-    if (!button.hasAttribute('disabled')) await user.click(button)
+    )
+    expect(mutations).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: '/api/redemption/',
+        data: {
+          name: 'customer',
+          quota: 500000,
+          count: 3,
+          expired_time: 0,
+          request_id: prepare.mock.calls[0][0].request_id,
+        },
+        headers: { 'X-Security-Proof': 'test-single-use-proof' },
+        skipAuthRefresh: true,
+      })
+    )
+    finish({ data: { success: true, data: ['one', 'two', 'three'] } })
+    await waitFor(() => expect(close).toHaveBeenCalledWith(false))
   }
-  await user.keyboard('{Escape}')
-  expect(close).not.toHaveBeenCalled()
-  expect(post).toHaveBeenCalledTimes(1)
-  expect(post).toHaveBeenCalledWith(
-    '/api/redemption/',
-    expect.objectContaining({
-      quota: 500000,
-      count: 3,
-      request_id: expect.any(String),
-    })
-  )
-  resolve({ data: { success: true, data: ['one', 'two', 'three'] } })
-  await waitFor(() => expect(close).toHaveBeenCalledWith(false))
-})
+)
 
-it('keeps failed issuance open and preserves the same idempotency key on retry', async () => {
-  const post = vi
-    .spyOn(api, 'post')
-    .mockResolvedValueOnce({
-      data: {
-        success: false,
-        message: 'Insufficient available agent redemption quota',
-      },
-    })
-    .mockResolvedValueOnce({ data: { success: true, data: ['code'] } })
-  const { close } = await setup()
+it('an interrupted issuance cannot create a replacement batch before reconciliation', async () => {
+  const { close, mutations } = await setup()
+  mutations.mockRejectedValueOnce(new Error('Offline'))
   enterBatch('1', '1')
   await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
-  await waitFor(() =>
-    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled()
-  )
+  await authorizeTransaction()
+  expect(
+    await screen.findByText('Do not submit a new request')
+  ).toBeInTheDocument()
   expect(close).not.toHaveBeenCalled()
-  await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
-  await waitFor(() => expect(close).toHaveBeenCalledWith(false))
-  expect(post.mock.calls[0]?.[1]).toEqual(post.mock.calls[1]?.[1])
+  expect(
+    screen.getByRole('button', { name: 'Authorize transaction' })
+  ).toBeDisabled()
+  expect(mutations).toHaveBeenCalledOnce()
+  expect(sessionStorage.getItem('agent-platform:pending:7')).not.toContain(
+    'test-single-use-proof'
+  )
 })
 
 it('closing an unsubmitted batch never creates redemption codes', async () => {

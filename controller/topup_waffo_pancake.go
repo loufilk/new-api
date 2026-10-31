@@ -556,7 +556,15 @@ func WaffoPancakeWebhook(c *gin.Context) {
 	LockOrder(tradeNo)
 	defer UnlockOrder(tradeNo)
 
-	if err := model.RechargeWaffoPancake(tradeNo); err != nil {
+	environment := "live"
+	if event.Mode == setting.WaffoPancakeEnvironmentTest {
+		environment = "test"
+	}
+	var paymentFacts []model.AgentVerifiedPaymentFacts
+	if fact, ok := model.NewAgentVerifiedPaymentFacts(model.PaymentProviderWaffoPancake, event.Data.OrderID, event.StoreID, environment, event.Data.Currency, event.Data.Amount, false); ok {
+		paymentFacts = append(paymentFacts, fact)
+	}
+	if err := model.RechargeWaffoPancake(tradeNo, paymentFacts...); err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake top-up processing failed trade_no=%s event_id=%s order_id=%s client_ip=%s error=%q", tradeNo, event.ID, event.Data.OrderID, c.ClientIP(), err.Error()))
 		c.String(http.StatusInternalServerError, "retry")
 		return

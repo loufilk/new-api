@@ -686,11 +686,17 @@ func executeTaskSubmissionWith(
 		diagnostics.reserve("reserve_start", result.Quota)
 		if reserveErr := relayInfo.Billing.Reserve(result.Quota); reserveErr != nil {
 			common.SysError(common.LogText("reserve adjusted task billing error: %s", reserveErr.Error()))
-			taskErr = service.TaskErrorWrapperLocal(errors.New("insufficient quota for adjusted task cost"), string(types.ErrorCodeInsufficientUserQuota), http.StatusForbidden)
-			diagnostics.failed("reserve", "insufficient_quota", taskErr, false)
-			return nil, taskErr
+			// An explicitly completed native stream has already delivered work.
+			// Continue to the atomic settlement barrier, without weakening the
+			// source's affordability, identity or uncertain-COMMIT safeguards.
+			if !c.Writer.Written() {
+				taskErr = service.TaskErrorWrapperLocal(errors.New("insufficient quota for adjusted task cost"), string(types.ErrorCodeInsufficientUserQuota), http.StatusForbidden)
+				diagnostics.failed("reserve", "insufficient_quota", taskErr, false)
+				return nil, taskErr
+			}
+		} else {
+			diagnostics.reserve("reserve_complete", result.Quota)
 		}
-		diagnostics.reserve("reserve_complete", result.Quota)
 	}
 	if requestErr := c.Request.Context().Err(); requestErr != nil {
 		diagnostics.cancelled("before_insert", retryParam.GetRetry()+1)
@@ -766,10 +772,21 @@ func executeTaskSubmissionWith(
 		}
 	}
 	diagnostics.insertStart(task)
-	if insertErr := service.PersistTaskBilling(relayInfo, task, insertOmits...); insertErr != nil {
+	if insertErr := service.PersistTaskBillingAndLog(c, relayInfo, task, insertOmits...); insertErr != nil {
 		common.SysError(common.LogText("insert task error: %s", insertErr.Error()))
 		taskErr = service.TaskErrorWrapperLocal(errors.New("failed to persist task"), "task_insert_failed", http.StatusInternalServerError)
 		diagnostics.failed("insert", "database_error", taskErr, false)
+		// Settle a validated terminal native result through the durable owner
+		// even if its task row could not
+		// be inserted. A lost COMMIT acknowledgement is resolved by the same
+		// owner; it cannot settle twice. Failure preserves the original hold.
+		if c.Writer.Written() && immediateTerminal {
+			if settleErr := service.SettleDeliveredTaskBilling(c, relayInfo, task, insertOmits...); settleErr != nil {
+				common.SysError(common.LogText("settle task billing error: %s", settleErr.Error()))
+				return nil, taskErr
+			}
+			durable = true
+		}
 		return nil, taskErr
 	}
 	durable = true
@@ -783,7 +800,6 @@ func executeTaskSubmissionWith(
 	} else {
 		policy.AddEvent(service.PolicyEvent{Decision: service.PolicyDecision{Action: "stop", Reason: "task_failed", Source: "upstream"}})
 	}
-	service.LogTaskConsumption(c, relayInfo, task)
 	diagnostics.complete(task, result.Quota)
 
 	return &taskSubmissionOutcome{Result: result, Task: task, RelayInfo: relayInfo}, nil

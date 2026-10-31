@@ -70,7 +70,7 @@ func TestMain(m *testing.M) {
 		panic("failed to load locales: " + err.Error())
 	}
 
-	if err := db.AutoMigrate(
+	if err := db.AutoMigrate(append([]any{
 		// Isolated billing subtrees still execute subscription group hooks and
 		// funding capability lookups; never depend on another test's migrations.
 		&model.Option{},
@@ -96,7 +96,7 @@ func TestMain(m *testing.M) {
 		&model.SubscriptionPlan{},
 		&model.SubscriptionOrder{},
 		&model.SubscriptionPreConsumeRecord{},
-	); err != nil {
+	}, model.AgentPlatformModels()...)...); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
 
@@ -143,6 +143,11 @@ func initServiceTestDatabaseDialect() error {
 func truncate(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
+		for _, schema := range model.AgentPlatformModels() {
+			statement := &gorm.Statement{DB: model.DB}
+			require.NoError(t, statement.Parse(schema))
+			require.NoError(t, model.DB.Exec("DELETE FROM "+statement.Schema.Table).Error)
+		}
 		model.DB.Exec("DELETE FROM balance_ledger")
 		model.DB.Exec("DELETE FROM balance_ledger_operations")
 		model.DB.Exec("DELETE FROM referral_commissions")

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "stage": "image-user-id-upstream-merge",
+  "stage": "agent-platform-upstream-alignment",
   "production_baseline": {
     "repository": "1057300248/wanchuan-new-api",
     "commit": "093c7197d5eac50787971fd5ff7553a414142fc7",
@@ -13,16 +13,16 @@
   },
   "upstream_reference": {
     "repository": "QuantumNous/new-api",
-    "commit": "1424ffdd4aef28812a0e9309a465453cbdd034e4",
+    "commit": "ea343c4a81151bfd537d33b66527c25fa21a1112",
     "release_tag": "v1.0.0-rc.47",
     "release_commit": "e835b1bfc43b565d625537830dbfb19328925134",
-    "commits_after_release": 34,
-    "alignment_method": "Retain the upstream history already merged as the second parent of d07abe39543d3fe8acf23bee42790352286424d1. Merge source commit 8de0abd7764a6d4d8c4bb54702c042a655cefadb into that image branch without advancing the upstream pin. Preserve both lines of custom accounting, authorization, logging and image safeguards.",
-    "tree": "48874f04d5eb9479a948147e9263e21c852865ea",
-    "pinned_at": "2026-10-31T00:02:33Z",
-    "verified_at": "2026-10-31T08:40:00Z"
+    "commits_after_release": 38,
+    "alignment_method": "Merge the frozen official main commit into the verified published image/source integration baseline. Preserve custom accounting, authorization, image and source-isolation safeguards. Join completed native-stream fallback usage and same-database consume logs with durable financial ownership; retain uncertain-delivery holds.",
+    "tree": "7de10355dcc9bbef7e5fce68dc7f52d5c8d76dc0",
+    "pinned_at": "2026-10-31T09:09:00Z",
+    "verified_at": "2026-10-31T09:47:00Z"
   },
-  "version": "v1.0.0-rc.47.chuanapi.image.2",
+  "version": "v1.0.0-rc.47.chuanapi.agent.1",
   "scope": "Records source history only. production_baseline and feature_reference remain historical pins, not evidence of the currently deployed version. This manifest does not authorize a release, main-branch merge or deployment, and does not assert feature parity.",
   "integrated_feature_baseline": {
     "repository": "loufilk/new-api",
@@ -41,5 +41,11 @@
     "branch": "dot/upstream-user-id-search-20261029",
     "commit": "8de0abd7764a6d4d8c4bb54702c042a655cefadb",
     "tree": "80b6f7a7a0ed619c1c683fd993a269fe25db5649"
+  },
+  "agent_platform_baseline": {
+    "repository": "loufilk/new-api",
+    "branch": "dot/image-resolution-batch-fix-20261029",
+    "commit": "495c2baa722e90bb2bf024b79f15158a011a946a",
+    "tree": "3fa4666499b17be5cc3a571d8b4473483bc7fc9f"
   }
 }

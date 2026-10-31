@@ -27,7 +27,7 @@ func TestMain(m *testing.M) {
 		if err != nil || !net.ParseIP(parsed.Hostname()).IsLoopback() {
 			panic("TEST_MODEL_POSTGRES_DSN must name a disposable loopback PostgreSQL fixture")
 		}
-		dialector = postgres.Open(nativeDSN)
+		dialector = postgres.New(postgres.Config{DSN: nativeDSN, PreferSimpleProtocol: true})
 	} else {
 		dialector = sqlite.Open(":memory:")
 	}
@@ -62,7 +62,7 @@ func TestMain(m *testing.M) {
 		sqlDB.SetMaxOpenConns(1)
 	}
 
-	if err := db.AutoMigrate(
+	if err := db.AutoMigrate(append([]any{
 		&AgentRedemptionAccount{},
 		&AgentRedemptionLedger{},
 		&AgentRedemptionOperation{},
@@ -99,7 +99,7 @@ func TestMain(m *testing.M) {
 		&ModelBonusEligibleAudit{},
 		&ReferralCommission{},
 		&UserAccessToken{},
-	); err != nil {
+	}, AgentPlatformModels()...)...); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
 
@@ -109,6 +109,11 @@ func TestMain(m *testing.M) {
 func truncateTables(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
+		for _, schema := range AgentPlatformModels() {
+			statement := &gorm.Statement{DB: DB}
+			require.NoError(t, statement.Parse(schema))
+			require.NoError(t, DB.Exec("DELETE FROM "+statement.Schema.Table).Error)
+		}
 		DB.Exec("DELETE FROM agent_redemption_ledgers")
 		DB.Exec("DELETE FROM agent_redemption_operations")
 		DB.Exec("DELETE FROM agent_redemption_accounts")

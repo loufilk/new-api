@@ -26,6 +26,11 @@ export const redemptionSchema = z.object({
   id: z.number(),
   user_id: z.number(),
   budget_agent_id: z.number().optional(),
+  version: z.number().int().nonnegative().optional(),
+  budget_reserved: z.boolean().optional(),
+  source_protected: z.boolean().optional(),
+  customer_user_id: z.number().optional(),
+  delivery_id: z.number().optional(),
   name: z.string(),
   key: z.string(),
   status: z.number(), // 1: enabled, 2: disabled, 3: used

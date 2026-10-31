@@ -16,10 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMutation } from '@tanstack/react-query'
 import type { Table } from '@tanstack/react-table'
 import { Trash2 } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -32,10 +31,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { handleServerError } from '@/lib/handle-server-error'
-import { createServerError } from '@/lib/server-error-message'
+import { OperationDialog } from '@/features/agent-platform/components/operation-dialog'
+import type { OperationDraft } from '@/features/agent-platform/types'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { batchDeleteRedemptions } from '../api'
+import { isProtectedRedemption, redemptionOperation } from '../lib/transaction'
 import type { Redemption } from '../types'
 import { useRedemptions } from './redemptions-provider'
 
@@ -46,7 +46,8 @@ type DataTableBulkActionsProps = {
 export function DataTableBulkActions(props: DataTableBulkActionsProps) {
   const { t } = useTranslation()
   const { triggerRefresh } = useRedemptions()
-  const submitting = useRef(false)
+  const role = useAuthStore((state) => state.auth.user?.role)
+  const [draft, setDraft] = useState<OperationDraft | null>(null)
   const [deleteTargets, setDeleteTargets] = useState<Redemption[] | null>(null)
   const selectedRows = props.table.getFilteredSelectedRowModel().rows
 
@@ -57,39 +58,6 @@ export function DataTableBulkActions(props: DataTableBulkActionsProps) {
     })
     return selectedCodes.join('\n')
   }, [selectedRows])
-
-  const deletion = useMutation({
-    mutationFn: async (targets: Redemption[]) => {
-      const result = await batchDeleteRedemptions(
-        targets.map((code) => code.id)
-      )
-      if (!result.success) throw createServerError(result)
-      return result.data ?? 0
-    },
-    onSuccess: (count, targets) => {
-      toast.success(
-        t('Successfully deleted {{count}} redemption codes', { count })
-      )
-      props.table.setRowSelection((previous) => {
-        const next = { ...previous }
-        for (const code of targets) delete next[String(code.id)]
-        return next
-      })
-      setDeleteTargets(null)
-      triggerRefresh()
-    },
-    onSettled: () => {
-      submitting.current = false
-    },
-    onError: (_error, targets) => {
-      handleServerError(
-        _error,
-        t('Failed to delete {{count}} redemption codes', {
-          count: targets.length,
-        })
-      )
-    },
-  })
 
   return (
     <>
@@ -111,7 +79,12 @@ export function DataTableBulkActions(props: DataTableBulkActionsProps) {
                 size='icon'
                 className='size-8'
                 aria-label={t('Delete selected redemption codes')}
-                disabled={deletion.isPending}
+                disabled={
+                  draft !== null ||
+                  selectedRows.some((row) =>
+                    isProtectedRedemption(row.original)
+                  )
+                }
                 onClick={() =>
                   setDeleteTargets(selectedRows.map((row) => row.original))
                 }
@@ -121,30 +94,78 @@ export function DataTableBulkActions(props: DataTableBulkActionsProps) {
             <Trash2 aria-hidden='true' />
           </TooltipTrigger>
           <TooltipContent>
-            {t('Delete selected redemption codes')}
+            {selectedRows.some((row) => isProtectedRedemption(row.original))
+              ? t('Customer rights protected')
+              : t('Delete selected redemption codes')}
           </TooltipContent>
         </Tooltip>
       </BulkActionsToolbar>
       <ConfirmDialog
         destructive
-        open={deleteTargets !== null}
+        open={deleteTargets !== null && !draft}
         onOpenChange={(open) => {
-          if (!open && !deletion.isPending) setDeleteTargets(null)
+          if (!open && !draft) setDeleteTargets(null)
         }}
         title={t('Delete {{count}} redemption codes?', {
           count: deleteTargets?.length ?? 0,
         })}
         desc={t('This action cannot be undone.')}
-        confirmText={deletion.isPending ? t('Deleting...') : t('Delete')}
-        isLoading={deletion.isPending}
-        disabled={!deleteTargets?.length}
+        confirmText={t('Delete')}
+        disabled={
+          !deleteTargets?.length || deleteTargets.some(isProtectedRedemption)
+        }
         handleConfirm={() => {
-          if (deleteTargets?.length && !submitting.current) {
-            submitting.current = true
-            deletion.mutate(deleteTargets)
+          if (
+            !deleteTargets?.length ||
+            draft ||
+            deleteTargets.some(isProtectedRedemption)
+          ) {
+            return
           }
+          setDraft(
+            redemptionOperation(
+              'delete',
+              role,
+              {
+                ids: deleteTargets.map((code) => code.id),
+                invalid_only: false,
+                agent_user_id: 0,
+              },
+              '/api/redemption/batch',
+              [
+                {
+                  label: 'Selected redemption IDs',
+                  after: deleteTargets.map((code) => code.id).join(', '),
+                },
+              ]
+            )
+          )
         }}
       />
+      {draft && (
+        <OperationDialog
+          key={draft.request_id}
+          draft={draft}
+          onClose={() => setDraft(null)}
+          onComplete={(count) => {
+            if (typeof count === 'number') {
+              toast.success(
+                t('Successfully deleted {{count}} redemption codes', { count })
+              )
+            }
+            props.table.setRowSelection((previous) => {
+              const next = { ...previous }
+              for (const code of deleteTargets ?? []) {
+                delete next[String(code.id)]
+              }
+              return next
+            })
+            setDraft(null)
+            setDeleteTargets(null)
+            triggerRefresh()
+          }}
+        />
+      )}
     </>
   )
 }

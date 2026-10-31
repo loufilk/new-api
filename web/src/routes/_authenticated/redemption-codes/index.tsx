@@ -21,6 +21,7 @@ import z from 'zod'
 
 import { Redemptions } from '@/features/redemption-codes'
 import { REDEMPTION_FILTER_VALUES } from '@/features/redemption-codes/constants'
+import { hasAgentHistory } from '@/lib/agent-permissions'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -38,7 +39,7 @@ export const Route = createFileRoute('/_authenticated/redemption-codes/')({
 
     if (
       !auth.user ||
-      (auth.user.role !== ROLE.AGENT && auth.user.role < ROLE.ADMIN)
+      (!hasAgentHistory(auth.user) && auth.user.role < ROLE.ADMIN)
     ) {
       throw redirect({
         to: '/403',

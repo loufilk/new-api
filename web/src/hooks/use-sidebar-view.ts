@@ -71,7 +71,7 @@ export function useSidebarView(): ResolvedSidebarView {
       })
   }, [configFilteredRoot, userRole])
 
-  const view = userRole === ROLE.AGENT ? null : resolveSidebarView(pathname)
+  const view = resolveSidebarView(pathname)
 
   if (view) {
     return {
@@ -84,7 +84,6 @@ export function useSidebarView(): ResolvedSidebarView {
   return {
     key: ROOT_VIEW_KEY,
     view: null,
-    navGroups:
-      userRole === ROLE.AGENT ? rootSidebarData.navGroups : rootNavGroups,
+    navGroups: rootNavGroups,
   }
 }

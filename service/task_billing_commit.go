@@ -10,12 +10,29 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 // PersistTaskBilling is the durable submit barrier. An upstream acceptance is
 // never followed by another submission merely because this COMMIT ACK is lost.
 func PersistTaskBilling(info *relaycommon.RelayInfo, task *model.Task, omits ...string) error {
+	return persistTaskBilling(info, task, nil, omits...)
+}
+
+// PersistTaskBillingAndLog gives controller submissions an atomic main-DB log.
+// A lost task COMMIT acknowledgement cannot lose or duplicate its consume log.
+func PersistTaskBillingAndLog(c *gin.Context, info *relaycommon.RelayInfo, task *model.Task, omits ...string) error {
+	if c == nil || info == nil || task == nil {
+		return errors.New("missing task billing handoff")
+	}
+	if _, ok := info.Billing.(*BillingSession); info.Billing != nil && !ok {
+		return errors.New("task funding does not support an atomic handoff")
+	}
+	return persistTaskBilling(info, task, newTaskSubmissionLog(c, info, task), omits...)
+}
+
+func persistTaskBilling(info *relaycommon.RelayInfo, task *model.Task, log *taskSubmissionLog, omits ...string) error {
 	if info == nil || task == nil {
 		return errors.New("missing task billing handoff")
 	}
@@ -40,10 +57,13 @@ func PersistTaskBilling(info *relaycommon.RelayInfo, task *model.Task, omits ...
 		task.PrivateData.TokenId = receipt.TokenID
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_, err := model.CommitBillingTask(ctx, receipt, 0, task, omits, func(tx *gorm.DB, destination *model.Task) error {
+		applied, err := model.CommitBillingTask(ctx, receipt, 0, task, omits, func(tx *gorm.DB, destination *model.Task) error {
 			destination.PrivateData.WalletDebit = []model.LedgerShare{}
-			return nil
+			return log.writeTx(tx, destination)
 		})
+		if err == nil {
+			log.afterCommit(ctx, applied)
+		}
 		return err
 	}
 	s.mu.Lock()
@@ -94,7 +114,7 @@ func PersistTaskBilling(info *relaycommon.RelayInfo, task *model.Task, omits ...
 			}
 			destination.PrivateData.WalletDebit = shares
 		}
-		return nil
+		return log.writeTx(tx, destination)
 	})
 	model.RefreshUserQuotaCacheAfterBillingFinalization(receipt.UserID)
 	if err != nil {
@@ -109,7 +129,93 @@ func PersistTaskBilling(info *relaycommon.RelayInfo, task *model.Task, omits ...
 	if receipt.Source == BillingSourceSubscription {
 		info.SubscriptionPostDelta += int64(delta)
 	}
+	log.afterCommit(ctx, applied)
 	return nil
+}
+
+// SettleDeliveredTaskBilling is only for an explicitly completed native stream
+// whose task handoff failed after its delivery. It preserves a committed task's
+// owner after a lost ACK; otherwise funds, usage and main-DB log settle together
+// without inventing a task row. An incomplete stream must never call this.
+func SettleDeliveredTaskBilling(c *gin.Context, info *relaycommon.RelayInfo, task *model.Task, omits ...string) error {
+	if c == nil || info == nil || task == nil || info.TaskRelayInfo == nil || info.ChannelMeta == nil || !c.Writer.Written() ||
+		(task.Status != model.TaskStatusSuccess && task.Status != model.TaskStatusFailure) ||
+		task.UserId != info.UserId || task.ChannelId != info.ChannelId || task.TaskID != info.PublicTaskID ||
+		task.PrivateData.EffectiveRequestID() != info.RequestId {
+		return errors.New("missing completed native task billing evidence")
+	}
+	s, ok := info.Billing.(*BillingSession)
+	if !ok || s.relayInfo != info {
+		return errors.New("delivered task funding does not support an atomic settlement")
+	}
+	log := newTaskSubmissionLog(c, info, task)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.durableTerminalSource() {
+		return errors.New("delivered task funding has no durable owner")
+	}
+	if s.reservationUncertain {
+		if err := s.resolveReservationLocked(); err != nil {
+			return err
+		}
+	}
+	receipt, err := s.terminalReceiptLocked()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stored, err := model.ProbeBillingFinalization(ctx, receipt)
+	if err != nil {
+		return err
+	}
+	if stored == nil {
+		return errors.New("delivered task has no held owner")
+	}
+	if stored.State == model.BillingTaskOwned {
+		// Reuse the task barrier's exact task-ID, amount and receipt checks.
+		// The callback refuses to manufacture a second handoff if ownership
+		// unexpectedly changes between the probe and its locked verification.
+		_, err = model.CommitBillingTask(ctx, receipt, task.Quota, task, omits, func(*gorm.DB, *model.Task) error {
+			return model.ErrBillingFinalized
+		})
+		if err != nil {
+			return err
+		}
+		s.taskOwned, s.fundingSettled, s.actualSettled = true, true, task.Quota
+		s.settlementUncertain = false
+		return nil
+	}
+	if s.settled {
+		if s.actualSettled != task.Quota {
+			return errors.New("billing settlement replay amount mismatch")
+		}
+		return nil
+	}
+	applied, err := s.settleDurableWithAccountingLocked(task.Quota, func(tx *gorm.DB) error {
+		if receipt.Source == BillingSourceWallet {
+			if task.Quota == 0 && receipt.SourceHeld == 0 {
+				task.PrivateData.WalletDebit = []model.LedgerShare{}
+			} else {
+				shares, err := model.WalletRequestReceiptTx(tx, receipt.UserID, receipt.RequestID)
+				if err != nil {
+					return err
+				}
+				if err := model.ValidateTaskWalletReceipt(shares, task.Quota); err != nil {
+					return err
+				}
+				task.PrivateData.WalletDebit = shares
+			}
+		}
+		if err := model.ApplyTaskUsageDeltaTx(tx, receipt.UserID, task.ChannelId, task.Quota, 1); err != nil {
+			return err
+		}
+		return log.writeTx(tx, task)
+	})
+	if err == nil {
+		log.afterCommit(ctx, applied)
+	}
+	return err
 }
 
 // PreserveUnknownTaskDelivery blocks the request-level failure defer from

@@ -4,10 +4,12 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -44,24 +46,57 @@ func GetAgentInvitationPolicy(c *gin.Context) {
 }
 
 func UpdateAgentInvitationPolicy(c *gin.Context) {
-	identity, ok := middleware.GetStepUpIdentity(c)
-	_, accessToken := model.ParseAccessTokenSessionID(identity.SessionID)
-	if !ok || accessToken || identity.UserID != c.GetInt("id") {
+	identity, ok := middleware.GetSessionAuthIdentity(c)
+	if !ok || c.GetBool("use_access_token") || identity.UserID != c.GetInt("id") || service.ValidateStepUpIdentity(identity) != nil {
 		writeAgentInvitationError(c, model.ErrAgentInvitationPermission)
 		return
 	}
-	// Bind only these fields, never a model, actor ID, role or ledger entry.
-	var request struct {
-		Enabled *bool `json:"enabled"`
-		Quota   *int  `json:"quota"`
-	}
-	if err := c.ShouldBindJSON(&request); err != nil || request.Enabled == nil || request.Quota == nil {
-		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+	if _, err := model.GetAgentInvitationPolicy(identity.UserID); err != nil {
+		writeAgentInvitationError(c, err)
 		return
 	}
-	policy, err := model.UpdateAgentInvitationPolicy(c.GetInt("id"), *request.Enabled, *request.Quota, identity)
+	var request struct {
+		RequestID        *string `json:"request_id"`
+		ExpectedRevision *int64  `json:"expected_revision"`
+		Enabled          *bool   `json:"enabled"`
+		Quota            *int    `json:"quota"`
+	}
+	if common.DecodeJsonStrict(c.Request.Body, &request) != nil || request.RequestID == nil || request.ExpectedRevision == nil || request.Enabled == nil || request.Quota == nil {
+		writeAgentInvitationError(c, model.ErrAgentInvitationPolicy)
+		return
+	}
+	mutation := model.AgentInvitationPolicyMutation{ExpectedRevision: *request.ExpectedRevision, Enabled: *request.Enabled, Quota: *request.Quota}
+	current, err := model.GetCurrentAgentPolicy()
 	if err != nil {
 		writeAgentInvitationError(c, err)
+		return
+	}
+	profile, err := model.GetAgentProfile(identity.UserID)
+	if err != nil {
+		writeAgentInvitationError(c, err)
+		return
+	}
+	version := int64(0)
+	if profile != nil {
+		version = profile.Version
+	}
+	context, err := model.AgentInvitationPolicyTransactionContext(identity.UserID, version, current.ID, *request.RequestID, mutation)
+	if err != nil {
+		writeAgentInvitationError(c, err)
+		return
+	}
+	authorization, err := service.PrepareAgentTransactionAuthorization(strings.TrimSpace(c.GetHeader("X-Security-Proof")), identity, context)
+	if err != nil {
+		writeAgentProfileError(c, err)
+		return
+	}
+	policy, err := model.UpdateAgentInvitationPolicyAuthorized(authorization, *request.RequestID, mutation)
+	if err != nil {
+		if errors.Is(err, model.ErrAgentInvitationPermission) || errors.Is(err, model.ErrAgentInvitationPolicy) {
+			writeAgentInvitationError(c, err)
+		} else {
+			writeAgentProfileError(c, err)
+		}
 		return
 	}
 	common.ApiSuccess(c, policy)

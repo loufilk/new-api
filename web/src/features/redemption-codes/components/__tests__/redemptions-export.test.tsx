@@ -28,7 +28,8 @@ import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, expect, test, vi } from 'vitest'
 
-import { api } from '@/lib/api'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 import {
   DEFAULT_CURRENCY_CONFIG,
   useSystemConfigStore,
@@ -37,6 +38,7 @@ import {
 import { RedemptionsExportDialog } from '../redemptions-export-dialog'
 import { RedemptionsMutateDrawer } from '../redemptions-mutate-drawer'
 import { RedemptionsProvider } from '../redemptions-provider'
+import { authorizeTransaction, transactionNetwork } from './transaction-fixture'
 
 type Download = { filename: string; blob: Blob }
 
@@ -93,6 +95,9 @@ afterEach(() => {
     .getState()
     .setConfig({ currency: { ...DEFAULT_CURRENCY_CONFIG } })
   localStorage.clear()
+  sessionStorage.clear()
+  useAuthStore.getState().auth.reset()
+  vi.restoreAllMocks()
 })
 
 test.each([
@@ -195,7 +200,11 @@ test('successful batch creation opens export with returned codes and the configu
       usdExchangeRate: 7.2,
     },
   })
-  vi.spyOn(api, 'post').mockResolvedValue({
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'operator', role: ROLE.ADMIN })
+  const network = transactionNetwork()
+  network.mutations.mockResolvedValue({
     data: { success: true, data: ['createdA', 'createdB'] },
   })
   render(<CreateDrawer />)
@@ -214,6 +223,7 @@ test('successful batch creation opens export with returned codes and the configu
   await user.click(
     within(createDialog).getByRole('button', { name: 'Save changes' })
   )
+  await authorizeTransaction()
   const exportDialog = await screen.findByRole('dialog', {
     name: 'Redemption codes created',
   })
@@ -245,7 +255,11 @@ test('successful batch creation opens export with returned codes and the configu
 
 test('failed creation does not open a success export dialog', async () => {
   const user = userEvent.setup()
-  vi.spyOn(api, 'post').mockResolvedValue({
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'operator', role: ROLE.ADMIN })
+  const network = transactionNetwork()
+  network.mutations.mockResolvedValue({
     data: { success: false, message: 'Creation failed' },
   })
   render(<CreateDrawer />)
@@ -253,15 +267,14 @@ test('failed creation does not open a success export dialog', async () => {
     target: { value: 'batch' },
   })
   await user.click(screen.getByRole('button', { name: 'Save changes' }))
-  await waitFor(() =>
-    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled()
-  )
+  await authorizeTransaction()
+  expect(
+    await screen.findByText('Do not submit a new request')
+  ).toBeInTheDocument()
   expect(
     screen.queryByRole('dialog', { name: 'Redemption codes created' })
   ).not.toBeInTheDocument()
-  expect(
-    screen.getByRole('dialog', { name: 'Create Redemption Code' })
-  ).toBeVisible()
+  expect(document.querySelector('#redemption-form')).toBeInTheDocument()
 })
 
 test('completion defaults to no file and closes without downloading', async () => {

@@ -21,7 +21,7 @@ import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
 import { AgentBudget } from '@/features/agent-redemption/components/agent-budget'
-import { ROLE } from '@/lib/roles'
+import { isAgentWorkspaceUser } from '@/lib/agent-permissions'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { RedemptionsDialogs } from './components/redemptions-dialogs'
@@ -34,7 +34,7 @@ const route = getRouteApi('/_authenticated/redemption-codes/')
 export function Redemptions() {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
-  const isAgent = user?.role === ROLE.AGENT
+  const isAgent = isAgentWorkspaceUser(user)
   const search = route.useSearch()
   const agentId = isAgent ? user.id : search.agent_user_id
   return (

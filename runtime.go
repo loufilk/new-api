@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/QuantumNous/new-api/chuanapi"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/model"
@@ -31,6 +32,7 @@ func newApplicationRuntime() *applicationRuntime {
 // claimed before the adaptor factory and handlers have been installed.
 func (app *applicationRuntime) Start(balanceInterval time.Duration, enablePprof bool) {
 	model.StartRuntimeWorkers(app.workers, common.SyncFrequency)
+	chuanapi.StartRuntimeWorkers(app.workers)
 	controller.StartRuntimeWorkers(app.workers, balanceInterval)
 	service.StartRuntimeWorkers(app.workers)
 	app.workers.Go("websocket-invalidation", func(schedule, _ context.Context) { wsmanager.RunSubscriber(schedule) })

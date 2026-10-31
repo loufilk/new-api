@@ -46,7 +46,6 @@ export function ProfileDropdown() {
   const [open, setOpen] = useDialogState()
   const user = useAuthStore((state) => state.auth.user)
   const { displayName, roleLabel } = useUserDisplay(user)
-  const isAgent = user?.role === ROLE.AGENT
   const isSuperAdmin = user?.role === ROLE.SUPER_ADMIN
   const isWalletVisible = useIsSidebarModuleVisible('/wallet')
   const isSecurityVisible = useIsSidebarModuleVisible('/security')
@@ -104,12 +103,10 @@ export function ProfileDropdown() {
 
           <DropdownMenuSeparator />
 
-          {!isAgent && (
-            <DropdownMenuItem onClick={() => navigate({ to: '/profile' })}>
-              <User className='size-4' />
-              {t('Profile')}
-            </DropdownMenuItem>
-          )}
+          <DropdownMenuItem onClick={() => navigate({ to: '/profile' })}>
+            <User className='size-4' />
+            {t('Profile')}
+          </DropdownMenuItem>
 
           {isSecurityVisible && (
             <DropdownMenuItem onClick={() => navigate({ to: '/security' })}>

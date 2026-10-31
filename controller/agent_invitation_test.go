@@ -47,7 +47,7 @@ func setupAgentInvitationControllerTest(t *testing.T) []model.User {
 		common.RedisEnabled = previousRedis
 		*operation_setting.GetPaymentSetting() = previousPayment
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AgentInvitation{}, &model.AgentInvitationPolicy{}, &model.AgentInvitationPolicyAudit{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AgentInvitation{}, &model.AgentInvitationPolicy{}, &model.AgentInvitationPolicyAudit{}, &model.AgentProfile{}, &model.AgentProfileOperation{}, &model.AgentPolicy{}, &model.AgentPolicyState{}, &model.AgentInvitationPolicyOperation{}, &model.TwoFA{}, &model.PasskeyCredential{}, &model.AuthFlow{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}))
 	users := []model.User{
 		{Username: "invite-common", Role: common.RoleCommonUser},
 		{Username: "invite-agent-a", Role: common.RoleAgentUser},
@@ -59,6 +59,9 @@ func setupAgentInvitationControllerTest(t *testing.T) []model.User {
 		users[i].Status = common.UserStatusEnabled
 		users[i].AffCode = fmt.Sprintf("invitation-api-%d", i)
 		require.NoError(t, db.Create(&users[i]).Error)
+		if users[i].Role == common.RoleAgentUser {
+			require.NoError(t, db.Create(&model.AgentProfile{UserID: users[i].Id, Status: model.AgentProfileActive, Version: 1}).Error)
+		}
 		require.NoError(t, model.CreateUserSession(&model.UserSession{
 			SID: fmt.Sprintf("invitation-api-session-%d", users[i].Id), UserID: users[i].Id,
 			UserAuthVersion: users[i].AuthVersion, Version: 1,
@@ -69,12 +72,15 @@ func setupAgentInvitationControllerTest(t *testing.T) []model.User {
 	return users
 }
 
-func performAgentInvitationRequest(t *testing.T, user model.User, method, target, body string, handler gin.HandlerFunc) *httptest.ResponseRecorder {
+func performAgentInvitationRequest(t *testing.T, user model.User, method, target, body string, handler gin.HandlerFunc, proof ...string) *httptest.ResponseRecorder {
 	t.Helper()
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(method, target, strings.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
+	if len(proof) > 0 {
+		c.Request.Header.Set("X-Security-Proof", proof[0])
+	}
 	c.Set("id", user.Id)
 	// Deliberately stale/forged context role: model authorization must reread DB.
 	c.Set("role", common.RoleRootUser)
@@ -145,8 +151,25 @@ func TestAgentInvitationPolicyAPIRootOnlyAndBounds(t *testing.T) {
 		response := performAgentInvitationRequest(t, users[4], "PUT", "/api/agent-redemption/invitation-policy", body, UpdateAgentInvitationPolicy)
 		assert.Equal(t, http.StatusBadRequest, response.Code, body)
 	}
-	response := performAgentInvitationRequest(t, users[4], "PUT", "/api/agent-redemption/invitation-policy", `{"enabled":true,"quota":400,"updated_by":1}`, UpdateAgentInvitationPolicy)
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	root := users[4]
+	require.NoError(t, model.DB.Create(&model.TwoFA{UserId: root.Id, Secret: "synthetic-test-factor", IsEnabled: true}).Error)
+	identity := model.AuthSessionIdentity{UserID: root.Id, SessionID: fmt.Sprintf("invitation-api-session-%d", root.Id), UserAuthVersion: root.AuthVersion, SessionVersion: 1}
+	prepared, err := model.PrepareAgentProfileOperation(identity, "invitation.policy.update", "invitation-policy-update", []byte(`{"expected_revision":0,"enabled":true,"quota":400}`))
+	require.NoError(t, err)
+	hash, err := model.AgentTransactionContextHash(prepared.VerificationContext)
+	require.NoError(t, err)
+	proof, _, err := model.IssueAgentTransactionProof(identity, hash, "2fa")
+	require.NoError(t, err)
+	body := `{"request_id":"invitation-policy-update","expected_revision":0,"enabled":true,"quota":400}`
+	response := performAgentInvitationRequest(t, root, "PUT", "/api/agent-redemption/invitation-policy", body, UpdateAgentInvitationPolicy)
+	assert.Equal(t, http.StatusForbidden, response.Code, "MFA required even for root browser session")
+	for range 2 {
+		response = performAgentInvitationRequest(t, root, "PUT", "/api/agent-redemption/invitation-policy", body, UpdateAgentInvitationPolicy, proof)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	}
+	response = performAgentInvitationRequest(t, root, "PUT", "/api/agent-redemption/invitation-policy", strings.Replace(body, `"quota":400`, `"quota":401`, 1), UpdateAgentInvitationPolicy, proof)
+	assert.Equal(t, http.StatusConflict, response.Code, "same request cannot authorize changed gift policy")
+
 	policy, err := model.GetAgentInvitationPolicy(users[4].Id)
 	require.NoError(t, err)
 	assert.Equal(t, users[4].Id, policy.UpdatedBy)
@@ -228,10 +251,11 @@ func TestAgentInvitationOAuthFlowGrantsOnlyOnVerifiedNewAccount(t *testing.T) {
 	var version string
 	require.NoError(t, model.DB.Raw("SHOW server_version_num").Scan(&version).Error)
 	require.Equal(t, "180006", version)
-	require.NoError(t, model.DB.AutoMigrate(&model.AgentInvitation{}, &model.AgentInvitationPolicy{}, &model.AgentInvitationPolicyAudit{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.AgentInvitation{}, &model.AgentInvitationPolicy{}, &model.AgentInvitationPolicyAudit{}, &model.AgentProfile{}, &model.AgentPolicy{}, &model.AgentPolicyState{}))
 	require.NoError(t, model.DB.Model(root).Update("role", common.RoleRootUser).Error)
 	agent := model.User{Username: "oauth-agent", AffCode: "oauth-agent-aff", Role: common.RoleAgentUser, Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(&agent).Error)
+	require.NoError(t, model.DB.Create(&model.AgentProfile{UserID: agent.Id, Status: model.AgentProfileActive, Version: 1}).Error)
 	previousPayment := *operation_setting.GetPaymentSetting()
 	operation_setting.GetPaymentSetting().ComplianceConfirmed = true
 	operation_setting.GetPaymentSetting().ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion

@@ -46,6 +46,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { ProfileEditor } from '@/features/agent-platform/components/profiles'
 import type { AdminUserManageAction } from '@/features/auth/secure-verification'
 import { UserSubscriptionsDialog } from '@/features/subscriptions/components/dialogs/user-subscriptions-dialog'
 import { handleServerError } from '@/lib/handle-server-error'
@@ -86,6 +87,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     requestVerification,
     verificationActive,
   } = useUsers()
+  const [profileEditorOpen, setProfileEditorOpen] = useState(false)
   const [resetPasskeyOpen, setResetPasskeyOpen] = useState(false)
   const [resetTwoFAOpen, setResetTwoFAOpen] = useState(false)
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
@@ -235,20 +237,12 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuItem>
         )}
 
-        {!isAdmin && (
-          <DropdownMenuItem
-            disabled={verificationActive}
-            onClick={() =>
-              handleManage(
-                user.role === USER_ROLE.AGENT ? 'unset_agent' : 'set_agent'
-              )
-            }
-          >
-            {user.role === USER_ROLE.AGENT
-              ? t('Remove agent role')
-              : t('Grant agent role')}
-          </DropdownMenuItem>
-        )}
+        <DropdownMenuItem
+          disabled={verificationActive}
+          onClick={() => setProfileEditorOpen(true)}
+        >
+          {t('Manage agent eligibility')}
+        </DropdownMenuItem>
 
         {isAdmin && !isRoot && (
           <DropdownMenuItem onClick={() => handleManage('demote')}>
@@ -357,6 +351,14 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         confirmText={t('Reset 2FA')}
         handleConfirm={handleResetTwoFA}
       />
+
+      {profileEditorOpen && (
+        <ProfileEditor
+          userId={user.id}
+          onClose={() => setProfileEditorOpen(false)}
+          onComplete={triggerRefresh}
+        />
+      )}
 
       <UserBindingDialog
         open={bindingDialogOpen}

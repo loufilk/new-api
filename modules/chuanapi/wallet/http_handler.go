@@ -221,7 +221,32 @@ func TransferAffQuota(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserTransferQuotaMinimum, map[string]any{"Min": logger.FormatQuota(int(common.QuotaPerUnit))})
 		return
 	}
-	result, err := model.TransferAffQuota(c.GetInt("id"), int(amount), idempotencyKey)
+	// The public, typed dashboard context is populated by auth middleware.
+	// Keep this leaf module independent of middleware/service (service registers
+	// wallet implementations). The model revalidates the session in the money tx.
+	identity := model.AuthSessionIdentity{UserID: c.GetInt("id"), SessionID: c.GetString("session_id"), UserAuthVersion: c.GetInt64("auth_version"), SessionVersion: c.GetInt64("session_version")}
+	_, pat := model.ParseAccessTokenSessionID(identity.SessionID)
+	if identity.UserID <= 0 || identity.SessionID == "" || identity.UserAuthVersion <= 0 || identity.SessionVersion <= 0 || pat || c.GetBool("use_access_token") {
+		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Financial operations require a current browser session"))
+		return
+	}
+	input := model.AgentLegacyCommissionRequest{RequestID: idempotencyKey, Quota: int(amount)}
+	payload, err := common.Marshal(input)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid commission request"))
+		return
+	}
+	prepared, err := model.PrepareAgentCommissionOperation(identity, "commission.convert.legacy", idempotencyKey, payload)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Financial authorization is invalid or no longer matches this transaction"))
+		return
+	}
+	authorization, err := model.PrepareAgentTransactionAuthorization(c.GetHeader("X-Security-Proof"), identity, prepared.VerificationContext)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Financial authorization is invalid or no longer matches this transaction"))
+		return
+	}
+	result, err := model.TransferAffQuota(c.GetInt("id"), int(amount), idempotencyKey, authorization)
 	if err != nil {
 		switch {
 		case errors.Is(err, model.ErrLedgerInsufficientBalance):

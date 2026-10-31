@@ -27,7 +27,6 @@ import { DataTablePage, useDataTable } from '@/components/data-table'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { formatQuotaWithCurrency } from '@/lib/currency'
-import { ROLE } from '@/lib/roles'
 
 import type { AgentAccount, AgentPage } from '../types'
 
@@ -68,13 +67,10 @@ export function AccountsTable(props: {
             />
           )
         }
-        if (
-          row.original.user_role !== undefined &&
-          row.original.user_role !== ROLE.AGENT
-        ) {
+        if (row.original.active_agent !== true) {
           return (
             <StatusBadge
-              label={t('Not an agent')}
+              label={t('Sales unavailable')}
               variant='neutral'
               copyable={false}
             />

@@ -24,7 +24,25 @@ export type VerificationMethod =
   | 'password'
   | 'oauth'
   | 'session'
+export interface AgentTransactionContext {
+  action: string
+  request_id: string
+  agent_user_id: number
+  profile_version: number
+  policy_version: number
+  currency: string
+  amount_minor: string
+  quota: number
+  target_type: string
+  target_id: string
+  target_version: number
+  recipient_version: number
+  recipient_digest: string
+  parameters_hash: string
+}
+
 export type SecurityProofScope =
+  | 'agent.transaction'
   | 'channel.key.read'
   | 'passkey.register'
   | 'passkey.delete'
@@ -57,6 +75,7 @@ export type AdminUserManageAction =
   | 'unset_agent'
 
 export type VerificationOperation =
+  | { scope: 'agent.transaction'; context: AgentTransactionContext }
   | { scope: 'channel.key.read'; context: { channel_id: number } }
   | {
       scope: 'account.binding.bind'
@@ -97,6 +116,7 @@ export type VerificationOperation =
   | {
       scope: Exclude<
         SecurityProofScope,
+        | 'agent.transaction'
         | 'channel.key.read'
         | 'account.binding.bind'
         | 'account.binding.unbind'

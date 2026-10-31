@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { isAgentWorkspaceUser } from '@/lib/agent-permissions'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -43,7 +44,7 @@ import type { AgentAccount } from './types'
 export function AgentRedemption() {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
-  const isAgent = user?.role === ROLE.AGENT
+  const isAgent = isAgentWorkspaceUser(user)
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 20 })
   const [filter, setFilter] = useState('')
   const [agentId, setAgentId] = useState<number | undefined>()

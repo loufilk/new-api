@@ -41,7 +41,7 @@ func setupAgentRedemptionControllerTest(t *testing.T) []model.User {
 		common.RedisEnabled = previousRedis
 		*operation_setting.GetPaymentSetting() = previousPayment
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Redemption{}, &model.AgentRedemptionAccount{}, &model.AgentRedemptionLedger{}, &model.AgentRedemptionOperation{}, &model.AuditLog{}, &model.Log{}, &model.UserSession{}, &model.UserAccessToken{}))
+	require.NoError(t, db.AutoMigrate(append([]any{&model.User{}, &model.Redemption{}, &model.AgentRedemptionAccount{}, &model.AgentRedemptionLedger{}, &model.AgentRedemptionOperation{}, &model.AuditLog{}, &model.Log{}, &model.UserSession{}, &model.UserAccessToken{}, &model.AuthFlow{}, &model.TwoFA{}, &model.PasskeyCredential{}, &model.TopUp{}}, model.AgentPlatformModels()...)...))
 	users := []model.User{
 		{Username: "redemption-admin", Role: common.RoleAdminUser},
 		{Username: "redemption-agent-a", Role: common.RoleAgentUser},
@@ -54,6 +54,13 @@ func setupAgentRedemptionControllerTest(t *testing.T) []model.User {
 		require.NoError(t, db.Create(&users[i]).Error)
 		require.NoError(t, db.Create(&model.UserSession{SID: fmt.Sprintf("budget-controller-session-%d", users[i].Id), UserID: users[i].Id, Version: 1, UserAuthVersion: users[i].AuthVersion, Status: model.UserSessionStatusActive, RefreshHash: strings.Repeat("a", 64), LoginMethod: "password", ExpiresAt: common.GetTimestamp() + 3600}).Error)
 	}
+
+	for _, user := range users {
+		require.NoError(t, db.Create(&model.TwoFA{UserId: user.Id, IsEnabled: true, Secret: "synthetic-fixture-only"}).Error)
+	}
+	for _, user := range users[1:3] {
+		require.NoError(t, db.Create(&model.AgentProfile{UserID: user.Id, Status: model.AgentProfileActive, Version: 1, Reason: "fixture"}).Error)
+	}
 	admin := model.RedemptionScope{UserID: users[0].Id, Role: common.RoleAdminUser}
 	for _, user := range users[1:3] {
 		_, err := model.AllocateAgentRedemptionQuota(admin, model.AgentQuotaAllocationRequest{AgentUserID: user.Id, Delta: 1000, Reason: "controller fixture", RequestID: fmt.Sprintf("controller-initial-%d", user.Id)})
@@ -62,12 +69,15 @@ func setupAgentRedemptionControllerTest(t *testing.T) []model.User {
 	return users
 }
 
-func performAgentRedemptionRequest(t *testing.T, user model.User, method, target, body string, handler gin.HandlerFunc, id int) *httptest.ResponseRecorder {
+func performAgentRedemptionRequest(t *testing.T, user model.User, method, target, body string, handler gin.HandlerFunc, id int, proof ...string) *httptest.ResponseRecorder {
 	t.Helper()
 	response := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(response)
 	c.Request = httptest.NewRequest(method, target, strings.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
+	if len(proof) > 0 {
+		c.Request.Header.Set("X-Security-Proof", proof[0])
+	}
 	c.Set("id", user.Id)
 	c.Set("session_id", fmt.Sprintf("budget-controller-session-%d", user.Id))
 	c.Set("auth_version", user.AuthVersion)
@@ -85,6 +95,13 @@ func TestAgentRedemptionAPIRejectsOwnerInjectionAndCrossTenantAccess(t *testing.
 	users := setupAgentRedemptionControllerTest(t)
 	body := fmt.Sprintf(`{"name":"private","quota":100,"count":1,"request_id":"controller-create-own","user_id":%d,"budget_agent_id":%d,"status":3,"key":"injected","used_user_id":%d}`, users[2].Id, users[2].Id, users[2].Id)
 	response := performAgentRedemptionRequest(t, users[1], http.MethodPost, "/api/redemption/", body, AddRedemption, 0)
+	assert.Contains(t, response.Body.String(), `"success":false`)
+	var injected int64
+	require.NoError(t, model.DB.Model(&model.Redemption{}).Count(&injected).Error)
+	assert.Zero(t, injected)
+	body = `{"name":"private","quota":100,"count":1,"request_id":"controller-create-own"}`
+	proof := agentRedemptionControllerProof(t, users[1], "redemption.create", "controller-create-own", body)
+	response = performAgentRedemptionRequest(t, users[1], http.MethodPost, "/api/redemption/", body, AddRedemption, 0, proof)
 	require.Equal(t, http.StatusOK, response.Code)
 	assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
 	var created struct {
@@ -129,7 +146,7 @@ func TestAgentRedemptionAPIRejectsOwnerInjectionAndCrossTenantAccess(t *testing.
 	assert.Equal(t, http.StatusForbidden, response.Code)
 	for _, user := range users[1:] {
 		response = performAgentRedemptionRequest(t, user, http.MethodPost, "/api/agent-redemption/allocations", fmt.Sprintf(`{"agent_user_id":%d,"delta":100,"reason":"privilege injection","request_id":"forged-admin-allocation","role":100}`, user.Id), AllocateAgentRedemptionQuota, 0)
-		assert.Equal(t, http.StatusForbidden, response.Code)
+		assert.Contains(t, response.Body.String(), `"success":false`)
 	}
 }
 
@@ -145,6 +162,9 @@ func TestAgentRedemptionAPIPrivateLedgerAndLiveRevocation(t *testing.T) {
 		assert.NotContains(t, response.Body.String(), forbidden)
 	}
 	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", users[1].Id).Update("role", common.RoleCommonUser).Error)
+	response = performAgentRedemptionRequest(t, users[1], http.MethodGet, "/api/redemption/", "", GetAllRedemptions, 0)
+	assert.Equal(t, http.StatusOK, response.Code, "ordinary role retains an existing active profile")
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", users[1].Id).Update("status", common.UserStatusDisabled).Error)
 	for _, handler := range []gin.HandlerFunc{GetAllRedemptions, GetAgentRedemptionAccounts} {
 		response = performAgentRedemptionRequest(t, users[1], http.MethodGet, "/api/redemption/", "", handler, 0)
 		assert.Equal(t, http.StatusForbidden, response.Code)
@@ -158,7 +178,8 @@ func TestAgentRedemptionAPIFinancialMutationRejectsRevokedReceipt(t *testing.T) 
 	users := setupAgentRedemptionControllerTest(t)
 	user := users[1]
 	body := `{"name":"session proof","quota":100,"count":1,"request_id":"session-proof-create"}`
-	response := performAgentRedemptionRequest(t, user, http.MethodPost, "/api/redemption/", body, AddRedemption, 0)
+	proof := agentRedemptionControllerProof(t, user, "redemption.create", "session-proof-create", body)
+	response := performAgentRedemptionRequest(t, user, http.MethodPost, "/api/redemption/", body, AddRedemption, 0, proof)
 	require.Contains(t, response.Body.String(), `"success":true`)
 	var code model.Redemption
 	require.NoError(t, model.DB.First(&code).Error)
@@ -171,9 +192,9 @@ func TestAgentRedemptionAPIFinancialMutationRejectsRevokedReceipt(t *testing.T) 
 		id                   int
 	}{
 		{http.MethodPost, "/api/redemption/", body, AddRedemption, 0}, // exact idempotent replay still requires a live session
-		{http.MethodPut, "/api/redemption/?status_only=true", fmt.Sprintf(`{"id":%d,"status":2}`, code.Id), UpdateRedemption, 0},
-		{http.MethodDelete, "/api/redemption/1", "", DeleteRedemption, code.Id},
-		{http.MethodPost, "/api/redemption/batch", fmt.Sprintf(`{"ids":[%d]}`, code.Id), DeleteRedemptionBatch, 0},
+		{http.MethodPut, "/api/redemption/?status_only=true", fmt.Sprintf(`{"id":%d,"status":2,"request_id":"revoked-update-request","version":%d}`, code.Id, code.BudgetVersion), UpdateRedemption, 0},
+		{http.MethodDelete, "/api/redemption/1?request_id=revoked-delete-request", "", DeleteRedemption, code.Id},
+		{http.MethodPost, "/api/redemption/batch", fmt.Sprintf(`{"ids":[%d],"request_id":"revoked-batch-request"}`, code.Id), DeleteRedemptionBatch, 0},
 	} {
 		response = performAgentRedemptionRequest(t, user, call.method, call.target, call.body, call.handler, call.id)
 		assert.Equal(t, http.StatusForbidden, response.Code)
@@ -202,8 +223,8 @@ func TestAgentRedemptionAPIPATAndFilteredInvalidCleanup(t *testing.T) {
 		_, err = model.UpdateRedemptionScoped(scope, model.RedemptionUpdateRequest{ID: codes[i].Id, Status: common.RedemptionCodeStatusDisabled}, true)
 		require.NoError(t, err)
 	}
-	// Scoped administrator PATs retain the existing redemption management API,
-	// and carry an authoritative pat:<id> receipt into the budget transaction.
+	// Even scoped administrator PATs cannot perform business financial mutations;
+	// a browser session and transaction-specific MFA are required.
 	token, _ := createScopedAccessToken(t, users[0].Id, 0, "redemption:write")
 	router := gin.New()
 	router.DELETE("/api/redemption/invalid", middleware.AdminAuth(), DeleteInvalidRedemption)
@@ -211,6 +232,13 @@ func TestAgentRedemptionAPIPATAndFilteredInvalidCleanup(t *testing.T) {
 	request := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/redemption/invalid?agent_user_id=%d", users[1].Id), nil)
 	request.Header.Set("Authorization", "Bearer "+token)
 	router.ServeHTTP(response, request)
+	require.Equal(t, http.StatusForbidden, response.Code)
+	var untouched int64
+	require.NoError(t, model.DB.Model(&model.Redemption{}).Count(&untouched).Error)
+	require.EqualValues(t, 2, untouched)
+	payload := fmt.Sprintf(`{"request_id":"browser-invalid-cleanup","ids":null,"invalid_only":true,"agent_user_id":%d}`, users[1].Id)
+	proof := agentRedemptionControllerProof(t, users[0], "redemption.admin.delete", "browser-invalid-cleanup", payload)
+	response = performAgentRedemptionRequest(t, users[0], http.MethodDelete, fmt.Sprintf("/api/redemption/invalid?agent_user_id=%d&request_id=browser-invalid-cleanup", users[1].Id), "", DeleteInvalidRedemption, 0, proof)
 	require.Equal(t, http.StatusOK, response.Code)
 	assert.Contains(t, response.Body.String(), `"success":true`)
 	assert.Contains(t, response.Body.String(), `"data":1`)
@@ -286,5 +314,46 @@ func TestAgentRedemptionAPIPaginationNormalizesBeforeOffsetMath(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func agentRedemptionControllerProof(t *testing.T, user model.User, action, requestID, payload string) string {
+	t.Helper()
+	identity := model.AuthSessionIdentity{UserID: user.Id, SessionID: fmt.Sprintf("budget-controller-session-%d", user.Id), UserAuthVersion: user.AuthVersion, SessionVersion: 1}
+	prepared, err := model.PrepareAgentPurchaseOperation(identity, action, requestID, []byte(payload))
+	require.NoError(t, err)
+	require.NotNil(t, prepared)
+	hash, err := model.AgentTransactionContextHash(prepared.VerificationContext)
+	require.NoError(t, err)
+	proof, _, err := model.IssueAgentTransactionProof(identity, hash, "2fa")
+	require.NoError(t, err)
+	return proof
+}
+
+func TestAgentRedemptionAPIExactReplayNeedsNoNewProofButRejectsChangedInputs(t *testing.T) {
+	users := setupAgentRedemptionControllerTest(t)
+	body := fmt.Sprintf(`{"agent_user_id":%d,"delta":25,"reason":"explicit fixture grant","request_id":"http-allocate-exact-replay"}`, users[1].Id)
+	proof := agentRedemptionControllerProof(t, users[0], "redemption.allocate", "http-allocate-exact-replay", body)
+	first := performAgentRedemptionRequest(t, users[0], http.MethodPost, "/api/agent-redemption/allocations", body, AllocateAgentRedemptionQuota, 0, proof)
+	require.Contains(t, first.Body.String(), `"success":true`)
+	replay := performAgentRedemptionRequest(t, users[0], http.MethodPost, "/api/agent-redemption/allocations", body, AllocateAgentRedemptionQuota, 0)
+	require.Contains(t, replay.Body.String(), `"success":true`)
+	assert.Contains(t, replay.Body.String(), `"replayed":true`)
+	changed := strings.Replace(body, `"delta":25`, `"delta":26`, 1)
+	conflict := performAgentRedemptionRequest(t, users[0], http.MethodPost, "/api/agent-redemption/allocations", changed, AllocateAgentRedemptionQuota, 0)
+	assert.Equal(t, http.StatusConflict, conflict.Code)
+	var account model.AgentRedemptionAccount
+	require.NoError(t, model.DB.First(&account, "agent_user_id = ?", users[1].Id).Error)
+	assert.Equal(t, 1025, account.AvailableQuota)
+}
+
+func TestAgentPurchaseFinancialReadsRejectDurablyRevokedCachedIdentity(t *testing.T) {
+	users := setupAgentRedemptionControllerTest(t)
+	owner := users[1]
+	require.NoError(t, model.DB.Model(&model.UserSession{}).Where("user_id = ?", owner.Id).Update("status", model.UserSessionStatusRevoked).Error)
+	for _, handler := range []gin.HandlerFunc{GetAgentPurchaseOrders, GetAgentPurchaseRefunds, GetAgentFundBatches, GetAgentFundLedger, GetAgentPurchaseAudit, GetAgentDeliveries, GetReceivedAgentDeliveries, GetAllRedemptions, GetAgentRedemptionAccounts} {
+		response := performAgentRedemptionRequest(t, owner, http.MethodGet, "/api/agent-platform/read", "", handler, 0)
+		assert.Equal(t, http.StatusForbidden, response.Code, "stale accepted session context cannot read finance data")
+		assert.Contains(t, response.Body.String(), `"success":false`)
 	}
 }

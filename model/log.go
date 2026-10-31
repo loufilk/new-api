@@ -433,6 +433,11 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 }
 
 type RecordTaskBillingLogParams struct {
+	TokenName         string
+	RequestID         string
+	UpstreamRequestID string
+	IP                string
+
 	// OperationID links this non-authoritative display log to a committed
 	// financial receipt. It never authorizes or replays a money operation.
 	OperationID string
@@ -453,8 +458,8 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		return
 	}
 	username, _ := GetUsernameById(params.UserId, false)
-	tokenName := ""
-	if params.TokenId > 0 {
+	tokenName := params.TokenName
+	if tokenName == "" && params.TokenId > 0 {
 		if token, err := GetTokenById(params.TokenId); err == nil {
 			tokenName = token.Name
 		}
@@ -481,9 +486,12 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		Group:     params.Group,
 		Other:     other.JSONString(),
 	}
-	if params.OperationID != "" {
+	if params.RequestID != "" {
+		log.RequestId = params.RequestID
+	} else if params.OperationID != "" {
 		log.RequestId = BillingTokenFingerprint(params.OperationID)
 	}
+	log.UpstreamRequestId, log.Ip = params.UpstreamRequestID, params.IP
 	err := createLog(log)
 	if err != nil {
 		common.SysLog(common.LogText("failed to record task billing log: %s", err.Error()))

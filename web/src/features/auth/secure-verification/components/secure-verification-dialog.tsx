@@ -62,13 +62,18 @@ export function SecureVerificationDialog(props: SecureVerificationDialogProps) {
   const verifying = state.phase === 'verifying'
   const login = state.request.scope === 'auth.login'
   const acceptsBackupCode =
-    state.request.scope !== '2fa.backup_codes.regenerate'
+    state.request.scope !== '2fa.backup_codes.regenerate' &&
+    state.request.scope !== 'agent.transaction'
   let canVerify = state.phase === 'ready' && Boolean(input)
   if (input?.method === 'password') {
     canVerify = canVerify && input.password.length > 0
   }
   if (input?.method === '2fa') {
-    canVerify = canVerify && input.code.trim().length >= 6
+    canVerify =
+      canVerify &&
+      (acceptsBackupCode
+        ? input.code.trim().length >= 6
+        : /^\d{6}$/.test(input.code.trim()))
   }
   // Linked-account verification starts from the provider button itself.
   const showSubmit = state.phase !== 'error' && input?.method !== 'oauth'

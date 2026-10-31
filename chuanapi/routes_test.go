@@ -33,7 +33,8 @@ func TestLlmsRouteSetPreservesLegacyRouteTableAndHandlers(t *testing.T) {
 		// Provider route bodies are host-owned again; the payment route set
 		// only forwards to this registrar. Real URL/handler coverage lives in
 		// router/payment_routes_test.go against the production registrar.
-		PaymentRoutes: func(extension.RouteScopes) error { return nil },
+		PaymentRoutes:       func(extension.RouteScopes) error { return nil },
+		AgentPlatformRoutes: func(extension.RouteScopes) error { return nil },
 	}
 	require.NoError(t, reg.ApplyRoutesWithScopes(scopes, extension.PriorityBeforePlugin))
 

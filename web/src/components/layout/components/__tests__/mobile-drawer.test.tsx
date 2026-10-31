@@ -331,15 +331,13 @@ describe('mobile navigation drawer', () => {
   })
 })
 
-test('an agent can sign out but cannot navigate to wallet, profile or security', async () => {
+test('an agent retains wallet, profile and security navigation', async () => {
   isSidebarModuleVisible.mockReturnValue(true)
   renderDrawer({ user: { ...user, role: 5 } })
   expect(await screen.findByRole('button', { name: 'Sign out' })).toBeEnabled()
-  expect(screen.queryByRole('link', { name: 'Wallet' })).not.toBeInTheDocument()
-  expect(
-    screen.queryByRole('link', { name: 'Profile' })
-  ).not.toBeInTheDocument()
+  expect(screen.queryByRole('link', { name: 'Wallet' })).toBeInTheDocument()
+  expect(screen.queryByRole('link', { name: 'Profile' })).toBeInTheDocument()
   expect(
     screen.queryByRole('link', { name: 'Security & Access' })
-  ).not.toBeInTheDocument()
+  ).toBeInTheDocument()
 })

@@ -42,7 +42,7 @@ func TestRegisterContributesWalletModelsInMigrationOrder(t *testing.T) {
 	require.NoError(t, Register(reg))
 
 	models := reg.ModelsFor(extension.PhaseAfterCoreModels)
-	require.Len(t, models, len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+len(expectedPaymentModelOrder)+len(expectedSupportModelOrder))
+	require.Len(t, models, len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+len(expectedPaymentModelOrder)+len(expectedSupportModelOrder)+len(model.AgentPlatformModels()))
 	for i, expected := range expectedWalletModelOrder {
 		assert.IsType(t, expected, models[i], "wallet model at index %d changed", i)
 	}
@@ -58,7 +58,7 @@ func TestRegisterContributesWalletModelsInMigrationOrder(t *testing.T) {
 	}
 
 	sets := reg.ModelSets()
-	require.Len(t, sets, 4)
+	require.Len(t, sets, 5)
 	assert.Equal(t, ExtensionName, sets[0].Extension)
 	assert.Equal(t, WalletModelsName, sets[0].Name)
 	assert.Equal(t, extension.PhaseAfterCoreModels, sets[0].Phase)
@@ -71,6 +71,10 @@ func TestRegisterContributesWalletModelsInMigrationOrder(t *testing.T) {
 	assert.Equal(t, ExtensionName, sets[3].Extension)
 	assert.Equal(t, SupportModelsName, sets[3].Name)
 	assert.Equal(t, extension.PhaseAfterCoreModels, sets[3].Phase)
+	assert.Equal(t, AgentModelsName, sets[4].Name)
+	for i, expected := range model.AgentPlatformModels() {
+		assert.IsType(t, expected, models[len(models)-len(model.AgentPlatformModels())+i])
+	}
 }
 
 // The backfill mutates balances, so it must run only after the wallet schema
@@ -80,10 +84,12 @@ func TestRegisterContributesBackfillStepAfterCoreData(t *testing.T) {
 	require.NoError(t, Register(reg))
 
 	steps := reg.StepsFor(extension.PhaseAfterCoreData)
-	require.Len(t, steps, 1)
+	require.Len(t, steps, 2)
 	assert.Equal(t, ExtensionName, steps[0].Extension)
 	assert.Equal(t, LegacyQuotaBackfillName, steps[0].Name)
 	require.NotNil(t, steps[0].Run)
+	assert.Equal(t, AgentMigrationName, steps[1].Name)
+	require.NotNil(t, steps[1].Run)
 
 	assert.Empty(t, reg.ModelsFor(extension.PhaseAfterCoreData))
 	assert.Empty(t, reg.StepsFor(extension.PhaseAfterCoreModels))
@@ -94,7 +100,7 @@ func TestRegisterContributesModuleRoutesBeforePluginSnapshot(t *testing.T) {
 	require.NoError(t, Register(reg))
 
 	sets := reg.RouteSetsFor(extension.PriorityBeforePlugin)
-	require.Len(t, sets, 5)
+	require.Len(t, sets, 6)
 	assert.Equal(t, ExtensionName, sets[0].Extension)
 	assert.Equal(t, WalletPolicyRoutesName, sets[0].Name)
 	require.NotNil(t, sets[0].RegisterScoped)
@@ -110,6 +116,8 @@ func TestRegisterContributesModuleRoutesBeforePluginSnapshot(t *testing.T) {
 	assert.Equal(t, ExtensionName, sets[4].Extension)
 	assert.Equal(t, SupportRoutesName, sets[4].Name)
 	require.NotNil(t, sets[4].Register)
+	assert.Equal(t, AgentRoutesName, sets[5].Name)
+	require.NotNil(t, sets[5].RegisterScoped)
 	assert.Empty(t, reg.RouteSetsFor(extension.PriorityAfterPlugin))
 }
 
@@ -146,9 +154,9 @@ func TestRegisterTwiceIsRejectedWithoutDuplicatingModels(t *testing.T) {
 	require.NoError(t, Register(reg))
 	require.Error(t, Register(reg))
 
-	assert.Len(t, reg.ModelsFor(extension.PhaseAfterCoreModels), len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+len(expectedPaymentModelOrder)+len(expectedSupportModelOrder))
-	assert.Len(t, reg.StepsFor(extension.PhaseAfterCoreData), 1)
-	assert.Len(t, reg.RouteSetsFor(extension.PriorityBeforePlugin), 5)
+	assert.Len(t, reg.ModelsFor(extension.PhaseAfterCoreModels), len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+len(expectedPaymentModelOrder)+len(expectedSupportModelOrder)+len(model.AgentPlatformModels()))
+	assert.Len(t, reg.StepsFor(extension.PhaseAfterCoreData), 2)
+	assert.Len(t, reg.RouteSetsFor(extension.PriorityBeforePlugin), 6)
 }
 
 func TestSupportRouteSetRegistersUserAndAdminTicketAPIs(t *testing.T) {
@@ -156,7 +164,7 @@ func TestSupportRouteSetRegistersUserAndAdminTicketAPIs(t *testing.T) {
 	reg := extension.NewRegistry()
 	require.NoError(t, Register(reg))
 	sets := reg.RouteSetsFor(extension.PriorityBeforePlugin)
-	require.Len(t, sets, 5)
+	require.Len(t, sets, 6)
 
 	engine := gin.New()
 	require.NoError(t, sets[4].Register(engine))

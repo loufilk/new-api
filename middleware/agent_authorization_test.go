@@ -19,19 +19,6 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestAgentDashboardRouteAllowlist(t *testing.T) {
-	for _, route := range []string{"/api/redemption/", "/api/redemption/search", "/api/redemption/:id", "/api/agent-redemption/accounts", "/api/agent-redemption/accounts/:id/ledger", "/api/agent-redemption/invitations", "/api/user/self", "/api/user/aff", "/api/user/auth/session"} {
-		assert.True(t, agentDashboardRouteAllowed(http.MethodGet, route), route)
-	}
-	for _, route := range []string{"/api/user/", "/api/user/self", "/api/user/manage", "/api/user/topup", "/api/user/setting", "/api/user/access_tokens", "/api/agent-redemption/allocations", "/api/agent-redemption/invitation-policy", "/api/redemption/new-unreviewed-route", "/v1/chat/completions"} {
-		assert.False(t, agentDashboardRouteAllowed(http.MethodPost, route), route)
-	}
-	assert.False(t, agentDashboardRouteAllowed(http.MethodGet, "/api/agent-redemption/invitation-policy"))
-	assert.False(t, agentDashboardRouteAllowed(http.MethodGet, ""))
-	assert.True(t, common.IsValidateRole(common.RoleAgentUser))
-	assert.Less(t, common.RoleAgentUser, common.RoleAdminUser)
-}
-
 func TestAgentDashboardAuthorizationPostgres(t *testing.T) {
 	dsn := os.Getenv("TEST_AGENT_POSTGRES_DSN")
 	if dsn == "" {
@@ -45,7 +32,7 @@ func TestAgentDashboardAuthorizationPostgres(t *testing.T) {
 	var version string
 	require.NoError(t, db.Raw("SHOW server_version_num").Scan(&version).Error)
 	require.Equal(t, "180006", version)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.UserAccessToken{}, &model.Token{}, &model.AuditLog{}, &model.Option{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.UserAccessToken{}, &model.Token{}, &model.AuditLog{}, &model.Option{}, &model.AgentProfile{}))
 	oldDB, oldLog, oldRedis, oldSecret := model.DB, model.LOG_DB, common.RedisEnabled, common.SessionSecret
 	oldMain, oldLogType := common.MainDatabaseType(), common.LogDatabaseType()
 	model.DB, model.LOG_DB, common.RedisEnabled, common.SessionSecret = db, db, false, "synthetic-agent-session-test"
@@ -59,6 +46,7 @@ func TestAgentDashboardAuthorizationPostgres(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	user := model.User{Username: "agent-auth-" + common.GetRandomString(10), AffCode: common.GetRandomString(16), Role: common.RoleAgentUser, Status: common.UserStatusEnabled, AuthVersion: 1}
 	require.NoError(t, db.Create(&user).Error)
+	require.NoError(t, db.Create(&model.AgentProfile{UserID: user.Id, Status: model.AgentProfileActive, Version: 1}).Error)
 	now := time.Now().Unix()
 	session := model.UserSession{SID: "agent-" + common.GetRandomString(16), UserID: user.Id, Version: 1, UserAuthVersion: 1, Status: model.UserSessionStatusActive, RefreshHash: "synthetic", LoginMethod: "password", LastActiveAt: now, ExpiresAt: now + 3600}
 	require.NoError(t, model.CreateUserSession(&session))
@@ -76,14 +64,14 @@ func TestAgentDashboardAuthorizationPostgres(t *testing.T) {
 		{"POST", "/api/redemption/", "/api/redemption/", AgentRedemptionAuth(), 200},
 		{"GET", "/api/agent-redemption/accounts", "/api/agent-redemption/accounts", AgentRedemptionAuth(), 200},
 		{"GET", "/api/agent-redemption/accounts/:id/ledger", "/api/agent-redemption/accounts/123/ledger", AgentRedemptionAuth(), 200},
-		{"POST", "/api/user/topup", "/api/user/topup", UserAuth(), 403},
-		{"POST", "/api/user/access_tokens", "/api/user/access_tokens", UserAuth(), 403},
+		{"POST", "/api/user/topup", "/api/user/topup", UserAuth(), 200},
+		{"POST", "/api/user/access_tokens", "/api/user/access_tokens", UserAuth(), 200},
 		{"GET", "/api/channel/", "/api/channel/", AdminAuth(), 403},
 		{"POST", "/api/user/manage", "/api/user/manage", AdminAuth(), 403},
 		{"POST", "/api/agent-redemption/allocations", "/api/agent-redemption/allocations", AdminAuth(), 403},
 		{"PUT", "/api/agent-redemption/invitation-policy", "/api/agent-redemption/invitation-policy", RootAuth(), 403},
-		{"GET", "/optional", "/optional", TryUserAuth(), 403},
-		{"POST", "/v1/test", "/v1/test", TokenOrUserAuth(), 403},
+		{"GET", "/optional", "/optional", TryUserAuth(), 200},
+		{"POST", "/v1/test", "/v1/test", TokenOrUserAuth(), 200},
 	}
 	for _, tc := range routes {
 		t.Run(tc.method+tc.path, func(t *testing.T) {
@@ -107,4 +95,50 @@ func TestAgentDashboardAuthorizationPostgres(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	r.ServeHTTP(recorder, request)
 	assert.NotEqual(t, 200, recorder.Code)
+}
+
+func TestAgentBrowserBoundaryRejectsPATAndCSRF(t *testing.T) {
+	oldSecure, oldTrusted := common.SessionCookieSecure, common.SessionCookieTrustedURLs
+	common.SessionCookieSecure = false
+	common.SessionCookieTrustedURLs = nil
+	t.Cleanup(func() { common.SessionCookieSecure, common.SessionCookieTrustedURLs = oldSecure, oldTrusted })
+	for _, tc := range []struct {
+		name, session, authorization, contentType, origin, fetch string
+		pat                                                      bool
+		status                                                   int
+	}{
+		{name: "browser JSON", session: "browser", authorization: "Bearer browser-token", contentType: "application/json", status: http.StatusNoContent},
+		{name: "same-origin JSON", session: "browser", authorization: "Bearer browser-token", contentType: "application/json", origin: "https://panel.example.test", status: http.StatusNoContent},
+		{name: "cookie only", session: "browser", contentType: "application/json", status: http.StatusForbidden},
+		{name: "PAT identity", session: "pat:12", authorization: "Bearer scoped-pat", contentType: "application/json", status: http.StatusForbidden},
+		{name: "PAT context", session: "browser", authorization: "Bearer scoped-pat", contentType: "application/json", pat: true, status: http.StatusForbidden},
+		{name: "model key has no browser", authorization: "Bearer sk-model-key", contentType: "application/json", status: http.StatusForbidden},
+		{name: "simple form content", session: "browser", authorization: "Bearer browser-token", contentType: "application/x-www-form-urlencoded", status: http.StatusUnsupportedMediaType},
+		{name: "cross origin insecure-cookie mode", session: "browser", authorization: "Bearer browser-token", contentType: "application/json", origin: "https://evil.example.test", status: http.StatusForbidden},
+		{name: "cross-site metadata", session: "browser", authorization: "Bearer browser-token", contentType: "application/json", fetch: "cross-site", status: http.StatusForbidden},
+		{name: "null origin", session: "browser", authorization: "Bearer browser-token", contentType: "application/json", origin: "null", status: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Set("id", 1)
+				c.Set("session_id", tc.session)
+				c.Set("auth_version", int64(1))
+				c.Set("session_version", int64(1))
+				c.Set("use_access_token", tc.pat)
+				c.Next()
+			})
+			router.POST("/fund", AgentBrowserSessionRequired(), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+			request := httptest.NewRequest(http.MethodPost, "https://panel.example.test/fund", strings.NewReader("{}"))
+			request.Header.Set("Authorization", tc.authorization)
+			request.Header.Set("Content-Type", tc.contentType)
+			if tc.origin != "" {
+				request.Header.Set("Origin", tc.origin)
+			}
+			request.Header.Set("Sec-Fetch-Site", tc.fetch)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			assert.Equal(t, tc.status, response.Code, response.Body.String())
+		})
+	}
 }

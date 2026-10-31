@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -52,7 +53,7 @@ func openNormalizationPostgres(t *testing.T) *gorm.DB {
 	require.NotEmpty(t, serverVersion)
 	t.Logf("PostgreSQL server_version evidence: server_version=%s version=%s", serverVersion, version)
 
-	require.NoError(t, db.AutoMigrate(
+	require.NoError(t, db.AutoMigrate(append([]any{
 		&model.User{},
 		&model.TopUp{},
 		&model.SubscriptionOrder{},
@@ -62,7 +63,7 @@ func openNormalizationPostgres(t *testing.T) *gorm.DB {
 		&model.ReferralCommission{},
 		&model.Log{},
 		&paymentcore.PaymentOrderBinding{},
-	))
+	}, model.AgentPlatformModels()...)...))
 
 	previousDB, previousLogDB := model.DB, model.LOG_DB
 	previousMainType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
@@ -82,6 +83,9 @@ func openNormalizationPostgres(t *testing.T) *gorm.DB {
 	// through the fixture rows' operation_id before those rows, so a re-run
 	// cannot replay a stale operation and silently skip the credit.
 	for _, stmt := range []string{
+		`DELETE FROM agent_commission_inboxes WHERE event_id IN (SELECT id FROM agent_commission_outboxes WHERE reference_id LIKE 'WAFFO-NORM-%')`,
+		`DELETE FROM agent_commission_outboxes WHERE reference_id LIKE 'WAFFO-NORM-%'`,
+		`DELETE FROM agent_payment_receipts WHERE local_order_key LIKE 'WAFFO-NORM-%'`,
 		`DELETE FROM referral_commissions WHERE reference_id LIKE 'WAFFO-NORM-%'`,
 		`DELETE FROM balance_ledger_operations WHERE id IN (SELECT operation_id FROM balance_ledger WHERE reference_type = 'topup' AND reference_id LIKE 'WAFFO-NORM-%')`,
 		`DELETE FROM balance_ledger WHERE reference_id LIKE 'WAFFO-NORM-%'`,
@@ -337,6 +341,8 @@ func TestWaffoPancakeNormalizationPostgreSQL(t *testing.T) {
 
 	assertReferralCommissionOnce := func(t *testing.T, buyer *model.User, ledgerRef string, paid int) {
 		t.Helper()
+		_, processErr := model.ProcessAgentCommissionOutbox(context.Background(), 200)
+		require.NoError(t, processErr)
 		expectedReward := int(float64(paid) * 0.05)
 		require.Positive(t, expectedReward)
 
@@ -539,14 +545,15 @@ func TestWaffoPancakeNormalizationPostgreSQL(t *testing.T) {
 		assertReferralCommissionOnce(t, buyer, tradeNo, expectedPaid)
 
 		rejections := []struct {
-			name    string
-			storeID string
-			mode    string
-			amount  string
+			name       string
+			storeID    string
+			mode       string
+			amount     string
+			wantStatus int
 		}{
-			{name: "amount", storeID: "STORE_NORM", mode: "prod", amount: "0.01"},
-			{name: "store", storeID: "STORE_OTHER", mode: "prod", amount: "50.00"},
-			{name: "environment", storeID: "STORE_NORM", mode: "test", amount: "50.00"},
+			{name: "amount", storeID: "STORE_NORM", mode: "prod", amount: "0.01", wantStatus: http.StatusOK},
+			{name: "store", storeID: "STORE_OTHER", mode: "prod", amount: "50.00", wantStatus: http.StatusUnauthorized},
+			{name: "environment", storeID: "STORE_NORM", mode: "test", amount: "50.00", wantStatus: http.StatusOK},
 		}
 		for _, rejection := range rejections {
 			t.Run(rejection.name, func(t *testing.T) {
@@ -556,7 +563,7 @@ func TestWaffoPancakeNormalizationPostgreSQL(t *testing.T) {
 
 				body := normalizationPGPancakePayload(rejectedTradeNo, "ORD_NORM_BAD", rejection.storeID, rejection.mode, rejection.amount, "USD", rejectedBuyer.Id)
 				recorder := runPancakeRetryWebhook(t, signedPancakeRetryRequest(t, body, pancakeKey))
-				require.Equal(t, http.StatusOK, recorder.Code)
+				require.Equal(t, rejection.wantStatus, recorder.Code)
 
 				var refreshed model.TopUp
 				require.NoError(t, db.Where("trade_no = ?", rejectedTradeNo).First(&refreshed).Error)

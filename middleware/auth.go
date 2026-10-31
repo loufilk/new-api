@@ -61,11 +61,15 @@ func authHelper(c *gin.Context, minRole int) {
 		abortWithWebMessage(c, http.StatusUnauthorized, "AUTH_USER_DISABLED", common.NewMessage("User has been banned"))
 		return
 	}
-	if user.Role < minRole {
+	requiredRole := minRole
+	if minRole == common.RoleAgentUser {
+		requiredRole = common.RoleCommonUser
+	}
+	if user.Role < requiredRole {
 		abortWithWebMessage(c, http.StatusForbidden, "AUTH_INSUFFICIENT_PRIVILEGE", common.NewMessage("Unauthorized, insufficient privileges"))
 		return
 	}
-	if !enforceAgentDashboardRoute(c, user.Role, useAccessToken) {
+	if minRole == common.RoleAgentUser && !enforceAgentBusinessAccess(c, user, identity, useAccessToken) {
 		return
 	}
 	var lookup *accessTokenLookup
@@ -552,11 +556,6 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 			c.Abort()
 			return
 		}
-		if userCache.Role == common.RoleAgentUser {
-			common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Unauthorized, insufficient privileges"))
-			c.Abort()
-			return
-		}
 
 		c.Set("id", token.UserId)
 		c.Set("token_id", token.Id)
@@ -652,10 +651,6 @@ func TokenAuth() func(c *gin.Context) {
 			return
 		}
 		userEnabled := userCache.Status == common.UserStatusEnabled
-		if userCache.Role == common.RoleAgentUser {
-			abortWithOpenAiMessage(c, http.StatusForbidden, common.TranslateMessage(c, i18n.MsgAuthInsufficientPrivilege), types.ErrorCodeAccessDenied)
-			return
-		}
 		if !userEnabled {
 			abortWithOpenAiMessage(c, http.StatusForbidden, common.TranslateMessage(c, i18n.MsgAuthUserBanned))
 			return

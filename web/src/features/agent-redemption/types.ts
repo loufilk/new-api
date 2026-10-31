@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 export interface AgentAccount {
+  active_agent: boolean
   agent_user_id: number
   user_role?: number
   user_status?: number

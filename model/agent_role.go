@@ -85,16 +85,32 @@ func ApplyUserManagementActionTx(tx *gorm.DB, actorID int, expected User, action
 		role = common.RoleAdminUser
 	case "demote":
 		role = common.RoleCommonUser
-	case "set_agent":
-		if target.Role != common.RoleCommonUser {
-			return nil, errors.New("Only common users can become agent administrators")
+	case "set_agent", "unset_agent":
+		profile, err := LockAgentProfileTx(tx, target.Id)
+		if err != nil {
+			return nil, err
 		}
-		role = common.RoleAgentUser
-	case "unset_agent":
-		if target.Role != common.RoleAgentUser {
-			return nil, errors.New("User is not an agent administrator")
+		request := AgentProfileMutation{Status: AgentProfileActive, Reason: "Agent qualification enabled by administrator"}
+		if profile != nil {
+			request.ExpectedVersion = profile.Version
+			request.SalesFrozen, request.SettlementFrozen = profile.SalesFrozen, profile.SettlementFrozen
 		}
-		role = common.RoleCommonUser
+		if action == "unset_agent" {
+			if profile == nil {
+				return nil, ErrAgentProfilePermission
+			}
+			request.Status, request.Reason = AgentProfileExited, "Agent qualification exited by administrator"
+		}
+		if _, err := updateAgentProfileTx(tx, actor.Id, target.Id, request); err != nil {
+			return nil, err
+		}
+		if target.Role == common.RoleAgentUser {
+			if err := tx.Model(&User{}).Where("id = ?", target.Id).Update("role", common.RoleCommonUser).Error; err != nil {
+				return nil, err
+			}
+			target.Role = common.RoleCommonUser
+		}
+		return target, nil
 	default:
 		return nil, errors.New("Invalid parameters")
 	}
@@ -104,30 +120,6 @@ func ApplyUserManagementActionTx(tx *gorm.DB, actorID int, expected User, action
 	version, err := IncrementUserAuthVersionWithTx(tx, target.Id)
 	if err != nil {
 		return nil, err
-	}
-	if role == common.RoleAgentUser && target.Role != common.RoleAgentUser {
-		// Do not resurrect pre-agent API credentials on a later downgrade.
-		// Legacy opaque PATs are not auth-version bound during their transition
-		// window, so clearing their persisted generation is also mandatory.
-		if err := tx.Model(&User{}).Where("id = ?", target.Id).Updates(map[string]any{"access_token": nil, "access_token_created_at": nil}).Error; err != nil {
-			return nil, err
-		}
-		target.AccessToken, target.AccessTokenCreatedAt = nil, nil
-		if _, err := DeleteUserAccessTokensWithTx(tx, target.Id); err != nil {
-			return nil, err
-		}
-		var tokens []Token
-		if err := lockForUpdate(tx).Where("user_id = ?", target.Id).Order("id").Find(&tokens).Error; err != nil {
-			return nil, err
-		}
-		for _, token := range tokens {
-			if err := advanceTokenPermissionRevisionTx(tx, token.Id); err != nil {
-				return nil, err
-			}
-		}
-		if err := tx.Model(&Token{}).Where("user_id = ?", target.Id).Update("status", common.TokenStatusDisabled).Error; err != nil {
-			return nil, err
-		}
 	}
 	if err := tx.Model(&User{}).Where("id = ?", target.Id).Updates(map[string]any{"role": role, "status": status}).Error; err != nil {
 		return nil, err

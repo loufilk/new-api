@@ -23,7 +23,9 @@ import userEvent from '@testing-library/user-event'
 import { useEffect } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 
+import type { OperationDraft } from '@/features/agent-platform/types'
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 
 import type { User } from '../../types'
 import { DataTableRowActions } from '../data-table-row-actions'
@@ -199,37 +201,131 @@ it('disabling a user from the row menu binds the proof to the user and action', 
   )
 })
 
-it.each([
-  { role: 1, label: 'Grant agent role', action: 'set_agent' },
-  { role: 5, label: 'Remove agent role', action: 'unset_agent' },
-])(
-  '$label requires proof bound to the target and exact role action',
-  async ({ role, label, action }) => {
-    const proof = mockVerification('admin.user.manage', 'agent-role-proof')
-    const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
-      if (url === '/api/verify') return proof
-      if (url === '/api/user/manage') return { data: { success: true } }
-      throw new Error(`Unexpected POST ${url}`)
+it.each([1, 5])(
+  'role %s uses separate versioned agent eligibility and transaction MFA, not a role switch',
+  async (role) => {
+    sessionStorage.clear()
+    useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
+    const proof = mockVerification('agent.transaction', 'profile-one-use')
+    const get = vi.mocked(api.get).getMockImplementation()
+    vi.mocked(api.get).mockImplementation(async (url, config) => {
+      if (url === '/api/agent-platform/profiles/2') {
+        return {
+          data: {
+            success: true,
+            data: {
+              user_id: 2,
+              username: 'managed-user',
+              profile:
+                role === 5
+                  ? {
+                      status: 'active',
+                      version: 3,
+                      sales_frozen: false,
+                      settlement_frozen: false,
+                    }
+                  : null,
+            },
+          },
+        }
+      }
+      if (!get) throw new Error('Missing verification test fixture')
+      return get(url, config)
     })
+    const post = vi.spyOn(api, 'post').mockResolvedValue(proof)
+    const request = vi
+      .spyOn(api, 'request')
+      .mockImplementation(async (config) => {
+        if (config.url?.endsWith('/prepare')) {
+          const input = config.data as OperationDraft
+          const context = {
+            action: input.action,
+            request_id: input.request_id,
+            agent_user_id: 2,
+            profile_version: role === 5 ? 3 : 0,
+            policy_version: 0,
+            currency: '',
+            amount_minor: '0',
+            quota: 0,
+            target_type: 'agent_profile',
+            target_id: '2',
+            target_version: role === 5 ? 3 : 0,
+            recipient_version: 0,
+            recipient_digest: '',
+            parameters_hash: 'profile-parameters',
+          }
+          return {
+            data: {
+              success: true,
+              data: {
+                verification_context: context,
+                summary: {
+                  action: input.action,
+                  agent_user_id: 2,
+                  currency: '',
+                  currency_exponent: 0,
+                  amount_minor: '0',
+                  fee_minor: '0',
+                  net_minor: '0',
+                  quota: 0,
+                  target_label: 'managed-user #2',
+                  recipient_label: '',
+                  policy_version: 0,
+                },
+                status_url: `/api/agent-platform/operations/${input.request_id}`,
+              },
+            },
+          }
+        }
+        return { data: { success: true, data: { user_id: 2, version: 4 } } }
+      })
     renderInProvider(
       <DataTableRowActions
         row={{ original: { ...target, role } } as Row<User>}
       />
     )
     await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
-    await userEvent.click(await screen.findByRole('menuitem', { name: label }))
-    expect(post).not.toHaveBeenCalledWith(
-      '/api/user/manage',
-      expect.anything(),
-      expect.anything()
+    await userEvent.click(
+      await screen.findByRole('menuitem', { name: 'Manage agent eligibility' })
     )
-    await completeTwoFactorVerification()
+    await userEvent.type(
+      await screen.findByRole('textbox', { name: 'Reason' }),
+      'Reviewed eligibility without banning account'
+    )
+    await userEvent.click(
+      screen.getByRole('checkbox', { name: 'Freeze new sales' })
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }))
     await waitFor(() =>
-      expect(post).toHaveBeenCalledWith(
-        '/api/user/manage',
-        { id: 2, action },
+      expect(
+        screen.getByRole('button', { name: 'Authorize transaction' })
+      ).toBeEnabled()
+    )
+    expect(
+      request.mock.calls.filter(([config]) => config.method === 'patch')
+    ).toHaveLength(0)
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Authorize transaction' })
+    )
+    await userEvent.type(
+      await screen.findByRole('textbox', { name: 'Authenticator code' }),
+      '123456'
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Verify' }))
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(
         expect.objectContaining({
-          headers: { 'X-Security-Proof': 'agent-role-proof' },
+          method: 'patch',
+          url: '/api/agent-platform/profiles/2',
+          data: {
+            request_id: expect.any(String),
+            expected_version: role === 5 ? 3 : 0,
+            status: 'active',
+            sales_frozen: true,
+            settlement_frozen: false,
+            reason: 'Reviewed eligibility without banning account',
+          },
+          headers: { 'X-Security-Proof': 'profile-one-use' },
           singleUseAuthorization: true,
         })
       )
@@ -237,10 +333,18 @@ it.each([
     expect(post).toHaveBeenCalledWith(
       '/api/verify',
       expect.objectContaining({
-        scope: 'admin.user.manage',
-        context: { user_id: 2, action },
+        scope: 'agent.transaction',
+        context: expect.objectContaining({
+          action: 'profile.update',
+          agent_user_id: 2,
+          profile_version: role === 5 ? 3 : 0,
+          parameters_hash: 'profile-parameters',
+        }),
       }),
       expect.anything()
     )
+    expect(
+      post.mock.calls.filter(([url]) => url === '/api/user/manage')
+    ).toHaveLength(0)
   }
 )

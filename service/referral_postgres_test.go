@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -80,7 +81,7 @@ func openReferralPostgreSQLFixture(t *testing.T) *referralPGFixture {
 		_ = adminSQL.Close()
 	})
 
-	require.NoError(t, db.AutoMigrate(
+	require.NoError(t, db.AutoMigrate(append([]any{
 		&model.User{},
 		&model.TopUp{},
 		&model.SubscriptionOrder{},
@@ -93,7 +94,7 @@ func openReferralPostgreSQLFixture(t *testing.T) *referralPGFixture {
 		&model.Option{},
 		&model.SystemTask{},
 		&model.Log{},
-	))
+	}, model.AgentPlatformModels()...)...))
 
 	return &referralPGFixture{db: db, schema: schema}
 }
@@ -115,7 +116,7 @@ func countReferralPGCommissions(t *testing.T, inviterId int) int64 {
 }
 
 // TestReferralPostgreSQLCommissionConcurrentCapAndBoundary 在真实 PostgreSQL 上
-// 验证并发充值的前三次计次上限与邀请人余额边界回滚。
+// 验证并发充值计次上限；邀请人余额异常只阻止返佣，不回滚实付本金。
 func TestReferralPostgreSQLCommissionConcurrentCapAndBoundary(t *testing.T) {
 	openReferralPostgreSQLFixture(t)
 	setReferralRewardConfig(t, true, 0.05)
@@ -140,11 +141,12 @@ func TestReferralPostgreSQLCommissionConcurrentCapAndBoundary(t *testing.T) {
 	for i, err := range errs {
 		require.NoError(t, err, "topup %d", i)
 	}
+	drainReferralOutbox(t)
 	assert.EqualValues(t, 3, countReferralPGCommissions(t, 8301), "前三次后不再返佣")
 	assert.Equal(t, 150_000, getUserBalances(t, 8301).AffQuota)
 	assert.Equal(t, 5_000_000, getUserBalances(t, 8302).QuotaPaid, "充值本身必须全部入账")
 
-	// 场景二：两个被邀请人并发充值至同一邀请人的上限边界，只允许一笔成功。
+	// 场景二：两笔本金均成功；邀请人上限只允许一笔返佣，另一笔保留重试。
 	seedReferralPGUser(t, 8303, 0, common.MaxWalletQuota-50_000, 0)
 	seedReferralPGUser(t, 8304, 8303, 0, 0)
 	seedReferralPGUser(t, 8305, 8303, 0, 0)
@@ -161,44 +163,33 @@ func TestReferralPostgreSQLCommissionConcurrentCapAndBoundary(t *testing.T) {
 	}
 	wg.Wait()
 
-	successes := 0
-	for i, userId := range []int{8304, 8305} {
-		if boundaryErrs[i] == nil {
-			successes++
-			assert.Equal(t, 1_000_000, getUserBalances(t, userId).QuotaPaid)
-			continue
-		}
-		assert.Zero(t, getUserBalances(t, userId).QuotaPaid, "失败方充值必须回滚")
-		var topUp model.TopUp
-		require.NoError(t, model.DB.Where("trade_no = ?", fmt.Sprintf("PG-BOUNDARY-%d", i+1)).First(&topUp).Error)
-		assert.Equal(t, common.TopUpStatusPending, topUp.Status)
+	for i, userID := range []int{8304, 8305} {
+		require.NoError(t, boundaryErrs[i])
+		assert.Equal(t, 1_000_000, getUserBalances(t, userID).QuotaPaid)
 	}
-	assert.Equal(t, 1, successes, "边界上只允许一笔返佣成功")
+	_, processErr := model.ProcessAgentCommissionOutbox(context.Background(), 200)
+	require.Error(t, processErr, "only the failed commission remains retryable; both principals committed")
+	var failed int64
+	require.NoError(t, model.DB.Model(&model.AgentCommissionOutbox{}).Where("status = ?", "failed").Count(&failed).Error)
+	assert.EqualValues(t, 1, failed)
+
 	assert.EqualValues(t, 1, countReferralPGCommissions(t, 8303))
 	assert.Equal(t, common.MaxWalletQuota, getUserBalances(t, 8303).AffQuota)
 }
 
-// TestReferralPostgreSQLCommissionOverflowRollsBackAtomically 在真实 PostgreSQL
-// 上验证超限时订单状态、充值账本与返佣在同一事务整体回滚。
-func TestReferralPostgreSQLCommissionOverflowRollsBackAtomically(t *testing.T) {
+// The actual PostgreSQL commission exception must not undo principal, its
+// payment order, or its paid-wallet ledger. Recovery is a durable outbox retry.
+func TestReferralPostgreSQLCommissionOverflowPreservesPrincipal(t *testing.T) {
 	openReferralPostgreSQLFixture(t)
 	setReferralRewardConfig(t, true, 0.05)
 	seedReferralPGUser(t, 8311, 0, common.MaxWalletQuota, common.MaxWalletQuota)
 	seedReferralPGUser(t, 8312, 8311, 0, 0)
-
-	seedPendingOnlineTopUp(t, 8312, 2, "PG-OVERFLOW-ROLLBACK")
-	_, err := model.RechargeEpay("PG-OVERFLOW-ROLLBACK", "alipay", "2.00", "127.0.0.1")
-	require.Error(t, err, "超限必须整体回滚")
-
-	var topUp model.TopUp
-	require.NoError(t, model.DB.Where("trade_no = ?", "PG-OVERFLOW-ROLLBACK").First(&topUp).Error)
-	assert.Equal(t, common.TopUpStatusPending, topUp.Status)
-	assert.Zero(t, getUserBalances(t, 8312).QuotaPaid, "失败充值不得入账")
-	var ledgerRows int64
-	require.NoError(t, model.DB.Model(&model.BalanceLedger{}).
-		Where("reference_id = ?", "PG-OVERFLOW-ROLLBACK").Count(&ledgerRows).Error)
-	assert.Zero(t, ledgerRows, "失败充值不得留下账本")
-	assert.Zero(t, countReferralPGCommissions(t, 8311))
+	seedPendingOnlineTopUp(t, 8312, 2, "PG-OVERFLOW-RETRY")
+	_, err := model.RechargeEpay("PG-OVERFLOW-RETRY", "alipay", "2.00", "127.0.0.1")
+	require.NoError(t, err)
+	_, err = model.ProcessAgentCommissionOutbox(context.Background(), 200)
+	require.Error(t, err)
+	assertReferralPrincipalPreserved(t, 8312, 8311, "PG-OVERFLOW-RETRY")
 	assert.Equal(t, common.MaxWalletQuota, getUserBalances(t, 8311).AffQuota)
 }
 

@@ -12,9 +12,12 @@ import (
 )
 
 type Redemption struct {
+	CustomerUserID      int            `json:"customer_user_id" gorm:"not null;default:0;index"`
+	DeliveryID          int            `json:"delivery_id" gorm:"not null;default:0;index"`
+	SourceProtected     bool           `json:"source_protected" gorm:"not null;default:false"`
 	BudgetAgentID       int            `json:"budget_agent_id" gorm:"not null;default:0;index"`
 	BudgetReserved      bool           `json:"budget_reserved" gorm:"not null;default:false"`
-	BudgetVersion       int            `json:"-" gorm:"not null;default:0"`
+	BudgetVersion       int            `json:"version" gorm:"not null;default:0"`
 	CreationOperationID int            `json:"-" gorm:"not null;default:0;index"`
 	Id                  int            `json:"id"`
 	UserId              int            `json:"user_id"`
@@ -156,19 +159,34 @@ func Redeem(key string, userId int) (quota int, err error) {
 	ledgerApplied := false
 	expired := false
 	err = DB.Session(&gorm.Session{Logger: DB.Logger.LogMode(gormlogger.Silent)}).Transaction(func(tx *gorm.DB) error {
+		if _, err := LockCurrentAgentPolicyTx(tx); err != nil {
+			return err
+		}
 		err := lockForUpdate(tx).Where(keyCol+" = ?", key).First(redemption).Error
 		if err != nil {
 			return errors.New("invalid redemption code")
 		}
+		if redemption.SourceProtected && redemption.BudgetAgentID == userId {
+			return ErrAgentDeliveryConfirmationRequired
+		}
+		if redemption.DeliveryID > 0 {
+			return ErrAgentDeliveryConfirmationRequired
+		}
+		if redemption.CustomerUserID > 0 && redemption.CustomerUserID != userId {
+			return ErrAgentRedemptionPermission
+		}
 		if redemption.Status != common.RedemptionCodeStatusEnabled || redemption.UsedUserId != 0 || redemption.RedeemedTime != 0 {
 			return errors.New("redemption code already used")
 		}
-		if redemption.ExpiredTime != 0 && redemption.ExpiredTime < common.GetTimestamp() {
+		if redemption.CustomerUserID == 0 && redemption.ExpiredTime != 0 && redemption.ExpiredTime < common.GetTimestamp() {
 			expired = true
-			if err := updateRedemptionBudgetTx(tx, redemption, 0, 0, false, "expire"); err != nil {
-				return err
+			if !redemption.SourceProtected {
+				if err := updateRedemptionBudgetTx(tx, redemption, 0, 0, false, "expire"); err != nil {
+					return err
+				}
+				return tx.Model(redemption).Select("budget_reserved", "budget_version").Updates(redemption).Error
 			}
-			return tx.Model(redemption).Select("budget_reserved", "budget_version").Updates(redemption).Error
+			return nil
 		}
 		if redemption.BudgetAgentID != 0 {
 			if !redemption.BudgetReserved {
@@ -199,14 +217,7 @@ func Redeem(key string, userId int) (quota int, err error) {
 
 		// 兑换码入账并写账本（同一事务；幂等键 = redemption id，兑换码一次性，
 		// 数据库状态 CAS 已保证不会被重复兑换）
-		ledgerResult, err := CreditQuotaTx(tx, LedgerEntry{
-			UserId:        userId,
-			Account:       AccountPaid,
-			Delta:         redemption.Quota,
-			Reason:        LedgerReasonRedemption,
-			ReferenceType: "redemption",
-			ReferenceId:   strconv.Itoa(redemption.Id),
-		})
+		ledgerResult, err := creditAgentRedemptionWalletTx(tx, redemption, userId)
 		if err != nil {
 			return err
 		}
@@ -235,7 +246,7 @@ func Redeem(key string, userId int) (quota int, err error) {
 }
 
 func (redemption *Redemption) Insert() error {
-	if redemption.BudgetAgentID != 0 || redemption.BudgetReserved {
+	if redemption.BudgetAgentID != 0 || redemption.BudgetReserved || redemption.CustomerUserID != 0 || redemption.DeliveryID != 0 || redemption.SourceProtected {
 		return ErrAgentQuotaInvalid
 	}
 	if redemption.Quota <= 0 {

@@ -124,6 +124,9 @@ func ParseDashboardAccessToken(raw string) (identity AuthIdentity, internal bool
 }
 
 func IssueSecurityProof(identity AuthIdentity, method string, binding VerificationBinding) (string, int64, error) {
+	if binding.Scope == model.AgentTransactionScope {
+		return "", 0, ErrProofScope
+	}
 	method = strings.TrimSpace(method)
 	if identity.UserID <= 0 || identity.SessionID == "" || identity.UserAuthVersion <= 0 || identity.SessionVersion <= 0 || method == "" || binding.Scope == "" || binding.ContextHash == "" {
 		return "", 0, ErrAuthTokenInvalid

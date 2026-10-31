@@ -34,15 +34,18 @@ For commercial licensing, please contact support@quantumnous.com
  * it positive proof of a bind flow.
  */
 
+import { sanitizeAuthRedirect } from './auth-redirect'
+
 const OAUTH_POPUP_FLOW_KEY_PREFIX = 'oauth_popup_flow:'
 
 export function rememberOAuthLoginRedirect(
   state: string,
   redirect?: string
 ): void {
-  if (!redirect) return
+  const safeRedirect = sanitizeAuthRedirect(redirect, window.location.origin)
+  if (!safeRedirect) return
   try {
-    window.sessionStorage.setItem(`oauth_login_redirect:${state}`, redirect)
+    window.sessionStorage.setItem(`oauth_login_redirect:${state}`, safeRedirect)
   } catch {
     // Login can still complete using the default destination.
   }
@@ -53,7 +56,7 @@ export function consumeOAuthLoginRedirect(state: string): string | null {
     const key = `oauth_login_redirect:${state}`
     const redirect = window.sessionStorage.getItem(key)
     window.sessionStorage.removeItem(key)
-    return redirect
+    return sanitizeAuthRedirect(redirect, window.location.origin)
   } catch {
     return null
   }

@@ -26,9 +26,9 @@ import { DataTablePage, useDataTable } from '@/components/data-table'
 import { ErrorState } from '@/components/error-state'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { isAgentWorkspaceUser } from '@/lib/agent-permissions'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import { formatTimestampToDate } from '@/lib/format'
-import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { getAgentInvitationCode, getAgentInvitations } from '../api'
@@ -41,7 +41,7 @@ import type { AgentInvitation } from '../types'
 export function InvitationsTable(props: { agentId?: number }) {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
-  const isAgent = user?.role === ROLE.AGENT
+  const isAgent = isAgentWorkspaceUser(user)
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 20 })
   const query = useQuery({
     queryKey: [

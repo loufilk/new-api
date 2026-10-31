@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -59,7 +60,10 @@ func useRedemptionLifecycleDatabase(t *testing.T, db *gorm.DB, dialect string) {
 		common.RedisEnabled, common.BatchUpdateEnabled = previousRedis, previousBatch
 		*operation_setting.GetPaymentSetting() = previousPayment
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Redemption{}, &model.AgentRedemptionAccount{}, &model.AgentRedemptionOperation{}, &model.AgentRedemptionLedger{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}, &model.AuditLog{}))
+	// The ordinary bearer-code lifecycle now shares the policy lock and durable
+	// browser/proof machinery with agent issuance. Use the actual schema registry,
+	// while deliberately leaving every new cash feature disabled.
+	require.NoError(t, db.AutoMigrate(append([]any{&model.User{}, &model.UserSession{}, &model.UserAccessToken{}, &model.AuthFlow{}, &model.TwoFA{}, &model.PasskeyCredential{}, &model.Redemption{}, &model.AgentRedemptionAccount{}, &model.AgentRedemptionOperation{}, &model.AgentRedemptionLedger{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}, &model.AuditLog{}}, model.AgentPlatformModels()...)...))
 	query := "SELECT version()"
 	if dialect == "sqlite" {
 		query = "SELECT sqlite_version()"
@@ -71,6 +75,7 @@ func useRedemptionLifecycleDatabase(t *testing.T, db *gorm.DB, dialect string) {
 
 func redemptionLifecycleIdentity(t *testing.T, db *gorm.DB, user model.User) model.User {
 	t.Helper()
+	user.AuthVersion = 1
 	require.NoError(t, db.Create(&user).Error)
 	require.NoError(t, db.Create(&model.UserSession{
 		SID:             fmt.Sprintf("redemption-lifecycle-session-%d", user.Id),
@@ -82,7 +87,42 @@ func redemptionLifecycleIdentity(t *testing.T, db *gorm.DB, user model.User) mod
 		LoginMethod:     "password",
 		ExpiresAt:       common.GetTimestamp() + 3600,
 	}).Error)
+	if user.Role == common.RoleAdminUser || user.Role == common.RoleRootUser {
+		require.NoError(t, db.Create(&model.TwoFA{UserId: user.Id, IsEnabled: true, Secret: "synthetic-lifecycle-fixture-only"}).Error)
+	}
+	// Ordinary users and administrators deliberately have no AgentProfile: the
+	// former retain normal wallet redemption; the latter issue free legacy codes.
 	return user
+}
+
+// The factor ceremony itself has independent security tests. Lifecycle tests
+// obtain the server-built context and the same opaque one-use proof, never a
+// hand-constructed authorization or bypass flag. The caller can prepare before
+// installing an interleaving callback to exercise a genuinely stale signed edit.
+func redemptionLifecyclePrepareMutation(t *testing.T, user model.User, action, path string, input gin.H) (gin.H, string) {
+	t.Helper()
+	body := maps.Clone(input)
+	requestID := "lifecycle-" + common.GetUUID()
+	body["request_id"] = requestID
+	preparedBody := maps.Clone(body)
+	if action == "redemption.admin.update" {
+		var code model.Redemption
+		require.NoError(t, model.DB.First(&code, body["id"]).Error)
+		body["version"] = code.BudgetVersion
+		preparedBody["version"] = code.BudgetVersion
+		preparedBody["status_only"] = strings.Contains(path, "status_only=")
+	}
+	payload, err := common.Marshal(preparedBody)
+	require.NoError(t, err)
+	identity := model.AuthSessionIdentity{UserID: user.Id, SessionID: fmt.Sprintf("redemption-lifecycle-session-%d", user.Id), UserAuthVersion: user.AuthVersion, SessionVersion: 1}
+	prepared, err := model.PrepareAgentPurchaseOperation(identity, action, requestID, payload)
+	require.NoError(t, err)
+	require.NotNil(t, prepared)
+	hash, err := model.AgentTransactionContextHash(prepared.VerificationContext)
+	require.NoError(t, err)
+	proof, _, err := model.IssueAgentTransactionProof(identity, hash, "2fa")
+	require.NoError(t, err)
+	return body, proof
 }
 
 func redemptionLifecycleSeed(t *testing.T, db *gorm.DB, name string) (model.User, model.Redemption) {
@@ -93,7 +133,7 @@ func redemptionLifecycleSeed(t *testing.T, db *gorm.DB, name string) (model.User
 	return user, code
 }
 
-func redemptionLifecycleRequest(t *testing.T, handler gin.HandlerFunc, path string, user model.User, body any) *httptest.ResponseRecorder {
+func redemptionLifecycleRequest(t *testing.T, handler gin.HandlerFunc, path string, user model.User, body any, proof ...string) *httptest.ResponseRecorder {
 	t.Helper()
 	payload, err := common.Marshal(body)
 	require.NoError(t, err)
@@ -101,6 +141,9 @@ func redemptionLifecycleRequest(t *testing.T, handler gin.HandlerFunc, path stri
 	c, _ := gin.CreateTestContext(response)
 	c.Request = httptest.NewRequest(http.MethodPost, path, bytes.NewReader(payload))
 	c.Request.Header.Set("Content-Type", "application/json")
+	if len(proof) > 0 {
+		c.Request.Header.Set("X-Security-Proof", proof[0])
+	}
 	c.Set("id", user.Id)
 	c.Set("role", user.Role)
 	c.Set("session_id", fmt.Sprintf("redemption-lifecycle-session-%d", user.Id))
@@ -287,6 +330,11 @@ func TestRedemptionLifecycleDatabaseMatrix(t *testing.T) {
 			for _, statusOnly := range []bool{false, true} {
 				t.Run(fmt.Sprintf("admin_save_after_redeem_rejects_stale_status_only_%v", statusOnly), func(t *testing.T) {
 					user, code := redemptionLifecycleSeed(t, db, fmt.Sprintf("stale-save-%v", statusOnly))
+					path := "/api/redemption/"
+					if statusOnly {
+						path += "?status_only=true"
+					}
+					body, proof := redemptionLifecyclePrepareMutation(t, admin, "redemption.admin.update", path, gin.H{"id": code.Id, "name": "stale edit", "quota": 900, "status": common.RedemptionCodeStatusEnabled})
 					var interleaved atomic.Bool
 					var redeemErr error
 					// Complete the competing redemption after HTTP identity resolution,
@@ -299,11 +347,7 @@ func TestRedemptionLifecycleDatabaseMatrix(t *testing.T) {
 						}
 					}))
 					t.Cleanup(func() { require.NoError(t, db.Callback().Query().Remove(callback)) })
-					path := "/api/redemption/"
-					if statusOnly {
-						path += "?status_only=true"
-					}
-					response := redemptionLifecycleRequest(t, UpdateRedemption, path, admin, gin.H{"id": code.Id, "name": "stale edit", "quota": 900, "status": common.RedemptionCodeStatusEnabled})
+					response := redemptionLifecycleRequest(t, UpdateRedemption, path, admin, body, proof)
 					require.True(t, interleaved.Load())
 					require.NoError(t, redeemErr)
 					assert.False(t, redemptionResponseSuccess(t, response), response.Body.String())
@@ -351,8 +395,15 @@ func TestRedemptionLifecycleDatabaseMatrix(t *testing.T) {
 			t.Run("status_api_accepts_only_enable_disable_and_preserves_redemption_metadata", func(t *testing.T) {
 				_, code := redemptionLifecycleSeed(t, db, "status-validation")
 				for _, status := range []int{0, -1, common.RedemptionCodeStatusUsed, 99} {
-					response := redemptionLifecycleRequest(t, UpdateRedemption, "/api/redemption/?status_only=true", admin, gin.H{"id": code.Id, "status": status, "redeemed_time": 123, "used_user_id": 999})
+					path := "/api/redemption/?status_only=true"
+					body, proof := redemptionLifecyclePrepareMutation(t, admin, "redemption.admin.update", path, gin.H{"id": code.Id, "status": status})
+					response := redemptionLifecycleRequest(t, UpdateRedemption, path, admin, body, proof)
 					assert.False(t, redemptionResponseSuccess(t, response), response.Body.String())
+					assert.Contains(t, response.Body.String(), model.ErrRedemptionInvalidStatus.Error())
+					body["redeemed_time"], body["used_user_id"] = 123, 999
+					response = redemptionLifecycleRequest(t, UpdateRedemption, path, admin, body, proof)
+					assert.False(t, redemptionResponseSuccess(t, response), response.Body.String())
+					assert.Contains(t, response.Body.String(), "Invalid parameters")
 				}
 				require.NoError(t, db.First(&code, code.Id).Error)
 				assert.Equal(t, common.RedemptionCodeStatusEnabled, code.Status)
@@ -369,7 +420,8 @@ func TestRedemptionLifecycleDatabaseMatrix(t *testing.T) {
 						if statusOnly {
 							path += "?status_only=true"
 						}
-						response := redemptionLifecycleRequest(t, UpdateRedemption, path, admin, gin.H{"id": code.Id, "name": "recovered edit", "quota": 700, "status": common.RedemptionCodeStatusEnabled})
+						body, proof := redemptionLifecyclePrepareMutation(t, admin, "redemption.admin.update", path, gin.H{"id": code.Id, "name": "recovered edit", "quota": 700, "status": common.RedemptionCodeStatusEnabled})
+						response := redemptionLifecycleRequest(t, UpdateRedemption, path, admin, body, proof)
 						assert.False(t, redemptionResponseSuccess(t, response), response.Body.String())
 						assert.Contains(t, response.Body.String(), model.ErrRedemptionUsedImmutable.Error())
 					}
@@ -403,7 +455,8 @@ func TestRedemptionLifecycleDatabaseMatrix(t *testing.T) {
 					setting.ComplianceTermsVersion = "outdated"
 					response := redemptionLifecycleRequest(t, TopUp, "/api/user/topup", user, gin.H{"key": code.Key})
 					assert.False(t, redemptionResponseSuccess(t, response), response.Body.String())
-					response = redemptionLifecycleRequest(t, AddRedemption, "/api/redemption/", admin, gin.H{"name": "gated-create", "quota": 250, "count": 1})
+					body, proof := redemptionLifecyclePrepareMutation(t, admin, "redemption.admin.create", "/api/redemption/", gin.H{"name": "gated-create", "quota": 250, "count": 1})
+					response = redemptionLifecycleRequest(t, AddRedemption, "/api/redemption/", admin, body, proof)
 					assert.False(t, redemptionResponseSuccess(t, response), response.Body.String())
 				}
 				var count int64
@@ -415,7 +468,8 @@ func TestRedemptionLifecycleDatabaseMatrix(t *testing.T) {
 				assert.Equal(t, 60, user.Quota)
 				setting.ComplianceConfirmed = true
 				setting.ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
-				response := redemptionLifecycleRequest(t, AddRedemption, "/api/redemption/", admin, gin.H{"name": "gated-create", "quota": 250, "count": 1})
+				body, proof := redemptionLifecyclePrepareMutation(t, admin, "redemption.admin.create", "/api/redemption/", gin.H{"name": "gated-create", "quota": 250, "count": 1})
+				response := redemptionLifecycleRequest(t, AddRedemption, "/api/redemption/", admin, body, proof)
 				assert.True(t, redemptionResponseSuccess(t, response), response.Body.String())
 				require.NoError(t, db.Model(&model.Redemption{}).Where("name = ?", "gated-create").Count(&count).Error)
 				assert.EqualValues(t, 1, count)

@@ -246,12 +246,9 @@ func TestUsageLogRouteAuthorizationPostgres(t *testing.T) {
 				request.Header.Set("Authorization", "Bearer "+token)
 				response := httptest.NewRecorder()
 				router.ServeHTTP(response, request)
-				if role == common.RoleAgentUser {
-					assert.Equal(t, http.StatusForbidden, response.Code, path)
-				} else {
-					assert.Equal(t, http.StatusOK, response.Code, path)
-					assert.Contains(t, response.Body.String(), `"success":true`)
-				}
+				// Agent qualification must not remove ordinary personal usage access.
+				assert.Equal(t, http.StatusOK, response.Code, path)
+				assert.Contains(t, response.Body.String(), `"success":true`)
 			}
 		})
 	}

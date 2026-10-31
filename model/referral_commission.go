@@ -290,7 +290,7 @@ func ValidReferralTransferIdempotencyKey(key string) bool {
 // 幂等：IdempotencyKey 由用户提供、后端按用户命名空间化。同键同金额重放返回
 // 原始结果（Replayed=true）且不再扣减 aff_quota；同键不同金额返回
 // ErrLedgerIdempotencyConflict。余额不足、正数、上限与键格式校验失败不产生任何变动。
-func TransferAffQuota(userId, amount int, idempotencyKey string) (*LedgerResult, error) {
+func TransferAffQuota(userId, amount int, idempotencyKey string, authorizations ...AgentTransactionAuthorization) (*LedgerResult, error) {
 	key := strings.TrimSpace(idempotencyKey)
 	if userId <= 0 || amount <= 0 || amount > common.MaxWalletQuota || !ValidReferralTransferIdempotencyKey(key) {
 		return nil, ErrReferralTransferInvalid
@@ -310,6 +310,22 @@ func TransferAffQuota(userId, amount int, idempotencyKey string) (*LedgerResult,
 	}
 	var result *LedgerResult
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		var authorization AgentTransactionAuthorization
+		var context AgentTransactionContext
+		if len(authorizations) > 0 {
+			if len(authorizations) != 1 || authorizations[0].Identity().UserID != userId {
+				return ErrAgentTransactionProof
+			}
+			authorization = authorizations[0]
+			policy, err := LockCurrentAgentPolicyTx(tx)
+			if err != nil {
+				return err
+			}
+			context, err = legacyCommissionContext(tx, policy, authorization.Identity(), AgentLegacyCommissionRequest{RequestID: key, Quota: amount})
+			if err != nil {
+				return err
+			}
+		}
 		var user User
 		if err := lockForUpdate(tx).Select("id", "aff_quota").Where("id = ?", userId).First(&user).Error; err != nil {
 			return err
@@ -320,7 +336,15 @@ func TransferAffQuota(userId, amount int, idempotencyKey string) (*LedgerResult,
 		}
 		result = applied
 		if applied.Replayed {
+			if len(authorizations) > 0 {
+				return ValidateAuthSessionWithTx(tx, authorization.Identity())
+			}
 			return nil
+		}
+		if len(authorizations) > 0 {
+			if err := ConsumeAgentTransactionAuthorizationTx(tx, authorization, context); err != nil {
+				return err
+			}
 		}
 		if user.AffQuota < amount {
 			return ErrLedgerInsufficientBalance

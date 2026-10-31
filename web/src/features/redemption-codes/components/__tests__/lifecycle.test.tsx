@@ -18,23 +18,36 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { Row } from '@tanstack/react-table'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 
-import { api } from '@/lib/api'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import type { Redemption } from '../../types'
 import { DataTableRowActions } from '../data-table-row-actions'
 import { RedemptionsDeleteDialog } from '../redemptions-delete-dialog'
 import { RedemptionsPrimaryButtons } from '../redemptions-primary-buttons'
 import { RedemptionsProvider, useRedemptions } from '../redemptions-provider'
+import { authorizeTransaction, transactionNetwork } from './transaction-fixture'
 
 const code: Redemption = {
   id: 1,
   user_id: 7,
   budget_agent_id: 7,
+  version: 3,
+  budget_reserved: true,
+  source_protected: false,
+  delivery_id: 0,
+  customer_user_id: 0,
   name: 'customer code',
   key: 'test-code',
   status: 1,
@@ -50,12 +63,14 @@ function DeleteHarness() {
   useEffect(() => {
     redemptions.setCurrentRow(code)
     redemptions.setOpen('delete')
-    // Seed the real provider once for this deletion workflow.
+    // Seed the provider once, not after its own state updates.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   return <RedemptionsDeleteDialog />
 }
-function setup(children: React.ReactNode) {
+function setup(children: React.ReactNode, role: number = ROLE.ADMIN, id = 1) {
+  useAuthStore.getState().auth.setUser({ id, username: 'operator', role })
+  const network = transactionNetwork()
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -65,10 +80,13 @@ function setup(children: React.ReactNode) {
       <RedemptionsProvider>{children}</RedemptionsProvider>
     </QueryClientProvider>
   )
+  return network
 }
 afterEach(() => {
   clients.forEach((client) => client.clear())
   clients.length = 0
+  useAuthStore.getState().auth.reset()
+  sessionStorage.clear()
   vi.restoreAllMocks()
 })
 
@@ -87,68 +105,192 @@ it('used redemption codes expose no edit or re-enable control', async () => {
     screen.queryByRole('menuitem', { name: 'Disable' })
   ).not.toBeInTheDocument()
 })
-
-it('single deletion failure keeps its confirmation open for a safe retry', async () => {
-  const remove = vi
-    .spyOn(api, 'delete')
-    .mockRejectedValueOnce(new Error('Offline'))
-    .mockResolvedValueOnce({ data: { success: true } })
-  setup(<DeleteHarness />)
+it('single deletion is parameter-bound and interrupted results cannot be blindly retried', async () => {
+  const { prepare, mutations } = setup(<DeleteHarness />)
+  mutations.mockRejectedValueOnce(new Error('Offline'))
   await userEvent.click(
     within(await screen.findByRole('alertdialog')).getByRole('button', {
       name: 'Delete',
     })
   )
-  await waitFor(() =>
-    expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled()
-  )
-  expect(screen.getByRole('alertdialog')).toBeInTheDocument()
-  await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
-  await waitFor(() =>
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-  )
-  expect(remove).toHaveBeenCalledTimes(2)
-})
-
-it('delete-invalid transport failures keep the dialog open and re-enable retry', async () => {
-  const remove = vi.spyOn(api, 'delete').mockRejectedValue(new Error('Offline'))
-  setup(<RedemptionsPrimaryButtons />)
-  await userEvent.click(screen.getByRole('button', { name: 'Delete Invalid' }))
-  const dialog = await screen.findByRole('alertdialog')
-  await userEvent.click(
-    within(dialog).getByRole('button', { name: 'Delete Invalid' })
-  )
-  await waitFor(() => expect(remove).toHaveBeenCalledTimes(1))
-  expect(dialog).toBeInTheDocument()
+  expect(mutations).not.toHaveBeenCalled()
+  await authorizeTransaction()
   expect(
-    within(dialog).getByRole('button', { name: 'Delete Invalid' })
-  ).toBeEnabled()
+    await screen.findByText('Do not submit a new request')
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: 'Authorize transaction' })
+  ).toBeDisabled()
+  expect(prepare).toHaveBeenCalledWith(
+    expect.objectContaining({
+      action: 'redemption.admin.delete',
+      payload: { ids: [1], invalid_only: false, agent_user_id: 0 },
+    })
+  )
+  expect(mutations).toHaveBeenCalledWith(
+    expect.objectContaining({
+      url: '/api/redemption/1/',
+      method: 'delete',
+      params: { request_id: prepare.mock.calls[0][0].request_id },
+      headers: { 'X-Security-Proof': 'test-single-use-proof' },
+      skipAuthRefresh: true,
+    })
+  )
+  expect(mutations).toHaveBeenCalledOnce()
 })
-
-it('delete-invalid forwards the visible agent scope rather than clearing all agents', async () => {
-  const remove = vi
-    .spyOn(api, 'delete')
-    .mockResolvedValue({ data: { success: true, data: 1 } })
-  setup(<RedemptionsPrimaryButtons agentId={7} />)
+it('delete-invalid preserves the visible agent scope through review and final query', async () => {
+  const { mutations, prepare } = setup(
+    <RedemptionsPrimaryButtons agentId={7} />
+  )
   await userEvent.click(screen.getByRole('button', { name: 'Delete Invalid' }))
   const dialog = await screen.findByRole('alertdialog')
   expect(dialog).toHaveTextContent(
     'Only invalid codes belonging to agent #7 will be deleted.'
   )
+  expect(dialog).toHaveTextContent(
+    'Each cleanup removes up to 1,000 used, disabled, or expired codes. Repeat cleanup if invalid codes remain.'
+  )
   await userEvent.click(
     within(dialog).getByRole('button', { name: 'Delete Invalid' })
   )
-  await waitFor(() =>
-    expect(remove).toHaveBeenCalledWith(
-      '/api/redemption/invalid?agent_user_id=7'
-    )
+  await authorizeTransaction()
+  await waitFor(() => expect(mutations).toHaveBeenCalledOnce())
+  expect(prepare).toHaveBeenCalledWith(
+    expect.objectContaining({
+      payload: { ids: null, invalid_only: true, agent_user_id: 7 },
+    })
+  )
+  expect(mutations).toHaveBeenCalledWith(
+    expect.objectContaining({
+      url: '/api/redemption/invalid',
+      method: 'delete',
+      params: {
+        agent_user_id: 7,
+        request_id: prepare.mock.calls[0][0].request_id,
+      },
+    })
   )
 })
-
-it('delete-invalid explains the bounded cleanup and how to continue before confirmation', async () => {
-  setup(<RedemptionsPrimaryButtons />)
-  await userEvent.click(screen.getByRole('button', { name: 'Delete Invalid' }))
-  expect(await screen.findByRole('alertdialog')).toHaveTextContent(
-    'Each cleanup removes up to 1,000 used, disabled, or expired codes. Repeat cleanup if invalid codes remain.'
+it.each([ROLE.AGENT, ROLE.ADMIN])(
+  'status changes use the role-matched prepare action and retain the observed version for role %s',
+  async (role) => {
+    const { mutations, prepare } = setup(
+      <DataTableRowActions row={{ original: code } as Row<Redemption>} />,
+      role,
+      7
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Disable' }))
+    await authorizeTransaction()
+    await waitFor(() => expect(mutations).toHaveBeenCalledOnce())
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action:
+          role === ROLE.AGENT ? 'redemption.update' : 'redemption.admin.update',
+        payload: {
+          id: 1,
+          version: 3,
+          name: '',
+          status: 2,
+          quota: 0,
+          expired_time: 0,
+          status_only: true,
+        },
+      })
+    )
+    expect(mutations).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: '/api/redemption/',
+        method: 'put',
+        params: { status_only: true },
+        data: {
+          id: 1,
+          version: 3,
+          name: '',
+          status: 2,
+          quota: 0,
+          expired_time: 0,
+          request_id: prepare.mock.calls[0][0].request_id,
+        },
+      })
+    )
+  }
+)
+it.each([
+  { source_protected: true },
+  { customer_user_id: 99 },
+  { delivery_id: 8 },
+])(
+  'protected rights $source_protected $customer_user_id $delivery_id prevent legacy mutations',
+  async (flags) => {
+    setup(
+      <DataTableRowActions
+        row={{ original: { ...code, ...flags } } as Row<Redemption>}
+      />
+    )
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+    expect(
+      screen.queryByRole('menuitem', { name: 'Disable' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('menuitem', { name: 'Delete' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('menuitem', { name: 'Review cancellation' })
+    ).not.toBeInTheDocument()
+  }
+)
+it('the owner may cancel an unbound paid-source reservation only with obligation evidence and MFA', async () => {
+  const { prepare, mutations } = setup(
+    <DataTableRowActions
+      row={{ original: { ...code, source_protected: true } } as Row<Redemption>}
+    />,
+    ROLE.AGENT,
+    7
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+  await userEvent.click(
+    screen.getByRole('menuitem', { name: 'Review cancellation' })
+  )
+  expect(
+    await screen.findByRole('dialog', { name: 'Review cancellation' })
+  ).toHaveTextContent(
+    'An unclaimed delivery may already have been sold offline.'
+  )
+  fireEvent.change(
+    screen.getByRole('textbox', {
+      name: 'Customer obligation evidence reference',
+    }),
+    { target: { value: 'case-42 resolved with customer' } }
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Continue' }))
+  expect(prepare).not.toHaveBeenCalled()
+  expect(mutations).not.toHaveBeenCalled()
+  await userEvent.click(
+    screen.getByRole('checkbox', {
+      name: 'All customer obligations have been verified as resolved',
+    })
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Continue' }))
+  await authorizeTransaction()
+  await waitFor(() => expect(mutations).toHaveBeenCalledOnce())
+  expect(prepare).toHaveBeenCalledWith(
+    expect.objectContaining({
+      action: 'delivery.cancel',
+      payload: {
+        redemption_id: 1,
+        version: 3,
+        customer_obligations_resolved: true,
+        evidence_reference: 'case-42 resolved with customer',
+      },
+    })
+  )
+  expect(mutations).toHaveBeenCalledWith(
+    expect.objectContaining({
+      url: '/api/agent-platform/deliveries/cancel-code',
+      headers: { 'X-Security-Proof': 'test-single-use-proof' },
+      skipAuthRefresh: true,
+    })
   )
 })

@@ -229,20 +229,14 @@ export function UsersMutateDrawer({
           if (!proof) return
           proofToken = proof.proof_token
         }
-      } else if ((payload.role ?? 0) >= ROLE.AGENT) {
+      } else if ((payload.role ?? 0) >= ROLE.ADMIN) {
         const proof = await requestVerification({
           scope: 'admin.user.create',
           context: { role: payload.role ?? ROLE.ADMIN },
-          title:
-            payload.role === ROLE.AGENT
-              ? t('Verify to create agent')
-              : t('Verify to create administrator'),
-          description:
-            payload.role === ROLE.AGENT
-              ? t('Confirm your identity before creating an agent account.')
-              : t(
-                  'Confirm your identity before creating an administrator account.'
-                ),
+          title: t('Verify to create administrator'),
+          description: t(
+            'Confirm your identity before creating an administrator account.'
+          ),
         })
         if (!proof) return
         proofToken = proof.proof_token
@@ -356,7 +350,6 @@ export function UsersMutateDrawer({
                         <Select
                           items={[
                             { value: '1', label: t('Common User') },
-                            { value: '5', label: t('Agent') },
                             { value: '10', label: t('Admin') },
                           ]}
                           onValueChange={(value) =>
@@ -375,7 +368,6 @@ export function UsersMutateDrawer({
                               <SelectItem value='1'>
                                 {t('Common User')}
                               </SelectItem>
-                              <SelectItem value='5'>{t('Agent')}</SelectItem>
                               <SelectItem value='10'>{t('Admin')}</SelectItem>
                             </SelectGroup>
                           </SelectContent>

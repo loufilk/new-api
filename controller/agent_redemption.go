@@ -16,8 +16,11 @@ import (
 // may omit one, but controllers cannot accidentally fall back to role-only auth.
 func redemptionScope(c *gin.Context) model.RedemptionScope {
 	c.Header("Cache-Control", "no-store")
-	identity, ok := middleware.GetStepUpIdentity(c)
-	if !ok || identity.UserID != c.GetInt("id") {
+	identity, ok := middleware.GetSessionAuthIdentity(c)
+	if !ok || c.GetBool("use_access_token") || identity.UserID != c.GetInt("id") {
+		return model.RedemptionScope{}
+	}
+	if err := model.ValidateAgentPurchaseReadIdentity(identity); err != nil {
 		return model.RedemptionScope{}
 	}
 	scope, err := model.ResolveRedemptionScope(identity.UserID)
@@ -41,6 +44,10 @@ func redemptionPage(c *gin.Context) *common.PageInfo {
 // Never expose raw database errors from code creation/lookup: unique violations
 // and SQL diagnostics may contain the plaintext redemption credential.
 func redemptionAPIError(c *gin.Context, err error) {
+	if errors.Is(err, model.ErrAgentTransactionProof) || errors.Is(err, model.ErrAgentTransactionContext) || errors.Is(err, model.ErrAgentProfilePermission) || errors.Is(err, model.ErrAgentProfileConflict) || errors.Is(err, model.ErrAgentDeliveryProtected) {
+		writeAgentPurchaseError(c, err)
+		return
+	}
 	switch {
 	case errors.Is(err, model.ErrAgentRedemptionPermission):
 		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage(err.Error()))
@@ -85,11 +92,17 @@ func GetAgentRedemptionLedger(c *gin.Context) {
 
 func AllocateAgentRedemptionQuota(c *gin.Context) {
 	var request model.AgentQuotaAllocationRequest
-	if err := c.ShouldBindJSON(&request); err != nil {
+	if err := common.DecodeJsonStrict(c.Request.Body, &request); err != nil {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	result, err := model.AllocateAgentRedemptionQuota(redemptionScope(c), request)
+	scope := redemptionScope(c)
+	auth, ok := agentPurchaseAuthorization(c, "redemption.allocate", request.RequestID, request)
+	if !ok {
+		return
+	}
+	scope.Authorization = &auth
+	result, err := model.AllocateAgentRedemptionQuota(scope, request)
 	if err != nil {
 		redemptionAPIError(c, err)
 		return

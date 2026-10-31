@@ -509,7 +509,15 @@ func handleWaffoPayment(c *gin.Context, wh *core.WebhookHandler, result *core.Pa
 	LockOrder(merchantOrderId)
 	defer UnlockOrder(merchantOrderId)
 
-	if err := model.RechargeWaffo(merchantOrderId, c.ClientIP()); err != nil {
+	environment := "live"
+	if setting.WaffoSandbox {
+		environment = "test"
+	}
+	var paymentFacts []model.AgentVerifiedPaymentFacts
+	if fact, ok := model.NewAgentVerifiedPaymentFacts(model.PaymentProviderWaffo, result.AcquiringOrderID, setting.WaffoMerchantId, environment, result.OrderCurrency, result.OrderAmount, false); ok {
+		paymentFacts = append(paymentFacts, fact)
+	}
+	if err := model.RechargeWaffo(merchantOrderId, c.ClientIP(), paymentFacts...); err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("Waffo top-up processing failed trade_no=%s client_ip=%s error=%q", merchantOrderId, c.ClientIP(), err.Error()))
 		sendWaffoWebhookResponse(c, wh, false, err.Error())
 		return

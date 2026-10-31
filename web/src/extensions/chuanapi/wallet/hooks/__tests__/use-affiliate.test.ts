@@ -19,90 +19,73 @@ For commercial licensing, please contact support@quantumnous.com
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
-import { getAffiliateCode, transferAffiliateQuota } from '../../api'
+import { api } from '@/lib/api'
+
 import { useAffiliate } from '../use-affiliate'
 
-vi.mock('../../api', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  getAffiliateCode: vi.fn(),
-  transferAffiliateQuota: vi.fn(),
-}))
-
-describe('useAffiliate transfer idempotency', () => {
+describe('useAffiliate transaction handoff', () => {
   beforeEach(() => {
-    vi.mocked(getAffiliateCode).mockResolvedValue({
-      success: true,
-      data: 'aff-1',
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: 'aff-1' },
     })
   })
-
   async function renderAffiliate() {
     const view = renderHook(() => useAffiliate())
     await waitFor(() => expect(view.result.current.loading).toBe(false))
     return view
   }
-
-  test('reuses the idempotency key when the same amount is retried after a lost response', async () => {
-    vi.mocked(transferAffiliateQuota)
-      .mockRejectedValueOnce(new Error('connection lost'))
-      .mockResolvedValueOnce({ success: true, message: 'Transfer successful' })
-
+  test('does not transfer before a concrete transaction is authorized', async () => {
+    const post = vi.spyOn(api, 'post')
     const { result } = await renderAffiliate()
-
-    let firstAttempt = true
-    await act(async () => {
-      firstAttempt = await result.current.transferQuota(500000)
+    let pending!: Promise<boolean>
+    act(() => {
+      pending = result.current.transferQuota(500000)
     })
-    expect(firstAttempt).toBe(false)
-
-    let secondAttempt = false
-    await act(async () => {
-      secondAttempt = await result.current.transferQuota(500000)
+    expect(result.current.transferDraft).toMatchObject({
+      action: 'commission.convert.legacy',
+      payload: { quota: 500000 },
     })
-    expect(secondAttempt).toBe(true)
-
-    const [firstCall, secondCall] = vi.mocked(transferAffiliateQuota).mock.calls
-    expect(firstCall[0]).toEqual({ quota: 500000 })
-    expect(secondCall[0]).toEqual({ quota: 500000 })
-    expect(firstCall[1]).toBe(secondCall[1])
+    expect(post).not.toHaveBeenCalled()
+    act(() => result.current.finishTransfer(false))
+    expect(await pending).toBe(false)
   })
-
-  test('uses a new idempotency key when the amount changes after a failure', async () => {
-    vi.mocked(transferAffiliateQuota)
-      .mockRejectedValueOnce(new Error('connection lost'))
-      .mockResolvedValueOnce({ success: true, message: 'Transfer successful' })
-
+  test('retains the same request ID after an unresolved or cancelled attempt', async () => {
     const { result } = await renderAffiliate()
-
-    await act(async () => {
-      await result.current.transferQuota(500000)
+    act(() => {
+      void result.current.transferQuota(500000)
     })
-    await act(async () => {
-      await result.current.transferQuota(1000000)
+    const firstId = result.current.transferDraft?.request_id
+    act(() => result.current.finishTransfer(false))
+    act(() => {
+      void result.current.transferQuota(500000)
     })
-
-    const [firstCall, secondCall] = vi.mocked(transferAffiliateQuota).mock.calls
-    expect(firstCall[0]).toEqual({ quota: 500000 })
-    expect(secondCall[0]).toEqual({ quota: 1000000 })
-    expect(firstCall[1]).not.toBe(secondCall[1])
+    expect(result.current.transferDraft?.request_id).toBe(firstId)
+    act(() => result.current.finishTransfer(false))
   })
-
-  test('uses a fresh idempotency key for a new transfer after success', async () => {
-    vi.mocked(transferAffiliateQuota).mockResolvedValue({
-      success: true,
-      message: 'Transfer successful',
-    })
-
+  test('allocates a fresh request only after completed transfer', async () => {
     const { result } = await renderAffiliate()
-
-    await act(async () => {
-      await result.current.transferQuota(500000)
+    act(() => {
+      void result.current.transferQuota(500000)
     })
-    await act(async () => {
-      await result.current.transferQuota(500000)
+    const firstId = result.current.transferDraft?.request_id
+    act(() => result.current.finishTransfer(true))
+    act(() => {
+      void result.current.transferQuota(500000)
     })
-
-    const [firstCall, secondCall] = vi.mocked(transferAffiliateQuota).mock.calls
-    expect(firstCall[1]).not.toBe(secondCall[1])
+    expect(result.current.transferDraft?.request_id).not.toBe(firstId)
+    act(() => result.current.finishTransfer(false))
+  })
+  test('rejects duplicates and unsafe quota without replacing the existing operation', async () => {
+    const { result } = await renderAffiliate()
+    expect(
+      await result.current.transferQuota(Number.MAX_SAFE_INTEGER + 1)
+    ).toBe(false)
+    act(() => {
+      void result.current.transferQuota(500000)
+    })
+    const firstId = result.current.transferDraft?.request_id
+    expect(await result.current.transferQuota(1000000)).toBe(false)
+    expect(result.current.transferDraft?.request_id).toBe(firstId)
+    act(() => result.current.finishTransfer(false))
   })
 })

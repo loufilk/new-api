@@ -61,6 +61,9 @@ func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 				model.InvalidateModelBonusEligibleCache()
 			})
 			require.NoError(t, db.AutoMigrate(&model.Option{}, &model.BillingFinalization{}, &model.Task{}, &model.User{}, &model.Token{}, &model.Log{}, &model.Channel{}, &model.Ability{}, &model.Midjourney{}, &model.TopUp{}, &model.UserSubscription{}, &model.SystemTask{}, &model.SystemTaskLock{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Model{}, &model.Vendor{}, &model.ModelBonusEligibleAudit{}, &model.ReferralCommission{}, &model.Redemption{}, &model.SubscriptionPlan{}, &model.SubscriptionOrder{}, &model.SubscriptionPreConsumeRecord{}))
+			// Match the service fixture cleanup and additive startup schema after the
+			// matrix replaces TestMain's database with this isolated topology.
+			require.NoError(t, db.AutoMigrate(model.AgentPlatformModels()...))
 			var version string
 			q := "SELECT version()"
 			if dialect.name == common.DatabaseTypeSQLite {

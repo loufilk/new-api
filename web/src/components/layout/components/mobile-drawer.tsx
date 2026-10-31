@@ -28,7 +28,6 @@ import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useIsSidebarModuleVisible } from '@/hooks/use-sidebar-config'
 import { useUserDisplay } from '@/hooks/use-user-display'
-import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import type { AuthUser } from '@/stores/auth-store'
 
@@ -166,7 +165,6 @@ function MobileUserProfile(props: MobileUserProfileProps) {
   const { t } = useTranslation()
   const { displayName, initials, roleLabel } = useUserDisplay(props.user)
   const isSecurityVisible = useIsSidebarModuleVisible('/security')
-  const isAgent = props.user?.role === ROLE.AGENT
 
   if (!props.user) return null
 
@@ -195,18 +193,16 @@ function MobileUserProfile(props: MobileUserProfileProps) {
       </div>
 
       {/* Navigation links - same style as top nav */}
-      {!isAgent && (
-        <Link
-          to='/profile'
-          onClick={props.onNavigate}
-          className='text-primary/60 hover:text-primary/80 border-border flex items-center gap-2.5 border-b p-2.5 transition-colors'
-        >
-          <User className='size-4' />
-          {t('Profile')}
-        </Link>
-      )}
+      <Link
+        to='/profile'
+        onClick={props.onNavigate}
+        className='text-primary/60 hover:text-primary/80 border-border flex items-center gap-2.5 border-b p-2.5 transition-colors'
+      >
+        <User className='size-4' />
+        {t('Profile')}
+      </Link>
 
-      {!isAgent && isSecurityVisible && (
+      {isSecurityVisible && (
         <Link
           to='/security'
           onClick={props.onNavigate}
@@ -217,16 +213,14 @@ function MobileUserProfile(props: MobileUserProfileProps) {
         </Link>
       )}
 
-      {!isAgent && (
-        <Link
-          to='/wallet'
-          onClick={props.onNavigate}
-          className='text-primary/60 hover:text-primary/80 border-border flex items-center gap-2.5 border-b p-2.5 transition-colors'
-        >
-          <Wallet className='size-4' />
-          {t('Wallet')}
-        </Link>
-      )}
+      <Link
+        to='/wallet'
+        onClick={props.onNavigate}
+        className='text-primary/60 hover:text-primary/80 border-border flex items-center gap-2.5 border-b p-2.5 transition-colors'
+      >
+        <Wallet className='size-4' />
+        {t('Wallet')}
+      </Link>
 
       {/* Sign out - consistent style */}
       <Button

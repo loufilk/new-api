@@ -31,6 +31,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
+import { isAgentWorkspaceUser } from '@/lib/agent-permissions'
 import { ROLE } from '@/lib/roles'
 import { createServerError } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
@@ -63,7 +64,7 @@ export function RedemptionsTable() {
   const user = useAuthStore((state) => state.auth.user)
   const search = route.useSearch()
   const navigate = route.useNavigate()
-  const agentId = user?.role === ROLE.AGENT ? user.id : search.agent_user_id
+  const agentId = isAgentWorkspaceUser(user) ? user.id : search.agent_user_id
   const { refreshTrigger } = useRedemptions()
   const isMobile = useMediaQuery('(max-width: 640px)')
 

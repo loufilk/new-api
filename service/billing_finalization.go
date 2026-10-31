@@ -79,14 +79,21 @@ func (s *BillingSession) terminalReceiptLocked() (model.BillingFinalization, err
 }
 
 func (s *BillingSession) settleDurableLocked(actual int) error {
+	_, err := s.settleDurableWithAccountingLocked(actual, nil)
+	return err
+}
+
+// accounting participates in the same source/token/terminal-owner transaction.
+// It is never called for an already committed settlement replay.
+func (s *BillingSession) settleDurableWithAccountingLocked(actual int, accounting func(*gorm.DB) error) (bool, error) {
 	if s.refunded || s.taskOwned {
-		return model.ErrBillingFinalized
+		return false, model.ErrBillingFinalized
 	}
 	if actual < 0 || actual > common.MaxQuota {
-		return errors.New("invalid billing actual quota")
+		return false, errors.New("invalid billing actual quota")
 	}
 	if s.settlementIntent != nil && *s.settlementIntent != actual {
-		return errors.New("billing settlement replay amount mismatch")
+		return false, errors.New("billing settlement replay amount mismatch")
 	}
 	// Freeze locally before any SQL. Even if the durable intent write fails or
 	// its COMMIT acknowledgement is lost, a later failure defer cannot refund
@@ -94,11 +101,11 @@ func (s *BillingSession) settleDurableLocked(actual int) error {
 	s.settlementIntent = &actual
 	receipt, err := s.terminalReceiptLocked()
 	if err != nil {
-		return err
+		return false, err
 	}
 	funding, ok := s.funding.(transactionalSettlementFunding)
 	if !ok {
-		return fmt.Errorf("funding source %T does not support transactional settlement", s.funding)
+		return false, fmt.Errorf("funding source %T does not support transactional settlement", s.funding)
 	}
 	delta := actual - s.preConsumedQuota
 	var result moneyport.SettlementResult
@@ -127,6 +134,9 @@ func (s *BillingSession) settleDurableLocked(actual int) error {
 				count = 1
 			}
 			return model.ApplyTaskUsageDeltaTx(tx, receipt.UserID, s.realtime.channelID, actual, count)
+		}
+		if accounting != nil {
+			return accounting(tx)
 		}
 		return nil
 	}
@@ -169,7 +179,7 @@ func (s *BillingSession) settleDurableLocked(actual int) error {
 		// A deadline (like a lost COMMIT ACK) is not proof of rollback. Preserve
 		// the frozen receipt for the existing terminal-owner reconciliation.
 		s.settlementUncertain = true
-		return err
+		return false, err
 	}
 	s.settlementUncertain = false
 	if s.realtime != nil {
@@ -183,7 +193,7 @@ func (s *BillingSession) settleDurableLocked(actual int) error {
 	}
 	s.settled, s.fundingSettled = true, true
 	s.actualSettled = actual
-	return nil
+	return applied, nil
 }
 
 func (s *BillingSession) resolveSettlementBeforeReserveLocked() error {

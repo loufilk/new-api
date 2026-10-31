@@ -22,7 +22,7 @@ func setupAgentInvitationTest(t *testing.T) (User, User) {
 	operation_setting.GetPaymentSetting().ComplianceConfirmed = true
 	operation_setting.GetPaymentSetting().ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
 	t.Cleanup(func() { *operation_setting.GetPaymentSetting() = previousPayment })
-	require.NoError(t, DB.AutoMigrate(&AgentInvitation{}, &AgentInvitationPolicy{}, &AgentInvitationPolicyAudit{}))
+	require.NoError(t, DB.AutoMigrate(&AgentInvitation{}, &AgentInvitationPolicy{}, &AgentInvitationPolicyAudit{}, &AgentProfile{}, &AgentPolicy{}, &AgentPolicyState{}))
 	for _, table := range []string{"agent_invitations", "agent_invitation_policies", "agent_invitation_policy_audits", "external_identity_claims"} {
 		require.NoError(t, DB.Exec("DELETE FROM "+table).Error)
 	}
@@ -30,6 +30,7 @@ func setupAgentInvitationTest(t *testing.T) (User, User) {
 	agent := User{Username: "invitation-agent", AffCode: "invitation-agent", Role: common.RoleAgentUser, Status: common.UserStatusEnabled}
 	require.NoError(t, DB.Create(&root).Error)
 	require.NoError(t, DB.Create(&agent).Error)
+	require.NoError(t, DB.Create(&AgentProfile{UserID: agent.Id, Status: AgentProfileActive, Version: 1}).Error)
 	return root, agent
 }
 
@@ -191,6 +192,9 @@ func TestAgentInvitationValidatesInviterAndPolicyAtCreation(t *testing.T) {
 			_, err := UpdateAgentInvitationPolicy(root.Id, tc.enabled, 321)
 			require.NoError(t, err)
 			require.NoError(t, DB.Model(&User{}).Where("id = ?", agent.Id).Updates(map[string]any{"role": tc.role, "status": tc.status}).Error)
+			if tc.role != common.RoleAgentUser {
+				require.NoError(t, DB.Where("user_id = ?", agent.Id).Delete(&AgentProfile{}).Error)
+			}
 			if tc.deleted {
 				require.NoError(t, DB.Delete(&agent).Error)
 			}
@@ -409,11 +413,13 @@ func TestAgentInvitationListScopesAndLegacySummary(t *testing.T) {
 	assert.Equal(t, agent.Username, legacy.Invitation.InviterUsername)
 	assert.Zero(t, legacy.Invitation.InviterRole, "historical role is unknown, not today's role")
 	assert.Zero(t, legacy.Invitation.BonusQuota)
-	for _, change := range []map[string]any{{"role": common.RoleCommonUser}, {"role": common.RoleAgentUser, "status": common.UserStatusDisabled}} {
-		require.NoError(t, DB.Model(&User{}).Where("id = ?", agent.Id).Updates(change).Error)
-		_, _, err = ListAgentInvitations(agent.Id, 1, 20)
-		require.ErrorIs(t, err, ErrAgentInvitationPermission)
-	}
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", agent.Id).Update("role", common.RoleCommonUser).Error)
+	require.NoError(t, DB.Model(&AgentProfile{}).Where("user_id = ?", agent.Id).Update("status", AgentProfileExited).Error)
+	_, _, err = ListAgentInvitations(agent.Id, 1, 20)
+	require.NoError(t, err, "exiting business retains invitation history")
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", agent.Id).Update("status", common.UserStatusDisabled).Error)
+	_, _, err = ListAgentInvitations(agent.Id, 1, 20)
+	require.ErrorIs(t, err, ErrAgentInvitationPermission)
 }
 
 func TestAgentInvitationMigrationPreservesLegacyAndUniqueAttribution(t *testing.T) {

@@ -350,7 +350,7 @@ func lockCredentialOwnerForWriteTx(tx *gorm.DB, userID int, expectedAuthVersion 
 		return err
 	}
 	if user.Status != common.UserStatusEnabled || user.AuthVersion <= 0 ||
-		(user.Role != common.RoleCommonUser && user.Role != common.RoleAdminUser && user.Role != common.RoleRootUser) ||
+		(user.Role != common.RoleCommonUser && user.Role != common.RoleAgentUser && user.Role != common.RoleAdminUser && user.Role != common.RoleRootUser) ||
 		(len(expectedAuthVersion) == 1 && user.AuthVersion != expectedAuthVersion[0]) {
 		return ErrCredentialWriteUnauthorized
 	}

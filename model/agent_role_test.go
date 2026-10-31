@@ -13,90 +13,38 @@ import (
 )
 
 func TestAgentRoleLifecyclePostgres(t *testing.T) {
-	if os.Getenv("TEST_MODEL_POSTGRES_DSN") == "" {
-		t.Skip("requires isolated PostgreSQL 18.6")
-	}
-	setupLedgerTestState(t)
-	admin := User{Username: "agent-role-admin", AffCode: "agent-role-admin", Role: common.RoleAdminUser, Status: common.UserStatusEnabled}
-	user := User{Username: "agent-role-user", AffCode: "agent-role-user", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Quota: 123, QuotaPaid: 100, QuotaBonus: 23}
-	root := User{Username: "agent-role-root", AffCode: "agent-role-root", Role: common.RoleRootUser, Status: common.UserStatusEnabled}
-	require.NoError(t, DB.Create(&admin).Error)
-	require.NoError(t, DB.Create(&user).Error)
-	require.NoError(t, DB.Create(&root).Error)
-	token := Token{UserId: user.Id, Key: "synthetic-agent-role-token", Status: common.TokenStatusEnabled, RemainQuota: 100}
-	require.NoError(t, token.Insert())
-	oldTokenRevision := token.CacheRevision
-	oldRetireAt := legacyAccessTokenRetireAt.Load()
-	legacyAccessTokenRetireAt.Store(time.Now().Add(time.Hour).Unix())
-	t.Cleanup(func() { legacyAccessTokenRetireAt.Store(oldRetireAt) })
-	legacyToken := "synthetic-agent-role-legacy-pat"
-	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Update("access_token", legacyToken).Error)
-	validated, err := ValidateAccessToken(legacyToken)
-	require.NoError(t, err)
-	require.NotNil(t, validated)
-	initial := user
-	var changed *User
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		var err error
-		changed, err = ApplyUserManagementActionTx(tx, admin.Id, user, "set_agent")
-		return err
-	})
-	require.NoError(t, err)
-	require.Equal(t, common.RoleAgentUser, changed.Role)
-	assert.Greater(t, changed.AuthVersion, initial.AuthVersion)
-	require.NoError(t, DB.First(&token, token.Id).Error)
-	assert.Equal(t, common.TokenStatusDisabled, token.Status)
-	assert.Greater(t, token.CacheRevision, oldTokenRevision, "old enabled cache snapshots cannot republish")
-	assert.Equal(t, 123, changed.Quota)
-	assert.Equal(t, 100, changed.QuotaPaid)
-	assert.Equal(t, 23, changed.QuotaBonus)
-	// A stale admin form cannot overwrite a newer role or status.
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		_, err := ApplyUserManagementActionTx(tx, admin.Id, initial, "disable")
-		return err
-	})
-	require.Error(t, err)
-	user = *changed
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		var err error
-		changed, err = ApplyUserManagementActionTx(tx, admin.Id, user, "unset_agent")
-		return err
-	})
-	require.NoError(t, err)
-	assert.Equal(t, common.RoleCommonUser, changed.Role)
-	require.NoError(t, DB.First(&token, token.Id).Error)
-	assert.Equal(t, common.TokenStatusDisabled, token.Status, "downgrade must not reactivate old keys")
-	validated, err = ValidateAccessToken(legacyToken)
-	require.NoError(t, err)
-	assert.Nil(t, validated, "downgrade must not revive legacy management credentials")
-	var persisted User
-	require.NoError(t, DB.First(&persisted, user.Id).Error)
-	assert.Nil(t, persisted.AccessToken)
-	assert.Nil(t, persisted.AccessTokenCreatedAt)
-	for _, input := range []struct {
-		actor  int
-		target User
-		action string
-	}{
-		{changed.Id, admin, "set_agent"},
-		{admin.Id, root, "unset_agent"},
-		{admin.Id, *changed, "promote"},
-		{admin.Id, admin, "disable"},
-	} {
-		err := DB.Transaction(func(tx *gorm.DB) error {
-			_, err := ApplyUserManagementActionTx(tx, input.actor, input.target, input.action)
+	root, user, identity, _ := setupAgentProfileSecurityTest(t)
+	enabled := Token{UserId: user.Id, Key: "synthetic-legacy-profile-enabled", Status: common.TokenStatusEnabled}
+	disabled := Token{UserId: user.Id, Key: "synthetic-legacy-profile-disabled", Status: common.TokenStatusDisabled}
+	require.NoError(t, enabled.Insert(user.AuthVersion))
+	require.NoError(t, disabled.Insert(user.AuthVersion))
+	for _, action := range []string{"set_agent", "unset_agent"} {
+		var changed *User
+		require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+			var err error
+			changed, err = ApplyUserManagementActionTx(tx, root.Id, user, action, identity)
 			return err
-		})
-		require.Error(t, err)
+		}))
+		require.Equal(t, common.RoleCommonUser, changed.Role)
+		assert.Equal(t, user.AuthVersion, changed.AuthVersion)
+		assert.Equal(t, user.Quota, changed.Quota)
+		profile, err := GetAgentProfile(user.Id)
+		require.NoError(t, err)
+		require.NotNil(t, profile)
+		if action == "set_agent" {
+			assert.Equal(t, AgentProfileActive, profile.Status)
+		} else {
+			assert.Equal(t, AgentProfileExited, profile.Status)
+		}
 	}
-	// A revoked operator is rejected from DB authority, not accepted from an
-	// earlier middleware role snapshot.
-	require.NoError(t, DB.Model(&admin).Update("status", common.UserStatusDisabled).Error)
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		_, err := ApplyUserManagementActionTx(tx, admin.Id, *changed, "set_agent")
+	require.NoError(t, DB.First(&enabled, enabled.Id).Error)
+	require.NoError(t, DB.First(&disabled, disabled.Id).Error)
+	assert.Equal(t, common.TokenStatusEnabled, enabled.Status)
+	assert.Equal(t, common.TokenStatusDisabled, disabled.Status, "historical disabled keys never reactivate")
+	require.Error(t, DB.Transaction(func(tx *gorm.DB) error {
+		_, err := ApplyUserManagementActionTx(tx, user.Id, root, "set_agent")
 		return err
-	})
-	require.Error(t, err)
+	}))
 }
 
 // A valid middleware snapshot or consumed proof is not sufficient after logout

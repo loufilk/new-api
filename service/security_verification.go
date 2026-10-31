@@ -163,6 +163,25 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 	}
 	var normalized any
 	switch operation.Scope {
+	case model.AgentTransactionScope:
+		if len(fields) != 14 {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		for _, key := range []string{"action", "request_id", "agent_user_id", "profile_version", "policy_version", "currency", "amount_minor", "quota", "target_type", "target_id", "target_version", "recipient_version", "recipient_digest", "parameters_hash"} {
+			value, exists := fields[key]
+			if !exists || strings.TrimSpace(string(value)) == "null" {
+				return VerificationBinding{}, ErrVerificationContextInvalid
+			}
+		}
+		var context model.AgentTransactionContext
+		if common.Unmarshal(operation.Context, &context) != nil {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		hash, err := model.AgentTransactionContextHash(context)
+		if err != nil {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		return VerificationBinding{Scope: model.AgentTransactionScope, ContextHash: hash}, nil
 	case VerificationScopeChannelKeyRead:
 		var context ChannelKeyReadContext
 		if len(fields) != 1 || common.Unmarshal(fields["channel_id"], &context.ChannelID) != nil || context.ChannelID <= 0 {
@@ -319,6 +338,12 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 		methods = append(methods, VerificationMethodPasskey)
 	}
 	switch scope {
+	case model.AgentTransactionScope:
+		// Financial authorization never falls back to a password, OAuth login,
+		// cached session verification or recovery code when MFA is unavailable.
+		if len(methods) == 0 {
+			return nil, model.ErrAgentTransactionMethod
+		}
 	case VerificationScopeChannelKeyRead, VerificationScopePasskeyDelete, VerificationScopeLogin:
 	case VerificationScopeTwoFADisable, VerificationScopeTwoFABackupCodes:
 		if !state.HasTwoFA {
@@ -495,7 +520,14 @@ func CompleteSecurityVerification(identity AuthIdentity, binding VerificationBin
 	if _, err := RequireVerificationMethod(identity, binding.Scope, method); err != nil {
 		return nil, err
 	}
-	token, expiresAt, err := IssueSecurityProof(identity, method, binding)
+	var token string
+	var expiresAt int64
+	var err error
+	if binding.Scope == model.AgentTransactionScope {
+		token, expiresAt, err = model.IssueAgentTransactionProof(identity, binding.ContextHash, method)
+	} else {
+		token, expiresAt, err = IssueSecurityProof(identity, method, binding)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -505,6 +537,9 @@ func CompleteSecurityVerification(identity AuthIdentity, binding VerificationBin
 // ConsumeOperationProof accepts a proof at most once. The consumption commits
 // before the caller performs its action; an action failure must not restore it.
 func ConsumeOperationProof(raw string, identity AuthIdentity, operation VerificationOperation) (*model.AuthFlowAuthorization, error) {
+	if operation.Scope == model.AgentTransactionScope {
+		return nil, ErrProofScope
+	}
 	binding, err := BindVerificationOperation(operation)
 	if err != nil {
 		return nil, err
@@ -578,6 +613,15 @@ func VerifySecurityInput(identity AuthIdentity, input VerificationInput) (*Secur
 	if _, err := RequireVerificationMethod(identity, input.Scope, input.Method); err != nil {
 		return nil, err
 	}
+	strictAgentMFA := input.Scope == model.AgentTransactionScope
+	if strictAgentMFA {
+		if _, pat := model.ParseAccessTokenSessionID(identity.SessionID); pat {
+			return nil, ErrVerificationForbidden
+		}
+		if input.Method != VerificationMethodTwoFA && input.Method != VerificationMethodPasskey {
+			return nil, model.ErrAgentTransactionMethod
+		}
+	}
 	switch input.Method {
 	case VerificationMethodPassword:
 		password := input.Password
@@ -596,7 +640,7 @@ func VerifySecurityInput(identity AuthIdentity, input VerificationInput) (*Secur
 			return nil, ErrVerificationFailed
 		}
 	case VerificationMethodTwoFA:
-		if input.Scope == VerificationScopeTwoFABackupCodes {
+		if input.Scope == VerificationScopeTwoFABackupCodes || strictAgentMFA {
 			if _, err := common.ValidateNumericCode(input.Code); err != nil {
 				return nil, ErrVerificationFailed
 			}
@@ -607,6 +651,11 @@ func VerifySecurityInput(identity AuthIdentity, input VerificationInput) (*Secur
 		}
 		if err := VerifyTwoFactorCode(twoFA, input.Code); err != nil {
 			return nil, err
+		}
+		if strictAgentMFA {
+			if err := claimAgentTransactionTOTP(twoFA, input.Code); err != nil {
+				return nil, err
+			}
 		}
 	case VerificationMethodPasskey, VerificationMethodOAuth:
 		return nil, ErrVerificationFlowRequired

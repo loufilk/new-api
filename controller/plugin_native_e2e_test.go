@@ -3,6 +3,7 @@ package controller
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
@@ -29,6 +31,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -371,8 +374,11 @@ func TestDoubaoRelayedImageStreamSettlement(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		write := func(frame string) { _, _ = io.WriteString(w, frame); w.(http.Flusher).Flush() }
 		switch request.Prompt {
-		case "finished":
+		case "finished", "insert_fails", "task_lost_ack", "fallback_lost_ack", "fallback_rollback", "fallback_log_failure", "separate_log_failure", "separate_log_lost_ack":
 			write(image + completed + done)
+		case "reserve_rollback", "reserve_lost_ack", "funds_shortage":
+			second := strings.ReplaceAll(strings.ReplaceAll(image, `"image_index":0`, `"image_index":1`), "0.png", "1.png")
+			write(image + second + strings.ReplaceAll(completed, `"generated_images":1`, `"generated_images":2`) + done)
 		case "rejected":
 			write(rejected + done)
 		case "missing_payload":
@@ -408,12 +414,25 @@ func TestDoubaoRelayedImageStreamSettlement(t *testing.T) {
 		unknown            bool
 	}{
 		{"finished", image, 10_000, false}, {"rejected", rejected, 0, false},
+		{"insert_fails", image, 10_000, false},
+		{"reserve_rollback", image, 20_000, false}, {"reserve_lost_ack", image, 20_000, false},
+		{"task_lost_ack", image, 10_000, false}, {"fallback_lost_ack", image, 10_000, false},
+		{"fallback_rollback", image, 30_000, false}, {"fallback_log_failure", image, 30_000, false},
+		{"funds_shortage", image, 10_000, false},
+		{"separate_log_failure", image, 10_000, false}, {"separate_log_lost_ack", image, 10_000, false},
 		{"missing_payload", completed, 30_000, true}, {"broken", image, 30_000, true},
 		{"eof", image, 30_000, true}, {"unreadable", ": heartbeat\n\n", 30_000, true},
 		{"stalled", ": heartbeat\n\n", 30_000, true},
 	} {
 		t.Run(tc.prompt, func(t *testing.T) {
-			f := newTaskSubmissionFinancialFixtureForModel(t, "native-stream-"+tc.prompt, 1_000_000, 30_000, seedream)
+			initial, held, requestImages := 1_000_000, 30_000, "3"
+			if strings.HasPrefix(tc.prompt, "reserve_") || tc.prompt == "funds_shortage" {
+				held, requestImages = 10_000, "1"
+			}
+			if tc.prompt == "funds_shortage" {
+				initial = 10_000
+			}
+			f := newTaskSubmissionFinancialFixtureForModel(t, "native-stream-"+tc.prompt, initial, held, seedream)
 			var version string
 			require.NoError(t, f.db.Raw("SHOW server_version_num").Scan(&version).Error)
 			require.Equal(t, "180006", version)
@@ -423,14 +442,14 @@ func TestDoubaoRelayedImageStreamSettlement(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
 			f.c = c
-			c.Request = httptest.NewRequest(http.MethodPost, "/api/v3/images/generations", strings.NewReader(`{"model":"`+seedream+`","prompt":"`+tc.prompt+`","stream":true,"sequential_image_generation":"auto","sequential_image_generation_options":{"max_images":3}}`))
+			c.Request = httptest.NewRequest(http.MethodPost, "/api/v3/images/generations", strings.NewReader(`{"model":"`+seedream+`","prompt":"`+tc.prompt+`","stream":true,"sequential_image_generation":"auto","sequential_image_generation_options":{"max_images":`+requestImages+`}}`))
 			c.Request.Header.Set("Content-Type", "application/json")
 			c.Set(pluginruntime.ContextKeyPinnedRoute, pluginruntime.PinnedRoute{Generation: generation, Plugin: binding.Plugin, Route: binding.Route})
 			common.SetContextKey(c, constant.ContextKeyUserId, f.user.Id)
 			common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
 			common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
 			common.SetContextKey(c, constant.ContextKeyTokenGroup, "default")
-			common.SetContextKey(c, constant.ContextKeyUserQuota, 1_000_000)
+			common.SetContextKey(c, constant.ContextKeyUserQuota, initial)
 			common.SetContextKey(c, constant.ContextKeyTokenId, f.token.Id)
 			common.SetContextKey(c, constant.ContextKeyTokenKey, f.token.Key)
 			c.Set(common.RequestIdKey, f.info.RequestId)
@@ -440,8 +459,60 @@ func TestDoubaoRelayedImageStreamSettlement(t *testing.T) {
 			require.Nil(t, middleware.SetupContextForSelectedChannel(c, &f.channel, seedream))
 			f.info.Action, f.info.PublicTaskID = c.GetString("task_action"), "task_"+tc.prompt
 			f.info.ChannelMeta = &relaycommon.ChannelMeta{ChannelId: f.channel.Id, ChannelType: f.channel.Type, UpstreamModelName: seedream}
+			var insertFailures *atomic.Int32
+			if tc.prompt == "insert_fails" || strings.HasPrefix(tc.prompt, "fallback_") {
+				insertFailures = installTaskPostInsertFailure(t, f.db, f.user.Id, f.info.PublicTaskID)
+			}
+			var logFailures atomic.Int32
+			if strings.HasPrefix(tc.prompt, "separate_log_") {
+				dsn := os.Getenv("TEST_POSTGRES_LOG_DSN")
+				require.NotEmpty(t, dsn, "separate log acceptance requires a dedicated disposable PostgreSQL database")
+				logDB, err := gorm.Open(postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true}), &gorm.Config{NamingStrategy: f.db.NamingStrategy})
+				require.NoError(t, err)
+				sqlDB, err := logDB.DB()
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+				require.False(t, logDB.Migrator().HasTable(&model.Log{}), "refuse existing log fixtures")
+				require.NoError(t, logDB.AutoMigrate(&model.Log{}))
+				t.Cleanup(func() { require.NoError(t, logDB.Migrator().DropTable(&model.Log{})) })
+				model.LOG_DB = logDB
+				callback := logDB.Callback().Create().Before("gorm:create")
+				if tc.prompt == "separate_log_lost_ack" {
+					callback = logDB.Callback().Create().After("gorm:commit_or_rollback_transaction")
+				}
+				require.NoError(t, callback.Register("test:separate_submit_log_failure", func(tx *gorm.DB) {
+					if tx.Statement.Schema != nil && tx.Statement.Schema.Name == "Log" && tx.Error == nil {
+						logFailures.Add(1)
+						tx.AddError(errors.New("synthetic separate-log write rollback"))
+					}
+				}))
+			}
+			if tc.prompt == "fallback_log_failure" {
+				name := "test:native_fallback_log_failure"
+				require.NoError(t, f.db.Callback().Create().After("gorm:create").Register(name, func(tx *gorm.DB) {
+					if tx.Statement.Schema != nil && tx.Statement.Schema.Name == "Log" && insertFailures.Load() > 0 && tx.Error == nil {
+						logFailures.Add(1)
+						tx.AddError(errors.New("synthetic post-log-write failure"))
+					}
+				}))
+				t.Cleanup(func() { require.NoError(t, f.db.Callback().Create().Remove(name)) })
+			}
+			var fault *nativeTaskCommitFaultPool
 			beforeCalls := submitCalls.Load()
-			outcome, taskErr := executeTaskSubmissionWith(c, f.info, relay.RelayTaskSubmit)
+			outcome, taskErr := executeTaskSubmissionWith(c, f.info, func(c *gin.Context, info *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *taskdto.TaskError) {
+				result, err := relay.RelayTaskSubmit(c, info)
+				if err == nil {
+					switch tc.prompt {
+					case "reserve_rollback", "reserve_lost_ack", "task_lost_ack":
+						fault = installNativeTaskCommitFault(t, f.db, 1, tc.prompt == "reserve_rollback")
+					case "fallback_lost_ack", "fallback_rollback":
+						// Failed INSERT rolls back before Commit, then owner probe,
+						// settlement intent, and the source/token/usage/log commit.
+						fault = installNativeTaskCommitFault(t, f.db, 3, tc.prompt == "fallback_rollback")
+					}
+				}
+				return result, err
+			})
 			waitTaskSubmissionFixtureQuiescence(t)
 			assert.Equal(t, beforeCalls+1, submitCalls.Load(), "unknown delivery cannot retry the paid submit")
 			assert.True(t, strings.HasPrefix(recorder.Body.String(), tc.firstFrame), recorder.Body.String())
@@ -458,6 +529,70 @@ func TestDoubaoRelayedImageStreamSettlement(t *testing.T) {
 				assert.Equal(t, relayed, recorder.Body.String(), "no JSON error is appended to native SSE")
 				return
 			}
+			if fault != nil {
+				require.True(t, fault.fired.Load(), "the real driver COMMIT boundary must be reached")
+			}
+			if tc.prompt == "insert_fails" || tc.prompt == "task_lost_ack" || strings.HasPrefix(tc.prompt, "fallback_") || tc.prompt == "funds_shortage" {
+				require.NotNil(t, taskErr)
+				assert.Equal(t, "task_insert_failed", taskErr.Code)
+				assert.Nil(t, outcome)
+				if insertFailures != nil {
+					assert.EqualValues(t, 1, insertFailures.Load())
+				}
+				if tc.prompt == "fallback_log_failure" {
+					assert.EqualValues(t, 1, logFailures.Load())
+				}
+				state := captureTaskSubmissionFinancialState(t, f.db, f.info)
+				if tc.prompt == "task_lost_ack" {
+					require.Len(t, state.Tasks, 1)
+				} else {
+					assert.Empty(t, state.Tasks)
+				}
+				require.Len(t, state.Owners, 1)
+				wantState := model.BillingSettled
+				wantUsed, wantRequests, wantLogs := tc.charge, 1, 1
+				if tc.prompt == "task_lost_ack" {
+					wantState = model.BillingTaskOwned
+				}
+				if tc.prompt == "fallback_rollback" || tc.prompt == "fallback_log_failure" || tc.prompt == "funds_shortage" {
+					wantState, wantUsed, wantRequests, wantLogs = model.BillingSettlementReview, 0, 0, 0
+				}
+				assert.Equal(t, wantState, state.Owners[0].State)
+				actual := 10_000
+				if tc.prompt == "funds_shortage" {
+					actual = 20_000
+				}
+				assert.Equal(t, actual, state.Owners[0].ActualQuota)
+				assert.Equal(t, f.initial-tc.charge, state.User.Quota)
+				assert.Equal(t, f.initial-tc.charge, state.User.QuotaPaid)
+				assert.Zero(t, state.User.QuotaBonus)
+				assert.Zero(t, state.User.QuotaReward)
+				assert.Equal(t, f.initial-tc.charge, state.Token.RemainQuota)
+				assert.Equal(t, tc.charge, state.Token.UsedQuota)
+				assert.Equal(t, wantUsed, state.User.UsedQuota)
+				assert.Equal(t, wantRequests, state.User.RequestCount)
+				assert.EqualValues(t, wantUsed, state.Channel.UsedQuota)
+				require.Len(t, state.Logs, wantLogs)
+				if wantLogs == 1 {
+					assert.Equal(t, tc.charge, state.Logs[0].Quota)
+					assert.Equal(t, f.info.RequestId, state.Logs[0].RequestId)
+					assert.Contains(t, state.Logs[0].Other, `"request_path":"/api/v3/images/generations"`)
+				}
+				net := 0
+				for _, entry := range state.Ledger {
+					net += entry.Delta
+				}
+				assert.Equal(t, -tc.charge, net)
+				assert.False(t, f.info.Billing.NeedsRefund())
+				f.info.Billing.Refund(c)
+				_ = f.info.Billing.Settle(actual)
+				waitTaskSubmissionFixtureQuiescence(t)
+				assert.Equal(t, state, captureTaskSubmissionFinancialState(t, f.db, f.info), "replay must not change funds, usage, owner or logs")
+				relayed := recorder.Body.String()
+				respondTaskSubmissionError(c, taskErr)
+				assert.Equal(t, relayed, recorder.Body.String())
+				return
+			}
 			require.Nil(t, taskErr)
 			require.NotNil(t, outcome)
 			assert.Equal(t, tc.charge, outcome.Task.Quota)
@@ -471,6 +606,25 @@ func TestDoubaoRelayedImageStreamSettlement(t *testing.T) {
 			assert.Equal(t, f.initial-tc.charge, state.User.QuotaPaid)
 			assert.Equal(t, f.initial-tc.charge, state.Token.RemainQuota)
 			assert.Equal(t, tc.charge, state.Token.UsedQuota)
+			assert.Equal(t, tc.charge, state.User.UsedQuota)
+			assert.Equal(t, 1, state.User.RequestCount)
+			assert.EqualValues(t, tc.charge, state.Channel.UsedQuota)
+			if strings.HasPrefix(tc.prompt, "separate_log_") {
+				assert.Empty(t, state.Logs)
+				var count int64
+				require.NoError(t, model.LOG_DB.Model(&model.Log{}).Count(&count).Error)
+				want := int64(0)
+				if tc.prompt == "separate_log_lost_ack" {
+					want = 1
+				}
+				assert.Equal(t, want, count)
+				assert.EqualValues(t, 1, logFailures.Load())
+				require.NoError(t, service.PersistTaskBillingAndLog(c, f.info, outcome.Task))
+				assert.EqualValues(t, 1, logFailures.Load(), "a replay cannot duplicate a separate-log projection")
+			} else {
+				require.Len(t, state.Logs, 1)
+				assert.Equal(t, tc.charge, state.Logs[0].Quota)
+			}
 			require.Len(t, state.Owners, 1)
 			assert.Equal(t, model.BillingTaskOwned, state.Owners[0].State)
 			assert.Equal(t, tc.charge, state.Owners[0].ActualQuota)

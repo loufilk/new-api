@@ -19,8 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import { createFileRoute, redirect } from '@tanstack/react-router'
 
 import { AuthenticatedLayout } from '@/components/layout'
+import { sanitizeAuthRedirect } from '@/features/auth/lib/auth-redirect'
 import { resolveAuthentication } from '@/lib/auth-session'
-import { canAccessAgentRoute } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 export const Route = createFileRoute('/_authenticated')({
@@ -36,12 +36,13 @@ export const Route = createFileRoute('/_authenticated')({
     if (!auth.user || !auth.accessToken) {
       throw redirect({
         to: '/sign-in',
-        search: { redirect: location.href },
+        search: {
+          redirect:
+            sanitizeAuthRedirect(location.href, window.location.origin) ??
+            undefined,
+        },
+        replace: true,
       })
-    }
-
-    if (!canAccessAgentRoute(auth.user.role, location.pathname)) {
-      throw redirect({ to: '/redemption-codes' })
     }
   },
   component: AuthenticatedLayout,

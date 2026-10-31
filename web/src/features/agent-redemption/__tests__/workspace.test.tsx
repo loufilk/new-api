@@ -29,7 +29,14 @@ import { AgentRedemption } from '..'
 
 const clients: QueryClient[] = []
 function setup(role: number) {
-  useAuthStore.getState().auth.setUser({ id: 7, username: 'agent', role })
+  useAuthStore.getState().auth.setUser({
+    id: 7,
+    username: 'agent',
+    role,
+    ...(role === ROLE.USER
+      ? { permissions: { agent_history: true, agent_sales: true } }
+      : {}),
+  })
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -47,63 +54,68 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-it('shows an agent only their budget, ledger and invitation link with no administrative controls', async () => {
-  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
-    if (url === '/api/agent-redemption/accounts') {
-      return {
-        data: {
-          success: true,
+it.each([ROLE.AGENT, ROLE.USER])(
+  'shows legacy or migrated agent role %s only their own budget, ledger and invitation link',
+  async (role) => {
+    const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+      if (url === '/api/agent-redemption/accounts') {
+        return {
           data: {
-            items: [
-              {
-                agent_user_id: 7,
-                available_quota: 1,
-                reserved_quota: 2,
-                spent_quota: 3,
-                allocated_quota: 6,
-              },
-            ],
-            total: 1,
+            success: true,
+            data: {
+              items: [
+                {
+                  agent_user_id: 7,
+                  available_quota: 1,
+                  reserved_quota: 2,
+                  spent_quota: 3,
+                  allocated_quota: 6,
+                },
+              ],
+              total: 1,
+            },
           },
-        },
+        }
       }
-    }
-    if (url === '/api/user/aff') {
-      return { data: { success: true, data: 'agent-code' } }
-    }
-    return { data: { success: true, data: { items: [], total: 0 } } }
-  })
-  setup(ROLE.AGENT)
-  expect(await screen.findByLabelText('Agent quota budget')).toBeInTheDocument()
-  expect(
-    screen.queryByRole('tab', { name: 'Invitation policy' })
-  ).not.toBeInTheDocument()
-  expect(
-    screen.queryByRole('tab', { name: 'Agent accounts' })
-  ).not.toBeInTheDocument()
-  expect(
-    screen.queryByRole('button', { name: 'Adjust quota' })
-  ).not.toBeInTheDocument()
-  expect(screen.queryByLabelText('Agent ID')).not.toBeInTheDocument()
-  expect(get).toHaveBeenCalledWith(
-    '/api/agent-redemption/accounts/7/ledger',
-    expect.anything()
-  )
-  await userEvent.click(screen.getByRole('tab', { name: 'Invitations' }))
-  expect(
-    await screen.findByDisplayValue(
-      `${window.location.origin}/sign-up?aff=agent-code`
+      if (url === '/api/user/aff') {
+        return { data: { success: true, data: 'agent-code' } }
+      }
+      return { data: { success: true, data: { items: [], total: 0 } } }
+    })
+    setup(role)
+    expect(
+      await screen.findByLabelText('Agent quota budget')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('tab', { name: 'Invitation policy' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('tab', { name: 'Agent accounts' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Adjust quota' })
+    ).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Agent ID')).not.toBeInTheDocument()
+    expect(get).toHaveBeenCalledWith(
+      '/api/agent-redemption/accounts/7/ledger',
+      expect.anything()
     )
-  ).toHaveAttribute('readonly')
-  expect(
-    screen.getByRole('button', { name: 'Copy invitation link' })
-  ).toBeEnabled()
-  expect(
-    get.mock.calls.some(
-      ([url]) => url === '/api/agent-redemption/invitation-policy'
-    )
-  ).toBe(false)
-})
+    await userEvent.click(screen.getByRole('tab', { name: 'Invitations' }))
+    expect(
+      await screen.findByDisplayValue(
+        `${window.location.origin}/sign-up?aff=agent-code`
+      )
+    ).toHaveAttribute('readonly')
+    expect(
+      screen.getByRole('button', { name: 'Copy invitation link' })
+    ).toBeEnabled()
+    expect(
+      get.mock.calls.some(
+        ([url]) => url === '/api/agent-redemption/invitation-policy'
+      )
+    ).toBe(false)
+  }
+)
 
 it('distinguishes a ledger request failure from an empty ledger and offers retry', async () => {
   const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {

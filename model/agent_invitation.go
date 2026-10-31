@@ -117,76 +117,77 @@ func GetAgentInvitationPolicy(actorID int) (*AgentInvitationPolicy, error) {
 	return policy, err
 }
 
+// UpdateAgentInvitationPolicy is retained for trusted internal callers. HTTP
+// changes must use UpdateAgentInvitationPolicyAuthorized with transaction MFA.
 func UpdateAgentInvitationPolicy(actorID int, enabled bool, quota int, identities ...AuthSessionIdentity) (*AgentInvitationPolicy, error) {
-	if actorID <= 0 {
+	if actorID <= 0 || len(identities) > 1 {
 		return nil, ErrAgentInvitationPermission
 	}
 	if quota < 0 || quota > common.MaxWalletQuota {
 		return nil, ErrAgentInvitationPolicy
 	}
-	var policy AgentInvitationPolicy
+	var policy *AgentInvitationPolicy
 	err := DB.Transaction(func(tx *gorm.DB) error {
-		if len(identities) > 1 {
-			return ErrAgentInvitationPermission
+		if _, err := LockCurrentAgentPolicyTx(tx); err != nil {
+			return err
 		}
-		if len(identities) == 1 {
-			identity := identities[0]
-			_, accessToken := ParseAccessTokenSessionID(identity.SessionID)
-			if identity.UserID != actorID || accessToken {
-				return ErrAgentInvitationPermission
-			}
-			// HTTP always supplies a browser identity. Lock user/session until
-			// commit so logout and role-version changes cannot race a stale
-			// middleware authorization. Internal model callers may omit it.
-			identityTx := tx.Session(&gorm.Session{Logger: tx.Logger.LogMode(logger.Silent)})
-			if err := ValidateAuthSessionWithTx(identityTx, identity); err != nil {
-				if errors.Is(err, ErrUserSessionInactive) || errors.Is(err, gorm.ErrRecordNotFound) {
-					return ErrAgentInvitationPermission
-				}
-				return err
-			}
+		var err error
+		policy, err = lockAgentInvitationPolicyTx(tx)
+		if err != nil {
+			return err
 		}
 		var actor User
-		if err := lockForUpdate(tx).Select("id", "role", "status").First(&actor, actorID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrAgentInvitationPermission
-			}
-			return err
+		if err := lockForUpdate(tx).First(&actor, actorID).Error; err != nil {
+			return ErrAgentInvitationPermission
 		}
 		if actor.Status != common.UserStatusEnabled || actor.Role != common.RoleRootUser {
 			return ErrAgentInvitationPermission
 		}
-		// The singleton row serializes concurrent writers, including first use
-		// by different root operators. ON CONFLICT is translated by GORM.
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&AgentInvitationPolicy{Id: 1}).Error; err != nil {
-			return err
+		if len(identities) == 1 {
+			identity := identities[0]
+			if _, pat := ParseAccessTokenSessionID(identity.SessionID); pat || identity.UserID != actorID {
+				return ErrAgentInvitationPermission
+			}
+			if err := ValidateAuthSessionWithTx(tx.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)}), identity); err != nil {
+				return ErrAgentInvitationPermission
+			}
 		}
-		if err := lockForUpdate(tx).First(&policy, 1).Error; err != nil {
-			return err
-		}
-		if policy.Enabled == enabled && policy.Quota == quota {
-			return nil // A transport retry is a no-op, not another policy event.
-		}
-		if policy.Revision == math.MaxInt64 {
-			return ErrAgentInvitationPolicy
-		}
-		audit := AgentInvitationPolicyAudit{
-			Revision: policy.Revision + 1, OperatorId: actor.Id,
-			PreviousEnabled: policy.Enabled, PreviousQuota: policy.Quota,
-			Enabled: enabled, Quota: quota,
-		}
-		if err := tx.Create(&audit).Error; err != nil {
-			return err
-		}
-		policy.Enabled, policy.Quota = enabled, quota
-		policy.Revision, policy.UpdatedBy, policy.UpdatedAt = audit.Revision, actor.Id, audit.CreatedAt
-		return tx.Model(&AgentInvitationPolicy{}).Where("id = ?", 1).Updates(map[string]any{
-			"enabled": policy.Enabled, "quota": policy.Quota, "revision": policy.Revision,
-			"updated_by": policy.UpdatedBy, "updated_at": policy.UpdatedAt,
-		}).Error
+		return applyAgentInvitationPolicyValuesTx(tx, policy, actorID, enabled, quota)
 	})
-	policy.PaymentComplianceConfirmed = operation_setting.IsPaymentComplianceConfirmed()
-	return &policy, err
+	if policy != nil {
+		policy.PaymentComplianceConfirmed = operation_setting.IsPaymentComplianceConfirmed()
+	}
+	return policy, err
+}
+
+func lockAgentInvitationPolicyTx(tx *gorm.DB) (*AgentInvitationPolicy, error) {
+	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&AgentInvitationPolicy{Id: 1}).Error; err != nil {
+		return nil, err
+	}
+	var policy AgentInvitationPolicy
+	if err := lockForUpdate(tx).First(&policy, 1).Error; err != nil {
+		return nil, err
+	}
+	return &policy, nil
+}
+
+func applyAgentInvitationPolicyValuesTx(tx *gorm.DB, policy *AgentInvitationPolicy, actorID int, enabled bool, quota int) error {
+	if quota < 0 || quota > common.MaxWalletQuota {
+		return ErrAgentInvitationPolicy
+	}
+	if policy.Enabled == enabled && policy.Quota == quota {
+		return nil
+	}
+	if policy.Revision == math.MaxInt64 {
+		return ErrAgentInvitationPolicy
+	}
+	audit := AgentInvitationPolicyAudit{Revision: policy.Revision + 1, OperatorId: actorID, PreviousEnabled: policy.Enabled, PreviousQuota: policy.Quota, Enabled: enabled, Quota: quota}
+	if err := tx.Create(&audit).Error; err != nil {
+		return err
+	}
+	policy.Enabled, policy.Quota = enabled, quota
+	policy.Revision, policy.UpdatedBy, policy.UpdatedAt = audit.Revision, actorID, audit.CreatedAt
+	return tx.Model(&AgentInvitationPolicy{}).Where("id = ?", 1).Updates(map[string]any{"enabled": enabled, "quota": quota, "revision": policy.Revision, "updated_by": actorID, "updated_at": policy.UpdatedAt}).Error
 }
 
 // resolveInviterForInsert snapshots only a live, recognized inviter under a row
@@ -216,7 +217,11 @@ func resolveInviterForInsert(tx *gorm.DB, userID, inviterID int, source string) 
 		InviterId: inviter.Id, InviterUsername: inviter.Username, InviterRole: inviter.Role, Source: source,
 		BonusReason: "inviter_not_agent",
 	}
-	if inviter.Role != common.RoleAgentUser {
+	profile, err := LockAgentProfileTx(tx, inviter.Id)
+	if err != nil {
+		return nil, err
+	}
+	if !profile.Allows(AgentCapabilitySales) {
 		return invitation, nil
 	}
 	policy, err := readAgentInvitationPolicy(tx)
@@ -306,14 +311,19 @@ func ListAgentInvitations(actorID, page, pageSize int, inviterIDs ...int) ([]Age
 		}
 		query := tx.Model(&AgentInvitation{})
 		switch actor.Role {
-		case common.RoleAgentUser:
-			query = query.Where("inviter_id = ?", actor.Id)
 		case common.RoleAdminUser, common.RoleRootUser:
 			if len(inviterIDs) > 0 && inviterIDs[0] > 0 {
 				query = query.Where("inviter_id = ?", inviterIDs[0])
 			}
 		default:
-			return ErrAgentInvitationPermission
+			profile, err := LockAgentProfileTx(tx, actor.Id)
+			if err != nil {
+				return err
+			}
+			if !profile.Allows(AgentCapabilityHistory) {
+				return ErrAgentInvitationPermission
+			}
+			query = query.Where("inviter_id = ?", actor.Id)
 		}
 		if err := query.Count(&total).Error; err != nil {
 			return err

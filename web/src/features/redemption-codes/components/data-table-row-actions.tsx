@@ -16,10 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMutation } from '@tanstack/react-query'
 import type { Row } from '@tanstack/react-table'
 import { Trash2, Edit, Power, PowerOff } from 'lucide-react'
-import { useRef } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -35,13 +34,15 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { handleServerError } from '@/lib/handle-server-error'
-import { requireServerSuccess } from '@/lib/server-error-message'
+import { OperationDialog } from '@/features/agent-platform/components/operation-dialog'
+import type { OperationDraft } from '@/features/agent-platform/types'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { updateRedemptionStatus } from '../api'
 import { REDEMPTION_STATUS, SUCCESS_MESSAGES } from '../constants'
 import { isRedemptionExpired } from '../lib'
+import { isProtectedRedemption, redemptionOperation } from '../lib/transaction'
 import { redemptionSchema } from '../types'
+import { RedemptionCancellationDialog } from './redemption-cancellation-dialog'
 import { useRedemptions } from './redemptions-provider'
 
 interface DataTableRowActionsProps<TData> {
@@ -61,97 +62,171 @@ export function DataTableRowActions<TData>({
     redemption.status
   )
 
-  const submitting = useRef(false)
-  const statusMutation = useMutation({
-    mutationFn: async (status: number) =>
-      requireServerSuccess(await updateRedemptionStatus(redemption.id, status)),
-    retry: false,
-    onSuccess: (_result, status) => {
-      toast.success(
-        t(
-          status === REDEMPTION_STATUS.DISABLED
-            ? SUCCESS_MESSAGES.REDEMPTION_DISABLED
-            : SUCCESS_MESSAGES.REDEMPTION_ENABLED
-        )
-      )
-      triggerRefresh()
-    },
-    onError: (error) => handleServerError(error),
-    onSettled: () => {
-      submitting.current = false
-    },
-  })
+  const user = useAuthStore((state) => state.auth.user)
+  const role = user?.role
+  const protectedCode = isProtectedRedemption(redemption)
+  const [cancelling, setCancelling] = useState(false)
+  const [draft, setDraft] = useState<OperationDraft | null>(null)
   const handleToggleStatus = () => {
-    if (submitting.current || isUsed || isExpired) return
-    submitting.current = true
-    statusMutation.mutate(
-      isEnabled ? REDEMPTION_STATUS.DISABLED : REDEMPTION_STATUS.ENABLED
+    if (
+      draft ||
+      protectedCode ||
+      isUsed ||
+      isExpired ||
+      !Number.isSafeInteger(redemption.version)
+    ) {
+      return
+    }
+    const status = isEnabled
+      ? REDEMPTION_STATUS.DISABLED
+      : REDEMPTION_STATUS.ENABLED
+    setDraft(
+      redemptionOperation(
+        'update',
+        role,
+        {
+          id: redemption.id,
+          version: Number(redemption.version),
+          status,
+          name: '',
+          quota: 0,
+          expired_time: 0,
+          status_only: true,
+        },
+        '/api/redemption/?status_only=true',
+        [
+          { label: 'Name', after: redemption.name },
+          {
+            label: 'Status',
+            before: t(isEnabled ? 'Enabled' : 'Disabled'),
+            after: t(isEnabled ? 'Disabled' : 'Enabled'),
+          },
+        ]
+      )
     )
   }
 
-  const canEdit = isEnabled && !isExpired
-  const canToggle = !isUsed && !isExpired
+  const canEdit = isEnabled && !isExpired && !protectedCode
+  const canToggle =
+    !protectedCode &&
+    !isUsed &&
+    !isExpired &&
+    Number.isSafeInteger(redemption.version)
+
+  const canCancel =
+    redemption.budget_agent_id === user?.id &&
+    (redemption.budget_agent_id ?? 0) > 0 &&
+    redemption.delivery_id === 0 &&
+    redemption.customer_user_id === 0 &&
+    redemption.budget_reserved === true &&
+    isEnabled &&
+    Number.isSafeInteger(redemption.version)
 
   return (
-    <div className='-ml-1.5 flex items-center gap-1'>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant='ghost'
-              size='icon-sm'
+    <>
+      <div className='-ml-1.5 flex items-center gap-1'>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant='ghost'
+                size='icon-sm'
+                onClick={() => {
+                  setCurrentRow(redemption)
+                  setOpen('update')
+                }}
+                disabled={!canEdit || draft !== null}
+                aria-label={t('Edit')}
+              />
+            }
+          >
+            <Edit />
+          </TooltipTrigger>
+          <TooltipContent>{t('Edit')}</TooltipContent>
+        </Tooltip>
+
+        <DataTableRowActionMenu ariaLabel={t('Open menu')} modal={false}>
+          {canToggle && (
+            <DropdownMenuItem
+              onClick={handleToggleStatus}
+              disabled={draft !== null}
+            >
+              {isEnabled ? (
+                <>
+                  {t('Disable')}
+                  <DropdownMenuShortcut>
+                    <PowerOff size={16} />
+                  </DropdownMenuShortcut>
+                </>
+              ) : (
+                <>
+                  {t('Enable')}
+                  <DropdownMenuShortcut>
+                    <Power size={16} />
+                  </DropdownMenuShortcut>
+                </>
+              )}
+            </DropdownMenuItem>
+          )}
+          {canToggle && <DropdownMenuSeparator />}
+          {!protectedCode && (
+            <DropdownMenuItem
+              disabled={draft !== null}
               onClick={() => {
                 setCurrentRow(redemption)
-                setOpen('update')
+                setOpen('delete')
               }}
-              disabled={!canEdit || statusMutation.isPending}
-              aria-label={t('Edit')}
-            />
-          }
-        >
-          <Edit />
-        </TooltipTrigger>
-        <TooltipContent>{t('Edit')}</TooltipContent>
-      </Tooltip>
-
-      <DataTableRowActionMenu ariaLabel={t('Open menu')} modal={false}>
-        {canToggle && (
-          <DropdownMenuItem
-            onClick={handleToggleStatus}
-            disabled={statusMutation.isPending}
-          >
-            {isEnabled ? (
-              <>
-                {t('Disable')}
-                <DropdownMenuShortcut>
-                  <PowerOff size={16} />
-                </DropdownMenuShortcut>
-              </>
-            ) : (
-              <>
-                {t('Enable')}
-                <DropdownMenuShortcut>
-                  <Power size={16} />
-                </DropdownMenuShortcut>
-              </>
-            )}
-          </DropdownMenuItem>
-        )}
-        {canToggle && <DropdownMenuSeparator />}
-        <DropdownMenuItem
-          disabled={statusMutation.isPending}
-          onClick={() => {
-            setCurrentRow(redemption)
-            setOpen('delete')
+              className='text-destructive focus:text-destructive'
+            >
+              {t('Delete')}
+              <DropdownMenuShortcut>
+                <Trash2 size={16} />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          )}
+          {canCancel && (
+            <DropdownMenuItem
+              disabled={draft !== null}
+              onClick={() => setCancelling(true)}
+            >
+              {t('Review cancellation')}
+            </DropdownMenuItem>
+          )}
+          {protectedCode && !canCancel && (
+            <DropdownMenuItem disabled>
+              {t('Customer rights protected')}
+            </DropdownMenuItem>
+          )}
+        </DataTableRowActionMenu>
+      </div>
+      {cancelling && (
+        <RedemptionCancellationDialog
+          code={redemption}
+          onClose={() => setCancelling(false)}
+          onComplete={() => {
+            setCancelling(false)
+            triggerRefresh()
           }}
-          className='text-destructive focus:text-destructive'
-        >
-          {t('Delete')}
-          <DropdownMenuShortcut>
-            <Trash2 size={16} />
-          </DropdownMenuShortcut>
-        </DropdownMenuItem>
-      </DataTableRowActionMenu>
-    </div>
+        />
+      )}
+      {draft && (
+        <OperationDialog
+          key={draft.request_id}
+          draft={draft}
+          onClose={() => setDraft(null)}
+          onComplete={() => {
+            toast.success(
+              t(
+                draft.payload.status === REDEMPTION_STATUS.DISABLED
+                  ? SUCCESS_MESSAGES.REDEMPTION_DISABLED
+                  : SUCCESS_MESSAGES.REDEMPTION_ENABLED
+              )
+            )
+            setDraft(null)
+            triggerRefresh()
+          }}
+        />
+      )}
+    </>
   )
 }

@@ -16,60 +16,68 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMutation } from '@tanstack/react-query'
-import { useRef } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
-import { handleServerError } from '@/lib/handle-server-error'
-import { requireServerSuccess } from '@/lib/server-error-message'
+import { OperationDialog } from '@/features/agent-platform/components/operation-dialog'
+import type { OperationDraft } from '@/features/agent-platform/types'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { deleteRedemption } from '../api'
 import { SUCCESS_MESSAGES } from '../constants'
+import { isProtectedRedemption, redemptionOperation } from '../lib/transaction'
 import { useRedemptions } from './redemptions-provider'
 
 export function RedemptionsDeleteDialog() {
   const { t } = useTranslation()
   const { open, setOpen, currentRow, triggerRefresh } = useRedemptions()
-  const submitting = useRef(false)
-  const deletion = useMutation({
-    mutationFn: async (id: number) =>
-      requireServerSuccess(await deleteRedemption(id)),
-    retry: false,
-    onSuccess: () => {
-      toast.success(t(SUCCESS_MESSAGES.REDEMPTION_DELETED))
-      setOpen(null)
-      triggerRefresh()
-    },
-    onError: (error) => handleServerError(error),
-    onSettled: () => {
-      submitting.current = false
-    },
-  })
+  const role = useAuthStore((state) => state.auth.user?.role)
+  const [draft, setDraft] = useState<OperationDraft | null>(null)
   return (
-    <ConfirmDialog
-      open={open === 'delete'}
-      onOpenChange={(nextOpen) => {
-        if (!nextOpen && !submitting.current) setOpen(null)
-      }}
-      title={t('Are you sure?')}
-      desc={
-        <>
-          {t('This will permanently delete redemption code')}{' '}
-          <span className='font-semibold break-all'>{currentRow?.name}</span>
-          {t('. This action cannot be undone.')}
-        </>
-      }
-      destructive
-      isLoading={deletion.isPending}
-      disabled={!currentRow}
-      confirmText={deletion.isPending ? t('Deleting...') : t('Delete')}
-      handleConfirm={() => {
-        if (!currentRow || submitting.current) return
-        submitting.current = true
-        deletion.mutate(currentRow.id)
-      }}
-    />
+    <>
+      <ConfirmDialog
+        open={open === 'delete' && !draft}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && !draft) setOpen(null)
+        }}
+        title={t('Are you sure?')}
+        desc={
+          <>
+            {t('This will permanently delete redemption code')}{' '}
+            <span className='font-semibold break-all'>{currentRow?.name}</span>
+            {t('. This action cannot be undone.')}
+          </>
+        }
+        destructive
+        disabled={!currentRow || isProtectedRedemption(currentRow)}
+        confirmText={t('Delete')}
+        handleConfirm={() => {
+          if (!currentRow || draft || isProtectedRedemption(currentRow)) return
+          setDraft(
+            redemptionOperation(
+              'delete',
+              role,
+              { ids: [currentRow.id], invalid_only: false, agent_user_id: 0 },
+              `/api/redemption/${currentRow.id}/`,
+              [{ label: 'Name', after: currentRow.name }]
+            )
+          )
+        }}
+      />
+      {draft && (
+        <OperationDialog
+          key={draft.request_id}
+          draft={draft}
+          onClose={() => setDraft(null)}
+          onComplete={() => {
+            toast.success(t(SUCCESS_MESSAGES.REDEMPTION_DELETED))
+            setDraft(null)
+            setOpen(null)
+            triggerRefresh()
+          }}
+        />
+      )}
+    </>
   )
 }

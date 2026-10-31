@@ -17,13 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import {
@@ -36,15 +35,14 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { OperationDialog } from '@/features/agent-platform/components/operation-dialog'
+import type { OperationDraft } from '@/features/agent-platform/types'
 import { formatQuotaWithCurrency, getCurrencyLabel } from '@/lib/currency'
 import { getEditableQuotaStep, parseQuotaFromDollars } from '@/lib/format'
-import { handleServerError } from '@/lib/handle-server-error'
-import { ROLE } from '@/lib/roles'
 
-import { allocateAgentQuota } from '../api'
 import { allocationSchema, type AllocationForm } from '../lib/forms'
 import { canAllocateQuota } from '../lib/quota'
-import type { AgentAccount, AgentAllocation } from '../types'
+import type { AgentAccount } from '../types'
 
 export function AllocationDialog(props: {
   account: AgentAccount
@@ -52,41 +50,15 @@ export function AllocationDialog(props: {
 }) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const submitting = useRef(false)
-  const request = useRef<{ signature: string; id: string } | null>(null)
-  const [pending, setPending] = useState<AgentAllocation | null>(null)
+  const [pending, setPending] = useState<OperationDraft | null>(null)
   const form = useForm<AllocationForm>({
     resolver: zodResolver(allocationSchema(t)),
     defaultValues: { amount: 0, reason: '' },
   })
-  const mutation = useMutation({
-    mutationFn: allocateAgentQuota,
-    retry: false,
-    onSuccess: () => {
-      toast.success(t('Quota adjusted successfully'))
-      void queryClient.invalidateQueries({ queryKey: ['agent-redemption'] })
-      props.onClose()
-    },
-    onError: (error) => {
-      handleServerError(error)
-      setPending(null)
-    },
-    onSettled: () => {
-      submitting.current = false
-    },
-  })
-
   const onSubmit = (data: AllocationForm) => {
-    if (submitting.current) return
+    if (pending) return
     const delta = parseQuotaFromDollars(data.amount)
-    if (
-      delta > 0 &&
-      (props.account.user_deleted ||
-        (props.account.user_role !== undefined &&
-          props.account.user_role !== ROLE.AGENT) ||
-        (props.account.user_status !== undefined &&
-          props.account.user_status !== 1))
-    ) {
+    if (delta > 0 && props.account.active_agent !== true) {
       form.setError('amount', {
         message: t(
           'Agent account must be active before issuing redemption codes'
@@ -102,19 +74,23 @@ export function AllocationDialog(props: {
       })
       return
     }
-    const signature = JSON.stringify([
-      props.account.agent_user_id,
-      delta,
-      data.reason,
-    ])
-    if (request.current?.signature !== signature) {
-      request.current = { signature, id: crypto.randomUUID() }
-    }
     setPending({
-      agent_user_id: props.account.agent_user_id,
-      delta,
-      reason: data.reason,
-      request_id: request.current.id,
+      action: 'redemption.allocate',
+      request_id: crypto.randomUUID(),
+      payload: {
+        agent_user_id: props.account.agent_user_id,
+        delta,
+        reason: data.reason,
+      },
+      endpoint: '/api/agent-redemption/allocations',
+      resource: '/agent-redemption',
+      review: [
+        {
+          label: 'Quota adjustment',
+          after: formatQuotaWithCurrency(delta, { abbreviate: false }),
+        },
+        { label: 'Reason', after: data.reason },
+      ],
     })
   }
 
@@ -123,18 +99,18 @@ export function AllocationDialog(props: {
       <Dialog
         open
         onOpenChange={(open) => {
-          if (!open && !mutation.isPending && !pending) props.onClose()
+          if (!open && !pending) props.onClose()
         }}
         title={t('Adjust agent quota')}
         description={t(
           'Only available quota can be reclaimed. Reserved and redeemed quota cannot be withdrawn.'
         )}
-        showCloseButton={!mutation.isPending}
+        showCloseButton={!pending}
         footer={
           <>
             <Button
               variant='outline'
-              disabled={mutation.isPending}
+              disabled={pending !== null}
               onClick={props.onClose}
             >
               {t('Cancel')}
@@ -142,7 +118,7 @@ export function AllocationDialog(props: {
             <Button
               type='submit'
               form='agent-allocation'
-              disabled={mutation.isPending}
+              disabled={pending !== null}
             >
               {t('Continue')}
             </Button>
@@ -176,7 +152,7 @@ export function AllocationDialog(props: {
                       {...field}
                       type='number'
                       step={getEditableQuotaStep()}
-                      disabled={mutation.isPending}
+                      disabled={pending !== null}
                       onChange={(event) =>
                         field.onChange(
                           event.target.value === ''
@@ -205,7 +181,7 @@ export function AllocationDialog(props: {
                     <Textarea
                       {...field}
                       maxLength={200}
-                      disabled={mutation.isPending}
+                      disabled={pending !== null}
                     />
                   </FormControl>
                   <FormMessage />
@@ -215,29 +191,21 @@ export function AllocationDialog(props: {
           </form>
         </Form>
       </Dialog>
-      <ConfirmDialog
-        open={pending !== null}
-        onOpenChange={(open) => {
-          if (!open && !mutation.isPending) setPending(null)
-        }}
-        title={t('Confirm quota adjustment')}
-        desc={t(
-          'Adjust agent #{{id}} by {{amount}}. This action is recorded in the ledger.',
-          {
-            id: props.account.agent_user_id,
-            amount: formatQuotaWithCurrency(pending?.delta ?? 0, {
-              abbreviate: false,
-            }),
-          }
-        )}
-        isLoading={mutation.isPending}
-        confirmText={t('Confirm')}
-        handleConfirm={() => {
-          if (!pending || submitting.current) return
-          submitting.current = true
-          mutation.mutate(pending)
-        }}
-      />
+      {pending && (
+        <OperationDialog
+          key={pending.request_id}
+          draft={pending}
+          onClose={() => setPending(null)}
+          onComplete={() => {
+            toast.success(t('Quota adjusted successfully'))
+            void queryClient.invalidateQueries({
+              queryKey: ['agent-redemption'],
+            })
+            setPending(null)
+            props.onClose()
+          }}
+        />
+      )}
     </>
   )
 }

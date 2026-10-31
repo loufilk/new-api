@@ -186,7 +186,7 @@ export function useSecureVerification() {
         )
         // Hide linked-account verification on entries that cannot complete the
         // provider callback; the server-side method list stays untouched.
-        const requirements: VerificationRequirements = oauthAvailable
+        let requirements: VerificationRequirements = oauthAvailable
           ? fetched
           : {
               ...fetched,
@@ -195,6 +195,18 @@ export function useSecureVerification() {
               ),
               oauth_providers: [],
             }
+        if (
+          current.kind === 'operation' &&
+          current.request.scope === 'agent.transaction'
+        ) {
+          requirements = {
+            ...requirements,
+            methods: requirements.methods.filter(
+              (option) => option.method === '2fa' || option.method === 'passkey'
+            ),
+            oauth_providers: [],
+          }
+        }
         if (pending.current !== current) return
         const initialPassword = current.initialPassword
         current.initialPassword = undefined

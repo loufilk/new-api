@@ -88,6 +88,8 @@ func writeSecurityOperationError(c *gin.Context, err error) {
 		code, message = "SECURITY_VERIFICATION_FAILED", service.ErrVerificationFailed.Error()
 	case errors.Is(err, service.ErrVerificationLocked):
 		code, message = "SECURITY_VERIFICATION_LOCKED", service.ErrVerificationLocked.Error()
+	case errors.Is(err, model.ErrAgentTransactionMethod):
+		code, message = "SECURITY_METHOD_UNAVAILABLE", model.ErrAgentTransactionMethod.Error()
 	case errors.Is(err, service.ErrVerificationUnavailable):
 		code, message = "SECURITY_METHOD_UNAVAILABLE", service.ErrVerificationUnavailable.Error()
 	case errors.Is(err, service.ErrVerificationFlowRequired):
