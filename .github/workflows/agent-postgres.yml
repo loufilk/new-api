@@ -2,7 +2,7 @@ name: Agent PostgreSQL acceptance
 
 on:
   push:
-    branches: ['dot/agent-upstream-align-20261029', 'dot/upstream-user-id-search-20261029']
+    branches: ['dot/agent-upstream-align-20261029', 'dot/upstream-user-id-search-20261029', 'dot/user-call-interception-20261031']
   workflow_dispatch:
 
 permissions:
@@ -15,9 +15,9 @@ concurrency:
 jobs:
   postgres:
     name: Agent, migration, and wallet regressions (PostgreSQL 18.6)
-    if: github.ref == 'refs/heads/dot/agent-upstream-align-20261029' || github.ref == 'refs/heads/dot/upstream-user-id-search-20261029'
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/dot/agent-upstream-align-20261029' || github.ref == 'refs/heads/dot/upstream-user-id-search-20261029' || github.ref == 'refs/heads/dot/user-call-interception-20261031'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:18.6
@@ -45,6 +45,7 @@ jobs:
       TEST_SERVICE_POSTGRES_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_service_ci?sslmode=disable
       TEST_POSTGRES_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_agent_ci?sslmode=disable
       TEST_AGENT_POSTGRES_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_agent_ci?sslmode=disable
+      TEST_AGENT_MIGRATION_POSTGRES_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_agent_ci?sslmode=disable
       TEST_FIXED_POSTGRES_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_fixed_ci?sslmode=disable
       TEST_FIXED_POSTGRES_LOG_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_fixed_log_ci?sslmode=disable
       TEST_PERF_POSTGRES_DSN: postgres://postgres:agent-postgres-fixture@127.0.0.1:55438/newapi_perf_ci?sslmode=disable
@@ -92,6 +93,27 @@ jobs:
           go test -race -p 1 -count=1 -timeout=10m -json ./model ./middleware ./controller \
             -run '^(TestAgent|TestRedeem|TestRedemption(Quota|DuplicateCallback)|TestSearchRedemption|TestMainAutoMigrate|TestInsertPersistsValidatedInviter|TestInsertWithTxRejectsDisabled|TestInsertLinuxDOWithTx|TestInsertIgnoresLegacyGlobal|TestInsertWithTxOAuthRollback|TestInviteUser|TestLinuxDOSignup|TestAdminUser|TestCreateUser|TestManageUser(Disable|Demote|Delete)|TestFailedRedemptionDoesNotLogSubmittedCode)' \
             | tee acceptance-evidence/agent.jsonl
+
+      - name: Native user interception authorization and atomic audit
+        run: |
+          set -euo pipefail
+          go test -race -p 1 -count=1 -timeout=10m -json ./model ./controller ./service \
+            -run '^TestUserCall' \
+            | tee acceptance-evidence/user-call-interception.jsonl
+
+      - name: Registered agent migrations and routed financial operations
+        run: |
+          set -euo pipefail
+          go test -race -p 1 -count=1 -timeout=10m -json ./modules/chuanapi/agents ./router \
+            -run '^TestAgentPlatform' \
+            | tee acceptance-evidence/agent-platform.jsonl
+
+      - name: Bonus source provenance and refund boundaries
+        run: |
+          set -euo pipefail
+          go test -race -p 1 -count=1 -timeout=10m -json ./model \
+            -run '^TestBonusSource' \
+            | tee acceptance-evidence/bonus-source.jsonl
 
       - name: Upstream redemption lifecycle on PostgreSQL only
         run: |
@@ -181,6 +203,9 @@ jobs:
           from pathlib import Path
 
           required = {
+              'user-call-interception': {'TestUserCallInterceptionConcurrentSaveRejectsLostUpdate', 'TestUserCallInterceptionAuditFailureRollsBackConfiguration', 'TestUserCallInterceptionAPIEnforcesAdminPermissionsAndRoleHierarchy', 'TestUserCallReplyStreamingTerminalContracts'},
+              'agent-platform': {'TestAgentPlatformRegisteredMigrationFreshPostgres', 'TestAgentPlatformRegisteredMigrationPreservesLegacyLiabilitiesPostgres', 'TestAgentPlatformRoutedWithdrawalApprovalUnknownFailureAndRejectPostgres', 'TestAgentPlatformRoutedPurchaseDeliveryCustomerBindingPostgres'},
+              'bonus-source': {'TestBonusSourceConcurrentDebitsAndRefundCeilingPostgres', 'TestBonusSourceHistoricalRefundCutoverAndMissingSchemaFailClosedPostgres'},
               'agent': {'TestAgentRedemptionPostgresLegacyUpgradeRepeatedMigrationAndForwardRecovery', 'TestAgentDashboardAuthorizationPostgres', 'TestAgentInvitationConcurrentDuplicateRegistrationHasOneGrant'},
               'redemption': {'TestRedemptionLifecycleDatabaseMatrix/postgres'},
               'wallet-model': {'TestCreditQuotaShares', 'TestIsModelBonusEligibleFailClosed'},
