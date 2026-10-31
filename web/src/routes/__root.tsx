@@ -31,7 +31,7 @@ import { ThemeCustomizationProvider } from '@/context/theme-customization-provid
 import { saveAffiliateCode } from '@/features/auth/lib/storage'
 import { GeneralError } from '@/features/errors/general-error'
 import { NotFoundError } from '@/features/errors/not-found-error'
-import { getSetupStatus } from '@/features/setup/api'
+import { setupStatusQueryOptions } from '@/features/setup/api'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import {
   bootstrapAuthentication,
@@ -129,7 +129,7 @@ export const Route = createRootRouteWithContext<{
   queryClient: QueryClient
 }>()({
   // 应用初始化与路由解析前统一校验会话
-  beforeLoad: async ({ location }) => {
+  beforeLoad: async ({ location, context }) => {
     const legacyTarget = resolveLegacyRoute(location.href)
     if (legacyTarget) {
       throw redirect({ href: legacyTarget, replace: true })
@@ -143,13 +143,22 @@ export const Route = createRootRouteWithContext<{
     // 只检查 setup 状态（如果需要）
     if (needsSetupCheck) {
       const [status] = await Promise.all([
-        getSetupStatus().catch((error) => {
-          if (import.meta.env.DEV) {
-            // eslint-disable-next-line no-console
-            console.warn('[root.beforeLoad] setup status check failed', error)
-          }
-          return null
-        }),
+        context.queryClient
+          .fetchQuery(setupStatusQueryOptions)
+          .catch((error) => {
+            if (import.meta.env.DEV) {
+              // eslint-disable-next-line no-console
+              console.warn('[root.beforeLoad] setup status check failed', error)
+            }
+            return null
+          })
+          .finally(() => {
+            // Never retain an uninitialized/error result after a setup redirect.
+            context.queryClient.removeQueries({
+              queryKey: setupStatusQueryOptions.queryKey,
+              exact: true,
+            })
+          }),
         authBootstrap,
       ])
 

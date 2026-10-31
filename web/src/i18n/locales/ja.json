@@ -7402,6 +7402,7 @@
     "User has been deleted": "ユーザーは削除されています",
     "User ID": "ユーザー ID",
     "User ID Field": "ユーザーIDフィールド",
+    "User ID must be a positive integer no greater than 9223372036854775807": "ユーザー ID は 9223372036854775807 以下の正の整数である必要があります",
     "User ID:": "ユーザーID:",
     "User Info Endpoint": "ユーザー情報エンドポイント",
     "User Info Endpoint (Optional)": "ユーザー情報エンドポイント（オプション）",

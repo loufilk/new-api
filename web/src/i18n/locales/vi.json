@@ -7402,6 +7402,7 @@
     "User has been deleted": "Người dùng đã bị xóa",
     "User ID": "ID người dùng",
     "User ID Field": "Trường ID Người dùng",
+    "User ID must be a positive integer no greater than 9223372036854775807": "ID người dùng phải là số nguyên dương không lớn hơn 9223372036854775807",
     "User ID:": "ID người dùng:",
     "User Info Endpoint": "Điểm cuối Thông tin Người dùng",
     "User Info Endpoint (Optional)": "Điểm cuối Thông tin Người dùng (Tùy chọn)",

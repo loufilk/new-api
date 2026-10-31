@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "stage": "agent-upstream-alignment",
+  "stage": "image-user-id-upstream-merge",
   "production_baseline": {
     "repository": "1057300248/wanchuan-new-api",
     "commit": "093c7197d5eac50787971fd5ff7553a414142fc7",
@@ -13,14 +13,33 @@
   },
   "upstream_reference": {
     "repository": "QuantumNous/new-api",
-    "commit": "e449cc700eb569cdfc2199cb73e97de46944f43c",
+    "commit": "1424ffdd4aef28812a0e9309a465453cbdd034e4",
     "release_tag": "v1.0.0-rc.47",
     "release_commit": "e835b1bfc43b565d625537830dbfb19328925134",
-    "commits_after_release": 15,
-    "alignment_method": "Upstream history through e449cc700eb569cdfc2199cb73e97de46944f43c is merged as a second parent after the agent branch and verified rc47 upgrade were integrated. Custom accounting, authorization and dependency choices are retained.",
-    "tree": "30ccda83eebe810565c9d234c2d5ece63121e17e",
-    "pinned_at": "2026-10-29T02:36:00Z"
+    "commits_after_release": 34,
+    "alignment_method": "Retain the upstream history already merged as the second parent of d07abe39543d3fe8acf23bee42790352286424d1. Merge source commit 8de0abd7764a6d4d8c4bb54702c042a655cefadb into that image branch without advancing the upstream pin. Preserve both lines of custom accounting, authorization, logging and image safeguards.",
+    "tree": "48874f04d5eb9479a948147e9263e21c852865ea",
+    "pinned_at": "2026-10-31T00:02:33Z",
+    "verified_at": "2026-10-31T08:40:00Z"
   },
-  "version": "v1.0.0-rc.47.chuanapi.1",
-  "scope": "Records source history only. production_baseline and feature_reference remain historical pins, not evidence of the currently deployed version. This manifest does not authorize a release, main-branch merge or deployment, and does not assert feature parity."
+  "version": "v1.0.0-rc.47.chuanapi.image.2",
+  "scope": "Records source history only. production_baseline and feature_reference remain historical pins, not evidence of the currently deployed version. This manifest does not authorize a release, main-branch merge or deployment, and does not assert feature parity.",
+  "integrated_feature_baseline": {
+    "repository": "loufilk/new-api",
+    "branch": "dot/agent-upstream-align-20261029",
+    "commit": "7b72d259453ac0b54eb29b873d44de435b7e9dc8",
+    "tree": "49759b58960f3095fb409ed3db5363be20cdb1c2"
+  },
+  "merged_image_baseline": {
+    "repository": "loufilk/new-api",
+    "branch": "dot/image-resolution-batch-fix-20261029",
+    "commit": "d07abe39543d3fe8acf23bee42790352286424d1",
+    "tree": "48cef84d50e7e9c40b21ce10e6613974752725e3"
+  },
+  "merged_source_baseline": {
+    "repository": "loufilk/new-api",
+    "branch": "dot/upstream-user-id-search-20261029",
+    "commit": "8de0abd7764a6d4d8c4bb54702c042a655cefadb",
+    "tree": "80b6f7a7a0ed619c1c683fd993a269fe25db5649"
+  }
 }

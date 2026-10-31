@@ -6,6 +6,8 @@ import { pluginReact } from '@rsbuild/plugin-react'
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss'
 import { tanstackRouter } from '@tanstack/router-plugin/rspack'
 
+import { getBootstrapTemplateParameters } from './scripts/bootstrap-template'
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig(({ envMode }) => {
@@ -76,6 +78,7 @@ export default defineConfig(({ envMode }) => {
     html: {
       template: './index.html',
       favicon: './public/favicon.ico',
+      templateParameters: getBootstrapTemplateParameters(__dirname),
     },
     server: {
       host: '0.0.0.0',

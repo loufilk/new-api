@@ -7402,6 +7402,7 @@
     "User has been deleted": "User has been deleted",
     "User ID": "User ID",
     "User ID Field": "User ID Field",
+    "User ID must be a positive integer no greater than 9223372036854775807": "User ID must be a positive integer no greater than 9223372036854775807",
     "User ID:": "User ID:",
     "User Info Endpoint": "User Info Endpoint",
     "User Info Endpoint (Optional)": "User Info Endpoint (Optional)",
