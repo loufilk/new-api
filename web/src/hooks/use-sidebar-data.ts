@@ -122,6 +122,21 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             icon: Wallet,
           },
           {
+            title: t('pool.title'),
+            url: '/account-pool',
+            icon: ServerCog,
+          },
+          {
+            title: t('intelligence.title'),
+            url: '/intelligence',
+            icon: FlaskConical,
+          },
+          {
+            title: t('Invitation Rewards'),
+            url: '/affiliate',
+            icon: Users,
+          },
+          {
             title: t('Support Center'),
             url: '/support',
             icon: LifeBuoy,

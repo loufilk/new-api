@@ -34,6 +34,9 @@ func TestChuanAPIAccessTokenScopeEnforcement(t *testing.T) {
 		{http.MethodGet, "/api/user/self/email/verification", "account_security:read", "ACCESS_TOKEN_SCOPE_DENIED"},
 		{http.MethodGet, "/api/user/playground/bootstrap", "api_key:write", "AUTH_SESSION_REQUIRED"},
 		{http.MethodPost, "/api/user/playground/chat", "api_key:write", "AUTH_SESSION_REQUIRED"},
+		{http.MethodGet, "/api/user/account-pool", "profile:read", "AUTH_SESSION_REQUIRED"},
+		{http.MethodGet, "/api/user/model-tests", "profile:read", "AUTH_SESSION_REQUIRED"},
+		{http.MethodPost, "/api/user/model-tests/runs", "api_key:write", "AUTH_SESSION_REQUIRED"},
 		{http.MethodGet, "/api/support/tickets", "profile:read", "AUTH_SESSION_REQUIRED"},
 	} {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {

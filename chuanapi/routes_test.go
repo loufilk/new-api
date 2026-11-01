@@ -51,17 +51,14 @@ func TestLlmsRouteSetPreservesLegacyRouteTableAndHandlers(t *testing.T) {
 		http.MethodHead + " /public-api/pricing",
 		http.MethodGet + " /public-api/status",
 		http.MethodGet + " /api/chuanapi/public-config",
-		http.MethodGet + " /api/model-monitor",
-		http.MethodGet + " /api/option/model-monitor",
-		http.MethodPut + " /api/option/model-monitor",
-		http.MethodGet + " /api/option/model-monitor/targets",
-		http.MethodGet + " /api/model-monitor/results/:id",
-		http.MethodGet + " /api/model-monitor/artworks/:id",
-		http.MethodGet + " /api/model-monitor/thumbnails/:id",
 		http.MethodGet + " /api/user/auth/session",
+		http.MethodGet + " /api/user/account-pool",
+		http.MethodGet + " /api/option/account-pool",
 	} {
 		assert.Contains(t, handlers, key)
 	}
+	assert.NotContains(t, handlers, "GET /api/model-monitor")
+	assert.NotContains(t, handlers, "PUT /api/option/model-monitor")
 	assert.True(t, strings.HasSuffix(handlers[http.MethodGet+" /llms.txt"], "/console.GetLlmsIndex"))
 	assert.True(t, strings.HasSuffix(handlers[http.MethodHead+" /llms.txt"], "/console.GetLlmsIndex"))
 	assert.True(t, strings.HasSuffix(handlers[http.MethodGet+" /llms-full.txt"], "/console.GetLlmsFull"))

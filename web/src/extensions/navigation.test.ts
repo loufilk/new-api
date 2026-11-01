@@ -44,7 +44,9 @@ describe('frontend extension navigation contract', () => {
         documentNavigation: true,
       },
       { title: 'Pricing', href: '/pricing' },
-      { title: 'monitor.title', href: '/model-monitor' },
+      { title: 'pool.title', href: '/account-pool' },
+      { title: 'intelligence.title', href: '/intelligence' },
+      { title: 'Invitation Rewards', href: '/affiliate' },
     ])
     expect(links).toEqual([
       { title: 'Home', href: '/' },
@@ -67,7 +69,9 @@ describe('frontend extension navigation contract', () => {
     )
 
     expect(result).toEqual([
-      { title: 'monitor.title', href: '/model-monitor' },
+      { title: 'pool.title', href: '/account-pool' },
+      { title: 'intelligence.title', href: '/intelligence' },
+      { title: 'Invitation Rewards', href: '/affiliate' },
       {
         title: 'Docs',
         href: '/help',

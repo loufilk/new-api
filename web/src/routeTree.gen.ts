@@ -36,12 +36,15 @@ import { Route as PricingIndexRouteImport } from './routes/pricing/index'
 import { Route as RankingsIndexRouteImport } from './routes/rankings/index'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as authUserResetRouteImport } from './routes/(auth)/user/reset'
+import { Route as AuthenticatedAccountPoolIndexRouteImport } from './routes/_authenticated/account-pool/index'
+import { Route as AuthenticatedAffiliateIndexRouteImport } from './routes/_authenticated/affiliate/index'
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
 import { Route as AuthenticatedChatChatIdRouteImport } from './routes/_authenticated/chat/$chatId'
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
 import { Route as AuthenticatedDashboardSectionRouteImport } from './routes/_authenticated/dashboard/$section'
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
 import { Route as AuthenticatedImageIndexRouteImport } from './routes/_authenticated/image/index'
+import { Route as AuthenticatedIntelligenceIndexRouteImport } from './routes/_authenticated/intelligence/index'
 import { Route as AuthenticatedKeysIndexRouteImport } from './routes/_authenticated/keys/index'
 import { Route as AuthenticatedModelManagementIndexRouteImport } from './routes/_authenticated/model-management/index'
 import { Route as AuthenticatedModelManagementSectionRouteImport } from './routes/_authenticated/model-management/$section'
@@ -213,6 +216,18 @@ const authUserResetRoute = authUserResetRouteImport.update({
   path: '/user/reset',
   getParentRoute: () => authRouteRoute,
 } as any)
+const AuthenticatedAccountPoolIndexRoute =
+  AuthenticatedAccountPoolIndexRouteImport.update({
+    id: '/account-pool/',
+    path: '/account-pool/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedAffiliateIndexRoute =
+  AuthenticatedAffiliateIndexRouteImport.update({
+    id: '/affiliate/',
+    path: '/affiliate/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedChannelsIndexRoute =
   AuthenticatedChannelsIndexRouteImport.update({
     id: '/channels/',
@@ -247,6 +262,12 @@ const AuthenticatedImageIndexRoute = AuthenticatedImageIndexRouteImport.update({
   path: '/image/',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedIntelligenceIndexRoute =
+  AuthenticatedIntelligenceIndexRouteImport.update({
+    id: '/intelligence/',
+    path: '/intelligence/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedKeysIndexRoute = AuthenticatedKeysIndexRouteImport.update({
   id: '/keys/',
   path: '/keys/',
@@ -492,9 +513,12 @@ export interface FileRoutesByFullPath {
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
   '/help/guides/$slug': typeof HelpGuidesSlugRoute
+  '/account-pool/': typeof AuthenticatedAccountPoolIndexRoute
+  '/affiliate/': typeof AuthenticatedAffiliateIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/image/': typeof AuthenticatedImageIndexRoute
+  '/intelligence/': typeof AuthenticatedIntelligenceIndexRoute
   '/keys/': typeof AuthenticatedKeysIndexRoute
   '/model-management/': typeof AuthenticatedModelManagementIndexRoute
   '/playground/': typeof AuthenticatedPlaygroundIndexRoute
@@ -560,9 +584,12 @@ export interface FileRoutesByTo {
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
   '/help/guides/$slug': typeof HelpGuidesSlugRoute
+  '/account-pool': typeof AuthenticatedAccountPoolIndexRoute
+  '/affiliate': typeof AuthenticatedAffiliateIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
   '/image': typeof AuthenticatedImageIndexRoute
+  '/intelligence': typeof AuthenticatedIntelligenceIndexRoute
   '/keys': typeof AuthenticatedKeysIndexRoute
   '/model-management': typeof AuthenticatedModelManagementIndexRoute
   '/playground': typeof AuthenticatedPlaygroundIndexRoute
@@ -632,9 +659,12 @@ export interface FileRoutesById {
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/_authenticated/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
   '/help/guides/$slug': typeof HelpGuidesSlugRoute
+  '/_authenticated/account-pool/': typeof AuthenticatedAccountPoolIndexRoute
+  '/_authenticated/affiliate/': typeof AuthenticatedAffiliateIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/_authenticated/image/': typeof AuthenticatedImageIndexRoute
+  '/_authenticated/intelligence/': typeof AuthenticatedIntelligenceIndexRoute
   '/_authenticated/keys/': typeof AuthenticatedKeysIndexRoute
   '/_authenticated/model-management/': typeof AuthenticatedModelManagementIndexRoute
   '/_authenticated/playground/': typeof AuthenticatedPlaygroundIndexRoute
@@ -703,9 +733,12 @@ export interface FileRouteTypes {
     | '/usage-logs/$section'
     | '/usage-logs/audit'
     | '/help/guides/$slug'
+    | '/account-pool/'
+    | '/affiliate/'
     | '/channels/'
     | '/dashboard/'
     | '/image/'
+    | '/intelligence/'
     | '/keys/'
     | '/model-management/'
     | '/playground/'
@@ -771,9 +804,12 @@ export interface FileRouteTypes {
     | '/usage-logs/$section'
     | '/usage-logs/audit'
     | '/help/guides/$slug'
+    | '/account-pool'
+    | '/affiliate'
     | '/channels'
     | '/dashboard'
     | '/image'
+    | '/intelligence'
     | '/keys'
     | '/model-management'
     | '/playground'
@@ -842,9 +878,12 @@ export interface FileRouteTypes {
     | '/_authenticated/usage-logs/$section'
     | '/_authenticated/usage-logs/audit'
     | '/help/guides/$slug'
+    | '/_authenticated/account-pool/'
+    | '/_authenticated/affiliate/'
     | '/_authenticated/channels/'
     | '/_authenticated/dashboard/'
     | '/_authenticated/image/'
+    | '/_authenticated/intelligence/'
     | '/_authenticated/keys/'
     | '/_authenticated/model-management/'
     | '/_authenticated/playground/'
@@ -1093,6 +1132,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof authUserResetRouteImport
       parentRoute: typeof authRouteRoute
     }
+    '/_authenticated/account-pool/': {
+      id: '/_authenticated/account-pool/'
+      path: '/account-pool'
+      fullPath: '/account-pool/'
+      preLoaderRoute: typeof AuthenticatedAccountPoolIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/affiliate/': {
+      id: '/_authenticated/affiliate/'
+      path: '/affiliate'
+      fullPath: '/affiliate/'
+      preLoaderRoute: typeof AuthenticatedAffiliateIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/channels/': {
       id: '/_authenticated/channels/'
       path: '/channels'
@@ -1133,6 +1186,13 @@ declare module '@tanstack/react-router' {
       path: '/image'
       fullPath: '/image/'
       preLoaderRoute: typeof AuthenticatedImageIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/intelligence/': {
+      id: '/_authenticated/intelligence/'
+      path: '/intelligence'
+      fullPath: '/intelligence/'
+      preLoaderRoute: typeof AuthenticatedIntelligenceIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/keys/': {
@@ -1488,9 +1548,12 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedModelManagementSectionRoute: typeof AuthenticatedModelManagementSectionRoute
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
   AuthenticatedUsageLogsAuditRoute: typeof AuthenticatedUsageLogsAuditRoute
+  AuthenticatedAccountPoolIndexRoute: typeof AuthenticatedAccountPoolIndexRoute
+  AuthenticatedAffiliateIndexRoute: typeof AuthenticatedAffiliateIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
   AuthenticatedImageIndexRoute: typeof AuthenticatedImageIndexRoute
+  AuthenticatedIntelligenceIndexRoute: typeof AuthenticatedIntelligenceIndexRoute
   AuthenticatedKeysIndexRoute: typeof AuthenticatedKeysIndexRoute
   AuthenticatedModelManagementIndexRoute: typeof AuthenticatedModelManagementIndexRoute
   AuthenticatedPlaygroundIndexRoute: typeof AuthenticatedPlaygroundIndexRoute
@@ -1517,9 +1580,12 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
     AuthenticatedModelManagementSectionRoute,
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
   AuthenticatedUsageLogsAuditRoute: AuthenticatedUsageLogsAuditRoute,
+  AuthenticatedAccountPoolIndexRoute: AuthenticatedAccountPoolIndexRoute,
+  AuthenticatedAffiliateIndexRoute: AuthenticatedAffiliateIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
   AuthenticatedImageIndexRoute: AuthenticatedImageIndexRoute,
+  AuthenticatedIntelligenceIndexRoute: AuthenticatedIntelligenceIndexRoute,
   AuthenticatedKeysIndexRoute: AuthenticatedKeysIndexRoute,
   AuthenticatedModelManagementIndexRoute:
     AuthenticatedModelManagementIndexRoute,

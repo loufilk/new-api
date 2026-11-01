@@ -443,6 +443,8 @@ func mainAutoMigrateModels(registry *extension.Registry) []any {
 		&UserCallInterception{},
 		&UserCallInterceptionHit{},
 		&UserCallInterceptionAudit{},
+		&ModelTestRun{},
+		&ModelTestGate{},
 		&UserSession{},
 		&AuthFlow{},
 		&ExternalIdentityClaim{},

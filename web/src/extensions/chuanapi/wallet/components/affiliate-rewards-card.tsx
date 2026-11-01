@@ -25,7 +25,9 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TitledCard } from '@/components/ui/titled-card'
-import { formatQuota } from '@/lib/format'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber, formatQuota } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
 import { REFERRAL_REWARD_MAX_TOPUP_EVENTS } from '../constants'
 import { formatReferralRate } from '../lib'
@@ -46,10 +48,13 @@ interface AffiliateRewardsCardProps {
   recordsPage: number
   onRecordsPageChange: (page: number) => void
   loading?: boolean
+  standalone?: boolean
+  affiliateCode?: string
 }
 
 export function AffiliateRewardsCard(props: AffiliateRewardsCardProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
 
   if (props.loading) {
     return (
@@ -71,8 +76,15 @@ export function AffiliateRewardsCard(props: AffiliateRewardsCardProps) {
   const stats = [
     [t('Pending Rewards'), formatQuota(props.user?.aff_quota ?? 0)],
     [t('Total Rewards'), formatQuota(props.user?.aff_history_quota ?? 0)],
-    [t('Referral Invited Users'), String(props.user?.aff_count ?? 0)],
+    [
+      t('Referral Invited Users'),
+      formatNumber(props.user?.aff_count ?? 0, locale),
+    ],
   ]
+
+  if (props.standalone) {
+    stats.unshift([t('affiliate.rate'), formatReferralRate(props.referralRate)])
+  }
 
   return (
     <TitledCard
@@ -87,10 +99,10 @@ export function AffiliateRewardsCard(props: AffiliateRewardsCardProps) {
       descriptionClassName='sm:text-xs'
       contentClassName='space-y-3 sm:p-3'
       action={
-        hasRewards ? (
+        hasRewards || props.standalone ? (
           <Button
             onClick={props.onTransfer}
-            disabled={!props.complianceConfirmed}
+            disabled={!props.complianceConfirmed || !hasRewards}
             size='sm'
             variant='outline'
           >
@@ -99,7 +111,12 @@ export function AffiliateRewardsCard(props: AffiliateRewardsCardProps) {
         ) : null
       }
     >
-      <div className='bg-muted/40 grid grid-cols-3 gap-3 rounded-lg border p-2 text-center'>
+      <div
+        className={cn(
+          'bg-muted/40 grid gap-3 rounded-lg border p-3 text-center',
+          props.standalone ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'
+        )}
+      >
         {stats.map(([label, value]) => (
           <div key={label}>
             <div className='text-muted-foreground text-xs font-medium'>
@@ -112,6 +129,18 @@ export function AffiliateRewardsCard(props: AffiliateRewardsCardProps) {
         ))}
       </div>
 
+      {props.standalone && props.affiliateCode && (
+        <div className='flex items-center gap-2'>
+          <span className='text-muted-foreground text-sm'>
+            {t('affiliate.code')}
+          </span>
+          <code className='min-w-0 break-all'>{props.affiliateCode}</code>
+          <CopyButton
+            value={props.affiliateCode}
+            aria-label={t('affiliate.copyCode')}
+          />
+        </div>
+      )}
       <div className='flex items-center gap-2'>
         <Input
           value={props.affiliateLink}

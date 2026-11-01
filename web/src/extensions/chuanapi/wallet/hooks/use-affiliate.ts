@@ -49,6 +49,7 @@ export function useAffiliate() {
   const [affiliateCode, setAffiliateCode] = useState<string>('')
   const [affiliateLink, setAffiliateLink] = useState<string>('')
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<unknown>(null)
   const [transferring, setTransferring] = useState(false)
   const transferInFlight = useRef(false)
   const pendingTransferRef = useRef<{ quota: number; key: string } | null>(null)
@@ -57,6 +58,7 @@ export function useAffiliate() {
   const fetchAffiliateCode = useCallback(async () => {
     try {
       setLoading(true)
+      setError(null)
       const response = requireServerSuccess(await getAffiliateCode())
 
       if (response.success && response.data) {
@@ -65,6 +67,7 @@ export function useAffiliate() {
         setAffiliateLink(link)
       }
     } catch (error) {
+      setError(error)
       handleServerError(error)
     } finally {
       setLoading(false)
@@ -111,6 +114,7 @@ export function useAffiliate() {
   return {
     affiliateCode,
     affiliateLink,
+    error,
     loading,
     transferring,
     transferQuota,

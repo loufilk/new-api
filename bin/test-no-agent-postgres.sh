@@ -17,8 +17,9 @@ port=${NO_AGENT_PG_PORT:-55439}
 "$pg_bin/pg_ctl" -D "$state/data" -l "$evidence/postgres.log" -o "-h 127.0.0.1 -p $port" -w start >"$evidence/start.log" 2>&1
 export PGHOST=127.0.0.1 PGPORT=$port PGUSER=postgres
 "$pg_bin/psql" -d postgres -Atc 'SHOW server_version_num' | grep '^180006$' | tee "$evidence/postgres-version.txt"
-for name in model service auth preflight wallet referral normalization finalization fresh upgrade; do "$pg_bin/createdb" "no_agent_$name"; done
+for name in model service auth preflight wallet referral normalization finalization fresh upgrade retirement; do "$pg_bin/createdb" "no_agent_$name"; done
 base="postgres://postgres@127.0.0.1:$port"
+export TEST_RETIREMENT_POSTGRES_DSN="$base/no_agent_retirement?sslmode=disable"
 export TEST_MODEL_POSTGRES_DSN="$base/no_agent_model?sslmode=disable"
 export TEST_SERVICE_POSTGRES_DSN="$base/no_agent_service?sslmode=disable"
 export TEST_POSTGRES_DSN="$base/no_agent_auth?sslmode=disable"
@@ -32,7 +33,8 @@ export GOWORK=off GOTOOLCHAIN=local NO_AGENT_FIXTURE_OWNED=1
 cd "$root"
 if (($#)); then "$@"; exit; fi
 run() { local label=$1; shift; "$@" 2>&1 | tee "$evidence/$label.log"; }
-run model go test -p 2 -count=1 -timeout=10m -json ./model -run '^(TestOrdinary|TestPaymentReceipt|TestBonusSource|TestRedeem|TestRedemptionQuota|TestSearchRedemptions|TestRecordReferralCommission|TestNonAgent|TestMainAutoMigrate|TestUserCall|TestInsertPersistsValidatedInviterRelationship|TestInsertWithTxRejectsDisabledAndSelfInviter)'
+run model go test -p 2 -count=1 -timeout=10m -json ./model -run '^(TestOrdinary|TestPaymentReceipt|TestBonusSource|TestRedeem|TestRedemptionQuota|TestSearchRedemptions|TestRecordReferralCommission|TestNonAgentPreflight|TestMainAutoMigrate|TestUserCall|TestInsertPersistsValidatedInviterRelationship|TestInsertWithTxRejectsDisabledAndSelfInviter)'
+run promotion-retirement go test -p 2 -count=1 -timeout=10m -json ./model -run '^TestNonAgentPromotionRetirementMatrix$/^postgres$'
 run service go test -p 2 -count=1 -timeout=10m -json ./service -run '^(TestReferralPostgreSQL|TestReferralCommission|TestUserCall)'
 run permissions go test -p 2 -count=1 -timeout=10m -json ./middleware ./controller -run '^(TestLegacyConsumerRoleAuthorizationPostgres|TestRetiredQualification|TestSelfDTO|TestUserCall|TestAdminUser|TestWaffoPancakeNormalizationPostgreSQL)'
 run redemption go test -p 2 -count=1 -timeout=10m -json ./controller -run '^(TestRedemptionLifecycleDatabaseMatrix|TestDeleteRedemptionBatch)$/^postgres$'

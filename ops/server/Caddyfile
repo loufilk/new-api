@@ -122,6 +122,7 @@ http://:8081 {
 			path /401 /403 /404 /500 /503
 			path /help /help/*
 			path /model-monitor /model-monitor/*
+			path /account-pool /account-pool/* /intelligence /intelligence/* /affiliate /affiliate/*
 			path /support /support/*
 			path /llms.txt /llms-full.txt
 			path /subscriptions /subscriptions/* /redemption-codes /redemption-codes/* /chat /chat/* /chat2link /chat2link/* /errors /errors/* /user-agreement /privacy-policy

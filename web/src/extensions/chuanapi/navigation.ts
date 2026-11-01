@@ -33,16 +33,17 @@ const LEGACY_QUICKSTART_URLS = new Set([
   'https://chuanapi.com#quickstart',
 ])
 
-export const chuanapiMonitorNavigationExtension: NavigationExtension = {
-  id: 'chuanapi/monitor-navigation',
+export const chuanapiToolsNavigationExtension: NavigationExtension = {
+  id: 'chuanapi/tools-navigation',
   apply(links) {
-    if (links.some((link) => link.href === '/model-monitor')) return [...links]
-    const result = [...links]
+    const result = links.filter((link) => link.href !== '/model-monitor')
+    const additions = [
+      { title: t('pool.title'), href: '/account-pool' },
+      { title: t('intelligence.title'), href: '/intelligence' },
+      { title: t('Invitation Rewards'), href: '/affiliate' },
+    ].filter((link) => !result.some((existing) => existing.href === link.href))
     const docsIndex = result.findIndex((link) => link.href === '/help')
-    result.splice(docsIndex < 0 ? result.length : docsIndex, 0, {
-      title: t('monitor.title'),
-      href: '/model-monitor',
-    })
+    result.splice(docsIndex < 0 ? result.length : docsIndex, 0, ...additions)
     return result
   },
 }

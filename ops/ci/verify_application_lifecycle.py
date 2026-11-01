@@ -408,18 +408,20 @@ AND i.indexprs IS NULL AND i.indpred IS NULL;
         saved = self.request("/api/option/", "PUT", {"key": "Notice", "value": phase}, bearer)
         require(saved.get("success") is True, "application option write failed")
         require(self.request("/api/notice").get("data") == phase, "application option write could not be read back")
-        monitor = self.request("/api/option/model-monitor", bearer=bearer)
-        require(monitor.get("success") is True and monitor.get("data", {}).get("config") == MONITOR_CONFIG, "saved monitor visibility did not load")
-        omitted = {key: value for key, value in MONITOR_CONFIG.items() if key != "hidden_groups"}
-        monitor = self.request("/api/option/model-monitor", "PUT", omitted, bearer)
-        require(monitor.get("success") is True and monitor.get("data") == MONITOR_CONFIG, "legacy omission-save lost hidden groups")
+        if candidate:
+            pool = self.request("/api/option/account-pool", bearer=bearer)
+            require(pool.get("success") is True and pool.get("data", {}).get("configured") is False,
+                    "unconfigured pool must not invent upstream data")
+        # Retired monitor options remain historical data; the external collector
+        # and its management routes no longer execute in this edition.
+
         usage = self.request("/api/usage/token/", bearer="sk-" + TOKEN)
         require(usage.get("code") is True and "user_quota" not in usage.get("data", {}),
                 "historical API token exposed user-level quota after upgrade")
         models = self.request("/v1/models", bearer="sk-" + TOKEN)
         check_models(models, candidate)
         (self.out / f"{phase}-contracts.json").write_text(json.dumps({"roles": roles, "root_read_write": True, "previous_notice": previous_notice,
-            "saved_notice": phase, "monitor_omission_save": True, "models": models}, indent=2) + "\n")
+            "saved_notice": phase, "pool_unconfigured_checked": candidate, "models": models}, indent=2) + "\n")
 
     def fresh_setup_state(self):
         return json.loads(self.sql("candidate_fresh_main", """

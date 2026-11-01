@@ -3,9 +3,12 @@ package constant
 type ContextKey string
 
 const (
-	ContextKeyTokenCountMeta  ContextKey = "token_count_meta"
-	ContextKeyPromptTokens    ContextKey = "prompt_tokens"
-	ContextKeyEstimatedTokens ContextKey = "estimated_tokens"
+	// Only the server-owned, confirmed model-test ingress sets this flag.
+	ContextKeyModelTestSingleAttempt ContextKey = "model_test_single_attempt"
+	ContextKeyModelTestOutputLimit   ContextKey = "model_test_output_limit"
+	ContextKeyTokenCountMeta         ContextKey = "token_count_meta"
+	ContextKeyPromptTokens           ContextKey = "prompt_tokens"
+	ContextKeyEstimatedTokens        ContextKey = "estimated_tokens"
 
 	ContextKeyOriginalModel    ContextKey = "original_model"
 	ContextKeyRequestStartTime ContextKey = "request_start_time"

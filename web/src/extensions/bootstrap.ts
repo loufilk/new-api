@@ -24,14 +24,12 @@ import {
   chuanapiNavigationExtension,
   chuanapiPaymentSettingsExtension,
   chuanapiWalletExtension,
-  chuanapiMonitorExtension,
-  chuanapiMonitorNavigationExtension,
+  chuanapiToolsNavigationExtension,
   SHOW_LEGACY_AFFILIATE_QUOTA,
 } from './chuanapi'
 import { setExtensionFlags } from './flags'
 import { setHelpExtension } from './help'
 import { setI18nExtensions } from './i18n'
-import { setMonitorExtension } from './monitor'
 import { setNavigationExtensions } from './navigation'
 import { setPaymentSettingsExtension } from './payment-settings'
 import { setWalletExtension } from './wallet'
@@ -41,7 +39,7 @@ import { setWalletExtension } from './wallet'
 // application entrypoint (and explicitly by composition tests).
 setNavigationExtensions([
   chuanapiNavigationExtension,
-  chuanapiMonitorNavigationExtension,
+  chuanapiToolsNavigationExtension,
 ])
 setBrandExtension(chuanapiBrandExtension)
 setHelpExtension(chuanapiHelpExtension)
@@ -49,4 +47,3 @@ setI18nExtensions([chuanapiI18nExtension])
 setExtensionFlags({ showLegacyAffiliateQuota: SHOW_LEGACY_AFFILIATE_QUOTA })
 setPaymentSettingsExtension(chuanapiPaymentSettingsExtension)
 setWalletExtension(chuanapiWalletExtension)
-setMonitorExtension(chuanapiMonitorExtension)

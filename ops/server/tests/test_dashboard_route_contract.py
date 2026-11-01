@@ -115,7 +115,7 @@ class DashboardRouteContractTest(unittest.TestCase):
             self.assertNotIn(path, matcher_tokens)
             self.assertNotIn(f"{path}/*", matcher_tokens)
 
-        for path in ("/pricing", "/playground", "/image", "/model-monitor"):
+        for path in ("/pricing", "/playground", "/image", "/model-monitor", "/account-pool", "/intelligence", "/affiliate"):
             self.assertIn(path, matcher_tokens)
             self.assertIn(f"{path}/*", matcher_tokens)
 

@@ -116,8 +116,15 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/models/bonus_eligible/audits": accessTokenScopeRule("model:read"),
 	"POST /api/models/bonus_eligible/batch": accessTokenScopeRule("model:write"),
 	// Management PATs must not obtain inference access through the playground.
-	"GET /api/user/playground/bootstrap": accessTokenSessionRule,
-	"POST /api/user/playground/chat":     accessTokenSessionRule,
+	"GET /api/user/playground/bootstrap":         accessTokenSessionRule,
+	"POST /api/user/playground/chat":             accessTokenSessionRule,
+	"GET /api/user/account-pool":                 accessTokenSessionRule,
+	"GET /api/option/account-pool":               accessTokenSessionRule,
+	"GET /api/user/model-tests":                  accessTokenSessionRule,
+	"POST /api/user/model-tests/estimate":        accessTokenSessionRule,
+	"POST /api/user/model-tests/runs":            accessTokenSessionRule,
+	"GET /api/user/model-tests/runs/:id":         accessTokenSessionRule,
+	"POST /api/user/model-tests/runs/:id/cancel": accessTokenSessionRule,
 	// Support has no dedicated PAT scope. Require login sessions rather than
 	// grant ticket access through unrelated profile or user permissions.
 	"GET /api/support/tickets":                    accessTokenSessionRule,
@@ -174,9 +181,6 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/option/request_policy":                             accessTokenScopeRule("option:read"),
 	"PATCH /api/option/request_policy":                           accessTokenScopeRule("option:write"),
 	"PUT /api/option/":                                           accessTokenScopeRule("option:write"),
-	"GET /api/option/model-monitor":                              accessTokenScopeRule("option:read"),
-	"GET /api/option/model-monitor/targets":                      accessTokenScopeRule("option:read"),
-	"PUT /api/option/model-monitor":                              accessTokenScopeRule("option:write"),
 	"PUT /api/option/passkey/domains":                            accessTokenScopeRule("option:write"),
 	"GET /api/option/model_pricing":                              accessTokenScopeRule("option:read"),
 	"GET /api/option/model_pricing/issues":                       accessTokenScopeRule("option:read"),

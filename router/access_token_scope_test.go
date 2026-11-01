@@ -45,10 +45,6 @@ var accessTokenExemptRoutes = []string{
 	"GET /api/chuanapi/public-config",
 	"HEAD /api/chuanapi/public-config",
 	"GET /api/user/auth/session",
-	"GET /api/model-monitor",
-	"GET /api/model-monitor/results/:id",
-	"GET /api/model-monitor/artworks/:id",
-	"GET /api/model-monitor/thumbnails/:id",
 
 	// Anonymous account entry points.
 	"GET /api/verification",

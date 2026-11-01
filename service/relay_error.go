@@ -23,6 +23,9 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	if err == nil {
 		return PolicyDecision{Action: "stop", Reason: "request_completed", Source: "system"}
 	}
+	if common.GetContextKeyBool(c, constant.ContextKeyModelTestSingleAttempt) {
+		return PolicyDecision{Action: "stop", Reason: "model_test_single_attempt", Source: "system"}
+	}
 	// Request lifetime is a hard stop, including errors with channel precedence.
 	// Never consume another account's quota for an abandoned downstream request.
 	if stopped := RelayRequestCancellation(c); stopped != nil {

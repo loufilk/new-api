@@ -16,12 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
-import { extensionMonitorPage } from '@/extensions'
-
-const { page: MonitorPage } = extensionMonitorPage()
-
+// Preserve bookmarked URLs without retaining the retired third-party monitor.
 export const Route = createFileRoute('/model-monitor/')({
-  component: MonitorPage,
+  beforeLoad: () => {
+    throw redirect({ to: '/intelligence', replace: true })
+  },
 })

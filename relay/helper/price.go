@@ -310,6 +310,12 @@ func HasPriceOrRatioEntry(name string) bool {
 	return billing_setting.GetBillingMode(formatted) == billing_setting.BillingModeTieredExpr
 }
 
+// ResolveBillingModelName shares the relay's canonical pricing lookup with
+// explicit cost confirmations. It does not use the mapped upstream model.
+func ResolveBillingModelName(origin string) string {
+	return resolveBillingModelName(origin)
+}
+
 func resolveBillingModelName(origin string) string {
 	var candidates []string
 	if !reasoning.ParseModelModifiers(origin).HasModifiers() {

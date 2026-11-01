@@ -2,10 +2,9 @@ package console
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/QuantumNous/new-api/extension"
-	"github.com/QuantumNous/new-api/modules/chuanapi/console/monitor"
+	"github.com/QuantumNous/new-api/modules/chuanapi/console/accountpool"
 	"github.com/gin-gonic/gin"
 )
 
@@ -51,7 +50,7 @@ func registerLlmsRoutes(engine *gin.Engine) error {
 // limiting, session cookie origin guard, session auth) stays host-owned and is
 // never reconstructed inside the module.
 func registerPublicRoutes(scopes extension.RouteScopes) error {
-	if scopes.API == nil || scopes.PublicAPI == nil || scopes.BrowserSession == nil || scopes.RootOptions == nil {
+	if scopes.API == nil || scopes.PublicAPI == nil || scopes.BrowserSession == nil || scopes.RootOptions == nil || scopes.UserSelf == nil {
 		return fmt.Errorf("chuanapi console: required host API route scopes are unavailable")
 	}
 	scopes.BrowserSession.GET("/session", GetAuthSession)
@@ -61,8 +60,6 @@ func registerPublicRoutes(scopes extension.RouteScopes) error {
 	scopes.PublicAPI.HEAD("/status", GetPublicConfig)
 	scopes.PublicAPI.GET("/pricing", GetPublicPricing)
 	scopes.PublicAPI.HEAD("/pricing", GetPublicPricing)
-	monitorService := monitor.New(os.Getenv("MODEL_MONITOR_ENABLED") != "false")
-	monitorService.Register(scopes.API.Group("/model-monitor"))
-	monitorService.RegisterSettings(scopes.RootOptions)
+	accountpool.New().Register(scopes.UserSelf, scopes.RootOptions)
 	return nil
 }

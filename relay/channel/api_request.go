@@ -464,6 +464,11 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	if stopped := service.RelayRequestCancellation(c); stopped != nil {
 		return nil, stopped
 	}
+	if err := validateModelTestOutputBudget(c, req); err != nil {
+		common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, true)
+		c.Set("model_test_error_code", "output_budget_changed")
+		return nil, err
+	}
 	client, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
 	if err != nil {
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
