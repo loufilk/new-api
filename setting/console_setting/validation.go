@@ -165,6 +165,11 @@ func GetApiInfo() []map[string]any {
 }
 
 func validateAnnouncements(announcementsStr string) error {
+	// Bound the entire saved JSON value, including links and unknown fields, before parsing.
+	// Existing saved content remains readable; oversized updates are rejected, never truncated.
+	if len(announcementsStr) > 256*1024 {
+		return common.NewMessage("Announcements cannot exceed 256 KiB in total")
+	}
 	list, err := parseJSONArray(announcementsStr, "Invalid announcements format: {{error}}")
 	if err != nil {
 		return err
@@ -198,8 +203,8 @@ func validateAnnouncements(announcementsStr string) error {
 				}
 			}
 		}
-		if exceedsMaxCharacters(content, 500) {
-			return common.NewMessage("Announcement #{{index}} content cannot exceed 500 characters", map[string]any{"index": i + 1})
+		if exceedsMaxCharacters(content, 10000) {
+			return common.NewMessage("Announcement #{{index}} content cannot exceed {{max}} characters", map[string]any{"index": i + 1, "max": 10000})
 		}
 		if extra, exists := ann["extra"]; exists {
 			if extraStr, ok := extra.(string); ok && exceedsMaxCharacters(extraStr, 100) {

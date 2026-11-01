@@ -30,6 +30,7 @@ type RichContentMode = 'markdown' | 'html'
 
 interface RichContentProps {
   content: string
+  imagePolicy?: 'announcement'
   mode?: RichContentMode
   breaks?: boolean
   className?: string
@@ -65,7 +66,11 @@ export function RichContent(props: RichContentProps) {
 
   return (
     <Suspense fallback={<MarkdownFallback className={props.className} />}>
-      <Markdown breaks={props.breaks} className={props.className}>
+      <Markdown
+        breaks={props.breaks}
+        className={props.className}
+        imagePolicy={props.imagePolicy}
+      >
         {props.content}
       </Markdown>
     </Suspense>

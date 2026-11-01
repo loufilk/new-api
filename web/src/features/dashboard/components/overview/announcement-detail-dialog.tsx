@@ -60,7 +60,11 @@ export function AnnouncementDetailModal({
           {announcement?.content && (
             <div>
               <h4 className='mb-2 font-medium'>{t('Content')}</h4>
-              <RichContent breaks content={announcement.content} />
+              <RichContent
+                imagePolicy='announcement'
+                breaks
+                content={announcement.content}
+              />
             </div>
           )}
           {announcement?.extra && (
@@ -69,6 +73,7 @@ export function AnnouncementDetailModal({
                 {t('Additional Information')}
               </h4>
               <RichContent
+                imagePolicy='announcement'
                 breaks
                 content={announcement.extra}
                 className='text-muted-foreground'

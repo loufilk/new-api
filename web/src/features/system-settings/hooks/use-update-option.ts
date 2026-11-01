@@ -31,6 +31,8 @@ const STATUS_RELATED_KEYS = new Set([
   'HeaderNavModules',
   'SidebarModulesAdmin',
   'Notice',
+  'console_setting.announcements',
+  'console_setting.announcements_enabled',
   'LogConsumeEnabled',
   'log_setting.user_export_enabled',
   'log_setting.max_range_days',
@@ -70,6 +72,10 @@ export function useUpdateOption() {
           } catch {
             /* empty */
           }
+        }
+
+        if (variables.key === 'Notice') {
+          queryClient.invalidateQueries({ queryKey: ['notice'] })
         }
 
         toast.success(i18next.t('Setting updated successfully'))
