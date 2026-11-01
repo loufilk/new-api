@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -22,12 +24,18 @@ import (
 func TestMain(m *testing.M) {
 	var dialector gorm.Dialector
 	nativeDSN := os.Getenv("TEST_MODEL_POSTGRES_DSN")
+	mysqlDSN := os.Getenv("TEST_MODEL_MYSQL_DSN")
 	if nativeDSN != "" {
 		parsed, err := url.Parse(nativeDSN)
 		if err != nil || !net.ParseIP(parsed.Hostname()).IsLoopback() {
 			panic("TEST_MODEL_POSTGRES_DSN must name a disposable loopback PostgreSQL fixture")
 		}
 		dialector = postgres.New(postgres.Config{DSN: nativeDSN, PreferSimpleProtocol: true})
+	} else if mysqlDSN != "" {
+		if !strings.Contains(mysqlDSN, "@tcp(127.0.0.1:") || !strings.Contains(mysqlDSN, ")/no_agent_model?") {
+			panic("requires disposable loopback MySQL")
+		}
+		dialector = mysql.Open(mysqlDSN)
 	} else {
 		dialector = sqlite.Open(":memory:")
 	}
@@ -44,6 +52,8 @@ func TestMain(m *testing.M) {
 		if err := db.Raw("SHOW server_version_num").Scan(&version).Error; err != nil || version != "180006" {
 			panic("native model tests require PostgreSQL 18.6")
 		}
+	} else if mysqlDSN != "" {
+		common.SetDatabaseTypes(common.DatabaseTypeMySQL, common.DatabaseTypeMySQL)
 	} else {
 		common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	}
@@ -56,7 +66,7 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic("failed to get sql.DB: " + err.Error())
 	}
-	if nativeDSN != "" {
+	if nativeDSN != "" || mysqlDSN != "" {
 		sqlDB.SetMaxOpenConns(8)
 	} else {
 		sqlDB.SetMaxOpenConns(1)

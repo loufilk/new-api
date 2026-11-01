@@ -65,8 +65,9 @@ func NonAgentCutoverPreflight(db *gorm.DB) ([]NonAgentCutoverBlock, error) {
 		"agent_statement_reviews":          {predicate: "state IS NULL OR state NOT IN ?", args: []any{[]string{"confirmed", "excluded"}}},
 		"agent_statement_exceptions":       {predicate: "state IS NULL OR state <> ?", args: []any{"resolved"}},
 	}
-	// Funding batches/slices/economics, credit draws, and outbound payment receipts intentionally
-	// remain outside this allowlist: without their original business reconciler,
+	// Funding histories remain blocked except a fully reclaimed, never-used
+	// non-cash promotion verified below. Economics, credit draws and outbound
+	// payment receipts remain outside this allowlist: without their reconciler,
 	// this build cannot prove the absence of an orphaned source or late clawback.
 	// Such histories require a separately reviewed retirement migration, not a
 	// force-start flag or deletion of rows.
@@ -106,6 +107,10 @@ agent_governances agent_governance_submissions agent_governance_audits agent_gov
 			return errors.New("non-agent cutover preflight: unable to enumerate database tables")
 		}
 		slices.Sort(tables)
+		retiredPromotions, err := retiredUnusedPromotions(tx, tables)
+		if err != nil {
+			return errors.New("non-agent cutover preflight: cannot verify retired promotional sources")
+		}
 		identifier := regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 		for _, table := range tables {
 			if !strings.HasPrefix(table, "agent_") || slices.Contains(archives, table) {
@@ -115,6 +120,14 @@ agent_governances agent_governance_submissions agent_governance_audits agent_gov
 				return errors.New("non-agent cutover preflight: unrecognized legacy table name")
 			}
 			query := tx.Table(table)
+			if len(retiredPromotions) > 0 {
+				switch table {
+				case "agent_fund_batches":
+					query = query.Where("id NOT IN ?", retiredPromotions)
+				case "agent_fund_slices":
+					query = query.Where("batch_id NOT IN ?", retiredPromotions)
+				}
+			}
 			if rule, ok := rules[table]; ok {
 				query = query.Where(rule.predicate, rule.args...)
 			}
