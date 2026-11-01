@@ -54,12 +54,15 @@ afterEach(() => {
   useAuthStore.getState().auth.reset()
 })
 
-async function renderNavigation(role: number) {
+async function renderNavigation(role: number, accountPoolEnabled = false) {
   useAuthStore.getState().auth.setUser({ id: 7, username: 'user', role })
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
-  client.setQueryData(['status'], { SidebarModulesAdmin: '' })
+  client.setQueryData(['status'], {
+    SidebarModulesAdmin: '',
+    account_pool_enabled: accountPoolEnabled,
+  })
   const router = createRouter({
     routeTree: createRootRoute({ component: Navigation }),
     history: createMemoryHistory({ initialEntries: ['/wallet'] }),
@@ -120,3 +123,22 @@ it('administrators retain normal redemption and user management but no reseller 
       .filter((href) => href?.startsWith('/agent-'))
   ).toEqual([])
 })
+
+it.each([1, 5, 10, 100])(
+  'role %s sees the account pool entry only when enabled',
+  async (role) => {
+    await renderNavigation(role)
+    expect(
+      screen
+        .getAllByRole('link')
+        .some((link) => link.getAttribute('href') === '/account-pool')
+    ).toBe(false)
+    cleanup()
+    await renderNavigation(role, true)
+    expect(
+      screen
+        .getAllByRole('link')
+        .filter((link) => link.getAttribute('href') === '/account-pool')
+    ).toHaveLength(1)
+  }
+)

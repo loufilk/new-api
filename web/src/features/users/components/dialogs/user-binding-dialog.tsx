@@ -83,6 +83,7 @@ interface StatusInfo {
   discord_oauth?: boolean
   oidc_enabled?: boolean
   wechat_login?: boolean
+  google_oauth?: boolean
   telegram_oauth?: boolean
   linuxdo_oauth?: boolean
   custom_oauth_providers?: Array<{
@@ -133,6 +134,13 @@ const BUILTIN_BINDINGS: ReadonlyArray<{
     label: 'OIDC',
     icon: <Globe className='h-4 w-4' />,
     statusKey: 'oidc_enabled',
+  },
+  {
+    key: 'google',
+    field: 'google_id',
+    label: 'Google',
+    icon: <Globe className='h-4 w-4' />,
+    statusKey: 'google_oauth',
   },
   {
     key: 'telegram',

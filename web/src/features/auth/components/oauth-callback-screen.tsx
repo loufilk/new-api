@@ -35,6 +35,7 @@ type ProviderMeta = {
 }
 
 const providerDictionary: Record<string, ProviderMeta> = {
+  google: { label: 'Google', Icon: Shield },
   github: {
     label: 'GitHub',
     Icon: (props: { className?: string }) => (

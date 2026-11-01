@@ -22,12 +22,14 @@ import { toast } from 'sonner'
 
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
+import { STATUS_QUERY_KEY, type StatusRecord } from '@/lib/status-query'
 
 import { updatePasskeyDomains, updateSystemOption } from '../api'
 import type { UpdateOptionRequest, UpdatePasskeyDomainsRequest } from '../types'
 
 // Configuration keys that require status refresh
 const STATUS_RELATED_KEYS = new Set([
+  'AccountPoolEnabled',
   'HeaderNavModules',
   'SidebarModulesAdmin',
   'Notice',
@@ -44,6 +46,9 @@ const STATUS_RELATED_KEYS = new Set([
   'general_setting.custom_currency_symbol',
   'general_setting.custom_currency_exchange_rate',
   'oidc.display_name',
+  'GoogleOAuthEnabled',
+  'google.client_id',
+  'google.client_secret',
   'ServerAddress',
   'passkey.enabled',
   'passkey.rp_id',
@@ -61,6 +66,21 @@ export function useUpdateOption() {
       requireServerSuccess(await updateSystemOption(request)),
     onSuccess: (data, variables) => {
       if (data.success) {
+        if (variables.key === 'AccountPoolEnabled') {
+          const enabled = variables.value === true || variables.value === 'true'
+          queryClient.setQueryData<StatusRecord>(
+            STATUS_QUERY_KEY,
+            (previous) => ({
+              ...previous,
+              account_pool_enabled: enabled,
+            })
+          )
+          void queryClient
+            .cancelQueries({ queryKey: ['account-pool'] })
+            .then(() => {
+              queryClient.removeQueries({ queryKey: ['account-pool'] })
+            })
+        }
         // Always refresh system-options
         queryClient.invalidateQueries({ queryKey: ['system-options'] })
 

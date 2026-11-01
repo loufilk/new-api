@@ -477,6 +477,7 @@ func buildSelfUserDataWithRole(user *model.User, permissionRole int) map[string]
 		"oidc_id":           user.OidcId,
 		"wechat_id":         user.WeChatId,
 		"telegram_id":       user.TelegramId,
+		"google_id":         user.GoogleId,
 		"group":             user.Group,
 		"quota":             user.Quota,
 		"used_quota":        user.UsedQuota,
@@ -730,7 +731,12 @@ func AdminClearUserBinding(c *gin.Context) {
 		return
 	}
 
-	if err := user.ClearBinding(bindingType); err != nil {
+	if bindingType == "google" {
+		if err := model.ClearGoogleBindingByAdministrator(authorization.AuthSessionIdentity, *user); err != nil {
+			writeSecurityOperationError(c, err)
+			return
+		}
+	} else if err := user.ClearBinding(bindingType); err != nil {
 		common.ApiError(c, err)
 		return
 	}

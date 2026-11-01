@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -29,11 +29,13 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { PoolDiagnostics } from '../diagnostics'
 
-function renderDiagnostics(role: number) {
-  useAuthStore.getState().auth.setUser({ id: 1, username: 'fixture', role })
-  const client = new QueryClient({
+function renderDiagnostics(
+  role: number,
+  client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   })
+) {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'fixture', role })
   render(
     <QueryClientProvider client={client}>
       <PoolDiagnostics />
@@ -95,4 +97,87 @@ describe('root-only pool diagnostics', () => {
     )
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
   })
+})
+
+test('root diagnostics clearly report disabled state without rendering cached accounts', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        enabled: false,
+        configured: true,
+        invalid_config: false,
+        nodes: [],
+        cache_scope: 'per_process',
+        cache_ttl_seconds: 60,
+        stale_after_seconds: 300,
+        automatic_collection: false,
+      },
+    },
+  })
+  const user = userEvent.setup()
+  renderDiagnostics(ROLE.SUPER_ADMIN)
+  await user.click(
+    screen.getByRole('button', { name: 'Root-only pool diagnostics' })
+  )
+  expect(await screen.findByText('Account pool is disabled')).toBeVisible()
+})
+
+test('failed diagnostic refresh hides previous node details instead of presenting stale data', async () => {
+  const get = vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        enabled: true,
+        configured: true,
+        invalid_config: false,
+        nodes: [{ channel_id: 42, state: 'ready', count: 3 }],
+        cache_scope: 'per_process',
+        cache_ttl_seconds: 60,
+        stale_after_seconds: 300,
+        automatic_collection: false,
+      },
+    },
+  })
+  const user = userEvent.setup()
+  renderDiagnostics(ROLE.SUPER_ADMIN)
+  await user.click(
+    screen.getByRole('button', { name: 'Root-only pool diagnostics' })
+  )
+  expect(await screen.findByText('42')).toBeVisible()
+  get.mockRejectedValue(new Error('database unavailable'))
+  await user.click(screen.getByRole('button', { name: 'Refresh' }))
+  expect(await screen.findByText('Oops! Something went wrong')).toBeVisible()
+  await waitFor(() => expect(screen.queryByText('42')).not.toBeInTheDocument())
+})
+
+test('opening diagnostics checks current state instead of accepting a recently cached enabled result', async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 10000, gcTime: 0 } },
+  })
+  const disabled = {
+    enabled: false,
+    configured: true,
+    invalid_config: false,
+    nodes: [],
+    cache_scope: 'per_process',
+    cache_ttl_seconds: 60,
+    stale_after_seconds: 300,
+    automatic_collection: false,
+  }
+  client.setQueryData(['account-pool', 'root-diagnostics'], {
+    ...disabled,
+    enabled: true,
+    nodes: [{ channel_id: 42, state: 'ready', count: 3 }],
+  })
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: disabled },
+  })
+  const user = userEvent.setup()
+  renderDiagnostics(ROLE.SUPER_ADMIN, client)
+  await user.click(
+    screen.getByRole('button', { name: 'Root-only pool diagnostics' })
+  )
+  expect(await screen.findByText('Account pool is disabled')).toBeVisible()
+  expect(screen.queryByText('42')).not.toBeInTheDocument()
 })

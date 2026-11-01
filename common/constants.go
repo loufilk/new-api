@@ -72,6 +72,7 @@ var GitHubOAuthEnabled = false
 var LinuxDOOAuthEnabled = false
 var WeChatAuthEnabled = false
 var TelegramOAuthEnabled = false
+var GoogleOAuthEnabled = false
 var TurnstileCheckEnabled = false
 var RegisterEnabled = true
 

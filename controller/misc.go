@@ -38,15 +38,21 @@ func TestStatus(c *gin.Context) {
 }
 
 func GetStatus(c *gin.Context) {
+	// This public capability flag is non-secret and fails closed. Do not allow
+	// a browser/proxy cache or another node's OptionMap to grant pool access.
+	c.Header("Cache-Control", "no-store")
+	accountPoolEnabled, _ := model.AccountPoolEnabled(c.Request.Context())
 
 	cs := console_setting.GetConsoleSetting()
 	passkeySetting := system_setting.PasskeySettingsSnapshot()
+	googleAvailable := oauth.GoogleConfigurationError() == nil
 	common.OptionMapRWMutex.RLock()
 	defer common.OptionMapRWMutex.RUnlock()
 
 	legalSetting := system_setting.GetLegalSettings()
 
 	data := gin.H{
+		"account_pool_enabled":        accountPoolEnabled,
 		"version":                     common.Version,
 		"start_time":                  common.StartTime,
 		"email_verification":          common.EmailVerificationEnabled,
@@ -58,6 +64,8 @@ func GetStatus(c *gin.Context) {
 		"linuxdo_client_id":           common.LinuxDOClientId,
 		"linuxdo_minimum_trust_level": common.LinuxDOMinimumTrustLevel,
 		"telegram_oauth":              common.TelegramOAuthEnabled,
+		"google_oauth":                googleAvailable,
+		"google_oauth_configured":     googleAvailable,
 		"telegram_oauth_configured":   oauth.TelegramConfigurationError() == nil,
 		"telegram_bot_name":           common.TelegramBotName,
 		"theme":                       "default",

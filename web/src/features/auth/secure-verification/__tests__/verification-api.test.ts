@@ -67,9 +67,18 @@ it('allows a security key when the browser has WebAuthn but no platform authenti
   expect(requirements.methods).toEqual([{ method: 'passkey', available: true }])
 })
 
-it.each([false, true])(
-  'retains the Telegram verification request after popup close and honors caller cancellation: %s',
-  async (cancel) => {
+it.each([
+  ['telegram', false],
+  ['telegram', true],
+  ['google', false],
+  ['google', true],
+] as const)(
+  'retains the %s verification request after popup close and honors caller cancellation: %s',
+  async (provider, cancel) => {
+    const authorizationUrl =
+      provider === 'google'
+        ? 'https://accounts.google.com/o/oauth2/v2/auth?server=pkce'
+        : 'https://oauth.telegram.org/auth?server=pkce'
     const popup = {
       closed: false,
       location: { replace: vi.fn() },
@@ -83,7 +92,7 @@ it.each([false, true])(
         success: true,
         data: {
           flow_token: 'verification-state',
-          authorization_url: 'https://oauth.telegram.org/auth?server=pkce',
+          authorization_url: authorizationUrl,
         },
       },
     })
@@ -110,7 +119,7 @@ it.each([false, true])(
       )
     const controller = new AbortController()
     const result = verify(
-      { method: 'oauth', provider: 'telegram' },
+      { method: 'oauth', provider },
       { scope: '2fa.setup' },
       false,
       controller.signal
@@ -119,16 +128,14 @@ it.each([false, true])(
       ? expect(result).rejects.toMatchObject({ code: 'AUTH_CANCELLED' })
       : expect(result).resolves.toEqual(proof)
     await waitFor(() =>
-      expect(popup.location.replace).toHaveBeenCalledWith(
-        'https://oauth.telegram.org/auth?server=pkce'
-      )
+      expect(popup.location.replace).toHaveBeenCalledWith(authorizationUrl)
     )
     const event = new MessageEvent('message', {
       origin: window.location.origin,
       data: {
         type: OAUTH_POPUP_CALLBACK_MESSAGE,
         intent: 'verify',
-        provider: 'telegram',
+        provider,
         state: 'verification-state',
         code: 'code',
       },
@@ -138,12 +145,12 @@ it.each([false, true])(
     popup.closed = true
     await waitFor(() =>
       expect(get).toHaveBeenCalledWith(
-        '/api/oauth/telegram',
+        `/api/oauth/${provider}`,
         expect.objectContaining({ singleUseAuthorization: true })
       )
     )
     const signal = get.mock.calls.find(
-      ([url]) => url === '/api/oauth/telegram'
+      ([url]) => url === `/api/oauth/${provider}`
     )?.[1]?.signal
     expect(signal?.aborted).toBe(false)
     if (cancel) {

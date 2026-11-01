@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -84,13 +85,14 @@ func newTestUserSession(sid string, userID int, now int64) *UserSession {
 		Version:         1,
 		UserAuthVersion: 1,
 		Status:          UserSessionStatusActive,
-		RefreshHash:     fmt.Sprintf("current-%s", sid),
-		LoginMethod:     "password",
-		IP:              "127.0.0.1",
-		UserAgent:       "model-test",
-		CreatedAt:       now,
-		LastActiveAt:    now,
-		ExpiresAt:       now + int64((30*24*time.Hour)/time.Second),
+		// Match the service's 64-character digest contract on CHAR(64) columns.
+		RefreshHash:  fmt.Sprintf("%x", sha256.Sum256([]byte("synthetic-refresh:"+sid))),
+		LoginMethod:  "password",
+		IP:           "127.0.0.1",
+		UserAgent:    "model-test",
+		CreatedAt:    now,
+		LastActiveAt: now,
+		ExpiresAt:    now + int64((30*24*time.Hour)/time.Second),
 	}
 }
 
@@ -248,21 +250,22 @@ func TestRotateUserSessionRefreshRaceAndReuse(t *testing.T) {
 	session := newTestUserSession("rotate-session", 1002, now)
 	require.NoError(t, CreateUserSession(session))
 
-	rotated, err := RotateUserSessionRefresh(1002, session.SID, session.RefreshHash, "next-hash", now+10, 30*time.Second)
+	nextHash, unusedHash, unknownHash := strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("d", 64)
+	rotated, err := RotateUserSessionRefresh(1002, session.SID, session.RefreshHash, nextHash, now+10, 30*time.Second)
 	require.NoError(t, err)
-	assert.Equal(t, "next-hash", rotated.RefreshHash)
+	assert.Equal(t, nextHash, rotated.RefreshHash)
 	assert.Equal(t, session.RefreshHash, rotated.PreviousRefreshHash)
 	assert.Equal(t, now+40, rotated.PreviousValidUntil)
 
-	_, err = RotateUserSessionRefresh(1002, session.SID, session.RefreshHash, "unused-hash", now+20, 30*time.Second)
+	_, err = RotateUserSessionRefresh(1002, session.SID, session.RefreshHash, unusedHash, now+20, 30*time.Second)
 	assert.ErrorIs(t, err, ErrUserSessionRefreshRace)
-	_, err = RotateUserSessionRefresh(1002, session.SID, "unknown-hash", "unused-hash", now+20, 30*time.Second)
+	_, err = RotateUserSessionRefresh(1002, session.SID, unknownHash, unusedHash, now+20, 30*time.Second)
 	assert.ErrorIs(t, err, ErrUserSessionRefreshInvalid)
 	stored, getErr := GetUserSessionBySID(session.SID)
 	require.NoError(t, getErr)
 	assert.Equal(t, UserSessionStatusActive, stored.Status)
 
-	_, err = RotateUserSessionRefresh(1002, session.SID, session.RefreshHash, "unused-hash", now+41, 30*time.Second)
+	_, err = RotateUserSessionRefresh(1002, session.SID, session.RefreshHash, unusedHash, now+41, 30*time.Second)
 	assert.ErrorIs(t, err, ErrUserSessionRefreshReuse)
 	stored, getErr = GetUserSessionBySID(session.SID)
 	require.NoError(t, getErr)

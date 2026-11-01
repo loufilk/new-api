@@ -23,6 +23,16 @@ import i18next from 'i18next'
 export const safeServerErrorMessage = Symbol('safeServerErrorMessage')
 
 const serverErrorMessageKeys = {
+  GOOGLE_SECURE_COOKIES_REQUIRED:
+    'Google sign-in requires secure session cookies and a trusted HTTPS site origin. Ask your administrator to configure the session cookie settings.',
+  GOOGLE_OAUTH_NOT_CONFIGURED:
+    'Google OAuth is not configured or enabled. Please contact your administrator.',
+  GOOGLE_OAUTH_CONFLICT:
+    'The google OAuth provider name is reserved. Rename the conflicting custom provider before enabling Google sign-in.',
+  GOOGLE_OAUTH_FAILED:
+    'Google authorization failed. Please start Google sign-in again.',
+  GOOGLE_REAUTHENTICATION_REQUIRED:
+    'Google requires a recent sign-in for this security action. Sign in to Google again, or use a password, two-factor authentication or Passkey.',
   TELEGRAM_OAUTH_NOT_CONFIGURED:
     'Telegram OAuth is not configured or enabled. Please contact your administrator.',
   TELEGRAM_OAUTH_CONFLICT:

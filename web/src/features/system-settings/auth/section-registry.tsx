@@ -64,6 +64,11 @@ const AUTH_SECTIONS = [
             settings['oidc.authorization_endpoint'],
           'oidc.token_endpoint': settings['oidc.token_endpoint'],
           'oidc.user_info_endpoint': settings['oidc.user_info_endpoint'],
+          GoogleOAuthEnabled: settings.GoogleOAuthEnabled,
+          'google.client_id': settings['google.client_id'],
+          'google.client_secret': '',
+          'google.client_secret_configured':
+            settings['google.client_secret_configured'],
           TelegramOAuthEnabled: settings.TelegramOAuthEnabled,
           'telegram.client_id': settings['telegram.client_id'],
           'telegram.client_secret': settings['telegram.client_secret'],

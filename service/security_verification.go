@@ -79,7 +79,8 @@ type AccountBindingContext struct {
 }
 
 type AccountUnbindingContext struct {
-	ProviderID int `json:"provider_id"`
+	ProviderID int    `json:"provider_id,omitempty"`
+	Provider   string `json:"provider,omitempty"`
 }
 
 type AdminUserContext struct {
@@ -194,7 +195,14 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 		normalized = context
 	case VerificationScopeAccountUnbind:
 		var context AccountUnbindingContext
-		if len(fields) != 1 || common.Unmarshal(fields["provider_id"], &context.ProviderID) != nil || context.ProviderID <= 0 {
+		if len(fields) != 1 || common.Unmarshal(operation.Context, &context) != nil {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		if context.Provider == "google" {
+			if fields["provider"] == nil || context.ProviderID != 0 {
+				return VerificationBinding{}, ErrVerificationContextInvalid
+			}
+		} else if fields["provider_id"] == nil || context.ProviderID <= 0 || context.Provider != "" {
 			return VerificationBinding{}, ErrVerificationContextInvalid
 		}
 		normalized = context
@@ -455,6 +463,8 @@ func verificationOAuthProviders(user *model.User) ([]VerificationOAuthProvider, 
 				userID = user.DiscordId
 			case "oidc_id":
 				userID = user.OidcId
+			case "google_id":
+				userID = user.GoogleId
 			case "linux_do_id":
 				userID = user.LinuxDOId
 			case "telegram_id":

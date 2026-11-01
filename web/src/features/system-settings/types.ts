@@ -209,6 +209,10 @@ export type AuthSettings = {
   'oidc.authorization_endpoint': string
   'oidc.token_endpoint': string
   'oidc.user_info_endpoint': string
+  GoogleOAuthEnabled: boolean
+  'google.client_id': string
+  'google.client_secret': string
+  'google.client_secret_configured': boolean
   TelegramOAuthEnabled: boolean
   'telegram.client_id': string
   'telegram.client_secret': string

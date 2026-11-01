@@ -16,10 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 import { lazy, Suspense } from 'react'
 
 import { LoadingState } from '@/components/loading-state'
+import { verifyAccountPoolAccess } from '@/extensions/chuanapi/account-pool/access'
 
 const Page = lazy(() =>
   import('@/extensions/chuanapi/account-pool').then((m) => ({
@@ -27,6 +28,11 @@ const Page = lazy(() =>
   }))
 )
 export const Route = createFileRoute('/_authenticated/account-pool/')({
+  beforeLoad: async ({ context }) => {
+    if (!(await verifyAccountPoolAccess(context.queryClient))) {
+      throw redirect({ to: '/dashboard' })
+    }
+  },
   component: () => (
     <Suspense fallback={<LoadingState />}>
       <Page />

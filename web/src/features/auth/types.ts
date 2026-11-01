@@ -88,6 +88,7 @@ export interface ApiResponse<T = unknown> {
 // ============================================================================
 
 export interface SystemStatus {
+  account_pool_enabled?: boolean
   success?: boolean
   message?: string
   data?: {
@@ -104,6 +105,8 @@ export interface SystemStatus {
     oidc_display_name?: string
     linuxdo_oauth?: boolean
     linuxdo_client_id?: string
+    google_oauth?: boolean
+    google_oauth_configured?: boolean
     telegram_oauth?: boolean
     telegram_oauth_configured?: boolean
     telegram_bot_name?: string
@@ -156,6 +159,8 @@ export interface SystemStatus {
   oidc_display_name?: string
   linuxdo_oauth?: boolean
   linuxdo_client_id?: string
+  google_oauth?: boolean
+  google_oauth_configured?: boolean
   telegram_oauth?: boolean
   telegram_oauth_configured?: boolean
   telegram_bot_name?: string
@@ -206,7 +211,14 @@ export interface SystemStatus {
 
 export interface OAuthProvider {
   name: string
-  type: 'github' | 'discord' | 'oidc' | 'linuxdo' | 'telegram' | 'wechat'
+  type:
+    | 'google'
+    | 'github'
+    | 'discord'
+    | 'oidc'
+    | 'linuxdo'
+    | 'telegram'
+    | 'wechat'
   enabled: boolean
   clientId?: string
   authEndpoint?: string

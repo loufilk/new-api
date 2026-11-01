@@ -54,6 +54,10 @@ const defaults: ComponentProps<typeof OAuthSection>['defaultValues'] = {
   'oidc.authorization_endpoint': '',
   'oidc.token_endpoint': '',
   'oidc.user_info_endpoint': '',
+  GoogleOAuthEnabled: false,
+  'google.client_id': '',
+  'google.client_secret': '',
+  'google.client_secret_configured': false,
   TelegramOAuthEnabled: false,
   'telegram.client_id': '',
   'telegram.client_secret': '',
@@ -114,6 +118,85 @@ beforeEach(async () => {
 })
 
 describe('OAuth settings saves', () => {
+  it('keeps Google disabled until its client configuration is complete', async () => {
+    const user = userEvent.setup()
+    await renderSettings()
+    await user.click(screen.getByRole('tab', { name: 'Google' }))
+    expect(
+      screen.getByRole('switch', { name: 'Enable Google OAuth' })
+    ).not.toBeChecked()
+    expect(
+      screen.getByText('https://gateway.example.com/oauth/google')
+    ).toBeVisible()
+    await user.click(
+      screen.getByRole('switch', { name: 'Enable Google OAuth' })
+    )
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    expect(screen.getByRole('textbox', { name: 'Client ID' })).toHaveAttribute(
+      'aria-invalid',
+      'true'
+    )
+    expect(api.put).not.toHaveBeenCalled()
+  })
+
+  it('saves Google credentials before enabling and clears the write-only secret field', async () => {
+    const user = userEvent.setup()
+    await renderSettings()
+    await user.click(screen.getByRole('tab', { name: 'Google' }))
+    await user.type(
+      screen.getByRole('textbox', { name: 'Client ID' }),
+      'test-client.apps.googleusercontent.com'
+    )
+    await user.type(
+      screen.getByLabelText('Client Secret', { selector: 'input' }),
+      'synthetic-secret'
+    )
+    await user.click(
+      screen.getByRole('switch', { name: 'Enable Google OAuth' })
+    )
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Reset' })).toBeDisabled()
+    )
+    expect(vi.mocked(api.put).mock.calls.map(([, body]) => body)).toEqual([
+      {
+        key: 'google.client_id',
+        value: 'test-client.apps.googleusercontent.com',
+      },
+      { key: 'google.client_secret', value: 'synthetic-secret' },
+      { key: 'GoogleOAuthEnabled', value: true },
+    ])
+    expect(
+      screen.getByLabelText('Client Secret', { selector: 'input' })
+    ).toHaveValue('')
+    expect(
+      screen.getByText(
+        'Client secret is configured. Leave blank to keep it unchanged.'
+      )
+    ).toBeVisible()
+  })
+
+  it('does not send a blank secret or the read-only configuration flag when enabling Google', async () => {
+    const user = userEvent.setup()
+    await renderSettings({
+      'google.client_id': 'existing-client',
+      'google.client_secret_configured': true,
+    })
+    await user.click(screen.getByRole('tab', { name: 'Google' }))
+    expect(
+      screen.getByLabelText('Client Secret', { selector: 'input' })
+    ).toHaveValue('')
+    await user.click(
+      screen.getByRole('switch', { name: 'Enable Google OAuth' })
+    )
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
+    expect(api.put).toHaveBeenCalledWith('/api/option/', {
+      key: 'GoogleOAuthEnabled',
+      value: true,
+    })
+  })
+
   it.each([
     [false, 'provider.example.com/discovery'],
     [true, 'provider.example.com/discovery'],

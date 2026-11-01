@@ -111,6 +111,10 @@ export function buildOAuthAuthorizationUrl(
   status: SystemStatus
 ): string {
   switch (provider) {
+    // Google requires the server-owned PKCE and nonce. Never reconstruct it
+    // from a custom provider with a colliding slug or from browser state.
+    case 'google':
+      break
     case 'github':
       if (status.github_client_id) {
         return buildGitHubOAuthUrl(status.github_client_id, state)

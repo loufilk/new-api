@@ -78,6 +78,7 @@ export interface UserProfile {
   /** OIDC ID (OAuth) */
   oidc_id?: string
   /** Telegram ID (OAuth) */
+  google_id?: string
   telegram_id?: string
   /** LinuxDO ID (OAuth) */
   linux_do_id?: string

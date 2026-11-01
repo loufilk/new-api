@@ -48,6 +48,7 @@ export interface AuthUser {
   discord_id?: string
   oidc_id?: string
   wechat_id?: string
+  google_id?: string
   telegram_id?: string
   linux_do_id?: string
   language?: string

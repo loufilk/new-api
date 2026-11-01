@@ -41,6 +41,7 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import type { SidebarBadges, SidebarData } from '@/components/layout/types'
+import { useStatus } from '@/hooks/use-status'
 import { ROLE } from '@/lib/roles'
 
 /**
@@ -51,6 +52,7 @@ import { ROLE } from '@/lib/roles'
  */
 export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
   const { t } = useTranslation()
+  const { status } = useStatus()
   return {
     navGroups: [
       {
@@ -121,11 +123,15 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             url: '/wallet',
             icon: Wallet,
           },
-          {
-            title: t('pool.title'),
-            url: '/account-pool',
-            icon: ServerCog,
-          },
+          ...(status?.account_pool_enabled === true
+            ? [
+                {
+                  title: t('pool.title'),
+                  url: '/account-pool',
+                  icon: ServerCog,
+                },
+              ]
+            : []),
           {
             title: t('intelligence.title'),
             url: '/intelligence',

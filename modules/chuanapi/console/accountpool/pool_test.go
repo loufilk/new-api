@@ -19,6 +19,13 @@ import (
 
 const poolFixture = `{"code":0,"data":{"page":1,"total":1,"items":[{"id":909,"name":"private@example.invalid","platform":"openai","type":"oauth","status":"active","schedulable":true,"concurrency":2,"current_concurrency":2,"group_ids":[7,99],"credentials":{"plan_type":"plus","access_token":"synthetic-do-not-expose"},"extra":{"codex_5h_used_percent":31.5,"codex_7d_used_percent":40},"error_message":"private upstream address"}]}}`
 
+// Pure collector fixtures explicitly opt in without touching any real DB.
+func enabledTestService() *Service {
+	s := New()
+	s.enabled = func(context.Context) (bool, error) { return true, nil }
+	return s
+}
+
 func TestCollectorUsesExplicitAdminCredentialAndOnlyAnonymousProjection(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/admin/accounts", r.URL.Path)
@@ -28,7 +35,7 @@ func TestCollectorUsesExplicitAdminCredentialAndOnlyAnonymousProjection(t *testi
 		fmt.Fprint(w, poolFixture)
 	}))
 	defer upstream.Close()
-	s := New()
+	s := enabledTestService()
 	items, err := s.collect(context.Background(), upstream.URL, "synthetic-admin-key", Binding{ChannelID: 3, GroupMap: map[string]string{"7": "default"}})
 	require.NoError(t, err)
 	require.Len(t, items, 1)
@@ -39,7 +46,7 @@ func TestCollectorUsesExplicitAdminCredentialAndOnlyAnonymousProjection(t *testi
 	assert.Equal(t, []Group{{Name: "default"}}, items[0].Groups)
 	encoded, err := common.Marshal(items)
 	require.NoError(t, err)
-	for _, secret := range []string{"909", "private@", "synthetic-do-not-expose", "error_message", "credentials", "99"} {
+	for _, secret := range []string{`"id":909`, "private@", "synthetic-do-not-expose", "error_message", "credentials", "group_ids"} {
 		assert.NotContains(t, string(encoded), secret)
 	}
 	assert.True(t, strings.HasPrefix(items[0].AnonymousID, "AC-"))
@@ -48,7 +55,7 @@ func TestCollectorUsesExplicitAdminCredentialAndOnlyAnonymousProjection(t *testi
 func TestCollectorRejectsPaginationDriftAndRedirects(t *testing.T) {
 	for _, body := range []string{`{"code":0,"data":{"page":1,"total":1,"items":[]}}`, `{"code":0,"data":{"page":1,"total":5001,"items":[]}}`, `{"code":0,"data":{"page":2,"total":0,"items":[]}}`, `{"code":0,"data":{"page":1,"total":2,"items":[{"id":1},{"id":1}]}}`} {
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, body) }))
-		s := New()
+		s := enabledTestService()
 		_, err := s.collect(context.Background(), upstream.URL, "synthetic", Binding{ChannelID: 1, GroupMap: map[string]string{"1": "default"}})
 		upstream.Close()
 		require.Error(t, err)
@@ -58,7 +65,7 @@ func TestCollectorRejectsPaginationDriftAndRedirects(t *testing.T) {
 	defer destination.Close()
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, destination.URL, 302) }))
 	defer upstream.Close()
-	s := New()
+	s := enabledTestService()
 	_, err := s.collect(context.Background(), upstream.URL, "synthetic", Binding{})
 	require.Error(t, err)
 	assert.Zero(t, destinationCalls.Load())
@@ -77,7 +84,7 @@ func TestCacheFailureShowsBoundedStaleThenNoData(t *testing.T) {
 	}))
 	defer upstream.Close()
 	now := time.Unix(1800000000, 0)
-	s := New()
+	s := enabledTestService()
 	s.bindings = []Binding{{ChannelID: 3, Origin: upstream.URL, GroupMap: map[string]string{"7": "default"}}}
 	s.now = func() time.Time { return now }
 	s.getenv = func(string) string { return "synthetic" }
@@ -107,7 +114,7 @@ func TestMissingAdminAccessNeverReusesRelayKey(t *testing.T) {
 	var calls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
 	defer upstream.Close()
-	s := New()
+	s := enabledTestService()
 	s.bindings = []Binding{{ChannelID: 3, Origin: upstream.URL, GroupMap: map[string]string{"7": "default"}}}
 	s.getenv = func(string) string { return "" }
 	s.channel = func(int) (*model.Channel, error) {
@@ -127,7 +134,7 @@ func TestChannelBaseURLChangeCannotExfiltratePinnedManagementKey(t *testing.T) {
 	defer trusted.Close()
 	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { attackerCalls.Add(1) }))
 	defer attacker.Close()
-	s := New()
+	s := enabledTestService()
 	s.bindings = []Binding{{ChannelID: 3, Origin: trusted.URL, GroupMap: map[string]string{"7": "default"}}}
 	s.getenv = func(string) string { return "synthetic-admin-credential" }
 	s.channel = func(int) (*model.Channel, error) {

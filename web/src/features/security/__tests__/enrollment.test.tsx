@@ -130,132 +130,146 @@ it.each(['2fa', 'passkey'] as const)(
   }
 )
 
-it('refreshes Telegram bindings from the server result after the callback popup has closed', async () => {
-  const popup = {
-    closed: false,
-    location: { replace: vi.fn() },
-    sessionStorage: window.sessionStorage,
-    close: vi.fn(),
-    postMessage: vi.fn(),
-  }
-  vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
-  vi.spyOn(api, 'post').mockImplementation(async (url) => ({
-    data: {
-      success: true,
-      data:
-        url === '/api/verify'
-          ? {
-              proof_token: 'binding-proof',
-              method: 'password',
-              scope: 'account.binding.bind',
-              expires_at: expiresAt(),
-            }
-          : {
-              flow_token: 'binding-state',
-              authorization_url: 'https://oauth.telegram.org/auth?server=pkce',
-            },
-    },
-  }))
-  let resolve!: (response: {
-    data: { success: boolean; data: { action: string } }
-  }) => void
-  const response = new Promise<{
-    data: { success: boolean; data: { action: string } }
-  }>((done) => {
-    resolve = done
-  })
-  const get = vi.spyOn(api, 'get').mockImplementation((url) => {
-    if (url === '/api/verify/methods') {
-      return Promise.resolve({
-        data: {
-          success: true,
-          data: {
-            scope: 'account.binding.bind',
-            methods: [{ method: 'password', available: true }],
-            oauth_providers: [],
-            password_encryption_enabled: false,
-          },
-        },
-      })
+it.each([
+  ['telegram', 'Telegram'],
+  ['google', 'Google'],
+])(
+  'refreshes %s bindings from the server result after the callback popup has closed',
+  async (provider, label) => {
+    const authorizationUrl =
+      provider === 'google'
+        ? 'https://accounts.google.com/o/oauth2/v2/auth?server=pkce'
+        : 'https://oauth.telegram.org/auth?server=pkce'
+    const popup = {
+      closed: false,
+      location: { replace: vi.fn() },
+      sessionStorage: window.sessionStorage,
+      close: vi.fn(),
+      postMessage: vi.fn(),
     }
-    return url === '/api/status'
-      ? Promise.resolve({
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+    vi.spyOn(api, 'post').mockImplementation(async (url) => ({
+      data: {
+        success: true,
+        data:
+          url === '/api/verify'
+            ? {
+                proof_token: 'binding-proof',
+                method: 'password',
+                scope: 'account.binding.bind',
+                expires_at: expiresAt(),
+              }
+            : {
+                flow_token: 'binding-state',
+                authorization_url: authorizationUrl,
+              },
+      },
+    }))
+    let resolve!: (response: {
+      data: { success: boolean; data: { action: string } }
+    }) => void
+    const response = new Promise<{
+      data: { success: boolean; data: { action: string } }
+    }>((done) => {
+      resolve = done
+    })
+    const get = vi.spyOn(api, 'get').mockImplementation((url) => {
+      if (url === '/api/verify/methods') {
+        return Promise.resolve({
           data: {
             success: true,
-            data: { telegram_oauth: true, telegram_oauth_configured: true },
+            data: {
+              scope: 'account.binding.bind',
+              methods: [{ method: 'password', available: true }],
+              oauth_providers: [],
+              password_encryption_enabled: false,
+            },
           },
         })
-      : response
-  })
-  const onUpdate = vi.fn()
-  const user = userEvent.setup()
-  render(
-    <QueryClientProvider client={client}>
-      <AccountBindings
-        profile={{ email: 'bound@example.com' } as UserProfile}
-        onUpdate={onUpdate}
-      />
-    </QueryClientProvider>
-  )
-  const telegram = (await screen.findByText('Telegram')).closest('li')
-  if (!telegram) throw new Error('Telegram binding entry is missing')
-  await user.click(within(telegram).getByRole('button', { name: 'Bind' }))
-  const verification = await screen.findByRole('dialog', {
-    name: 'Security verification',
-  })
-  await user.type(
-    within(verification).getByLabelText('Password', { selector: 'input' }),
-    'current-password'
-  )
-  await user.click(within(verification).getByRole('button', { name: 'Verify' }))
-  const continuation = await screen.findByRole('alertdialog', {
-    name: 'Continue account binding',
-  })
-  await user.click(
-    within(continuation).getByRole('button', { name: 'Continue' })
-  )
-  await waitFor(() =>
-    expect(popup.location.replace).toHaveBeenCalledWith(
-      'https://oauth.telegram.org/auth?server=pkce'
+      }
+      return url === '/api/status'
+        ? Promise.resolve({
+            data: {
+              success: true,
+              data: {
+                [`${provider}_oauth`]: true,
+                [`${provider}_oauth_configured`]: true,
+              },
+            },
+          })
+        : response
+    })
+    const onUpdate = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <QueryClientProvider client={client}>
+        <AccountBindings
+          profile={{ email: 'bound@example.com' } as UserProfile}
+          onUpdate={onUpdate}
+        />
+      </QueryClientProvider>
     )
-  )
-  const message = new MessageEvent('message', {
-    origin: window.location.origin,
-    data: {
-      type: OAUTH_POPUP_CALLBACK_MESSAGE,
-      provider: 'telegram',
-      intent: 'bind',
-      state: 'binding-state',
-      code: 'code',
-    },
-  })
-  Object.defineProperty(message, 'source', { value: popup })
-  act(() => {
-    window.dispatchEvent(message)
-    popup.closed = true
-  })
-  await waitFor(() =>
-    expect(get).toHaveBeenCalledWith(
-      '/api/oauth/telegram',
-      expect.objectContaining({
-        params: expect.objectContaining({
-          state: 'binding-state',
-          code: 'code',
-        }),
-      })
+    const telegram = (await screen.findByText(label)).closest('li')
+    if (!telegram) throw new Error('Telegram binding entry is missing')
+    await user.click(within(telegram).getByRole('button', { name: 'Bind' }))
+    const verification = await screen.findByRole('dialog', {
+      name: 'Security verification',
+    })
+    await user.type(
+      within(verification).getByLabelText('Password', { selector: 'input' }),
+      'current-password'
     )
-  )
-  expect(onUpdate).not.toHaveBeenCalled()
-  expect(
-    get.mock.calls.find(([url]) => url === '/api/oauth/telegram')?.[1]?.signal
-      ?.aborted
-  ).toBe(false)
-  await act(async () => {
-    resolve({ data: { success: true, data: { action: 'bind' } } })
-    await response
-  })
-  await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(1))
-})
+    await user.click(
+      within(verification).getByRole('button', { name: 'Verify' })
+    )
+    const continuation = await screen.findByRole('alertdialog', {
+      name: 'Continue account binding',
+    })
+    await user.click(
+      within(continuation).getByRole('button', { name: 'Continue' })
+    )
+    await waitFor(() =>
+      expect(popup.location.replace).toHaveBeenCalledWith(authorizationUrl)
+    )
+    const message = new MessageEvent('message', {
+      origin: window.location.origin,
+      data: {
+        type: OAUTH_POPUP_CALLBACK_MESSAGE,
+        provider,
+        intent: 'bind',
+        state: 'binding-state',
+        code: 'code',
+      },
+    })
+    Object.defineProperty(message, 'source', { value: popup })
+    act(() => {
+      window.dispatchEvent(message)
+      window.dispatchEvent(message)
+      popup.closed = true
+    })
+    await waitFor(() =>
+      expect(get).toHaveBeenCalledWith(
+        `/api/oauth/${provider}`,
+        expect.objectContaining({
+          params: expect.objectContaining({
+            state: 'binding-state',
+            code: 'code',
+          }),
+        })
+      )
+    )
+    expect(onUpdate).not.toHaveBeenCalled()
+    expect(
+      get.mock.calls.find(([url]) => url === `/api/oauth/${provider}`)?.[1]
+        ?.signal?.aborted
+    ).toBe(false)
+    await act(async () => {
+      resolve({ data: { success: true, data: { action: 'bind' } } })
+      await response
+    })
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(1))
+  }
+)
 
 it('shows a retry when the 2FA status query fails instead of offering enrollment', async () => {
   const get = vi

@@ -12,6 +12,7 @@ import (
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/gorm/logger"
 )
 
 const (
@@ -166,6 +167,14 @@ func createAuthFlowWithTx(tx *gorm.DB, input AuthFlowCreate) (string, *AuthFlow,
 		SessionId: input.SessionId,
 		Payload:   input.Payload,
 		ExpiresAt: input.ExpiresAt,
+	}
+	if input.Provider == "google" {
+		// Google flow payload contains PKCE/nonce/browser binding. Never interpolate
+		// it into SQL logs or leak a database error's rejected row, even in DEBUG.
+		if err := tx.Session(&gorm.Session{Logger: logger.Discard}).Create(flow).Error; err != nil {
+			return "", nil, errors.New("could not persist Google authentication flow")
+		}
+		return token, flow, nil
 	}
 	if err := tx.Create(flow).Error; err != nil {
 		return "", nil, err

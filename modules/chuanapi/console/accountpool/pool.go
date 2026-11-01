@@ -101,10 +101,12 @@ type Service struct {
 	now      func() time.Time
 	getenv   func(string) string
 	channel  func(int) (*model.Channel, error)
+	enabled  func(context.Context) (bool, error)
 }
 
 func New() *Service {
 	s := &Service{client: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, now: time.Now, getenv: os.Getenv, channel: func(id int) (*model.Channel, error) { return model.GetChannelById(id, false) }}
+	s.enabled = model.AccountPoolEnabled
 	raw := os.Getenv("SUB2_POOL_CHANNELS")
 	if raw != "" && (len(raw) > 8192 || common.UnmarshalJsonStr(raw, &s.bindings) != nil || len(s.bindings) > 8) {
 		s.invalid = true
@@ -135,6 +137,9 @@ func (s *Service) Register(user, root *gin.RouterGroup) {
 }
 
 func (s *Service) List(c *gin.Context) {
+	if !s.requireEnabled(c) {
+		return
+	}
 	user, err := model.GetUserCache(c.GetInt("id"))
 	if err != nil {
 		c.JSON(503, gin.H{"success": false, "message": "Account pool is unavailable"})
@@ -232,17 +237,65 @@ func (s *Service) List(c *gin.Context) {
 	total := len(items)
 	start := min((min(page, 100000)-1)*size, total)
 	end := min(start+size, total)
+	// A collection may have waited on upstream I/O while another node disabled
+	// the page. Recheck the authoritative option before releasing any snapshot.
+	if !s.requireEnabled(c) {
+		return
+	}
 	common.ApiSuccess(c, Snapshot{Configured: result.configured, State: state, UpdatedAt: updated, CacheTTLSeconds: 60, StaleAfterSeconds: 300, Items: items[start:end], Total: total, Page: page, PageSize: size, Groups: groups})
 }
 
 func (s *Service) AdminStatus(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	enabled, err := s.enabled(c.Request.Context())
+	if err != nil {
+		s.clearCache()
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "Account pool is unavailable"})
+		return
+	}
+	if !enabled {
+		s.clearCache()
+		// Root can inspect configuration without enabling the public page. This
+		// path never collects upstream data or returns cached node information.
+		common.ApiSuccess(c, gin.H{"enabled": false, "configured": len(s.bindings) > 0 || s.invalid, "invalid_config": s.invalid, "nodes": []NodeStatus{}, "cache_scope": "per_process", "cache_ttl_seconds": 60, "stale_after_seconds": 300, "automatic_collection": false})
+		return
+	}
 	result := s.snapshot(c.Request.Context())
-	common.ApiSuccess(c, gin.H{"configured": result.configured, "invalid_config": s.invalid, "nodes": result.nodes, "cache_scope": "per_process", "cache_ttl_seconds": 60, "stale_after_seconds": 300, "automatic_collection": false})
+	if !s.requireEnabled(c) {
+		return
+	}
+	common.ApiSuccess(c, gin.H{"enabled": true, "configured": result.configured, "invalid_config": s.invalid, "nodes": result.nodes, "cache_scope": "per_process", "cache_ttl_seconds": 60, "stale_after_seconds": 300, "automatic_collection": false})
+}
+
+func (s *Service) clearCache() {
+	s.mu.Lock()
+	s.cache = cached{}
+	s.mu.Unlock()
+}
+
+func (s *Service) requireEnabled(c *gin.Context) bool {
+	c.Header("Cache-Control", "no-store")
+	enabled, err := s.enabled(c.Request.Context())
+	if err != nil {
+		s.clearCache()
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "Account pool is unavailable"})
+		return false
+	}
+	if !enabled {
+		s.clearCache()
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "code": "ACCOUNT_POOL_DISABLED", "message": "Account pool is disabled"})
+		return false
+	}
+	return true
 }
 
 // Per-process singleflight and a one-minute success/failure TTL bound reads.
 // N app nodes may each collect once per minute; no distributed cron is started.
 func (s *Service) snapshot(ctx context.Context) cached {
+	if enabled, err := s.enabled(ctx); err != nil || !enabled {
+		s.clearCache()
+		return cached{}
+	}
 	s.mu.Lock()
 	previous := s.cache
 	s.mu.Unlock()
@@ -253,6 +306,10 @@ func (s *Service) snapshot(ctx context.Context) cached {
 		return previous
 	}
 	ch := s.flight.DoChan("pool", func() (any, error) {
+		if enabled, err := s.enabled(ctx); err != nil || !enabled {
+			s.clearCache()
+			return cached{}, nil
+		}
 		s.mu.Lock()
 		current := s.cache
 		s.mu.Unlock()
@@ -316,6 +373,10 @@ func (s *Service) snapshot(ctx context.Context) cached {
 			next = current
 		} else {
 			next.fetched = s.now()
+		}
+		if enabled, err := s.enabled(ctx); err != nil || !enabled {
+			s.clearCache()
+			return cached{}, nil
 		}
 		s.mu.Lock()
 		s.cache = next
@@ -386,6 +447,11 @@ func (s *Service) collect(ctx context.Context, origin, key string, b Binding) ([
 	seen := map[int64]bool{}
 	total := -1
 	for page := 1; page <= 50; page++ {
+		// Stop pagination after an operator disables the feature. Requests already
+		// sent cannot be recalled; their response is discarded by snapshot/List.
+		if enabled, err := s.enabled(ctx); err != nil || !enabled {
+			return nil, errors.New("account pool disabled or unavailable")
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/v1/admin/accounts?lite=true&page=%d&page_size=100", origin, page), nil)
 		if err != nil {
 			return nil, err

@@ -45,6 +45,7 @@ type Node = {
   error_code?: string
 }
 type Diagnostics = {
+  enabled?: boolean
   configured: boolean
   invalid_config: boolean
   nodes: Node[]
@@ -63,6 +64,9 @@ export function PoolDiagnostics() {
   const query = useQuery({
     queryKey: ['account-pool', 'root-diagnostics'],
     enabled: isRoot && open,
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: 'always',
     retry: false,
     meta: { errorToast: false },
     queryFn: async ({ signal }) =>
@@ -112,10 +116,13 @@ export function PoolDiagnostics() {
           <Alert>
             <AlertDescription>{t('pool.diagnosticsScope')}</AlertDescription>
           </Alert>
-          {query.isPending && <LoadingState />}
+          {(query.isPending || query.isFetching) && <LoadingState />}
           {query.isError && <ErrorState onRetry={() => void query.refetch()} />}
-          {query.data && (
+          {query.data && !query.isFetching && !query.isError && (
             <>
+              {query.data.enabled === false && (
+                <p role='status'>{t('Account pool is disabled')}</p>
+              )}
               {query.data.invalid_config && (
                 <p role='alert'>{t('pool.invalidConfig')}</p>
               )}
@@ -138,7 +145,7 @@ export function PoolDiagnostics() {
             disabled={query.isFetching}
             onClick={() => void query.refetch()}
           >
-            {t('monitor.refresh')}
+            {t('Refresh')}
           </Button>
         </div>
       </CollapsibleContent>

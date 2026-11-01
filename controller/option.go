@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
@@ -76,7 +77,7 @@ func GetOptions(c *gin.Context) {
 	optionValues := make(map[string]string)
 	common.OptionMapRWMutex.Lock()
 	for k, v := range common.OptionMap {
-		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" {
+		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" || k == "google.client_secret_configured" {
 			continue
 		}
 		value := common.Interface2String(v)
@@ -99,6 +100,7 @@ func GetOptions(c *gin.Context) {
 	options = append(options, &model.Option{
 		Key: "ResendKeyConfigured", Value: strconv.FormatBool(strings.TrimSpace(common.OptionMap["ResendApiKey"]) != ""),
 	})
+	options = append(options, &model.Option{Key: "google.client_secret_configured", Value: strconv.FormatBool(strings.TrimSpace(common.OptionMap["google.client_secret"]) != "")})
 	effectiveModes := billing_setting.GetBillingModeCopy()
 	effectiveExpressions := billing_setting.GetBillingExprCopy()
 	common.OptionMapRWMutex.Unlock()
@@ -205,6 +207,46 @@ func UpdateOption(c *gin.Context) {
 		}
 	}
 	switch option.Key {
+	case "google.client_secret_configured":
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	case "google.client_secret":
+		option.Value = strings.TrimSpace(option.Value.(string))
+		// Empty means keep, not clear. Disable Google sign-in before rotating credentials.
+		if option.Value == "" {
+			common.ApiSuccess(c, nil)
+			return
+		}
+		if len(option.Value.(string)) > 4096 {
+			common.ApiErrorT(c, "Invalid parameters")
+			return
+		}
+	case "google.client_id":
+		option.Value = strings.TrimSpace(option.Value.(string))
+		if len(option.Value.(string)) > 255 {
+			common.ApiErrorT(c, "Invalid parameters")
+			return
+		}
+	case "GoogleOAuthEnabled":
+		if option.Value != "true" && option.Value != "false" {
+			common.ApiErrorT(c, "Invalid parameters")
+			return
+		}
+		if option.Value == "true" {
+			config := system_setting.GoogleSettingsSnapshot()
+			if configErr := oauth.ValidateGoogleConfiguration(config); configErr != nil {
+				writeSecurityOperationError(c, configErr)
+				return
+			}
+			if _, err := oauth.GoogleRedirectURI(config.ServerAddress); err != nil {
+				common.ApiErrorT(c, "Google sign-in requires a secure site address. Use HTTPS, or HTTP only for localhost development.")
+				return
+			}
+			if oauth.HasCustomProviderConflict("google") {
+				writeSecurityOperationError(c, oauth.ErrGoogleOAuthConflict)
+				return
+			}
+		}
 	case "GitHubOAuthEnabled":
 		if option.Value == "true" && common.GitHubClientId == "" {
 			common.ApiErrorT(c, "Cannot enable {{provider}}. Enter the {{provider}} Client ID and Client Secret first.", map[string]any{"provider": "GitHub OAuth"})

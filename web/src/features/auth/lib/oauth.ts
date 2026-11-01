@@ -39,6 +39,10 @@ export function getAvailableOAuthProviders(
 
   const providers: OAuthProvider[] = []
 
+  if (status.google_oauth && status.google_oauth_configured) {
+    providers.push({ name: 'Google', type: 'google', enabled: true })
+  }
+
   if (status.github_oauth) {
     providers.push({
       name: 'GitHub',
@@ -93,6 +97,7 @@ export function getAvailableOAuthProviders(
 export function hasOAuthProviders(status: SystemStatus | null): boolean {
   if (!status) return false
   return !!(
+    (status.google_oauth && status.google_oauth_configured) ||
     status.github_oauth ||
     status.discord_oauth ||
     status.oidc_enabled ||

@@ -104,6 +104,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/user/checkin":                       accessTokenScopeRule("wallet:write"),
 	"GET /api/user/oauth/bindings":                 accessTokenScopeRule("account_security:read"),
 	"DELETE /api/user/oauth/bindings/:provider_id": accessTokenScopeRule("account_security:write"),
+	"DELETE /api/user/bindings/google":             accessTokenSessionRule,
 
 	// ChuanAPI routes retain host role and ownership checks in addition to scopes.
 	"GET /api/user/self/email/verification": accessTokenScopeRule("account_security:write"),

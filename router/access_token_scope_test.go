@@ -237,3 +237,10 @@ func TestAccessTokenVerificationScopesAreAllListed(t *testing.T) {
 		assert.True(t, listed, "verification scope %s has no access token rule", scope)
 	}
 }
+
+func TestAccessTokenGoogleUnbindRequiresInteractiveSession(t *testing.T) {
+	rule, ok := middleware.AccessTokenRouteRule("DELETE /api/user/bindings/google")
+	require.True(t, ok)
+	assert.Equal(t, "session", rule.Kind(), "Google unlink must reject both legacy and scoped personal access tokens")
+	assert.Empty(t, rule.Scope())
+}

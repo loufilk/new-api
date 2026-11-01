@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { ContentSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { AccountPoolSection } from './account-pool-section'
 import { AnnouncementsSection } from './announcements-section'
 import { ApiInfoSection } from './api-info-section'
 import { ChatSettingsSection } from './chat-settings-section'
@@ -38,6 +39,11 @@ function validateDataExportDefaultTime(value: string): 'week' | 'hour' | 'day' {
 }
 
 const CONTENT_SECTIONS = [
+  {
+    id: 'account-pool',
+    titleKey: 'pool.title',
+    build: () => <AccountPoolSection />,
+  },
   {
     id: 'dashboard',
     titleKey: 'Data Dashboard',

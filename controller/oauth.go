@@ -1,9 +1,11 @@
 package controller
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/oauth2"
 	"gorm.io/gorm"
 )
 
@@ -33,6 +36,7 @@ type oauthFlowPayload struct {
 	AffiliateCode   string                         `json:"affiliate_code,omitempty"`
 	Verification    *service.OAuthVerificationFlow `json:"verification,omitempty"`
 	Telegram        *oauth.TelegramOAuthFlow       `json:"telegram,omitempty"`
+	Google          *oauth.GoogleOAuthFlow         `json:"google,omitempty"`
 	SessionIdentity *service.AuthIdentity          `json:"session_identity,omitempty"`
 	Authorization   *model.AuthFlowAuthorization   `json:"authorization,omitempty"`
 }
@@ -64,6 +68,29 @@ func GenerateOAuthCode(c *gin.Context) {
 	sessionID := ""
 	flowPayload := oauthFlowPayload{AffiliateCode: request.Aff}
 	bindingStarted := false
+	if request.Provider == "google" {
+		googleFlow, err := oauth.NewGoogleOAuthFlow()
+		if err != nil {
+			writeSecurityOperationError(c, err)
+			return
+		}
+		origin, err := url.Parse(googleFlow.RedirectURI)
+		if err != nil {
+			writeSecurityOperationError(c, oauth.ErrGoogleOAuthNotConfigured)
+			return
+		}
+		if requestOrigin := c.GetHeader("Origin"); requestOrigin != "" && requestOrigin != origin.Scheme+"://"+origin.Host {
+			writeAccountStatusError(c, http.StatusForbidden, "State parameter is empty or mismatched")
+			return
+		}
+		browser := oauth2.GenerateVerifier()
+		googleFlow.BrowserHash = googleBrowserHash(browser)
+		googleFlow.RequireFreshAuth = request.Intent == model.AuthFlowIntentVerify
+		flowPayload.Google = googleFlow
+		// Host-only, HttpOnly cookie binds even anonymous login to its initiating browser.
+		// A new attempt replaces the prior attempt; stale callbacks cannot log a user in.
+		http.SetCookie(c.Writer, googleFlowCookie(googleFlow.RedirectURI, browser, int(oauthAuthFlowTTL.Seconds())))
+	}
 	if request.Provider == "telegram" {
 		telegramFlow, err := oauth.NewTelegramOAuthFlow()
 		if err != nil {
@@ -95,7 +122,7 @@ func GenerateOAuthCode(c *gin.Context) {
 			}
 			flowPayload.SessionIdentity = &identity
 		}
-		if flowPayload.Telegram != nil {
+		if flowPayload.Telegram != nil || flowPayload.Google != nil {
 			if _, _, err := service.ValidateLoginSession(identity); err != nil {
 				writeSecurityOperationError(c, err)
 				return
@@ -132,6 +159,9 @@ func GenerateOAuthCode(c *gin.Context) {
 	}
 	bindingStarted = request.Intent == model.AuthFlowIntentBind
 	data := gin.H{"flow_token": state, "expires_at": expiresAt.Unix()}
+	if flowPayload.Google != nil {
+		data["authorization_url"] = flowPayload.Google.AuthorizationURL(state)
+	}
 	if flowPayload.Telegram != nil {
 		data["authorization_url"] = flowPayload.Telegram.AuthorizationURL(state)
 	}
@@ -203,6 +233,43 @@ func HandleOAuth(c *gin.Context) {
 		return
 	}
 
+	// Google additionally binds anonymous login to an HttpOnly browser cookie.
+	// Claim an exchange attempt before any network I/O: even a failed/cancelled
+	// callback cannot replay a code or race another callback into the token endpoint.
+	if providerName == "google" {
+		var payload oauthFlowPayload
+		if err := common.UnmarshalJsonStr(pendingFlow.Payload, &payload); err != nil || payload.Google == nil {
+			writeSecurityOperationError(c, model.ErrAuthFlowInvalid)
+			return
+		}
+		cookie, err := c.Cookie(googleFlowCookie(payload.Google.RedirectURI, "", 0).Name)
+		if err != nil || cookie == "" || len(cookie) > 128 || subtle.ConstantTimeCompare([]byte(payload.Google.BrowserHash), []byte(googleBrowserHash(cookie))) != 1 {
+			writeAccountStatusError(c, http.StatusForbidden, "State parameter is empty or mismatched")
+			return
+		}
+		if pendingFlow.Intent != model.AuthFlowIntentLogin {
+			identity, _ := middleware.GetSessionAuthIdentity(c)
+			if payload.SessionIdentity == nil || *payload.SessionIdentity != identity {
+				writeSecurityOperationError(c, model.ErrAuthFlowInvalid)
+				return
+			}
+			if _, _, err := service.ValidateLoginSession(identity); err != nil {
+				writeSecurityOperationError(c, err)
+				return
+			}
+		}
+		if err := oauth.GoogleConfigurationError(); err != nil {
+			writeSecurityOperationError(c, err)
+			return
+		}
+		if err := model.ClaimExternalAuthAssertion("google_oauth_exchange", state, pendingFlow.ExpiresAt); err != nil {
+			writeAccountStatusError(c, http.StatusForbidden, "State parameter is empty or mismatched")
+			return
+		}
+		http.SetCookie(c.Writer, googleFlowCookie(payload.Google.RedirectURI, "", -1))
+		c.Set(oauth.GoogleOAuthFlowContextKey, payload.Google)
+	}
+
 	// 3. Check if provider is enabled
 	var telegramPayload oauthFlowPayload
 	if providerName == "telegram" {
@@ -239,6 +306,10 @@ func HandleOAuth(c *gin.Context) {
 			writeAccountStatusError(c, http.StatusForbidden, "State parameter is empty or mismatched")
 			return
 		}
+		if providerName == "google" {
+			common.ApiErrorT(c, "Google sign-in was cancelled. Please try again.")
+			return
+		}
 		errorDescription := c.Query("error_description")
 		if errorDescription == "" {
 			errorDescription = errorCode
@@ -253,7 +324,7 @@ func HandleOAuth(c *gin.Context) {
 	code := c.Query("code")
 	token, err := provider.ExchangeToken(c.Request.Context(), code, c)
 	if err != nil {
-		if providerName == "telegram" {
+		if providerName == "telegram" || providerName == "google" {
 			writeSecurityOperationError(c, err)
 			return
 		}
@@ -264,7 +335,7 @@ func HandleOAuth(c *gin.Context) {
 	// 6. Get user info
 	oauthUser, err := provider.GetUserInfo(c.Request.Context(), token)
 	if err != nil {
-		if providerName == "telegram" {
+		if providerName == "telegram" || providerName == "google" {
 			writeSecurityOperationError(c, err)
 			return
 		}
@@ -373,6 +444,9 @@ func handleOAuthBind(c *gin.Context, providerName string, provider oauth.Provide
 	_, err = model.ConsumeAuthFlowWithAction(state, match, func(tx *gorm.DB, _ *model.AuthFlow) error {
 		if providerName == "telegram" {
 			return model.BindTelegramForSessionWithTx(tx, identity, oauthUser.ProviderUserID)
+		}
+		if providerName == "google" {
+			return model.BindGoogleForSessionWithTx(tx, identity, oauthUser.ProviderUserID)
 		}
 		if custom, ok := provider.(*oauth.GenericOAuthProvider); ok {
 			return model.UpdateUserOAuthBindingForSessionWithTx(tx, identity, custom.GetProviderId(), oauthUser.ProviderUserID)
@@ -570,6 +644,11 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 
 			// Set the provider user ID on the user model and update
 			provider.SetProviderUserID(user, oauthUser.ProviderUserID)
+			if user.GoogleId != "" {
+				if err := model.UpdateGoogleBindingWithTx(tx, user.Id, user.GoogleId); err != nil {
+					return err
+				}
+			}
 			if user.GitHubId != "" {
 				if err := model.UpdateGitHubBindingWithTx(tx, user.Id, user.GitHubId); err != nil {
 					return err
@@ -582,6 +661,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 				"linux_do_id": user.LinuxDOId,
 				"wechat_id":   user.WeChatId,
 				"telegram_id": user.TelegramId,
+				"google_id":   user.GoogleId,
 			}).Error; err != nil {
 				return err
 			}
@@ -648,4 +728,18 @@ func handleOAuthError(c *gin.Context, err error) {
 	default:
 		writeSecurityOperationError(c, err)
 	}
+}
+
+// Browser binding is purpose-separated from persisted state and session tokens.
+func googleBrowserHash(value string) string {
+	return common.GenerateHMACWithKey([]byte("google-oauth-browser-v1:"+common.SessionSecret), value)
+}
+
+func googleFlowCookie(redirectURI, value string, maxAge int) *http.Cookie {
+	secure := strings.HasPrefix(redirectURI, "https://")
+	name := "new_api_google_oauth"
+	if secure {
+		name = "__Host-new-api-google-oauth"
+	}
+	return &http.Cookie{Name: name, Value: value, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, MaxAge: maxAge}
 }

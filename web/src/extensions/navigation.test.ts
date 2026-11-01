@@ -44,7 +44,6 @@ describe('frontend extension navigation contract', () => {
         documentNavigation: true,
       },
       { title: 'Pricing', href: '/pricing' },
-      { title: 'pool.title', href: '/account-pool' },
       { title: 'intelligence.title', href: '/intelligence' },
       { title: 'Invitation Rewards', href: '/affiliate' },
     ])
@@ -69,7 +68,6 @@ describe('frontend extension navigation contract', () => {
     )
 
     expect(result).toEqual([
-      { title: 'pool.title', href: '/account-pool' },
       { title: 'intelligence.title', href: '/intelligence' },
       { title: 'Invitation Rewards', href: '/affiliate' },
       {
@@ -80,4 +78,30 @@ describe('frontend extension navigation contract', () => {
       },
     ])
   })
+})
+
+test.each([
+  null,
+  {},
+  { account_pool_enabled: false },
+  { account_pool_enabled: 'true' },
+])(
+  'pool navigation stays hidden unless the flag is boolean true: %j',
+  (status) => {
+    const result = applyNavigationExtensions(
+      [{ title: 'Pool', href: '/account-pool' }],
+      { isAuthenticated: true, status }
+    )
+    expect(result.some((link) => link.href === '/account-pool')).toBe(false)
+    expect(result.some((link) => link.href === '/intelligence')).toBe(true)
+    expect(result.some((link) => link.href === '/affiliate')).toBe(true)
+  }
+)
+
+test('enabled pool is included once in header navigation', () => {
+  const result = applyNavigationExtensions([], {
+    isAuthenticated: true,
+    status: { account_pool_enabled: true },
+  })
+  expect(result.filter((link) => link.href === '/account-pool')).toHaveLength(1)
 })

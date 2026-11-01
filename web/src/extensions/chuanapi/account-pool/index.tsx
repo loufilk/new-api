@@ -16,10 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getCoreRowModel, useReactTable } from '@tanstack/react-table'
 import { RefreshCw } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DataTablePagination } from '@/components/data-table'
@@ -34,12 +34,18 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
+import { useStatus } from '@/hooks/use-status'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
+import {
+  STATUS_QUERY_KEY,
+  type StatusRecord,
+  writeCachedStatus,
+} from '@/lib/status-query'
 
+import { isAccountPoolDisabled } from './access'
 import { AccountTable } from './account-table'
 import { getPoolSnapshot } from './api'
-import { PoolDiagnostics } from './diagnostics'
 import type { PoolFilters } from './types'
 
 const plans = ['free', 'plus', 'pro', 'promax', 'team']
@@ -58,6 +64,9 @@ export function AccountPoolPage() {
 
 export function AccountPoolDashboard() {
   const { t, i18n } = useTranslation()
+  const client = useQueryClient()
+  const { status } = useStatus()
+  const enabled = status?.account_pool_enabled === true
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const [filters, setFilters] = useState<PoolFilters>({
     q: '',
@@ -68,13 +77,46 @@ export function AccountPoolDashboard() {
     page_size: 20,
   })
   const query = useQuery({
-    queryKey: ['account-pool', filters],
-    queryFn: ({ signal }) => getPoolSnapshot(filters, signal),
-    staleTime: 30_000,
+    queryKey: ['account-pool', 'snapshot', filters],
+    enabled,
+    queryFn: async ({ signal }) => {
+      try {
+        return await getPoolSnapshot(filters, signal)
+      } catch (error) {
+        if (isAccountPoolDisabled(error)) {
+          client.setQueryData<StatusRecord>(STATUS_QUERY_KEY, (previous) => ({
+            ...previous,
+            account_pool_enabled: false,
+          }))
+          writeCachedStatus({
+            ...client.getQueryData<StatusRecord>(STATUS_QUERY_KEY),
+            account_pool_enabled: false,
+          })
+        }
+        throw error
+      }
+    },
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: 'always',
     retry: false,
     meta: { errorToast: false },
   })
-  const snapshot = query.data
+  // A previously fetched list is never proof that the page is still enabled.
+  const snapshot =
+    enabled && query.isFetchedAfterMount && !query.isError && !query.isFetching
+      ? query.data
+      : undefined
+  useEffect(() => {
+    if (!enabled) {
+      void client
+        .cancelQueries({ queryKey: ['account-pool', 'snapshot'] })
+        .then(() => {
+          client.removeQueries({ queryKey: ['account-pool', 'snapshot'] })
+        })
+    }
+  }, [client, enabled])
   const table = useReactTable({
     data: snapshot?.items ?? emptyAccounts,
     columns: [],
@@ -103,6 +145,8 @@ export function AccountPoolDashboard() {
   const setFilter = (key: keyof PoolFilters, value: string) =>
     setFilters((previous) => ({ ...previous, [key]: value, page: 1 }))
 
+  if (!enabled) return <EmptyState title={t('Account pool is disabled')} />
+
   return (
     <div className='mx-auto flex max-w-7xl flex-col gap-6 py-4'>
       <header className='flex flex-wrap items-start justify-between gap-4'>
@@ -119,7 +163,7 @@ export function AccountPoolDashboard() {
           onClick={() => void query.refetch()}
         >
           <RefreshCw aria-hidden />
-          {t('monitor.refresh')}
+          {t('Refresh')}
         </Button>
       </header>
       <Alert>
@@ -198,7 +242,7 @@ export function AccountPoolDashboard() {
           </NativeSelect>
         </div>
       </div>
-      {query.isPending && <LoadingState />}
+      {(query.isPending || query.isFetching) && <LoadingState />}
       {query.isError && (
         <ErrorState
           title={t('pool.loadFailed')}
@@ -215,12 +259,10 @@ export function AccountPoolDashboard() {
             </Alert>
           )}
           <p className='text-muted-foreground text-sm' role='status'>
-            {t('monitor.updatedAt', {
-              time:
-                snapshot.updated_at > 0
-                  ? new Date(snapshot.updated_at * 1000).toLocaleString(locale)
-                  : '—',
-            })}
+            {t('Last updated:')}{' '}
+            {snapshot.updated_at > 0
+              ? new Date(snapshot.updated_at * 1000).toLocaleString(locale)
+              : '—'}
           </p>
           {!snapshot.configured ? (
             <EmptyState
@@ -297,7 +339,6 @@ export function AccountPoolDashboard() {
           )}
         </>
       )}
-      <PoolDiagnostics />
     </div>
   )
 }

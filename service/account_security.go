@@ -13,6 +13,14 @@ import (
 )
 
 func UnbindAccountOAuth(identity AuthIdentity, providerID int) error {
+	return model.UnbindUserOAuthForSession(identity, providerID, enabledAccountLoginMethods())
+}
+
+func UnbindAccountGoogle(identity AuthIdentity) error {
+	return model.UnbindGoogleForSession(identity, enabledAccountLoginMethods())
+}
+
+func enabledAccountLoginMethods() model.AccountLoginMethods {
 	enabled := model.AccountLoginMethods{
 		Password: common.PasswordLoginEnabled,
 		Passkey:  system_setting.PasskeySettingsSnapshot().Enabled,
@@ -28,7 +36,7 @@ func UnbindAccountOAuth(identity AuthIdentity, providerID int) error {
 			enabled.OAuthColumns = append(enabled.OAuthColumns, provider.ProviderUserIDColumn())
 		}
 	}
-	return model.UnbindUserOAuthForSession(identity, providerID, enabled)
+	return enabled
 }
 
 // AccountMailLanguage is the language of mail about a user's account: the

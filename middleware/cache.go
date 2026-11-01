@@ -14,6 +14,9 @@ func Cache() func(c *gin.Context) {
 		}
 		c.Header("X-Content-Type-Options", "nosniff")
 		switch {
+		case path == "/oauth/google":
+			c.Header("Cache-Control", "no-store")
+			c.Header("Referrer-Policy", "no-referrer")
 		case path == "/" || path == "/index.html":
 			c.Header("Cache-Control", "no-store")
 		case strings.HasPrefix(path, "/static/"):

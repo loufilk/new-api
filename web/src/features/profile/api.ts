@@ -275,6 +275,21 @@ export function unbindCustomOAuth(
   )
 }
 
+export function unbindGoogleOAuth(
+  proofToken: string,
+  signal: AbortSignal
+): Promise<AccountSecurityResult> {
+  return authResult(
+    api.delete('/api/user/bindings/google', {
+      ...authRequestOptions,
+      acceptAuthRotation: true,
+      headers: { 'X-Security-Proof': proofToken },
+      singleUseAuthorization: true,
+      signal,
+    })
+  )
+}
+
 // ============================================================================
 // Checkin APIs
 // ============================================================================

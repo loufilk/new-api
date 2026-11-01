@@ -19,6 +19,17 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  // Google OAuth backend errors and dynamic provider labels.
+  'Google sign-in requires secure session cookies and a trusted HTTPS site origin. Ask your administrator to configure the session cookie settings.',
+  'Google',
+  'Google ID',
+  'Google OAuth is not configured or enabled. Please contact your administrator.',
+  'The google OAuth provider name is reserved. Rename the conflicting custom provider before enabling Google sign-in.',
+  'Google authorization failed. Please start Google sign-in again.',
+  'Google sign-in was cancelled. Please try again.',
+  'Google sign-in requires a secure site address. Use HTTPS, or HTTP only for localhost development.',
+  'Google requires a recent sign-in for this security action. Sign in to Google again, or use a password, two-factor authentication or Passkey.',
+  'Failed to save Google OAuth settings. Please try again.',
   // User-call interception schema and backend permission catalog.
   'A custom reply is required when call interception is enabled',
   'Custom reply must not exceed 16000 UTF-8 bytes',

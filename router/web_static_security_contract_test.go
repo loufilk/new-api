@@ -46,13 +46,16 @@ func TestWebFallbackResponseSecurityContract(t *testing.T) {
 		return res, body
 	}
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
-		for _, path := range []string{"/", "/dashboard", "/dashboard/models", "/channels", "/system-settings", "/image?prompt=synthetic", "/nested.client/route"} {
+		for _, path := range []string{"/", "/dashboard", "/dashboard/models", "/channels", "/system-settings", "/image?prompt=synthetic", "/nested.client/route", "/oauth/google?code=synthetic-code&state=synthetic-state"} {
 			t.Run(method+"_SPA_"+path, func(t *testing.T) {
 				res, body := request(t, method, path)
 				assert.Equal(t, http.StatusOK, res.StatusCode)
 				assert.Contains(t, res.Header.Get("Content-Type"), "text/html")
 				assert.Contains(t, res.Header.Get("Cache-Control"), "no-store")
 				assert.Equal(t, "nosniff", res.Header.Get("X-Content-Type-Options"))
+				if strings.HasPrefix(path, "/oauth/google") {
+					assert.Equal(t, "no-referrer", res.Header.Get("Referrer-Policy"))
+				}
 				if method == http.MethodGet {
 					assert.Contains(t, string(body), "synthetic SPA shell")
 				} else {

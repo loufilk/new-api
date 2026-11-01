@@ -68,6 +68,7 @@ export function OAuthProviders({
     handleOIDCLogin,
     handleLinuxDOLogin,
     handleTelegramLogin,
+    handleGoogleLogin,
     handleCustomOAuthLogin,
   } = useOAuthLogin(status, redirectTo)
 
@@ -78,6 +79,14 @@ export function OAuthProviders({
   const oauthAvailable = isOAuthAvailableOnOrigin(status?.server_address)
 
   const providerButtons: ProviderButton[] = []
+
+  if (status?.google_oauth && status.google_oauth_configured) {
+    providerButtons.push({
+      key: 'google',
+      label: t('Continue with Google'),
+      onClick: handleGoogleLogin,
+    })
+  }
 
   if (status?.wechat_login && onWeChatLogin) {
     providerButtons.push({

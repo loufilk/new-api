@@ -176,7 +176,7 @@ func releaseAllExternalIdentitiesWithTx(tx *gorm.DB, userId int) error {
 	return tx.Where("user_id = ?", userId).Delete(&ExternalIdentityClaim{}).Error
 }
 
-// InitializeExternalIdentityClaims imports legacy Telegram bindings after the
+// InitializeExternalIdentityClaims imports legacy built-in bindings after the
 // claim table is migrated. Existing duplicate ownership fails migration rather
 // than preserving an ambiguous login identity.
 func InitializeExternalIdentityClaims() error {
@@ -191,6 +191,6 @@ func InitializeExternalIdentityClaims() error {
 				return fmt.Errorf("backfill Telegram identity for user %d: %w", user.Id, err)
 			}
 		}
-		return nil
+		return initializeGoogleIdentityClaims(tx)
 	})
 }

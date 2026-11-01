@@ -90,6 +90,7 @@ type User struct {
 	GitHubId             string                     `json:"github_id" gorm:"column:github_id;index"`
 	DiscordId            string                     `json:"discord_id" gorm:"column:discord_id;index"`
 	OidcId               string                     `json:"oidc_id" gorm:"column:oidc_id;index"`
+	GoogleId             string                     `json:"google_id" gorm:"column:google_id;type:varchar(255);index"`
 	WeChatId             string                     `json:"wechat_id" gorm:"column:wechat_id;index"`
 	TelegramId           string                     `json:"telegram_id" gorm:"column:telegram_id;index"`
 	VerificationCode     string                     `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
@@ -230,6 +231,7 @@ var userBindColumns = map[string]bool{
 	"github_id":   true,
 	"discord_id":  true,
 	"oidc_id":     true,
+	"google_id":   true,
 	"linux_do_id": true,
 	"wechat_id":   true,
 }
@@ -247,6 +249,15 @@ func UpdateUserBindColumn(userId int, column string, value string) error {
 	}
 	if column == "github_id" {
 		return DB.Transaction(func(tx *gorm.DB) error { return UpdateGitHubBindingWithTx(tx, userId, value) })
+	}
+	if column == "google_id" {
+		if err := DB.Transaction(func(tx *gorm.DB) error { return UpdateGoogleBindingWithTx(tx, userId, value) }); err != nil {
+			return err
+		}
+		if value == "" {
+			return PublishUserAuthCache(userId)
+		}
+		return nil
 	}
 	if column == "linux_do_id" {
 		return DB.Transaction(func(tx *gorm.DB) error { return UpdateLinuxDOBindingWithTx(tx, userId, value) })
@@ -563,7 +574,7 @@ func GetSelfUserById(id int) (*User, error) {
 	}
 	err := DB.Model(&User{}).Select([]string{
 		"id", "username", "display_name", "role", "status", "email",
-		"github_id", "discord_id", "oidc_id", "wechat_id", "telegram_id",
+		"github_id", "discord_id", "oidc_id", "google_id", "wechat_id", "telegram_id",
 		"group", "quota", "used_quota", "request_count", "aff_code", "aff_count",
 		"aff_quota", "aff_history", "inviter_id", "linux_do_id", "setting",
 		"stripe_customer", "auth_version",
@@ -950,6 +961,7 @@ func (user *User) ClearBinding(bindingType string) error {
 		"github":   "github_id",
 		"discord":  "discord_id",
 		"oidc":     "oidc_id",
+		"google":   "google_id",
 		"wechat":   "wechat_id",
 		"telegram": "telegram_id",
 		"linuxdo":  "linux_do_id",
@@ -961,6 +973,9 @@ func (user *User) ClearBinding(bindingType string) error {
 	}
 
 	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if bindingType == ExternalIdentityProviderGoogle {
+			return UpdateGoogleBindingWithTx(tx, user.Id, "")
+		}
 		if err := tx.Model(&User{}).Where("id = ?", user.Id).Update(column, "").Error; err != nil {
 			return err
 		}
@@ -975,7 +990,9 @@ func (user *User) ClearBinding(bindingType string) error {
 	if err := DB.Where("id = ?", user.Id).First(user).Error; err != nil {
 		return err
 	}
-
+	if bindingType == ExternalIdentityProviderGoogle {
+		return PublishUserAuthCache(user.Id)
+	}
 	return updateUserCache(*user)
 }
 

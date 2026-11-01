@@ -173,6 +173,7 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 
 				// Custom OAuth bindings
 				selfRoute.GET("/oauth/bindings", controller.GetUserOAuthBindings)
+				selfRoute.DELETE("/bindings/google", middleware.DisableCache(), controller.UnbindGoogleOAuth)
 				selfRoute.DELETE("/oauth/bindings/:provider_id", controller.UnbindCustomOAuth)
 			}
 

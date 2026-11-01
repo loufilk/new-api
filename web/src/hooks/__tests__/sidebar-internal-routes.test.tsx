@@ -33,14 +33,6 @@ import { NavGroup } from '@/components/layout/components/nav-group'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { useSidebarData } from '@/hooks/use-sidebar-data'
 
-function internalSidebarUrls(): string[] {
-  const { result } = renderHook(() => useSidebarData())
-  const chat = result.current.navGroups.find((group) => group.id === 'chat')
-  return (chat?.items ?? [])
-    .filter((item) => 'url' in item)
-    .map((item) => (item as { url: string }).url)
-}
-
 function SidebarTestLayout() {
   const sidebar = useSidebarData()
   const chat = sidebar.navGroups.find((group) => group.id === 'chat')
@@ -87,24 +79,43 @@ function createSidebarTestRouter() {
 }
 
 describe('sidebar playground/image stay inside the SPA router', () => {
-  test('both entries are declared as internal routes without external flag', () => {
-    const { result } = renderHook(() => useSidebarData())
-    const chat = result.current.navGroups.find((group) => group.id === 'chat')
-    expect(chat).toBeDefined()
+  test.each([false, true])(
+    'both entries remain internal when account pool enabled=%s',
+    (accountPoolEnabled) => {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      })
+      queryClient.setQueryData(['status'], {
+        account_pool_enabled: accountPoolEnabled,
+      })
+      const { result, unmount } = renderHook(() => useSidebarData(), {
+        wrapper: (props) => (
+          <QueryClientProvider client={queryClient}>
+            {props.children}
+          </QueryClientProvider>
+        ),
+      })
+      const chat = result.current.navGroups.find((group) => group.id === 'chat')
+      expect(chat).toBeDefined()
 
-    for (const url of ['/playground', '/image']) {
-      const item = (chat?.items ?? []).find(
-        (entry) => 'url' in entry && entry.url === url
-      ) as { url: string; external?: boolean } | undefined
-      expect(item).toBeDefined()
-      expect(item?.url.startsWith('/')).toBe(true)
-      expect(item?.external).toBeFalsy()
+      for (const url of ['/playground', '/image']) {
+        const item = (chat?.items ?? []).find(
+          (entry) => 'url' in entry && entry.url === url
+        ) as { url: string; external?: boolean } | undefined
+        expect(item).toBeDefined()
+        expect(item?.url.startsWith('/')).toBe(true)
+        expect(item?.external).toBeFalsy()
+      }
+
+      expect(
+        (chat?.items ?? [])
+          .filter((item) => 'url' in item)
+          .map((item) => (item as { url: string }).url)
+      ).toEqual(expect.arrayContaining(['/playground', '/image']))
+      unmount()
+      queryClient.clear()
     }
-
-    expect(internalSidebarUrls()).toEqual(
-      expect.arrayContaining(['/playground', '/image'])
-    )
-  })
+  )
 
   test('clicking playground/image navigates via the router without a document reload', async () => {
     const user = userEvent.setup()
@@ -112,6 +123,7 @@ describe('sidebar playground/image stay inside the SPA router', () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     })
+    queryClient.setQueryData(['status'], { account_pool_enabled: false })
     await router.load()
 
     const beforeHref = window.location.href
