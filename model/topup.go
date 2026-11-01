@@ -115,9 +115,9 @@ func creditTopUpQuota(tx *gorm.DB, entry LedgerEntry) (*LedgerResult, error) {
 	if result.Replayed {
 		return result, nil
 	}
-	// Principal and its durable event commit together. Reward calculation and
-	// inviter accounting run later, so their failure cannot undo this payment.
-	if err := EnqueueAgentCommissionTopUpTx(tx, entry); err != nil {
+	// Principal and an immutable ordinary-reward event commit together.
+	// Inviter accounting failures remain retryable without undoing paid credit.
+	if err := EnqueueReferralRewardTopUpTx(tx, entry); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -188,7 +188,7 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 // 在同一个事务内完成，因此同一订单的并发/重复回调（包括多实例部署下）最多充值一次。
 // alreadyDone=true 表示订单此前已完成，本次为幂等重复回调。
 // 进程内的 LockOrder 只是优化，正确性由本函数的数据库行锁保证。
-func RechargeEpay(tradeNo string, actualPaymentMethod string, actualMoney string, callerIp string, facts ...AgentVerifiedPaymentFacts) (alreadyDone bool, err error) {
+func RechargeEpay(tradeNo string, actualPaymentMethod string, actualMoney string, callerIp string, facts ...VerifiedPaymentFacts) (alreadyDone bool, err error) {
 	if tradeNo == "" {
 		return false, errors.New("payment order number not provided")
 	}
@@ -235,7 +235,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, actualMoney string
 		if quotaErr != nil || quotaToAdd <= 0 {
 			return errors.New("无效的充值额度")
 		}
-		if err := applyAgentVerifiedPaymentTx(tx, topUp, facts); err != nil {
+		if err := applyVerifiedPaymentTx(tx, topUp, facts); err != nil {
 			return err
 		}
 		topUp.CompleteTime = common.GetTimestamp()
@@ -275,7 +275,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, actualMoney string
 	return false, nil
 }
 
-func Recharge(referenceId string, customerId string, callerIp string, facts ...AgentVerifiedPaymentFacts) (err error) {
+func Recharge(referenceId string, customerId string, callerIp string, facts ...VerifiedPaymentFacts) (err error) {
 	if referenceId == "" {
 		return errors.New("payment order number not provided")
 	}
@@ -308,7 +308,7 @@ func Recharge(referenceId string, customerId string, callerIp string, facts ...A
 			return errors.New("invalid top-up order status")
 		}
 
-		if err := applyAgentVerifiedPaymentTx(tx, topUp, facts); err != nil {
+		if err := applyVerifiedPaymentTx(tx, topUp, facts); err != nil {
 			return err
 		}
 		topUp.CompleteTime = common.GetTimestamp()
@@ -610,7 +610,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	RecordTopupLog(userId, common.NewMessage("Administrator completed the order, amount added: {{quota}}, payment amount: {{amount}}", map[string]any{"quota": logger.FormatQuota(quotaToAdd), "amount": fmt.Sprintf("%f", payMoney)}), callerIp, paymentMethod, "admin")
 	return nil
 }
-func RechargeCreem(referenceId string, customerEmail string, customerName string, callerIp string, facts ...AgentVerifiedPaymentFacts) (err error) {
+func RechargeCreem(referenceId string, customerEmail string, customerName string, callerIp string, facts ...VerifiedPaymentFacts) (err error) {
 	if referenceId == "" {
 		return errors.New("payment order number not provided")
 	}
@@ -641,7 +641,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 			return errors.New("invalid top-up order status")
 		}
 
-		if err := applyAgentVerifiedPaymentTx(tx, topUp, facts); err != nil {
+		if err := applyVerifiedPaymentTx(tx, topUp, facts); err != nil {
 			return err
 		}
 		topUp.CompleteTime = common.GetTimestamp()
@@ -703,7 +703,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 	return nil
 }
 
-func RechargeWaffo(tradeNo string, callerIp string, facts ...AgentVerifiedPaymentFacts) (err error) {
+func RechargeWaffo(tradeNo string, callerIp string, facts ...VerifiedPaymentFacts) (err error) {
 	if tradeNo == "" {
 		return errors.New("payment order number not provided")
 	}
@@ -742,7 +742,7 @@ func RechargeWaffo(tradeNo string, callerIp string, facts ...AgentVerifiedPaymen
 			return errors.New("无效的充值额度")
 		}
 
-		if err := applyAgentVerifiedPaymentTx(tx, topUp, facts); err != nil {
+		if err := applyVerifiedPaymentTx(tx, topUp, facts); err != nil {
 			return err
 		}
 		topUp.CompleteTime = common.GetTimestamp()
@@ -781,7 +781,7 @@ func RechargeWaffo(tradeNo string, callerIp string, facts ...AgentVerifiedPaymen
 	return nil
 }
 
-func RechargeWaffoPancake(tradeNo string, facts ...AgentVerifiedPaymentFacts) (err error) {
+func RechargeWaffoPancake(tradeNo string, facts ...VerifiedPaymentFacts) (err error) {
 	if tradeNo == "" {
 		return errors.New("payment order number not provided")
 	}
@@ -820,7 +820,7 @@ func RechargeWaffoPancake(tradeNo string, facts ...AgentVerifiedPaymentFacts) (e
 			return errors.New("无效的充值额度")
 		}
 
-		if err := applyAgentVerifiedPaymentTx(tx, topUp, facts); err != nil {
+		if err := applyVerifiedPaymentTx(tx, topUp, facts); err != nil {
 			return err
 		}
 		topUp.CompleteTime = common.GetTimestamp()

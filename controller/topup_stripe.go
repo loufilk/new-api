@@ -22,7 +22,6 @@ import (
 	"github.com/stripe/stripe-go/v81/checkout/session"
 	"github.com/stripe/stripe-go/v81/webhook"
 	"github.com/thanhpk/randstr"
-	"gorm.io/gorm"
 )
 
 var stripeAdaptor = &StripeAdaptor{}
@@ -197,8 +196,6 @@ func StripeWebhook(c *gin.Context) {
 	logger.LogInfo(ctx, fmt.Sprintf("Stripe webhook 验签成功 event_type=%s client_ip=%s path=%q", string(event.Type), callerIp, c.Request.URL.Path))
 	var processingErr error
 	switch event.Type {
-	case stripe.EventTypeChargeRefunded:
-		processingErr = stripeChargeRefunded(event)
 	case stripe.EventTypeCheckoutSessionCompleted:
 		processingErr = sessionCompleted(ctx, event, callerIp)
 	case stripe.EventTypeCheckoutSessionExpired:
@@ -216,34 +213,6 @@ func StripeWebhook(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusOK)
-}
-
-// Stripe charge.refunded supplies the charge's cumulative refunded amount in
-// original minor units (including partial refunds). No Stripe API is invoked.
-// The caller has verified the webhook signature before reaching this adapter.
-func stripeChargeRefunded(event stripe.Event) error {
-	var charge stripe.Charge
-	if event.Data == nil || common.Unmarshal(event.Data.Raw, &charge) != nil || charge.PaymentIntent == nil || charge.PaymentIntent.ID == "" || charge.AmountRefunded <= 0 || charge.AmountRefunded > charge.Amount {
-		return model.ErrAgentCommissionInvalid
-	}
-	merchant := event.Account
-	if merchant == "" {
-		merchant = "primary"
-	}
-	environment := "test"
-	if event.Livemode {
-		environment = "live"
-	}
-	if charge.Livemode != event.Livemode {
-		return model.ErrAgentCommissionInvalid
-	}
-	facts, ok := model.NewAgentVerifiedPaymentFacts(model.PaymentProviderStripe, charge.PaymentIntent.ID, merchant, environment, string(charge.Currency), strconv.FormatInt(charge.Amount, 10), true)
-	if !ok {
-		return model.ErrAgentCommissionInvalid
-	}
-	return model.DB.Transaction(func(tx *gorm.DB) error {
-		return model.EnqueueAgentCommissionProviderRefundTx(tx, model.AgentVerifiedProviderRefund{Provider: facts.Provider, EventReference: event.ID, PaymentReference: facts.ExternalReference, MerchantScope: facts.MerchantScope, Environment: facts.Environment, Currency: facts.Currency, CurrencyExponent: facts.CurrencyExponent, ChargePaidMinor: facts.PaidMinor, CumulativeRefundedMinor: charge.AmountRefunded})
-	})
 }
 
 func sessionCompleted(ctx context.Context, event stripe.Event, callerIp string) error {
@@ -346,8 +315,8 @@ func fulfillOrder(ctx context.Context, event stripe.Event, referenceId string, c
 	if merchantScope == "" {
 		merchantScope = "primary"
 	}
-	var paymentFacts []model.AgentVerifiedPaymentFacts
-	if fact, ok := model.NewAgentVerifiedPaymentFacts(model.PaymentProviderStripe, event.GetObjectValue("payment_intent"), merchantScope, environment, event.GetObjectValue("currency"), event.GetObjectValue("amount_total"), true); ok {
+	var paymentFacts []model.VerifiedPaymentFacts
+	if fact, ok := model.NewVerifiedPaymentFacts(model.PaymentProviderStripe, event.GetObjectValue("payment_intent"), merchantScope, environment, event.GetObjectValue("currency"), event.GetObjectValue("amount_total"), true); ok {
 		paymentFacts = append(paymentFacts, fact)
 	}
 	err := model.Recharge(referenceId, customerId, callerIp, paymentFacts...)

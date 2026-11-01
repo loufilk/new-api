@@ -31,9 +31,6 @@ type RouteScopes struct {
 	// only forward host payment routes must delegate here and fail closed when
 	// the registrar is unavailable.
 	PaymentRoutes func(RouteScopes) error
-
-	// AgentPlatformRoutes mounts the session-only platform API in the host.
-	AgentPlatformRoutes func(RouteScopes) error
 }
 
 // RoutePriority is a closed enum naming the points in host router wiring where

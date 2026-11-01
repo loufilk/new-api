@@ -27,12 +27,8 @@ import {
   DataTablePage,
   useDataTable,
 } from '@/components/data-table'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
-import { isAgentWorkspaceUser } from '@/lib/agent-permissions'
-import { ROLE } from '@/lib/roles'
 import { createServerError } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -62,9 +58,6 @@ export function RedemptionsTable() {
   const { t } = useTranslation()
   const columns = useRedemptionsColumns()
   const user = useAuthStore((state) => state.auth.user)
-  const search = route.useSearch()
-  const navigate = route.useNavigate()
-  const agentId = isAgentWorkspaceUser(user) ? user.id : search.agent_user_id
   const { refreshTrigger } = useRedemptions()
   const isMobile = useMediaQuery('(max-width: 640px)')
 
@@ -95,7 +88,6 @@ export function RedemptionsTable() {
       'redemptions',
       user?.id,
       user?.role,
-      agentId,
       pagination.pageIndex + 1,
       pagination.pageSize,
       globalFilter,
@@ -108,7 +100,6 @@ export function RedemptionsTable() {
       const params = {
         p: pagination.pageIndex + 1,
         page_size: pagination.pageSize,
-        agent_user_id: agentId,
       }
 
       const result =
@@ -170,63 +161,35 @@ export function RedemptionsTable() {
   )
 
   return (
-    <>
-      {user && user.role >= ROLE.ADMIN && (
-        <div className='mb-3 max-w-xs space-y-1'>
-          <Label htmlFor='redemption-agent-filter'>{t('Agent ID')}</Label>
-          <Input
-            id='redemption-agent-filter'
-            type='number'
-            min={1}
-            step={1}
-            value={search.agent_user_id ?? ''}
-            placeholder={t('All agents')}
-            onChange={(event) => {
-              const value = Number(event.target.value)
-              void navigate({
-                search: (previous) => ({
-                  ...previous,
-                  page: 1,
-                  agent_user_id:
-                    Number.isSafeInteger(value) && value > 0
-                      ? value
-                      : undefined,
-                }),
-              })
-            }}
-          />
-        </div>
+    <DataTablePage
+      table={table}
+      columns={columns}
+      isLoading={isLoading}
+      isFetching={isFetching}
+      emptyTitle={t('No Redemption Codes Found')}
+      emptyDescription={t(
+        'No redemption codes available. Create your first redemption code to get started.'
       )}
-      <DataTablePage
-        table={table}
-        columns={columns}
-        isLoading={isLoading}
-        isFetching={isFetching}
-        emptyTitle={t('No Redemption Codes Found')}
-        emptyDescription={t(
-          'No redemption codes available. Create your first redemption code to get started.'
-        )}
-        skeletonKeyPrefix='redemptions-skeleton'
-        applyHeaderSize
-        toolbarProps={{
-          searchPlaceholder: t('Filter by name or ID...'),
-          searchDebounceMs: 500,
-          filters: [
-            {
-              columnId: 'status',
-              title: t('Status'),
-              options: redemptionStatusOptions,
-              singleSelect: true,
-            },
-          ],
-        }}
-        mobile={<RedemptionsMobileList table={table} isLoading={isLoading} />}
-        getRowClassName={(row, { isMobile }) => {
-          if (!isDisabledRedemptionRow(row.original)) return undefined
-          return isMobile ? DISABLED_ROW_MOBILE : DISABLED_ROW_DESKTOP
-        }}
-        bulkActions={<DataTableBulkActions table={table} />}
-      />
-    </>
+      skeletonKeyPrefix='redemptions-skeleton'
+      applyHeaderSize
+      toolbarProps={{
+        searchPlaceholder: t('Filter by name or ID...'),
+        searchDebounceMs: 500,
+        filters: [
+          {
+            columnId: 'status',
+            title: t('Status'),
+            options: redemptionStatusOptions,
+            singleSelect: true,
+          },
+        ],
+      }}
+      mobile={<RedemptionsMobileList table={table} isLoading={isLoading} />}
+      getRowClassName={(row, { isMobile }) => {
+        if (!isDisabledRedemptionRow(row.original)) return undefined
+        return isMobile ? DISABLED_ROW_MOBILE : DISABLED_ROW_DESKTOP
+      }}
+      bulkActions={<DataTableBulkActions table={table} />}
+    />
   )
 }

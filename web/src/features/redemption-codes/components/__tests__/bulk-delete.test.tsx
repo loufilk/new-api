@@ -35,7 +35,6 @@ import { getRedemptions } from '../../api'
 import type { Redemption } from '../../types'
 import { DataTableBulkActions } from '../data-table-bulk-actions'
 import { RedemptionsProvider, useRedemptions } from '../redemptions-provider'
-import { authorizeTransaction, transactionNetwork } from './transaction-fixture'
 
 const codes: Redemption[] = [11, 22, 33].map((id) => ({
   id,
@@ -81,27 +80,25 @@ function RedemptionList() {
   )
 }
 
-async function setup(protectedCode = false) {
+async function setup() {
   useAuthStore
     .getState()
     .auth.setUser({ id: 1, username: 'operator', role: ROLE.ADMIN })
-  let remaining = codes.map((code) => ({
-    ...code,
-    source_protected: protectedCode && code.id === 11,
-  }))
+  let remaining = [...codes]
   vi.spyOn(api, 'get').mockImplementation(async () => ({
     data: {
       success: true,
       data: { items: remaining, total: remaining.length },
     },
   }))
-  const network = transactionNetwork()
-  const remove = network.mutations.mockImplementation(async (config) => {
-    const { ids } = config.data as { ids: number[] }
-    const count = remaining.filter((code) => ids.includes(code.id)).length
-    remaining = remaining.filter((code) => !ids.includes(code.id))
-    return { data: { success: true, data: count } }
-  })
+  const remove = vi
+    .spyOn(api, 'post')
+    .mockImplementation(async (_url, data) => {
+      const { ids } = data as { ids: number[] }
+      const count = remaining.filter((code) => ids.includes(code.id)).length
+      remaining = remaining.filter((code) => !ids.includes(code.id))
+      return { data: { success: true, data: count } }
+    })
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -115,7 +112,7 @@ async function setup(protectedCode = false) {
     </QueryClientProvider>
   )
   await screen.findByRole('checkbox', { name: 'code-11' })
-  return { user: userEvent.setup(), remove, prepare: network.prepare }
+  return { user: userEvent.setup(), remove }
 }
 
 afterEach(() => {
@@ -156,9 +153,9 @@ test('confirmation deletes only selected codes, disables repeat submissions and 
   })
   const originalDelete = remove.getMockImplementation()
   if (!originalDelete) throw new Error('Missing batch delete mock')
-  remove.mockImplementationOnce(async (config) => {
+  remove.mockImplementationOnce(async (url, data) => {
     await pending
-    return originalDelete(config)
+    return originalDelete(url, data)
   })
   await user.click(screen.getByRole('checkbox', { name: 'code-11' }))
   await user.click(screen.getByRole('checkbox', { name: 'code-22' }))
@@ -169,12 +166,8 @@ test('confirmation deletes only selected codes, disables repeat submissions and 
   expect(dialog).toHaveAccessibleName('Delete 2 redemption codes?')
   expect(remove).not.toHaveBeenCalled()
   await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
-  await authorizeTransaction()
-  const review = screen.getByRole('alertdialog', { name: 'Review transaction' })
-  expect(
-    within(review).getByRole('button', { name: 'Authorize transaction' })
-  ).toBeDisabled()
-  expect(within(review).getByRole('button', { name: 'Cancel' })).toBeDisabled()
+  expect(within(dialog).getByRole('button', { name: 'Delete' })).toBeDisabled()
+  expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled()
   release()
   await waitFor(() =>
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
@@ -185,15 +178,9 @@ test('confirmation deletes only selected codes, disables repeat submissions and 
     ).not.toBeInTheDocument()
   )
   expect(remove).toHaveBeenCalledOnce()
-  expect(remove).toHaveBeenCalledWith(
-    expect.objectContaining({
-      url: '/api/redemption/batch',
-      method: 'post',
-      data: { ids: [11, 22], request_id: expect.any(String) },
-      headers: { 'X-Security-Proof': 'test-single-use-proof' },
-      skipAuthRefresh: true,
-    })
-  )
+  expect(remove).toHaveBeenCalledWith('/api/redemption/batch', {
+    ids: [11, 22],
+  })
   expect(screen.getByRole('checkbox', { name: 'code-33' })).not.toBeChecked()
   expect(screen.queryByRole('toolbar')).not.toBeInTheDocument()
   expect(document.body).toHaveTextContent(
@@ -202,7 +189,7 @@ test('confirmation deletes only selected codes, disables repeat submissions and 
 })
 
 test.each(['server', 'network'])(
-  '%s failure preserves selected codes and requires reconciliation instead of replay',
+  '%s failure preserves the selected codes and does not retry automatically',
   async (failure) => {
     const { user, remove } = await setup()
     if (failure === 'server') {
@@ -218,26 +205,14 @@ test.each(['server', 'network'])(
         name: 'Delete',
       })
     )
-    await authorizeTransaction()
-    expect(
-      await screen.findByText('Do not submit a new request')
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: 'Authorize transaction' })
-    ).toBeDisabled()
+    await screen.findByText(
+      failure === 'server'
+        ? 'Failed to delete redemption code'
+        : 'Network unavailable'
+    )
+    expect(screen.getByRole('button', { name: /^Delete$/ })).toBeEnabled()
     expect(screen.getByLabelText('code-11')).toBeChecked()
     expect(screen.getByLabelText('code-22')).toBeChecked()
     expect(remove).toHaveBeenCalledOnce()
   }
 )
-
-test('a selection containing protected rights cannot enter batch deletion', async () => {
-  const { user, remove, prepare } = await setup(true)
-  await user.click(screen.getByRole('checkbox', { name: 'code-11' }))
-  await user.click(screen.getByRole('checkbox', { name: 'code-22' }))
-  expect(
-    screen.getByRole('button', { name: 'Delete selected redemption codes' })
-  ).toBeDisabled()
-  expect(prepare).not.toHaveBeenCalled()
-  expect(remove).not.toHaveBeenCalled()
-})

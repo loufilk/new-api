@@ -1,9 +1,7 @@
 package wallet
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -33,7 +31,7 @@ func setupWalletTestDB(t *testing.T) *gorm.DB {
 	common.RedisEnabled = false
 	var db *gorm.DB
 	var err error
-	if configured := os.Getenv("TEST_AGENT_POSTGRES_DSN"); configured != "" {
+	if configured := os.Getenv("TEST_WALLET_POSTGRES_DSN"); configured != "" {
 		parsed, parseErr := url.Parse(configured)
 		require.NoError(t, parseErr)
 		require.True(t, net.ParseIP(parsed.Hostname()).IsLoopback(), "wallet fixture must be disposable loopback PostgreSQL")
@@ -69,7 +67,6 @@ func setupWalletTestDB(t *testing.T) *gorm.DB {
 		&model.ReferralCommission{},
 		&model.Log{},
 		&model.AuthFlow{}, &model.UserSession{}, &model.UserAccessToken{}, &model.TwoFA{}, &model.PasskeyCredential{}}, model.BonusSourceModels()...)...))
-	require.NoError(t, db.AutoMigrate(model.AgentPlatformModels()...))
 
 	t.Cleanup(func() {
 		model.DB, model.LOG_DB = previousDB, previousLogDB
@@ -313,7 +310,6 @@ func TestTransferAffQuotaMovesRewardOnceAndReplaysByKey(t *testing.T) {
 
 	c, recorder := performWalletRequest(t, http.MethodPost, "/api/user/aff_transfer", `{"quota":500000}`, user.Id, common.RoleCommonUser)
 	c.Request.Header.Set("Idempotency-Key", "transfer-key-1")
-	authorizeWalletTransfer(t, c)
 	TransferAffQuota(c)
 	require.Contains(t, recorder.Body.String(), `"success":true`)
 
@@ -326,7 +322,6 @@ func TestTransferAffQuotaMovesRewardOnceAndReplaysByKey(t *testing.T) {
 	// 同键同金额重放：返回原结果，不重复扣加。
 	c, recorder = performWalletRequest(t, http.MethodPost, "/api/user/aff_transfer", `{"quota":500000}`, user.Id, common.RoleCommonUser)
 	c.Request.Header.Set("Idempotency-Key", "transfer-key-1")
-	authorizeWalletTransfer(t, c)
 	TransferAffQuota(c)
 	require.Contains(t, recorder.Body.String(), `"success":true`)
 	require.NoError(t, db.First(&user, user.Id).Error)
@@ -340,7 +335,6 @@ func TestTransferAffQuotaMovesRewardOnceAndReplaysByKey(t *testing.T) {
 	// 同键不同金额：明确冲突失败，不再扣加。
 	c, recorder = performWalletRequest(t, http.MethodPost, "/api/user/aff_transfer", `{"quota":600000}`, user.Id, common.RoleCommonUser)
 	c.Request.Header.Set("Idempotency-Key", "transfer-key-1")
-	authorizeWalletTransfer(t, c)
 	TransferAffQuota(c)
 	assert.Contains(t, recorder.Body.String(), `"success":false`)
 	assert.Contains(t, recorder.Body.String(), "不一致")
@@ -351,7 +345,6 @@ func TestTransferAffQuotaMovesRewardOnceAndReplaysByKey(t *testing.T) {
 	// 超出待使用收益：拒绝且余额不动。
 	c, recorder = performWalletRequest(t, http.MethodPost, "/api/user/aff_transfer", `{"quota":600000}`, user.Id, common.RoleCommonUser)
 	c.Request.Header.Set("Idempotency-Key", "transfer-key-2")
-	authorizeWalletTransfer(t, c)
 	TransferAffQuota(c)
 	assert.Contains(t, recorder.Body.String(), `"success":false`)
 	assert.Contains(t, recorder.Body.String(), "不足")
@@ -381,7 +374,6 @@ func TestTransferAffQuotaScopesIdempotencyKeyToUser(t *testing.T) {
 	for _, user := range []model.User{first, second} {
 		c, recorder := performWalletRequest(t, http.MethodPost, "/api/user/aff_transfer", `{"quota":500000}`, user.Id, common.RoleCommonUser)
 		c.Request.Header.Set("Idempotency-Key", "shared-key")
-		authorizeWalletTransfer(t, c)
 		TransferAffQuota(c)
 		require.Contains(t, recorder.Body.String(), `"success":true`)
 	}
@@ -394,31 +386,9 @@ func TestTransferAffQuotaScopesIdempotencyKeyToUser(t *testing.T) {
 	assert.Equal(t, 500000, second.QuotaReward)
 }
 
-func authorizeWalletTransfer(t *testing.T, c *gin.Context) {
-	t.Helper()
-	data, err := io.ReadAll(c.Request.Body)
-	require.NoError(t, err)
-	c.Request.Body = io.NopCloser(bytes.NewReader(data))
-	var input struct {
-		Quota int `json:"quota"`
-	}
-	require.NoError(t, common.Unmarshal(data, &input))
-	identity := model.AuthSessionIdentity{UserID: c.GetInt("id"), SessionID: c.GetString("session_id"), UserAuthVersion: c.GetInt64("auth_version"), SessionVersion: c.GetInt64("session_version")}
-	request := model.AgentLegacyCommissionRequest{RequestID: c.GetHeader("Idempotency-Key"), Quota: input.Quota}
-	payload, err := common.Marshal(request)
-	require.NoError(t, err)
-	prepared, err := model.PrepareAgentCommissionOperation(identity, "commission.convert.legacy", request.RequestID, payload)
-	require.NoError(t, err)
-	hash, err := model.AgentTransactionContextHash(prepared.VerificationContext)
-	require.NoError(t, err)
-	proof, _, err := model.IssueAgentTransactionProof(identity, hash, "2fa")
-	require.NoError(t, err)
-	c.Request.Header.Set("X-Security-Proof", proof)
-}
-
-func TestTransferAffQuotaBrowserProofRequiredPostgres(t *testing.T) {
-	if os.Getenv("TEST_AGENT_POSTGRES_DSN") == "" {
-		t.Skip("opt-in PostgreSQL fixture; acceptance runner must configure TEST_AGENT_POSTGRES_DSN and require zero skips")
+func TestTransferAffQuotaCurrentBrowserSessionRequiredPostgres(t *testing.T) {
+	if os.Getenv("TEST_WALLET_POSTGRES_DSN") == "" {
+		t.Skip("opt-in PostgreSQL fixture; acceptance runner must configure TEST_WALLET_POSTGRES_DSN and require zero skips")
 	}
 	db := setupWalletTestDB(t)
 	confirmPaymentComplianceForTest(t)
@@ -427,9 +397,12 @@ func TestTransferAffQuotaBrowserProofRequiredPostgres(t *testing.T) {
 	t.Cleanup(func() { common.QuotaPerUnit = oldUnit })
 	user := model.User{Username: "legacy-financial-browser", AffCode: "legacy-financial-browser", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AffQuota: 1000000, AuthVersion: 1}
 	require.NoError(t, db.Create(&user).Error)
-	for _, kind := range []string{"no_proof", "pat", "wrong_context_type"} {
+	for _, kind := range []string{"no_session", "pat", "wrong_context_type"} {
 		c, response := performWalletRequest(t, http.MethodPost, "/api/user/aff_transfer", `{"quota":500000}`, user.Id, user.Role)
-		c.Request.Header.Set("Idempotency-Key", "legacy-proof-"+kind)
+		c.Request.Header.Set("Idempotency-Key", "session-"+kind)
+		if kind == "no_session" {
+			c.Set("session_id", "")
+		}
 		if kind == "pat" {
 			c.Set("session_id", model.AccessTokenSessionID(99))
 			c.Set("use_access_token", true)
@@ -445,7 +418,6 @@ func TestTransferAffQuotaBrowserProofRequiredPostgres(t *testing.T) {
 	assert.Zero(t, user.QuotaReward)
 	c, response := performWalletRequest(t, http.MethodPost, "/api/user/aff_transfer", `{"quota":500000}`, user.Id, user.Role)
 	c.Request.Header.Set("Idempotency-Key", "x.1")
-	authorizeWalletTransfer(t, c)
 	TransferAffQuota(c)
 	require.Contains(t, response.Body.String(), `"success":true`)
 }

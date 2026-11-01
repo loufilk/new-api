@@ -351,11 +351,6 @@ func GetAllUsers(c *gin.Context) {
 		return
 	}
 
-	if err := model.PopulateAgentInvitationSummaries(users); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(users)
 
@@ -386,11 +381,6 @@ func SearchUsers(c *gin.Context) {
 		return
 	}
 
-	if err := model.PopulateAgentInvitationSummaries(users); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(users)
 	common.ApiSuccess(c, pageInfo)
@@ -415,10 +405,6 @@ func GetUser(c *gin.Context) {
 	myRole := c.GetInt("role")
 	if !canManageTargetRole(myRole, user.Role) {
 		common.ApiErrorT(c, "No permission to access users of same or higher level")
-		return
-	}
-	if err := model.PopulateAgentInvitationSummaries([]*model.User{user}); err != nil {
-		common.ApiError(c, err)
 		return
 	}
 	user.AdminPermissions = authz.Capabilities(user.Id, user.Role)
@@ -476,25 +462,14 @@ func buildSelfUserData(user *model.User) map[string]interface{} {
 
 func buildSelfUserDataWithRole(user *model.User, permissionRole int) map[string]interface{} {
 	userSetting := user.GetSetting()
-	permissions := calculateUserPermissions(permissionRole)
-	permissions["admin_permissions"] = authz.Capabilities(user.Id, permissionRole)
-	profile, profileErr := model.GetAgentProfile(user.Id)
-	if profileErr != nil {
-		profile = nil
-	}
-	permissionUser := *user
-	permissionUser.Role = permissionRole
-	capabilities := model.AgentCapabilitiesFor(&permissionUser, profile)
-	permissions["agent_history"], permissions["agent_sales"] = capabilities.History, capabilities.Sales
-	permissions["agent_settlement"], permissions["agent_admin"] = capabilities.Settlement, capabilities.Admin
-	permissions["agent_redemption"] = capabilities.History
+	permissions := calculateUserPermissions(common.EffectiveUserRole(permissionRole))
+	permissions["admin_permissions"] = authz.Capabilities(user.Id, common.EffectiveUserRole(permissionRole))
 	return map[string]interface{}{
-		"agent_profile":     profile,
 		"has_password":      user.HasPassword,
 		"id":                user.Id,
 		"username":          user.Username,
 		"display_name":      user.DisplayName,
-		"role":              user.Role,
+		"role":              common.EffectiveUserRole(user.Role),
 		"status":            user.Status,
 		"email":             user.Email,
 		"github_id":         user.GitHubId,
@@ -1016,7 +991,7 @@ func CreateUser(c *gin.Context) {
 		return
 	}
 	if user.Role == common.RoleAgentUser {
-		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Create an ordinary user first, then grant agent qualification through Profile management"), gin.H{"code": "AGENT_PROFILE_SEPARATE_REQUIRED"})
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"), gin.H{"code": "INVALID_USER_ROLE"})
 		return
 	}
 	if user.DisplayName == "" {
@@ -1029,7 +1004,7 @@ func CreateUser(c *gin.Context) {
 	}
 	auditParams := map[string]any{"role": user.Role}
 	// Creating an administrator grants privilege just like promoting one.
-	if user.Role >= common.RoleAgentUser {
+	if user.Role >= common.RoleAdminUser {
 		authorization := requireAdminUserProof(c, service.VerificationScopeAdminUserCreate, service.AdminUserCreateContext{Role: user.Role})
 		if authorization == nil {
 			return
@@ -1139,22 +1114,6 @@ func ManageUser(c *gin.Context) {
 		common.ApiErrorT(c, "User does not exist")
 		return
 	}
-	if req.Action == "set_agent" || req.Action == "unset_agent" {
-		profile, err := model.GetAgentProfile(user.Id)
-		if err != nil {
-			writeAgentProfileError(c, err)
-			return
-		}
-		mutation := model.AgentProfileMutation{Status: model.AgentProfileActive, Reason: "Agent qualification enabled by administrator"}
-		if profile != nil {
-			mutation.ExpectedVersion, mutation.SalesFrozen, mutation.SettlementFrozen = profile.Version, profile.SalesFrozen, profile.SettlementFrozen
-		}
-		if req.Action == "unset_agent" {
-			mutation.Status, mutation.Reason = model.AgentProfileExited, "Agent qualification exited by administrator"
-		}
-		executeAgentProfileUpdate(c, req.RequestId, model.AgentProfileCommand{UserID: user.Id, AgentProfileMutation: mutation})
-		return
-	}
 	expectedUser := user
 	myRole := c.GetInt("role")
 	if !canManageTargetRole(myRole, user.Role) {
@@ -1201,9 +1160,6 @@ func ManageUser(c *gin.Context) {
 			"message": "",
 		})
 		return
-	case "set_agent", "unset_agent":
-		// Compatibility action: only business qualification changes. The model
-		// rechecks the current profile under lock without touching credentials.
 	case "promote":
 		if myRole != common.RoleRootUser {
 			common.ApiErrorT(c, "Regular administrators cannot promote other users to administrator")
@@ -1258,11 +1214,9 @@ func ManageUser(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if req.Action != "set_agent" && req.Action != "unset_agent" {
-		if _, err := model.RevokeAllUserSessions(user.Id, "admin_"+req.Action); err != nil {
-			common.ApiError(c, err)
-			return
-		}
+	if _, err := model.RevokeAllUserSessions(user.Id, "admin_"+req.Action); err != nil {
+		common.ApiError(c, err)
+		return
 	}
 	// The committed role/status is published and browser sessions revoked. Only PAT/relay token caches still need an
 	// explicit invalidation; deleting the user hash here would discard the

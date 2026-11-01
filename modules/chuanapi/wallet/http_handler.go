@@ -230,23 +230,7 @@ func TransferAffQuota(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Financial operations require a current browser session"))
 		return
 	}
-	input := model.AgentLegacyCommissionRequest{RequestID: idempotencyKey, Quota: int(amount)}
-	payload, err := common.Marshal(input)
-	if err != nil {
-		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid commission request"))
-		return
-	}
-	prepared, err := model.PrepareAgentCommissionOperation(identity, "commission.convert.legacy", idempotencyKey, payload)
-	if err != nil {
-		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Financial authorization is invalid or no longer matches this transaction"))
-		return
-	}
-	authorization, err := model.PrepareAgentTransactionAuthorization(c.GetHeader("X-Security-Proof"), identity, prepared.VerificationContext)
-	if err != nil {
-		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Financial authorization is invalid or no longer matches this transaction"))
-		return
-	}
-	result, err := model.TransferAffQuota(c.GetInt("id"), int(amount), idempotencyKey, authorization)
+	result, err := model.TransferAffQuota(c.GetInt("id"), int(amount), idempotencyKey, identity)
 	if err != nil {
 		switch {
 		case errors.Is(err, model.ErrLedgerInsufficientBalance):

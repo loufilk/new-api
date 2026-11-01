@@ -2,6 +2,14 @@
 
 DO NOT send optional commentary
 
+## Non-agent edition boundary
+
+This branch removes the business reseller/agent system, not HTTP proxying or AI-provider agents.
+Read `docs/no-agent-edition.md` before changing retirement guards or shared financial code.
+Do not reintroduce agent routes, workers, policy/Profile models or mutate historical liabilities.
+Keep ordinary referral rewards, payment receipt uniqueness, wallet source accounting and all
+inherited relay/interception fixes. Historical role 5 is ordinary-user compatibility only.
+
 ## Overview
 
 This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard.

@@ -20,25 +20,18 @@ import { useTranslation } from 'react-i18next'
 
 import { LongText } from '@/components/long-text'
 import { extensionFlags } from '@/extensions'
-import {
-  invitationBonusLabel,
-  invitationSourceLabel,
-} from '@/features/agent-redemption/lib/invitation-labels'
-import { formatQuotaWithCurrency } from '@/lib/currency'
 import { formatQuota } from '@/lib/format'
-import { getRoleLabelKey } from '@/lib/roles'
 
 import type { User } from '../types'
 
 export function UserInvitationCell(props: { user: User }) {
   const { t } = useTranslation()
-  const invitation = props.user.invitation
   const affCount = props.user.aff_count ?? 0
   const historyQuota = props.user.aff_history_quota ?? 0
-  const legacyEarnings =
+  const showEarnings =
     extensionFlags.showLegacyAffiliateQuota && historyQuota !== 0
-  const inviterId = invitation?.inviter_id ?? props.user.inviter_id ?? 0
-  if (!invitation && affCount === 0 && !legacyEarnings && inviterId === 0) {
+  const inviterId = props.user.inviter_id ?? 0
+  if (affCount === 0 && !showEarnings && inviterId === 0) {
     return <span className='text-muted-foreground text-sm'>—</span>
   }
   return (
@@ -49,41 +42,13 @@ export function UserInvitationCell(props: { user: User }) {
       {affCount > 0 && (
         <LongText>{t('Invited {{count}} users', { count: affCount })}</LongText>
       )}
-      {legacyEarnings && (
+      {showEarnings && (
         <LongText>
           {t('Earnings')}:{' '}
           <span className='tabular-nums'>{formatQuota(historyQuota)}</span>
         </LongText>
       )}
-      {inviterId > 0 && (
-        <p>
-          {invitation
-            ? `${t('Inviter')}: ${invitation.inviter_username || '—'} #${inviterId}`
-            : t('Inviter ID: {{id}}', { id: inviterId })}
-        </p>
-      )}
-      {invitation && (
-        <>
-          <p>
-            {invitationSourceLabel(invitation.source, t)}
-            {!invitation.legacy &&
-              ` · ${t(getRoleLabelKey(invitation.inviter_role))}`}
-          </p>
-          {!invitation.legacy && (
-            <p>
-              {t('Test quota granted')}:{' '}
-              {formatQuotaWithCurrency(invitation.bonus_quota, {
-                abbreviate: false,
-              })}
-            </p>
-          )}
-          {!invitation.legacy && (
-            <p className='text-muted-foreground'>
-              {invitationBonusLabel(invitation.bonus_reason, t)}
-            </p>
-          )}
-        </>
-      )}
+      {inviterId > 0 && <p>{t('Inviter ID: {{id}}', { id: inviterId })}</p>}
     </div>
   )
 }

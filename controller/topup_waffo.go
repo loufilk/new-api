@@ -513,8 +513,8 @@ func handleWaffoPayment(c *gin.Context, wh *core.WebhookHandler, result *core.Pa
 	if setting.WaffoSandbox {
 		environment = "test"
 	}
-	var paymentFacts []model.AgentVerifiedPaymentFacts
-	if fact, ok := model.NewAgentVerifiedPaymentFacts(model.PaymentProviderWaffo, result.AcquiringOrderID, setting.WaffoMerchantId, environment, result.OrderCurrency, result.OrderAmount, false); ok {
+	var paymentFacts []model.VerifiedPaymentFacts
+	if fact, ok := model.NewVerifiedPaymentFacts(model.PaymentProviderWaffo, result.AcquiringOrderID, setting.WaffoMerchantId, environment, result.OrderCurrency, result.OrderAmount, false); ok {
 		paymentFacts = append(paymentFacts, fact)
 	}
 	if err := model.RechargeWaffo(merchantOrderId, c.ClientIP(), paymentFacts...); err != nil {

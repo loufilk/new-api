@@ -17,7 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { type FormEvent, useEffect, useState } from 'react'
+import { useMutation } from '@tanstack/react-query'
+import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -30,7 +31,6 @@ import {
   sideDrawerFormClassName,
   sideDrawerHeaderClassName,
 } from '@/components/drawer-layout'
-import { ErrorState } from '@/components/error-state'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -51,17 +51,6 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { OperationDialog } from '@/features/agent-platform/components/operation-dialog'
-import type {
-  OperationDraft,
-  OperationPayload,
-} from '@/features/agent-platform/types'
-import { useAgentAccount } from '@/features/agent-redemption/hooks/use-agent-account'
-import {
-  canReserveQuota,
-  getBatchQuota,
-} from '@/features/agent-redemption/lib/quota'
-import { isAgentWorkspaceUser } from '@/lib/agent-permissions'
 import {
   formatQuotaWithCurrency,
   getCurrencyDisplay,
@@ -74,9 +63,8 @@ import {
 } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { addTimeToDate } from '@/lib/time'
-import { useAuthStore } from '@/stores/auth-store'
 
-import { getRedemption } from '../api'
+import { createRedemption, getRedemption, updateRedemption } from '../api'
 import { REDEMPTION_STATUS, SUCCESS_MESSAGES } from '../constants'
 import {
   getRedemptionFormSchema,
@@ -85,8 +73,7 @@ import {
   transformFormDataToPayload,
   transformRedemptionToFormDefaults,
 } from '../lib'
-import { isProtectedRedemption, redemptionOperation } from '../lib/transaction'
-import type { Redemption } from '../types'
+import type { Redemption, RedemptionFormData } from '../types'
 import {
   RedemptionsExportDialog,
   type RedemptionExportData,
@@ -105,14 +92,11 @@ export function RedemptionsMutateDrawer({
   currentRow,
 }: RedemptionsMutateDrawerProps) {
   const { t } = useTranslation()
-  const isAgent = useAuthStore((state) => isAgentWorkspaceUser(state.auth.user))
-  const accountQuery = useAgentAccount(open)
-  const role = useAuthStore((state) => state.auth.user?.role)
-  const [draft, setDraft] = useState<OperationDraft | null>(null)
+  const submitting = useRef(false)
+  const creationRequest = useRef<RedemptionFormData | null>(null)
   const isUpdate = !!currentRow
   const redemptionId = currentRow?.id
   const { triggerRefresh } = useRedemptions()
-  const isSubmitting = draft !== null
   const [createdCodes, setCreatedCodes] = useState<RedemptionExportData | null>(
     null
   )
@@ -122,6 +106,47 @@ export function RedemptionsMutateDrawer({
   const [loadedRedemption, setLoadedRedemption] = useState<Redemption | null>(
     null
   )
+
+  const saveMutation = useMutation({
+    mutationFn: async (payload: RedemptionFormData) => {
+      if (payload.id !== undefined) {
+        await updateRedemption(payload)
+        return null
+      }
+      return createRedemption(payload)
+    },
+    retry: false,
+    onSuccess: (codes, payload) => {
+      if (codes) {
+        creationRequest.current = null
+        toast.success(
+          codes.length > 1
+            ? t('Successfully created {{count}} redemption codes', {
+                count: codes.length,
+              })
+            : t(SUCCESS_MESSAGES.REDEMPTION_CREATED)
+        )
+        if (codes.length) {
+          setCreatedCodes({
+            keys: codes,
+            name: payload.name,
+            quota: formatQuotaWithCurrency(payload.quota, {
+              abbreviate: false,
+            }),
+          })
+        }
+      } else {
+        toast.success(t(SUCCESS_MESSAGES.REDEMPTION_UPDATED))
+      }
+      onOpenChange(false)
+      triggerRefresh()
+    },
+    onError: (error) => handleServerError(error),
+    onSettled: () => {
+      submitting.current = false
+    },
+  })
+  const isSubmitting = saveMutation.isPending
 
   const form = useForm<RedemptionFormValues>({
     resolver: zodResolver(getRedemptionFormSchema(t)),
@@ -185,13 +210,11 @@ export function RedemptionsMutateDrawer({
     (redemptionLoadState === 'ready' &&
       loadedRedemption !== null &&
       loadedRedemption?.id === redemptionId &&
-      Number.isSafeInteger(loadedRedemption?.version) &&
-      !isProtectedRedemption(loadedRedemption) &&
       loadedRedemption?.status !== REDEMPTION_STATUS.USED)
   const isLoadingRedemption = redemptionLoadState === 'loading'
 
   const onSubmit = (data: RedemptionFormValues) => {
-    if (draft) return
+    if (submitting.current) return
     if (isUpdate && (!currentRow || !loadedRedemption || !isUpdateReady)) {
       return
     }
@@ -210,115 +233,36 @@ export function RedemptionsMutateDrawer({
     }
     if (
       !isUpdate &&
-      getBatchQuota(basePayload.quota, basePayload.count ?? 1) === null
+      !Number.isSafeInteger(basePayload.quota * (basePayload.count ?? 1))
     ) {
       form.setError('quota_dollars', { message: t('Invalid quota amount') })
       return
     }
-    if (isAgent) {
-      const existingReservation =
-        isUpdate && loadedRedemption?.status === 1 ? loadedRedemption.quota : 0
-      const available =
-        (accountQuery.account?.available_quota ?? -1) + existingReservation
+    let payload: RedemptionFormData
+    if (isUpdate && loadedRedemption) {
+      payload = {
+        id: loadedRedemption.id,
+        name: basePayload.name,
+        quota: basePayload.quota,
+        expired_time: basePayload.expired_time,
+      }
+    } else {
+      const previous = creationRequest.current
       if (
-        !accountQuery.account ||
-        !canReserveQuota(
-          basePayload.quota,
-          isUpdate ? 1 : (basePayload.count ?? 1),
-          available
-        )
+        previous &&
+        previous.name === basePayload.name &&
+        previous.quota === basePayload.quota &&
+        previous.count === basePayload.count &&
+        previous.expired_time === basePayload.expired_time
       ) {
-        form.setError('quota_dollars', {
-          message: t('Insufficient available agent quota'),
-        })
-        return
+        payload = previous
+      } else {
+        payload = { ...basePayload, request_id: crypto.randomUUID() }
+        creationRequest.current = payload
       }
     }
-    // Freeze the exact reviewed values; edits after cancellation require a new review.
-    const payload: OperationPayload =
-      isUpdate && loadedRedemption
-        ? {
-            id: loadedRedemption.id,
-            version: Number(loadedRedemption.version),
-            name: basePayload.name,
-            quota: basePayload.quota,
-            expired_time: basePayload.expired_time,
-            status: 0,
-            status_only: false,
-          }
-        : {
-            name: basePayload.name,
-            quota: basePayload.quota,
-            expired_time: basePayload.expired_time,
-            count: basePayload.count ?? 1,
-          }
-    setDraft(
-      redemptionOperation(
-        isUpdate ? 'update' : 'create',
-        role,
-        payload,
-        '/api/redemption/',
-        [
-          {
-            label: 'Name',
-            before: loadedRedemption?.name,
-            after: basePayload.name,
-          },
-          {
-            label: 'Quota',
-            before: loadedRedemption
-              ? formatQuotaWithCurrency(loadedRedemption.quota, {
-                  abbreviate: false,
-                })
-              : undefined,
-            after: formatQuotaWithCurrency(basePayload.quota, {
-              abbreviate: false,
-            }),
-          },
-          {
-            label: 'Quantity',
-            after: String(isUpdate ? 1 : (basePayload.count ?? 1)),
-          },
-          {
-            label: 'Expiration time',
-            after: data.expired_time
-              ? data.expired_time.toISOString()
-              : t('Never expires'),
-          },
-        ]
-      )
-    )
-  }
-
-  const completeOperation = (result?: unknown) => {
-    if (!draft) return
-    if (
-      draft.action.endsWith('.create') &&
-      Array.isArray(result) &&
-      result.every((code) => typeof code === 'string')
-    ) {
-      toast.success(
-        result.length > 1
-          ? t('Successfully created {{count}} redemption codes', {
-              count: result.length,
-            })
-          : t(SUCCESS_MESSAGES.REDEMPTION_CREATED)
-      )
-      if (result.length) {
-        setCreatedCodes({
-          keys: result,
-          name: String(draft.payload.name),
-          quota: formatQuotaWithCurrency(Number(draft.payload.quota), {
-            abbreviate: false,
-          }),
-        })
-      }
-    } else if (draft.action.endsWith('.update')) {
-      toast.success(t(SUCCESS_MESSAGES.REDEMPTION_UPDATED))
-    }
-    setDraft(null)
-    onOpenChange(false)
-    triggerRefresh()
+    submitting.current = true
+    saveMutation.mutate(payload)
   }
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -342,13 +286,6 @@ export function RedemptionsMutateDrawer({
   const currencyLabel = getCurrencyLabel()
   const tokensOnly = currencyMeta.kind === 'tokens'
   const quotaStep = getEditableQuotaStep()
-  const batchQuota = getBatchQuota(
-    parseQuotaFromDollars(form.watch('quota_dollars')),
-    isUpdate ? 1 : (form.watch('count') ?? 1)
-  )
-  const budgetLoading =
-    isAgent &&
-    (!accountQuery.account || accountQuery.isFetching || accountQuery.isError)
   const quotaLabel = t('Quota ({{currency}})', { currency: currencyLabel })
   const quotaPlaceholder = tokensOnly
     ? t('Enter quota in tokens')
@@ -365,7 +302,7 @@ export function RedemptionsMutateDrawer({
       <Sheet
         open={open}
         onOpenChange={(nextOpen) => {
-          if (!draft) onOpenChange(nextOpen)
+          if (!isSubmitting) onOpenChange(nextOpen)
         }}
       >
         <SheetContent
@@ -386,22 +323,10 @@ export function RedemptionsMutateDrawer({
               {t('Click save when you&apos;re done.')}
             </SheetDescription>
           </SheetHeader>
-          {loadedRedemption && isProtectedRedemption(loadedRedemption) && (
-            <p role='status' className='text-muted-foreground px-6 text-sm'>
-              {t('Customer rights protected')}
-            </p>
-          )}
           {loadedRedemption?.status === REDEMPTION_STATUS.USED && (
             <p role='status' className='text-muted-foreground px-6 text-sm'>
               {t('Used redemption codes cannot be changed or re-enabled')}
             </p>
-          )}
-          {isAgent && accountQuery.isError && (
-            <ErrorState
-              onRetry={() => {
-                void accountQuery.refetch()
-              }}
-            />
           )}
           <Form {...form}>
             <form
@@ -411,37 +336,10 @@ export function RedemptionsMutateDrawer({
               aria-busy={isLoadingRedemption}
             >
               <fieldset
-                disabled={!isUpdateReady || isSubmitting || budgetLoading}
+                disabled={!isUpdateReady || isSubmitting}
                 className='contents'
               >
                 <SideDrawerSection>
-                  {isAgent && (
-                    <div
-                      className='bg-muted space-y-1 rounded-md p-3 text-sm'
-                      role='status'
-                    >
-                      <p>
-                        {t('Available quota')}:{' '}
-                        {formatQuotaWithCurrency(
-                          accountQuery.account?.available_quota ?? 0,
-                          { abbreviate: false }
-                        )}
-                      </p>
-                      <p>
-                        {t('Batch reservation')}:{' '}
-                        {batchQuota === null
-                          ? '—'
-                          : formatQuotaWithCurrency(batchQuota, {
-                              abbreviate: false,
-                            })}
-                      </p>
-                      <p className='text-muted-foreground'>
-                        {t(
-                          'The server rechecks the budget before creating codes.'
-                        )}
-                      </p>
-                    </div>
-                  )}
                   <FormField
                     control={form.control}
                     name='name'
@@ -593,21 +491,13 @@ export function RedemptionsMutateDrawer({
             <Button
               form='redemption-form'
               type='submit'
-              disabled={isSubmitting || !isUpdateReady || budgetLoading}
+              disabled={isSubmitting || !isUpdateReady}
             >
               {submitButtonLabel}
             </Button>
           </SheetFooter>
         </SheetContent>
       </Sheet>
-      {draft && (
-        <OperationDialog
-          key={draft.request_id}
-          draft={draft}
-          onClose={() => setDraft(null)}
-          onComplete={completeOperation}
-        />
-      )}
       {createdCodes && (
         <RedemptionsExportDialog
           data={createdCodes}

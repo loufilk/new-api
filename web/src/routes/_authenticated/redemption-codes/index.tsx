@@ -21,14 +21,12 @@ import z from 'zod'
 
 import { Redemptions } from '@/features/redemption-codes'
 import { REDEMPTION_FILTER_VALUES } from '@/features/redemption-codes/constants'
-import { hasAgentHistory } from '@/lib/agent-permissions'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 const redemptionsSearchSchema = z.object({
   page: z.number().optional().catch(1),
   pageSize: z.number().optional().catch(10),
-  agent_user_id: z.number().int().positive().optional().catch(undefined),
   filter: z.string().optional().catch(''),
   status: z.array(z.enum(REDEMPTION_FILTER_VALUES)).optional().catch([]),
 })
@@ -37,10 +35,7 @@ export const Route = createFileRoute('/_authenticated/redemption-codes/')({
   beforeLoad: () => {
     const { auth } = useAuthStore.getState()
 
-    if (
-      !auth.user ||
-      (!hasAgentHistory(auth.user) && auth.user.role < ROLE.ADMIN)
-    ) {
+    if (!auth.user || !(auth.user.role >= ROLE.ADMIN)) {
       throw redirect({
         to: '/403',
       })

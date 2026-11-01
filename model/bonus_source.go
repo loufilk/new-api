@@ -34,8 +34,8 @@ type BonusSourceLot struct {
 	CreatedAt         int64  `json:"created_at" gorm:"autoCreateTime"`
 }
 
-func (*BonusSourceLot) BeforeUpdate(*gorm.DB) error { return ErrAgentLedgerImmutable }
-func (*BonusSourceLot) BeforeDelete(*gorm.DB) error { return ErrAgentLedgerImmutable }
+func (*BonusSourceLot) BeforeUpdate(*gorm.DB) error { return ErrLedgerImmutable }
+func (*BonusSourceLot) BeforeDelete(*gorm.DB) error { return ErrLedgerImmutable }
 
 type BonusSourceState struct {
 	LegacyRestored   int   `json:"legacy_restored" gorm:"type:bigint;not null"`
@@ -77,8 +77,8 @@ type BonusSourceRestoration struct {
 	CreatedAt    int64 `json:"created_at" gorm:"autoCreateTime"`
 }
 
-func (*BonusSourceRestoration) BeforeUpdate(*gorm.DB) error { return ErrAgentLedgerImmutable }
-func (*BonusSourceRestoration) BeforeDelete(*gorm.DB) error { return ErrAgentLedgerImmutable }
+func (*BonusSourceRestoration) BeforeUpdate(*gorm.DB) error { return ErrLedgerImmutable }
+func (*BonusSourceRestoration) BeforeDelete(*gorm.DB) error { return ErrLedgerImmutable }
 
 type BonusSourceRemoval struct {
 	ID        int64  `json:"id" gorm:"primaryKey"`
@@ -90,14 +90,14 @@ type BonusSourceRemoval struct {
 	CreatedAt int64  `json:"created_at" gorm:"autoCreateTime"`
 }
 
-func (*BonusSourceRemoval) BeforeUpdate(*gorm.DB) error    { return ErrAgentLedgerImmutable }
-func (*BonusSourceRemoval) BeforeDelete(*gorm.DB) error    { return ErrAgentLedgerImmutable }
-func (*BonusSourceAccount) BeforeUpdate(*gorm.DB) error    { return ErrAgentLedgerImmutable }
-func (*BonusSourceAccount) BeforeDelete(*gorm.DB) error    { return ErrAgentLedgerImmutable }
-func (*BonusSourceAllocation) BeforeDelete(*gorm.DB) error { return ErrAgentLedgerImmutable }
+func (*BonusSourceRemoval) BeforeUpdate(*gorm.DB) error    { return ErrLedgerImmutable }
+func (*BonusSourceRemoval) BeforeDelete(*gorm.DB) error    { return ErrLedgerImmutable }
+func (*BonusSourceAccount) BeforeUpdate(*gorm.DB) error    { return ErrLedgerImmutable }
+func (*BonusSourceAccount) BeforeDelete(*gorm.DB) error    { return ErrLedgerImmutable }
+func (*BonusSourceAllocation) BeforeDelete(*gorm.DB) error { return ErrLedgerImmutable }
 func (*BonusSourceAllocation) BeforeUpdate(tx *gorm.DB) error {
 	if tx.Statement.Changed("UserID", "LotID", "LedgerID", "ReferenceType", "ReferenceID", "Amount", "CreatedAt") {
-		return ErrAgentLedgerImmutable
+		return ErrLedgerImmutable
 	}
 	return nil
 }

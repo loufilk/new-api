@@ -15,10 +15,21 @@ func StartRuntimeWorkers(group *lifecycle.Group, frequency int) {
 		frequency = 60
 	}
 	interval := time.Duration(frequency) * time.Second
-	group.Go("agent-redemption-expiry", func(schedule, work context.Context) {
-		lifecycle.Periodic(schedule, work, func() time.Duration { return time.Minute }, true, func(context.Context) {
-			if _, err := ReleaseExpiredAgentRedemptions(200); err != nil {
-				common.SysError("agent redemption expiry reconciliation failed: " + common.MaskSensitiveLogInfo(err.Error()))
+	group.Go("ordinary-referral-rewards", func(schedule, work context.Context) {
+		lifecycle.Periodic(schedule, work, func() time.Duration { return 10 * time.Second }, true, func(ctx context.Context) {
+			bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			if _, err := ProcessReferralRewardOutbox(bounded, 100); err != nil && ctx.Err() == nil {
+				common.SysError("ordinary referral reward processing failed; durable events remain retryable")
+			}
+		})
+	})
+	group.Go("wallet-bonus-source-maintenance", func(schedule, work context.Context) {
+		lifecycle.Periodic(schedule, work, func() time.Duration { return time.Minute }, true, func(ctx context.Context) {
+			bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			if _, err := RunBonusSourceMaintenance(bounded, 100); err != nil && ctx.Err() == nil {
+				common.SysError("wallet bonus source maintenance failed; balances remain unchanged on failed transactions")
 			}
 		})
 	})

@@ -31,7 +31,7 @@ import type { AuditLog } from '../api'
 const AUDIT_ROLE_NAMES: Record<number, string> = {
   [ROLE.GUEST]: 'guest',
   [ROLE.USER]: 'user',
-  [ROLE.AGENT]: 'agent',
+  5: 'user',
   [ROLE.ADMIN]: 'admin',
   [ROLE.SUPER_ADMIN]: 'root',
 }

@@ -36,10 +36,6 @@ import { Route as PricingIndexRouteImport } from './routes/pricing/index'
 import { Route as RankingsIndexRouteImport } from './routes/rankings/index'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as authUserResetRouteImport } from './routes/(auth)/user/reset'
-import { Route as AuthenticatedAgentPlatformIndexRouteImport } from './routes/_authenticated/agent-platform/index'
-import { Route as AuthenticatedAgentPlatformClaimRouteImport } from './routes/_authenticated/agent-platform/claim'
-import { Route as AuthenticatedAgentPlatformFinanceRouteImport } from './routes/_authenticated/agent-platform/finance'
-import { Route as AuthenticatedAgentRedemptionIndexRouteImport } from './routes/_authenticated/agent-redemption/index'
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
 import { Route as AuthenticatedChatChatIdRouteImport } from './routes/_authenticated/chat/$chatId'
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
@@ -217,30 +213,6 @@ const authUserResetRoute = authUserResetRouteImport.update({
   path: '/user/reset',
   getParentRoute: () => authRouteRoute,
 } as any)
-const AuthenticatedAgentPlatformIndexRoute =
-  AuthenticatedAgentPlatformIndexRouteImport.update({
-    id: '/agent-platform/',
-    path: '/agent-platform/',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
-const AuthenticatedAgentPlatformClaimRoute =
-  AuthenticatedAgentPlatformClaimRouteImport.update({
-    id: '/agent-platform/claim',
-    path: '/agent-platform/claim',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
-const AuthenticatedAgentPlatformFinanceRoute =
-  AuthenticatedAgentPlatformFinanceRouteImport.update({
-    id: '/agent-platform/finance',
-    path: '/agent-platform/finance',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
-const AuthenticatedAgentRedemptionIndexRoute =
-  AuthenticatedAgentRedemptionIndexRouteImport.update({
-    id: '/agent-redemption/',
-    path: '/agent-redemption/',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
 const AuthenticatedChannelsIndexRoute =
   AuthenticatedChannelsIndexRouteImport.update({
     id: '/channels/',
@@ -513,8 +485,6 @@ export interface FileRoutesByFullPath {
   '/rankings/': typeof RankingsIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/user/reset': typeof authUserResetRoute
-  '/agent-platform/claim': typeof AuthenticatedAgentPlatformClaimRoute
-  '/agent-platform/finance': typeof AuthenticatedAgentPlatformFinanceRoute
   '/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
@@ -522,8 +492,6 @@ export interface FileRoutesByFullPath {
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
   '/help/guides/$slug': typeof HelpGuidesSlugRoute
-  '/agent-platform/': typeof AuthenticatedAgentPlatformIndexRoute
-  '/agent-redemption/': typeof AuthenticatedAgentRedemptionIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/image/': typeof AuthenticatedImageIndexRoute
@@ -585,8 +553,6 @@ export interface FileRoutesByTo {
   '/rankings': typeof RankingsIndexRoute
   '/setup': typeof SetupIndexRoute
   '/user/reset': typeof authUserResetRoute
-  '/agent-platform/claim': typeof AuthenticatedAgentPlatformClaimRoute
-  '/agent-platform/finance': typeof AuthenticatedAgentPlatformFinanceRoute
   '/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
@@ -594,8 +560,6 @@ export interface FileRoutesByTo {
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
   '/help/guides/$slug': typeof HelpGuidesSlugRoute
-  '/agent-platform': typeof AuthenticatedAgentPlatformIndexRoute
-  '/agent-redemption': typeof AuthenticatedAgentRedemptionIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
   '/image': typeof AuthenticatedImageIndexRoute
@@ -661,8 +625,6 @@ export interface FileRoutesById {
   '/rankings/': typeof RankingsIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/(auth)/user/reset': typeof authUserResetRoute
-  '/_authenticated/agent-platform/claim': typeof AuthenticatedAgentPlatformClaimRoute
-  '/_authenticated/agent-platform/finance': typeof AuthenticatedAgentPlatformFinanceRoute
   '/_authenticated/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/_authenticated/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
   '/_authenticated/errors/$error': typeof AuthenticatedErrorsErrorRoute
@@ -670,8 +632,6 @@ export interface FileRoutesById {
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/_authenticated/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
   '/help/guides/$slug': typeof HelpGuidesSlugRoute
-  '/_authenticated/agent-platform/': typeof AuthenticatedAgentPlatformIndexRoute
-  '/_authenticated/agent-redemption/': typeof AuthenticatedAgentRedemptionIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/_authenticated/image/': typeof AuthenticatedImageIndexRoute
@@ -736,8 +696,6 @@ export interface FileRouteTypes {
     | '/rankings/'
     | '/setup/'
     | '/user/reset'
-    | '/agent-platform/claim'
-    | '/agent-platform/finance'
     | '/chat/$chatId'
     | '/dashboard/$section'
     | '/errors/$error'
@@ -745,8 +703,6 @@ export interface FileRouteTypes {
     | '/usage-logs/$section'
     | '/usage-logs/audit'
     | '/help/guides/$slug'
-    | '/agent-platform/'
-    | '/agent-redemption/'
     | '/channels/'
     | '/dashboard/'
     | '/image/'
@@ -808,8 +764,6 @@ export interface FileRouteTypes {
     | '/rankings'
     | '/setup'
     | '/user/reset'
-    | '/agent-platform/claim'
-    | '/agent-platform/finance'
     | '/chat/$chatId'
     | '/dashboard/$section'
     | '/errors/$error'
@@ -817,8 +771,6 @@ export interface FileRouteTypes {
     | '/usage-logs/$section'
     | '/usage-logs/audit'
     | '/help/guides/$slug'
-    | '/agent-platform'
-    | '/agent-redemption'
     | '/channels'
     | '/dashboard'
     | '/image'
@@ -883,8 +835,6 @@ export interface FileRouteTypes {
     | '/rankings/'
     | '/setup/'
     | '/(auth)/user/reset'
-    | '/_authenticated/agent-platform/claim'
-    | '/_authenticated/agent-platform/finance'
     | '/_authenticated/chat/$chatId'
     | '/_authenticated/dashboard/$section'
     | '/_authenticated/errors/$error'
@@ -892,8 +842,6 @@ export interface FileRouteTypes {
     | '/_authenticated/usage-logs/$section'
     | '/_authenticated/usage-logs/audit'
     | '/help/guides/$slug'
-    | '/_authenticated/agent-platform/'
-    | '/_authenticated/agent-redemption/'
     | '/_authenticated/channels/'
     | '/_authenticated/dashboard/'
     | '/_authenticated/image/'
@@ -1144,34 +1092,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/user/reset'
       preLoaderRoute: typeof authUserResetRouteImport
       parentRoute: typeof authRouteRoute
-    }
-    '/_authenticated/agent-platform/': {
-      id: '/_authenticated/agent-platform/'
-      path: '/agent-platform'
-      fullPath: '/agent-platform/'
-      preLoaderRoute: typeof AuthenticatedAgentPlatformIndexRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/agent-platform/claim': {
-      id: '/_authenticated/agent-platform/claim'
-      path: '/agent-platform/claim'
-      fullPath: '/agent-platform/claim'
-      preLoaderRoute: typeof AuthenticatedAgentPlatformClaimRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/agent-platform/finance': {
-      id: '/_authenticated/agent-platform/finance'
-      path: '/agent-platform/finance'
-      fullPath: '/agent-platform/finance'
-      preLoaderRoute: typeof AuthenticatedAgentPlatformFinanceRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/agent-redemption/': {
-      id: '/_authenticated/agent-redemption/'
-      path: '/agent-redemption'
-      fullPath: '/agent-redemption/'
-      preLoaderRoute: typeof AuthenticatedAgentRedemptionIndexRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/channels/': {
       id: '/_authenticated/channels/'
@@ -1562,16 +1482,12 @@ const AuthenticatedSystemSettingsRouteRouteWithChildren =
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedSystemSettingsRouteRoute: typeof AuthenticatedSystemSettingsRouteRouteWithChildren
   AuthenticatedChat2linkRoute: typeof AuthenticatedChat2linkRoute
-  AuthenticatedAgentPlatformClaimRoute: typeof AuthenticatedAgentPlatformClaimRoute
-  AuthenticatedAgentPlatformFinanceRoute: typeof AuthenticatedAgentPlatformFinanceRoute
   AuthenticatedChatChatIdRoute: typeof AuthenticatedChatChatIdRoute
   AuthenticatedDashboardSectionRoute: typeof AuthenticatedDashboardSectionRoute
   AuthenticatedErrorsErrorRoute: typeof AuthenticatedErrorsErrorRoute
   AuthenticatedModelManagementSectionRoute: typeof AuthenticatedModelManagementSectionRoute
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
   AuthenticatedUsageLogsAuditRoute: typeof AuthenticatedUsageLogsAuditRoute
-  AuthenticatedAgentPlatformIndexRoute: typeof AuthenticatedAgentPlatformIndexRoute
-  AuthenticatedAgentRedemptionIndexRoute: typeof AuthenticatedAgentRedemptionIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
   AuthenticatedImageIndexRoute: typeof AuthenticatedImageIndexRoute
@@ -1594,9 +1510,6 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedSystemSettingsRouteRoute:
     AuthenticatedSystemSettingsRouteRouteWithChildren,
   AuthenticatedChat2linkRoute: AuthenticatedChat2linkRoute,
-  AuthenticatedAgentPlatformClaimRoute: AuthenticatedAgentPlatformClaimRoute,
-  AuthenticatedAgentPlatformFinanceRoute:
-    AuthenticatedAgentPlatformFinanceRoute,
   AuthenticatedChatChatIdRoute: AuthenticatedChatChatIdRoute,
   AuthenticatedDashboardSectionRoute: AuthenticatedDashboardSectionRoute,
   AuthenticatedErrorsErrorRoute: AuthenticatedErrorsErrorRoute,
@@ -1604,9 +1517,6 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
     AuthenticatedModelManagementSectionRoute,
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
   AuthenticatedUsageLogsAuditRoute: AuthenticatedUsageLogsAuditRoute,
-  AuthenticatedAgentPlatformIndexRoute: AuthenticatedAgentPlatformIndexRoute,
-  AuthenticatedAgentRedemptionIndexRoute:
-    AuthenticatedAgentRedemptionIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
   AuthenticatedImageIndexRoute: AuthenticatedImageIndexRoute,

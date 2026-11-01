@@ -96,7 +96,7 @@ func TestMain(m *testing.M) {
 		&model.SubscriptionPlan{},
 		&model.SubscriptionOrder{},
 		&model.SubscriptionPreConsumeRecord{},
-	}, model.AgentPlatformModels()...)...); err != nil {
+	}, append(append([]any{&model.PaymentReceipt{}, &model.RedemptionMutation{}}, model.BonusSourceModels()...), model.ReferralRewardModels()...)...)...); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
 
@@ -143,7 +143,7 @@ func initServiceTestDatabaseDialect() error {
 func truncate(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
-		for _, schema := range model.AgentPlatformModels() {
+		for _, schema := range append(append([]any{&model.PaymentReceipt{}, &model.RedemptionMutation{}}, model.BonusSourceModels()...), model.ReferralRewardModels()...) {
 			statement := &gorm.Statement{DB: model.DB}
 			require.NoError(t, statement.Parse(schema))
 			require.NoError(t, model.DB.Exec("DELETE FROM "+statement.Schema.Table).Error)

@@ -34,54 +34,14 @@ const user: User = {
   status: 1,
 }
 
-it('shows immutable inviter, registration source, role and test-grant outcome to administrators', () => {
-  render(
-    <UserInvitationCell
-      user={{
-        ...user,
-        invitation: {
-          inviter_id: 7,
-          inviter_username: 'agent-seven',
-          inviter_role: 5,
-          source: 'password',
-          bonus_quota: 0,
-          bonus_reason: 'payment_compliance_required',
-          created_at: 1,
-          legacy: false,
-        },
-      }}
-    />
-  )
-  expect(screen.getByText('Inviter: agent-seven #7')).toBeInTheDocument()
-  expect(screen.getByText('Password registration · Agent')).toBeInTheDocument()
-  expect(
-    screen.getByText('Payment compliance confirmation required')
-  ).toBeInTheDocument()
+it('shows ordinary invitation counts and inviter attribution without reseller test-grant details', () => {
+  render(<UserInvitationCell user={{ ...user, aff_count: 3, inviter_id: 7 }} />)
+  expect(screen.getByText('Invited 3 users')).toBeInTheDocument()
+  expect(screen.getByText('Inviter ID: 7')).toBeInTheDocument()
+  expect(screen.queryByText(/Test quota granted/)).not.toBeInTheDocument()
 })
 
-it('labels old inviter data as legacy without claiming a verified role or test grant', () => {
-  render(
-    <UserInvitationCell
-      user={{
-        ...user,
-        invitation: {
-          inviter_id: 9,
-          inviter_username: 'old-inviter',
-          inviter_role: 0,
-          source: 'legacy',
-          bonus_quota: 0,
-          bonus_reason: '',
-          created_at: 0,
-          legacy: true,
-        },
-      }}
-    />
-  )
-  expect(screen.getByText('Legacy attribution')).toBeInTheDocument()
-  expect(screen.queryByText(/Test quota granted:/)).not.toBeInTheDocument()
-})
-
-it('shows an empty marker when a user has no invitation record or legacy affiliate activity', () => {
+it('shows an empty marker when a user has no ordinary invitation activity', () => {
   render(<UserInvitationCell user={user} />)
   expect(screen.getByText('—')).toBeInTheDocument()
 })

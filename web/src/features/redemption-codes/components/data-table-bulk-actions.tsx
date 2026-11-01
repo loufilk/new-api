@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useMutation } from '@tanstack/react-query'
 import type { Table } from '@tanstack/react-table'
 import { Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
@@ -31,33 +32,43 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { OperationDialog } from '@/features/agent-platform/components/operation-dialog'
-import type { OperationDraft } from '@/features/agent-platform/types'
-import { useAuthStore } from '@/stores/auth-store'
+import { handleServerError } from '@/lib/handle-server-error'
 
-import { isProtectedRedemption, redemptionOperation } from '../lib/transaction'
+import { deleteRedemptions } from '../api'
 import type { Redemption } from '../types'
 import { useRedemptions } from './redemptions-provider'
 
-type DataTableBulkActionsProps = {
-  table: Table<Redemption>
-}
+type DataTableBulkActionsProps = { table: Table<Redemption> }
 
 export function DataTableBulkActions(props: DataTableBulkActionsProps) {
   const { t } = useTranslation()
   const { triggerRefresh } = useRedemptions()
-  const role = useAuthStore((state) => state.auth.user?.role)
-  const [draft, setDraft] = useState<OperationDraft | null>(null)
   const [deleteTargets, setDeleteTargets] = useState<Redemption[] | null>(null)
   const selectedRows = props.table.getFilteredSelectedRowModel().rows
-
-  const contentToCopy = useMemo(() => {
-    const selectedCodes = selectedRows.map((row) => {
-      const redemption = row.original
-      return `${redemption.name}\t${redemption.key}`
-    })
-    return selectedCodes.join('\n')
-  }, [selectedRows])
+  const deletion = useMutation({
+    mutationFn: deleteRedemptions,
+    retry: false,
+    onSuccess: (count, ids) => {
+      toast.success(
+        t('Successfully deleted {{count}} redemption codes', { count })
+      )
+      props.table.setRowSelection((previous) => {
+        const next = { ...previous }
+        for (const id of ids) delete next[String(id)]
+        return next
+      })
+      setDeleteTargets(null)
+      triggerRefresh()
+    },
+    onError: (error) => handleServerError(error),
+  })
+  const contentToCopy = useMemo(
+    () =>
+      selectedRows
+        .map((row) => `${row.original.name}\t${row.original.key}`)
+        .join('\n'),
+    [selectedRows]
+  )
 
   return (
     <>
@@ -79,12 +90,7 @@ export function DataTableBulkActions(props: DataTableBulkActionsProps) {
                 size='icon'
                 className='size-8'
                 aria-label={t('Delete selected redemption codes')}
-                disabled={
-                  draft !== null ||
-                  selectedRows.some((row) =>
-                    isProtectedRedemption(row.original)
-                  )
-                }
+                disabled={deletion.isPending}
                 onClick={() =>
                   setDeleteTargets(selectedRows.map((row) => row.original))
                 }
@@ -94,78 +100,29 @@ export function DataTableBulkActions(props: DataTableBulkActionsProps) {
             <Trash2 aria-hidden='true' />
           </TooltipTrigger>
           <TooltipContent>
-            {selectedRows.some((row) => isProtectedRedemption(row.original))
-              ? t('Customer rights protected')
-              : t('Delete selected redemption codes')}
+            {t('Delete selected redemption codes')}
           </TooltipContent>
         </Tooltip>
       </BulkActionsToolbar>
       <ConfirmDialog
         destructive
-        open={deleteTargets !== null && !draft}
+        open={deleteTargets !== null}
         onOpenChange={(open) => {
-          if (!open && !draft) setDeleteTargets(null)
+          if (!open && !deletion.isPending) setDeleteTargets(null)
         }}
         title={t('Delete {{count}} redemption codes?', {
           count: deleteTargets?.length ?? 0,
         })}
         desc={t('This action cannot be undone.')}
         confirmText={t('Delete')}
-        disabled={
-          !deleteTargets?.length || deleteTargets.some(isProtectedRedemption)
-        }
+        disabled={!deleteTargets?.length}
+        isLoading={deletion.isPending}
         handleConfirm={() => {
-          if (
-            !deleteTargets?.length ||
-            draft ||
-            deleteTargets.some(isProtectedRedemption)
-          ) {
-            return
+          if (deleteTargets?.length && !deletion.isPending) {
+            deletion.mutate(deleteTargets.map((code) => code.id))
           }
-          setDraft(
-            redemptionOperation(
-              'delete',
-              role,
-              {
-                ids: deleteTargets.map((code) => code.id),
-                invalid_only: false,
-                agent_user_id: 0,
-              },
-              '/api/redemption/batch',
-              [
-                {
-                  label: 'Selected redemption IDs',
-                  after: deleteTargets.map((code) => code.id).join(', '),
-                },
-              ]
-            )
-          )
         }}
       />
-      {draft && (
-        <OperationDialog
-          key={draft.request_id}
-          draft={draft}
-          onClose={() => setDraft(null)}
-          onComplete={(count) => {
-            if (typeof count === 'number') {
-              toast.success(
-                t('Successfully deleted {{count}} redemption codes', { count })
-              )
-            }
-            props.table.setRowSelection((previous) => {
-              const next = { ...previous }
-              for (const code of deleteTargets ?? []) {
-                delete next[String(code.id)]
-              }
-              return next
-            })
-            setDraft(null)
-            setDeleteTargets(null)
-            triggerRefresh()
-          }}
-        />
-      )}
     </>
   )
 }

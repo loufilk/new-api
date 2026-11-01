@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQueryClient } from '@tanstack/react-query'
 import React, { useState } from 'react'
 
 import useDialogState from '@/hooks/use-dialog'
@@ -41,14 +40,12 @@ export function RedemptionsProvider({
 }: {
   children: React.ReactNode
 }) {
-  const queryClient = useQueryClient()
   const [open, setOpen] = useDialogState<RedemptionsDialogType>(null)
   const [currentRow, setCurrentRow] = useState<Redemption | null>(null)
   const [refreshTrigger, setRefreshTrigger] = useState(0)
 
   const triggerRefresh = () => {
     setRefreshTrigger((prev) => prev + 1)
-    void queryClient.invalidateQueries({ queryKey: ['agent-redemption'] })
   }
 
   return (

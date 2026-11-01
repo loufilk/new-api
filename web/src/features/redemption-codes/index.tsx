@@ -16,27 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { getRouteApi } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
-import { AgentBudget } from '@/features/agent-redemption/components/agent-budget'
-import { isAgentWorkspaceUser } from '@/lib/agent-permissions'
-import { useAuthStore } from '@/stores/auth-store'
 
 import { RedemptionsDialogs } from './components/redemptions-dialogs'
 import { RedemptionsPrimaryButtons } from './components/redemptions-primary-buttons'
 import { RedemptionsProvider } from './components/redemptions-provider'
 import { RedemptionsTable } from './components/redemptions-table'
 
-const route = getRouteApi('/_authenticated/redemption-codes/')
-
 export function Redemptions() {
   const { t } = useTranslation()
-  const user = useAuthStore((state) => state.auth.user)
-  const isAgent = isAgentWorkspaceUser(user)
-  const search = route.useSearch()
-  const agentId = isAgent ? user.id : search.agent_user_id
   return (
     <RedemptionsProvider>
       <SectionPageLayout fixedContent>
@@ -44,11 +34,10 @@ export function Redemptions() {
           {t('Redemption Codes')}
         </SectionPageLayout.Title>
         <SectionPageLayout.Actions>
-          <RedemptionsPrimaryButtons agentId={agentId} />
+          <RedemptionsPrimaryButtons />
         </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
           <div className='flex h-full min-h-0 flex-col gap-3'>
-            {isAgent && <AgentBudget />}
             <div className='min-h-0 flex-1'>
               <RedemptionsTable />
             </div>

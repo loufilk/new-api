@@ -331,7 +331,7 @@ describe('mobile navigation drawer', () => {
   })
 })
 
-test('an agent retains wallet, profile and security navigation', async () => {
+test('legacy role 5 retains ordinary wallet, profile and security navigation', async () => {
   isSidebarModuleVisible.mockReturnValue(true)
   renderDrawer({ user: { ...user, role: 5 } })
   expect(await screen.findByRole('button', { name: 'Sign out' })).toBeEnabled()

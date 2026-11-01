@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useMutation } from '@tanstack/react-query'
 import { Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -23,38 +24,33 @@ import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Button } from '@/components/ui/button'
-import { OperationDialog } from '@/features/agent-platform/components/operation-dialog'
-import type { OperationDraft } from '@/features/agent-platform/types'
-import { useAuthStore } from '@/stores/auth-store'
+import { handleServerError } from '@/lib/handle-server-error'
 
-import { redemptionOperation } from '../lib/transaction'
+import { deleteInvalidRedemptions } from '../api'
 import { useRedemptions } from './redemptions-provider'
 
-export function RedemptionsPrimaryButtons(props: { agentId?: number }) {
+export function RedemptionsPrimaryButtons() {
   const { t } = useTranslation()
   const { setOpen, triggerRefresh } = useRedemptions()
   const [showDeleteInvalidConfirm, setShowDeleteInvalidConfirm] =
     useState(false)
-  const role = useAuthStore((state) => state.auth.user?.role)
-  const [draft, setDraft] = useState<OperationDraft | null>(null)
-
-  const handleDeleteInvalid = () => {
-    if (draft) return
-    setDraft(
-      redemptionOperation(
-        'delete',
-        role,
-        { ids: null, invalid_only: true, agent_user_id: props.agentId ?? 0 },
-        '/api/redemption/invalid',
-        [
-          {
-            label: 'Agent',
-            after: props.agentId ? String(props.agentId) : t('All'),
-          },
-        ]
+  const deletion = useMutation({
+    mutationFn: deleteInvalidRedemptions,
+    retry: false,
+    onSuccess: (count) => {
+      toast.success(
+        t('Successfully deleted {{count}} invalid redemption codes', { count }),
+        {
+          description: t(
+            'Each cleanup removes up to 1,000 used, disabled, or expired codes. Repeat cleanup if invalid codes remain.'
+          ),
+        }
       )
-    )
-  }
+      setShowDeleteInvalidConfirm(false)
+      triggerRefresh()
+    },
+    onError: (error) => handleServerError(error),
+  })
 
   return (
     <>
@@ -72,26 +68,20 @@ export function RedemptionsPrimaryButtons(props: { agentId?: number }) {
           {t('Create Code')}
         </Button>
       </div>
-
       <ConfirmDialog
         destructive
-        open={showDeleteInvalidConfirm && !draft}
+        open={showDeleteInvalidConfirm}
         onOpenChange={(nextOpen) => {
-          if (!draft) setShowDeleteInvalidConfirm(nextOpen)
+          if (!deletion.isPending) setShowDeleteInvalidConfirm(nextOpen)
         }}
-        handleConfirm={handleDeleteInvalid}
+        handleConfirm={() => {
+          if (!deletion.isPending) deletion.mutate()
+        }}
+        isLoading={deletion.isPending}
         className='max-w-md'
         title={t('Delete Invalid Redemption Codes?')}
         desc={
           <>
-            {props.agentId && (
-              <p>
-                {t(
-                  'Only invalid codes belonging to agent #{{id}} will be deleted.',
-                  { id: props.agentId }
-                )}
-              </p>
-            )}
             {t(
               'Each cleanup removes up to 1,000 used, disabled, or expired codes. Repeat cleanup if invalid codes remain.'
             )}
@@ -101,30 +91,6 @@ export function RedemptionsPrimaryButtons(props: { agentId?: number }) {
         }
         confirmText={t('Delete Invalid')}
       />
-      {draft && (
-        <OperationDialog
-          key={draft.request_id}
-          draft={draft}
-          onClose={() => setDraft(null)}
-          onComplete={(count) => {
-            if (typeof count === 'number') {
-              toast.success(
-                t('Successfully deleted {{count}} invalid redemption codes', {
-                  count,
-                }),
-                {
-                  description: t(
-                    'Each cleanup removes up to 1,000 used, disabled, or expired codes. Repeat cleanup if invalid codes remain.'
-                  ),
-                }
-              )
-            }
-            setDraft(null)
-            setShowDeleteInvalidConfirm(false)
-            triggerRefresh()
-          }}
-        />
-      )}
     </>
   )
 }

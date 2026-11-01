@@ -76,14 +76,13 @@ export function sanitizeAuthRedirect(
     return null
   }
 
-  // Delivery fragments contain a redeemable bearer, not navigation state.
-  // Never encode them into a sign-in query or persist them for an OAuth trip.
-  // The customer can reopen the original link after authenticating.
+  // Retired destinations can contain legacy bearer secrets. Reject them
+  // rather than copying their query or fragment into login/OAuth storage.
   try {
     const routePath = decodeURI(redirectURL.pathname)
       .replace(/\/+$/, '')
       .toLowerCase()
-    if (routePath === '/agent-platform/claim') return '/agent-platform/claim'
+    if (/^\/agent-(?:platform|redemption)(?:\/|$)/.test(routePath)) return null
   } catch {
     return null
   }

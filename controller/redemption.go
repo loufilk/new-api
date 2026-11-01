@@ -1,20 +1,26 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func GetAllRedemptions(c *gin.Context) {
+	if _, ok := redemptionIdentity(c); !ok {
+		return
+	}
 	pageInfo := redemptionPage(c)
-	redemptions, total, err := model.GetRedemptionsScoped(redemptionScope(c), redemptionAgentFilter(c), "", "", pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	redemptions, total, err := model.GetAllRedemptions(pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		redemptionAPIError(c, err)
 		return
@@ -26,10 +32,13 @@ func GetAllRedemptions(c *gin.Context) {
 }
 
 func SearchRedemptions(c *gin.Context) {
+	if _, ok := redemptionIdentity(c); !ok {
+		return
+	}
 	keyword := c.Query("keyword")
 	status := c.Query("status")
 	pageInfo := redemptionPage(c)
-	redemptions, total, err := model.GetRedemptionsScoped(redemptionScope(c), redemptionAgentFilter(c), keyword, status, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	redemptions, total, err := model.SearchRedemptions(keyword, status, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		redemptionAPIError(c, err)
 		return
@@ -41,12 +50,15 @@ func SearchRedemptions(c *gin.Context) {
 }
 
 func GetRedemption(c *gin.Context) {
+	if _, ok := redemptionIdentity(c); !ok {
+		return
+	}
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		redemptionAPIError(c, err)
 		return
 	}
-	redemption, err := model.GetRedemptionScoped(redemptionScope(c), id)
+	redemption, err := model.GetRedemptionById(id)
 	if err != nil {
 		redemptionAPIError(c, err)
 		return
@@ -70,17 +82,11 @@ func AddRedemption(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	scope := redemptionScope(c)
-	action := "redemption.create"
-	if scope.IsAdmin() {
-		action = "redemption.admin.create"
-	}
-	auth, ok := agentPurchaseAuthorization(c, action, redemption.RequestID, redemption)
+	identity, ok := redemptionIdentity(c)
 	if !ok {
 		return
 	}
-	scope.Authorization = &auth
-	keys, err := model.CreateRedemptionsScoped(scope, redemption)
+	keys, err := model.CreateRedemptions(identity, redemption)
 	if err != nil {
 		redemptionAPIError(c, err)
 		return
@@ -100,19 +106,11 @@ func AddRedemption(c *gin.Context) {
 
 func DeleteRedemption(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
-	scope := redemptionScope(c)
-	scope.RequestID = c.Query("request_id")
-	action := "redemption.delete"
-	if scope.IsAdmin() {
-		action = "redemption.admin.delete"
-	}
-	command := model.AgentLegacyRedemptionDeleteRequest{RequestID: scope.RequestID, IDs: []int{id}}
-	auth, ok := agentPurchaseAuthorization(c, action, scope.RequestID, command)
+	identity, ok := redemptionIdentity(c)
 	if !ok {
 		return
 	}
-	scope.Authorization = &auth
-	_, err := model.DeleteRedemptionsScoped(scope, []int{id}, false)
+	_, err := model.DeleteRedemptions([]int{id}, false, identity)
 	if err != nil {
 		redemptionAPIError(c, err)
 		return
@@ -130,19 +128,11 @@ func UpdateRedemption(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	scope := redemptionScope(c)
-	action := "redemption.update"
-	if scope.IsAdmin() {
-		action = "redemption.admin.update"
-	}
-	statusOnly := c.Query("status_only") != ""
-	command := model.AgentLegacyRedemptionUpdateRequest{RedemptionUpdateRequest: redemption, StatusOnly: statusOnly}
-	auth, ok := agentPurchaseAuthorization(c, action, redemption.RequestID, command)
+	identity, ok := redemptionIdentity(c)
 	if !ok {
 		return
 	}
-	scope.Authorization = &auth
-	cleanRedemption, err := model.UpdateRedemptionScoped(scope, redemption, statusOnly)
+	cleanRedemption, err := model.UpdateRedemption(redemption, c.Query("status_only") != "", identity)
 	if err != nil {
 		redemptionAPIError(c, err)
 		return
@@ -156,19 +146,11 @@ func UpdateRedemption(c *gin.Context) {
 }
 
 func DeleteInvalidRedemption(c *gin.Context) {
-	scope := redemptionScope(c)
-	scope.RequestID = c.Query("request_id")
-	action := "redemption.delete"
-	if scope.IsAdmin() {
-		action = "redemption.admin.delete"
-	}
-	command := model.AgentLegacyRedemptionDeleteRequest{RequestID: scope.RequestID, InvalidOnly: true, AgentUserID: redemptionAgentFilter(c)}
-	auth, ok := agentPurchaseAuthorization(c, action, scope.RequestID, command)
+	identity, ok := redemptionIdentity(c)
 	if !ok {
 		return
 	}
-	scope.Authorization = &auth
-	rows, err := model.DeleteRedemptionsScoped(scope, nil, true, redemptionAgentFilter(c))
+	rows, err := model.DeleteRedemptions(nil, true, identity)
 	if err != nil {
 		redemptionAPIError(c, err)
 		return
@@ -190,19 +172,11 @@ func DeleteRedemptionBatch(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	scope := redemptionScope(c)
-	scope.RequestID = request.RequestID
-	action := "redemption.delete"
-	if scope.IsAdmin() {
-		action = "redemption.admin.delete"
-	}
-	command := model.AgentLegacyRedemptionDeleteRequest{RequestID: scope.RequestID, IDs: request.Ids}
-	auth, ok := agentPurchaseAuthorization(c, action, scope.RequestID, command)
+	identity, ok := redemptionIdentity(c)
 	if !ok {
 		return
 	}
-	scope.Authorization = &auth
-	count, err := model.DeleteRedemptionsScoped(scope, request.Ids, false)
+	count, err := model.DeleteRedemptions(request.Ids, false, identity)
 	if err != nil {
 		redemptionAPIError(c, err)
 		return
@@ -215,8 +189,33 @@ func DeleteRedemptionBatch(c *gin.Context) {
 	common.ApiSuccess(c, count)
 }
 
-// Filtering never supplies the authority: the model always enforces the scope.
-func redemptionAgentFilter(c *gin.Context) int {
-	id, _ := strconv.Atoi(c.Query("agent_user_id"))
-	return id
+// Browser authentication is independently revalidated in each mutation's transaction.
+func redemptionIdentity(c *gin.Context) (model.AuthSessionIdentity, bool) {
+	c.Header("Cache-Control", "no-store")
+	identity, ok := middleware.GetSessionAuthIdentity(c)
+	if !ok || c.GetBool("use_access_token") || identity.UserID != c.GetInt("id") || model.ValidateRedemptionAdmin(identity) != nil {
+		redemptionAPIError(c, model.ErrRedemptionPermission)
+		return model.AuthSessionIdentity{}, false
+	}
+	return identity, true
+}
+func redemptionPage(c *gin.Context) *common.PageInfo {
+	page := common.GetPageQuery(c)
+	page.Page = min(max(page.Page, 1), 1_000_000)
+	page.PageSize = min(max(page.PageSize, 1), 100)
+	return page
+}
+
+// Database diagnostics may contain usable codes; return only known message keys.
+func redemptionAPIError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, model.ErrRedemptionPermission):
+		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage(err.Error()))
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		common.ApiErrorT(c, "Redemption code not found")
+	case errors.Is(err, model.ErrRedemptionUsedImmutable), errors.Is(err, model.ErrRedemptionInvalidStatus), errors.Is(err, model.ErrRedemptionInvalidRequest), errors.Is(err, model.ErrWalletQuotaLimitExceeded):
+		common.ApiErrorT(c, err.Error())
+	default:
+		common.ApiErrorT(c, "Redemption operation failed, please try again later")
+	}
 }

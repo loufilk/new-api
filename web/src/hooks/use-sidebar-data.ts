@@ -41,9 +41,7 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import type { SidebarBadges, SidebarData } from '@/components/layout/types'
-import { hasAgentHistory } from '@/lib/agent-permissions'
 import { ROLE } from '@/lib/roles'
-import { useAuthStore } from '@/stores/auth-store'
 
 /**
  * Root navigation groups for the application sidebar.
@@ -53,31 +51,8 @@ import { useAuthStore } from '@/stores/auth-store'
  */
 export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
   const { t } = useTranslation()
-  const user = useAuthStore((state) => state.auth.user)
-  const agentGroups: SidebarData['navGroups'] = hasAgentHistory(user)
-    ? [
-        {
-          id: 'agent',
-          title: t('Agent'),
-          items: [
-            {
-              title: t('Redemption Codes'),
-              url: '/redemption-codes',
-              icon: Ticket,
-            },
-            {
-              title: t('Legacy quota & invitations'),
-              url: '/agent-redemption',
-              icon: ClipboardList,
-            },
-          ],
-        },
-      ]
-    : []
-
   return {
     navGroups: [
-      ...agentGroups,
       {
         id: 'chat',
         title: t('Chat'),
@@ -142,11 +117,6 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
         title: t('Personal'),
         items: [
           {
-            title: t('Agent services & commissions'),
-            url: '/agent-platform',
-            icon: Users,
-          },
-          {
             title: t('Wallet'),
             url: '/wallet',
             icon: Wallet,
@@ -191,16 +161,6 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             title: t('Redemption Codes'),
             url: '/redemption-codes',
             icon: Ticket,
-          },
-          {
-            title: t('Agent finance'),
-            url: '/agent-platform/finance',
-            icon: Users,
-          },
-          {
-            title: t('Legacy agent budgets'),
-            url: '/agent-redemption',
-            icon: Users,
           },
           {
             title: t('Subscriptions'),

@@ -46,7 +46,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { ProfileEditor } from '@/features/agent-platform/components/profiles'
 import type { AdminUserManageAction } from '@/features/auth/secure-verification'
 import { UserSubscriptionsDialog } from '@/features/subscriptions/components/dialogs/user-subscriptions-dialog'
 import { handleServerError } from '@/lib/handle-server-error'
@@ -69,8 +68,6 @@ const MANAGE_ACTION_TITLES: Record<AdminUserManageAction, string> = {
   enable: 'Verify to enable user',
   promote: 'Verify to promote user',
   demote: 'Verify to demote user',
-  set_agent: 'Verify to grant agent role',
-  unset_agent: 'Verify to remove agent role',
 }
 
 interface DataTableRowActionsProps {
@@ -87,7 +84,6 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     requestVerification,
     verificationActive,
   } = useUsers()
-  const [profileEditorOpen, setProfileEditorOpen] = useState(false)
   const [resetPasskeyOpen, setResetPasskeyOpen] = useState(false)
   const [resetTwoFAOpen, setResetTwoFAOpen] = useState(false)
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
@@ -237,13 +233,6 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuItem>
         )}
 
-        <DropdownMenuItem
-          disabled={verificationActive}
-          onClick={() => setProfileEditorOpen(true)}
-        >
-          {t('Manage agent eligibility')}
-        </DropdownMenuItem>
-
         {isAdmin && !isRoot && (
           <DropdownMenuItem onClick={() => handleManage('demote')}>
             {t('Demote')}
@@ -351,14 +340,6 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         confirmText={t('Reset 2FA')}
         handleConfirm={handleResetTwoFA}
       />
-
-      {profileEditorOpen && (
-        <ProfileEditor
-          userId={user.id}
-          onClose={() => setProfileEditorOpen(false)}
-          onComplete={triggerRefresh}
-        />
-      )}
 
       <UserBindingDialog
         open={bindingDialogOpen}

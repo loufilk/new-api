@@ -4,14 +4,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -120,7 +118,7 @@ func TestAdminUserRiskOperationsRequireProofBeforeMutation(t *testing.T) {
 		},
 		{
 			name: "reject legacy agent role creation", method: http.MethodPost, path: "/api/user/", handler: CreateUser,
-			expectedStatus: http.StatusBadRequest, expectedCode: "AGENT_PROFILE_SEPARATE_REQUIRED",
+			expectedStatus: http.StatusBadRequest, expectedCode: "INVALID_USER_ROLE",
 			body: func(*model.User) string { return `{"username":"new-agent","password":"agent-password-1","role":5}` },
 			unchanged: func(t *testing.T, _ *model.User) {
 				var count int64
@@ -404,63 +402,4 @@ func TestAdminUserVerificationPolicy(t *testing.T) {
 		require.NoError(t, model.DB.Model(&model.AuthFlow{}).Count(&flows).Error)
 		assert.Zero(t, flows)
 	})
-}
-
-func TestAgentUserCreationAndLifecycleRequireBoundProof(t *testing.T) {
-	if os.Getenv("TEST_POSTGRES_DSN") == "" {
-		t.Skip("requires isolated PostgreSQL 18.6")
-	}
-	t.Setenv("TEST_SECURITY_DIALECT", "postgres")
-	operator, identity, target := setupAdminUserTest(t)
-	require.NoError(t, model.DB.AutoMigrate(&model.Token{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.AgentInvitation{}, &model.AgentInvitationPolicy{}, &model.AgentInvitationPolicyAudit{}, &model.AgentProfile{}, &model.AgentProfileAudit{}, &model.AgentProfileOperation{}, &model.AgentPolicy{}, &model.AgentPolicyState{}))
-	require.NoError(t, model.DB.Create(&model.TwoFA{UserId: operator.Id, Secret: "JBSWY3DPEHPK3PXP", IsEnabled: true}).Error)
-	previousMaster := common.IsMasterNode
-	common.IsMasterNode = false
-	t.Cleanup(func() { common.IsMasterNode = previousMaster })
-	require.NoError(t, authz.Init(model.DB))
-	response := adminUserRequest(http.MethodPost, "/api/user/", `{"username":"created-agent","password":"synthetic-agent-password","role":5}`, "", identity, common.RoleRootUser, nil, CreateUser)
-	assert.Equal(t, http.StatusBadRequest, response.Code)
-	assert.Contains(t, response.Body.String(), "AGENT_PROFILE_SEPARATE_REQUIRED")
-	var created int64
-	require.NoError(t, model.DB.Model(&model.User{}).Where("username = ?", "created-agent").Count(&created).Error)
-	assert.Zero(t, created, "legacy role creation cannot bypass operation-bound Profile authorization")
-	// Even a valid old administrator-create proof cannot resurrect mutually
-	// exclusive role 5. Qualification must use the transaction-bound Profile API.
-	legacyProof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: service.VerificationScopeAdminUserCreate, Context: []byte(`{"role":5}`)}, service.VerificationMethodPassword)
-	response = adminUserRequest(http.MethodPost, "/api/user/", `{"username":"created-agent","password":"synthetic-agent-password","role":5}`, legacyProof, identity, common.RoleRootUser, nil, CreateUser)
-	assert.Equal(t, http.StatusBadRequest, response.Code)
-	assert.Contains(t, response.Body.String(), "AGENT_PROFILE_SEPARATE_REQUIRED")
-	require.NoError(t, model.DB.Model(&model.User{}).Where("username = ?", "created-agent").Count(&created).Error)
-	assert.Zero(t, created)
-	var result securityEnrollmentResponse
-	var proof string
-
-	for _, action := range []string{"set_agent", "unset_agent"} {
-		mutation := model.AgentProfileMutation{Status: model.AgentProfileActive, Reason: "Agent qualification enabled by administrator"}
-		if action == "unset_agent" {
-			mutation.ExpectedVersion = 1
-			mutation.Status, mutation.Reason = model.AgentProfileExited, "Agent qualification exited by administrator"
-		}
-		command := model.AgentProfileCommand{UserID: target.Id, AgentProfileMutation: mutation}
-		encoded, err := common.Marshal(command)
-		require.NoError(t, err)
-		requestID := "legacy-profile-" + action
-		prepared, err := model.PrepareAgentProfileOperation(identity, "profile.update", requestID, encoded)
-		require.NoError(t, err)
-		hash, err := model.AgentTransactionContextHash(prepared.VerificationContext)
-		require.NoError(t, err)
-		proof, _, err = model.IssueAgentTransactionProof(identity, hash, "2fa")
-		require.NoError(t, err)
-		body := fmt.Sprintf(`{"id":%d,"action":%q,"request_id":%q}`, target.Id, action, requestID)
-		response = adminUserRequest(http.MethodPost, "/api/user/manage", body, proof, identity, common.RoleRootUser, nil, ManageUser)
-		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
-		require.True(t, result.Success, response.Body.String())
-		var updated model.User
-		require.NoError(t, model.DB.First(&updated, target.Id).Error)
-		assert.Equal(t, common.RoleCommonUser, updated.Role)
-		profile, err := model.GetAgentProfile(target.Id)
-		require.NoError(t, err)
-		require.NotNil(t, profile)
-		assert.Equal(t, mutation.Status, profile.Status)
-	}
 }

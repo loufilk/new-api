@@ -215,8 +215,8 @@ const (
 const (
 	RoleGuestUser  = 0
 	RoleCommonUser = 1
-	// Agent administrators are deliberately below administrators. Their scope
-	// is an explicit allowlist, not all privileges of a normal dashboard user.
+	// RoleAgentUser is a read-only compatibility value for historical accounts.
+	// It grants only ordinary consumer privileges in this non-agent build.
 	RoleAgentUser = 5
 	RoleAdminUser = 10
 	RoleRootUser  = 100
@@ -297,3 +297,12 @@ const (
 	TopUpStatusFailed  = "failed"
 	TopUpStatusExpired = "expired"
 )
+
+// EffectiveUserRole preserves stored legacy identities without granting business
+// or administrative privileges. It never rewrites the database role.
+func EffectiveUserRole(role int) int {
+	if role == RoleAgentUser {
+		return RoleCommonUser
+	}
+	return role
+}

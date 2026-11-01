@@ -412,8 +412,8 @@ func EpayNotify(c *gin.Context) {
 		// 数据库行锁 + 事务内状态校验保证（多实例部署下同样安全）。
 		LockOrder(verifyInfo.ServiceTradeNo)
 		defer UnlockOrder(verifyInfo.ServiceTradeNo)
-		var paymentFacts []model.AgentVerifiedPaymentFacts
-		if fact, ok := model.NewAgentVerifiedPaymentFacts(model.PaymentProviderEpay, params["trade_no"], operation_setting.EpayId, "live", "CNY", verifyInfo.Money, false); ok {
+		var paymentFacts []model.VerifiedPaymentFacts
+		if fact, ok := model.NewVerifiedPaymentFacts(model.PaymentProviderEpay, params["trade_no"], operation_setting.EpayId, "live", "CNY", verifyInfo.Money, false); ok {
 			paymentFacts = append(paymentFacts, fact)
 		}
 		alreadyDone, err := model.RechargeEpay(verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.Money, c.ClientIP(), paymentFacts...)

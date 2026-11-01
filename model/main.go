@@ -212,6 +212,9 @@ func InitDB() (err error) {
 			db = db.Debug()
 		}
 		DB = db
+		if _, err := NonAgentCutoverPreflight(DB); err != nil {
+			return err
+		}
 		// MySQL charset/collation startup check: ensure Chinese-capable charset
 		if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
 			if err := checkMySQLChineseSupport(DB); err != nil {
@@ -447,12 +450,8 @@ func mainAutoMigrateModels(registry *extension.Registry) []any {
 		&Option{},
 		&LoginEncryptionKey{},
 		&Redemption{},
-		&AgentRedemptionAccount{},
-		&AgentRedemptionLedger{},
-		&AgentRedemptionOperation{},
-		&AgentInvitation{},
-		&AgentInvitationPolicy{},
-		&AgentInvitationPolicyAudit{},
+		&RedemptionMutation{},
+		&PaymentReceipt{},
 		&Ability{},
 		&Log{},
 		&Midjourney{},
@@ -481,6 +480,8 @@ func mainAutoMigrateModels(registry *extension.Registry) []any {
 		&UserAccessToken{},
 		&BillingFinalization{},
 	}
+	coreModels = append(coreModels, BonusSourceModels()...)
+	coreModels = append(coreModels, ReferralRewardModels()...)
 	if registry == nil {
 		return coreModels
 	}

@@ -81,7 +81,7 @@ afterEach(() => {
 it.each([
   [100, 'root'],
   [10, 'admin'],
-  [5, 'agent'],
+  [5, 'user'],
   [1, 'user'],
 ] as const)('keeps role %i as %s in Chinese', async (role, label) => {
   const i18n = createInstance()

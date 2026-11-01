@@ -20,11 +20,10 @@ import i18next from 'i18next'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { toast } from 'sonner'
 
-import type { OperationDraft } from '@/features/agent-platform/types'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import { getAffiliateCode } from '../api'
+import { getAffiliateCode, transferAffiliateQuota } from '../api'
 import { generateAffiliateLink } from '../lib'
 
 // ============================================================================
@@ -50,11 +49,8 @@ export function useAffiliate() {
   const [affiliateCode, setAffiliateCode] = useState<string>('')
   const [affiliateLink, setAffiliateLink] = useState<string>('')
   const [loading, setLoading] = useState(true)
-  const [transferDraft, setTransferDraft] = useState<OperationDraft | null>(
-    null
-  )
-  const transferResolver = useRef<((success: boolean) => void) | null>(null)
-  const transferring = transferDraft !== null
+  const [transferring, setTransferring] = useState(false)
+  const transferInFlight = useRef(false)
   const pendingTransferRef = useRef<{ quota: number; key: string } | null>(null)
 
   // Fetch affiliate code
@@ -75,14 +71,14 @@ export function useAffiliate() {
     }
   }, [])
 
-  const transferQuota = useCallback((quota: number): Promise<boolean> => {
+  const transferQuota = useCallback(async (quota: number): Promise<boolean> => {
     if (
-      transferResolver.current ||
+      transferInFlight.current ||
       !Number.isSafeInteger(quota) ||
       quota <= 0
     ) {
       toast.error(i18next.t('Transfer failed'))
-      return Promise.resolve(false)
+      return false
     }
     if (pendingTransferRef.current?.quota !== quota) {
       pendingTransferRef.current = {
@@ -90,34 +86,23 @@ export function useAffiliate() {
         key: createTransferIdempotencyKey(),
       }
     }
-    const requestId = pendingTransferRef.current.key
-    return new Promise((resolve) => {
-      transferResolver.current = resolve
-      setTransferDraft({
-        action: 'commission.convert.legacy',
-        request_id: requestId,
-        payload: { quota },
-        endpoint: '/legacy-affiliate-transfer',
-        resource: '/commissions/conversions',
-      })
-    })
+    transferInFlight.current = true
+    setTransferring(true)
+    try {
+      requireServerSuccess(
+        await transferAffiliateQuota({ quota }, pendingTransferRef.current.key)
+      )
+      pendingTransferRef.current = null
+      toast.success(i18next.t('Transfer successful'))
+      return true
+    } catch (error) {
+      handleServerError(error, i18next.t('Transfer failed'))
+      return false
+    } finally {
+      transferInFlight.current = false
+      setTransferring(false)
+    }
   }, [])
-
-  const finishTransfer = useCallback((success: boolean) => {
-    const resolve = transferResolver.current
-    transferResolver.current = null
-    if (success) pendingTransferRef.current = null
-    setTransferDraft(null)
-    resolve?.(success)
-  }, [])
-
-  useEffect(
-    () => () => {
-      transferResolver.current?.(false)
-      transferResolver.current = null
-    },
-    []
-  )
 
   useEffect(() => {
     fetchAffiliateCode()
@@ -129,8 +114,6 @@ export function useAffiliate() {
     loading,
     transferring,
     transferQuota,
-    transferDraft,
-    finishTransfer,
     refetch: fetchAffiliateCode,
   }
 }

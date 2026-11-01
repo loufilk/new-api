@@ -29,8 +29,6 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { formatQuota, formatTimestampToDate } from '@/lib/format'
-import { ROLE } from '@/lib/roles'
-import { useAuthStore } from '@/stores/auth-store'
 
 import { REDEMPTION_FILTER_EXPIRED, REDEMPTION_STATUSES } from '../constants'
 import { isRedemptionExpired, isTimestampExpired } from '../lib'
@@ -39,19 +37,7 @@ import { DataTableRowActions } from './data-table-row-actions'
 
 export function useRedemptionsColumns(): ColumnDef<Redemption>[] {
   const { t } = useTranslation()
-  const role = useAuthStore((state) => state.auth.user?.role)
-  const ownerColumns: ColumnDef<Redemption>[] =
-    role && role >= ROLE.ADMIN
-      ? [
-          {
-            accessorKey: 'budget_agent_id',
-            header: t('Agent ID'),
-            cell: ({ row }) => row.original.budget_agent_id || '—',
-          },
-        ]
-      : []
   return [
-    ...ownerColumns,
     {
       id: 'select',
       header: ({ table }) => (

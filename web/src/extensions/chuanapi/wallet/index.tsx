@@ -21,8 +21,6 @@ import { useTranslation } from 'react-i18next'
 
 import { ErrorState } from '@/components/error-state'
 import { SectionPageLayout } from '@/components/layout'
-import { OperationDialog } from '@/features/agent-platform/components/operation-dialog'
-import { PendingOperations } from '@/features/agent-platform/components/pending-operations'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
@@ -95,8 +93,6 @@ export function Wallet(_props: WalletProps) {
     loading: affiliateLoading,
     transferring,
     transferQuota,
-    transferDraft,
-    finishTransfer,
   } = useAffiliate()
   const {
     records: referralRecords,
@@ -424,17 +420,8 @@ export function Wallet(_props: WalletProps) {
         processing={creemProcessing}
       />
 
-      <PendingOperations key={user?.id} />
-      {transferDraft && (
-        <OperationDialog
-          key={transferDraft.request_id}
-          draft={transferDraft}
-          onClose={() => finishTransfer(false)}
-          onComplete={() => finishTransfer(true)}
-        />
-      )}
       <TransferDialog
-        open={transferDialogOpen && !transferDraft}
+        open={transferDialogOpen}
         onOpenChange={setTransferDialogOpen}
         onConfirm={handleTransfer}
         availableQuota={user?.aff_quota ?? 0}

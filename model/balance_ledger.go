@@ -62,6 +62,7 @@ const (
 )
 
 var (
+	ErrLedgerImmutable           = errors.New("Financial source records are immutable")
 	ErrLedgerInvalidEntry        = errors.New("invalid ledger entry")
 	ErrLedgerInsufficientBalance = errors.New("insufficient balance")
 	ErrLedgerIdempotencyConflict = errors.New("ledger idempotency key conflict: same key with different parameters")

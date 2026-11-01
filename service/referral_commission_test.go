@@ -64,7 +64,7 @@ func settleOnlineTopUp(t *testing.T, tradeNo string, amount int64) {
 
 func drainReferralOutbox(t *testing.T) {
 	t.Helper()
-	_, err := model.ProcessAgentCommissionOutbox(context.Background(), 200)
+	_, err := model.ProcessReferralRewardOutbox(context.Background(), 200)
 	require.NoError(t, err)
 }
 
@@ -355,7 +355,7 @@ func TestReferralCommissionInvalidRateKeepsPrincipalAndRetryableEvent(t *testing
 		done, err := model.RechargeEpay(trade, "alipay", "2.00", "127.0.0.1")
 		require.NoError(t, err)
 		assert.False(t, done)
-		_, err = model.ProcessAgentCommissionOutbox(context.Background(), 200)
+		_, err = model.ProcessReferralRewardOutbox(context.Background(), 200)
 		require.Error(t, err)
 		assertReferralPrincipalPreserved(t, buyerID, inviterID, trade)
 	}
@@ -371,12 +371,12 @@ func assertReferralPrincipalPreserved(t *testing.T, buyerID, inviterID int, trad
 	require.NoError(t, model.DB.Model(&model.BalanceLedger{}).Where("reference_id = ?", trade).Count(&ledgerRows).Error)
 	assert.EqualValues(t, 1, ledgerRows)
 	assert.Zero(t, countReferralCommissions(t, inviterID))
-	var event model.AgentCommissionOutbox
+	var event model.ReferralRewardOutbox
 	require.NoError(t, model.DB.Where("reference_id = ?", trade).First(&event).Error)
 	assert.Equal(t, "failed", event.Status)
 	assert.Positive(t, event.Attempts)
 	var inbox int64
-	require.NoError(t, model.DB.Model(&model.AgentCommissionInbox{}).Where("event_id = ?", event.ID).Count(&inbox).Error)
+	require.NoError(t, model.DB.Model(&model.ReferralRewardInbox{}).Where("event_id = ?", event.ID).Count(&inbox).Error)
 	assert.Zero(t, inbox, "failed reward has no success receipt")
 }
 
@@ -411,7 +411,7 @@ func TestReferralCommissionInvalidBalancesDoNotRollBackPrincipal(t *testing.T) {
 		seedPendingOnlineTopUp(t, buyerID, 2, trade)
 		_, err := model.RechargeEpay(trade, "alipay", "2.00", "127.0.0.1")
 		require.NoError(t, err)
-		_, err = model.ProcessAgentCommissionOutbox(context.Background(), 200)
+		_, err = model.ProcessReferralRewardOutbox(context.Background(), 200)
 		require.Error(t, err)
 		assertReferralPrincipalPreserved(t, buyerID, inviterID, trade)
 		user := getUserBalances(t, inviterID)
@@ -436,7 +436,7 @@ func TestReferralCommissionConcurrentInviteesAtAffBoundary(t *testing.T) {
 	for range 2 {
 		require.NoError(t, <-errs)
 	}
-	_, err := model.ProcessAgentCommissionOutbox(context.Background(), 200)
+	_, err := model.ProcessReferralRewardOutbox(context.Background(), 200)
 	require.Error(t, err, "one award remains retryable at the upper bound")
 	assert.Equal(t, 1_000_000, getUserBalances(t, 642).QuotaPaid)
 	assert.Equal(t, 1_000_000, getUserBalances(t, 643).QuotaPaid)
@@ -445,7 +445,7 @@ func TestReferralCommissionConcurrentInviteesAtAffBoundary(t *testing.T) {
 	assert.Equal(t, common.MaxWalletQuota, inviter.AffQuota)
 	assert.Equal(t, 50_000, inviter.AffHistoryQuota)
 	var pending int64
-	require.NoError(t, model.DB.Model(&model.AgentCommissionOutbox{}).Where("status = ?", "failed").Count(&pending).Error)
+	require.NoError(t, model.DB.Model(&model.ReferralRewardOutbox{}).Where("status = ?", "failed").Count(&pending).Error)
 	assert.EqualValues(t, 1, pending)
 }
 

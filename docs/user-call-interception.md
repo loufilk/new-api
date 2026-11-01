@@ -28,7 +28,7 @@ apply. The controller rechecks the persisted actor; the save transaction locks
 and rechecks actor and target. Non-administrators cannot use these endpoints,
 even when targeting themselves. The permissions also provide matching scoped
 administrator PAT access through the existing permission-route registry; this
-does **not** enable PATs for Playground or agent-platform business APIs.
+does **not** enable PATs for Playground. Agent-platform business APIs are absent in this edition.
 The latter remain browser-session-only, including legacy PAT rejection and
 existing transaction MFA. Personal-profile updates use an explicit field
 allowlist and cannot change this separate policy.

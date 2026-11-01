@@ -83,7 +83,7 @@ func openReferralPostgreSQLFixture(t *testing.T) *referralPGFixture {
 
 	require.NoError(t, db.AutoMigrate(append([]any{
 		&model.User{},
-		&model.TopUp{},
+		&model.TopUp{}, &model.PaymentReceipt{},
 		&model.SubscriptionOrder{},
 		&model.SubscriptionPlan{},
 		&model.Redemption{},
@@ -94,7 +94,7 @@ func openReferralPostgreSQLFixture(t *testing.T) *referralPGFixture {
 		&model.Option{},
 		&model.SystemTask{},
 		&model.Log{},
-	}, model.AgentPlatformModels()...)...))
+	}, append(model.BonusSourceModels(), model.ReferralRewardModels()...)...)...))
 
 	return &referralPGFixture{db: db, schema: schema}
 }
@@ -167,10 +167,10 @@ func TestReferralPostgreSQLCommissionConcurrentCapAndBoundary(t *testing.T) {
 		require.NoError(t, boundaryErrs[i])
 		assert.Equal(t, 1_000_000, getUserBalances(t, userID).QuotaPaid)
 	}
-	_, processErr := model.ProcessAgentCommissionOutbox(context.Background(), 200)
+	_, processErr := model.ProcessReferralRewardOutbox(context.Background(), 200)
 	require.Error(t, processErr, "only the failed commission remains retryable; both principals committed")
 	var failed int64
-	require.NoError(t, model.DB.Model(&model.AgentCommissionOutbox{}).Where("status = ?", "failed").Count(&failed).Error)
+	require.NoError(t, model.DB.Model(&model.ReferralRewardOutbox{}).Where("status = ?", "failed").Count(&failed).Error)
 	assert.EqualValues(t, 1, failed)
 
 	assert.EqualValues(t, 1, countReferralPGCommissions(t, 8303))
@@ -187,7 +187,7 @@ func TestReferralPostgreSQLCommissionOverflowPreservesPrincipal(t *testing.T) {
 	seedPendingOnlineTopUp(t, 8312, 2, "PG-OVERFLOW-RETRY")
 	_, err := model.RechargeEpay("PG-OVERFLOW-RETRY", "alipay", "2.00", "127.0.0.1")
 	require.NoError(t, err)
-	_, err = model.ProcessAgentCommissionOutbox(context.Background(), 200)
+	_, err = model.ProcessReferralRewardOutbox(context.Background(), 200)
 	require.Error(t, err)
 	assertReferralPrincipalPreserved(t, 8312, 8311, "PG-OVERFLOW-RETRY")
 	assert.Equal(t, common.MaxWalletQuota, getUserBalances(t, 8311).AffQuota)

@@ -55,3 +55,6 @@ go.work.sum
 /tmp
 /secrets
 /semantic-review
+
+# Executor-local frontend test cache.
+/node_modules/

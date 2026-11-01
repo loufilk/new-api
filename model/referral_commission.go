@@ -11,6 +11,7 @@ import (
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 // ReferralTransferIdempotencyKeyMaxLength 是划转幂等键的长度上限；模型层与
@@ -174,7 +175,7 @@ func RecordReferralCommissionForTopUpTx(tx *gorm.DB, sourceUserId, paidQuota int
 	update := tx.Model(&User{}).
 		Where("id = ? AND aff_quota >= 0 AND aff_history >= 0 AND aff_quota <= ? AND aff_history <= ?",
 			inviter.Id, common.MaxWalletQuota-rewardQuota, common.MaxWalletQuota-rewardQuota).
-		Updates(map[string]interface{}{
+		Updates(map[string]any{
 			"aff_quota":   gorm.Expr("aff_quota + ?", rewardQuota),
 			"aff_history": gorm.Expr("aff_history + ?", rewardQuota),
 		})
@@ -290,7 +291,7 @@ func ValidReferralTransferIdempotencyKey(key string) bool {
 // 幂等：IdempotencyKey 由用户提供、后端按用户命名空间化。同键同金额重放返回
 // 原始结果（Replayed=true）且不再扣减 aff_quota；同键不同金额返回
 // ErrLedgerIdempotencyConflict。余额不足、正数、上限与键格式校验失败不产生任何变动。
-func TransferAffQuota(userId, amount int, idempotencyKey string, authorizations ...AgentTransactionAuthorization) (*LedgerResult, error) {
+func TransferAffQuota(userId, amount int, idempotencyKey string, identities ...AuthSessionIdentity) (*LedgerResult, error) {
 	key := strings.TrimSpace(idempotencyKey)
 	if userId <= 0 || amount <= 0 || amount > common.MaxWalletQuota || !ValidReferralTransferIdempotencyKey(key) {
 		return nil, ErrReferralTransferInvalid
@@ -310,19 +311,16 @@ func TransferAffQuota(userId, amount int, idempotencyKey string, authorizations 
 	}
 	var result *LedgerResult
 	err := DB.Transaction(func(tx *gorm.DB) error {
-		var authorization AgentTransactionAuthorization
-		var context AgentTransactionContext
-		if len(authorizations) > 0 {
-			if len(authorizations) != 1 || authorizations[0].Identity().UserID != userId {
-				return ErrAgentTransactionProof
+		// HTTP callers bind the transfer to a current browser session. Internal
+		// accounting callers may omit this receipt; they never accept client input.
+		if len(identities) > 0 {
+			if len(identities) != 1 || identities[0].UserID != userId {
+				return ErrUserSessionInactive
 			}
-			authorization = authorizations[0]
-			policy, err := LockCurrentAgentPolicyTx(tx)
-			if err != nil {
-				return err
+			if _, token := ParseAccessTokenSessionID(identities[0].SessionID); token {
+				return ErrUserSessionInactive
 			}
-			context, err = legacyCommissionContext(tx, policy, authorization.Identity(), AgentLegacyCommissionRequest{RequestID: key, Quota: amount})
-			if err != nil {
+			if err := ValidateAuthSessionWithTx(tx.Session(&gorm.Session{Logger: tx.Logger.LogMode(gormlogger.Silent)}), identities[0]); err != nil {
 				return err
 			}
 		}
@@ -336,15 +334,7 @@ func TransferAffQuota(userId, amount int, idempotencyKey string, authorizations 
 		}
 		result = applied
 		if applied.Replayed {
-			if len(authorizations) > 0 {
-				return ValidateAuthSessionWithTx(tx, authorization.Identity())
-			}
 			return nil
-		}
-		if len(authorizations) > 0 {
-			if err := ConsumeAgentTransactionAuthorizationTx(tx, authorization, context); err != nil {
-				return err
-			}
 		}
 		if user.AffQuota < amount {
 			return ErrLedgerInsufficientBalance

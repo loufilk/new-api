@@ -79,9 +79,9 @@ func TestSetRouterPreservesLlmsRoutesAndCORSContract(t *testing.T) {
 	})
 }
 
-// M7 intentionally changes the old snapshot boundary: /llms is now a declared
-// host route before the plugin generation is built, so an intersecting plugin
-// fails registry validation instead of being admitted and silently shadowed.
+// /llms is a declared host namespace before plugin generation. The current
+// plugin contract skips a third-party top-level overlap, while preserving its
+// namespaced route; neither path may replace the static host endpoint.
 func TestLlmsRoutesAreIncludedInPluginStaticSnapshot(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
@@ -100,16 +100,13 @@ func TestLlmsRoutesAreIncludedInPluginStaticSnapshot(t *testing.T) {
 		},
 	))
 	require.NoError(t, pluginRegistry.SetGenerationPreparer(builder.prepare))
-	routingErrors := pluginRegistry.RoutingErrors()
-	require.NotEmpty(t, routingErrors, "intersecting plugin must be rejected by the host static-route snapshot")
-	var routingErrorText strings.Builder
-	for pluginKey, message := range routingErrors {
-		routingErrorText.WriteString(pluginKey)
-		routingErrorText.WriteByte(':')
-		routingErrorText.WriteString(message)
-		routingErrorText.WriteByte('\n')
-	}
-	assert.Contains(t, strings.ToLower(routingErrorText.String()), "llms.txt")
+	require.Empty(t, pluginRegistry.RoutingErrors())
+	require.Equal(t, []jsplugin.SkippedRoute{{
+		PluginKey: "llms-shadow-equivalence", Route: plugin.Meta.Routes[0], Reason: "host_namespace",
+	}}, pluginRegistry.Generation().SkippedRoutes())
+	engine.NoRoute((&pluginRouteDispatcher{registry: pluginRegistry}).dispatch,
+		func(c *gin.Context) { c.String(http.StatusNotFound, "fallback") })
+	assert.Equal(t, "plugin", performPluginRequest(engine, http.MethodGet, "/llms-shadow-equivalence/llms.txt").Body.String())
 
 	var llmsRoutes []string
 	for _, route := range engine.Routes() {

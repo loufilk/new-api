@@ -366,8 +366,8 @@ func handleCheckoutCompleted(c *gin.Context, event *CreemWebhookEvent) {
 	case "test":
 		environment = "test"
 	}
-	var paymentFacts []model.AgentVerifiedPaymentFacts
-	if fact, ok := model.NewAgentVerifiedPaymentFacts(model.PaymentProviderCreem, event.Object.Order.Id, "primary", environment, event.Object.Order.Currency, fmt.Sprint(event.Object.Order.AmountPaid), true); ok {
+	var paymentFacts []model.VerifiedPaymentFacts
+	if fact, ok := model.NewVerifiedPaymentFacts(model.PaymentProviderCreem, event.Object.Order.Id, "primary", environment, event.Object.Order.Currency, fmt.Sprint(event.Object.Order.AmountPaid), true); ok {
 		paymentFacts = append(paymentFacts, fact)
 	}
 	err := model.RechargeCreem(referenceId, customerEmail, customerName, c.ClientIP(), paymentFacts...)

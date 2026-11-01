@@ -4,6 +4,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -186,18 +188,20 @@ func TestAccessTokenCatalogCoversEveryPermission(t *testing.T) {
 	}
 }
 
-func TestAgentPlatformAccessTokenRulesRequireBrowserSessionsForEveryRoute(t *testing.T) {
+func TestNonAgentBuildDoesNotRegisterRetiredBusinessRoutes(t *testing.T) {
 	engine := newAccessTokenScopeTestEngine(t)
 	for _, route := range engine.Routes() {
-		if !strings.HasPrefix(route.Path, "/api/agent-platform/") {
-			continue
-		}
-		key := route.Method + " " + route.Path
-		rule, exists := middleware.AccessTokenRouteRule(key)
-		require.True(t, exists, key)
-		assert.Equal(t, "session", rule.Kind(), key)
-		assert.Empty(t, rule.Scope(), "financial routes must never acquire a PAT grant: %s", key)
+		assert.False(t, strings.HasPrefix(route.Path, "/api/agent-platform"), route.Path)
+		assert.False(t, strings.HasPrefix(route.Path, "/api/agent-redemption"), route.Path)
 	}
+	for _, path := range []string{"/api/agent-platform", "/api/agent-platform/me", "/api/agent-platform/purchases", "/api/agent-redemption/", "/api/agent-redemption/batches"} {
+		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete} {
+			recorder := httptest.NewRecorder()
+			engine.ServeHTTP(recorder, httptest.NewRequest(method, path, nil))
+			assert.Equal(t, http.StatusNotFound, recorder.Code, method+" "+path)
+		}
+	}
+
 }
 
 func TestAccessTokenVerificationScopesAreAllListed(t *testing.T) {

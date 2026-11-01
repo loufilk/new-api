@@ -62,14 +62,8 @@ func authHelper(c *gin.Context, minRole int) {
 		return
 	}
 	requiredRole := minRole
-	if minRole == common.RoleAgentUser {
-		requiredRole = common.RoleCommonUser
-	}
-	if user.Role < requiredRole {
+	if common.EffectiveUserRole(user.Role) < requiredRole {
 		abortWithWebMessage(c, http.StatusForbidden, "AUTH_INSUFFICIENT_PRIVILEGE", common.NewMessage("Unauthorized, insufficient privileges"))
-		return
-	}
-	if minRole == common.RoleAgentUser && !enforceAgentBusinessAccess(c, user, identity, useAccessToken) {
 		return
 	}
 	var lookup *accessTokenLookup
@@ -92,7 +86,7 @@ func authHelper(c *gin.Context, minRole int) {
 	// 的写接口都会自动留痕（无需在路由上单独挂审计中间件，避免漏挂）。
 	// handler 内手动埋点者会设置 ContextKeyAuditLogged，finishAdminAudit 据此跳过。
 	var auditWriter *auditResponseWriter
-	if minRole >= common.RoleAgentUser {
+	if minRole >= common.RoleAdminUser {
 		auditWriter = beginAdminAudit(c)
 	}
 
@@ -126,9 +120,6 @@ func TryUserAuth() func(c *gin.Context) {
 			}
 		}
 		if credentialKind != dashboardCredentialUnmatched {
-			if !enforceAgentDashboardRoute(c, user.Role, credentialKind == dashboardCredentialPAT) {
-				return
-			}
 			setDashboardAuthContext(c, user, identity, credentialKind == dashboardCredentialPAT)
 			if credentialKind == dashboardCredentialPAT {
 				setAccessTokenContext(c, lookup)
@@ -155,9 +146,6 @@ func SessionAuth() func(c *gin.Context) {
 		}
 		if user.Status != common.UserStatusEnabled || user.Role < common.RoleCommonUser || !validUserInfo(user.Username, user.Role) {
 			writeDashboardAuthError(c, service.ErrLoginSessionRevoked)
-			return
-		}
-		if !enforceAgentDashboardRoute(c, user.Role, false) {
 			return
 		}
 		setDashboardAuthContext(c, user, identity, false)
@@ -395,7 +383,7 @@ func authorizationToken(header string) (string, bool) {
 func setDashboardAuthContext(c *gin.Context, user *model.UserBase, identity service.AuthIdentity, useAccessToken bool) {
 	c.Header("Auth-Version", "864b7076dbcd0a3c01b5520316720ebf")
 	c.Set("username", user.Username)
-	c.Set("role", user.Role)
+	c.Set("role", common.EffectiveUserRole(user.Role))
 	c.Set("id", user.Id)
 	c.Set("group", user.Group)
 	c.Set("user_group", user.Group)
@@ -477,9 +465,6 @@ func TokenOrUserAuth() func(c *gin.Context) {
 			_, user, err := service.ValidateLoginSession(identity)
 			if err != nil {
 				writeDashboardAuthError(c, err)
-				return
-			}
-			if !enforceAgentDashboardRoute(c, user.Role, false) {
 				return
 			}
 			setDashboardAuthContext(c, user, identity, false)

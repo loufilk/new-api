@@ -42,12 +42,8 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 		&Option{},
 		&LoginEncryptionKey{},
 		&Redemption{},
-		&AgentRedemptionAccount{},
-		&AgentRedemptionLedger{},
-		&AgentRedemptionOperation{},
-		&AgentInvitation{},
-		&AgentInvitationPolicy{},
-		&AgentInvitationPolicyAudit{},
+		&RedemptionMutation{},
+		&PaymentReceipt{},
 		&Ability{},
 		&Log{},
 		&Midjourney{},
@@ -75,6 +71,16 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 		&AuthzRole{},
 		&UserAccessToken{},
 		&BillingFinalization{},
+		&BonusSourceLot{},
+		&BonusSourceState{},
+		&BonusSourceAccount{},
+		&BonusSourceAllocation{},
+		&BonusSourceRestoration{},
+		&BonusSourceRemoval{},
+		&BonusSourceAnomaly{},
+		&BonusSourceReconciliationCursor{},
+		&ReferralRewardOutbox{},
+		&ReferralRewardInbox{},
 		&BalanceLedgerOperation{},
 		&BalanceLedger{},
 		&ModelBonusEligibleAudit{},
@@ -89,7 +95,7 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 
 func TestMainAutoMigrateModelsWithoutRegistryKeepsCoreModels(t *testing.T) {
 	models := mainAutoMigrateModels(nil)
-	require.Len(t, models, 46)
+	require.Len(t, models, 52)
 	assert.IsType(t, &Channel{}, models[0])
-	assert.IsType(t, &BillingFinalization{}, models[len(models)-1])
+	assert.IsType(t, &ReferralRewardInbox{}, models[len(models)-1])
 }

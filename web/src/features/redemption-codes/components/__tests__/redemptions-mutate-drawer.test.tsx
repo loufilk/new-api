@@ -30,7 +30,6 @@ import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import type { Redemption } from '../../types'
-import { authorizeTransaction, transactionNetwork } from './transaction-fixture'
 
 const i18n = (await import('i18next')).default
 const { I18nextProvider, initReactI18next } = await import('react-i18next')
@@ -77,7 +76,6 @@ function redemption(id: number, quota = 500001): Redemption {
   return {
     id,
     user_id: 1,
-    version: 3,
     name: `code-${id}`,
     key: `key-${id}`,
     status: 1,
@@ -141,14 +139,6 @@ async function renderDrawer(
   useAuthStore
     .getState()
     .auth.setUser({ id: 1, username: 'operator', role: ROLE.ADMIN })
-  const network = transactionNetwork()
-  network.mutations.mockImplementation((config) => {
-    expect(config.params).toBeUndefined()
-    expect(config.data).not.toHaveProperty('status_only')
-    expect(config.data).not.toHaveProperty('count')
-    expect(config.data).toHaveProperty('version', 3)
-    return apiClient.put(String(config.url), config.data)
-  })
   renderedDrawer = { result: render(drawerTree(currentRow)) }
 }
 
@@ -284,7 +274,6 @@ describe('redemption drawer', () => {
 
     changeInput(getControlByLabel('Name'), 'renamed')
     submitForm()
-    await authorizeTransaction()
     await waitFor(() => expect(updates).toHaveLength(1))
 
     expect(updates[0]?.name).toBe('renamed')
@@ -305,7 +294,6 @@ describe('redemption drawer', () => {
     await waitForLoadedForm()
     changeInput(getControlByLabel('Quota (USD)'), '2')
     submitForm()
-    await authorizeTransaction()
     await waitFor(() => expect(updates).toHaveLength(1))
 
     expect(updates[0]?.quota).toBe(1000000)
@@ -339,7 +327,6 @@ describe('redemption drawer', () => {
     expect(screen.getByRole('button', { name: 'Never expires' })).toBeVisible()
     expect(screen.getByLabelText('Time')).toBeDisabled()
     fireEvent.click(getSaveButton())
-    await authorizeTransaction()
     await waitFor(() =>
       expect(updates).toEqual([
         expect.objectContaining({ id: 2, expired_time: 0 }),
@@ -366,7 +353,6 @@ describe('redemption drawer', () => {
       ).toBeVisible()
       expect(screen.getByLabelText('Time')).toBeDisabled()
       fireEvent.click(getSaveButton())
-      await authorizeTransaction()
       await waitFor(() =>
         expect(updates).toEqual([
           expect.objectContaining({ id: 1, expired_time: 0 }),
@@ -405,7 +391,6 @@ describe('redemption drawer', () => {
 
     changeInput(getControlByLabel('Name'), 'second')
     submitForm()
-    await authorizeTransaction()
     await waitFor(() => expect(updates).toHaveLength(1))
 
     expect(updates[0]?.id).toBe(2)

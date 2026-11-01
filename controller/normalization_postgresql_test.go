@@ -63,7 +63,7 @@ func openNormalizationPostgres(t *testing.T) *gorm.DB {
 		&model.ReferralCommission{},
 		&model.Log{},
 		&paymentcore.PaymentOrderBinding{},
-	}, model.AgentPlatformModels()...)...))
+	}, append([]any{&model.PaymentReceipt{}, &model.RedemptionMutation{}}, append(model.BonusSourceModels(), model.ReferralRewardModels()...)...)...)...))
 
 	previousDB, previousLogDB := model.DB, model.LOG_DB
 	previousMainType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
@@ -83,8 +83,8 @@ func openNormalizationPostgres(t *testing.T) *gorm.DB {
 	// through the fixture rows' operation_id before those rows, so a re-run
 	// cannot replay a stale operation and silently skip the credit.
 	for _, stmt := range []string{
-		`DELETE FROM agent_commission_inboxes WHERE event_id IN (SELECT id FROM agent_commission_outboxes WHERE reference_id LIKE 'WAFFO-NORM-%')`,
-		`DELETE FROM agent_commission_outboxes WHERE reference_id LIKE 'WAFFO-NORM-%'`,
+		`DELETE FROM referral_reward_inboxes WHERE event_id IN (SELECT id FROM referral_reward_outboxes WHERE reference_id LIKE 'WAFFO-NORM-%')`,
+		`DELETE FROM referral_reward_outboxes WHERE reference_id LIKE 'WAFFO-NORM-%'`,
 		`DELETE FROM agent_payment_receipts WHERE local_order_key LIKE 'WAFFO-NORM-%'`,
 		`DELETE FROM referral_commissions WHERE reference_id LIKE 'WAFFO-NORM-%'`,
 		`DELETE FROM balance_ledger_operations WHERE id IN (SELECT operation_id FROM balance_ledger WHERE reference_type = 'topup' AND reference_id LIKE 'WAFFO-NORM-%')`,
@@ -341,7 +341,7 @@ func TestWaffoPancakeNormalizationPostgreSQL(t *testing.T) {
 
 	assertReferralCommissionOnce := func(t *testing.T, buyer *model.User, ledgerRef string, paid int) {
 		t.Helper()
-		_, processErr := model.ProcessAgentCommissionOutbox(context.Background(), 200)
+		_, processErr := model.ProcessReferralRewardOutbox(context.Background(), 200)
 		require.NoError(t, processErr)
 		expectedReward := int(float64(paid) * 0.05)
 		require.Positive(t, expectedReward)

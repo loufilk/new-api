@@ -85,7 +85,7 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 				common.SetDatabaseTypes(previousMain, previousLog)
 				common.RedisEnabled = previousRedis
 			})
-			for _, table := range []any{&model.User{}, &model.Redemption{}, &model.UserAccessToken{}} {
+			for _, table := range []any{&model.User{}, &model.Redemption{}, &model.UserAccessToken{}, &model.UserSession{}} {
 				require.False(t, db.Migrator().HasTable(table), "use an empty test database")
 				require.NoError(t, db.AutoMigrate(table))
 				t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(table)) })
@@ -95,7 +95,7 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, logDB.Migrator().DropTable(&model.AuditLog{})) })
 			admin := model.User{Username: "redemption-audit-admin", Password: "unused", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1}
 			require.NoError(t, db.Create(&admin).Error)
-			token, _ := createScopedAccessToken(t, admin.Id, 0, "redemption:write")
+			_, token := createAccessTokenTestSession(t, admin.Id, "redemption-batch-browser")
 			codes := make([]model.Redemption, 16)
 			for index := range codes {
 				codes[index] = model.Redemption{Name: "selected", Key: fmt.Sprintf("%032d", index+1), Quota: 100, Status: common.RedemptionCodeStatusEnabled}

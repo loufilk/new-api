@@ -62,8 +62,7 @@ export function SecureVerificationDialog(props: SecureVerificationDialogProps) {
   const verifying = state.phase === 'verifying'
   const login = state.request.scope === 'auth.login'
   const acceptsBackupCode =
-    state.request.scope !== '2fa.backup_codes.regenerate' &&
-    state.request.scope !== 'agent.transaction'
+    state.request.scope !== '2fa.backup_codes.regenerate'
   let canVerify = state.phase === 'ready' && Boolean(input)
   if (input?.method === 'password') {
     canVerify = canVerify && input.password.length > 0

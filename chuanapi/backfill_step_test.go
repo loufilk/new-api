@@ -48,7 +48,7 @@ func newWalletDB(t *testing.T) *gorm.DB {
 		}
 	})
 
-	require.NoError(t, db.AutoMigrate(append(append([]any{&model.User{}, &model.AgentRedemptionAccount{}, &model.Redemption{}}, WalletModels()...), model.AgentPlatformModels()...)...))
+	require.NoError(t, db.AutoMigrate(append(append([]any{&model.User{}, &model.Redemption{}}, WalletModels()...), append(append([]any{&model.PaymentReceipt{}, &model.RedemptionMutation{}}, model.BonusSourceModels()...), model.ReferralRewardModels()...)...)...))
 	return db
 }
 
