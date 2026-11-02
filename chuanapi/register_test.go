@@ -34,7 +34,7 @@ var expectedPaymentModelOrder = []any{
 
 var expectedSupportModelOrder = []any{
 	&model.SupportTicket{},
-	&model.SupportTicketMessage{},
+	&model.SupportTicketMessage{}, &model.SupportTicketAttachment{}, &model.SupportTicketSubmission{},
 	&model.SupportEmailSettings{}, &model.SupportEmailPreference{}, &model.SupportEmailOutbox{}, &model.SupportEmailRate{},
 }
 

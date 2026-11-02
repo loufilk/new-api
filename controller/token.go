@@ -3,9 +3,11 @@ package controller
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -13,11 +15,13 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
 	relayhelper "github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/perf_metrics_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -39,9 +43,37 @@ func (input *tokenAutoGroupsInput) UnmarshalJSON(data []byte) error {
 
 type tokenRequest struct {
 	model.Token
-	AutoGroups tokenAutoGroupsInput `json:"auto_groups"`
+	AutoGroups         tokenAutoGroupsInput `json:"auto_groups"`
+	Group              *string              `json:"group"`
+	CrossGroupRetry    *bool                `json:"cross_group_retry"`
+	SmartRouting       *bool                `json:"smart_routing"`
+	RoutingStrategy    *string              `json:"routing_strategy"`
+	NoRetryWithinGroup *bool                `json:"no_retry_within_group"`
+	ProjectLabel       *string              `json:"project_label"`
 	// 指针区分“未传”和显式 false：新建时未传即开启，更新时未传则保留原值。
 	AllowUserQuotaQuery *bool `json:"allow_user_quota_query"`
+}
+
+func (request *tokenRequest) applyRoutingSettings(token *model.Token) error {
+	if request.Group != nil {
+		token.Group = *request.Group
+	}
+	if request.CrossGroupRetry != nil {
+		token.CrossGroupRetry = *request.CrossGroupRetry
+	}
+	if request.SmartRouting != nil {
+		token.SmartRouting = *request.SmartRouting
+	}
+	if request.RoutingStrategy != nil {
+		token.RoutingStrategy = *request.RoutingStrategy
+	}
+	if request.NoRetryWithinGroup != nil {
+		token.NoRetryWithinGroup = *request.NoRetryWithinGroup
+	}
+	if request.ProjectLabel != nil {
+		token.ProjectLabel = strings.TrimSpace(*request.ProjectLabel)
+	}
+	return token.ValidateRoutingSettings()
 }
 
 type tokenResponse struct {
@@ -213,18 +245,65 @@ func GetTokenAutoGroups(c *gin.Context) {
 		return
 	}
 	groups := service.GetUserAutoGroup(userGroup)
+	selectable := service.GetUserSelectableGroups(userGroup)
+	abilities, err := model.GetEnabledAbilitiesWithChannelsForGroups(selectable)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	available := make(map[string]bool, len(selectable))
+	for _, ability := range abilities {
+		available[ability.Group] = true
+	}
+	metricsAvailable := perf_metrics_setting.GetSetting().Enabled
+	now := time.Now()
+	windowEnd := now.Unix()
+	windowStart := windowEnd - windowEnd%3600 - 23*3600
+	histories := map[string]perfmetrics.TokenGroupHistory{}
+	if metricsAvailable {
+		histories, windowStart, windowEnd, err = perfmetrics.QueryTokenGroupHistory(c.Request.Context(), selectable, now)
+		if err != nil {
+			common.SysError(common.LogText("failed to query token group performance: %v", err))
+			metricsAvailable = false
+		}
+	}
+	type groupDetail struct {
+		Name        string     `json:"name"`
+		Ratio       float64    `json:"ratio"`
+		SuccessRate *float64   `json:"success_rate"`
+		Available   bool       `json:"available"`
+		History     []*float64 `json:"history"`
+	}
+	details := make([]groupDetail, 0, len(selectable))
+	for _, group := range selectable {
+		history, ok := histories[group]
+		if !ok {
+			history.History = make([]*float64, perfmetrics.TokenGroupHistoryBuckets)
+		}
+		details = append(details, groupDetail{
+			Name: group, Ratio: service.GetUserGroupRatio(userGroup, group),
+			SuccessRate: history.SuccessRate, Available: available[group], History: history.History,
+		})
+	}
 	maxCount := setting.GetMaxTokenAutoGroups()
 	if !finishControllerGroupConfigRead(c, guard) {
 		return
 	}
 	common.ApiSuccess(c, gin.H{
-		"groups":    groups,
-		"max_count": maxCount,
+		"groups":                 groups,
+		"max_count":              maxCount,
+		"selectable_groups":      selectable,
+		"group_details":          details,
+		"metrics_available":      metricsAvailable,
+		"window_start":           windowStart,
+		"window_end":             windowEnd,
+		"history_bucket_seconds": perfmetrics.TokenGroupHistoryBucketSeconds,
 	})
 }
 
 type tokenModelScopeRequest struct {
 	Group          string   `json:"group"`
+	SmartRouting   bool     `json:"smart_routing"`
 	AutoGroupsMode string   `json:"auto_groups_mode"`
 	AutoGroups     []string `json:"auto_groups"`
 }
@@ -311,13 +390,13 @@ func PreviewTokenModels(c *gin.Context) {
 		return
 	}
 
-	token := &model.Token{Group: request.Group}
-	if err := service.ValidateTokenGroup(user.Group, token.Group); err != nil {
+	token := &model.Token{Group: request.Group, SmartRouting: request.SmartRouting}
+	if err := service.ValidateTokenGroup(user.Group, token.Group); err != nil && !token.SmartRouting {
 		common.ApiSuccess(c, []string{})
 		return
 	}
 	var groups []string
-	if token.Group == "auto" && request.AutoGroupsMode == "custom" {
+	if !token.SmartRouting && token.Group == "auto" && request.AutoGroupsMode == "custom" {
 		groups = service.FilterUserTokenAutoGroups(user.Group, request.AutoGroups)
 	} else {
 		if token.Group == "auto" && len(request.AutoGroups) > 0 {
@@ -529,6 +608,10 @@ func AddToken(c *gin.Context) {
 	}
 	defer guard.Close()
 	token := request.Token
+	if err := request.applyRoutingSettings(&token); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	if len(token.Name) > 50 {
 		common.ApiErrorT(c, "Token name is too long")
 		return
@@ -558,10 +641,10 @@ func AddToken(c *gin.Context) {
 		common.ApiErrorT(c, "Maximum number of tokens reached ({{max}})", map[string]any{"max": maxTokens})
 		return
 	}
-	if !validateTokenRequestGroup(c, token.Group) {
+	if !(token.SmartRouting && token.Group == "auto") && !validateTokenRequestGroup(c, token.Group) {
 		return
 	}
-	if token.Group == "auto" {
+	if token.Group == "auto" || token.SmartRouting {
 		if !setTokenAutoGroups(c, &token, request.AutoGroups.Groups) {
 			return
 		}
@@ -590,6 +673,10 @@ func AddToken(c *gin.Context) {
 		Group:              token.Group,
 		CrossGroupRetry:    token.CrossGroupRetry,
 		AutoGroups:         token.AutoGroups,
+		SmartRouting:       token.SmartRouting,
+		RoutingStrategy:    token.RoutingStrategy,
+		NoRetryWithinGroup: token.NoRetryWithinGroup,
+		ProjectLabel:       token.ProjectLabel,
 	}
 	cleanToken.AllowUserQuotaQuery = request.AllowUserQuotaQuery == nil || *request.AllowUserQuotaQuery
 	if !finishControllerGroupConfigRead(c, guard) {
@@ -686,12 +773,21 @@ func UpdateToken(c *gin.Context) {
 		}
 	}
 	if statusOnly != "" {
-		if token.Status == common.TokenStatusEnabled && !validateTokenRequestGroup(c, cleanToken.Group) {
+		if token.Status == common.TokenStatusEnabled && !cleanToken.SmartRouting && !validateTokenRequestGroup(c, cleanToken.Group) {
 			return
 		}
 		cleanToken.Status = token.Status
 	} else {
-		if !validateTokenRequestGroup(c, token.Group) {
+		if err := request.applyRoutingSettings(cleanToken); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		// An unchanged manual draft has no authority while smart routing is on.
+		// New named selections still require permission; virtual Auto is only
+		// an internal dispatch mode for smart routing, never a new group grant.
+		validateManualGroup := !cleanToken.SmartRouting ||
+			(cleanToken.Group != "auto" && cleanToken.Group != previous.Group)
+		if validateManualGroup && !validateTokenRequestGroup(c, cleanToken.Group) {
 			return
 		}
 		// If you add more fields, please also update token.Update()
@@ -705,13 +801,13 @@ func UpdateToken(c *gin.Context) {
 		if request.AllowUserQuotaQuery != nil {
 			cleanToken.AllowUserQuotaQuery = *request.AllowUserQuotaQuery
 		}
-		cleanToken.Group = token.Group
-		cleanToken.CrossGroupRetry = token.CrossGroupRetry
-		if token.Group != "auto" {
+		if cleanToken.Group != "auto" && !cleanToken.SmartRouting {
 			cleanToken.CrossGroupRetry = false
 			_ = cleanToken.SetAutoGroups(nil)
 		} else if request.AutoGroups.Set {
-			if !setTokenAutoGroups(c, cleanToken, request.AutoGroups.Groups) {
+			previousGroups, parseErr := previous.GetAutoGroups()
+			retainedDraft := cleanToken.SmartRouting && parseErr == nil && slices.Equal(previousGroups, request.AutoGroups.Groups)
+			if !retainedDraft && !setTokenAutoGroups(c, cleanToken, request.AutoGroups.Groups) {
 				return
 			}
 		}
@@ -749,6 +845,10 @@ func UpdateToken(c *gin.Context) {
 			{"group", previous.Group != cleanToken.Group},
 			{"cross_group_retry", previous.CrossGroupRetry != cleanToken.CrossGroupRetry},
 			{"auto_groups", previous.AutoGroups != cleanToken.AutoGroups},
+			{"smart_routing", previous.SmartRouting != cleanToken.SmartRouting},
+			{"routing_strategy", previous.RoutingStrategy != cleanToken.RoutingStrategy},
+			{"no_retry_within_group", previous.NoRetryWithinGroup != cleanToken.NoRetryWithinGroup},
+			{"project_label", previous.ProjectLabel != cleanToken.ProjectLabel},
 		} {
 			if field.changed {
 				changedFields = append(changedFields, field.name)

@@ -33,6 +33,8 @@ import { GroupRatioBadge, type GroupRatio } from './auto-group-visuals'
 
 type ApiKeyGroupCellProps = {
   crossGroupRetry: boolean
+  smartRouting?: boolean
+  routingStrategy?: 'auto' | 'success_rate' | 'price' | 'speed'
   group: string
   ratio?: GroupRatio
   shouldReduceMotion: boolean
@@ -43,6 +45,34 @@ export function ApiKeyGroupCell(props: ApiKeyGroupCellProps) {
   const isMobile = useMediaQuery('(max-width: 640px)')
 
   const group = props.group?.trim() || ''
+  if (props.smartRouting) {
+    const strategies = {
+      auto: t('Smart Auto'),
+      success_rate: t('Success rate first'),
+      price: t('Price first'),
+      speed: t('Speed first'),
+    }
+    const strategy = strategies[props.routingStrategy || 'auto']
+    return (
+      <TruncatedCell
+        className={isMobile ? 'w-full' : 'max-w-50'}
+        tabIndex={0}
+        tooltipContent={`${t('Smart Routing')}: ${strategy}`}
+      >
+        <span className='flex min-w-0 flex-col items-start gap-1'>
+          <StatusBadge
+            label={t('Smart Routing')}
+            variant='warning'
+            copyable={false}
+            className='px-0'
+          />
+          <span className='text-muted-foreground truncate text-xs'>
+            {strategy}
+          </span>
+        </span>
+      </TruncatedCell>
+    )
+  }
   if (group !== 'auto') {
     const ratio =
       group && typeof props.ratio === 'number' ? props.ratio : undefined

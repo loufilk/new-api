@@ -47,14 +47,17 @@ export function ModelTestSection() {
     retry: false,
     meta: { errorToast: false },
   })
+  const settingsAvailable =
+    query.data?.model_test_settings_available === true &&
+    typeof query.data?.model_test_enabled === 'boolean'
   const savedEnabled = query.data?.model_test_enabled === true
   const [enabled, setEnabled] = useState(false)
   const updateOption = useUpdateOption()
   useEffect(() => {
-    if (query.isFetchedAfterMount) setEnabled(savedEnabled)
-  }, [query.isFetchedAfterMount, savedEnabled])
+    if (query.isFetchedAfterMount && settingsAvailable) setEnabled(savedEnabled)
+  }, [query.isFetchedAfterMount, savedEnabled, settingsAvailable])
   if (!isRoot) return null
-  if (query.isError) {
+  if (query.isError || (query.isFetchedAfterMount && !settingsAvailable)) {
     return (
       <ErrorState
         title={t('Failed to load settings')}

@@ -16,12 +16,40 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+export type SupportTicketCategory =
+  | 'billing'
+  | 'api_model'
+  | 'account_access'
+  | 'other'
+
+export interface SupportTicketAttachment {
+  id: string
+  media_type: string
+  size_bytes: number
+  width: number
+  height: number
+}
+
+export interface SupportTicketSubmission {
+  message: string
+  images?: File[]
+  request_id?: string
+}
+
+export interface SupportTicketCreateSubmission extends SupportTicketSubmission {
+  subject: string
+  category?: SupportTicketCategory
+  contact_email?: string
+}
+
 export type SupportTicketStatus = 'processing' | 'awaiting_user' | 'resolved'
 
 export interface SupportTicket {
   id: number
   user_id: number
   subject: string
+  category?: SupportTicketCategory
+  contact_email?: string
   status: SupportTicketStatus
   user_unread: boolean
   admin_unread: boolean
@@ -34,6 +62,7 @@ export interface SupportTicketMessage {
   id: number
   ticket_id: number
   author_role: 'user' | 'admin'
+  attachments?: SupportTicketAttachment[]
   content: string
   created_at: number
 }

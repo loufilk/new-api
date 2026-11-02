@@ -55,6 +55,9 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	if types.IsSkipRetryError(err) {
 		return PolicyDecision{Action: "stop", Reason: "non_retryable_error", Source: "system"}
 	}
+	if !TokenRoutingRetryAvailable(c) {
+		return PolicyDecision{Action: "stop", Reason: "token_routing_exhausted", Source: "token"}
+	}
 	if types.IsChannelError(err) {
 		return PolicyDecision{Action: "retry", Reason: "channel_error", Source: "system"}
 	}

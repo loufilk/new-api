@@ -142,6 +142,42 @@ func TestSetupWalletDatabaseMatrix(t *testing.T) {
 			if database.env != "" && dsn == "" {
 				t.Skip("set " + database.env + " to run this real database")
 			}
+			t.Run("startup_requires_explicit_setup", func(t *testing.T) {
+				db := setupWalletDatabase(t, database.dialect, dsn)
+				for range 2 {
+					model.CheckSetup()
+					assert.False(t, constant.Setup, "startup must not bootstrap a credential or account")
+					for _, entity := range []any{&model.User{}, &model.Setup{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}} {
+						var count int64
+						require.NoError(t, db.Model(entity).Count(&count).Error)
+						assert.Zero(t, count)
+					}
+					require.NoError(t, db.AutoMigrate(&model.User{}, &model.Setup{}))
+				}
+				require.True(t, postWalletSetup(t, ""), "validated explicit setup remains available")
+				assertSetupWalletGrant(t, db)
+			})
+			t.Run("startup_preserves_existing_root_credentials", func(t *testing.T) {
+				db := setupWalletDatabase(t, database.dialect, dsn)
+				hash, err := common.HashAccountPassword(setupWalletPassword)
+				require.NoError(t, err)
+				user := model.User{Username: "existing-root", Password: hash, Role: common.RoleRootUser, Status: common.UserStatusEnabled, Quota: 77, QuotaPaid: 77}
+				require.NoError(t, db.Create(&user).Error)
+				for range 2 {
+					model.CheckSetup()
+					assert.True(t, constant.Setup)
+					var stored model.User
+					require.NoError(t, db.First(&stored, user.Id).Error)
+					assert.Equal(t, user, stored, "startup must not replace credentials or credit an existing root")
+					assert.True(t, common.ValidatePasswordAndHash(setupWalletPassword, stored.Password))
+					var count int64
+					require.NoError(t, db.Model(&model.Setup{}).Count(&count).Error)
+					assert.EqualValues(t, 1, count)
+					require.NoError(t, db.Model(&model.BalanceLedger{}).Count(&count).Error)
+					assert.Zero(t, count)
+					require.NoError(t, db.AutoMigrate(&model.User{}, &model.Setup{}))
+				}
+			})
 			t.Run("fresh_root_and_replay", func(t *testing.T) {
 				db := setupWalletDatabase(t, database.dialect, dsn)
 				require.True(t, postWalletSetup(t, ""))

@@ -688,7 +688,11 @@ func TokenAuth() func(c *gin.Context) {
 
 		userGroup := userCache.Group
 		tokenGroup := token.Group
-		if err := service.ValidateTokenGroup(userGroup, tokenGroup); err != nil {
+		if token.SmartRouting {
+			// Only the virtual Auto gate is bypassed. Candidate selection still
+			// intersects every request with the user's live concrete permissions.
+			tokenGroup = "auto"
+		} else if err := service.ValidateTokenGroup(userGroup, tokenGroup); err != nil {
 			message := i18n.MsgAuthTokenGroupForbidden
 			if errors.Is(err, service.ErrTokenGroupDeprecated) {
 				message = i18n.MsgAuthTokenGroupDeprecated
@@ -763,7 +767,14 @@ func SetupContextForToken(c *gin.Context, token *model.Token, parts ...string) e
 	} else {
 		c.Set("token_model_limit_enabled", false)
 	}
-	common.SetContextKey(c, constant.ContextKeyTokenGroup, token.Group)
+	tokenGroup := token.Group
+	if token.SmartRouting {
+		tokenGroup = "auto"
+	}
+	common.SetContextKey(c, constant.ContextKeyTokenGroup, tokenGroup)
+	common.SetContextKey(c, constant.ContextKeyTokenSmartRouting, token.SmartRouting)
+	common.SetContextKey(c, constant.ContextKeyTokenRoutingStrategy, token.GetRoutingStrategy())
+	common.SetContextKey(c, constant.ContextKeyTokenNoRetryWithinGroup, token.NoRetryWithinGroup)
 	common.SetContextKey(c, constant.ContextKeyTokenCrossGroupRetry, token.CrossGroupRetry)
 	if token.AutoGroups != "" {
 		autoGroups, err := token.GetAutoGroups()

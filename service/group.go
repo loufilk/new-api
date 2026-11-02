@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -76,6 +77,19 @@ func IsUserSelectableGroup(userGroup, groupName string) bool {
 	return GroupInUserUsableGroups(userGroup, groupName) && ratio_setting.ContainsGroupRatio(groupName)
 }
 
+// GetUserSelectableGroups returns the current authorized concrete scope, not
+// the configured virtual Auto list or the token's dormant manual selection.
+func GetUserSelectableGroups(userGroup string) []string {
+	groups := make([]string, 0)
+	for group := range GetUserUsableGroups(userGroup) {
+		if IsUserSelectableGroup(userGroup, group) {
+			groups = append(groups, group)
+		}
+	}
+	sort.Strings(groups)
+	return groups
+}
+
 // GetUserAutoGroup 根据用户分组获取自动分组设置
 func GetUserAutoGroup(userGroup string) []string {
 	autoGroups := make([]string, 0)
@@ -123,6 +137,9 @@ func GetTokenEffectiveGroups(userGroup string, token *model.Token) ([]string, er
 	if token == nil {
 		return nil, fmt.Errorf("token is nil")
 	}
+	if token.SmartRouting {
+		return GetUserSelectableGroups(userGroup), nil
+	}
 	tokenGroup := token.Group
 	if err := ValidateTokenGroup(userGroup, tokenGroup); err != nil {
 		return []string{}, nil
@@ -152,6 +169,9 @@ func GetTokenEffectiveGroups(userGroup string, token *model.Token) ([]string, er
 // The absence of the context value means that the token inherits the complete
 // global Auto list; a present (even empty) value is an explicit token snapshot.
 func GetRequestAutoGroups(c *gin.Context, userGroup string) []string {
+	if common.GetContextKeyBool(c, constant.ContextKeyTokenSmartRouting) {
+		return GetUserSelectableGroups(userGroup)
+	}
 	value, ok := common.GetContextKey(c, constant.ContextKeyTokenAutoGroups)
 	if !ok {
 		return GetUserAutoGroup(userGroup)

@@ -189,7 +189,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	retryBudget := service.RelayRetryBudget(c)
+	for ; retryParam.GetRetry() <= retryBudget; retryParam.IncreaseRetry() {
 		// Prior attempts eligible for retry are already known not to need a
 		// delivery hold. Their address is diagnostic, not a current send fact.
 		common.SetContextKey(c, constant.ContextKeyUpstreamRequestAttempted, false)
@@ -252,7 +253,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		if newAPIError == nil {
-			service.MarkRequestPolicySuccess(c, relayInfo.StreamStatus)
+			service.MarkRequestPolicySuccess(c, relayInfo.StreamStatus, relayInfo)
 			relayInfo.LastError = nil
 			return
 		}
@@ -261,7 +262,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = relay.PreserveFailedRequestBilling(c, relayInfo, newAPIError)
 		relayInfo.LastError = newAPIError
 
-		decision := service.DecideRelayRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
+		decision := service.DecideRelayRetry(c, newAPIError, retryBudget-retryParam.GetRetry())
 		service.RecordPolicyFailure(c, channel.Id, newAPIError, decision)
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, relayInfo)
 
@@ -589,7 +590,13 @@ func executeTaskSubmissionWith(
 		Retry:       common.GetPointer(0),
 	}
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	retryBudget := service.RelayRetryBudget(c)
+	if locked, ok := relayInfo.LockedChannel.(*model.Channel); ok && locked != nil && common.GetContextKeyBool(c, constant.ContextKeyTokenNoRetryWithinGroup) {
+		// Native origin-task paths can lock a channel without a ChannelPin.
+		// Never rotate its keys or replay it when this key allows one attempt.
+		retryBudget = 0
+	}
+	for ; retryParam.GetRetry() <= retryBudget; retryParam.IncreaseRetry() {
 		stage = "select_channel"
 		if requestErr := c.Request.Context().Err(); requestErr != nil {
 			diagnostics.cancelled("before_attempt", retryParam.GetRetry()+1)
@@ -648,7 +655,7 @@ func executeTaskSubmissionWith(
 
 		taskAPIError := taskSubmissionAPIError(taskErr)
 		relayInfo.LastError = taskAPIError
-		decision := decideTaskRetry(c, taskErr, common.RetryTimes-retryParam.GetRetry())
+		decision := decideTaskRetry(c, taskErr, retryBudget-retryParam.GetRetry())
 		service.RecordPolicyFailure(c, channel.Id, taskAPIError, decision)
 		if !taskErr.LocalError {
 			processChannelError(c,
@@ -800,7 +807,7 @@ func executeTaskSubmissionWith(
 
 	perfmetrics.RecordImmediateTaskResult(relayInfo, result.Immediate)
 	if task.Status != model.TaskStatusFailure {
-		service.MarkRequestPolicySuccess(c, nil)
+		service.MarkRequestPolicySuccess(c, nil, relayInfo)
 	} else {
 		policy.AddEvent(service.PolicyEvent{Decision: service.PolicyDecision{Action: "stop", Reason: "task_failed", Source: "upstream"}})
 	}
@@ -913,6 +920,10 @@ func decideTaskRetry(c *gin.Context, taskErr *taskdto.TaskError, retryTimes int)
 	switch {
 	case taskErr == nil:
 		stop.Reason = "request_completed"
+	case taskErr.DeliveryUnknown:
+		stop.Reason = "unknown_delivery"
+	case !service.TokenRoutingRetryAvailable(c):
+		stop.Reason, stop.Source = "token_routing_exhausted", "token"
 	case taskErr.NoRetry:
 		stop.Reason = "no_retry"
 	case service.ShouldSkipRetryAfterChannelAffinityFailure(c):

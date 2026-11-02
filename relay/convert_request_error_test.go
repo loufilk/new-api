@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -23,7 +24,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tidwall/gjson"
 )
 
 type imageReservation struct {
@@ -117,12 +117,12 @@ func TestImageRequestReservesFinalQuantityBeforeUpstream(t *testing.T) {
 			assert.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
 			require.Len(t, received, 1)
 			body := <-received
-			assert.Equal(t, int64(tc.count), gjson.GetBytes(body, "n").Int())
+			assert.Equal(t, int64(tc.count), ojson.GetBytes(body, "n").Int())
 			assert.Equal(t, tc.count*20000, info.PriceData.QuotaToPreConsume)
 			assert.GreaterOrEqual(t, reservation.held, info.PriceData.QuotaToPreConsume)
 			assert.Nil(t, info.BillingImageCount)
 			if tc.tiered {
-				assert.Equal(t, int64(tc.count), gjson.GetBytes(info.BillingRequestInput.Body, "n").Int())
+				assert.Equal(t, int64(tc.count), ojson.GetBytes(info.BillingRequestInput.Body, "n").Int())
 				assert.Equal(t, tc.count, *info.BillingRequestInput.ImageCount)
 			}
 		})
@@ -199,10 +199,10 @@ func TestImageFinalGeometryControlsReservationAndSettlement(t *testing.T) {
 			require.Len(t, captured, 1)
 			outbound := <-captured
 			for key, value := range tc.overrides {
-				assert.Equal(t, gjson.GetBytes(outbound.body, key).Value(), gjson.GetBytes(info.BillingRequestInput.Body, key).Value(), "%s=%v", key, value)
+				assert.Equal(t, ojson.GetBytes(outbound.body, key).Value(), ojson.GetBytes(info.BillingRequestInput.Body, key).Value(), "%s=%v", key, value)
 			}
-			assert.Equal(t, tc.model, gjson.GetBytes(info.BillingRequestInput.Body, "model").String())
-			assert.Equal(t, target, gjson.GetBytes(info.BillingRequestInput.Body, "upstream_model").String())
+			assert.Equal(t, tc.model, ojson.GetBytes(info.BillingRequestInput.Body, "model").String())
+			assert.Equal(t, target, ojson.GetBytes(info.BillingRequestInput.Body, "upstream_model").String())
 			assert.Equal(t, tc.wantQuota, reservation.held)
 			info.UpdateImageCount(1)
 			ok, settled, _ := service.TryTieredSettle(info, billingexpr.TokenParams{})

@@ -46,12 +46,16 @@ function CellHarness(props: {
   ratio?: number | string
   crossGroupRetry?: boolean
   shouldReduceMotion?: boolean
+  smartRouting?: boolean
+  routingStrategy?: 'auto' | 'success_rate' | 'price' | 'speed'
 }) {
   return (
     <I18nextProvider i18n={i18n}>
       <TooltipProvider>
         <ApiKeyGroupCell
           group={props.group}
+          smartRouting={props.smartRouting}
+          routingStrategy={props.routingStrategy}
           ratio={props.ratio}
           crossGroupRetry={props.crossGroupRetry ?? false}
           shouldReduceMotion={props.shouldReduceMotion ?? false}
@@ -157,4 +161,19 @@ describe('API key group table cell', () => {
     expect(screen.queryByText('Auto')).not.toBeInTheDocument()
     expect(screen.queryByText('自动')).not.toBeInTheDocument()
   })
+})
+
+test('shows the active smart policy instead of claiming that the retained manual group and multiplier are used', () => {
+  render(
+    <CellHarness
+      group='manual-retained'
+      ratio={3}
+      smartRouting
+      routingStrategy='price'
+    />
+  )
+  expect(screen.getByText('Smart Routing')).toBeVisible()
+  expect(screen.getByText('Price first')).toBeVisible()
+  expect(screen.queryByText('manual-retained')).not.toBeInTheDocument()
+  expect(screen.queryByText('3x')).not.toBeInTheDocument()
 })

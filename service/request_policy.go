@@ -39,17 +39,20 @@ type PolicyEvent struct {
 // read the decision flow in the log details. Channel selection and the retry
 // decision stay in the relay flows; this state only records them.
 type RequestPolicyState struct {
-	FinalLogged       bool
-	StartedAt         time.Time
-	Attempts          int
-	SelectedGroup     string
-	SessionMode       string
-	SessionModeSource string
-	RuleName          string
-	Successful        bool
-	OutcomeRecorded   bool
-	mu                sync.Mutex
-	events            []PolicyEvent
+	FinalLogged            bool
+	StartedAt              time.Time
+	Attempts               int
+	SelectedGroup          string
+	SessionMode            string
+	SessionModeSource      string
+	RuleName               string
+	Successful             bool
+	AttemptChannelID       int
+	AttemptStartedAt       time.Time
+	RoutingOutcomeRecorded bool
+	OutcomeRecorded        bool
+	mu                     sync.Mutex
+	events                 []PolicyEvent
 }
 
 func RequestPolicy(c *gin.Context) *RequestPolicyState {
@@ -88,6 +91,9 @@ func (s *RequestPolicyState) Events() []PolicyEvent {
 
 func (s *RequestPolicyState) BeginAttempt(channel *model.Channel, group string) {
 	s.Attempts++
+	s.AttemptChannelID = channel.Id
+	s.AttemptStartedAt = time.Now()
+	s.RoutingOutcomeRecorded = false
 	s.Successful = false
 	s.OutcomeRecorded = false
 	s.SelectedGroup = group
@@ -113,6 +119,7 @@ func RecordPolicyFailure(c *gin.Context, channelID int, err *types.NewAPIError, 
 		source = "local"
 	}
 	state := RequestPolicy(c)
+	recordTokenRoutingOutcome(c, &relaycommon.RelayInfo{}, err)
 	event := PolicyEvent{ChannelID: channelID, Status: err.StatusCode, ErrorCode: string(err.GetErrorCode()), ErrorSource: source, Decision: PolicyDecision{Action: "failure", Reason: "upstream_failure", Source: source}}
 	if source == "local" {
 		event.Decision.Reason = "local_rejection"
@@ -130,7 +137,12 @@ func RecordPolicyFailure(c *gin.Context, channelID int, err *types.NewAPIError, 
 	state.AddEvent(event)
 }
 
-func MarkRequestPolicySuccess(c *gin.Context, stream *relaycommon.StreamStatus) {
+func MarkRequestPolicySuccess(c *gin.Context, stream *relaycommon.StreamStatus, relayInfos ...*relaycommon.RelayInfo) {
+	info := &relaycommon.RelayInfo{StreamStatus: stream}
+	if len(relayInfos) > 0 && relayInfos[0] != nil {
+		info = relayInfos[0]
+	}
+	recordTokenRoutingOutcome(c, info, nil)
 	state := RequestPolicy(c)
 	if state.OutcomeRecorded {
 		return

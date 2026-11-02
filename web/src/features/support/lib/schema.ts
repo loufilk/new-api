@@ -19,6 +19,12 @@ For commercial licensing, please contact support@quantumnous.com
 import { z } from 'zod'
 
 export const createSupportTicketSchema = z.object({
+  category: z.enum(['billing', 'api_model', 'account_access', 'other']),
+  contact_email: z
+    .string()
+    .trim()
+    .max(254)
+    .pipe(z.union([z.literal(''), z.email()])),
   subject: z.string().trim().min(1).max(200),
   message: z.string().trim().min(1).max(10000),
 })

@@ -371,10 +371,10 @@ it('reuses key creation and reloads the list when a new key is created', async (
     await screen.findByRole('button', { name: 'Create new Key' })
   )
   await user.type(
-    await screen.findByRole('textbox', { name: /^Name/ }),
+    await screen.findByRole('textbox', { name: 'Token Name' }),
     'New client key'
   )
-  await user.click(screen.getByRole('button', { name: /Save/ }))
+  await user.click(screen.getByRole('button', { name: 'Add' }))
   const combo = await screen.findByRole('combobox', { name: 'API Key' })
   await user.click(combo)
   expect(

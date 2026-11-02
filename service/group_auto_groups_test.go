@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -69,4 +70,25 @@ func TestGetRequestAutoGroupsDoesNotFallBackAfterPermissionChange(t *testing.T) 
 	groups := GetRequestAutoGroups(ctx, "default")
 
 	assert.Empty(t, groups)
+}
+
+func TestSmartTokenScopeUsesLiveAuthorizedGroupsNotVirtualAuto(t *testing.T) {
+	configureRequestAutoGroupsTest(t)
+	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`[]`))
+	require.NoError(t, setting.UpdateMaxTokenAutoGroups("1"))
+	ctx := newRequestAutoGroupsContext()
+	common.SetContextKey(ctx, constant.ContextKeyTokenSmartRouting, true)
+	common.SetContextKey(ctx, constant.ContextKeyTokenAutoGroups, []string{"forbidden"})
+	want := []string{"default", "svip", "vip"}
+	assert.Equal(t, want, GetRequestAutoGroups(ctx, "default"))
+	token := &model.Token{Group: "forbidden", AutoGroups: `["forbidden"]`, SmartRouting: true}
+	groups, err := GetTokenEffectiveGroups("default", token)
+	require.NoError(t, err)
+	assert.Equal(t, want, groups)
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default"}`))
+	assert.Equal(t, []string{"default"}, GetRequestAutoGroups(ctx, "default"))
+	token.SmartRouting = false
+	groups, err = GetTokenEffectiveGroups("default", token)
+	require.NoError(t, err)
+	assert.Empty(t, groups, "turning smart routing off must restore named-group permission checks")
 }

@@ -49,6 +49,16 @@ func ApplyUpstreamBodyMetadata(req *http.Request, body io.Reader) {
 	}
 }
 
+// Keep host-managed cross-group replay separate from transparent transport
+// replay. A written body must not be sent a second time within this group;
+// connection recovery before a body is sent remains the transport's concern.
+func applySingleAttemptTransportPolicy(c *gin.Context, req *http.Request) {
+	if req != nil && (common2.GetContextKeyBool(c, appconstant.ContextKeyTokenNoRetryWithinGroup) ||
+		common2.GetContextKeyBool(c, appconstant.ContextKeyModelTestSingleAttempt)) {
+		req.GetBody = nil
+	}
+}
+
 func SetupApiRequestHeader(info *common.RelayInfo, c *gin.Context, req *http.Header) {
 	if info.RelayMode == constant.RelayModeAudioTranscription || info.RelayMode == constant.RelayModeAudioTranslation {
 		// multipart/form-data
@@ -509,6 +519,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	}
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestOrigin, req.URL.Scheme+"://"+req.URL.Host)
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestAttempted, true)
+	applySingleAttemptTransportPolicy(c, req)
 	resp, err := relayClient.Do(req)
 	if err != nil {
 		var dialErr *net.OpError

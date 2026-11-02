@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/convdiag"
@@ -14,7 +15,6 @@ import (
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tidwall/gjson"
 )
 
 func TestResponsesReasoningReplayPlaintextAndSummary(t *testing.T) {
@@ -98,11 +98,11 @@ func TestResponsesReasoningReplayKeepsAssistantPartsAndToolBatch(t *testing.T) {
 	assert.Len(t, got.Messages[1].ParseToolCalls(), 2)
 	encoded, err := kitutil.Marshal(got)
 	require.NoError(t, err)
-	assert.JSONEq(t, `[{"type":"text","text":"first"},{"type":"text","text":"second"},{"type":"refusal","refusal":"unavailable"},{"type":"text","text":"third"},{"type":"refusal","refusal":"still unavailable"}]`, gjson.GetBytes(encoded, "messages.1.content").Raw)
+	assert.JSONEq(t, `[{"type":"text","text":"first"},{"type":"text","text":"second"},{"type":"refusal","refusal":"unavailable"},{"type":"text","text":"third"},{"type":"refusal","refusal":"still unavailable"}]`, ojson.GetBytes(encoded, "messages.1.content").Raw)
 	assert.Equal(t, "a", got.Messages[2].ToolCallId)
 	assert.Equal(t, "b", got.Messages[3].ToolCallId)
 	assert.Equal(t, "user", got.Messages[4].Role)
-	assert.Equal(t, "https://example.com/a.png", gjson.GetBytes(encoded, "messages.4.content.0.image_url.url").String())
+	assert.Equal(t, "https://example.com/a.png", ojson.GetBytes(encoded, "messages.4.content.0.image_url.url").String())
 	assert.Equal(t, "new plan", got.Messages[5].GetReasoningContent())
 	assert.Equal(t, "done", got.Messages[5].Content)
 	assert.Empty(t, got.Messages[6].GetReasoningContent())
@@ -229,7 +229,7 @@ func TestResponsesRequestToChatCompletionsRequestInstructionsAndScalarInput(t *t
 	assert.Equal(t, "medium", got.ReasoningEffort)
 	assert.Equal(t, `"user-1"`, string(got.User))
 	assert.Equal(t, `false`, string(got.Store))
-	assert.Equal(t, "abc", gjson.GetBytes(got.Metadata, "trace").String())
+	assert.Equal(t, "abc", ojson.GetBytes(got.Metadata, "trace").String())
 }
 
 func TestResponsesRequestToChatCompletionsRequestPreservesQwenThinkingBudget(t *testing.T) {
@@ -256,8 +256,8 @@ func TestResponsesRequestToChatCompletionsRequestPreservesQwenThinkingBudget(t *
 			encoded, err := kitutil.Marshal(got)
 			require.NoError(t, err)
 
-			assert.True(t, gjson.GetBytes(encoded, "enable_thinking").Bool())
-			value := gjson.GetBytes(encoded, "thinking_budget")
+			assert.True(t, ojson.GetBytes(encoded, "enable_thinking").Bool())
+			value := ojson.GetBytes(encoded, "thinking_budget")
 			assert.True(t, value.Exists())
 			assert.Equal(t, tt.want, value.Int())
 		})
@@ -304,10 +304,10 @@ func TestResponsesRequestToChatCompletionsRequestMultimodalInput(t *testing.T) {
 	// form: strict upstreams reject a bare image_url string inside content.
 	encoded, err := kitutil.Marshal(got)
 	require.NoError(t, err)
-	assert.Equal(t, "https://example.test/a.png", gjson.GetBytes(encoded, "messages.0.content.1.image_url.url").String())
-	assert.Equal(t, "low", gjson.GetBytes(encoded, "messages.0.content.1.image_url.detail").String())
-	assert.Equal(t, "https://example.test/b.png", gjson.GetBytes(encoded, "messages.0.content.2.image_url.url").String())
-	assert.Equal(t, "high", gjson.GetBytes(encoded, "messages.0.content.2.image_url.detail").String())
+	assert.Equal(t, "https://example.test/a.png", ojson.GetBytes(encoded, "messages.0.content.1.image_url.url").String())
+	assert.Equal(t, "low", ojson.GetBytes(encoded, "messages.0.content.1.image_url.detail").String())
+	assert.Equal(t, "https://example.test/b.png", ojson.GetBytes(encoded, "messages.0.content.2.image_url.url").String())
+	assert.Equal(t, "high", ojson.GetBytes(encoded, "messages.0.content.2.image_url.detail").String())
 }
 
 func TestResponsesRequestToChatCompletionsRequestAssistantTextAndFunctionCallCoexist(t *testing.T) {
@@ -407,7 +407,7 @@ func TestResponsesRequestToChatCompletionsRequestToolsToolChoiceAndTextFormat(t 
 	assert.Equal(t, "function", got.Tools[0].Type)
 	assert.Equal(t, "lookup", got.Tools[0].Function.Name)
 	assert.Equal(t, "Lookup data", got.Tools[0].Function.Description)
-	assert.Equal(t, "object", gjson.GetBytes(got.Tools[0].Function.Parameters, "type").String())
+	assert.Equal(t, "object", ojson.GetBytes(got.Tools[0].Function.Parameters, "type").String())
 	assert.Equal(t, map[string]any{
 		"type": "function",
 		"function": map[string]any{
@@ -416,8 +416,8 @@ func TestResponsesRequestToChatCompletionsRequestToolsToolChoiceAndTextFormat(t 
 	}, got.ToolChoice)
 	require.NotNil(t, got.ResponseFormat)
 	assert.Equal(t, "json_schema", got.ResponseFormat.Type)
-	assert.Equal(t, "answer", gjson.GetBytes(got.ResponseFormat.JsonSchema, "name").String())
-	assert.True(t, gjson.GetBytes(got.ResponseFormat.JsonSchema, "strict").Bool())
+	assert.Equal(t, "answer", ojson.GetBytes(got.ResponseFormat.JsonSchema, "name").String())
+	assert.True(t, ojson.GetBytes(got.ResponseFormat.JsonSchema, "strict").Bool())
 }
 
 func TestResponsesRequestToChatCompletionsRequestEncodesCustomToolHistoryAsFunction(t *testing.T) {
@@ -445,7 +445,7 @@ func TestResponsesRequestToChatCompletionsRequestEncodesCustomToolHistoryAsFunct
 	assert.Equal(t, "function", toolCalls[0].Type)
 	assert.Equal(t, "call_custom", toolCalls[0].ID)
 	assert.Equal(t, "exec", toolCalls[0].Function.Name)
-	assert.Equal(t, `echo "hi" && ls`, gjson.Get(toolCalls[0].Function.Arguments, "input").String())
+	assert.Equal(t, `echo "hi" && ls`, ojson.Get(toolCalls[0].Function.Arguments, "input").String())
 	assert.Empty(t, toolCalls[0].Custom)
 	assert.Equal(t, dto.Message{Role: "tool", ToolCallId: "call_custom", Content: "hi"}, got.Messages[1])
 }

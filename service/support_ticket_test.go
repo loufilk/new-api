@@ -29,10 +29,10 @@ func useSupportTicketTestDB(t *testing.T) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&model.SupportTicket{}, &model.SupportTicketMessage{}, &model.SupportEmailSettings{}, &model.SupportEmailOutbox{}, &model.SupportEmailPreference{}, &model.SupportEmailRate{}))
+	require.NoError(t, db.AutoMigrate(&model.SupportTicket{}, &model.SupportTicketMessage{}, &model.SupportTicketAttachment{}, &model.SupportTicketSubmission{}, &model.SupportEmailSettings{}, &model.SupportEmailOutbox{}, &model.SupportEmailPreference{}, &model.SupportEmailRate{}))
 	model.DB = db
 	common.SetMainDatabaseType(databaseType)
-	for _, table := range []string{"support_tickets", "support_ticket_messages", "support_email_settings", "support_email_outboxes", "support_email_preferences", "support_email_rates"} {
+	for _, table := range []string{"support_ticket_attachments", "support_ticket_submissions", "support_tickets", "support_ticket_messages", "support_email_settings", "support_email_outboxes", "support_email_preferences", "support_email_rates"} {
 		require.NoError(t, db.Exec("DELETE FROM "+table).Error)
 	}
 	t.Cleanup(func() {

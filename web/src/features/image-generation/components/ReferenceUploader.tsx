@@ -25,6 +25,9 @@ import type { ReferenceImageItem } from '../types'
 
 type ReferenceUploaderProps = {
   items: ReferenceImageItem[]
+  pickerLabel?: string
+  description?: string
+  previewLabel?: (name: string) => string
   maxAllowed: number
   disabled: boolean
   errorKey: string | null
@@ -84,7 +87,7 @@ export function ReferenceUploader(props: ReferenceUploaderProps) {
       <div
         role='button'
         tabIndex={props.disabled ? -1 : 0}
-        aria-label={t('Add reference images')}
+        aria-label={props.pickerLabel ?? t('Add reference images')}
         aria-disabled={props.disabled}
         onClick={openPicker}
         onDrop={handleDrop}
@@ -98,9 +101,10 @@ export function ReferenceUploader(props: ReferenceUploaderProps) {
         className='border-border rounded-lg border border-dashed p-3 text-sm'
       >
         <p className='text-muted-foreground text-xs leading-5'>
-          {t(
-            'Drag images here, paste from clipboard, or choose files. Only PNG, JPEG, or WebP. Total size up to 15MB.'
-          )}
+          {props.description ??
+            t(
+              'Drag images here, paste from clipboard, or choose files. Only PNG, JPEG, or WebP. Total size up to 15MB.'
+            )}
         </p>
         <div className='mt-2 flex items-center gap-2'>
           <span
@@ -143,7 +147,10 @@ export function ReferenceUploader(props: ReferenceUploaderProps) {
             >
               <img
                 src={item.previewUrl}
-                alt={t('Reference image {{name}}', { name: item.name })}
+                alt={
+                  props.previewLabel?.(item.name) ??
+                  t('Reference image {{name}}', { name: item.name })
+                }
                 className='h-16 w-full object-contain'
               />
               <div className='flex items-center justify-between gap-1 p-1.5'>

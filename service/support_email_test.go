@@ -99,8 +99,8 @@ func (f *supportSMTPFixture) handle(conn net.Conn) {
 func setupSupportEmailService(t *testing.T, fixture *supportSMTPFixture) *model.User {
 	t.Helper()
 	require.NotEmpty(t, os.Getenv("TEST_SERVICE_POSTGRES_DSN"), "only owned PostgreSQL")
-	require.NoError(t, model.DB.AutoMigrate(&model.SupportTicket{}, &model.SupportTicketMessage{}, &model.SupportEmailSettings{}, &model.SupportEmailPreference{}, &model.SupportEmailOutbox{}, &model.SupportEmailRate{}))
-	for _, table := range []string{"support_ticket_messages", "support_tickets", "support_email_settings", "support_email_preferences", "support_email_outboxes", "support_email_rates"} {
+	require.NoError(t, model.DB.AutoMigrate(&model.SupportTicket{}, &model.SupportTicketMessage{}, &model.SupportTicketAttachment{}, &model.SupportTicketSubmission{}, &model.SupportEmailSettings{}, &model.SupportEmailPreference{}, &model.SupportEmailOutbox{}, &model.SupportEmailRate{}))
+	for _, table := range []string{"support_ticket_attachments", "support_ticket_submissions", "support_ticket_messages", "support_tickets", "support_email_settings", "support_email_preferences", "support_email_outboxes", "support_email_rates"} {
 		require.NoError(t, model.DB.Exec("DELETE FROM "+table).Error)
 	}
 	require.NoError(t, model.DB.Unscoped().Where("username = ?", "support-mail-fixture").Delete(&model.User{}).Error)

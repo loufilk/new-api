@@ -35,6 +35,15 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
   return z
     .object({
       name: z.string().min(1, t('Please enter a name')),
+      smart_routing: z.boolean(),
+      routing_strategy: z.enum(['auto', 'success_rate', 'price', 'speed']),
+      no_retry_within_group: z.boolean(),
+      project_label: z
+        .string()
+        .refine(
+          (value) => [...value].length <= 100,
+          t('Project label must be at most 100 characters')
+        ),
       remain_quota_dollars: z.number().optional(),
       expired_time: z.date().nullable(),
       unlimited_quota: z.boolean(),
@@ -48,7 +57,7 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
       tokenCount: z.number().min(1).optional(),
     })
     .superRefine((data, ctx) => {
-      if (data.group === 'auto') {
+      if (!data.smart_routing && data.group === 'auto') {
         if (
           data.auto_groups_mode === 'custom' &&
           data.auto_groups.length === 0
@@ -106,6 +115,10 @@ export type ApiKeyFormValues = z.infer<ReturnType<typeof getApiKeyFormSchema>>
 
 export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   name: '',
+  smart_routing: false,
+  routing_strategy: 'auto',
+  no_retry_within_group: false,
+  project_label: '',
   remain_quota_dollars: 10,
   expired_time: null,
   unlimited_quota: true,
@@ -143,6 +156,10 @@ export function transformFormDataToPayload(
 ): ApiKeyFormData {
   return {
     name: data.name,
+    smart_routing: data.smart_routing,
+    routing_strategy: data.routing_strategy,
+    no_retry_within_group: data.no_retry_within_group,
+    project_label: data.project_label,
     remain_quota: data.unlimited_quota
       ? 0
       : parseQuotaFromDollars(data.remain_quota_dollars || 0),
@@ -173,13 +190,22 @@ export function transformApiKeyToFormDefaults(
 ): ApiKeyFormValues {
   const availableSet = new Set(availableAutoGroups)
   const storedAutoGroups = apiKey.auto_groups ?? []
-  const autoGroups = storedAutoGroups
-    .filter((group) => availableSet.has(group))
-    .slice(0, Math.max(0, maxAutoGroups))
+  // Smart routing ignores the manual draft. Keep it byte-for-byte in order,
+  // even if access or limits changed, so editing an unrelated field cannot
+  // silently erase it. Turning smart routing off revalidates it server-side.
+  const autoGroups = apiKey.smart_routing
+    ? [...storedAutoGroups]
+    : storedAutoGroups
+        .filter((group) => availableSet.has(group))
+        .slice(0, Math.max(0, maxAutoGroups))
   const autoGroupsMode = storedAutoGroups.length > 0 ? 'custom' : 'inherit'
 
   return {
     name: apiKey.name,
+    smart_routing: apiKey.smart_routing ?? false,
+    routing_strategy: apiKey.routing_strategy || 'auto',
+    no_retry_within_group: apiKey.no_retry_within_group ?? false,
+    project_label: apiKey.project_label || '',
     remain_quota_dollars: apiKey.unlimited_quota
       ? 0
       : quotaUnitsToDollars(apiKey.remain_quota),

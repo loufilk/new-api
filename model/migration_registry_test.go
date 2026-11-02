@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// This explicitly tracks core AutoMigrate order, including the six additive
-// agent-system models after redemptions and the ChuanAPI registry tail. A changed index is a schema
+// This explicitly tracks core AutoMigrate order, including additive routing
+// metrics and the ChuanAPI registry tail. A changed index is a schema
 // ordering change and must be reviewed explicitly rather than hidden inside a
 // composition refactor.
 func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
@@ -67,6 +67,7 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 		&CustomOAuthProvider{},
 		&UserOAuthBinding{},
 		&PerfMetric{},
+		&TokenRoutingMetric{},
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},
@@ -98,7 +99,7 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 
 func TestMainAutoMigrateModelsWithoutRegistryKeepsCoreModels(t *testing.T) {
 	models := mainAutoMigrateModels(nil)
-	require.Len(t, models, 55)
+	require.Len(t, models, 56)
 	assert.IsType(t, &Channel{}, models[0])
 	assert.IsType(t, &ReferralRewardInbox{}, models[len(models)-1])
 }

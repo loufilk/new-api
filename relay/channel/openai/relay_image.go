@@ -17,9 +17,8 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 // OpenaiImageHandler handles non-streaming OpenAI image responses
@@ -67,7 +66,7 @@ func validateImageResponseEvidence(c *gin.Context, body []byte, response *dto.Si
 		// xAI can report cost without OpenAI token aggregates. This is
 		// evidence of charged work, never an instruction to trust that cost
 		// as the gateway's bill or to refund it as an unused rejection.
-		costEvidence := gjson.GetBytes(body, "usage.cost_in_usd_ticks").Float() > 0
+		costEvidence := ojson.GetBytes(body, "usage.cost_in_usd_ticks").Float() > 0
 		if count == 0 && !dto.HasOpenAIUsageTokens(&response.Usage) && !costEvidence {
 			common.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, true)
 		} else {
@@ -96,7 +95,7 @@ func validateImageResponseEvidence(c *gin.Context, body []byte, response *dto.Si
 // bill nothing. A zero result leaves the requested quantity in place because
 // UpdateImageCount ignores non-positive counts.
 func openaiImageResponseCount(responseBody []byte) int64 {
-	data := gjson.GetBytes(responseBody, "data")
+	data := ojson.GetBytesNoCopy(responseBody, "data")
 	if data.IsObject() {
 		if openaiImageDataHasField(data, "url") || openaiImageDataHasField(data, "b64_json") {
 			return 1
@@ -107,7 +106,7 @@ func openaiImageResponseCount(responseBody []byte) int64 {
 		return 0
 	}
 	var urls, b64s int64
-	data.ForEach(func(_, item gjson.Result) bool {
+	data.ForEach(func(_, item ojson.Result) bool {
 		if openaiImageDataHasField(item, "url") {
 			urls++
 		}
@@ -121,9 +120,9 @@ func openaiImageResponseCount(responseBody []byte) int64 {
 
 // openaiImageDataHasField reports whether an image data entry carries a
 // non-empty string value for field.
-func openaiImageDataHasField(item gjson.Result, field string) bool {
+func openaiImageDataHasField(item ojson.Result, field string) bool {
 	value := item.Get(field)
-	return value.Type == gjson.String && strings.TrimSpace(value.String()) != ""
+	return value.Type == ojson.String && strings.TrimSpace(value.String()) != ""
 }
 
 // normalizeOpenAIUsage maps the OpenAI Images usage shape (input_tokens /
@@ -204,7 +203,7 @@ func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp 
 				completedImages++
 				generatedEvidence = true
 			}
-			generatedEvidence = generatedEvidence || openaiImageDataHasField(gjson.ParseBytes(raw), "b64_json") || openaiImageDataHasField(gjson.ParseBytes(raw), "url")
+			generatedEvidence = generatedEvidence || openaiImageDataHasField(ojson.ParseBytes(raw), "b64_json") || openaiImageDataHasField(ojson.ParseBytes(raw), "url")
 		} else {
 			generatedEvidence = true // An undecodable event cannot prove no work.
 		}
@@ -355,7 +354,7 @@ func openaiImageJSONAsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo,
 	helper.SetEventStreamHeaders(c)
 	c.Status(http.StatusOK)
 
-	created := gjson.GetBytes(responseBody, "created").Int()
+	created := ojson.GetBytes(responseBody, "created").Int()
 	if created == 0 {
 		created = time.Now().Unix()
 	}
@@ -372,44 +371,37 @@ func openaiImageJSONAsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo,
 		}
 	}
 
-	// gjson.Result.Array returns the element list for an array and a single
-	// element for an object-shaped data, keeping document-relative indexes so
-	// the zero-copy field forwarding below stays valid for both shapes.
-	// Entries without url or b64_json carry no image and are not forwarded.
+	// ojson.Result.Array returns the element list for an array and a single
+	// element for an object-shaped data. The results share memory with
+	// responseBody, which stays unchanged here, so the fields are forwarded
+	// without copying. Entries without url or b64_json carry no image and are
+	// not forwarded.
 	emitted := 0
-	for _, image := range gjson.GetBytes(responseBody, "data").Array() {
+	for _, image := range ojson.GetBytesNoCopy(responseBody, "data").Array() {
 		if !openaiImageDataHasField(image, "url") && !openaiImageDataHasField(image, "b64_json") {
 			continue
 		}
-		payload := []byte(`{"type":"image_generation.completed"}`)
-		payload, err = sjson.SetBytes(payload, "created_at", created)
-		if err != nil {
+		payload := ojson.NewDocString(`{"type":"image_generation.completed"}`)
+		if err := payload.Set("created_at", created); err != nil {
 			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 		}
 		if validUsage {
-			payload, err = sjson.SetRawBytes(payload, "usage", usageJSON)
-			if err != nil {
+			if err := payload.SetRawBytes("usage", usageJSON); err != nil {
 				return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 			}
 		}
-		// b64_json goes last: every sjson.Set* reallocates the whole payload,
-		// so inserting the large blob after all small fields avoids re-copying
-		// multi-MB buffers.
+		// The event keeps its field order with b64_json last. The Doc writes
+		// the event once, so the large blob is copied only into the output.
 		for _, field := range []string{"url", "revised_prompt", "b64_json"} {
 			value := image.Get(field)
-			if value.Type != gjson.String || value.Raw == `""` {
+			if value.Type != ojson.String || value.Raw == `""` {
 				continue
 			}
-			raw := []byte(value.Raw)
-			if value.Index > 0 {
-				raw = responseBody[value.Index : value.Index+len(value.Raw)]
-			}
-			payload, err = sjson.SetRawBytes(payload, field, raw)
-			if err != nil {
+			if err := payload.SetRaw(field, value.Raw); err != nil {
 				return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 			}
 		}
-		if writeErr := helper.ResponseChunkData(c, dto.ResponsesStreamResponse{Type: "image_generation.completed"}, string(payload)); writeErr != nil {
+		if writeErr := helper.ResponseChunkData(c, dto.ResponsesStreamResponse{Type: "image_generation.completed"}, payload.String()); writeErr != nil {
 			if info != nil && info.StreamStatus != nil {
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, writeErr)
 			}

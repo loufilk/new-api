@@ -176,10 +176,30 @@ func TestRealtimeFetchRefundsTaskItFindsFailed(t *testing.T) {
 	t.Cleanup(server.Close)
 	channel := &model.Channel{Name: "realtime-refund", Type: constant.ChannelTypeGemini, Key: "channel-key", BaseURL: &server.URL, UsedQuota: 1000}
 	require.NoError(t, database.Create(channel).Error)
-	require.NoError(t, database.Create(&model.User{Id: 7, Username: "realtime-owner", Quota: 100, QuotaPaid: 100, UsedQuota: 1000, RequestCount: 1}).Error)
-	token := &model.Token{UserId: 7, Key: "realtime-token", RemainQuota: 1000, UsedQuota: 1000}
+	require.NoError(t, database.Create(&model.User{Id: 7, Username: "realtime-owner", Quota: 1100, QuotaPaid: 1000, QuotaBonus: 70, QuotaReward: 30, UsedQuota: 1000, RequestCount: 1}).Error)
+	token := &model.Token{UserId: 7, Key: "realtime-token", RemainQuota: 2000}
 	require.NoError(t, database.Create(token).Error)
-	// Known already-accounted synthetic charge, with its original source receipt.
+	// Establish the charge through the real ledger/token transaction. A task's
+	// serialized shares alone are not proof of a refundable wallet debit.
+	const requestID = "realtime-refund-request"
+	var receipt []model.LedgerShare
+	require.NoError(t, database.Transaction(func(tx *gorm.DB) error {
+		_, err := model.DebitQuotaTx(tx, model.LedgerEntry{
+			UserId: 7, Delta: 1000, Reason: model.LedgerReasonBillingPreConsume,
+			ReferenceType: "relay", ReferenceId: requestID, RequestId: requestID,
+			IdempotencyKey: "billing:preconsume:" + requestID,
+		}, model.AccountBonus, model.AccountReward, model.AccountPaid)
+		if err != nil {
+			return err
+		}
+		if err := model.ApplyTokenQuotaDeltaTx(tx, token.Id, token.Key, -1000); err != nil {
+			return err
+		}
+		receipt, err = model.WalletRequestReceiptTx(tx, 7, requestID)
+		return err
+	}))
+	require.ElementsMatch(t, []model.LedgerShare{{Account: model.AccountBonus, Amount: 70}, {Account: model.AccountReward, Amount: 30}, {Account: model.AccountPaid, Amount: 900}}, receipt)
+	// Usage counters above represent this already-accounted synthetic task.
 	task := &model.Task{
 		TaskID: "public-task", Platform: constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeGemini)),
 		UserId: 7, ChannelId: channel.Id, Quota: 1000,
@@ -187,9 +207,9 @@ func TestRealtimeFetchRefundsTaskItFindsFailed(t *testing.T) {
 		PrivateData: model.TaskPrivateData{
 			Key: "channel-key", UpstreamTaskID: base64.RawURLEncoding.EncodeToString([]byte("operations/task-1")),
 			TokenId: token.Id, BillingSource: service.BillingSourceWallet,
-			RequestId: "realtime-refund-request", FinancialVersion: 2, SubmissionAccounted: true,
+			RequestId: requestID, FinancialVersion: 2, SubmissionAccounted: true,
 			TokenFingerprint: model.BillingTokenFingerprint(token.Key),
-			WalletDebit:      []model.LedgerShare{{Account: model.AccountBonus, Amount: 70}, {Account: model.AccountReward, Amount: 30}, {Account: model.AccountPaid, Amount: 900}},
+			WalletDebit:      receipt,
 		},
 	}
 	require.NoError(t, database.Create(task).Error)
@@ -215,10 +235,28 @@ func TestRealtimeFetchRefundsTaskItFindsFailed(t *testing.T) {
 	require.NoError(t, database.First(token, token.Id).Error)
 	assert.Equal(t, 2000, token.RemainQuota)
 	assert.Zero(t, token.UsedQuota)
+	require.NoError(t, database.First(channel, channel.Id).Error)
+	assert.Zero(t, channel.UsedQuota)
 	tryRealtimeFetch(&stored, true)
 	assert.EqualValues(t, 1, calls.Load(), "a terminal query neither polls upstream nor repeats financial settlement")
 	require.NoError(t, database.First(&user, 7).Error)
 	assert.Equal(t, 1100, user.Quota)
+	var ledgerRows []model.BalanceLedger
+	require.NoError(t, database.Where("user_id = ?", 7).Find(&ledgerRows).Error)
+	require.Len(t, ledgerRows, 6, "three source debits and exactly three corresponding refunds")
+	netDelta := 0
+	for _, row := range ledgerRows {
+		netDelta += row.Delta
+	}
+	assert.Zero(t, netDelta)
+	var source model.BonusSourceState
+	require.NoError(t, database.Where("user_id = ?", 7).First(&source).Error)
+	assert.Equal(t, 70, source.Available)
+	assert.Zero(t, source.Outstanding)
+	var refundLogs []model.Log
+	require.NoError(t, database.Where("user_id = ? AND type = ?", 7, model.LogTypeRefund).Find(&refundLogs).Error)
+	require.Len(t, refundLogs, 1, "a terminal query does not duplicate its financial display log")
+	assert.Equal(t, 1000, refundLogs[0].Quota)
 }
 
 func TestApplyChannelPinPreservesOriginTasksAndRetryMode(t *testing.T) {

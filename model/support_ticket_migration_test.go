@@ -44,7 +44,7 @@ func verifySupportTicketSchema(t *testing.T, db *gorm.DB) {
 	require.NoError(t, db.Raw(versionSQL).Scan(&version).Error)
 	t.Logf("support database: %s %s", db.Dialector.Name(), version)
 
-	require.NoError(t, db.AutoMigrate(&SupportTicket{}, &SupportTicketMessage{}, &SupportEmailSettings{}, &SupportEmailOutbox{}, &SupportEmailPreference{}, &SupportEmailRate{}))
+	require.NoError(t, db.AutoMigrate(&SupportTicket{}, &SupportTicketMessage{}, &SupportTicketAttachment{}, &SupportTicketSubmission{}, &SupportEmailSettings{}, &SupportEmailOutbox{}, &SupportEmailPreference{}, &SupportEmailRate{}))
 	ticket := &SupportTicket{
 		UserID: 107, Subject: "Support migration 工单 😀", Status: SupportTicketStatusProcessing,
 		UserUnread: false, AdminUnread: true, LastMessageAt: 1_700_000_000,
@@ -60,7 +60,7 @@ func verifySupportTicketSchema(t *testing.T, db *gorm.DB) {
 		require.NoError(t, db.Where("id = ?", ticket.ID).Delete(&SupportTicket{}).Error)
 	})
 
-	require.NoError(t, db.AutoMigrate(&SupportTicket{}, &SupportTicketMessage{}, &SupportEmailSettings{}, &SupportEmailOutbox{}, &SupportEmailPreference{}, &SupportEmailRate{}), "support schema migration must be idempotent")
+	require.NoError(t, db.AutoMigrate(&SupportTicket{}, &SupportTicketMessage{}, &SupportTicketAttachment{}, &SupportTicketSubmission{}, &SupportEmailSettings{}, &SupportEmailOutbox{}, &SupportEmailPreference{}, &SupportEmailRate{}), "support schema migration must be idempotent")
 	assert.True(t, db.Migrator().HasTable(&SupportTicket{}))
 	assert.True(t, db.Migrator().HasTable(&SupportTicketMessage{}))
 	for _, index := range []string{"idx_support_ticket_user_status", "idx_support_ticket_status", "idx_support_ticket_admin_unread", "idx_support_ticket_last_message"} {

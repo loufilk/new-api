@@ -82,6 +82,11 @@ func deleteOldEmptyBucket(k bucketKey, rawKey any) {
 }
 
 func cleanupExpiredMetrics(retentionDays int) {
+	// Routing uses one day; seven days bounds aggregate growth independently
+	// of the model-square history retention setting.
+	if err := model.DeleteTokenRoutingMetricsBefore(time.Now().Add(-7 * 24 * time.Hour).Unix()); err != nil {
+		common.SysError("failed to clean up token routing metrics")
+	}
 	if retentionDays <= 0 {
 		return
 	}

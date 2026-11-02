@@ -16,12 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 
 import { TicketDetail } from '../components/ticket-detail'
-import type { SupportTicketDetail } from '../types'
+import type { SupportTicketDetail, SupportTicketSubmission } from '../types'
 
 function detail(status: SupportTicketDetail['ticket']['status']) {
   return {
@@ -89,4 +89,39 @@ describe('TicketDetail preserves user/admin conversation rules', () => {
       .click(screen.getByRole('button', { name: 'Reopen ticket' }))
     expect(onStatusChange).toHaveBeenCalledWith('processing')
   })
+})
+
+test('reply draft survives a failed request and unchanged retries preserve request identity', async () => {
+  const onReply = vi.fn(async (_input: SupportTicketSubmission) => {
+    throw new Error('uncertain delivery')
+  })
+  render(
+    <TicketDetail
+      admin={false}
+      detail={detail('processing')}
+      replyPending={false}
+      statusPending={false}
+      onReply={onReply}
+      onStatusChange={vi.fn()}
+    />
+  )
+  expect(screen.getByText(/Other issues/)).toBeVisible()
+  const user = userEvent.setup()
+  await user.type(screen.getByLabelText('Reply'), 'A synthetic follow-up')
+  await user.click(screen.getByRole('button', { name: 'Send reply' }))
+  await waitFor(() => expect(onReply).toHaveBeenCalledTimes(1))
+  expect(screen.getByLabelText('Reply')).toHaveValue('A synthetic follow-up')
+  await user.click(screen.getByRole('button', { name: 'Send reply' }))
+  await waitFor(() => expect(onReply).toHaveBeenCalledTimes(2))
+  expect(onReply.mock.calls[0][0].request_id).toBe(
+    onReply.mock.calls[1][0].request_id
+  )
+  fireEvent.change(screen.getByLabelText('Reply'), { target: { value: '' } })
+  await user.click(screen.getByRole('button', { name: 'Send reply' }))
+  expect(
+    await screen.findByText(
+      'Reply is required and must not exceed 10000 characters'
+    )
+  ).toBeVisible()
+  expect(onReply).toHaveBeenCalledTimes(2)
 })

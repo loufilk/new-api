@@ -16,9 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { QueryClient } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { isRedirect } from '@tanstack/react-router'
 import { renderHook } from '@testing-library/react'
+import { createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import {
@@ -70,22 +71,33 @@ afterEach(() => {
 
 describe('sidebar exposes Text Generation and Image Generation in order', () => {
   test('chat group lists text generation before image generation', () => {
-    const { result } = renderHook(() => useSidebarData())
-    const chat = result.current.navGroups.find((group) => group.id === 'chat')
-    const urls = (chat?.items ?? [])
-      .filter((item) => 'url' in item)
-      .map((item) => (item as { url: string }).url)
-    const playgroundIndex = urls.indexOf('/playground')
-    const imageIndex = urls.indexOf('/image')
-    expect(playgroundIndex).toBeGreaterThanOrEqual(0)
-    expect(imageIndex).toBeGreaterThan(playgroundIndex)
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const { result, unmount } = renderHook(() => useSidebarData(), {
+      wrapper: ({ children }) =>
+        createElement(QueryClientProvider, { client }, children),
+    })
+    try {
+      const chat = result.current.navGroups.find((group) => group.id === 'chat')
+      const urls = (chat?.items ?? [])
+        .filter((item) => 'url' in item)
+        .map((item) => (item as { url: string }).url)
+      const playgroundIndex = urls.indexOf('/playground')
+      const imageIndex = urls.indexOf('/image')
+      expect(playgroundIndex).toBeGreaterThanOrEqual(0)
+      expect(imageIndex).toBeGreaterThan(playgroundIndex)
 
-    const titles = (chat?.items ?? [])
-      .filter((item) => 'url' in item)
-      .map((item) => (item as { title: string }).title)
-    expect(titles).toContain('Text Generation')
-    expect(titles).toContain('Image Generation')
-    expect(titles).not.toContain('Playground')
+      const titles = (chat?.items ?? [])
+        .filter((item) => 'url' in item)
+        .map((item) => (item as { title: string }).title)
+      expect(titles).toContain('Text Generation')
+      expect(titles).toContain('Image Generation')
+      expect(titles).not.toContain('Playground')
+    } finally {
+      unmount()
+      client.clear()
+    }
   })
 
   test('admin chat.image defaults to true and stays independently controllable', () => {

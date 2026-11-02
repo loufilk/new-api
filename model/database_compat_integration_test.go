@@ -39,7 +39,7 @@ func installDatabaseCompatRegistry(t *testing.T) {
 		Extension: "chuanapi",
 		Name:      "support_models",
 		Phase:     extension.PhaseAfterCoreModels,
-		Models:    []any{&SupportTicket{}, &SupportTicketMessage{}},
+		Models:    []any{&SupportTicket{}, &SupportTicketMessage{}, &SupportTicketAttachment{}, &SupportTicketSubmission{}},
 	}))
 	require.NoError(t, reg.RegisterDataStep(extension.DataStep{
 		Extension: "chuanapi",
@@ -135,14 +135,16 @@ func TestDatabaseCompatibilityReal(t *testing.T) {
 	t.Logf("validated %s server version: %s", dialect, version)
 
 	for name, table := range map[string]any{
-		"users":              &User{},
-		"tokens":             &Token{},
-		"options":            &Option{},
-		"quota_data":         &QuotaData{},
-		"balance_ledger":     &BalanceLedger{},
-		"subscription_plans": &SubscriptionPlan{},
-		"support_tickets":    &SupportTicket{},
-		"support_messages":   &SupportTicketMessage{},
+		"users":               &User{},
+		"tokens":              &Token{},
+		"options":             &Option{},
+		"quota_data":          &QuotaData{},
+		"balance_ledger":      &BalanceLedger{},
+		"subscription_plans":  &SubscriptionPlan{},
+		"support_tickets":     &SupportTicket{},
+		"support_messages":    &SupportTicketMessage{},
+		"support_attachments": &SupportTicketAttachment{},
+		"support_submissions": &SupportTicketSubmission{},
 	} {
 		require.Truef(t, DB.Migrator().HasTable(table), "migrateDB did not create %s on %s", name, dialect)
 	}

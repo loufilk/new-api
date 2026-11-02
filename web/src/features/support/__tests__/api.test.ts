@@ -22,6 +22,7 @@ import { api } from '@/lib/api'
 
 import {
   createSupportTicket,
+  getSupportTicketAttachment,
   listSupportTickets,
   replySupportTicket,
   updateSupportTicketStatus,
@@ -128,4 +129,67 @@ describe('support ticket API keeps user and admin routes separate', () => {
       createSupportTicket({ subject: '', message: '' })
     ).rejects.toThrow('invalid input')
   })
+})
+
+test('image create uses bounded multipart fields, preserving explicit empty contact and idempotency ID', async () => {
+  postMock.mockResolvedValue({ data: { success: true, message: '', data: {} } })
+  const images = [
+    new File(['one'], 'one.png', { type: 'image/png' }),
+    new File(['two'], 'two.webp', { type: 'image/webp' }),
+  ]
+  await createSupportTicket({
+    subject: 'Help',
+    message: 'Description',
+    category: 'billing',
+    contact_email: '',
+    request_id: '00000000-0000-4000-8000-000000000001',
+    images,
+  })
+  const payload = postMock.mock.calls[0][1] as FormData
+  expect(payload).toBeInstanceOf(FormData)
+  expect(payload.get('contact_email')).toBe('')
+  expect(payload.get('category')).toBe('billing')
+  expect(payload.get('request_id')).toBe('00000000-0000-4000-8000-000000000001')
+  expect(payload.getAll('images')).toHaveLength(2)
+  expect(payload.has('images[]')).toBe(false)
+})
+
+test('image reply uses admin route without including routing flags in multipart', async () => {
+  postMock.mockResolvedValue({ data: { success: true, message: '', data: {} } })
+  await replySupportTicket({
+    admin: true,
+    ticketId: 7,
+    message: 'See attached',
+    images: [new File(['png'], 'one.png', { type: 'image/png' })],
+    request_id: '00000000-0000-4000-8000-000000000002',
+  })
+  expect(postMock.mock.calls[0][0]).toBe('/api/admin/support/tickets/7/replies')
+  const payload = postMock.mock.calls[0][1] as FormData
+  expect([...payload.keys()]).toEqual(['message', 'request_id', 'images'])
+})
+
+test('private attachment fetch uses authenticated API, an independent abort signal, and rejects non-images', async () => {
+  const image = new Blob(['png'], { type: 'image/png' })
+  const controller = new AbortController()
+  getMock.mockResolvedValueOnce({ data: image })
+  expect(
+    await getSupportTicketAttachment(false, 7, 'private-id', controller.signal)
+  ).toBe(image)
+  expect(getMock).toHaveBeenCalledWith(
+    '/api/support/tickets/7/attachments/private-id',
+    expect.objectContaining({
+      responseType: 'blob',
+      signal: controller.signal,
+      disableDuplicate: true,
+    })
+  )
+  getMock.mockResolvedValueOnce({
+    data: new Blob(['<svg/>'], { type: 'image/svg+xml' }),
+  })
+  await expect(
+    getSupportTicketAttachment(true, 7, 'private-id')
+  ).rejects.toThrow('Invalid support image response')
+  expect(getMock.mock.calls[1][0]).toBe(
+    '/api/admin/support/tickets/7/attachments/private-id'
+  )
 })

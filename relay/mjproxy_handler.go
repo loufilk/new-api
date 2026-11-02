@@ -289,7 +289,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 		common.SysLog(common.LogText("error settling Midjourney quota: %s", billingErr.Error()))
 	}
 	if accepted {
-		service.MarkRequestPolicySuccess(c, nil)
+		service.MarkRequestPolicySuccess(c, nil, info)
 	}
 	if billingApplied {
 		billingChannelId := midjourneyTask.GetBillingChannelId()
@@ -664,7 +664,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		common.SysLog(common.LogText("error settling Midjourney quota: %s", billingErr.Error()))
 	}
 	if accepted {
-		service.MarkRequestPolicySuccess(c, nil)
+		service.MarkRequestPolicySuccess(c, nil, relayInfo)
 	}
 	if billingApplied {
 		billingChannelId := midjourneyTask.GetBillingChannelId()

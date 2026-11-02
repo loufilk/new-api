@@ -144,7 +144,7 @@ async function renderCreateDrawer(): Promise<void> {
   )
   await waitFor(
     () => {
-      const saveButton = findButton('Save changes', false)
+      const saveButton = findButton('Add', false)
       expect(saveButton).toBeEnabled()
     },
     { timeout: 1500 }
@@ -163,7 +163,9 @@ function findButton(text: string, required = true): HTMLButtonElement | null {
   return button ?? null
 }
 
-function getControlByLabel(labelText: 'Name' | 'Quantity'): HTMLInputElement
+function getControlByLabel(
+  labelText: 'Token Name' | 'Quantity'
+): HTMLInputElement
 function getControlByLabel(labelText: 'Group'): HTMLButtonElement
 function getControlByLabel(labelText: 'Auto group order'): HTMLElement
 function getControlByLabel(labelText: string): HTMLElement {
@@ -191,20 +193,6 @@ function changeInput(input: HTMLInputElement, value: string): void {
   fireEvent.input(input, { target: { value } })
 }
 
-function selectComboboxOption(
-  trigger: HTMLButtonElement,
-  optionDescription: string
-): void {
-  fireEvent.click(trigger)
-  const option = [
-    ...document.querySelectorAll<HTMLElement>('[data-slot="command-item"]'),
-  ].find((candidate) => candidate.textContent?.includes(optionDescription))
-  if (!option) {
-    throw new Error(`Expected option containing "${optionDescription}"`)
-  }
-  fireEvent.click(option)
-}
-
 afterEach(async () => {
   cleanup()
   if (renderedDrawer) {
@@ -224,22 +212,17 @@ describe('API keys mutate drawer Auto group integration', () => {
     await renderCreateDrawer()
 
     const groupTrigger = getControlByLabel('Group')
-    expect(groupTrigger.textContent?.includes('auto')).toBe(true)
+    expect(groupTrigger).toHaveTextContent('vip → default')
     expect(
       document.body.textContent?.includes(
         'Using the complete global Auto order (2 groups)'
       )
     ).toBe(true)
-    expect(
-      [
-        ...document.querySelectorAll('[data-slot="global-auto-order-name"]'),
-      ].map((item) => item.textContent)
-    ).toEqual(['vip', 'default'])
     expect(findButton('Restore global Auto', true).disabled).toBe(true)
 
-    changeInput(getControlByLabel('Name'), 'batch')
+    changeInput(getControlByLabel('Token Name'), 'batch')
     changeInput(getControlByLabel('Quantity'), '2')
-    fireEvent.click(findButton('Save changes', true))
+    fireEvent.click(findButton('Add', true))
     await waitFor(() => expect(createdPayloads).toHaveLength(2))
 
     expect(createdPayloads.length).toBe(2)
@@ -251,45 +234,27 @@ describe('API keys mutate drawer Auto group integration', () => {
     }
   })
 
-  test('preserves an unsaved custom order and mode after Auto to ordinary to Auto changes', async () => {
+  test('preserves an unsaved manual order when smart routing is toggled on and off', async () => {
     const createdPayloads: Array<Record<string, unknown>> = []
     installApiFixtures(createdPayloads)
     await renderCreateDrawer()
-
-    const autoOrderControl = getControlByLabel('Auto group order')
-    const addGroupTrigger = autoOrderControl.querySelector<HTMLButtonElement>(
-      'button[role="combobox"]'
-    )
-    if (!addGroupTrigger) {
-      throw new Error('Expected Auto group order combobox')
-    }
-    selectComboboxOption(addGroupTrigger, 'Priority access')
-
-    expect(
-      document.querySelector('button[aria-label="Remove vip"]')
-    ).toBeTruthy()
-    expect(document.body.textContent?.includes('1 / 3 groups selected')).toBe(
-      true
-    )
-    expect(findButton('Restore global Auto', true).disabled).toBe(false)
-
-    const groupTrigger = getControlByLabel('Group')
-    selectComboboxOption(groupTrigger, 'Standard access')
-    expect(document.querySelector('button[aria-label="Remove vip"]')).toBe(null)
-    selectComboboxOption(groupTrigger, 'Automatic routing')
-
-    expect(
-      document.querySelector('button[aria-label="Remove vip"]')
-    ).toBeTruthy()
-    expect(document.body.textContent?.includes('1 / 3 groups selected')).toBe(
-      true
-    )
-    expect(findButton('Restore global Auto', true).disabled).toBe(false)
-
-    changeInput(getControlByLabel('Name'), 'custom')
-    fireEvent.click(findButton('Save changes', true))
+    fireEvent.click(getControlByLabel('Group'))
+    const selectedDefault = screen.getByRole('option', { name: /^default/ })
+    fireEvent.click(selectedDefault)
+    fireEvent.keyDown(screen.getByPlaceholderText('Search group name'), {
+      key: 'Escape',
+    })
+    fireEvent.click(screen.getByRole('switch', { name: 'Smart Routing' }))
+    expect(getControlByLabel('Group')).toBeDisabled()
+    fireEvent.click(screen.getByRole('switch', { name: 'Smart Routing' }))
+    expect(getControlByLabel('Group')).toHaveTextContent('vip')
+    changeInput(getControlByLabel('Token Name'), 'custom')
+    fireEvent.click(findButton('Add', true))
     await waitFor(() => expect(createdPayloads).toHaveLength(1))
-    expect(createdPayloads[0]?.auto_groups).toEqual(['vip'])
+    expect(createdPayloads[0]).toMatchObject({
+      group: 'vip',
+      smart_routing: false,
+    })
   })
 })
 
@@ -415,7 +380,7 @@ describe('API key expiry across editing sessions', () => {
       const payloads: Array<Record<string, unknown>> = []
       installApiFixtures(payloads)
       await renderCreateDrawer()
-      changeInput(getControlByLabel('Name'), 'no-expiry')
+      changeInput(getControlByLabel('Token Name'), 'no-expiry')
       fireEvent.click(screen.getByRole('button', { name: '1 Month' }))
       expect(screen.getByLabelText('Time')).toBeEnabled()
       fireEvent.click(screen.getByRole('button', { name: action }))
@@ -423,7 +388,7 @@ describe('API key expiry across editing sessions', () => {
         screen.getByRole('button', { name: 'Never expires' })
       ).toBeVisible()
       expect(screen.getByLabelText('Time')).toBeDisabled()
-      fireEvent.click(findButton('Save changes', true))
+      fireEvent.click(findButton('Add', true))
       await waitFor(() => expect(payloads).toHaveLength(1))
       expect(payloads[0]?.expired_time).toBe(-1)
     }
@@ -436,7 +401,6 @@ describe('API keys mutate drawer user quota query switch', () => {
     installApiFixtures(createdPayloads)
     await renderCreateDrawer()
 
-    fireEvent.click(findButton('Advanced Settings', true))
     const quotaQuerySwitch = await screen.findByRole('switch', {
       name: 'Allow querying user quota',
     })
@@ -444,9 +408,39 @@ describe('API keys mutate drawer user quota query switch', () => {
     fireEvent.click(quotaQuerySwitch)
     expect(quotaQuerySwitch).not.toBeChecked()
 
-    changeInput(getControlByLabel('Name'), 'no-user-quota')
-    fireEvent.click(findButton('Save changes', true))
+    changeInput(getControlByLabel('Token Name'), 'no-user-quota')
+    fireEvent.click(findButton('Add', true))
     await waitFor(() => expect(createdPayloads).toHaveLength(1))
     expect(createdPayloads[0]?.allow_user_quota_query).toBe(false)
+  })
+})
+
+describe('API keys persisted routing policy', () => {
+  test('submits the selected strategy, project label and one-channel-per-group policy with the original quota permission', async () => {
+    const payloads: Array<Record<string, unknown>> = []
+    installApiFixtures(payloads)
+    await renderCreateDrawer()
+    changeInput(getControlByLabel('Token Name'), 'routing-fixture')
+    fireEvent.change(screen.getByLabelText('Project label'), {
+      target: { value: 'Synthetic project' },
+    })
+    fireEvent.click(
+      screen.getByRole('switch', { name: 'No retries within a group' })
+    )
+    fireEvent.click(screen.getByRole('switch', { name: 'Smart Routing' }))
+    fireEvent.click(
+      screen.getByRole('radio', { name: 'Speed first (fastest)' })
+    )
+    fireEvent.click(findButton('Add', true))
+    await waitFor(() => expect(payloads).toHaveLength(1))
+    expect(payloads[0]).toMatchObject({
+      smart_routing: true,
+      routing_strategy: 'speed',
+      no_retry_within_group: true,
+      project_label: 'Synthetic project',
+      group: 'auto',
+      auto_groups: [],
+      allow_user_quota_query: true,
+    })
   })
 })

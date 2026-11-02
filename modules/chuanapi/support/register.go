@@ -19,7 +19,7 @@ const (
 )
 
 func Models() []any {
-	return []any{&model.SupportTicket{}, &model.SupportTicketMessage{}, &model.SupportEmailSettings{}, &model.SupportEmailPreference{}, &model.SupportEmailOutbox{}, &model.SupportEmailRate{}}
+	return []any{&model.SupportTicket{}, &model.SupportTicketMessage{}, &model.SupportTicketAttachment{}, &model.SupportTicketSubmission{}, &model.SupportEmailSettings{}, &model.SupportEmailPreference{}, &model.SupportEmailOutbox{}, &model.SupportEmailRate{}}
 }
 
 func Register(reg *extension.Registry) error {
@@ -58,6 +58,7 @@ func registerSupportRoutes(engine *gin.Engine) error {
 	user.GET("", middleware.SearchRateLimit(), controller.ListSupportTickets)
 	user.POST("", middleware.UserCriticalRateLimit("support-ticket-create"), controller.CreateSupportTicket)
 	user.GET("/:id", controller.GetSupportTicket)
+	user.GET("/:id/attachments/:attachment_id", controller.GetSupportTicketAttachment)
 	user.POST("/:id/replies", middleware.UserCriticalRateLimit("support-ticket-reply"), controller.ReplySupportTicket)
 	user.POST("/:id/read", controller.MarkSupportTicketRead)
 
@@ -68,6 +69,7 @@ func registerSupportRoutes(engine *gin.Engine) error {
 	admin.Use(middleware.AdminAuth())
 	admin.GET("", middleware.SearchRateLimit(), controller.ListAdminSupportTickets)
 	admin.GET("/:id", controller.GetAdminSupportTicket)
+	admin.GET("/:id/attachments/:attachment_id", controller.GetAdminSupportTicketAttachment)
 	admin.POST("/:id/replies", middleware.UserCriticalRateLimit("support-ticket-reply"), controller.ReplyAdminSupportTicket)
 	admin.POST("/:id/read", controller.MarkAdminSupportTicketRead)
 	admin.PUT("/:id/status", controller.UpdateAdminSupportTicketStatus)

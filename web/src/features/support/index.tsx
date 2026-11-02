@@ -54,7 +54,7 @@ import {
 import { CreateTicketDialog } from './components/create-ticket-dialog'
 import { TicketDetail } from './components/ticket-detail'
 import { SupportEmailPreferences } from './email/preferences'
-import type { CreateSupportTicketValues } from './lib/schema'
+import { supportTicketCategoryLabel } from './lib/categories'
 import {
   supportTicketStatusLabel,
   supportTicketStatusVariant,
@@ -199,13 +199,14 @@ export function SupportCenter(
   } else {
     detailContent = (
       <TicketDetail
+        key={`${userId}:${admin}:${detailQuery.data.ticket.id}`}
         admin={admin}
         detail={detailQuery.data}
         replyPending={replyMutation.isPending}
         statusPending={statusMutation.isPending}
-        onReply={(message) =>
+        onReply={(submission) =>
           replyMutation
-            .mutateAsync({ admin, ticketId: selectedId, message })
+            .mutateAsync({ admin, ticketId: selectedId, ...submission })
             .then(() => undefined)
         }
         onStatusChange={(status) =>
@@ -282,6 +283,8 @@ export function SupportCenter(
                   </Badge>
                   <span className='text-muted-foreground text-xs'>
                     {t('Ticket #{{id}}', { id: ticket.id })}
+                    {' · '}
+                    {supportTicketCategoryLabel(t, ticket.category)}
                   </span>
                   {admin && (
                     <span className='text-muted-foreground text-xs'>
@@ -433,7 +436,7 @@ export function SupportCenter(
         open={createOpen}
         onOpenChange={setCreateOpen}
         pending={createMutation.isPending}
-        onSubmit={(values: CreateSupportTicketValues) =>
+        onSubmit={(values) =>
           createMutation.mutateAsync(values).then(() => undefined)
         }
       />

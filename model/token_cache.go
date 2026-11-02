@@ -114,7 +114,9 @@ redis.call('HSET', KEYS[1],
   'UnlimitedQuota', ARGV[8], 'ModelLimitsEnabled', ARGV[9], 'ModelLimits', ARGV[10],
   'AllowIps', ARGV[11], 'Group', ARGV[12], 'CrossGroupRetry', ARGV[13],
   'AutoGroups', ARGV[14], 'RemainQuota', ARGV[15], 'UsedQuota', ARGV[16],
-  'AllowUserQuotaQuery', ARGV[17], 'CacheRevision', ARGV[19])
+  'AllowUserQuotaQuery', ARGV[17], 'CacheRevision', ARGV[19],
+  'SmartRouting', ARGV[22], 'RoutingStrategy', ARGV[23],
+  'NoRetryWithinGroup', ARGV[24], 'ProjectLabel', ARGV[25])
 redis.call('EXPIRE', KEYS[1], ARGV[18])
 return 1`
 
@@ -128,6 +130,8 @@ return 1`
 		token.AutoGroups, token.RemainQuota, token.UsedQuota,
 		strconv.FormatBool(token.AllowUserQuotaQuery),
 		tokenCacheTTLSeconds(), token.CacheRevision, authority, expectedPending,
+		strconv.FormatBool(token.SmartRouting), token.RoutingStrategy,
+		strconv.FormatBool(token.NoRetryWithinGroup), token.ProjectLabel,
 	).Int()
 	if err == nil && result == -1 {
 		return 0, ErrPermissionCacheStale

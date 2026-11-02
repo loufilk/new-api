@@ -52,6 +52,7 @@ function renderSettings(
   client.setQueryData(['status'], {
     ...otherCapabilities,
     model_test_enabled: enabled,
+    model_test_settings_available: true,
   })
   vi.spyOn(api, 'get').mockImplementation(async () => ({
     data: { success: true, data: client.getQueryData(['status']) },
@@ -171,7 +172,10 @@ test.each([1, 5, 10])(
 test('root sees the fresh database flag instead of a stale enabled option or status cache', async () => {
   const { client } = renderSettings(true)
   vi.mocked(api.get).mockResolvedValue({
-    data: { success: true, data: { model_test_enabled: false } },
+    data: {
+      success: true,
+      data: { model_test_enabled: false, model_test_settings_available: true },
+    },
   })
   await client.invalidateQueries({ queryKey: ['status'] })
   await waitFor(() =>
@@ -212,4 +216,52 @@ test('an unreachable current flag never exposes a cached editable setting', asyn
   await client.invalidateQueries({ queryKey: ['status'] })
   expect(await screen.findByText('Failed to load settings')).toBeVisible()
   expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+})
+
+test.each([
+  { model_test_enabled: false, model_test_settings_available: false },
+  { model_test_enabled: false },
+  { model_test_settings_available: true },
+  { model_test_enabled: 'true', model_test_settings_available: true },
+])(
+  'an unavailable or invalid authoritative status cannot be edited: %j',
+  async (status) => {
+    const put = vi.spyOn(api, 'put')
+    const { client } = renderSettings(true)
+    await screen.findByRole('switch')
+    vi.mocked(api.get).mockResolvedValue({
+      data: { success: true, data: status },
+    })
+    await client.invalidateQueries({ queryKey: ['status'] })
+    expect(await screen.findByText('Failed to load settings')).toBeVisible()
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Save Changes' })
+    ).not.toBeInTheDocument()
+    expect(put).not.toHaveBeenCalled()
+  }
+)
+
+test('a recovered authoritative read restores the current setting without saving a stale draft', async () => {
+  const put = vi.spyOn(api, 'put')
+  const { client, user } = renderSettings(false)
+  await user.click(await screen.findByRole('switch'))
+  vi.mocked(api.get).mockResolvedValue({
+    data: {
+      success: true,
+      data: { model_test_enabled: false, model_test_settings_available: false },
+    },
+  })
+  await client.invalidateQueries({ queryKey: ['status'] })
+  await screen.findByText('Failed to load settings')
+  vi.mocked(api.get).mockResolvedValue({
+    data: {
+      success: true,
+      data: { model_test_enabled: false, model_test_settings_available: true },
+    },
+  })
+  await user.click(screen.getByRole('button', { name: 'Retry' }))
+  expect(await screen.findByRole('switch')).not.toBeChecked()
+  expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
+  expect(put).not.toHaveBeenCalled()
 })

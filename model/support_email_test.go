@@ -19,9 +19,9 @@ func setupSupportEmailPostgres(t *testing.T) *User {
 	require.NotEmpty(t, os.Getenv("TEST_MODEL_POSTGRES_DSN"), "only owned PostgreSQL is permitted")
 	setupGoogleIdentityPostgres(t)
 	for range 2 {
-		require.NoError(t, DB.AutoMigrate(&SupportTicket{}, &SupportTicketMessage{}, &SupportEmailSettings{}, &SupportEmailPreference{}, &SupportEmailOutbox{}, &SupportEmailRate{}))
+		require.NoError(t, DB.AutoMigrate(&SupportTicket{}, &SupportTicketMessage{}, &SupportTicketAttachment{}, &SupportTicketSubmission{}, &SupportEmailSettings{}, &SupportEmailPreference{}, &SupportEmailOutbox{}, &SupportEmailRate{}))
 	}
-	for _, table := range []string{"support_ticket_messages", "support_tickets", "support_email_settings", "support_email_preferences", "support_email_outboxes", "support_email_rates"} {
+	for _, table := range []string{"support_ticket_attachments", "support_ticket_submissions", "support_ticket_messages", "support_tickets", "support_email_settings", "support_email_preferences", "support_email_outboxes", "support_email_rates"} {
 		require.NoError(t, DB.Exec("DELETE FROM "+table).Error)
 	}
 	u := &User{Username: "support-owner", AffCode: "support-owner", Status: common.UserStatusEnabled, Role: common.RoleCommonUser, Email: "owner@example.invalid", EmailVerifiedAddress: "owner@example.invalid", EmailVerificationVersion: 1, EmailVerifiedAt: time.Now().Unix()}

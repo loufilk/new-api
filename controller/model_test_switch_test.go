@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -161,12 +164,141 @@ func TestModelTestSwitchPostgresDatabaseFaultDeniesNewWorkButPreservesHistory(t 
 }
 
 func TestModelTestSwitchPostgresRejectsNonBooleanSettings(t *testing.T) {
-	_, _ = setupModelTestsPostgres(t)
+	_, userID := setupModelTestsPostgres(t)
 	for _, raw := range []string{`1`, `null`, `{}`, `[]`, `"TRUE"`, `""`} {
 		recorder := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(recorder)
+		c.Set("id", userID)
+		c.Set("session_id", "synthetic-validation-session")
+		c.Set("auth_version", int64(1))
+		c.Set("session_version", int64(1))
 		c.Request = httptest.NewRequest(http.MethodPut, "/api/option/", strings.NewReader(`{"key":"ModelTestEnabled","value":`+raw+`}`))
 		UpdateOption(c)
 		assert.Contains(t, recorder.Body.String(), `"success":false`, raw)
+		assert.NotContains(t, recorder.Body.String(), "AUTH_SESSION_REQUIRED")
 	}
+}
+
+func TestModelTestSwitchPostgresOnlyLiveRootSessionCanChangeCapability(t *testing.T) {
+	db, rootID := setupModelTestsPostgres(t)
+	require.NoError(t, db.AutoMigrate(&model.UserSession{}, &model.UserAccessToken{}, &model.AuditLog{}))
+	require.NoError(t, i18n.Init())
+	oldMemory, oldSecret := common.MemoryCacheEnabled, common.SessionSecret
+	oldOptions := maps.Clone(common.OptionMap)
+	common.MemoryCacheEnabled = false
+	common.SessionSecret = "synthetic-model-test-settings-session-secret"
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled, common.SessionSecret = oldMemory, oldSecret
+		common.OptionMap = oldOptions
+	})
+	require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(time.Now().Unix()))
+	legacy := "synthetic-model-test-root-pat"
+	require.NoError(t, db.Model(&model.User{}).Where("id = ?", rootID).Updates(map[string]any{"role": common.RoleRootUser, "auth_version": 1, "access_token": legacy}).Error)
+	_, rootSession := createAccessTokenTestSession(t, rootID, "synthetic-model-test-root-session")
+	scoped, _ := createScopedAccessToken(t, rootID, 0, "option:write")
+	users := []model.User{
+		{Username: "settings-ordinary", AffCode: "settings-ordinary", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1},
+		{Username: "settings-admin", AffCode: "settings-admin", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1},
+	}
+	require.NoError(t, db.Create(&users).Error)
+	_, ordinarySession := createAccessTokenTestSession(t, users[0].Id, "synthetic-model-test-ordinary-session")
+	_, adminSession := createAccessTokenTestSession(t, users[1].Id, "synthetic-model-test-admin-session")
+	require.NoError(t, db.Create(&model.Option{Key: model.AccountPoolEnabledKey, Value: "true"}).Error)
+	engine := gin.New()
+	engine.PUT("/api/option/", middleware.RootAuth(), UpdateOption)
+	engine.GET("/api/status", GetStatus)
+	for _, enabled := range []string{"false", "true", "false"} {
+		body := `{"key":"ModelTestEnabled","value":` + enabled + `}`
+		response := accessTokenRequest(engine, http.MethodPut, "/api/option/", rootSession, "", body)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		require.Contains(t, response.Body.String(), `"success":true`)
+		status := httptest.NewRecorder()
+		engine.ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+		assert.Contains(t, status.Body.String(), `"model_test_enabled":`+enabled)
+		assert.Contains(t, status.Body.String(), `"model_test_settings_available":true`)
+		for _, denied := range []struct {
+			name, token, code string
+			status            int
+		}{
+			{"root scoped PAT", scoped, "AUTH_SESSION_REQUIRED", http.StatusForbidden},
+			{"root legacy PAT", legacy, "AUTH_SESSION_REQUIRED", http.StatusForbidden},
+			{"ordinary session", ordinarySession, "AUTH_INSUFFICIENT_PRIVILEGE", http.StatusForbidden},
+			{"admin session", adminSession, "AUTH_INSUFFICIENT_PRIVILEGE", http.StatusForbidden},
+			{"unauthenticated", "", "", http.StatusUnauthorized},
+		} {
+			t.Run(enabled+"/"+denied.name, func(t *testing.T) {
+				opposite := "true"
+				if enabled == "true" {
+					opposite = "false"
+				}
+				response := accessTokenRequest(engine, http.MethodPut, "/api/option/", denied.token, "", `{"key":"ModelTestEnabled","value":`+opposite+`}`)
+				assert.Equal(t, denied.status, response.Code, response.Body.String())
+				if denied.code != "" {
+					assert.Contains(t, response.Body.String(), denied.code)
+				}
+				var stored model.Option
+				require.NoError(t, db.Where(model.Option{Key: model.ModelTestEnabledKey}).Take(&stored).Error)
+				assert.Equal(t, enabled, stored.Value)
+			})
+		}
+		poolEnabled, err := model.AccountPoolEnabled(t.Context())
+		require.NoError(t, err)
+		assert.True(t, poolEnabled, "model testing is independent of the account pool")
+	}
+	// The narrow session-only capability must not revoke existing management
+	// permissions for unrelated options.
+	response := accessTokenRequest(engine, http.MethodPut, "/api/option/", scoped, "", `{"key":"ModelTestSyntheticUnrelatedOption","value":"preserved"}`)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), `"success":true`)
+	for _, alias := range []string{"modeltestenabled", "MODELTESTENABLED", "ModelTestEnabled ", " ModelTestEnabled", "\tModelTestEnabled\n"} {
+		body, err := common.Marshal(map[string]any{"key": alias, "value": true})
+		require.NoError(t, err)
+		for _, token := range []string{scoped, legacy} {
+			denied := accessTokenRequest(engine, http.MethodPut, "/api/option/", token, "", string(body))
+			assert.Equal(t, http.StatusForbidden, denied.Code, denied.Body.String())
+			assert.Contains(t, denied.Body.String(), "AUTH_SESSION_REQUIRED")
+		}
+		rejected := accessTokenRequest(engine, http.MethodPut, "/api/option/", rootSession, "", string(body))
+		assert.Equal(t, http.StatusBadRequest, rejected.Code, rejected.Body.String())
+		var aliasCount int64
+		require.NoError(t, db.Model(&model.Option{}).Where(model.Option{Key: alias}).Count(&aliasCount).Error)
+		assert.Zero(t, aliasCount, "noncanonical option key must never be persisted")
+		current, err := model.ModelTestEnabled(t.Context())
+		require.NoError(t, err)
+		assert.False(t, current)
+	}
+	revoked, err := model.RevokeUserSession(rootID, "synthetic-model-test-root-session", "synthetic-revocation")
+	require.NoError(t, err)
+	require.True(t, revoked)
+	response = accessTokenRequest(engine, http.MethodPut, "/api/option/", rootSession, "", `{"key":"ModelTestEnabled","value":true}`)
+	assert.Equal(t, http.StatusUnauthorized, response.Code, response.Body.String())
+	enabled, err := model.ModelTestEnabled(t.Context())
+	require.NoError(t, err)
+	assert.False(t, enabled)
+}
+
+func TestModelTestSwitchPostgresStatusDistinguishesDisabledFromUnavailable(t *testing.T) {
+	db, _ := setupModelTestsPostgres(t)
+	engine := gin.New()
+	engine.GET("/api/status", GetStatus)
+	for _, value := range []string{"true", "false"} {
+		require.NoError(t, db.Model(&model.Option{}).Where(model.Option{Key: model.ModelTestEnabledKey}).Update("value", value).Error)
+		response := httptest.NewRecorder()
+		engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+		require.Equal(t, http.StatusOK, response.Code)
+		assert.Contains(t, response.Body.String(), `"model_test_enabled":`+value)
+		assert.Contains(t, response.Body.String(), `"model_test_settings_available":true`)
+		assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+	}
+	require.NoError(t, db.Migrator().RenameTable(&model.Option{}, "model_test_settings_unavailable_options"))
+	t.Cleanup(func() {
+		require.NoError(t, db.Migrator().RenameTable("model_test_settings_unavailable_options", &model.Option{}))
+	})
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	require.Equal(t, http.StatusOK, response.Code, "one unavailable capability must not break public site status")
+	assert.Contains(t, response.Body.String(), `"model_test_enabled":false`)
+	assert.Contains(t, response.Body.String(), `"model_test_settings_available":false`)
+	assert.NotContains(t, response.Body.String(), "SQL")
+	assert.NotContains(t, response.Body.String(), "model_test_settings_unavailable_options")
 }

@@ -70,43 +70,6 @@ var DB *gorm.DB
 
 var LOG_DB *gorm.DB
 
-func createRootAccountIfNeed() error {
-	var user User
-	//if user.Status != common.UserStatusEnabled {
-	if err := DB.First(&user).Error; err != nil {
-		common.SysLog(common.LogText("no user exists, create a root user for you: username is root, password is 123456"))
-		hashedPassword, err := common.Password2Hash("123456")
-		if err != nil {
-			return err
-		}
-		return DB.Transaction(func(tx *gorm.DB) error {
-			rootUser := User{
-				Username:    "root",
-				Password:    hashedPassword,
-				Role:        common.RoleRootUser,
-				Status:      common.UserStatusEnabled,
-				DisplayName: "Root User",
-				AccessToken: nil,
-				Quota:       0,
-				QuotaPaid:   0,
-			}
-			if err := tx.Create(&rootUser).Error; err != nil {
-				return err
-			}
-			_, err := CreditQuotaTx(tx, LedgerEntry{
-				UserId:        rootUser.Id,
-				Account:       AccountPaid,
-				Delta:         100000000,
-				Reason:        LedgerReasonSystem,
-				ReferenceType: "root_init",
-				ReferenceId:   fmt.Sprintf("%d", rootUser.Id),
-			})
-			return err
-		})
-	}
-	return nil
-}
-
 func CheckSetup() {
 	setup := GetSetup()
 	if setup == nil {
@@ -475,6 +438,7 @@ func mainAutoMigrateModels(registry *extension.Registry) []any {
 		&CustomOAuthProvider{},
 		&UserOAuthBinding{},
 		&PerfMetric{},
+		&TokenRoutingMetric{},
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},

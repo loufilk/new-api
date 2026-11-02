@@ -97,7 +97,7 @@ func newSupportHTTPFixture(t *testing.T, opts supportHTTPOptions) supportHTTPFix
 		&model.UserSession{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{},
 		&model.AuditLog{},
 		&model.SupportTicket{},
-		&model.SupportTicketMessage{},
+		&model.SupportTicketMessage{}, &model.SupportTicketAttachment{}, &model.SupportTicketSubmission{},
 		&model.Option{}, &model.SupportEmailSettings{}, &model.SupportEmailPreference{}, &model.SupportEmailOutbox{}, &model.SupportEmailRate{},
 	))
 

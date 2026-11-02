@@ -7,6 +7,7 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -33,9 +34,39 @@ type Token struct {
 	Group              string         `json:"group" gorm:"default:''"`
 	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
 	AutoGroups         string         `json:"-" gorm:"type:text"`
+	SmartRouting       bool           `json:"smart_routing"`
+	RoutingStrategy    string         `json:"routing_strategy" gorm:"size:32"`
+	NoRetryWithinGroup bool           `json:"no_retry_within_group"`
+	ProjectLabel       string         `json:"project_label" gorm:"size:400"`
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 	// 允许用此令牌查询所属用户的额度；新建令牌默认开启，已有令牌升级后保持关闭
 	AllowUserQuotaQuery bool `json:"allow_user_quota_query"`
+}
+
+func ValidRoutingStrategy(strategy string) bool {
+	switch strategy {
+	case "", "auto", "success_rate", "price", "speed":
+		return true
+	default:
+		return false
+	}
+}
+
+func (token *Token) GetRoutingStrategy() string {
+	if token.RoutingStrategy == "" {
+		return "auto"
+	}
+	return token.RoutingStrategy
+}
+
+func (token *Token) ValidateRoutingSettings() error {
+	if !ValidRoutingStrategy(token.RoutingStrategy) {
+		return common.NewMessage("Invalid routing strategy")
+	}
+	if utf8.RuneCountInString(token.ProjectLabel) > 100 {
+		return common.NewMessage("Project label cannot exceed 100 characters")
+	}
+	return nil
 }
 
 func (token *Token) GetAutoGroups() ([]string, error) {
@@ -384,6 +415,9 @@ func (token *Token) InsertAtGroupConfigVersion(authVersion, groupVersion int64) 
 }
 
 func (token *Token) insertWithGroupConfig(groupVersion *int64, expectedAuthVersion ...int64) error {
+	if err := token.ValidateRoutingSettings(); err != nil {
+		return err
+	}
 	return DB.Transaction(func(tx *gorm.DB) error {
 		if err := lockGroupNamespace(tx); err != nil {
 			return err
@@ -411,6 +445,9 @@ func (token *Token) UpdateAtGroupConfigVersion(authVersion, groupVersion int64) 
 }
 
 func (token *Token) updateWithGroupConfig(groupVersion *int64, expectedAuthVersion ...int64) (err error) {
+	if err := token.ValidateRoutingSettings(); err != nil {
+		return err
+	}
 	return DB.Transaction(func(tx *gorm.DB) error {
 		if err := lockGroupNamespace(tx); err != nil {
 			return err
@@ -433,7 +470,7 @@ func (token *Token) updateWithGroupConfig(groupVersion *int64, expectedAuthVersi
 		}
 		return tx.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
 			"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups",
-			"allow_user_quota_query").Updates(token).Error
+			"allow_user_quota_query", "smart_routing", "routing_strategy", "no_retry_within_group", "project_label").Updates(token).Error
 	})
 }
 

@@ -33,6 +33,12 @@ export const apiKeySchema = z.object({
   expired_time: z.number(), // -1 for never expires
   created_time: z.number(),
   accessed_time: z.number(),
+  smart_routing: z.boolean().optional(),
+  routing_strategy: z
+    .enum(['auto', 'success_rate', 'price', 'speed'])
+    .optional(),
+  no_retry_within_group: z.boolean().optional(),
+  project_label: z.string().nullish(),
   group: z.string().nullish().default(''),
   auto_groups: z.array(z.string()).nullish().default(null),
   cross_group_retry: z
@@ -85,6 +91,10 @@ export interface SearchApiKeysParams {
 }
 
 export interface ApiKeyFormData {
+  smart_routing: boolean
+  routing_strategy: 'auto' | 'success_rate' | 'price' | 'speed'
+  no_retry_within_group: boolean
+  project_label: string
   name: string
   remain_quota: number
   expired_time: number
@@ -98,9 +108,23 @@ export interface ApiKeyFormData {
   cross_group_retry: boolean
 }
 
+export interface TokenGroupDetail {
+  name: string
+  ratio: number
+  success_rate: number | null
+  available: boolean
+  history: Array<number | null>
+}
+
 export interface TokenAutoGroupsConfig {
   groups: string[]
   max_count: number
+  selectable_groups?: string[]
+  group_details?: TokenGroupDetail[]
+  metrics_available?: boolean
+  window_start?: number
+  window_end?: number
+  history_bucket_seconds?: number
 }
 
 export type CCSwitchApp = 'claude' | 'codex' | 'gemini'

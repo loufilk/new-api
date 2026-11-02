@@ -64,15 +64,50 @@ func ListSupportTickets(userID int, adminView bool, keyword, status string, unre
 }
 
 func CreateSupportTicket(userID int, subject, content string) (*SupportTicketDetail, error) {
+	contact := ""
+	return CreateSupportTicketWithOptions(userID, SupportTicketCreateInput{Subject: subject, Message: content, ContactEmail: &contact})
+}
+
+func CreateSupportTicketWithOptions(userID int, input SupportTicketCreateInput) (*SupportTicketDetail, error) {
+	subject, content := input.Subject, input.Message
 	subject = strings.TrimSpace(subject)
 	content = strings.TrimSpace(content)
 	if userID <= 0 || subject == "" || content == "" || utf8.RuneCountInString(subject) > SupportTicketSubjectMaxRunes || utf8.RuneCountInString(content) > SupportTicketMessageMaxRunes {
 		return nil, ErrSupportTicketInvalidInput
 	}
+	category := strings.TrimSpace(input.Category)
+	if category == "" {
+		category = "other"
+	}
+	if !ValidSupportTicketCategory(category) || len(input.Attachments) > SupportTicketMaxImages {
+		return nil, ErrSupportTicketInvalidInput
+	}
+	contact := ""
+	if input.ContactEmail == nil {
+		var owner model.User
+		if err := model.DB.Select("id", "email").Where("id = ?", userID).First(&owner).Error; err != nil {
+			return nil, err
+		}
+		// Imported legacy addresses are not trusted contacts or a reason to
+		// prevent support access. Explicit entries, however, must be valid.
+		contact, _ = model.ValidSupportEmailAddress(owner.Email)
+	} else if strings.TrimSpace(*input.ContactEmail) != "" {
+		var valid bool
+		contact, valid = model.ValidSupportEmailAddress(*input.ContactEmail)
+		if !valid {
+			return nil, ErrSupportTicketInvalidInput
+		}
+	}
+	submission, err := supportTicketSubmission(input.RequestID, userID, 0, subject, content, category, contact, input.Attachments)
+	if err != nil {
+		return nil, err
+	}
 	now := common.GetTimestamp()
 	ticket := &model.SupportTicket{
 		UserID:        userID,
 		Subject:       subject,
+		Category:      category,
+		ContactEmail:  contact,
 		Status:        model.SupportTicketStatusProcessing,
 		AdminUnread:   true,
 		UserUnread:    false,
@@ -86,10 +121,10 @@ func CreateSupportTicket(userID int, subject, content string) (*SupportTicketDet
 		Content:      content,
 		CreatedAt:    now,
 	}
-	if err := model.CreateSupportTicket(ticket, message); err != nil {
+	if err := model.CreateSupportTicketWithAttachments(ticket, message, input.Attachments, submission); err != nil {
 		return nil, err
 	}
-	return &SupportTicketDetail{Ticket: ticket, Messages: []model.SupportTicketMessage{*message}}, nil
+	return GetSupportTicket(userID, false, ticket.ID)
 }
 
 func GetSupportTicket(userID int, adminView bool, ticketID int64) (*SupportTicketDetail, error) {
@@ -107,8 +142,12 @@ func GetSupportTicket(userID int, adminView bool, ticketID int64) (*SupportTicke
 }
 
 func ReplySupportTicket(userID int, adminView bool, ticketID int64, content string) (*model.SupportTicket, error) {
+	return ReplySupportTicketWithAttachments(userID, adminView, ticketID, content, "", nil)
+}
+
+func ReplySupportTicketWithAttachments(userID int, adminView bool, ticketID int64, content, requestID string, attachments []model.SupportTicketAttachment) (*model.SupportTicket, error) {
 	content = strings.TrimSpace(content)
-	if ticketID <= 0 || userID <= 0 || content == "" || utf8.RuneCountInString(content) > SupportTicketMessageMaxRunes {
+	if ticketID <= 0 || userID <= 0 || content == "" || utf8.RuneCountInString(content) > SupportTicketMessageMaxRunes || len(attachments) > SupportTicketMaxImages {
 		return nil, ErrSupportTicketInvalidInput
 	}
 	authorRole := model.SupportTicketAuthorUser
@@ -117,7 +156,11 @@ func ReplySupportTicket(userID int, adminView bool, ticketID int64, content stri
 		authorRole = model.SupportTicketAuthorAdmin
 		nextStatus = model.SupportTicketStatusAwaitingUser
 	}
-	ticket, err := model.AppendSupportTicketMessage(ticketID, userID, adminView, content, authorRole, nextStatus, common.GetTimestamp())
+	submission, err := supportTicketSubmission(requestID, userID, ticketID, authorRole, content, "", "", attachments)
+	if err != nil {
+		return nil, err
+	}
+	ticket, err := model.AppendSupportTicketMessageWithAttachments(ticketID, userID, adminView, content, authorRole, nextStatus, common.GetTimestamp(), attachments, submission)
 	if errors.Is(err, model.ErrSupportTicketResolved) {
 		return nil, ErrSupportTicketResolved
 	}

@@ -269,7 +269,7 @@ it('refreshes model candidates when the group changes', async () => {
   await waitFor(() =>
     expect(mocks.getApiKeyScopeModels).toHaveBeenLastCalledWith({
       group: 'b',
-      auto_groups_mode: 'inherit',
+      auto_groups_mode: 'custom',
       auto_groups: [],
     })
   )
@@ -306,7 +306,7 @@ it('preserves a restricted whitelist when candidates disappear', async () => {
     screen.getByText('hint:a-only:Unavailable for current routing scope')
   ).toBeInTheDocument()
 
-  const nameInput = screen.getByPlaceholderText('Enter a name')
+  const nameInput = screen.getByPlaceholderText('Enter token name')
   await user.clear(nameInput)
   await user.type(nameInput, 'renamed')
   await user.click(screen.getByRole('button', { name: 'Save changes' }))
@@ -340,7 +340,7 @@ it('keeps a restricted payload after switching groups', async () => {
   await waitFor(() =>
     expect(mocks.getApiKeyScopeModels).toHaveBeenLastCalledWith({
       group: 'b',
-      auto_groups_mode: 'inherit',
+      auto_groups_mode: 'custom',
       auto_groups: [],
     })
   )
@@ -364,4 +364,65 @@ it('keeps a restricted payload after switching groups', async () => {
       model_limits: 'a-only',
     })
   )
+})
+
+it('previews all authorized models for smart routing and restores the manual scope when disabled', async () => {
+  const user = userEvent.setup()
+  renderDrawer(restrictedKey)
+  await waitFor(() =>
+    expect(mocks.getApiKeyScopeModels).toHaveBeenCalledWith({
+      group: 'a',
+      auto_groups_mode: 'inherit',
+      auto_groups: [],
+    })
+  )
+  await user.click(screen.getByRole('switch', { name: 'Smart Routing' }))
+  await waitFor(() =>
+    expect(mocks.getApiKeyScopeModels).toHaveBeenLastCalledWith({
+      group: 'a',
+      smart_routing: true,
+      auto_groups_mode: 'inherit',
+      auto_groups: [],
+    })
+  )
+  expect(screen.getByTestId('selected-models')).toHaveTextContent('a-only')
+  await user.click(screen.getByRole('switch', { name: 'Smart Routing' }))
+  await waitFor(() =>
+    expect(mocks.getApiKeyScopeModels).toHaveBeenLastCalledWith({
+      group: 'a',
+      auto_groups_mode: 'inherit',
+      auto_groups: [],
+    })
+  )
+  expect(screen.getByTestId('selected-models')).toHaveTextContent('a-only')
+})
+
+it('blocks saving after a group load failure and recovers through the visible retry action', async () => {
+  mocks.getTokenAutoGroups.mockRejectedValueOnce(new Error('synthetic offline'))
+  renderDrawer()
+  expect(await screen.findByText('Failed to load routing groups')).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Retry' }))
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Add' })).toBeEnabled()
+  )
+  expect(
+    screen.queryByText('Failed to load routing groups')
+  ).not.toBeInTheDocument()
+})
+
+it('shows a retryable model-preview error without dropping a restricted whitelist', async () => {
+  mocks.getApiKeyScopeModels.mockRejectedValueOnce(
+    new Error('synthetic model preview offline')
+  )
+  renderDrawer(restrictedKey)
+  expect(await screen.findByText('Failed to load models')).toBeVisible()
+  expect(screen.getByTestId('selected-models')).toHaveTextContent('a-only')
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Retry' }))
+  await waitFor(() =>
+    expect(screen.queryByText('Failed to load models')).not.toBeInTheDocument()
+  )
+  expect(screen.getByTestId('selected-models')).toHaveTextContent('a-only')
 })

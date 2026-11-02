@@ -112,6 +112,18 @@ func (p *RetryParam) ResetRetryNextTry() {
 //	Retry=3: GroupB, priority1 (startRetryIndex=2, priorityRetry=1)
 //	         分组B, 优先级1
 func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, error) {
+	if tokenRoutingEnabled(param.Ctx) {
+		guard, err := model.BeginRequestGroupConfigRead(param.Ctx)
+		if err != nil {
+			return nil, "", err
+		}
+		defer guard.Close()
+		channel, group, selectionErr := selectTokenRoutingChannel(param)
+		if err := guard.Finish(); err != nil {
+			return nil, "", err
+		}
+		return channel, group, selectionErr
+	}
 	var channel *model.Channel
 	var err error
 	selectGroup := param.TokenGroup
@@ -379,7 +391,11 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 
 	if channel == nil {
 		var err error
-		channel, selectGroup, err = CacheGetRandomSatisfiedChannel(retry)
+		if tokenRoutingEnabled(c) {
+			channel, selectGroup, err = selectTokenRoutingChannel(retry)
+		} else {
+			channel, selectGroup, err = CacheGetRandomSatisfiedChannel(retry)
+		}
 		if err != nil {
 			showGroup := usingGroup
 			if usingGroup == "auto" {
@@ -419,5 +435,6 @@ func pinnedChannelUnavailable(pin dto.ChannelPin, statusCode int, messageID stri
 // AppendUsedChannel records an attempted channel in the request's channel
 // trail, which the retry log and the consume log's admin_info both read.
 func AppendUsedChannel(c *gin.Context, channelID int) {
+	markTokenRoutingAttempt(c, channelID)
 	c.Set("use_channel", append(c.GetStringSlice("use_channel"), fmt.Sprintf("%d", channelID)))
 }

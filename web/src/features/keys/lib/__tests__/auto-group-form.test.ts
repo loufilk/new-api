@@ -209,3 +209,96 @@ describe('API key user quota query form mapping', () => {
     }
   )
 })
+
+describe('API key routing policy persistence', () => {
+  test('does not erase dormant stored groups when editing a smart key after authorization or group limits change', () => {
+    const values = transformApiKeyToFormDefaults(
+      {
+        ...baseApiKey,
+        smart_routing: true,
+        auto_groups: ['renamed-old', 'vip', 'default'],
+      },
+      ['vip', 'default'],
+      1
+    )
+    expect(transformFormDataToPayload(values).auto_groups).toEqual([
+      'renamed-old',
+      'vip',
+      'default',
+    ])
+  })
+  test('keeps legacy keys on the legacy route by default', () => {
+    const values = transformApiKeyToFormDefaults(baseApiKey)
+    expect(transformFormDataToPayload(values)).toMatchObject({
+      smart_routing: false,
+      no_retry_within_group: false,
+      routing_strategy: 'auto',
+      project_label: '',
+    })
+  })
+  test('preserves smart strategy and disabled manual selections through edit and save', () => {
+    const values = transformApiKeyToFormDefaults(
+      {
+        ...baseApiKey,
+        smart_routing: true,
+        routing_strategy: 'speed',
+        no_retry_within_group: true,
+        project_label: 'Team A',
+        auto_groups: ['vip', 'default'],
+      },
+      ['default', 'vip']
+    )
+    expect(transformFormDataToPayload(values)).toMatchObject({
+      smart_routing: true,
+      routing_strategy: 'speed',
+      no_retry_within_group: true,
+      project_label: 'Team A',
+      auto_groups: ['vip', 'default'],
+    })
+  })
+  test('does not require an ignored manual draft while smart routing is enabled', () => {
+    const values = {
+      ...getApiKeyFormDefaultValues(true),
+      name: 'smart',
+      smart_routing: true,
+      auto_groups_mode: 'custom' as const,
+      auto_groups: [],
+    }
+    expect(getApiKeyFormSchema(t).safeParse(values).success).toBe(true)
+    expect(
+      getApiKeyFormSchema(t).safeParse({ ...values, smart_routing: false })
+        .success
+    ).toBe(false)
+  })
+  test('rejects unknown strategies and overlong project labels', () => {
+    const values = { ...getApiKeyFormDefaultValues(false), name: 'key' }
+    expect(
+      getApiKeyFormSchema(t).safeParse({
+        ...values,
+        routing_strategy: 'untrusted',
+      }).success
+    ).toBe(false)
+    expect(
+      getApiKeyFormSchema(t).safeParse({
+        ...values,
+        project_label: 'x'.repeat(101),
+      }).success
+    ).toBe(false)
+  })
+})
+
+test('counts Unicode project-label characters consistently with the backend limit', () => {
+  const values = { ...getApiKeyFormDefaultValues(false), name: 'unicode' }
+  expect(
+    getApiKeyFormSchema(t).safeParse({
+      ...values,
+      project_label: '😀'.repeat(100),
+    }).success
+  ).toBe(true)
+  expect(
+    getApiKeyFormSchema(t).safeParse({
+      ...values,
+      project_label: '😀'.repeat(101),
+    }).success
+  ).toBe(false)
+})

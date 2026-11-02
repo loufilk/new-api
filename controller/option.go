@@ -183,6 +183,19 @@ func UpdateOption(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
 		return
 	}
+	if strings.EqualFold(strings.TrimSpace(option.Key), model.ModelTestEnabledKey) {
+		// The general option API also accepts management PATs. This opt-in
+		// capability is controlled only from a live root dashboard session.
+		if _, ok := requireBrowserSession(c); !ok {
+			return
+		}
+		// Reject aliases instead of normalizing every option key. This also
+		// prevents accidental collisions on case-insensitive SQL collations.
+		if option.Key != model.ModelTestEnabledKey {
+			common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+			return
+		}
+	}
 	switch option.Value.(type) {
 	case bool:
 		option.Value = common.Interface2String(option.Value.(bool))

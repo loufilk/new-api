@@ -40,6 +40,34 @@ func TestTokenAllowUserQuotaQueryRoundTripsThroughRedisHashCache(t *testing.T) {
 	assert.Positive(t, server.TTL(getTokenCacheKey(token.Key)))
 }
 
+func TestTokenSmartRoutingRoundTripsAndRevokesCachedPolicy(t *testing.T) {
+	truncateTables(t)
+	useUserCacheMiniRedis(t)
+	owner := createAccessTokenTestUser(t, "smart-cache-owner")
+	token := Token{UserId: owner.Id, Key: "synthetic-smart-cache", Name: "smart-cache", Group: "default",
+		SmartRouting: true, RoutingStrategy: "price", NoRetryWithinGroup: true, ProjectLabel: "Team A",
+		Status: common.TokenStatusEnabled, ExpiredTime: -1, UnlimitedQuota: true}
+	require.NoError(t, token.Insert())
+	require.NoError(t, cacheSetTokenForTest(token))
+	cached, err := cacheGetTokenByKey(token.Key)
+	require.NoError(t, err)
+	assert.True(t, cached.SmartRouting)
+	assert.True(t, cached.NoRetryWithinGroup)
+	assert.Equal(t, "price", cached.RoutingStrategy)
+	assert.Equal(t, "Team A", cached.ProjectLabel)
+	token.SmartRouting, token.NoRetryWithinGroup = false, false
+	token.RoutingStrategy, token.ProjectLabel = "speed", "Team B"
+	require.NoError(t, token.Update())
+	_, err = cacheGetTokenByKey(token.Key)
+	require.Error(t, err)
+	reloaded, err := GetTokenByKey(token.Key, false)
+	require.NoError(t, err)
+	assert.False(t, reloaded.SmartRouting)
+	assert.False(t, reloaded.NoRetryWithinGroup)
+	assert.Equal(t, "speed", reloaded.RoutingStrategy)
+	assert.Equal(t, "Team B", reloaded.ProjectLabel)
+}
+
 func TestTokenUpdateRevokesCachedUserQuotaQueryPermission(t *testing.T) {
 	truncateTables(t)
 	useUserCacheMiniRedis(t)

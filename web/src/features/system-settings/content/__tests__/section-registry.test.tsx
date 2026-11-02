@@ -95,6 +95,7 @@ test('switching between registered support and model settings saves only the sel
   })
   const status = {
     model_test_enabled: false,
+    model_test_settings_available: true,
     account_pool_enabled: true,
     google_oauth: true,
   }

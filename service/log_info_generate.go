@@ -147,7 +147,7 @@ func appendStreamAdminDiagnostics(ctx *gin.Context, relayInfo *relaycommon.Relay
 
 func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelRatio, groupRatio, completionRatio float64,
 	cacheTokens int, cacheRatio float64, modelPrice float64, userGroupRatio float64) *model.LogOther {
-	MarkRequestPolicySuccess(ctx, relayInfo.StreamStatus)
+	MarkRequestPolicySuccess(ctx, relayInfo.StreamStatus, relayInfo)
 	other := model.NewLogOther()
 	other.SetPublic("model_ratio", modelRatio)
 	other.SetPublic("group_ratio", groupRatio)

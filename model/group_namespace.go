@@ -213,6 +213,11 @@ func validateTokenGroupsForWriteTx(tx *gorm.DB, token *Token) error {
 		}
 		groups = append(groups, autoGroups...)
 	}
+	// Smart routing never uses the retained manual scope. Keep a parseable
+	// draft editable even after an old group has been renamed or removed.
+	if token.SmartRouting {
+		return nil
+	}
 	return validateGroupNamesForWriteTx(tx, groups...)
 }
 

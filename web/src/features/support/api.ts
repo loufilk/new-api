@@ -18,12 +18,15 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { api, type ApiRequestConfig } from '@/lib/api'
 
+import { SUPPORT_IMAGE_MAX_BYTES, SUPPORT_IMAGE_TYPES } from './lib/attachments'
 import type {
   ApiResponse,
   SupportTicket,
   SupportTicketDetail,
   SupportTicketListData,
   SupportTicketStatus,
+  SupportTicketSubmission,
+  SupportTicketCreateSubmission,
 } from './types'
 
 const mutationConfig: ApiRequestConfig = {
@@ -38,6 +41,50 @@ function requireSuccess<T>(response: ApiResponse<T>): T {
 
 function supportBasePath(admin: boolean): string {
   return admin ? '/api/admin/support/tickets' : '/api/support/tickets'
+}
+
+function supportPayload(
+  input: SupportTicketCreateSubmission | SupportTicketSubmission
+) {
+  const { images, ...fields } = input
+  if (!images?.length) {
+    return Object.fromEntries(
+      Object.entries(fields).filter(([, value]) => value !== undefined)
+    )
+  }
+  const body = new FormData()
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== undefined) body.append(key, value)
+  }
+  for (const image of images) body.append('images', image)
+  return body
+}
+
+export async function getSupportTicketAttachment(
+  admin: boolean,
+  ticketId: number,
+  attachmentId: string,
+  signal?: AbortSignal
+): Promise<Blob> {
+  const response = await api.get<Blob>(
+    `${supportBasePath(admin)}/${ticketId}/attachments/${encodeURIComponent(attachmentId)}`,
+    {
+      responseType: 'blob',
+      signal,
+      disableDuplicate: true,
+      skipErrorHandler: true,
+    }
+  )
+  const blob = response.data
+  if (
+    !(blob instanceof Blob) ||
+    !SUPPORT_IMAGE_TYPES.includes(blob.type) ||
+    blob.size === 0 ||
+    blob.size > SUPPORT_IMAGE_MAX_BYTES
+  ) {
+    throw new Error('Invalid support image response')
+  }
+  return blob
 }
 
 export async function listSupportTickets(params: {
@@ -63,13 +110,12 @@ export async function listSupportTickets(params: {
   return requireSuccess(response.data)
 }
 
-export async function createSupportTicket(input: {
-  subject: string
-  message: string
-}): Promise<SupportTicketDetail> {
+export async function createSupportTicket(
+  input: SupportTicketCreateSubmission
+): Promise<SupportTicketDetail> {
   const response = await api.post<ApiResponse<SupportTicketDetail>>(
     '/api/support/tickets',
-    input,
+    supportPayload(input),
     mutationConfig
   )
   return requireSuccess(response.data)
@@ -85,14 +131,19 @@ export async function getSupportTicket(
   return requireSuccess(response.data)
 }
 
-export async function replySupportTicket(input: {
-  admin: boolean
-  ticketId: number
-  message: string
-}): Promise<SupportTicket> {
+export async function replySupportTicket(
+  input: {
+    admin: boolean
+    ticketId: number
+  } & SupportTicketSubmission
+): Promise<SupportTicket> {
   const response = await api.post<ApiResponse<SupportTicket>>(
     `${supportBasePath(input.admin)}/${input.ticketId}/replies`,
-    { message: input.message },
+    supportPayload({
+      message: input.message,
+      request_id: input.request_id,
+      images: input.images,
+    }),
     mutationConfig
   )
   return requireSuccess(response.data)

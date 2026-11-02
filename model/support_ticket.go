@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 const (
@@ -19,11 +20,14 @@ const (
 )
 
 var ErrSupportTicketResolved = errors.New("support ticket is resolved")
+var ErrSupportTicketSubmissionConflict = errors.New("support ticket request was already used with different content")
 
 type SupportTicket struct {
 	ID            int64  `json:"id" gorm:"primaryKey"`
 	UserID        int    `json:"user_id" gorm:"not null;index:idx_support_ticket_user_status,priority:1"`
 	Subject       string `json:"subject" gorm:"size:200;not null"`
+	Category      string `json:"category" gorm:"size:32"`
+	ContactEmail  string `json:"contact_email" gorm:"size:254"`
 	Status        string `json:"status" gorm:"size:32;not null;index:idx_support_ticket_user_status,priority:2;index:idx_support_ticket_status"`
 	UserUnread    bool   `json:"user_unread" gorm:"not null"`
 	AdminUnread   bool   `json:"admin_unread" gorm:"not null;index:idx_support_ticket_admin_unread"`
@@ -33,12 +37,13 @@ type SupportTicket struct {
 }
 
 type SupportTicketMessage struct {
-	ID           int64  `json:"id" gorm:"primaryKey"`
-	TicketID     int64  `json:"ticket_id" gorm:"not null;index:idx_support_ticket_message_ticket"`
-	AuthorUserID int    `json:"-" gorm:"not null"`
-	AuthorRole   string `json:"author_role" gorm:"size:16;not null"`
-	Content      string `json:"content" gorm:"type:text;not null"`
-	CreatedAt    int64  `json:"created_at" gorm:"autoCreateTime;index:idx_support_ticket_message_created"`
+	ID           int64                     `json:"id" gorm:"primaryKey"`
+	TicketID     int64                     `json:"ticket_id" gorm:"not null;index:idx_support_ticket_message_ticket"`
+	AuthorUserID int                       `json:"-" gorm:"not null"`
+	AuthorRole   string                    `json:"author_role" gorm:"size:16;not null"`
+	Content      string                    `json:"content" gorm:"type:text;not null"`
+	CreatedAt    int64                     `json:"created_at" gorm:"autoCreateTime;index:idx_support_ticket_message_created"`
+	Attachments  []SupportTicketAttachment `json:"attachments,omitempty" gorm:"-"`
 }
 
 type SupportTicketFilter struct {
@@ -109,7 +114,18 @@ func SearchSupportTickets(filter SupportTicketFilter, offset, limit int) ([]Supp
 }
 
 func CreateSupportTicket(ticket *SupportTicket, message *SupportTicketMessage) error {
-	return DB.Transaction(func(tx *gorm.DB) error {
+	return CreateSupportTicketWithAttachments(ticket, message, nil, nil)
+}
+
+func CreateSupportTicketWithAttachments(ticket *SupportTicket, message *SupportTicketMessage, attachments []SupportTicketAttachment, submission *SupportTicketSubmission) error {
+	return DB.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)}).Transaction(func(tx *gorm.DB) error {
+		replayed, err := lockSupportTicketSubmission(tx, submission)
+		if err != nil {
+			return err
+		}
+		if replayed {
+			return tx.Where("id = ? AND user_id = ?", submission.TicketID, ticket.UserID).First(ticket).Error
+		}
 		if err := tx.Create(ticket).Error; err != nil {
 			return err
 		}
@@ -117,7 +133,13 @@ func CreateSupportTicket(ticket *SupportTicket, message *SupportTicketMessage) e
 		if err := tx.Create(message).Error; err != nil {
 			return err
 		}
-		return enqueueSupportEmail(tx, ticket, message, true)
+		if err := persistSupportTicketAttachments(tx, ticket.ID, message.ID, attachments); err != nil {
+			return err
+		}
+		if err := enqueueSupportEmail(tx, ticket, message, true); err != nil {
+			return err
+		}
+		return completeSupportTicketSubmission(tx, submission, ticket.ID, message.ID)
 	})
 }
 
@@ -134,18 +156,40 @@ func GetSupportTicket(ticketID int64, userID int, adminView bool) (*SupportTicke
 	if err := DB.Where("ticket_id = ?", ticket.ID).Order("id ASC").Find(&messages).Error; err != nil {
 		return nil, nil, err
 	}
+	var attachments []SupportTicketAttachment
+	if err := DB.Select("id", "ticket_id", "message_id", "media_type", "size_bytes", "width", "height").Where("ticket_id = ?", ticket.ID).Order("message_id ASC, position ASC").Find(&attachments).Error; err != nil {
+		return nil, nil, err
+	}
+	byMessage := make(map[int64][]SupportTicketAttachment)
+	for _, attachment := range attachments {
+		byMessage[attachment.MessageID] = append(byMessage[attachment.MessageID], attachment)
+	}
+	for i := range messages {
+		messages[i].Attachments = byMessage[messages[i].ID]
+	}
 	return &ticket, messages, nil
 }
 
 func AppendSupportTicketMessage(ticketID int64, userID int, adminView bool, content, authorRole, nextStatus string, now int64) (*SupportTicket, error) {
+	return AppendSupportTicketMessageWithAttachments(ticketID, userID, adminView, content, authorRole, nextStatus, now, nil, nil)
+}
+
+func AppendSupportTicketMessageWithAttachments(ticketID int64, userID int, adminView bool, content, authorRole, nextStatus string, now int64, attachments []SupportTicketAttachment, submission *SupportTicketSubmission) (*SupportTicket, error) {
 	var updated SupportTicket
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err := DB.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)}).Transaction(func(tx *gorm.DB) error {
+		replayed, err := lockSupportTicketSubmission(tx, submission)
+		if err != nil {
+			return err
+		}
 		query := lockForUpdate(tx).Where("id = ?", ticketID)
 		if !adminView {
 			query = query.Where("user_id = ?", userID)
 		}
 		if err := query.First(&updated).Error; err != nil {
 			return err
+		}
+		if replayed {
+			return nil
 		}
 		if !adminView && updated.Status == SupportTicketStatusResolved {
 			return ErrSupportTicketResolved
@@ -158,6 +202,9 @@ func AppendSupportTicketMessage(ticketID int64, userID int, adminView bool, cont
 			CreatedAt:    now,
 		}
 		if err := tx.Create(&message).Error; err != nil {
+			return err
+		}
+		if err := persistSupportTicketAttachments(tx, updated.ID, message.ID, attachments); err != nil {
 			return err
 		}
 		updates := map[string]any{
@@ -178,7 +225,10 @@ func AppendSupportTicketMessage(ticketID int64, userID int, adminView bool, cont
 		if err := tx.Where("id = ?", updated.ID).First(&updated).Error; err != nil {
 			return err
 		}
-		return enqueueSupportEmail(tx, &updated, &message, false)
+		if err := enqueueSupportEmail(tx, &updated, &message, false); err != nil {
+			return err
+		}
+		return completeSupportTicketSubmission(tx, submission, updated.ID, message.ID)
 	})
 	if err != nil {
 		return nil, err

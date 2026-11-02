@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Check, ChevronsUpDown } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -37,6 +37,8 @@ import {
 import { useMediaQuery } from '@/hooks'
 import { cn } from '@/lib/utils'
 
+import type { TokenGroupDetail } from '../types'
+import { ApiKeyGroupHealth } from './api-key-group-health'
 import {
   AUTO_GROUP_FRAME_CLASS_NAME,
   AutoGroupFlowBorder,
@@ -48,6 +50,7 @@ export type ApiKeyGroupOption = {
   label: string
   desc?: string
   ratio?: number | string
+  health?: TokenGroupDetail
 }
 
 type ApiKeyGroupComboboxProps = {
@@ -56,6 +59,13 @@ type ApiKeyGroupComboboxProps = {
   onValueChange: (value: string) => void
   placeholder?: string
   disabled?: boolean
+  values?: string[]
+  onValuesChange?: (values: string[]) => void
+  maxCount?: number
+  id?: string
+  'aria-label'?: string
+  'aria-describedby'?: string
+  'aria-invalid'?: boolean | 'true' | 'false'
 }
 
 export function ApiKeyGroupCombobox({
@@ -64,13 +74,27 @@ export function ApiKeyGroupCombobox({
   onValueChange,
   placeholder,
   disabled,
+  values,
+  onValuesChange,
+  maxCount = 5,
+  id,
+  'aria-label': ariaLabel,
+  'aria-describedby': ariaDescribedBy,
+  'aria-invalid': ariaInvalid,
 }: ApiKeyGroupComboboxProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [searchValue, setSearchValue] = useState('')
   const shouldReduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
   const selectedOption = options.find((option) => option.value === value)
-  const isAutoSelected = selectedOption?.value === 'auto'
+  const multiple = values !== undefined && onValuesChange !== undefined
+  const isAutoSelected = !multiple && selectedOption?.value === 'auto'
+  useEffect(() => {
+    if (disabled) {
+      setOpen(false)
+      setSearchValue('')
+    }
+  }, [disabled])
 
   const filteredOptions = useMemo(() => {
     const search = searchValue.trim().toLowerCase()
@@ -88,24 +112,41 @@ export function ApiKeyGroupCombobox({
   }, [options, searchValue])
 
   const handleSelect = (selectedValue: string) => {
+    if (disabled) return
+    if (multiple) {
+      if (values.includes(selectedValue)) {
+        onValuesChange(values.filter((item) => item !== selectedValue))
+      } else if (maxCount === 1) {
+        onValuesChange([selectedValue])
+      } else if (values.length < maxCount) {
+        onValuesChange([...values, selectedValue])
+      }
+      return
+    }
     onValueChange(selectedValue)
     setOpen(false)
     setSearchValue('')
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open && !disabled} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
           <Button
             type='button'
             variant='outline'
+            id={id}
             role='combobox'
+            aria-label={ariaLabel}
+            aria-describedby={ariaDescribedBy}
+            aria-invalid={ariaInvalid}
             aria-expanded={open}
             data-auto-group-effect={isAutoSelected ? 'trigger' : undefined}
             disabled={disabled}
             className={cn(
               'border-input bg-muted/40 hover:bg-muted/55 hover:text-foreground active:bg-background data-popup-open:border-ring data-popup-open:bg-background data-popup-open:ring-ring/20 relative h-auto min-h-14 w-full justify-between gap-2 rounded-lg px-3 py-2 text-start shadow-none transition-[background-color,border-color,box-shadow] duration-150 data-popup-open:ring-[3px] sm:min-h-20 sm:gap-3 sm:px-4 sm:py-3',
+              multiple &&
+                'min-h-8! rounded-md px-3! py-1.5! text-xs sm:min-h-8!',
               isAutoSelected &&
                 cn(
                   AUTO_GROUP_FRAME_CLASS_NAME,
@@ -121,15 +162,19 @@ export function ApiKeyGroupCombobox({
         <span className='flex min-w-0 flex-1 items-center justify-between gap-2 sm:gap-3'>
           <span className='min-w-0'>
             <span className='block truncate font-medium'>
-              {selectedOption?.label || placeholder || t('Select a group')}
+              {multiple
+                ? values.join(' → ') ||
+                  placeholder ||
+                  t('Select groups in routing order')
+                : selectedOption?.label || placeholder || t('Select a group')}
             </span>
-            {selectedOption?.desc && (
+            {!multiple && selectedOption?.desc && (
               <span className='text-muted-foreground block truncate text-[11px] sm:text-xs'>
                 {selectedOption.desc}
               </span>
             )}
           </span>
-          <span className='hidden sm:block'>
+          <span className={multiple ? 'hidden' : 'hidden sm:block'}>
             <GroupRatioBadge
               ratio={selectedOption?.ratio}
               isAuto={isAutoSelected}
@@ -150,20 +195,34 @@ export function ApiKeyGroupCombobox({
       >
         <Command shouldFilter={false}>
           <CommandInput
-            placeholder={t('Search...')}
+            placeholder={multiple ? t('Search group name') : t('Search...')}
             value={searchValue}
             onValueChange={setSearchValue}
           />
-          <CommandList className='max-h-[360px]'>
+          <CommandList
+            className='max-h-[360px] overscroll-contain'
+            aria-label={t('Available groups')}
+            aria-multiselectable={multiple || undefined}
+          >
             <CommandEmpty>{t('No group found.')}</CommandEmpty>
             <CommandGroup>
               {filteredOptions.map((option) => {
                 const isAutoOption = option.value === 'auto'
+                const selected = multiple
+                  ? values.includes(option.value)
+                  : value === option.value
 
                 return (
                   <CommandItem
                     key={option.value}
                     value={option.value}
+                    aria-checked={multiple ? selected : undefined}
+                    disabled={
+                      multiple &&
+                      maxCount > 1 &&
+                      !selected &&
+                      values.length >= maxCount
+                    }
                     data-auto-group-effect={isAutoOption ? 'option' : undefined}
                     onSelect={() => handleSelect(option.value)}
                     className={cn(
@@ -184,24 +243,48 @@ export function ApiKeyGroupCombobox({
                       aria-hidden='true'
                       className={cn(
                         'mt-0.5 size-4',
-                        value === option.value ? 'opacity-100' : 'opacity-0'
+                        selected ? 'opacity-100' : 'opacity-0'
                       )}
                     />
                     <span className='min-w-0 flex-1'>
-                      <span className='block truncate font-medium'>
-                        {option.label}
+                      <span className='flex items-center justify-between gap-2'>
+                        <span className='block truncate font-medium'>
+                          {option.label}
+                        </span>
+                        {multiple && (
+                          <span className='flex items-center gap-2'>
+                            <GroupRatioBadge ratio={option.ratio} />
+                            <span
+                              className={cn(
+                                'size-2 shrink-0 rounded-full bg-muted',
+                                option.health?.available === true &&
+                                  'bg-emerald-500',
+                                option.health?.available === false &&
+                                  'bg-red-400'
+                              )}
+                              aria-label={
+                                option.health?.available === true
+                                  ? t('Available')
+                                  : t('Availability unknown or unavailable')
+                              }
+                            />
+                          </span>
+                        )}
                       </span>
-                      {option.desc && (
+                      {option.desc && !multiple && (
                         <span className='text-muted-foreground block truncate text-xs'>
                           {option.desc}
                         </span>
                       )}
+                      {multiple && <ApiKeyGroupHealth detail={option.health} />}
                     </span>
-                    <GroupRatioBadge
-                      ratio={option.ratio}
-                      isAuto={isAutoOption}
-                      shouldReduceMotion={shouldReduceMotion}
-                    />
+                    {!multiple && (
+                      <GroupRatioBadge
+                        ratio={option.ratio}
+                        isAuto={isAutoOption}
+                        shouldReduceMotion={shouldReduceMotion}
+                      />
+                    )}
                   </CommandItem>
                 )
               })}
