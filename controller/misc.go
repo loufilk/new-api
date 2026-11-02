@@ -42,6 +42,7 @@ func GetStatus(c *gin.Context) {
 	// a browser/proxy cache or another node's OptionMap to grant pool access.
 	c.Header("Cache-Control", "no-store")
 	accountPoolEnabled, _ := model.AccountPoolEnabled(c.Request.Context())
+	modelTestEnabled, _ := model.ModelTestEnabled(c.Request.Context())
 
 	cs := console_setting.GetConsoleSetting()
 	passkeySetting := system_setting.PasskeySettingsSnapshot()
@@ -53,6 +54,7 @@ func GetStatus(c *gin.Context) {
 
 	data := gin.H{
 		"account_pool_enabled":        accountPoolEnabled,
+		"model_test_enabled":          modelTestEnabled,
 		"version":                     common.Version,
 		"start_time":                  common.StartTime,
 		"email_verification":          common.EmailVerificationEnabled,

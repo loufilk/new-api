@@ -35,6 +35,7 @@ var expectedPaymentModelOrder = []any{
 var expectedSupportModelOrder = []any{
 	&model.SupportTicket{},
 	&model.SupportTicketMessage{},
+	&model.SupportEmailSettings{}, &model.SupportEmailPreference{}, &model.SupportEmailOutbox{}, &model.SupportEmailRate{},
 }
 
 func TestRegisterContributesWalletModelsInMigrationOrder(t *testing.T) {

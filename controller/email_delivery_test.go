@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -192,8 +193,14 @@ func TestEmailProviderCannotActivateIncompleteResend(t *testing.T) {
 }
 
 func TestResendSettingsChangesKeepActiveDeliveryWorking(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
+	var db *gorm.DB
+	if os.Getenv("TEST_SECURITY_DIALECT") == "postgres" {
+		db, _ = newAuditTestDatabase(t, "postgres", os.Getenv("TEST_POSTGRES_DSN"))
+	} else {
+		var err error
+		db, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+		require.NoError(t, err)
+	}
 	require.NoError(t, db.AutoMigrate(&model.Option{}))
 	previousDB, previousRedis := model.DB, common.RedisEnabled
 	model.DB, common.RedisEnabled = db, false

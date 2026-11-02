@@ -138,6 +138,15 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/admin/support/tickets/:id/replies": accessTokenSessionRule,
 	"POST /api/admin/support/tickets/:id/read":    accessTokenSessionRule,
 	"PUT /api/admin/support/tickets/:id/status":   accessTokenSessionRule,
+	// Mail preferences, delivery configuration and outbox actions also require
+	// sessions; explicitly deny both scoped and legacy PATs at authentication.
+	"GET /api/support-email/preferences":        accessTokenSessionRule,
+	"PUT /api/support-email/preferences":        accessTokenSessionRule,
+	"GET /api/support-email/settings":           accessTokenSessionRule,
+	"PUT /api/support-email/settings":           accessTokenSessionRule,
+	"GET /api/support-email/outbox":             accessTokenSessionRule,
+	"POST /api/support-email/outbox/:id/retry":  accessTokenSessionRule,
+	"POST /api/support-email/outbox/:id/cancel": accessTokenSessionRule,
 
 	// router/api-router.go: /api/user (admin)
 	"GET /api/user/":                                   accessTokenScopeRule("user:read"),

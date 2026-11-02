@@ -266,12 +266,20 @@ func RequestEpay(c *gin.Context) {
 		return
 	}
 
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
 	group, err := model.GetUserGroup(id, true)
 	if err != nil {
 		paymentError(c, common.NewMessage("Failed to get the user group"))
 		return
 	}
 	payMoney := getPayMoney(req.Amount, group)
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
 	if payMoney < 0.01 {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
 		return
@@ -464,12 +472,20 @@ func RequestAmount(c *gin.Context) {
 	if rejectInvalidTopUpQuota(c, id, req.Amount) {
 		return
 	}
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
 	group, err := model.GetUserGroup(id, true)
 	if err != nil {
 		paymentError(c, common.NewMessage("Failed to get the user group"))
 		return
 	}
 	payMoney := getPayMoney(req.Amount, group)
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
 	if payMoney <= 0.01 {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
 		return

@@ -37,10 +37,12 @@ export const chuanapiToolsNavigationExtension: NavigationExtension = {
   id: 'chuanapi/tools-navigation',
   apply(links, context) {
     const enabled = context.status?.account_pool_enabled === true
+    const testsEnabled = context.status?.model_test_enabled === true
     const result = links.filter(
       (link) =>
         link.href !== '/model-monitor' &&
-        (enabled || link.href !== '/account-pool')
+        (enabled || link.href !== '/account-pool') &&
+        (testsEnabled || link.href !== '/intelligence')
     )
     const additions = [
       { title: t('pool.title'), href: '/account-pool' },
@@ -49,6 +51,7 @@ export const chuanapiToolsNavigationExtension: NavigationExtension = {
     ].filter(
       (link) =>
         (enabled || link.href !== '/account-pool') &&
+        (testsEnabled || link.href !== '/intelligence') &&
         !result.some((existing) => existing.href === link.href)
     )
     const docsIndex = result.findIndex((link) => link.href === '/help')

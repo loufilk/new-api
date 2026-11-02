@@ -12,6 +12,12 @@ import (
 )
 
 func GetPricing(c *gin.Context) {
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
+
 	pricing := model.GetPricing()
 	userId, exists := c.Get("id")
 	usableGroup := map[string]string{}
@@ -20,13 +26,15 @@ func GetPricing(c *gin.Context) {
 	var group string
 	if exists {
 		user, err := model.GetUserCache(userId.(int))
-		if err == nil {
-			group = user.Group
-			for g := range groupRatio {
-				ratio, ok := ratio_setting.GetGroupGroupRatio(group, g)
-				if ok {
-					groupRatio[g] = ratio
-				}
+		if err != nil {
+			groupConfigReadFailure(c)
+			return
+		}
+		group = user.Group
+		for g := range groupRatio {
+			ratio, ok := ratio_setting.GetGroupGroupRatio(group, g)
+			if ok {
+				groupRatio[g] = ratio
 			}
 		}
 	}
@@ -40,6 +48,10 @@ func GetPricing(c *gin.Context) {
 		}
 	}
 
+	autoGroups := service.GetUserAutoGroup(group)
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
 	c.JSON(200, gin.H{
 		"success":            true,
 		"data":               pricing,
@@ -47,7 +59,7 @@ func GetPricing(c *gin.Context) {
 		"group_ratio":        groupRatio,
 		"usable_group":       usableGroup,
 		"supported_endpoint": model.GetSupportedEndpointMap(),
-		"auto_groups":        service.GetUserAutoGroup(group),
+		"auto_groups":        autoGroups,
 		"pricing_version":    "a42d372ccf0b5dd13ecf71203521f9d2",
 	})
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,6 +22,12 @@ func TestGroupRenamePostgresRedis(t *testing.T) {
 	parsed, err := url.Parse(dsn)
 	require.NoError(t, err)
 	require.True(t, net.ParseIP(parsed.Hostname()).IsLoopback(), "only disposable loopback fixtures are permitted")
+	if os.Getenv("TEST_REDIS_ADDR") == "" {
+		// Protocol-compatible local Redis fixture; never probe an external cache.
+		// Native Redis deployment behavior is a separate validation target.
+		server := miniredis.RunT(t)
+		t.Setenv("TEST_REDIS_ADDR", server.Addr())
+	}
 	require.NotEmpty(t, os.Getenv("TEST_REDIS_ADDR"))
 	previousDB, previousLog := DB, LOG_DB
 	previousMainType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()

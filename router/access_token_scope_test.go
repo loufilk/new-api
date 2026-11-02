@@ -244,3 +244,18 @@ func TestAccessTokenGoogleUnbindRequiresInteractiveSession(t *testing.T) {
 	assert.Equal(t, "session", rule.Kind(), "Google unlink must reject both legacy and scoped personal access tokens")
 	assert.Empty(t, rule.Scope())
 }
+
+func TestAccessTokenSupportEmailRoutesRequireSession(t *testing.T) {
+	for _, key := range []string{
+		"GET /api/support-email/preferences", "PUT /api/support-email/preferences",
+		"GET /api/support-email/settings", "PUT /api/support-email/settings",
+		"GET /api/support-email/outbox", "POST /api/support-email/outbox/:id/retry",
+		"POST /api/support-email/outbox/:id/cancel",
+	} {
+		t.Run(key, func(t *testing.T) {
+			rule, ok := middleware.AccessTokenRouteRule(key)
+			require.True(t, ok)
+			assert.Equal(t, "session", rule.Kind(), "reject scoped and legacy PATs before any support mail handler")
+		})
+	}
+}

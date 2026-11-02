@@ -2,12 +2,14 @@ package controller
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -24,11 +26,14 @@ func setupGroupRenameControllerTest(t *testing.T) *gorm.DB {
 	t.Helper()
 	db := openTokenControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(
-		&model.Option{}, &model.User{}, &model.Token{}, &model.Channel{},
+		&model.Option{}, &model.GroupRenameOperation{}, &model.User{}, &model.UserSession{}, &model.Token{}, &model.Channel{},
 		&model.Ability{}, &model.SubscriptionPlan{}, &model.UserSubscription{},
 		&model.Log{}, &model.AuditLog{},
 		&model.UserCallInterception{}, &model.UserCallInterceptionHit{}, &model.UserCallInterceptionAudit{},
 	))
+	root := model.User{Id: 990001, Username: "rename-root", Role: common.RoleRootUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AffCode: "rename-root"}
+	require.NoError(t, db.Create(&root).Error)
+	require.NoError(t, db.Create(&model.UserSession{SID: "rename-root-session", UserID: root.Id, UserAuthVersion: 1, Version: 1, Status: model.UserSessionStatusActive, ExpiresAt: common.GetTimestamp() + 3600, RefreshHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}).Error)
 	originalGroupRatio := ratio_setting.GroupRatio2JSONString()
 	originalGroupGroupRatio := ratio_setting.GroupGroupRatio2JSONString()
 	originalUsable := setting.UserUsableGroups2JSONString()
@@ -63,7 +68,7 @@ func setupGroupRenameControllerTest(t *testing.T) *gorm.DB {
 
 func TestRenameGroupsEndpointRejectsMalformedBody(t *testing.T) {
 	setupGroupRenameControllerTest(t)
-	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/option/group-rename", map[string]any{"renames": "invalid"}, 1)
+	ctx, recorder := newGroupRenameContext(t, http.MethodPost, "/api/option/group-rename", map[string]any{"renames": "invalid"}, 1)
 
 	RenameGroups(ctx)
 
@@ -78,7 +83,7 @@ func TestRenameGroupsEndpointRejectsUnknownSourceWithoutWrites(t *testing.T) {
 	user := model.User{Username: "controller-rename-user", Password: "hash", Group: "old", Status: common.UserStatusEnabled}
 	require.NoError(t, db.Create(&user).Error)
 
-	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/option/group-rename", map[string]any{
+	ctx, recorder := newGroupRenameContext(t, http.MethodPost, "/api/option/group-rename", map[string]any{
 		"renames": []map[string]string{{"from": "missing", "to": "new"}},
 	}, 1)
 	RenameGroups(ctx)
@@ -100,7 +105,7 @@ func TestRenameGroupsEndpointMigratesAndReturnsCounts(t *testing.T) {
 	user := model.User{Username: "controller-rename-success", Password: "hash", Group: "old", Status: common.UserStatusEnabled}
 	require.NoError(t, db.Create(&user).Error)
 
-	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/option/group-rename", map[string]any{
+	ctx, recorder := newGroupRenameContext(t, http.MethodPost, "/api/option/group-rename", map[string]any{
 		"renames": []map[string]string{{"from": "old", "to": "new"}},
 	}, 1)
 	RenameGroups(ctx)
@@ -128,7 +133,7 @@ func TestRenameGroupsEndpointAppliesCombinedOptionsAtomically(t *testing.T) {
 	user := model.User{Username: "controller-rename-options", Password: "hash", Group: "old", Status: common.UserStatusEnabled}
 	require.NoError(t, db.Create(&user).Error)
 
-	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/option/group-rename", map[string]any{
+	ctx, recorder := newGroupRenameContext(t, http.MethodPost, "/api/option/group-rename", map[string]any{
 		"renames": []map[string]string{{"from": "old", "to": "new"}},
 		"options": map[string]string{
 			"GroupRatio":         `{"new":0.5}`,
@@ -166,7 +171,7 @@ func TestRenameGroupsEndpointReportsStaleOptionEdit(t *testing.T) {
 	db := setupGroupRenameControllerTest(t)
 	require.NoError(t, db.Create(&model.Option{Key: "GroupRatio", Value: `{"old":1}`}).Error)
 
-	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/option/group-rename", map[string]any{
+	ctx, recorder := newGroupRenameContext(t, http.MethodPost, "/api/option/group-rename", map[string]any{
 		"renames":  []map[string]string{{"from": "old", "to": "new"}},
 		"options":  map[string]string{"GroupRatio": `{"new":1}`},
 		"expected": map[string]string{"GroupRatio": `{"old":2}`},
@@ -190,7 +195,7 @@ func TestRenameGroupsEndpointRejectsReferencedGroupRemoval(t *testing.T) {
 	user := model.User{Username: "controller-rename-removal", Password: "hash", Group: "cust0m", Status: common.UserStatusEnabled}
 	require.NoError(t, db.Create(&user).Error)
 
-	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/option/group-rename", map[string]any{
+	ctx, recorder := newGroupRenameContext(t, http.MethodPost, "/api/option/group-rename", map[string]any{
 		"options": map[string]string{"GroupRatio": `{"keep":1}`},
 	}, 1)
 	RenameGroups(ctx)
@@ -204,4 +209,67 @@ func TestRenameGroupsEndpointRejectsReferencedGroupRemoval(t *testing.T) {
 	var option model.Option
 	require.NoError(t, db.Where(&model.Option{Key: "GroupRatio"}).First(&option).Error)
 	assert.Equal(t, `{"cust0m":1,"keep":1}`, option.Value)
+}
+
+func newGroupRenameContext(t *testing.T, method, target string, body any, _ int) (*gin.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+	ctx, recorder := newAuthenticatedContext(t, method, target, body, 990001)
+	ctx.Set("role", common.RoleRootUser)
+	ctx.Set("session_id", "rename-root-session")
+	ctx.Set("session_version", int64(1))
+	return ctx, recorder
+}
+
+func TestRenameGroupsEndpointReceiptAuditReplayAndRevocation(t *testing.T) {
+	db := setupGroupRenameControllerTest(t)
+	require.NoError(t, db.Create(&model.Option{Key: "GroupRatio", Value: `{"old":1}`}).Error)
+	user := model.User{Username: "receipt-customer", AffCode: "receipt-customer", Group: "old", Status: common.UserStatusEnabled}
+	require.NoError(t, db.Create(&user).Error)
+	token := model.Token{UserId: user.Id, Key: "synthetic-secret-not-in-audit", Group: "old", Status: common.TokenStatusDisabled}
+	require.NoError(t, db.Create(&token).Error)
+	body := map[string]any{"request_id": "controller-request-001", "renames": []model.GroupRenameMapping{{From: "old", To: "new"}}}
+	for _, replayed := range []bool{false, true} {
+		ctx, rec := newGroupRenameContext(t, http.MethodPost, "/api/option/group-rename", body, 1)
+		RenameGroups(ctx)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var response groupRenameAPIResponse
+		require.NoError(t, common.Unmarshal(rec.Body.Bytes(), &response))
+		require.True(t, response.Success)
+		require.NotNil(t, response.Data)
+		assert.Equal(t, replayed, response.Data.Replayed)
+		assert.Equal(t, 1, response.Data.Tokens)
+	}
+	var operation model.GroupRenameOperation
+	require.NoError(t, db.First(&operation).Error)
+	assert.Equal(t, 990001, operation.ActorID)
+	assert.Equal(t, common.RoleRootUser, operation.ActorRole)
+	assert.NotContains(t, operation.Result, token.Key)
+	var audits []model.AuditLog
+	require.NoError(t, db.Where("action = ?", "option.group_rename").Find(&audits).Error)
+	require.Len(t, audits, 2)
+	raw, err := common.Marshal(audits)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), token.Key)
+	assert.Contains(t, string(raw), `"tokens":1`)
+	// A retry is not an authorization bypass: revoked sessions cannot even read
+	// their former success receipt through the mutation endpoint.
+	require.NoError(t, db.Model(&model.UserSession{}).Where("sid = ?", "rename-root-session").Update("status", model.UserSessionStatusRevoked).Error)
+	ctx, rec := newGroupRenameContext(t, http.MethodPost, "/api/option/group-rename", body, 1)
+	RenameGroups(ctx)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+func TestRenameGroupsEndpointRechecksCurrentRootRole(t *testing.T) {
+	db := setupGroupRenameControllerTest(t)
+	require.NoError(t, db.Create(&model.Option{Key: "GroupRatio", Value: `{"old":1}`}).Error)
+	require.NoError(t, db.Model(&model.User{}).Where("id = ?", 990001).Update("role", common.RoleAdminUser).Error)
+	ctx, rec := newGroupRenameContext(t, http.MethodPost, "/api/option/group-rename", map[string]any{"renames": []model.GroupRenameMapping{{From: "old", To: "new"}}}, 1)
+	RenameGroups(ctx)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	var operationCount int64
+	require.NoError(t, db.Model(&model.GroupRenameOperation{}).Count(&operationCount).Error)
+	assert.Zero(t, operationCount)
+	var option model.Option
+	require.NoError(t, db.Where(&model.Option{Key: "GroupRatio"}).First(&option).Error)
+	assert.JSONEq(t, `{"old":1}`, option.Value)
 }

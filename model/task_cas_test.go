@@ -75,6 +75,7 @@ func TestMain(m *testing.M) {
 	if err := db.AutoMigrate(append([]any{
 		&Task{},
 		&Option{},
+		&GroupRenameOperation{},
 		&User{},
 		&UserSession{},
 		&AuthFlow{},

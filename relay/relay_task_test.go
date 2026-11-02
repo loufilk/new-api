@@ -3,13 +3,18 @@ package relay
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -30,11 +35,15 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 func setupRelayChannelDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	if dsn := os.Getenv("TEST_POSTGRES_DSN"); dsn != "" {
+		return setupRelayChannelPostgresDB(t, dsn)
+	}
 	previousDB := model.DB
 	previousType := common.MainDatabaseType()
 	previousCache := common.MemoryCacheEnabled
@@ -53,6 +62,55 @@ func setupRelayChannelDB(t *testing.T) *gorm.DB {
 		common.MemoryCacheEnabled = previousCache
 		require.NoError(t, sqlDB.Close())
 	})
+	return database
+}
+
+// Native fixtures use a private schema per test and never fall through to an
+// embedded database when an owned PostgreSQL DSN was selected.
+func setupRelayChannelPostgresDB(t *testing.T, dsn string) *gorm.DB {
+	t.Helper()
+	parsed, err := url.Parse(dsn)
+	require.NoError(t, err)
+	require.Equal(t, "postgres", parsed.Scheme)
+	ip := net.ParseIP(parsed.Hostname())
+	require.NotNil(t, ip)
+	require.True(t, ip.IsLoopback())
+	admin, err := gorm.Open(postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true}), &gorm.Config{})
+	require.NoError(t, err)
+	adminConn, err := admin.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, adminConn.Close()) })
+	var version string
+	require.NoError(t, admin.Raw("SHOW server_version_num").Scan(&version).Error)
+	require.Equal(t, "180006", version)
+	schema := fmt.Sprintf("relay_group_%d", time.Now().UnixNano())
+	require.NoError(t, admin.Exec("CREATE SCHEMA "+schema).Error)
+	query := parsed.Query()
+	query.Set("search_path", schema)
+	parsed.RawQuery = query.Encode()
+	database, err := gorm.Open(postgres.New(postgres.Config{DSN: parsed.String(), PreferSimpleProtocol: true}), &gorm.Config{})
+	require.NoError(t, err)
+	connection, err := database.DB()
+	require.NoError(t, err)
+	connection.SetMaxOpenConns(4)
+	oldDB, oldLog, oldMainType, oldLogType, oldMemory := model.DB, model.LOG_DB, common.MainDatabaseType(), common.LogDatabaseType(), common.MemoryCacheEnabled
+	model.DB, model.LOG_DB = database, database
+	common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = oldDB, oldLog
+		common.SetDatabaseTypes(oldMainType, oldLogType)
+		common.MemoryCacheEnabled = oldMemory
+		require.NoError(t, connection.Close())
+		require.NoError(t, admin.Exec("DROP SCHEMA "+schema+" CASCADE").Error)
+	})
+	require.NoError(t, database.AutoMigrate(&model.Option{}, &model.Channel{}))
+	t.Setenv("LOG_SQL_DSN", "")
+	master := common.IsMasterNode
+	common.IsMasterNode = false
+	err = model.InitLogDB()
+	common.IsMasterNode = master
+	require.NoError(t, err)
 	return database
 }
 

@@ -375,8 +375,20 @@ func lockCredentialOwnerForWriteTx(tx *gorm.DB, userID int, expectedAuthVersion 
 }
 
 func (token *Token) Insert(expectedAuthVersion ...int64) error {
+	return token.insertWithGroupConfig(nil, expectedAuthVersion...)
+}
+
+// InsertAtGroupConfigVersion binds HTTP scope validation to the namespace lock.
+func (token *Token) InsertAtGroupConfigVersion(authVersion, groupVersion int64) error {
+	return token.insertWithGroupConfig(&groupVersion, authVersion)
+}
+
+func (token *Token) insertWithGroupConfig(groupVersion *int64, expectedAuthVersion ...int64) error {
 	return DB.Transaction(func(tx *gorm.DB) error {
 		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
+		if err := validateGroupConfigVersionTx(tx, groupVersion); err != nil {
 			return err
 		}
 		if err := lockCredentialOwnerForWriteTx(tx, token.UserId, expectedAuthVersion...); err != nil {
@@ -391,8 +403,19 @@ func (token *Token) Insert(expectedAuthVersion ...int64) error {
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
 func (token *Token) Update(expectedAuthVersion ...int64) (err error) {
+	return token.updateWithGroupConfig(nil, expectedAuthVersion...)
+}
+
+func (token *Token) UpdateAtGroupConfigVersion(authVersion, groupVersion int64) error {
+	return token.updateWithGroupConfig(&groupVersion, authVersion)
+}
+
+func (token *Token) updateWithGroupConfig(groupVersion *int64, expectedAuthVersion ...int64) (err error) {
 	return DB.Transaction(func(tx *gorm.DB) error {
 		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
+		if err := validateGroupConfigVersionTx(tx, groupVersion); err != nil {
 			return err
 		}
 		if err := lockCredentialOwnerForWriteTx(tx, token.UserId, expectedAuthVersion...); err != nil {

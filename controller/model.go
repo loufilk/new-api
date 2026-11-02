@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -169,7 +170,17 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 	}, nil
 }
 
-func visibleModelNames(c *gin.Context) ([]string, error) {
+func visibleModelNames(c *gin.Context) (names []string, resultErr error) {
+	guard, err := model.BeginRequestGroupConfigRead(c)
+	if err != nil {
+		return nil, model.ErrGroupConfigChanged
+	}
+	defer func() {
+		if err := guard.Finish(); err != nil {
+			names, resultErr = nil, model.ErrGroupConfigChanged
+		}
+	}()
+
 	acceptUnsetRatioModel := operation_setting.SelfUseModeEnabled
 	if !acceptUnsetRatioModel {
 		userId := c.GetInt("id")
@@ -217,6 +228,10 @@ func visibleModelNames(c *gin.Context) ([]string, error) {
 
 func ListModels(c *gin.Context, modelType int) {
 	userModelNames, err := visibleModelNames(c)
+	if errors.Is(err, model.ErrGroupConfigChanged) {
+		groupConfigReadFailure(c)
+		return
+	}
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "get user group failed"})
 		return
@@ -278,6 +293,11 @@ func ChannelListModels(c *gin.Context) {
 }
 
 func DashboardListModels(c *gin.Context) {
+	guard, ok := beginControllerGroupConfigRead(c)
+	if !ok {
+		return
+	}
+	defer guard.Close()
 	modelsByChannel := make(map[int][]string, len(channelId2Models))
 	for channelType, models := range channelId2Models {
 		modelsByChannel[channelType] = append([]string(nil), models...)
@@ -286,6 +306,9 @@ func DashboardListModels(c *gin.Context) {
 		if plugin, ok := jsplugin.DefaultRegistry.GetByChannelType(channelType); ok {
 			modelsByChannel[channelType] = append([]string(nil), plugin.Meta.Models...)
 		}
+	}
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
 	}
 	c.JSON(200, gin.H{
 		"success": true,
@@ -303,6 +326,10 @@ func EnabledListModels(c *gin.Context) {
 func RetrieveModel(c *gin.Context, modelType int) {
 	modelID := c.Param("model")
 	visible, err := visibleModelNames(c)
+	if errors.Is(err, model.ErrGroupConfigChanged) {
+		groupConfigReadFailure(c)
+		return
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": types.OpenAIError{
 			Message: "Failed to resolve available models", Type: "api_error", Code: "model_lookup_failed",

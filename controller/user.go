@@ -215,6 +215,7 @@ func writeLoginResponse(c *gin.Context, user *model.User, bundle *service.AuthBu
 }
 
 func Register(c *gin.Context) {
+	verifyEmail := common.EmailVerificationEnabled
 	if !common.RegisterEnabled {
 		common.ApiErrorT(c, "New user registration has been disabled by administrator")
 		return
@@ -239,12 +240,12 @@ func Register(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid input {{error}}", map[string]any{"error": err.Error()})
 		return
 	}
-	if common.EmailVerificationEnabled {
+	if verifyEmail {
 		if user.Email == "" || user.VerificationCode == "" {
 			common.ApiErrorT(c, "Email verification is enabled, please enter email address and verification code")
 			return
 		}
-		if !common.VerifyCodeWithKey(user.Email, user.VerificationCode, common.EmailVerificationPurpose) {
+		if !common.ConsumeVerificationCodeWithKey(user.Email, user.VerificationCode, common.EmailVerificationPurpose) {
 			common.ApiErrorT(c, "Verification code is incorrect or has expired")
 			return
 		}
@@ -258,7 +259,7 @@ func Register(c *gin.Context) {
 		}
 	}
 	emailForExistCheck := ""
-	if common.EmailVerificationEnabled {
+	if verifyEmail {
 		emailForExistCheck = user.Email
 	}
 	exist, err := model.CheckUserExistOrDeleted(user.Username, emailForExistCheck)
@@ -287,8 +288,9 @@ func Register(c *gin.Context) {
 		InviterId:   inviterId,
 		Role:        common.RoleCommonUser, // 明确设置角色为普通用户
 	}
-	if common.EmailVerificationEnabled {
+	if verifyEmail {
 		cleanUser.Email = user.Email
+		model.MarkNewUserEmailVerified(&cleanUser)
 	}
 	if err := cleanUser.Insert(inviterId); err != nil {
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
@@ -586,6 +588,12 @@ func generateDefaultSidebarConfig(userRole int) string {
 }
 
 func GetUserModels(c *gin.Context) {
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
+
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		id = c.GetInt("id")
@@ -612,10 +620,14 @@ func GetUserModels(c *gin.Context) {
 			groupsToQuery = []string{group}
 		}
 	}
+	models := service.GetGroupsEnabledModels(groupsToQuery)
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    service.GetGroupsEnabledModels(groupsToQuery),
+		"data":    models,
 	})
 }
 

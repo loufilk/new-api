@@ -20,7 +20,8 @@ import (
 func setupTokenModelsControllerTest(t *testing.T) (*gorm.DB, *model.User) {
 	t.Helper()
 	db := setupTokenControllerTestDB(t)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}))
+	// TokenAuth now refreshes the complete group-dependent runtime snapshot.
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{}, &model.UserCallInterception{}, &model.UserCallInterceptionHit{}, &model.UserCallInterceptionAudit{}))
 
 	previousAuto := setting.AutoGroups2JsonString()
 	previousUsable := setting.UserUsableGroups2JSONString()

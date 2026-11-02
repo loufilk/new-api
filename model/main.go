@@ -450,6 +450,7 @@ func mainAutoMigrateModels(registry *extension.Registry) []any {
 		&ExternalIdentityClaim{},
 		&PasskeyCredential{},
 		&Option{},
+		&GroupRenameOperation{},
 		&LoginEncryptionKey{},
 		&Redemption{},
 		&RedemptionMutation{},

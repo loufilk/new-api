@@ -9,6 +9,8 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting"
 
@@ -54,7 +56,7 @@ func redisRateLimitHandler(subject string, duration int64, totalMaxCount, succes
 
 // 内存限流处理器
 func memoryRateLimitHandler(subject string, duration int64, totalMaxCount, successMaxCount int) gin.HandlerFunc {
-	inMemoryRateLimiter.Init(time.Duration(setting.ModelRequestRateLimitDurationMinutes) * time.Minute)
+	inMemoryRateLimiter.Init(time.Duration(duration) * time.Second)
 
 	return func(c *gin.Context) {
 		totalKey := ModelRequestRateLimitCountMark + subject
@@ -92,8 +94,18 @@ func modelRequestSucceeded(c *gin.Context) bool {
 // ModelRequestRateLimit 模型请求限流中间件
 func ModelRequestRateLimit() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		guard, err := model.BeginRequestGroupConfigRead(c)
+		if err != nil {
+			abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgGroupConfigChanged), "group_config_changed")
+			return
+		}
+		defer guard.Close()
 		// 在每个请求时检查是否启用限流
 		if !setting.ModelRequestRateLimitEnabled {
+			if err := guard.Finish(); err != nil {
+				abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgGroupConfigChanged), "group_config_changed")
+				return
+			}
 			c.Next()
 			return
 		}
@@ -116,7 +128,12 @@ func ModelRequestRateLimit() func(c *gin.Context) {
 		if found {
 			totalMaxCount = groupTotalCount
 			successMaxCount = groupSuccessCount
-			subject += ":" + group
+			subject += ":" + model.GroupRateLimitBucket(group)
+		}
+
+		if err := guard.Finish(); err != nil {
+			abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgGroupConfigChanged), "group_config_changed")
+			return
 		}
 
 		if duration <= 0 || duration > int64((3650*24*time.Hour)/time.Second) || totalMaxCount < 0 || successMaxCount < 0 {

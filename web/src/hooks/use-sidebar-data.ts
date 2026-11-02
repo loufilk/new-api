@@ -132,11 +132,15 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
                 },
               ]
             : []),
-          {
-            title: t('intelligence.title'),
-            url: '/intelligence',
-            icon: FlaskConical,
-          },
+          ...(status?.model_test_enabled === true
+            ? [
+                {
+                  title: t('intelligence.title'),
+                  url: '/intelligence',
+                  icon: FlaskConical,
+                },
+              ]
+            : []),
           {
             title: t('Invitation Rewards'),
             url: '/affiliate',

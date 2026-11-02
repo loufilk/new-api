@@ -21,7 +21,7 @@ func AccountPoolEnabled(ctx context.Context) (bool, error) {
 	return err == nil && option.Value == "true", err
 }
 
-func validateAccountPoolEnabled(value string) error {
+func validateOptInFeatureEnabled(value string) error {
 	if value != "true" && value != "false" {
 		return common.NewMessage("Invalid parameters")
 	}

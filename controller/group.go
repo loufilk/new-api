@@ -3,6 +3,7 @@ package controller
 import (
 	"net/http"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
@@ -12,9 +13,20 @@ import (
 )
 
 func GetGroups(c *gin.Context) {
+	guard, err := model.BeginGroupConfigRead(c.Request.Context())
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusServiceUnavailable, common.NewMessage("Group settings changed or are temporarily unavailable. Retry the request."))
+		return
+	}
+	defer guard.Close()
+
 	groupNames := make([]string, 0)
 	for groupName := range ratio_setting.GetGroupRatioCopy() {
 		groupNames = append(groupNames, groupName)
+	}
+	if err := guard.Finish(); err != nil {
+		common.ApiErrorStatus(c, http.StatusServiceUnavailable, common.NewMessage("Group settings changed or are temporarily unavailable. Retry the request."))
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -24,10 +36,24 @@ func GetGroups(c *gin.Context) {
 }
 
 func GetUserGroups(c *gin.Context) {
+	guard, err := model.BeginGroupConfigRead(c.Request.Context())
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusServiceUnavailable, common.NewMessage("Group settings changed or are temporarily unavailable. Retry the request."))
+		return
+	}
+	defer guard.Close()
+
 	usableGroups := make(map[string]map[string]any)
 	userGroup := ""
 	userId := c.GetInt("id")
-	userGroup, _ = model.GetUserGroup(userId, false)
+	if userId > 0 {
+		user, lookupErr := model.GetUserCache(userId)
+		if lookupErr != nil {
+			groupConfigReadFailure(c)
+			return
+		}
+		userGroup = user.Group
+	}
 	userUsableGroups := service.GetUserUsableGroups(userGroup)
 	for groupName, _ := range ratio_setting.GetGroupRatioCopy() {
 		// UserUsableGroups contains the groups that the user can use
@@ -43,6 +69,10 @@ func GetUserGroups(c *gin.Context) {
 			"ratio": "auto",
 			"desc":  setting.GetUsableGroupDescription("auto"),
 		}
+	}
+	if err := guard.Finish(); err != nil {
+		common.ApiErrorStatus(c, http.StatusServiceUnavailable, common.NewMessage("Group settings changed or are temporarily unavailable. Retry the request."))
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

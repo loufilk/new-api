@@ -226,20 +226,62 @@ func GetModelTests(c *gin.Context) {
 		modelTestError(c, 503, "history_unavailable")
 		return
 	}
-	catalogue, err := modelTestCatalogue(c.GetInt("id"))
-	if err != nil {
-		modelTestError(c, 503, "catalogue_unavailable")
-		return
+	enabled, settingsErr := model.ModelTestEnabled(c.Request.Context())
+	availabilityError := ""
+	if settingsErr != nil {
+		availabilityError = "model_test_settings_unavailable"
 	}
-	common.ApiSuccess(c, gin.H{"benchmark": gin.H{"id": modelTestVersion, "name": "Pelican static illustration", "prompt": modelTestPrompt, "license": "CC0-1.0", "public_prompt": true, "assessment": "structural-only"}, "limits": gin.H{"max_output_tokens": 4096, "default_output_tokens": 2048, "allowed_output_tokens": []int{2048, 4096}, "timeout_seconds": 90, "runs_per_hour": 3, "concurrency_per_user": 1, "concurrency_global": 4}, "eligible_models_by_group": catalogue, "site_results": []any{}, "items": items})
+	catalogue := map[string][]string{}
+	if enabled {
+		// Owner history does not depend on routing configuration. A catalogue
+		// does, so acquire a fresh primary-store guard without an auth snapshot.
+		guard, guardErr := model.BeginGroupConfigRead(c.Request.Context())
+		if guardErr == nil {
+			catalogue, guardErr = modelTestCatalogue(c.GetInt("id"))
+			if finishErr := guard.Finish(); guardErr == nil {
+				guardErr = finishErr
+			}
+		}
+		if guardErr != nil {
+			enabled = false
+			catalogue = map[string][]string{}
+			availabilityError = "model_test_settings_unavailable"
+		}
+	}
+	common.ApiSuccess(c, gin.H{"enabled": enabled, "availability_error": availabilityError, "benchmark": gin.H{"id": modelTestVersion, "name": "Pelican static illustration", "prompt": modelTestPrompt, "license": "CC0-1.0", "public_prompt": true, "assessment": "structural-only"}, "limits": gin.H{"max_output_tokens": 4096, "default_output_tokens": 2048, "allowed_output_tokens": []int{2048, 4096}, "timeout_seconds": 90, "runs_per_hour": 3, "concurrency_per_user": 1, "concurrency_global": 4}, "eligible_models_by_group": catalogue, "site_results": []any{}, "items": items})
+}
+
+// Reads primary storage every time; neither a signed quote nor an administrator
+// session overrides the opt-in switch. History/reconciliation/cancel are separate.
+func requireModelTestEnabled(c *gin.Context) bool {
+	err := model.RequireModelTestEnabled(c.Request.Context())
+	if err == nil {
+		return true
+	}
+	code, status := "model_tests_disabled", http.StatusForbidden
+	if !errors.Is(err, model.ErrModelTestsDisabled) {
+		code, status = "model_test_settings_unavailable", http.StatusServiceUnavailable
+	}
+	c.Set("model_test_error_code", code)
+	modelTestError(c, status, code)
+	return false
 }
 
 func EstimateModelTest(c *gin.Context) {
+	if !requireModelTestEnabled(c) {
+		return
+	}
 	var selected modelTestSelection
 	if common.DecodeJsonStrict(http.MaxBytesReader(c.Writer, c.Request.Body, 4096), &selected) != nil {
 		modelTestError(c, 400, "invalid_selection")
 		return
 	}
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
+
 	if err := validateModelTestSelection(c.GetInt("id"), selected); err != nil {
 		modelTestError(c, 400, "model_or_group_unavailable")
 		return
@@ -249,7 +291,13 @@ func EstimateModelTest(c *gin.Context) {
 		modelTestError(c, 503, "catalogue_unavailable")
 		return
 	}
+	if !requireModelTestEnabled(c) {
+		return
+	}
 	ticket := modelTestConfirmation{modelTestSelection: selected, UserID: c.GetInt("id"), Version: modelTestVersion, ExpiresAt: time.Now().Add(5 * time.Minute).Unix(), EstimatedQuota: estimateModelTestQuota(c.GetInt("id"), selected), PricingHash: pricingHash}
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
 	common.ApiSuccess(c, gin.H{"model": selected.Model, "group": selected.Group, "max_output_tokens": selected.MaxOutputTokens, "estimated_quota": ticket.EstimatedQuota, "quota_per_unit": common.QuotaPerUnit, "estimate_is_cap": false, "timeout_seconds": 90, "benchmark_id": modelTestVersion, "confirmation_token": signModelTestConfirmation(ticket), "expires_at": ticket.ExpiresAt})
 }
 
@@ -301,11 +349,20 @@ func PrepareModelTest(c *gin.Context) {
 		common.ApiSuccess(c, previous)
 		return
 	}
+	if !requireModelTestEnabled(c) {
+		return
+	}
 	ticket, ok := verifyModelTestConfirmation(request.ConfirmationToken, userID, request.modelTestSelection)
 	if !ok {
 		modelTestError(c, 400, "confirmation_expired_or_invalid")
 		return
 	}
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
+
 	if err := validateModelTestSelection(userID, request.modelTestSelection); err != nil {
 		modelTestError(c, 400, "model_or_group_unavailable")
 		return
@@ -317,7 +374,18 @@ func PrepareModelTest(c *gin.Context) {
 	}
 	now := time.Now()
 	run := &model.ModelTestRun{ID: request.RequestID, UserID: userID, Model: request.Model, Group: request.Group, BenchmarkID: modelTestVersion, Status: "running", Assessment: "unassessed", CreatedAt: now.Unix(), ExpiresAt: now.Add(modelTestTimeout + 30*time.Second).Unix(), MaxOutputTokens: request.MaxOutputTokens, EstimatedQuota: ticket.EstimatedQuota, RequestID: c.GetString(common.RequestIdKey)}
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
 	replayed, err := model.CreateModelTestRun(run)
+	if errors.Is(err, model.ErrModelTestsDisabled) {
+		modelTestError(c, http.StatusForbidden, "model_tests_disabled")
+		return
+	}
+	if errors.Is(err, model.ErrModelTestSettingsUnavailable) {
+		modelTestError(c, http.StatusServiceUnavailable, "model_test_settings_unavailable")
+		return
+	}
 	if errors.Is(err, model.ErrModelTestLimit) {
 		modelTestError(c, 429, "rate_or_concurrency_limit")
 		return
@@ -426,6 +494,12 @@ func PrepareModelTest(c *gin.Context) {
 // Channel parameter overrides could change the fixed task or output budget.
 // Refuse those routes rather than silently claiming a controlled comparison.
 func ModelTestPlayground(c *gin.Context) {
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
+
 	selected, ok := c.MustGet("model_test_selection").(modelTestSelection)
 	if !ok {
 		c.AbortWithStatus(400)
@@ -455,6 +529,12 @@ func ModelTestPlayground(c *gin.Context) {
 			c.AbortWithStatusJSON(400, gin.H{"error": gin.H{"code": "channel_overrides_not_supported"}})
 			return
 		}
+	}
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
+	if !requireModelTestEnabled(c) {
+		return
 	}
 	Playground(c)
 }

@@ -8,6 +8,7 @@ package i18n
 const (
 	MsgImageTaskStillProcessing = "task.image_still_processing"
 	MsgDatabaseError            = "common.database_error"
+	MsgGroupConfigChanged       = "common.group_config_changed"
 	MsgAuthUserBanned           = "auth.user_banned"
 	MsgTokenGetInfoFailed       = "token.get_info_failed"
 	MsgTokenInvalid             = "token.invalid"

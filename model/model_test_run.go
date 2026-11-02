@@ -68,6 +68,15 @@ func CreateModelTestRun(run *ModelTestRun) (replayed bool, err error) {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
+		// Recheck after the cross-node queue/owner locks. A valid quote acquired
+		// before a disable is not authority to create work after waiting here.
+		enabled, settingsErr := modelTestEnabled(tx)
+		if settingsErr != nil {
+			return ErrModelTestSettingsUnavailable
+		}
+		if !enabled {
+			return ErrModelTestsDisabled
+		}
 		now := time.Now().Unix()
 		// A crashed node is never retried automatically: the outcome and charge
 		// may be unknown. Keep its audit row, unblock only after the bounded lease.

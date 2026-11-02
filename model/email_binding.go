@@ -24,13 +24,14 @@ var (
 // salted code hashes and an already-consumed authorization, never usable codes
 // or proof tokens. Resending must retain the deadline and failure counter.
 type EmailBindingState struct {
-	Authorization  *AuthFlowAuthorization `json:"authorization"`
-	CurrentEmail   string                 `json:"current_email"`
-	Email          string                 `json:"email"`
-	NewCodeHash    string                 `json:"new_code_hash"`
-	OldCodeHash    string                 `json:"old_code_hash,omitempty"`
-	FailedAttempts int                    `json:"failed_attempts"`
-	ResendAt       int64                  `json:"resend_at"`
+	Authorization            *AuthFlowAuthorization `json:"authorization"`
+	CurrentEmail             string                 `json:"current_email"`
+	EmailVerificationVersion int64                  `json:"email_verification_version"`
+	Email                    string                 `json:"email"`
+	NewCodeHash              string                 `json:"new_code_hash"`
+	OldCodeHash              string                 `json:"old_code_hash,omitempty"`
+	FailedAttempts           int                    `json:"failed_attempts"`
+	ResendAt                 int64                  `json:"resend_at"`
 }
 
 func CreateEmailBinding(identity AuthSessionIdentity, state EmailBindingState) (string, *AuthFlow, error) {
@@ -138,7 +139,11 @@ func CompleteEmailBinding(identity AuthSessionIdentity, token, email, newCode, o
 		if err := ensureEmailAvailableWithTx(tx, state.Email, identity.UserID); err != nil {
 			return err
 		}
-		if err := tx.Model(&User{}).Where("id = ?", identity.UserID).Update("email", state.Email).Error; err != nil {
+		if err := tx.Model(&User{}).Where("id = ?", identity.UserID).Updates(map[string]any{
+			"email": state.Email, "email_verified_address": state.Email,
+			"email_verified_at":          time.Now().Unix(),
+			"email_verification_version": gorm.Expr("COALESCE(email_verification_version, 0) + 1"),
+		}).Error; err != nil {
 			return err
 		}
 		return tx.Model(flow).Update("consumed_at", time.Now()).Error
@@ -195,10 +200,11 @@ func validateEmailBindingAccountWithTx(tx *gorm.DB, identity AuthSessionIdentity
 		return err
 	}
 	var user User
-	if err := tx.Select("email").First(&user, identity.UserID).Error; err != nil {
+	if err := tx.Select("email", "email_verified_address", "email_verification_version", "email_verified_at").First(&user, identity.UserID).Error; err != nil {
 		return err
 	}
-	if NormalizeEmail(user.Email) != state.CurrentEmail || state.CurrentEmail == state.Email {
+	if NormalizeEmail(user.Email) != state.CurrentEmail || user.EmailVerificationVersion != state.EmailVerificationVersion ||
+		(state.CurrentEmail == state.Email && VerifiedSupportEmail(&user)) {
 		return ErrAccountBindingChanged
 	}
 	return nil

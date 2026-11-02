@@ -578,6 +578,11 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 	}
 	if oauthUser.Email != "" {
 		user.Email = model.NormalizeEmail(oauthUser.Email)
+		// GoogleProvider only returns an email after signed, authoritative
+		// Gmail / Workspace verification. Other profile emails are not proof.
+		if _, google := provider.(*oauth.GoogleProvider); google {
+			model.MarkNewUserEmailVerified(user)
+		}
 		if err := model.EnsureEmailAvailable(user.Email, 0); err != nil {
 			if errors.Is(err, model.ErrEmailAlreadyTaken) {
 				return nil, nil, &OAuthEmailAlreadyTakenError{}

@@ -499,6 +499,14 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		}
 	}
 
+	// The successful authoritative read below is the model-test dispatch
+	// admission (linearization) point. A concurrent disable after that point
+	// does not revoke this admitted request or its normal settlement. There is
+	// deliberately no DB transaction held across network I/O.
+	if apiErr := service.CheckModelTestAccess(c); apiErr != nil {
+		common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, true)
+		return nil, apiErr
+	}
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestOrigin, req.URL.Scheme+"://"+req.URL.Host)
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestAttempted, true)
 	resp, err := relayClient.Do(req)

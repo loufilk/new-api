@@ -19,7 +19,22 @@ For commercial licensing, please contact support@quantumnous.com
 import { createFileRoute } from '@tanstack/react-router'
 
 import { SupportCenter } from '@/features/support'
+import { supportTicketSearch } from '@/features/support/email/schema'
 
 export const Route = createFileRoute('/_authenticated/support/')({
-  component: SupportCenter,
+  validateSearch: supportTicketSearch,
+  component: SupportRoute,
 })
+
+function SupportRoute() {
+  const search = supportTicketSearch(Route.useSearch())
+  const navigate = Route.useNavigate()
+  return (
+    <SupportCenter
+      ticketId={search.ticket}
+      onTicketSelect={(ticket) => {
+        void navigate({ search: { ticket } })
+      }}
+    />
+  )
+}

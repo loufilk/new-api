@@ -88,6 +88,8 @@ func setupModelTestsPostgres(t *testing.T) (*gorm.DB, int) {
 		model.InvalidatePricingCache()
 	})
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}, &model.ModelTestRun{}, &model.ModelTestGate{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.UserCallInterception{}, &model.UserCallInterceptionHit{}))
+	// Existing execution scenarios explicitly opt in; switch tests remove/disable it.
+	require.NoError(t, db.Create(&model.Option{Key: model.ModelTestEnabledKey, Value: "true"}).Error)
 	user := model.User{Username: "synthetic-model-test-user", AffCode: "synthetic-test-aff", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", Quota: 1_000_000, QuotaPaid: 1_000_000}
 	require.NoError(t, db.Create(&user).Error)
 	ch := model.Channel{Name: "Synthetic channel", Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Models: "gpt-4o-mini", Group: "default", Key: "synthetic-not-a-real-key"}

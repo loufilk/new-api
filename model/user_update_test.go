@@ -48,6 +48,9 @@ func createUserBindTestUser(t *testing.T) User {
 
 func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing.T) {
 	setupUserUpdateTestState(t)
+	// Match the CHAR(32) storage contract on PostgreSQL as well as SQLite.
+	const oldToken = "11111111111111111111111111111111"
+	const rotatedToken = "22222222222222222222222222222222"
 
 	user := User{
 		Id:              1,
@@ -63,7 +66,7 @@ func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing
 		AffQuota:        800,
 		AffHistoryQuota: 1200,
 	}
-	user.SetAccessToken("old-token")
+	user.SetAccessToken(oldToken)
 	require.NoError(t, DB.Create(&user).Error)
 
 	staleUser, err := GetUserById(user.Id, true)
@@ -79,7 +82,7 @@ func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing
 		"aff_count":     gorm.Expr("aff_count + ?", 1),
 		"aff_quota":     gorm.Expr("aff_quota - ?", 500),
 		"aff_history":   gorm.Expr("aff_history + ?", 500),
-		"access_token":  "rotated-token",
+		"access_token":  rotatedToken,
 	}).Error)
 
 	staleUser.DisplayName = "after"
@@ -97,7 +100,7 @@ func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing
 	assert.Equal(t, 3, got.AffCount)
 	assert.Equal(t, 300, got.AffQuota)
 	assert.Equal(t, 1700, got.AffHistoryQuota)
-	assert.Equal(t, "rotated-token", got.GetAccessToken())
+	assert.Equal(t, rotatedToken, got.GetAccessToken())
 }
 
 func TestUsageAccountingSupportsSignedDirectAndBatchDeltas(t *testing.T) {

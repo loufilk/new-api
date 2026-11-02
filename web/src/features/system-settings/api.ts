@@ -36,8 +36,11 @@ import type {
   UpstreamRatiosResponse,
 } from './types'
 
-export async function getSystemOptions() {
-  const res = await api.get<SystemOptionsResponse>('/api/option/')
+export async function getSystemOptions(options?: { fresh?: boolean }) {
+  const res = await api.get<SystemOptionsResponse>(
+    '/api/option/',
+    options?.fresh ? { disableDuplicate: true } : undefined
+  )
   return res.data
 }
 

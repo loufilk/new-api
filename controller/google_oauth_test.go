@@ -294,6 +294,7 @@ func TestGoogleOAuthOnlyAuthoritativeEmailBecomesRecoveryEmail(t *testing.T) {
 			user, err := model.GetUserByGoogleID("email-authority")
 			require.NoError(t, err)
 			assert.Equal(t, common.RoleCommonUser, user.Role, "hosted domain must not grant privileges")
+			assert.Equal(t, test.wantEmail, model.VerifiedSupportEmail(user), "only authoritative Google mailbox proof can enable support mail")
 			if test.wantEmail {
 				assert.Equal(t, test.email, user.Email)
 				return

@@ -19,7 +19,7 @@ const (
 )
 
 func Models() []any {
-	return []any{&model.SupportTicket{}, &model.SupportTicketMessage{}}
+	return []any{&model.SupportTicket{}, &model.SupportTicketMessage{}, &model.SupportEmailSettings{}, &model.SupportEmailPreference{}, &model.SupportEmailOutbox{}, &model.SupportEmailRate{}}
 }
 
 func Register(reg *extension.Registry) error {
@@ -71,5 +71,17 @@ func registerSupportRoutes(engine *gin.Engine) error {
 	admin.POST("/:id/replies", middleware.UserCriticalRateLimit("support-ticket-reply"), controller.ReplyAdminSupportTicket)
 	admin.POST("/:id/read", controller.MarkAdminSupportTicketRead)
 	admin.PUT("/:id/status", controller.UpdateAdminSupportTicketStatus)
+
+	notification := engine.Group("/api/support-email")
+	notification.Use(middleware.DisableCache(), middleware.RouteTag("api"), middleware.GlobalAPIRateLimit(), middleware.UserAuth(), controller.SupportEmailSessionOnly)
+	notification.GET("/preferences", controller.GetSupportEmailPreferences)
+	notification.PUT("/preferences", middleware.UserCriticalRateLimit("support-email-preference"), controller.UpdateSupportEmailPreferences)
+	root := notification.Group("")
+	root.Use(middleware.RootAuth())
+	root.GET("/settings", controller.GetSupportEmailSettings)
+	root.PUT("/settings", middleware.UserCriticalRateLimit("support-email-settings"), controller.UpdateSupportEmailSettings)
+	root.GET("/outbox", middleware.SearchRateLimit(), controller.ListSupportEmailOutbox)
+	root.POST("/outbox/:id/retry", middleware.UserCriticalRateLimit("support-email-retry"), controller.RetrySupportEmail)
+	root.POST("/outbox/:id/cancel", middleware.UserCriticalRateLimit("support-email-cancel"), controller.CancelSupportEmail)
 	return nil
 }

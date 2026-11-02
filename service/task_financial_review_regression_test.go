@@ -169,11 +169,17 @@ func TestTaskFinancialReviewFailureZeroPriceUsage(t *testing.T) {
 	user, token, channel := seedReceiptActors(t, 0, 0)
 	task := seedReceiptTask(t, user, token, channel, 300)
 	task.Status, task.Group = model.TaskStatusInProgress, "review-free"
+	// The admitted price, not a later lookup by the display group name, makes
+	// this a free usage settlement. The generic receipt fixture defaults to 1.
+	require.NotNil(t, task.PrivateData.BillingContext)
+	task.PrivateData.BillingContext.GroupRatio = 0
 	require.NoError(t, model.DB.Save(task).Error)
 	result := &relaycommon.TaskInfo{Status: model.TaskStatusFailure, TotalTokens: 10, Reason: "failed with measured usage in a free group"}
 	require.NoError(t, ApplyTaskPollResult(t.Context(), &reviewUsagePollingAdaptor{}, task, result, []byte(`{"usage":10}`)))
 	var saved model.Task
 	require.NoError(t, model.DB.First(&saved, task.ID).Error)
+	require.NotNil(t, saved.PrivateData.BillingContext)
+	require.Zero(t, saved.PrivateData.BillingContext.GroupRatio)
 	require.Zero(t, saved.Quota)
 	require.False(t, saved.SettlementPending)
 	require.Contains(t, saved.PrivateData.FinancialOperationID, ":settle:0", "an explicitly zero-priced usage decision is valid, not an unproven failure charge")

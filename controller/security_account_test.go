@@ -691,6 +691,8 @@ func TestSecurityAccountEmailConfirmationAndAudit(t *testing.T) {
 			stored, err := model.GetUserById(user.Id, false)
 			require.NoError(t, err)
 			assert.Equal(t, flow.Email, stored.Email)
+			assert.True(t, model.VerifiedSupportEmail(stored))
+			assert.Positive(t, stored.EmailVerificationVersion)
 			_, err = service.FinishEmailBinding(identity, flow.FlowToken, newCode, oldCode)
 			assert.ErrorIs(t, err, model.ErrAuthFlowConsumed)
 			legacy := securityEnrollmentRequest("POST", "/api/oauth/email/bind", `{"email":"other@example.com","code":"123456"}`, "", identity, EmailBind)

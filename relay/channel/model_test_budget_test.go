@@ -23,6 +23,7 @@ import (
 )
 
 func TestModelTestFinalConvertedThinkingBudgetIsEnforcedBeforeHTTP(t *testing.T) {
+	setupModelTestSwitchPostgres(t)
 	service.InitHttpClient()
 	for _, selected := range []uint{1024, 2048, 4096} {
 		t.Run(fmt.Sprint(selected), func(t *testing.T) {

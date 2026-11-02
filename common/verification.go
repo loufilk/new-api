@@ -55,6 +55,20 @@ func VerifyCodeWithKey(key string, code string, purpose string) bool {
 	return code == value.code
 }
 
+// ConsumeVerificationCodeWithKey verifies and consumes a registration proof
+// under one lock, so a successful challenge cannot be replayed after an address
+// is later unbound. A failed or expired code never becomes verification proof.
+func ConsumeVerificationCodeWithKey(key string, code string, purpose string) bool {
+	verificationMutex.Lock()
+	defer verificationMutex.Unlock()
+	value, ok := verificationMap[purpose+key]
+	if !ok || time.Since(value.time) >= time.Duration(VerificationValidMinutes)*time.Minute || code != value.code {
+		return false
+	}
+	delete(verificationMap, purpose+key)
+	return true
+}
+
 func DeleteKey(key string, purpose string) {
 	verificationMutex.Lock()
 	defer verificationMutex.Unlock()

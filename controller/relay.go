@@ -362,7 +362,11 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		return nil, types.NewError(errors.New(i18n.T(c, i18n.MsgRelayRetryNoAvailableChannel, map[string]any{"Group": selectGroup, "Model": info.OriginModelName})), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
 
-	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
+	groupRatio, groupErr := helper.HandleGroupRatio(c, info)
+	if groupErr != nil {
+		return nil, types.NewError(errors.New(i18n.T(c, i18n.MsgGroupConfigChanged)), "group_config_changed", types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
+	}
+	info.PriceData.GroupRatioInfo = groupRatio
 
 	service.RequestPolicy(c).BeginAttempt(channel, selectGroup)
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)

@@ -54,7 +54,11 @@ afterEach(() => {
   useAuthStore.getState().auth.reset()
 })
 
-async function renderNavigation(role: number, accountPoolEnabled = false) {
+async function renderNavigation(
+  role: number,
+  accountPoolEnabled = false,
+  modelTestEnabled: unknown = false
+) {
   useAuthStore.getState().auth.setUser({ id: 7, username: 'user', role })
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -62,6 +66,7 @@ async function renderNavigation(role: number, accountPoolEnabled = false) {
   client.setQueryData(['status'], {
     SidebarModulesAdmin: '',
     account_pool_enabled: accountPoolEnabled,
+    model_test_enabled: modelTestEnabled,
   })
   const router = createRouter({
     routeTree: createRootRoute({ component: Navigation }),
@@ -140,5 +145,32 @@ it.each([1, 5, 10, 100])(
         .getAllByRole('link')
         .filter((link) => link.getAttribute('href') === '/account-pool')
     ).toHaveLength(1)
+  }
+)
+
+it.each([1, 5, 10, 100])(
+  'role %s sees model test entry only when enabled without hiding ordinary playground',
+  async (role) => {
+    await renderNavigation(role, true, 'true')
+    expect(
+      screen
+        .getAllByRole('link')
+        .some((link) => link.getAttribute('href') === '/intelligence')
+    ).toBe(false)
+    expect(
+      screen.getByRole('link', { name: 'Text Generation' })
+    ).toHaveAttribute('href', '/playground')
+    cleanup()
+    await renderNavigation(role, false, true)
+    expect(
+      screen
+        .getAllByRole('link')
+        .filter((link) => link.getAttribute('href') === '/intelligence')
+    ).toHaveLength(1)
+    expect(
+      screen
+        .getAllByRole('link')
+        .some((link) => link.getAttribute('href') === '/account-pool')
+    ).toBe(false)
   }
 )

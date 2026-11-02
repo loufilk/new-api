@@ -8,7 +8,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -60,7 +62,13 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 
 	priceData, err := helper.ModelPriceHelper(c, info, tokens, meta)
 	if err != nil {
+		if errors.Is(err, model.ErrGroupConfigChanged) {
+			return types.NewError(errors.New(i18n.T(c, i18n.MsgGroupConfigChanged)), "group_config_changed", types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
+		}
 		return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
+	}
+	if apiErr := service.CheckModelTestAccess(c); apiErr != nil {
+		return apiErr
 	}
 	if priceData.FreeModel {
 		if info.RelayFormat == types.RelayFormatOpenAIRealtime {

@@ -355,3 +355,12 @@ task.image_still_processing: Image generation is still processing. Do not submit
 
 relay.user_call_intercepted: Calls for this user are intercepted. This endpoint cannot carry a text reply. Contact the administrator.
 relay.user_call_interception_unavailable: Call interception is temporarily unavailable. The request was not forwarded.
+
+common.group_config_changed: "Group settings changed or are temporarily unavailable. Retry the request."
+
+# Minimal support ticket notifications
+support_email_subject: "Support ticket #{{.ID}}"
+support_email_created: "A new support ticket is waiting for review."
+support_email_customer_reply: "A customer added a reply to this support ticket."
+support_email_admin_reply: "Support has replied to your ticket."
+support_email_guidance: "Sign in to view the ticket. Do not reply to this automated email; reply in the support page."

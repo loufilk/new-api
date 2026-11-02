@@ -17,10 +17,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Code2, Eye, HelpCircle } from 'lucide-react'
-import { memo, useCallback, useMemo, useState, type ReactNode } from 'react'
+import {
+  memo,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { useFormState, useWatch, type UseFormReturn } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import {
   sideDrawerContentClassName,
   sideDrawerFormClassName,
@@ -53,6 +61,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
+import { handleServerError } from '@/lib/handle-server-error'
 
 import {
   SettingsForm,
@@ -114,7 +123,15 @@ export const GroupRatioForm = memo(function GroupRatioForm({
   const [resolutions, setResolutions] = useState<GroupRenameResolutions>({})
   const [saveError, setSaveError] = useState<string | null>(null)
   const [renameSaveVersion, setRenameSaveVersion] = useState(0)
-  const submitting = isSaving || isSubmitting
+  const [pendingRename, setPendingRename] = useState<{
+    values: GroupFormValues
+    renames: GroupRenameMapping[]
+    baseline: string
+    save: GroupRatioFormProps['onSave']
+  } | null>(null)
+  const [saving, setSaving] = useState(false)
+  const saveInFlight = useRef(false)
+  const submitting = isSaving || isSubmitting || saving
   const [section, setSection] = useState<GroupSettingsSection>('pricing')
 
   const handleFieldChange = useCallback(
@@ -179,8 +196,37 @@ export const GroupRatioForm = memo(function GroupRatioForm({
     )
   }, [submittedValues, groupRenames, resolutions])
 
+  const saveGroupChanges = useCallback(
+    async (
+      values: GroupFormValues,
+      renames: GroupRenameMapping[],
+      save = onSave
+    ) => {
+      if (saveInFlight.current || isSaving) return
+      saveInFlight.current = true
+      setSaving(true)
+      setSaveError(null)
+      try {
+        const outcome = await save(values, renames)
+        if (outcome !== 'failed') {
+          setPendingRename(null)
+          setGroupRenames([])
+          setResolutions({})
+          setRenameSaveVersion((version) => version + 1)
+        }
+      } catch (error) {
+        handleServerError(error, t('Failed to update setting'))
+      } finally {
+        saveInFlight.current = false
+        setSaving(false)
+      }
+    },
+    [isSaving, onSave, t]
+  )
+
   const handleSave = useCallback(
     async (values: GroupFormValues) => {
+      if (saveInFlight.current || pendingRename) return
       setSaveError(null)
       const renames = mergeGroupRenameMappings(
         groupRenames,
@@ -202,17 +248,29 @@ export const GroupRatioForm = memo(function GroupRatioForm({
       ) {
         return
       }
-      const outcome = await onSave(
-        applyGroupRenamesToValues(values, renames),
-        renames
-      )
-      if (outcome !== 'failed') {
-        setGroupRenames([])
-        setResolutions({})
-        setRenameSaveVersion((version) => version + 1)
+      const renamedValues = applyGroupRenamesToValues(values, renames)
+      if (renames.length > 0) {
+        setPendingRename({
+          values: renamedValues,
+          renames,
+          baseline: JSON.stringify(baseline),
+          // Keep the loaded server revision captured by the save callback.
+          // A background refresh must not silently rebase these old edits.
+          save: onSave,
+        })
+        return
       }
+      await saveGroupChanges(renamedValues, renames)
     },
-    [baseline, groupRenames, onSave, resolutions, t]
+    [
+      baseline,
+      groupRenames,
+      onSave,
+      pendingRename,
+      resolutions,
+      saveGroupChanges,
+      t,
+    ]
   )
 
   const toggleEditMode = useCallback(() => {
@@ -257,6 +315,59 @@ export const GroupRatioForm = memo(function GroupRatioForm({
       </div>
 
       <GroupPricingGuide open={guideOpen} onOpenChange={setGuideOpen} />
+      <ConfirmDialog
+        open={pendingRename !== null}
+        onOpenChange={(open) => {
+          if (!open && !saveInFlight.current) setPendingRename(null)
+        }}
+        title={t('Rename groups and update API keys?')}
+        desc={
+          <div className='space-y-3'>
+            <p>
+              {t(
+                'Group references in existing API keys, users, channels, group settings, subscription plans and active subscriptions will be updated together.'
+              )}
+            </p>
+            <p>
+              {t(
+                'API key strings, account and key status, balances and IP restrictions stay unchanged.'
+              )}
+            </p>
+            <p>
+              {t(
+                'Past usage logs and financial records keep their original group names.'
+              )}
+            </p>
+          </div>
+        }
+        confirmText={t('Rename and update API keys')}
+        isLoading={saving || isSaving}
+        handleConfirm={() => {
+          if (!pendingRename || saveInFlight.current) return
+          if (pendingRename.baseline !== JSON.stringify(baseline)) {
+            setPendingRename(null)
+            setSaveError(
+              t(
+                'The group settings changed on the server. Reload the page and apply your edits again.'
+              )
+            )
+            return
+          }
+          void saveGroupChanges(
+            pendingRename.values,
+            pendingRename.renames,
+            pendingRename.save
+          )
+        }}
+      >
+        <ul className='max-h-48 space-y-2 overflow-y-auto text-sm'>
+          {pendingRename?.renames.map((rename) => (
+            <li key={rename.from} className='break-words'>
+              {t('{{from}} → {{to}}', { from: rename.from, to: rename.to })}
+            </li>
+          ))}
+        </ul>
+      </ConfirmDialog>
 
       <Form {...form}>
         <SettingsPageActionsPortal>

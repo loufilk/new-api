@@ -16,19 +16,46 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { handleServerError } from '@/lib/handle-server-error'
 
-import { cancelTest, estimateTest, startTest } from './api'
-import { modelTestErrorKey, rejectedBeforeModelTestStart } from './errors'
-import type { TestEstimate, TestRequest } from './types'
+import { cancelTest, estimateTest, getTestHistory, startTest } from './api'
+import {
+  modelTestErrorCode,
+  modelTestErrorKey,
+  rejectedBeforeModelTestStart,
+} from './errors'
+import type {
+  TestEstimate,
+  TestHistory,
+  TestRequest,
+  TestSelection,
+} from './types'
 
 export function useModelTest() {
   const { t } = useTranslation()
   const report = (error: unknown) => {
+    const code = modelTestErrorCode(error)
+    if (
+      code === 'model_tests_disabled' ||
+      code === 'model_test_settings_unavailable'
+    ) {
+      // A rejected stale quote is not permission to keep showing paid actions.
+      void client.invalidateQueries({ queryKey: ['model-tests', 'history'] })
+      client.setQueryData(
+        ['model-tests', 'history'],
+        (previous: TestHistory | undefined) =>
+          previous && {
+            ...previous,
+            enabled: false,
+            availability_error:
+              code === 'model_test_settings_unavailable' ? code : '',
+          }
+      )
+    }
     const key = modelTestErrorKey(error)
     handleServerError(error, undefined, key ? { title: t(key) } : undefined)
   }
@@ -38,9 +65,56 @@ export function useModelTest() {
   const [uncertain, setUncertain] = useState(false)
   const startLock = useRef(false)
   const hadUncertainAttempt = useRef(false)
+  const history = useQuery({
+    queryKey: ['model-tests', 'history'],
+    queryFn: ({ signal }) => getTestHistory(signal),
+    retry: false,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchInterval: (query) => {
+      const saved = query.state.data?.items.find(
+        (run) => run.id === pending?.request_id
+      )
+      const unresolved = !!pending && (!saved || saved.status === 'running')
+      return unresolved ||
+        query.state.data?.items.some((run) => run.status === 'running')
+        ? 3_000
+        : 30_000
+    },
+    meta: { errorToast: false },
+  })
+  // Navigation/status caches never authorize a new paid action. Even a cached
+  // history response must first be refreshed on this mount.
+  const enabled =
+    history.isFetchedAfterMount &&
+    !history.isError &&
+    history.data?.enabled === true
+  const availability = useRef({ enabled, generation: 0 })
+  useEffect(() => {
+    if (availability.current.enabled !== enabled) {
+      availability.current = {
+        enabled,
+        generation: availability.current.generation + 1,
+      }
+    }
+    if (!enabled) setQuote(null)
+  }, [enabled])
   const estimate = useMutation({
-    mutationFn: estimateTest,
-    onSuccess: setQuote,
+    mutationFn: (selection: TestSelection) => {
+      if (!availability.current.enabled) {
+        return Promise.reject({ code: 'model_tests_disabled' })
+      }
+      return estimateTest(selection)
+    },
+    onMutate: () => ({ generation: availability.current.generation }),
+    onSuccess: (value, _selection, context) => {
+      if (
+        availability.current.enabled &&
+        context?.generation === availability.current.generation
+      ) {
+        setQuote(value)
+      }
+    },
     onError: report,
   })
   const start = useMutation({
@@ -73,7 +147,12 @@ export function useModelTest() {
     },
   })
   const confirm = () => {
-    if (!quote || startLock.current || quote.expires_at <= Date.now() / 1000) {
+    if (
+      !availability.current.enabled ||
+      !quote ||
+      startLock.current ||
+      quote.expires_at <= Date.now() / 1000
+    ) {
       return
     }
     startLock.current = true
@@ -92,13 +171,15 @@ export function useModelTest() {
     start.mutate(request)
   }
   const retry = () => {
-    if (!pending || startLock.current) return
+    if (!availability.current.enabled || !pending || startLock.current) return
     startLock.current = true
     setUncertain(false)
     start.mutate(pending)
   }
   return {
-    quote,
+    history,
+    enabled,
+    quote: enabled ? quote : null,
     setQuote,
     pending,
     uncertain,

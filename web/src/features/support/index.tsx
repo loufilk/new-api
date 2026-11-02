@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Inbox, LifeBuoy, Plus, Search } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -41,6 +41,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { useIsAdmin } from '@/hooks/use-admin'
 import { handleServerError } from '@/lib/handle-server-error'
+import { useAuthStore } from '@/stores/auth-store'
 
 import {
   createSupportTicket,
@@ -52,6 +53,7 @@ import {
 } from './api'
 import { CreateTicketDialog } from './components/create-ticket-dialog'
 import { TicketDetail } from './components/ticket-detail'
+import { SupportEmailPreferences } from './email/preferences'
 import type { CreateSupportTicketValues } from './lib/schema'
 import {
   supportTicketStatusLabel,
@@ -61,10 +63,13 @@ import type { SupportTicket, SupportTicketStatus } from './types'
 
 const PAGE_SIZE = 20
 
-export function SupportCenter() {
+export function SupportCenter(
+  props: { ticketId?: number; onTicketSelect?: (ticketId: number) => void } = {}
+) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const admin = useIsAdmin()
+  const userId = useAuthStore((state) => state.auth.user?.id)
   const [searchInput, setSearchInput] = useState('')
   const [keyword, setKeyword] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | SupportTicketStatus>(
@@ -72,11 +77,21 @@ export function SupportCenter() {
   )
   const [unreadOnly, setUnreadOnly] = useState(false)
   const [page, setPage] = useState(1)
-  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [selectedId, setSelectedId] = useState<number | null>(
+    props.ticketId ?? null
+  )
+  useEffect(() => {
+    setSelectedId(props.ticketId ?? null)
+  }, [props.ticketId])
+  const selectTicket = (ticketId: number) => {
+    setSelectedId(ticketId)
+    props.onTicketSelect?.(ticketId)
+  }
   const [createOpen, setCreateOpen] = useState(false)
 
   const listQueryKey = [
     'support-tickets',
+    userId,
     admin,
     keyword,
     statusFilter,
@@ -96,7 +111,7 @@ export function SupportCenter() {
       }),
   })
   const detailQuery = useQuery({
-    queryKey: ['support-ticket', admin, selectedId],
+    queryKey: ['support-ticket', userId, admin, selectedId],
     queryFn: () => getSupportTicket(admin, selectedId as number),
     enabled: selectedId != null,
   })
@@ -108,7 +123,7 @@ export function SupportCenter() {
     if (ticketId != null) {
       tasks.push(
         queryClient.invalidateQueries({
-          queryKey: ['support-ticket', admin, ticketId],
+          queryKey: ['support-ticket', userId, admin, ticketId],
         })
       )
     }
@@ -119,7 +134,7 @@ export function SupportCenter() {
     mutationFn: createSupportTicket,
     onSuccess: async (detail) => {
       setCreateOpen(false)
-      setSelectedId(detail.ticket.id)
+      selectTicket(detail.ticket.id)
       toast.success(t('Ticket created'))
       await refreshTickets(detail.ticket.id)
     },
@@ -150,7 +165,7 @@ export function SupportCenter() {
   })
 
   const handleTicketSelect = (ticket: SupportTicket) => {
-    setSelectedId(ticket.id)
+    selectTicket(ticket.id)
     const unread = admin ? ticket.admin_unread : ticket.user_unread
     if (unread && !readMutation.isPending) {
       readMutation.mutate({ admin, ticketId: ticket.id })
@@ -322,6 +337,7 @@ export function SupportCenter() {
         </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
           <div className='mx-auto flex w-full max-w-7xl flex-col gap-4'>
+            {!admin && <SupportEmailPreferences />}
             <div className='grid gap-3 sm:grid-cols-3'>
               <StatusCounter
                 label={t('Platform processing')}

@@ -772,3 +772,90 @@ it('confirms both email addresses after identity verification and freezes the su
     expect.objectContaining({ singleUseAuthorization: true })
   )
 })
+
+it('reverifies an existing email through the same proof-bound binding flow without requiring a different address', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        scope: 'account.binding.bind',
+        methods: [{ method: 'password', available: true }],
+        oauth_providers: [],
+        password_encryption_enabled: false,
+      },
+    },
+  })
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url === '/api/verify') {
+      return {
+        data: {
+          success: true,
+          data: {
+            scope: 'account.binding.bind',
+            method: 'password',
+            proof_token: 'synthetic-reverify-proof',
+            expires_at: Math.floor(Date.now() / 1000) + 60,
+          },
+        },
+      }
+    }
+    if (url === '/api/oauth/email/bind/start') {
+      return {
+        data: {
+          success: true,
+          data: {
+            flow_token: 'synthetic-reverify-flow',
+            email: 'legacy@example.com',
+            current_email: 'l***@example.com',
+            old_email_required: false,
+            expires_at: Math.floor(Date.now() / 1000) + 600,
+            resend_at: Math.floor(Date.now() / 1000) + 60,
+          },
+        },
+      }
+    }
+    return { data: { success: true, data: {} } }
+  })
+  const onSuccess = vi.fn()
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={client}>
+      <EmailBindDialog
+        open
+        currentEmail='legacy@example.com'
+        onOpenChange={vi.fn()}
+        onSuccess={onSuccess}
+      />
+    </QueryClientProvider>
+  )
+  await user.type(screen.getByLabelText('Email Address'), 'legacy@example.com')
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.type(
+    await screen.findByLabelText('Password', { selector: 'input' }),
+    'synthetic-current-password'
+  )
+  await user.click(screen.getByRole('button', { name: 'Verify' }))
+  await user.type(
+    await screen.findByLabelText('New email verification code'),
+    '123456'
+  )
+  expect(
+    screen.queryByLabelText('Current email verification code')
+  ).not.toBeInTheDocument()
+  expect(screen.getByLabelText('Email Address')).toHaveValue(
+    'legacy@example.com'
+  )
+  expect(screen.getByLabelText('Email Address')).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: 'Confirm email' }))
+  await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce())
+  expect(post).toHaveBeenCalledWith(
+    '/api/oauth/email/bind/start',
+    { email: 'legacy@example.com' },
+    expect.objectContaining({ singleUseAuthorization: true })
+  )
+  expect(post).toHaveBeenCalledWith(
+    '/api/oauth/email/bind',
+    { flow_token: 'synthetic-reverify-flow', new_code: '123456', old_code: '' },
+    expect.objectContaining({ singleUseAuthorization: true })
+  )
+})

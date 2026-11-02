@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -302,7 +303,10 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			}
 			return nil, service.TaskErrorWrapper(runErr, "model_price_error", http.StatusBadRequest, common.UpstreamAddresses(c)...)
 		}
-		groupRatioInfo := helper.HandleGroupRatio(c, info)
+		groupRatioInfo, groupErr := helper.HandleGroupRatio(c, info)
+		if groupErr != nil {
+			return nil, service.TaskErrorWrapperLocal(errors.New(i18n.T(c, i18n.MsgGroupConfigChanged)), "group_config_changed", http.StatusServiceUnavailable)
+		}
 		quota, clamp := common.QuotaRoundChecked(cost * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
 		noteTaskQuotaClamp(info, clamp)
 		priceData = types.PriceData{Quota: quota, QuotaToPreConsume: quota, GroupRatioInfo: groupRatioInfo}
@@ -310,6 +314,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{BillingMode: billing_setting.BillingModeTieredExpr, ModelName: modelName, ExprString: exprStr, ExprHash: billingexpr.ExprHashString(exprStr), GroupRatio: groupRatioInfo.GroupRatio, EstimatedQuotaBeforeGroup: cost * common.QuotaPerUnit, EstimatedQuotaAfterGroup: quota, EstimatedTier: trace.MatchedTier, QuotaPerUnit: common.QuotaPerUnit, ExprVersion: billingexpr.ExprVersion(exprStr), TaskUsageBilling: true, UsageFacts: facts, RequestInput: &requestInput}
 	} else {
 		priceData, err = helper.ModelPriceHelperPerCall(c, info)
+		if errors.Is(err, model.ErrGroupConfigChanged) {
+			return nil, service.TaskErrorWrapperLocal(errors.New(i18n.T(c, i18n.MsgGroupConfigChanged)), "group_config_changed", http.StatusServiceUnavailable)
+		}
 		if err != nil {
 			return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest, common.UpstreamAddresses(c)...)
 		}

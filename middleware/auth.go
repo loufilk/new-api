@@ -48,7 +48,17 @@ func validUserInfo(username string, role int) bool {
 	return true
 }
 
-func authHelper(c *gin.Context, minRole int) {
+func authHelper(c *gin.Context, minRole int, requireGroupConfig bool) {
+	var groupRead *model.GroupConfigRead
+	if requireGroupConfig {
+		var err error
+		groupRead, err = model.BeginGroupConfigRead(c.Request.Context())
+		if err != nil {
+			abortWithWebMessage(c, http.StatusServiceUnavailable, "GROUP_CONFIG_CHANGED", common.NewMessage("Group settings changed or are temporarily unavailable. Retry the request."))
+			return
+		}
+		defer groupRead.Close()
+	}
 	if _, started := c.Get(accessTokenAuditContextKey); !started {
 		defer finishAccessTokenAudit(c)
 	}
@@ -90,6 +100,13 @@ func authHelper(c *gin.Context, minRole int) {
 		auditWriter = beginAdminAudit(c)
 	}
 
+	if groupRead != nil {
+		if err := groupRead.Finish(); err != nil {
+			abortWithWebMessage(c, http.StatusServiceUnavailable, "GROUP_CONFIG_CHANGED", common.NewMessage("Group settings changed or are temporarily unavailable. Retry the request."))
+			return
+		}
+		c.Set(model.GroupConfigVersionContextKey, groupRead.Version)
+	}
 	c.Next()
 
 	finishAdminAudit(c, auditWriter)
@@ -134,6 +151,12 @@ func TryUserAuth() func(c *gin.Context) {
 // same-site playground is bound to the user's browser login session.
 func SessionAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		groupRead, groupErr := model.BeginGroupConfigRead(c.Request.Context())
+		if groupErr != nil {
+			abortWithWebMessage(c, http.StatusServiceUnavailable, "GROUP_CONFIG_CHANGED", common.NewMessage("Group settings changed or are temporarily unavailable. Retry the request."))
+			return
+		}
+		defer groupRead.Close()
 		rawRefreshToken, err := c.Cookie(service.RefreshCookieName)
 		if err != nil || strings.TrimSpace(rawRefreshToken) == "" {
 			writeDashboardAuthError(c, service.ErrRefreshTokenInvalid)
@@ -149,25 +172,38 @@ func SessionAuth() func(c *gin.Context) {
 			return
 		}
 		setDashboardAuthContext(c, user, identity, false)
+		if err := groupRead.Finish(); err != nil {
+			abortWithWebMessage(c, http.StatusServiceUnavailable, "GROUP_CONFIG_CHANGED", common.NewMessage("Group settings changed or are temporarily unavailable. Retry the request."))
+			return
+		}
+		c.Set(model.GroupConfigVersionContextKey, groupRead.Version)
 		c.Next()
 	}
 }
 
 func UserAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
-		authHelper(c, common.RoleCommonUser)
+		authHelper(c, common.RoleCommonUser, true)
+	}
+}
+
+// ModelTestHistoryAuth keeps live dashboard/session/PAT checks while allowing
+// only owner history and cancellation to work without routing configuration.
+func ModelTestHistoryAuth() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		authHelper(c, common.RoleCommonUser, false)
 	}
 }
 
 func AdminAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
-		authHelper(c, common.RoleAdminUser)
+		authHelper(c, common.RoleAdminUser, false)
 	}
 }
 
 func RootAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
-		authHelper(c, common.RoleRootUser)
+		authHelper(c, common.RoleRootUser, false)
 	}
 }
 
@@ -551,6 +587,13 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 
 func TokenAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		groupRead, groupErr := model.BeginGroupConfigRead(c.Request.Context())
+		if groupErr != nil {
+			abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgGroupConfigChanged), "group_config_changed")
+			return
+		}
+		defer groupRead.Close()
+
 		// 先检测是否为ws
 		applyWebSocketSubprotocolAuthorization(c.Request.Header)
 		// 检查path包含/v1/messages 或 /v1/models
@@ -662,6 +705,11 @@ func TokenAuth() func(c *gin.Context) {
 		if err != nil {
 			return
 		}
+		if err := groupRead.Finish(); err != nil {
+			abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgGroupConfigChanged), "group_config_changed")
+			return
+		}
+		c.Set(model.GroupConfigVersionContextKey, groupRead.Version)
 		if interceptAuthenticatedUserCall(c) {
 			return
 		}

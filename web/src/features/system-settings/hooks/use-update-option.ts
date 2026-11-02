@@ -20,6 +20,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import i18next from 'i18next'
 import { toast } from 'sonner'
 
+import type { TestHistory } from '@/extensions/chuanapi/intelligence/types'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { STATUS_QUERY_KEY, type StatusRecord } from '@/lib/status-query'
@@ -30,6 +31,7 @@ import type { UpdateOptionRequest, UpdatePasskeyDomainsRequest } from '../types'
 // Configuration keys that require status refresh
 const STATUS_RELATED_KEYS = new Set([
   'AccountPoolEnabled',
+  'ModelTestEnabled',
   'HeaderNavModules',
   'SidebarModulesAdmin',
   'Notice',
@@ -64,7 +66,7 @@ export function useUpdateOption() {
   return useMutation({
     mutationFn: async (request: UpdateOptionRequest) =>
       requireServerSuccess(await updateSystemOption(request)),
-    onSuccess: (data, variables) => {
+    onSuccess: async (data, variables) => {
       if (data.success) {
         if (variables.key === 'AccountPoolEnabled') {
           const enabled = variables.value === true || variables.value === 'true'
@@ -80,6 +82,23 @@ export function useUpdateOption() {
             .then(() => {
               queryClient.removeQueries({ queryKey: ['account-pool'] })
             })
+        }
+        if (variables.key === 'ModelTestEnabled') {
+          const enabled = variables.value === true || variables.value === 'true'
+          queryClient.setQueryData<StatusRecord>(
+            STATUS_QUERY_KEY,
+            (previous) => ({ ...previous, model_test_enabled: enabled })
+          )
+          // Do not discard owned history or abort paid requests/cancellation.
+          // Cancel only stale reads before replacing their availability flag.
+          await queryClient.cancelQueries({
+            queryKey: ['model-tests', 'history'],
+          })
+          queryClient.setQueryData<TestHistory>(
+            ['model-tests', 'history'],
+            (previous) => previous && { ...previous, enabled }
+          )
+          void queryClient.invalidateQueries({ queryKey: ['model-tests'] })
         }
         // Always refresh system-options
         queryClient.invalidateQueries({ queryKey: ['system-options'] })

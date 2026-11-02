@@ -300,7 +300,18 @@ type ChannelSelectError struct {
 // eligible channel; every candidate must satisfy the request's channel
 // filters. The group the channel was chosen from is returned for auto-group
 // callers. The caller still applies SetupContextForSelectedChannel.
-func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam) (*model.Channel, string, *ChannelSelectError) {
+func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam) (selected *model.Channel, selectedGroup string, selectionError *ChannelSelectError) {
+	groupRead, err := model.BeginRequestGroupConfigRead(c)
+	if err != nil {
+		return nil, "", &ChannelSelectError{StatusCode: http.StatusServiceUnavailable, Code: "group_config_changed", MessageID: i18n.MsgGroupConfigChanged}
+	}
+	defer func() {
+		if err := groupRead.Finish(); err != nil {
+			selected, selectedGroup = nil, ""
+			selectionError = &ChannelSelectError{StatusCode: http.StatusServiceUnavailable, Code: "group_config_changed", MessageID: i18n.MsgGroupConfigChanged}
+		}
+	}()
+
 	constraints := GetChannelConstraints(c)
 	if pin, found, overridden := constraints.ResolvedPin(); found {
 		for _, lost := range overridden {

@@ -59,7 +59,7 @@ func TestGroupRenameRouteRequiresRootAuth(t *testing.T) {
 		require.NoError(t, sqlDB.Close())
 	})
 	require.NoError(t, db.AutoMigrate(
-		&model.Option{}, &model.User{}, &model.Token{}, &model.Channel{},
+		&model.Option{}, &model.GroupRenameOperation{}, &model.User{}, &model.Token{}, &model.Channel{},
 		&model.Ability{}, &model.SubscriptionPlan{}, &model.UserSubscription{},
 		&model.Log{}, &model.AuditLog{}, &model.UserAccessToken{},
 	))

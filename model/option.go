@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"maps"
 	"strconv"
 	"strings"
@@ -34,6 +35,7 @@ func InitOptionMap() {
 	common.OptionMapRWMutex.Lock()
 	common.OptionMap = make(map[string]string)
 	common.OptionMap[AccountPoolEnabledKey] = "false"
+	common.OptionMap[ModelTestEnabledKey] = "false"
 
 	// 添加原有的系统配置
 	common.OptionMap["FileUploadPermission"] = strconv.Itoa(common.FileUploadPermission)
@@ -210,27 +212,67 @@ func InitOptionMap() {
 func loadOptionsFromDatabase() {
 	requestPolicyOptionMutex.Lock()
 	defer requestPolicyOptionMutex.Unlock()
+	groupConfigRuntimeMutex.Lock()
+	defer groupConfigRuntimeMutex.Unlock()
 	defer func() {
 		if err := refreshRequestPolicySnapshot(); err != nil {
+			groupConfigRuntimeInvalid.Store(true)
 			common.SysError(common.LogText("invalid request policy: %s", err.Error()))
 		}
 	}()
 	passkeyOptionMutex.Lock()
 	defer passkeyOptionMutex.Unlock()
-	options, _ := AllOption()
+	options, err := AllOption()
+	if err != nil {
+		groupConfigRuntimeInvalid.Store(true)
+		common.SysError("failed to reload options from database: " + common.MaskSensitiveLogInfo(err.Error()))
+		return
+	}
+	groupValues := make(map[string]string)
+	for _, option := range options {
+		if isGroupRenameOptionKey(option.Key) {
+			groupValues[option.Key] = option.Value
+		}
+	}
+	if err := validateGroupOptionAliases(groupValues, nil); err != nil {
+		groupConfigRuntimeInvalid.Store(true)
+		common.SysError("conflicting group option aliases; runtime refresh rejected")
+		return
+	}
+	var bucketRaw string
+	for _, option := range options {
+		if option.Key == groupRateLimitBucketsOptionKey {
+			bucketRaw = option.Value
+		}
+	}
+	buckets, err := parseGroupRateLimitBuckets(bucketRaw)
+	if err != nil {
+		groupConfigRuntimeInvalid.Store(true)
+		common.SysError("invalid group rate limit bucket metadata; runtime refresh rejected")
+		return
+	}
+	groupRateLimitBuckets.Store(&buckets)
+	valid := true
 	passkeyOptions := make(map[string]string)
 	for _, option := range options {
+		if option.Key == groupRateLimitBucketsOptionKey {
+			continue
+		}
 		if IsPasskeyDomainOption(option.Key) {
 			passkeyOptions[option.Key] = option.Value
 			continue
 		}
 		err := updateOptionMap(option.Key, option.Value)
 		if err != nil {
+			valid = false
+			groupConfigRuntimeInvalid.Store(true)
 			common.SysLog(common.LogText("failed to update option map: %s", err.Error()))
 		}
 	}
 	applyPasskeyDomainOptions(passkeyOptions)
-	syncGroupConfigVersionAfterOptionLoad(options)
+	if valid {
+		syncGroupConfigVersionAfterOptionLoad(options)
+	}
 }
 
 func SyncOptions(frequency int) {
@@ -242,8 +284,11 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
-	if key == AccountPoolEnabledKey {
-		return validateAccountPoolEnabled(value)
+	if key == groupRateLimitBucketsOptionKey {
+		return errors.New("group rate limit bucket metadata is read-only")
+	}
+	if key == AccountPoolEnabledKey || key == ModelTestEnabledKey {
+		return validateOptInFeatureEnabled(value)
 	}
 	if key == "group_ratio_setting.group_special_usable_group" {
 		return ratio_setting.ValidateGroupSpecialUsableGroupJSON(value)
@@ -302,7 +347,7 @@ func UpdateOption(key string, value string) error {
 	if key == "GoogleOAuthEnabled" || key == "google.client_id" || key == "google.client_secret" {
 		return updateGoogleOAuthOption(key, value)
 	}
-	if key == setting.PublicModelOwnedByOptionKey || key == AccountPoolEnabledKey {
+	if key == setting.PublicModelOwnedByOptionKey || key == AccountPoolEnabledKey || key == ModelTestEnabledKey {
 		return UpdateOptionsBulk(map[string]string{key: value})
 	}
 	if IsRequestPolicyOption(key) {
@@ -348,6 +393,12 @@ func UpdateOption(key string, value string) error {
 func UpdateOptionsBulk(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
+	}
+	for key := range values {
+		if isGroupRenameOptionKey(key) && key != setting.SensitiveCheckExemptGroupsOptionKey {
+			_, err := ApplyGroupRename(GroupRenameApplyRequest{Options: values})
+			return err
+		}
 	}
 	for key := range values {
 		if IsPasskeyDomainOption(key) {

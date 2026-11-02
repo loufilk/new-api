@@ -78,6 +78,12 @@ type playgroundGroupInfo struct {
 }
 
 func PlaygroundBootstrap(c *gin.Context) {
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
+
 	userID := c.GetInt("id")
 	user, err := model.GetUserById(userID, false)
 	if err != nil {
@@ -117,6 +123,9 @@ func PlaygroundBootstrap(c *gin.Context) {
 	}
 	sort.Strings(models)
 
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
 	common.ApiSuccess(c, gin.H{
 		"id": user.Id, "username": user.Username, "display_name": user.DisplayName,
 		"quota": userCache.Quota, "quota_per_unit": common.QuotaPerUnit,

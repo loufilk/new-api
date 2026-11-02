@@ -140,13 +140,21 @@ func (s *Service) List(c *gin.Context) {
 	if !s.requireEnabled(c) {
 		return
 	}
+	// Collection can block on a remote admin API; never hold the policy read
+	// guard across that I/O. Filter only a coherent authenticated snapshot.
+	result := s.snapshot(c.Request.Context())
+	guard, err := model.BeginRequestGroupConfigRead(c)
+	if err != nil {
+		c.JSON(503, gin.H{"success": false, "message": "Account pool is unavailable"})
+		return
+	}
+	defer guard.Close()
 	user, err := model.GetUserCache(c.GetInt("id"))
 	if err != nil {
 		c.JSON(503, gin.H{"success": false, "message": "Account pool is unavailable"})
 		return
 	}
 	allowed := service.GetUserUsableGroups(user.Group)
-	result := s.snapshot(c.Request.Context())
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 	if page < 1 {
@@ -240,6 +248,10 @@ func (s *Service) List(c *gin.Context) {
 	// A collection may have waited on upstream I/O while another node disabled
 	// the page. Recheck the authoritative option before releasing any snapshot.
 	if !s.requireEnabled(c) {
+		return
+	}
+	if err := guard.Finish(); err != nil {
+		c.JSON(503, gin.H{"success": false, "message": "Account pool is unavailable"})
 		return
 	}
 	common.ApiSuccess(c, Snapshot{Configured: result.configured, State: state, UpdatedAt: updated, CacheTTLSeconds: 60, StaleAfterSeconds: 300, Items: items[start:end], Total: total, Page: page, PageSize: size, Groups: groups})

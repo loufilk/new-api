@@ -39,6 +39,8 @@ export type TestRun = {
   cancel_requested: boolean
 }
 export type TestHistory = {
+  enabled: boolean
+  availability_error?: string
   benchmark: {
     id: string
     name: string

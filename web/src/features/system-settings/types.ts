@@ -45,6 +45,8 @@ export type GroupRenameMapping = {
 }
 
 export type GroupRenameResult = {
+  request_id?: string
+  replayed?: boolean
   renames: GroupRenameMapping[]
   options: number
   channels: number
@@ -57,6 +59,7 @@ export type GroupRenameResult = {
 }
 
 export type GroupRenameRequest = {
+  request_id?: string
   renames: GroupRenameMapping[]
   options?: Record<string, string>
   expected?: Record<string, string>

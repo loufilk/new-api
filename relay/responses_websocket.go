@@ -330,7 +330,11 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				}
 				billingPrepared = true
 			} else {
-				info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
+				groupRatio, groupErr := helper.HandleGroupRatio(c, info)
+				if groupErr != nil {
+					return types.NewError(errors.New(i18n.T(c, i18n.MsgGroupConfigChanged)), "group_config_changed", types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
+				}
+				info.PriceData.GroupRatioInfo = groupRatio
 				if apiErr = service.PrepareTieredBillingForSelectedGroup(c, info); apiErr != nil {
 					return apiErr
 				}
@@ -585,7 +589,17 @@ func responsesWSErrorEndsRequest(event responsesWSErrorEvent, streamID, response
 	return true, len(control) > 0 && event.ResponseID == "", false
 }
 
-func (s *responsesWSSession) restoreConnectionContext(c *gin.Context, model string) *types.NewAPIError {
+func (s *responsesWSSession) restoreConnectionContext(c *gin.Context, model string) (apiErr *types.NewAPIError) {
+	guard, err := appmodel.BeginRequestGroupConfigRead(c)
+	if err != nil {
+		return types.NewError(errors.New(i18n.T(c, i18n.MsgGroupConfigChanged)), "group_config_changed", types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
+	}
+	defer func() {
+		if err := guard.Finish(); err != nil {
+			apiErr = types.NewError(errors.New(i18n.T(c, i18n.MsgGroupConfigChanged)), "group_config_changed", types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
+		}
+	}()
+
 	// The channel type is not rechecked: a locked channel keeps its type, and
 	// the FilterResponsesWebSocket rules were applied when it was selected.
 	channel, err := appmodel.CacheGetChannel(s.lockedChannelID)

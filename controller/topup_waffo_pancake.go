@@ -40,6 +40,11 @@ func RequestWaffoPancakeAmount(c *gin.Context) {
 		return
 	}
 
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
 	group, err := model.GetUserGroup(id, true)
 	if err != nil {
 		paymentError(c, common.NewMessage("Failed to get the user group"))
@@ -47,6 +52,9 @@ func RequestWaffoPancakeAmount(c *gin.Context) {
 	}
 
 	payMoney := getWaffoPancakePayMoney(req.Amount, group)
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
 	if payMoney <= 0.01 {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
 		return
@@ -374,6 +382,11 @@ func RequestWaffoPancakePay(c *gin.Context) {
 		return
 	}
 
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
 	group, err := model.GetUserGroup(id, true)
 	if err != nil {
 		paymentError(c, common.NewMessage("Failed to get the user group"))
@@ -381,6 +394,9 @@ func RequestWaffoPancakePay(c *gin.Context) {
 	}
 
 	payMoney := getWaffoPancakePayMoney(req.Amount, group)
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
 	if payMoney < 0.01 {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
 		return

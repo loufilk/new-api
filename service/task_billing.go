@@ -578,26 +578,28 @@ func taskQuotaByTokens(task *model.Task, totalTokens int) (int, *common.Message,
 		return 0, nil, nil, false
 	}
 
-	// 获取用户和组的倍率信息
-	group := task.Group
-	if group == "" {
-		user, err := model.GetUserById(task.UserId, false)
-		if err == nil {
-			group = user.Group
-		}
-	}
-	if group == "" {
-		return 0, nil, nil, false
-	}
-
-	groupRatio := ratio_setting.GetGroupRatio(group)
-	userGroupRatio, hasUserGroupRatio := ratio_setting.GetGroupGroupRatio(group, group)
-
+	// A task's admitted group ratio is a financial snapshot, not a lookup by
+	// its historical display name. Renames never rewrite that snapshot.
 	var finalGroupRatio float64
-	if hasUserGroupRatio {
-		finalGroupRatio = userGroupRatio
+	if snapshot := task.PrivateData.BillingContext; snapshot != nil {
+		finalGroupRatio = snapshot.GroupRatio
 	} else {
-		finalGroupRatio = groupRatio
+		// Legacy tasks without a quote cannot safely follow a renamed name (or
+		// a later, unrelated group that reused it). Keep the existing reservation.
+		if task.Group == "" {
+			return 0, nil, nil, false
+		}
+		aliases, err := model.GroupRenameAliasesForRead(context.Background())
+		if err != nil {
+			return 0, nil, nil, false
+		}
+		if _, renamed := aliases[task.Group]; renamed || !ratio_setting.ContainsGroupRatio(task.Group) {
+			return 0, nil, nil, false
+		}
+		finalGroupRatio = GetUserGroupRatio(task.Group, task.Group)
+	}
+	if math.IsNaN(finalGroupRatio) || math.IsInf(finalGroupRatio, 0) || finalGroupRatio < 0 {
+		return 0, nil, nil, false
 	}
 
 	// 计算 OtherRatios 乘积（视频折扣、时长等）

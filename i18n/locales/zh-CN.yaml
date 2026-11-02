@@ -323,3 +323,12 @@ task.image_still_processing: 图片仍在处理中，请勿重复提交；请查
 
 relay.user_call_intercepted: 该用户的调用已被拦截。此接口无法承载文本回复，请联系管理员。
 relay.user_call_interception_unavailable: 调用拦截服务暂时不可用，本请求未转发。
+
+common.group_config_changed: "分组设置已变更或暂时不可用，请重试请求。"
+
+# Minimal support ticket notifications
+support_email_subject: "工单 #{{.ID}}"
+support_email_created: "有新工单等待处理。"
+support_email_customer_reply: "客户对该工单追加了回复。"
+support_email_admin_reply: "客服已回复您的工单。"
+support_email_guidance: "请登录站点查看工单。本邮件为自动通知，请勿直接回复邮件；请在工单页面回复。"

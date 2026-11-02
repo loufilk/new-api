@@ -129,6 +129,11 @@ func RequestWaffoAmount(c *gin.Context) {
 		return
 	}
 
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
 	group, err := model.GetUserGroup(id, true)
 	if err != nil {
 		paymentError(c, common.NewMessage("Failed to get the user group"))
@@ -136,6 +141,9 @@ func RequestWaffoAmount(c *gin.Context) {
 	}
 
 	payMoney := getWaffoPayMoney(float64(req.Amount), group)
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
 	if payMoney <= 0.01 {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
 		return
@@ -212,8 +220,20 @@ func requestWaffoPay(c *gin.Context, sdkFactory func() (*waffo.Waffo, error)) {
 	}
 	// resolvedPayMethodType/Name 为空时，Waffo 自动选择支付方式
 
-	group, _ := model.GetUserGroup(id, true)
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
+	group, err := model.GetUserGroup(id, true)
+	if err != nil {
+		paymentError(c, common.NewMessage("Failed to get the user group"))
+		return
+	}
 	payMoney := getWaffoPayMoney(float64(req.Amount), group)
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
 	if payMoney < 0.01 {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
 		return

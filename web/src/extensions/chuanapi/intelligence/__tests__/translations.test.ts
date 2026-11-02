@@ -36,6 +36,13 @@ describe('pool, tests and referral translations', () => {
       for (const [key, value] of Object.entries(en.translation).filter(
         ([key]) =>
           /^(pool|intelligence|affiliate)\./.test(key) ||
+          key === 'Enable model performance tests' ||
+          key.startsWith(
+            'Disabled by default. Turning this off hides the test entry'
+          ) ||
+          key.startsWith(
+            'Saved changes take effect without a restart. Your test history'
+          ) ||
           Object.values(modelTestErrorKeys).includes(key) ||
           Object.values(modelTestFailureKeys).includes(key)
       )) {

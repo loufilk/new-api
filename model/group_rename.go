@@ -48,6 +48,8 @@ var (
 
 var groupRenameOptionKeys = []string{
 	"GroupRatio",
+	"group_ratio_setting.group_ratio",
+	"group_ratio_setting.group_group_ratio",
 	"TopupGroupRatio",
 	"UserUsableGroups",
 	"GroupGroupRatio",
@@ -61,12 +63,14 @@ var groupRenameOptionKeys = []string{
 // in the same transaction. The group-reference keys hold group names; the other
 // two only need to stay atomic with the rename.
 var groupRenameWritableOptionKeys = map[string]struct{}{
-	"GroupRatio":                 {},
-	"TopupGroupRatio":            {},
-	"UserUsableGroups":           {},
-	"GroupGroupRatio":            {},
-	"AutoGroups":                 {},
-	"ModelRequestRateLimitGroup": {},
+	"GroupRatio":                                     {},
+	"group_ratio_setting.group_ratio":                {},
+	"group_ratio_setting.group_group_ratio":          {},
+	"TopupGroupRatio":                                {},
+	"UserUsableGroups":                               {},
+	"GroupGroupRatio":                                {},
+	"AutoGroups":                                     {},
+	"ModelRequestRateLimitGroup":                     {},
 	"group_ratio_setting.group_special_usable_group": {},
 	"MaxTokenAutoGroups":                             {},
 	"DefaultUseAutoGroup":                            {},
@@ -74,12 +78,14 @@ var groupRenameWritableOptionKeys = map[string]struct{}{
 }
 
 var groupRenameReferenceOptionKeys = map[string]struct{}{
-	"GroupRatio":                 {},
-	"TopupGroupRatio":            {},
-	"UserUsableGroups":           {},
-	"GroupGroupRatio":            {},
-	"AutoGroups":                 {},
-	"ModelRequestRateLimitGroup": {},
+	"GroupRatio":                                     {},
+	"group_ratio_setting.group_ratio":                {},
+	"group_ratio_setting.group_group_ratio":          {},
+	"TopupGroupRatio":                                {},
+	"UserUsableGroups":                               {},
+	"GroupGroupRatio":                                {},
+	"AutoGroups":                                     {},
+	"ModelRequestRateLimitGroup":                     {},
 	"group_ratio_setting.group_special_usable_group": {},
 	setting.SensitiveCheckExemptGroupsOptionKey:      {},
 }
@@ -112,12 +118,18 @@ type GroupRenameMapping struct {
 // final post-rename values; Expected holds the option values the caller loaded
 // before editing, and lets the transaction reject stale edits.
 type GroupRenameApplyRequest struct {
-	Mappings []GroupRenameMapping
-	Options  map[string]string
-	Expected map[string]string
+	Mappings  []GroupRenameMapping
+	RequestID string
+	ActorID   int
+	ActorRole int
+	Options   map[string]string
+	Expected  map[string]string
+	Identity  *AuthSessionIdentity
 }
 
 type GroupRenameResult struct {
+	RequestID         string               `json:"request_id,omitempty"`
+	Replayed          bool                 `json:"replayed,omitempty"`
 	Renames           []GroupRenameMapping `json:"renames"`
 	Options           int                  `json:"options"`
 	Channels          int                  `json:"channels"`
@@ -195,15 +207,35 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 		request.Options = maps.Clone(request.Options)
 		request.Options[setting.SensitiveCheckExemptGroupsOptionKey] = normalized
 	}
+	request, err := normalizeGroupAliasRequest(request)
+	if err != nil {
+		return nil, err
+	}
+	receipt, err := newGroupRenameOperation(request)
+	if err != nil {
+		return nil, err
+	}
 	state := &groupRenameTxState{appliedOptions: make(map[string]string)}
 	var plan *groupRenamePlan
 	optionKeys := groupRenameAffectedOptionKeys(request)
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err = DB.Transaction(func(tx *gorm.DB) error {
 		if err := lockGroupNamespace(tx); err != nil {
 			return err
 		}
+		if err := authorizeGroupRenameTx(tx, request.Identity); err != nil {
+			return err
+		}
+		if receipt != nil {
+			replayed, err := loadGroupRenameOperationTx(tx, receipt, &state.result)
+			if err != nil || replayed {
+				return err
+			}
+		}
 		optionValues, err := lockAndLoadGroupRenameOptions(tx, optionKeys)
 		if err != nil {
+			return err
+		}
+		if err := validateGroupOptionAliases(optionValues, request.Options); err != nil {
 			return err
 		}
 		for key, expected := range request.Expected {
@@ -220,6 +252,9 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 			return err
 		}
 		if err := recordGroupRenameAliasesTx(tx, plan.mappings); err != nil {
+			return err
+		}
+		if err := recordGroupRateLimitBucketsTx(tx, plan.mappings); err != nil {
 			return err
 		}
 		unmappedRemovals, err := collectGroupRenameUnmappedRemovals(request, optionValues, plan)
@@ -241,6 +276,7 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 		if err != nil {
 			return err
 		}
+		synchronizeGroupOptionAliases(optionValues, renamedOptions)
 		// Validate final writes too: automatic renames can rewrite special rules
 		// not supplied by the caller. Historical conflicting values are neither
 		// normalized nor changed by an unrelated settings edit.
@@ -298,6 +334,14 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 		if err != nil {
 			return err
 		}
+		state.result.Renames = plan.mappings
+		state.result.AppliedOptions = state.appliedOptions
+		if receipt != nil {
+			state.result.RequestID = receipt.RequestID
+			if err := saveGroupRenameOperationTx(tx, receipt, state.result); err != nil {
+				return err
+			}
+		}
 		if groupRenameTxFailureHook != nil {
 			if err := groupRenameTxFailureHook(); err != nil {
 				return err
@@ -308,8 +352,14 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 	if err != nil {
 		return nil, err
 	}
-	applyGroupRenameRuntime(state)
-	setGroupConfigAppliedVersion(state.groupConfigVersion)
+	if state.result.Replayed {
+		return &state.result, nil
+	}
+	if err := applyGroupRenameRuntime(state); err != nil {
+		// The durable rename committed. Do not acknowledge this runtime version:
+		// requests fail closed and Pub/Sub or the next read retries recovery.
+		common.SysError("group rename runtime refresh failed: " + common.MaskSensitiveLogInfo(err.Error()))
+	}
 	if err := PublishGroupConfigInvalidation(state.groupConfigVersion, plan.mappings); err != nil {
 		common.SysLog("failed to publish group config invalidation: " + err.Error())
 	}
@@ -348,8 +398,27 @@ func groupRenameAffectedOptionKeys(request GroupRenameApplyRequest) []string {
 // Without the materialization, a FOR UPDATE on a nonexistent row locks nothing
 // and two concurrent initial operations would both proceed.
 func lockAndLoadGroupRenameOptions(tx *gorm.DB, keys []string) (map[string]string, error) {
+	var existing []Option
+	if err := tx.Where(map[string]any{"key": keys}).Find(&existing).Error; err != nil {
+		return nil, err
+	}
+	persisted := make(map[string]string, len(existing))
+	for _, option := range existing {
+		persisted[option.Key] = option.Value
+	}
 	for _, key := range keys {
-		option := Option{Key: key, Value: groupRenameMemoryOptionValue(key)}
+		if canonicalGroupOptionKey(key) != key {
+			continue
+		}
+		value := groupRenameMemoryOptionValue(key)
+		for alias, canonical := range groupOptionAliases {
+			if canonical == key {
+				if raw, ok := persisted[alias]; ok {
+					value = raw
+				}
+			}
+		}
+		option := Option{Key: key, Value: value}
 		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "key"}},
 			DoNothing: true,
@@ -359,6 +428,11 @@ func lockAndLoadGroupRenameOptions(tx *gorm.DB, keys []string) (map[string]strin
 	}
 	values := make(map[string]string, len(keys))
 	for _, key := range keys {
+		if canonicalGroupOptionKey(key) != key {
+			if _, exists := persisted[key]; !exists {
+				continue
+			}
+		}
 		var option Option
 		if err := lockForUpdate(tx).Where(&Option{Key: key}).First(&option).Error; err != nil {
 			return nil, err
@@ -369,7 +443,7 @@ func lockAndLoadGroupRenameOptions(tx *gorm.DB, keys []string) (map[string]strin
 }
 
 func groupRenameMemoryOptionValue(key string) string {
-	switch key {
+	switch canonicalGroupOptionKey(key) {
 	case "GroupRatio":
 		return ratio_setting.GroupRatio2JSONString()
 	case "TopupGroupRatio":
@@ -453,7 +527,7 @@ func buildGroupRenamePlan(mappings []GroupRenameMapping, knownGroups map[string]
 }
 
 func normalizeGroupRenameName(raw string) (string, error) {
-	if raw == "" || raw != strings.TrimSpace(raw) {
+	if raw == "" || !utf8.ValidString(raw) || raw != strings.TrimSpace(raw) {
 		return "", ErrGroupRenameInvalidName
 	}
 	if utf8.RuneCountInString(raw) > maxGroupNameRuneCount {
@@ -820,6 +894,7 @@ func groupRenameOptionContainsKey(key, raw, group string) (bool, error) {
 // groupRenameOptionGroupKeys extracts the group names referenced by a
 // group-reference option value without losing numeric precision.
 func groupRenameOptionGroupKeys(key, raw string) ([]string, error) {
+	key = canonicalGroupOptionKey(key)
 	if strings.TrimSpace(raw) == "" {
 		return nil, nil
 	}
@@ -924,7 +999,7 @@ func rewriteGroupRenameOptionValues(optionValues, provided map[string]string, pl
 }
 
 func rewriteGroupRenameOptionValue(key, raw string, plan *groupRenamePlan) (string, bool, error) {
-	switch key {
+	switch canonicalGroupOptionKey(key) {
 	case setting.SensitiveCheckExemptGroupsOptionKey:
 		groups, err := groupRenameOptionGroupKeys(key, raw)
 		if err != nil {
@@ -1272,7 +1347,6 @@ func renameGroupSubscriptionReferences(tx *gorm.DB, plan *groupRenamePlan, state
 			if update.Error != nil {
 				return update.Error
 			}
-			state.result.SubscriptionPlans += update.RowsAffected
 		}
 		for _, column := range []string{"upgrade_group", "prev_user_group", "downgrade_group"} {
 			update := tx.Model(&UserSubscription{}).Where("status = ?", groupRenameActiveStatus).
@@ -1280,9 +1354,10 @@ func renameGroupSubscriptionReferences(tx *gorm.DB, plan *groupRenamePlan, state
 			if update.Error != nil {
 				return update.Error
 			}
-			state.result.UserSubscriptions += update.RowsAffected
 		}
 	}
+	state.result.SubscriptionPlans = int64(len(plans))
+	state.result.UserSubscriptions = int64(len(subscriptions))
 	for i := range plans {
 		state.affectedPlanIds = append(state.affectedPlanIds, plans[i].Id)
 	}
@@ -1295,42 +1370,6 @@ func renameGroupSubscriptionReferences(tx *gorm.DB, plan *groupRenamePlan, state
 // applyGroupRenameRuntime refreshes in-process state after commit. Each option
 // value is re-read from the database while holding a package mutex, so a late
 // runtime apply cannot overwrite state written by a newer committed change.
-func applyGroupRenameRuntime(state *groupRenameTxState) {
-	// The transaction has committed before taking the policy mutex: policy
-	// writers take this mutex before their namespace lock, never the reverse.
-	requestPolicyOptionMutex.Lock()
-	groupRenameRuntimeApplyMutex.Lock()
-	for _, key := range state.affectedOptionKeys {
-		var option Option
-		if err := DB.Where(&Option{Key: key}).First(&option).Error; err != nil {
-			common.SysError("group rename: failed to reload option " + key + ": " + err.Error())
-			continue
-		}
-		if err := updateOptionMap(key, option.Value); err != nil {
-			common.SysError("group rename: failed to refresh option " + key + ": " + err.Error())
-		}
-	}
-	if err := refreshRequestPolicySnapshot(); err != nil {
-		common.SysError("group rename: failed to refresh request policy: " + err.Error())
-	}
-	groupRenameRuntimeApplyMutex.Unlock()
-	requestPolicyOptionMutex.Unlock()
-	InvalidatePricingCache()
-	InitChannelCache()
-	for _, planId := range slices.Compact(slices.Sorted(slices.Values(state.affectedPlanIds))) {
-		InvalidateSubscriptionPlanCache(planId)
-	}
-	for _, userId := range slices.Compact(slices.Sorted(slices.Values(state.affectedUserIds))) {
-		if err := RefreshUserGroupCache(userId); err != nil {
-			common.SysError(fmt.Sprintf("group rename: failed to refresh user %d group cache: %s", userId, err.Error()))
-		}
-	}
-	for _, userId := range slices.Compact(slices.Sorted(slices.Values(state.subscriptionUserIds))) {
-		refreshSubscriptionUserGroupCache(userId, "group rename")
-	}
-	for _, key := range slices.Compact(slices.Sorted(slices.Values(state.affectedTokenKeys))) {
-		if err := invalidateTokenCacheForMutation(key); err != nil {
-			common.SysError("group rename: failed to invalidate token cache: " + err.Error())
-		}
-	}
+func applyGroupRenameRuntime(state *groupRenameTxState) error {
+	return applyGroupConfigInvalidation(state.groupConfigVersion, nil, true)
 }

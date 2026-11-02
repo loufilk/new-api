@@ -36,12 +36,18 @@ import {
   type ModelPricingConfig,
 } from '@/features/model-pricing/api'
 import { pricingOptions } from '@/features/model-pricing/pricing'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
-import { getServerErrorSources } from '@/lib/server-error-message'
+import {
+  getServerErrorSources,
+  requireServerSuccess,
+} from '@/lib/server-error-message'
 
-import { renameSystemGroups } from '../api'
+import { getSystemOptions, renameSystemGroups } from '../api'
 import { SettingsPageTitleStatusPortal } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { getOptionValue } from '../hooks/use-system-options'
 import { useUpdateOption } from '../hooks/use-update-option'
 import type { GroupRenameMapping } from '../types'
 import { positiveIntegerSchema } from '../utils/numeric-field'
@@ -216,10 +222,14 @@ export function RatioSettingsCard({
   titleKey = 'Pricing Ratios',
   visibleTabs = ['models', 'groups', 'tool-prices', 'upstream-sync'],
 }: RatioSettingsCardProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const updateOption = useUpdateOption()
   const queryClient = useQueryClient()
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const groupRenameRequestIds = useRef(new Map<string, string>())
+  const groupReloadInFlight = useRef(false)
+  const [groupReloadRequired, setGroupReloadRequired] = useState(false)
+  const [groupReloading, setGroupReloading] = useState(false)
 
   const pricingQuery = useModelPricing()
   const savePricing = useSaveModelPricing()
@@ -444,6 +454,50 @@ export function RatioSettingsCard({
     [t, updateOption, pricingBaseline, savePricing, pricingQuery]
   )
 
+  const reloadCurrentGroupSettings = useCallback(async () => {
+    if (groupReloadInFlight.current) return
+    groupReloadInFlight.current = true
+    setGroupReloadRequired(true)
+    setGroupReloading(true)
+    try {
+      await queryClient.cancelQueries({ queryKey: ['system-options'] })
+      const refreshed = await queryClient.fetchQuery({
+        queryKey: ['system-options'],
+        queryFn: async () =>
+          requireServerSuccess(await getSystemOptions({ fresh: true })),
+        staleTime: 0,
+        retry: false,
+      })
+      const { GroupSpecialUsableGroup, ...otherFields } = groupDefaults
+      const fields = {
+        ...otherFields,
+        'group_ratio_setting.group_special_usable_group':
+          GroupSpecialUsableGroup,
+      }
+      if (
+        Object.keys(fields).some(
+          (key) => !refreshed.data.some((option) => option.key === key)
+        )
+      ) {
+        throw new Error('Current group settings are incomplete')
+      }
+      const current = getOptionValue(refreshed.data, fields)
+      const values: GroupFormValues = {
+        ...current,
+        GroupSpecialUsableGroup:
+          current['group_ratio_setting.group_special_usable_group'],
+      }
+      setGroupBaseline(groupRenameBaselineFromDefaults(values))
+      groupForm.reset(values)
+      setGroupReloadRequired(false)
+    } catch (error) {
+      handleServerError(error, t('Failed to load current group settings'))
+    } finally {
+      groupReloadInFlight.current = false
+      setGroupReloading(false)
+    }
+  }, [groupDefaults, groupForm, queryClient, t])
+
   const saveGroupRatios = useCallback(
     async (
       values: GroupFormValues,
@@ -490,48 +544,93 @@ export function RatioSettingsCard({
       // The stale conflict arrives as HTTP 409, which Axios rejects. Keep the
       // unsaved edits and pending mappings: do not refetch (that would reset
       // the form) and report a specific, translated conflict message.
-      const reportStaleConflict = () =>
-        toast.error(
-          t(
-            'The group settings changed on the server. Reload the page and apply your edits again.'
+      const reportConflict = (error: unknown) => {
+        if (isGroupRenameStale(error)) {
+          toast.error(
+            t(
+              'The group settings changed on the server. Reload the page and apply your edits again.'
+            )
           )
-        )
+          return true
+        }
+        if (
+          getServerErrorSources(error).some(
+            (source) => source.code === 'GROUP_RENAME_REQUEST_CONFLICT'
+          )
+        ) {
+          toast.error(
+            t(
+              'This rename request was already used for different changes. Reload the page before trying again.'
+            )
+          )
+          return true
+        }
+        return false
+      }
+
+      const fingerprint = JSON.stringify({ renames, options, expected })
 
       try {
+        // Keep an uncertain operation's identity in this page until it succeeds.
+        // Only an identical payload may reuse the server's durable receipt.
+        let requestId: string | undefined
+        if (renames.length > 0) {
+          requestId = groupRenameRequestIds.current.get(fingerprint)
+          if (!requestId) {
+            requestId = globalThis.crypto.randomUUID()
+            groupRenameRequestIds.current.set(fingerprint, requestId)
+          }
+        }
         const response = await renameSystemGroups({
           renames,
           options,
           expected,
+          ...(requestId ? { request_id: requestId } : {}),
         })
         if (!response.success) {
-          if (isGroupRenameStale(response)) {
-            reportStaleConflict()
-            return 'failed'
-          }
+          if (reportConflict(response)) return 'failed'
           handleServerError(response, t('Failed to update setting'))
           return 'failed'
         }
-        const applied = response.data?.applied_options ?? {}
-        const nextBaseline: GroupRenameBaseline = { ...groupBaseline }
-        for (const [field, value] of Object.entries(normalized)) {
-          const apiKey = apiKeyMap[field] ?? field
-          nextBaseline[field as keyof GroupRenameBaseline] =
-            applied[apiKey] ?? options[apiKey] ?? value
+        groupRenameRequestIds.current.delete(fingerprint)
+        if (response.data?.replayed) {
+          // A receipt is historical: later administrators may already have
+          // changed the settings again. Never install its applied_options.
+          await reloadCurrentGroupSettings()
+        } else {
+          const applied = response.data?.applied_options ?? {}
+          const nextBaseline: GroupRenameBaseline = { ...groupBaseline }
+          for (const [field, value] of Object.entries(normalized)) {
+            const apiKey = apiKeyMap[field] ?? field
+            nextBaseline[field as keyof GroupRenameBaseline] =
+              applied[apiKey] ?? options[apiKey] ?? value
+          }
+          setGroupBaseline(nextBaseline)
+          await queryClient.invalidateQueries({ queryKey: ['system-options'] })
         }
-        setGroupBaseline(nextBaseline)
-        await queryClient.invalidateQueries({ queryKey: ['system-options'] })
-        toast.success(t('Setting updated successfully'))
+        if (renames.length > 0 && response.data) {
+          const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+          toast.success(
+            t(
+              'Groups renamed: {{tokens}} API keys, {{users}} users and {{channels}} channels updated.',
+              {
+                tokens: formatNumber(response.data.tokens, locale),
+                users: formatNumber(response.data.users, locale),
+                channels: formatNumber(response.data.channels, locale),
+              }
+            )
+          )
+        } else {
+          toast.success(t('Setting updated successfully'))
+        }
         return 'saved'
       } catch (error) {
-        if (isGroupRenameStale(error)) {
-          reportStaleConflict()
-          return 'failed'
-        }
+        if (reportConflict(error)) return 'failed'
         handleServerError(error, t('Failed to update setting'))
         return 'failed'
       }
     },
-    [queryClient, t, groupBaseline]
+    [queryClient, t, i18n, groupBaseline, reloadCurrentGroupSettings]
   )
 
   const handleResetRatios = useCallback(() => {
@@ -599,6 +698,17 @@ export function RatioSettingsCard({
       )
     }
     if (tab === 'groups') {
+      if (groupReloading) return <LoadingState />
+      if (groupReloadRequired) {
+        return (
+          <ErrorState
+            description={t(
+              'The rename completed, but current group settings could not be loaded. Reload before making more changes.'
+            )}
+            onRetry={() => void reloadCurrentGroupSettings()}
+          />
+        )
+      }
       return (
         <GroupRatioForm
           form={groupForm}

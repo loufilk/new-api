@@ -34,7 +34,17 @@ func modelPriceNotConfiguredError(c *gin.Context, modelName string, userId int) 
 }
 
 // HandleGroupRatio checks for "auto_group" in the context and updates the group ratio and relayInfo.UsingGroup if present
-func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) hosttypes.GroupRatioInfo {
+func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) (ratio hosttypes.GroupRatioInfo, err error) {
+	groupRead, err := model.BeginRequestGroupConfigRead(ctx)
+	if err != nil {
+		return ratio, model.ErrGroupConfigChanged
+	}
+	defer func() {
+		if checkErr := groupRead.Finish(); checkErr != nil {
+			ratio, err = hosttypes.GroupRatioInfo{}, model.ErrGroupConfigChanged
+		}
+	}()
+
 	groupRatioInfo := hosttypes.GroupRatioInfo{
 		GroupRatio:        1.0, // default ratio
 		GroupSpecialRatio: -1,
@@ -59,7 +69,7 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) hostty
 		groupRatioInfo.GroupRatio = ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
 	}
 
-	return groupRatioInfo
+	return groupRatioInfo, nil
 }
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (hosttypes.PriceData, error) {
@@ -71,7 +81,10 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	billingModelName := info.GetBillingModelName()
 	modelPrice, usePrice := ratio_setting.GetModelPrice(billingModelName, false)
 
-	groupRatioInfo := HandleGroupRatio(c, info)
+	groupRatioInfo, err := HandleGroupRatio(c, info)
+	if err != nil {
+		return hosttypes.PriceData{}, err
+	}
 
 	// Check if this model uses tiered_expr billing
 	if billing_setting.GetBillingMode(billingModelName) == billing_setting.BillingModeTieredExpr {
@@ -214,7 +227,10 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 // TaskBillingContext.BillingModelName、赠金资格保持同一资金口径；
 // 未显式设置 BillingModelName 时回退 OriginModelName，行为不变。
 func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hosttypes.PriceData, error) {
-	groupRatioInfo := HandleGroupRatio(c, info)
+	groupRatioInfo, err := HandleGroupRatio(c, info)
+	if err != nil {
+		return hosttypes.PriceData{}, err
+	}
 
 	billingModelName := info.GetBillingModelName()
 	modelPrice, success := ratio_setting.GetModelPrice(billingModelName, true)

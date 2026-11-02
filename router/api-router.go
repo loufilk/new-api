@@ -478,12 +478,12 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 
 func registerPlaygroundRoutes(apiRouter *gin.RouterGroup) {
 	modelTests := apiRouter.Group("/user/model-tests")
-	modelTests.Use(middleware.DisableCache(), middleware.UserAuth())
-	modelTests.GET("", controller.GetModelTests)
-	modelTests.POST("/estimate", middleware.UserCriticalRateLimit("model-test-estimate"), controller.EstimateModelTest)
-	modelTests.GET("/runs/:id", controller.GetModelTest)
-	modelTests.POST("/runs/:id/cancel", middleware.UserCriticalRateLimit("model-test-cancel"), controller.CancelModelTest)
-	modelTests.POST("/runs", middleware.SystemPerformanceCheck(), controller.PrepareModelTest, middleware.UserCallInterception(), middleware.Distribute(), controller.ModelTestPlayground)
+	modelTests.Use(middleware.DisableCache())
+	modelTests.GET("", middleware.ModelTestHistoryAuth(), controller.GetModelTests)
+	modelTests.POST("/estimate", middleware.UserAuth(), middleware.UserCriticalRateLimit("model-test-estimate"), controller.EstimateModelTest)
+	modelTests.GET("/runs/:id", middleware.ModelTestHistoryAuth(), controller.GetModelTest)
+	modelTests.POST("/runs/:id/cancel", middleware.ModelTestHistoryAuth(), middleware.UserCriticalRateLimit("model-test-cancel"), controller.CancelModelTest)
+	modelTests.POST("/runs", middleware.UserAuth(), middleware.SystemPerformanceCheck(), controller.PrepareModelTest, middleware.UserCallInterception(), middleware.Distribute(), controller.ModelTestPlayground)
 	playgroundRoute := apiRouter.Group("/user/playground")
 	playgroundRoute.Use(middleware.UserAuth())
 	{

@@ -32,6 +32,7 @@ var (
 
 	groupConfigAppliedVersion     atomic.Int64
 	groupConfigVersionInitialized atomic.Bool
+	groupConfigRuntimeInvalid     atomic.Bool
 	groupConfigApplyMutex         sync.Mutex
 	groupConfigSubscriberOnce     sync.Once
 )
@@ -105,7 +106,12 @@ func loadGroupRenameAliasesTx(tx *gorm.DB) (map[string]string, error) {
 func loadConfiguredGroupNamesTx(tx *gorm.DB) (map[string]struct{}, error) {
 	values := make(map[string]string, len(groupRenameOptionKeys))
 	for _, key := range groupRenameOptionKeys {
-		values[key] = groupRenameMemoryOptionValue(key)
+		// An absent alias is not a second runtime definition. On a node whose
+		// cache still predates a rename, synthesizing it would reintroduce the
+		// retired source despite the canonical row already containing the target.
+		if canonicalGroupOptionKey(key) == key {
+			values[key] = groupRenameMemoryOptionValue(key)
+		}
 	}
 	var options []Option
 	if err := tx.Where(map[string]any{"key": groupRenameOptionKeys}).Find(&options).Error; err != nil {
@@ -113,6 +119,9 @@ func loadConfiguredGroupNamesTx(tx *gorm.DB) (map[string]struct{}, error) {
 	}
 	for _, option := range options {
 		values[option.Key] = option.Value
+	}
+	if err := validateGroupOptionAliases(values, nil); err != nil {
+		return nil, err
 	}
 	// Policy membership is a reference, not a definition or authorization to
 	// reintroduce a renamed group into subscriptions or other group writers.
@@ -331,11 +340,30 @@ func reloadGroupRuntimeOptions() error {
 	// The caller owns requestPolicyOptionMutex before groupConfigApplyMutex.
 	groupRenameRuntimeApplyMutex.Lock()
 	defer groupRenameRuntimeApplyMutex.Unlock()
+	keys := []string{groupRateLimitBucketsOptionKey}
+	for key := range groupRenameWritableOptionKeys {
+		keys = append(keys, key)
+	}
 	var options []Option
-	if err := DB.Where(map[string]any{"key": groupRenameOptionKeys}).Find(&options).Error; err != nil {
+	if err := DB.Where(map[string]any{"key": keys}).Find(&options).Error; err != nil {
 		return err
 	}
+	values := make(map[string]string, len(options))
 	for _, option := range options {
+		values[option.Key] = option.Value
+	}
+	if err := validateGroupOptionAliases(values, nil); err != nil {
+		return err
+	}
+	buckets, err := parseGroupRateLimitBuckets(values[groupRateLimitBucketsOptionKey])
+	if err != nil {
+		return err
+	}
+	groupRateLimitBuckets.Store(&buckets)
+	for _, option := range options {
+		if option.Key == groupRateLimitBucketsOptionKey {
+			continue
+		}
 		if err := updateOptionMap(option.Key, option.Value); err != nil {
 			return err
 		}
@@ -344,7 +372,10 @@ func reloadGroupRuntimeOptions() error {
 }
 
 func applyGroupConfigInvalidation(version int64, mappings []GroupRenameMapping, reloadOptions bool) error {
-	if version <= 0 || version <= groupConfigAppliedVersion.Load() {
+	if version < 0 {
+		return ErrGroupConfigChanged
+	}
+	if version < groupConfigAppliedVersion.Load() || (version == groupConfigAppliedVersion.Load() && groupConfigVersionInitialized.Load() && !groupConfigRuntimeInvalid.Load()) {
 		return nil
 	}
 	if reloadOptions {
@@ -353,11 +384,16 @@ func applyGroupConfigInvalidation(version int64, mappings []GroupRenameMapping, 
 		requestPolicyOptionMutex.Lock()
 		defer requestPolicyOptionMutex.Unlock()
 	}
+	if reloadOptions {
+		groupConfigRuntimeMutex.Lock()
+		defer groupConfigRuntimeMutex.Unlock()
+	}
 	groupConfigApplyMutex.Lock()
 	defer groupConfigApplyMutex.Unlock()
-	if version <= groupConfigAppliedVersion.Load() {
+	if version < groupConfigAppliedVersion.Load() || (version == groupConfigAppliedVersion.Load() && groupConfigVersionInitialized.Load() && !groupConfigRuntimeInvalid.Load()) {
 		return nil
 	}
+	groupConfigRuntimeInvalid.Store(true)
 	if reloadOptions {
 		if err := reloadGroupRuntimeOptions(); err != nil {
 			return err
@@ -368,6 +404,7 @@ func applyGroupConfigInvalidation(version int64, mappings []GroupRenameMapping, 
 	}
 	groupConfigAppliedVersion.Store(version)
 	groupConfigVersionInitialized.Store(true)
+	groupConfigRuntimeInvalid.Store(false)
 	return nil
 }
 
@@ -391,9 +428,11 @@ func syncGroupConfigVersionAfterOptionLoad(options []*Option) {
 			continue
 		}
 		parsed, err := strconv.ParseInt(strings.TrimSpace(option.Value), 10, 64)
-		if err == nil && parsed >= 0 {
-			version = parsed
+		if err != nil || parsed < 0 {
+			groupConfigRuntimeInvalid.Store(true)
+			return
 		}
+		version = parsed
 		break
 	}
 
@@ -401,13 +440,18 @@ func syncGroupConfigVersionAfterOptionLoad(options []*Option) {
 	// start before the first rename creates GroupConfigVersion; if it then
 	// misses that first Pub/Sub event, the later 0 -> 1 periodic observation
 	// must rebuild dependent caches instead of being mistaken for first init.
-	if !groupConfigVersionInitialized.Swap(true) {
+	if !groupConfigVersionInitialized.Load() && !groupConfigRuntimeInvalid.Load() {
 		groupConfigAppliedVersion.Store(version)
+		groupConfigVersionInitialized.Store(true)
 		return
 	}
 
 	current := groupConfigAppliedVersion.Load()
-	if version > current {
+	if version < current {
+		groupConfigRuntimeInvalid.Store(true)
+		return
+	}
+	if version > current || groupConfigRuntimeInvalid.Load() {
 		if err := applyGroupConfigInvalidation(version, nil, false); err != nil {
 			common.SysLog("failed to recover group config after periodic option sync: " + err.Error())
 		}

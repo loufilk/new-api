@@ -25,6 +25,8 @@ import { ChatSettingsSection } from './chat-settings-section'
 import { DashboardSection } from './dashboard-section'
 import { DrawingSettingsSection } from './drawing-settings-section'
 import { FAQSection } from './faq-section'
+import { ModelTestSection } from './model-test-section'
+import { SupportEmailSection } from './support-email-section'
 import { UptimeKumaSection } from './uptime-kuma-section'
 
 /**
@@ -39,6 +41,16 @@ function validateDataExportDefaultTime(value: string): 'week' | 'hour' | 'day' {
 }
 
 const CONTENT_SECTIONS = [
+  {
+    id: 'model-tests',
+    titleKey: 'intelligence.title',
+    build: () => <ModelTestSection />,
+  },
+  {
+    id: 'support-email',
+    titleKey: 'Support email notifications',
+    build: () => <SupportEmailSection />,
+  },
   {
     id: 'account-pool',
     titleKey: 'pool.title',

@@ -53,6 +53,11 @@ func (*StripeAdaptor) RequestAmount(c *gin.Context, req *StripePayRequest) {
 		return
 	}
 	id := c.GetInt("id")
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
 	group, err := model.GetUserGroup(id, true)
 	if err != nil {
 		paymentError(c, common.NewMessage("Failed to get the user group"))
@@ -62,6 +67,9 @@ func (*StripeAdaptor) RequestAmount(c *gin.Context, req *StripePayRequest) {
 		return
 	}
 	payMoney := getStripePayMoney(float64(req.Amount), group)
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
 	if payMoney <= 0.01 {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
 		return
@@ -94,12 +102,20 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 	}
 
 	id := c.GetInt("id")
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
 	user, err := model.GetUserById(id, false)
 	if err != nil || user == nil {
 		paymentError(c, common.NewMessage("User does not exist"))
 		return
 	}
 	chargedMoney := GetChargedAmount(float64(req.Amount), *user)
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
 	if rejectInvalidCreditedQuota(c, id,
 		decimal.NewFromFloat(chargedMoney).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
 	) {

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,6 +23,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -45,8 +48,8 @@ type supportHTTPFixture struct {
 
 var supportHTTPFixtureSequence atomic.Uint32
 
-// newSupportHTTPFixture builds a real Gin engine over a fresh in-memory SQLite
-// database. Global rate-limit configuration is set before routes are registered
+// newSupportHTTPFixture builds a real Gin engine over an isolated database
+// (PostgreSQL when selected by the owned fixture). Global rate-limit configuration is set before routes are registered
 // because the limiter factories snapshot the configured budgets at registration
 // time. Each caller uses a unique client IP and unique user IDs so the shared
 // package-level in-memory limiter buckets cannot leak between test cases.
@@ -61,21 +64,45 @@ func newSupportHTTPFixture(t *testing.T, opts supportHTTPOptions) supportHTTPFix
 	oldSearchEnable, oldSearchNum, oldSearchDuration := common.SearchRateLimitEnable, common.SearchRateLimitNum, common.SearchRateLimitDuration
 	oldExpiration := common.RateLimitKeyExpirationDuration
 
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	var driver gorm.Dialector = sqlite.Open(":memory:")
+	databaseType := common.DatabaseTypeSQLite
+	if dsn := os.Getenv("TEST_POSTGRES_DSN"); dsn != "" {
+		require.Equal(t, "1", os.Getenv("NO_AGENT_FIXTURE_OWNED"))
+		parsed, err := url.Parse(dsn)
+		require.NoError(t, err)
+		require.Equal(t, "127.0.0.1", parsed.Hostname())
+		bootstrap, err := gorm.Open(postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true}), &gorm.Config{})
+		require.NoError(t, err)
+		schema := fmt.Sprintf("support_http_%d", time.Now().UnixNano())
+		require.NoError(t, bootstrap.Exec("CREATE SCHEMA "+schema).Error)
+		t.Cleanup(func() {
+			require.NoError(t, bootstrap.Exec("DROP SCHEMA "+schema+" CASCADE").Error)
+			conn, err := bootstrap.DB()
+			require.NoError(t, err)
+			require.NoError(t, conn.Close())
+		})
+		query := parsed.Query()
+		query.Set("search_path", schema)
+		parsed.RawQuery = query.Encode()
+		driver = postgres.New(postgres.Config{DSN: parsed.String(), PreferSimpleProtocol: true})
+		databaseType = common.DatabaseTypePostgreSQL
+	}
+	db, err := gorm.Open(driver, &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(
 		&model.User{},
-		&model.UserSession{},
+		&model.UserSession{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{},
 		&model.AuditLog{},
 		&model.SupportTicket{},
 		&model.SupportTicketMessage{},
+		&model.Option{}, &model.SupportEmailSettings{}, &model.SupportEmailPreference{}, &model.SupportEmailOutbox{}, &model.SupportEmailRate{},
 	))
 
 	model.DB, model.LOG_DB = db, db
-	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	common.SetMainDatabaseType(databaseType)
 	common.RedisEnabled = false
 	common.SessionSecret = "support-http-isolated-fixture"
 	common.GlobalApiRateLimitEnable = true

@@ -323,3 +323,12 @@ task.image_still_processing: 圖片仍在處理中，請勿重複提交；請查
 
 relay.user_call_intercepted: 該使用者的呼叫已被攔截。此介面無法承載文字回覆，請聯絡管理員。
 relay.user_call_interception_unavailable: 呼叫攔截服務暫時無法使用，本請求未轉送。
+
+common.group_config_changed: "分組設定已變更或暫時無法使用，請重試請求。"
+
+# Minimal support ticket notifications
+support_email_subject: "工單 #{{.ID}}"
+support_email_created: "有新工單等待處理。"
+support_email_customer_reply: "客戶對此工單新增了回覆。"
+support_email_admin_reply: "客服已回覆您的工單。"
+support_email_guidance: "請登入站台查看工單。本郵件為自動通知，請勿直接回覆郵件；請在工單頁面回覆。"

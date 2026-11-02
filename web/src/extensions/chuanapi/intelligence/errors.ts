@@ -22,6 +22,10 @@ import {
 } from '@/lib/server-error-message'
 
 export const modelTestErrorKeys: Record<string, string> = {
+  model_tests_disabled:
+    'New model tests are disabled. You can still view your history and cancel active tests.',
+  model_test_settings_unavailable:
+    'Model test availability could not be verified. New tests are blocked; history and cancellation remain available.',
   unsupported_test_channel:
     'This channel does not support controlled model tests.',
   output_budget_changed:
@@ -48,6 +52,9 @@ export const modelTestErrorKeys: Record<string, string> = {
     'The test result could not be saved. Check history before retrying.',
 }
 export const modelTestFailureKeys: Record<string, string> = {
+  model_tests_disabled: modelTestErrorKeys.model_tests_disabled,
+  model_test_settings_unavailable:
+    modelTestErrorKeys.model_test_settings_unavailable,
   confirmation_price_changed: modelTestErrorKeys.confirmation_price_changed,
   channel_overrides_not_supported:
     modelTestErrorKeys.channel_overrides_not_supported,
@@ -66,7 +73,7 @@ export const modelTestFailureKeys: Record<string, string> = {
   incomplete_response: 'The model response was incomplete.',
   unsafe_or_invalid_artwork: 'The artwork was unsafe or structurally invalid.',
 }
-function modelTestErrorCode(error: unknown): string | undefined {
+export function modelTestErrorCode(error: unknown): string | undefined {
   const sources = getServerErrorSources(error)
   if (sources.some((source) => source[safeServerErrorMessage])) return undefined
   for (const source of sources) {
@@ -89,6 +96,8 @@ export function rejectedBeforeModelTestStart(error: unknown): boolean {
   return (
     !!code &&
     [
+      'model_tests_disabled',
+      'model_test_settings_unavailable',
       'confirmation_required',
       'invalid_request_id',
       'confirmation_expired_or_invalid',

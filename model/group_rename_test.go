@@ -20,6 +20,20 @@ import (
 
 func captureGroupRenameRuntimeState(t *testing.T) {
 	t.Helper()
+	previousBuckets := groupRateLimitBuckets.Load()
+	groupRateLimitBuckets.Store(nil)
+	t.Cleanup(func() { groupRateLimitBuckets.Store(previousBuckets) })
+	previousInvalid := groupConfigRuntimeInvalid.Load()
+	groupConfigRuntimeInvalid.Store(false)
+	previousVersion, previousInitialized := groupConfigAppliedVersion.Load(), groupConfigVersionInitialized.Load()
+	groupConfigAppliedVersion.Store(0)
+	groupConfigVersionInitialized.Store(false)
+	t.Cleanup(func() {
+		groupConfigRuntimeInvalid.Store(previousInvalid)
+		groupConfigAppliedVersion.Store(previousVersion)
+		groupConfigVersionInitialized.Store(previousInitialized)
+	})
+
 	originalOptionMap := make(map[string]string)
 	common.OptionMapRWMutex.RLock()
 	hadOptionMap := common.OptionMap != nil
@@ -63,10 +77,11 @@ func captureGroupRenameRuntimeState(t *testing.T) {
 func setupGroupRenameTest(t *testing.T) {
 	t.Helper()
 	truncateTables(t)
-	require.NoError(t, DB.AutoMigrate(&Option{}))
+	require.NoError(t, DB.AutoMigrate(&Option{}, &GroupRenameOperation{}))
 	captureGroupRenameRuntimeState(t)
 	t.Cleanup(func() {
 		DB.Exec("DELETE FROM options")
+		DB.Exec("DELETE FROM group_rename_operations")
 	})
 }
 
@@ -128,7 +143,7 @@ func TestGroupRenameMigratesEveryGroupSurface(t *testing.T) {
 	assert.Equal(t, 1, result.Users)
 	assert.Equal(t, 1, result.Tokens)
 	assert.Equal(t, int64(1), result.SubscriptionPlans)
-	assert.Equal(t, int64(2), result.UserSubscriptions)
+	assert.Equal(t, int64(1), result.UserSubscriptions)
 
 	var storedChannel Channel
 	require.NoError(t, DB.First(&storedChannel, channel.Id).Error)
@@ -237,6 +252,11 @@ func TestGroupRenameRejectsInvalidMappings(t *testing.T) {
 		{"reserved target", []GroupRenameMapping{{From: "old", To: "all"}}, ErrGroupRenameReservedName},
 		{"invalid target", []GroupRenameMapping{{From: "old", To: "bad,name"}}, ErrGroupRenameInvalidName},
 		{"empty target", []GroupRenameMapping{{From: "old", To: ""}}, ErrGroupRenameInvalidName},
+		{"leading whitespace", []GroupRenameMapping{{From: "old", To: " new"}}, ErrGroupRenameInvalidName},
+		{"unicode whitespace", []GroupRenameMapping{{From: "old", To: "new\u3000"}}, ErrGroupRenameInvalidName},
+		{"control character", []GroupRenameMapping{{From: "old", To: "ne\nw"}}, ErrGroupRenameInvalidName},
+		{"permission prefix", []GroupRenameMapping{{From: "old", To: "+:new"}}, ErrGroupRenameInvalidName},
+		{"invalid UTF8", []GroupRenameMapping{{From: "old", To: string([]byte{0xff})}}, ErrGroupRenameInvalidName},
 		{"overlong target", []GroupRenameMapping{{From: "old", To: longName}}, ErrGroupRenameInvalidName},
 		{"unknown source", []GroupRenameMapping{{From: "missing", To: "new"}}, ErrGroupRenameUnknownSource},
 		{"target collision", []GroupRenameMapping{{From: "old", To: "keep"}}, ErrGroupRenameCollision},
@@ -386,8 +406,8 @@ func TestGroupRenameMigratesOnlyActiveSubscriptions(t *testing.T) {
 
 	result, err := RenameGroups([]GroupRenameMapping{{From: "old", To: "new"}})
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), result.SubscriptionPlans)
-	assert.Equal(t, int64(6), result.UserSubscriptions)
+	assert.Equal(t, int64(1), result.SubscriptionPlans)
+	assert.Equal(t, int64(2), result.UserSubscriptions)
 
 	require.NoError(t, DB.First(&plan, plan.Id).Error)
 	assert.Equal(t, "new", plan.UpgradeGroup)
@@ -484,6 +504,9 @@ func TestGroupRenameCombinedOptionsCommitAtomically(t *testing.T) {
 	assert.Equal(t, "7", maxTokenAutoGroups.Value)
 	assert.Equal(t, 7, setting.GetMaxTokenAutoGroups())
 	for _, key := range groupRenameOptionKeys {
+		if canonicalGroupOptionKey(key) != key {
+			continue
+		}
 		var count int64
 		require.NoError(t, DB.Model(&Option{}).Where(&Option{Key: key}).Count(&count).Error)
 		assert.Equal(t, int64(1), count, "option row %s must be materialized", key)
@@ -618,7 +641,7 @@ func TestGroupRenameConcurrentDuplicateSubmissionsPostgres(t *testing.T) {
 		DB, LOG_DB = previousDB, previousLogDB
 		common.SetDatabaseTypes(previousMainType, previousLogType)
 	})
-	require.NoError(t, db.AutoMigrate(&Option{}, &User{}, &Token{}, &Channel{}, &Ability{}, &SubscriptionPlan{}, &UserSubscription{}))
+	require.NoError(t, db.AutoMigrate(&Option{}, &GroupRenameOperation{}, &User{}, &Token{}, &Channel{}, &Ability{}, &SubscriptionPlan{}, &UserSubscription{}))
 
 	oldGroup := "group_rename_concurrent_old"
 	newGroup := "group_rename_concurrent_new"

@@ -19,6 +19,17 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  // Group rename backend/runtime errors.
+  'Group settings changed or are temporarily unavailable. Retry the request.',
+  'group rename requires a current root identity',
+  'Current group settings are incomplete',
+  'Invalid support email settings',
+  'Support email notification is no longer eligible',
+  'Configure secure SMTP before enabling support email notifications',
+  'A dashboard login session is required',
+  'Support email notifications',
+  'Enter up to five administrator email addresses.',
+  'Enter an HTTPS origin without a path, query or fragment.',
   // Google OAuth backend errors and dynamic provider labels.
   'Google sign-in requires secure session cookies and a trusted HTTPS site origin. Ask your administrator to configure the session cookie settings.',
   'Google',
@@ -1030,6 +1041,8 @@ export const STATIC_I18N_KEYS = [
   'Test pricing changed after confirmation. Request and confirm a new estimate.',
   'This channel overrides request parameters and cannot run a controlled comparison.',
   'pool.diagnostic.pinned_origin_mismatch',
+  'New model tests are disabled. You can still view your history and cancel active tests.',
+  'Model test availability could not be verified. New tests are blocked; history and cancellation remain available.',
   'This channel does not support controlled model tests.',
   'The channel changed the confirmed output limit. The test was blocked.',
 ] as const

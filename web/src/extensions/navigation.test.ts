@@ -44,7 +44,6 @@ describe('frontend extension navigation contract', () => {
         documentNavigation: true,
       },
       { title: 'Pricing', href: '/pricing' },
-      { title: 'intelligence.title', href: '/intelligence' },
       { title: 'Invitation Rewards', href: '/affiliate' },
     ])
     expect(links).toEqual([
@@ -68,7 +67,6 @@ describe('frontend extension navigation contract', () => {
     )
 
     expect(result).toEqual([
-      { title: 'intelligence.title', href: '/intelligence' },
       { title: 'Invitation Rewards', href: '/affiliate' },
       {
         title: 'Docs',
@@ -93,7 +91,7 @@ test.each([
       { isAuthenticated: true, status }
     )
     expect(result.some((link) => link.href === '/account-pool')).toBe(false)
-    expect(result.some((link) => link.href === '/intelligence')).toBe(true)
+    expect(result.some((link) => link.href === '/intelligence')).toBe(false)
     expect(result.some((link) => link.href === '/affiliate')).toBe(true)
   }
 )
@@ -104,4 +102,29 @@ test('enabled pool is included once in header navigation', () => {
     status: { account_pool_enabled: true },
   })
   expect(result.filter((link) => link.href === '/account-pool')).toHaveLength(1)
+})
+
+test.each([
+  null,
+  {},
+  { model_test_enabled: false },
+  { model_test_enabled: 'true' },
+])(
+  'model test navigation requires an explicit boolean enablement (%j)',
+  (status) => {
+    const result = applyNavigationExtensions(
+      [{ title: 'Tests', href: '/intelligence' }],
+      { isAuthenticated: true, status }
+    )
+    expect(result.some((link) => link.href === '/intelligence')).toBe(false)
+    expect(result.some((link) => link.href === '/affiliate')).toBe(true)
+  }
+)
+test('model test and pool navigation are independent', () => {
+  const result = applyNavigationExtensions([], {
+    isAuthenticated: true,
+    status: { model_test_enabled: true, account_pool_enabled: false },
+  })
+  expect(result.filter((link) => link.href === '/intelligence')).toHaveLength(1)
+  expect(result.some((link) => link.href === '/account-pool')).toBe(false)
 })

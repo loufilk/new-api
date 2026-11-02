@@ -9,6 +9,7 @@ import (
 )
 
 func StartRuntimeWorkers(group *lifecycle.Group) {
+	group.Go("support-email-outbox", RunSupportEmailWorker)
 	group.Go("system-instance-reporter", func(schedule, work context.Context) {
 		lifecycle.Periodic(schedule, work, func() time.Duration { return systemInstanceReportInterval }, true, func(context.Context) { reportSystemInstanceWithLog() })
 	})

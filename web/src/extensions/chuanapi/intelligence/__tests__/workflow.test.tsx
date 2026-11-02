@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
@@ -31,6 +31,7 @@ import type { TestHistory, TestRun, TestSelection, TestRequest } from '../types'
 
 function history(items: TestRun[] = []): TestHistory {
   return {
+    enabled: true,
     benchmark: {
       id: 'pelican-static-v1',
       name: 'Pelican',
@@ -76,11 +77,17 @@ function renderWithQuery(content: React.ReactNode) {
       mutations: { retry: false },
     },
   })
-  return render(
-    <QueryClientProvider client={client}>{content}</QueryClientProvider>
-  )
+  return {
+    client,
+    ...render(
+      <QueryClientProvider client={client}>{content}</QueryClientProvider>
+    ),
+  }
 }
-function mockReads(items: TestRun[] = []) {
+function mockReads(
+  items: TestRun[] = [],
+  availability: { enabled?: unknown } = { enabled: true }
+) {
   return vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (String(url).endsWith('/bootstrap')) {
       return {
@@ -105,7 +112,9 @@ function mockReads(items: TestRun[] = []) {
         },
       }
     }
-    return { data: { success: true, data: history(items) } }
+    return {
+      data: { success: true, data: { ...history(items), ...availability } },
+    }
   })
 }
 beforeEach(async () => {
@@ -399,4 +408,250 @@ describe('explicit model test workflow', () => {
       screen.queryByRole('button', { name: 'Review cost and start' })
     ).not.toBeInTheDocument()
   })
+})
+
+describe('model test availability', () => {
+  test.each([undefined, false, 'true', 1])(
+    'does not offer new tests unless history enabled is boolean true (%s)',
+    async (enabled) => {
+      const get = mockReads(
+        [run({ status: 'running', assessment: 'unassessed' })],
+        { enabled }
+      )
+      const post = vi.spyOn(api, 'post').mockResolvedValue({
+        data: { success: true, data: run({ cancel_requested: true }) },
+      })
+      const user = userEvent.setup()
+      renderWithQuery(<IntelligenceDashboard />)
+      expect(
+        await screen.findByText(
+          'New model tests are disabled. You can still view your history and cancel active tests.'
+        )
+      ).toBeVisible()
+      expect(
+        screen.queryByRole('button', { name: 'Review cost and start' })
+      ).not.toBeInTheDocument()
+      expect(
+        screen.getByRole('heading', { name: 'My latest 60 tests' })
+      ).toBeVisible()
+      await user.click(screen.getByRole('button', { name: 'Cancel' }))
+      expect(post).toHaveBeenCalledExactlyOnceWith(
+        '/api/user/model-tests/runs/test-run/cancel'
+      )
+      expect(
+        get.mock.calls.some(([url]) => String(url).endsWith('/bootstrap'))
+      ).toBe(false)
+    }
+  )
+
+  test('closing the feature dismisses an existing quote and reopening cannot reuse it', async () => {
+    mockReads()
+    const post = vi
+      .spyOn(api, 'post')
+      .mockImplementation(async (_url, body) => ({
+        data: {
+          success: true,
+          data: {
+            ...(body as TestSelection),
+            estimated_quota: 100,
+            quota_per_unit: 500000,
+            estimate_is_cap: false,
+            timeout_seconds: 90,
+            benchmark_id: 'pelican-static-v1',
+            confirmation_token: 'old-quote',
+            expires_at: Math.floor(Date.now() / 1000) + 300,
+          },
+        },
+      }))
+    const user = userEvent.setup()
+    const { client } = renderWithQuery(<IntelligenceDashboard />)
+    await user.click(
+      await screen.findByRole('button', { name: 'Review cost and start' })
+    )
+    expect(await screen.findByRole('alertdialog')).toBeVisible()
+    client.setQueryData(['model-tests', 'history'], {
+      ...history(),
+      enabled: false,
+    })
+    await waitFor(() =>
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    )
+    client.setQueryData(['model-tests', 'history'], history())
+    expect(
+      await screen.findByRole('button', { name: 'Review cost and start' })
+    ).toBeEnabled()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(post).toHaveBeenCalledTimes(1)
+  })
+
+  test('failed availability refresh closes a quote and never enables stale cached new-test controls', async () => {
+    const get = mockReads()
+    vi.spyOn(api, 'post').mockImplementation(async (_url, body) => ({
+      data: {
+        success: true,
+        data: {
+          ...(body as TestSelection),
+          estimated_quota: 100,
+          quota_per_unit: 500000,
+          estimate_is_cap: false,
+          timeout_seconds: 90,
+          benchmark_id: 'pelican-static-v1',
+          confirmation_token: 'old-quote',
+          expires_at: Math.floor(Date.now() / 1000) + 300,
+        },
+      },
+    }))
+    const user = userEvent.setup()
+    const { client } = renderWithQuery(<IntelligenceDashboard />)
+    await user.click(
+      await screen.findByRole('button', { name: 'Review cost and start' })
+    )
+    expect(await screen.findByRole('alertdialog')).toBeVisible()
+    get.mockRejectedValue(new Error('offline'))
+    await client.invalidateQueries({ queryKey: ['model-tests', 'history'] })
+    await waitFor(() =>
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    )
+    expect(
+      screen.queryByRole('button', { name: 'Review cost and start' })
+    ).not.toBeInTheDocument()
+  })
+})
+
+test('an estimate response from before a disable-enable cycle cannot reopen the old confirmation', async () => {
+  mockReads()
+  let resolve: (value: unknown) => void = () => undefined
+  const post = vi.spyOn(api, 'post').mockImplementation(
+    (_url, body) =>
+      new Promise((done) => {
+        resolve = () =>
+          done({
+            data: {
+              success: true,
+              data: {
+                ...(body as TestSelection),
+                estimated_quota: 100,
+                quota_per_unit: 500000,
+                estimate_is_cap: false,
+                timeout_seconds: 90,
+                benchmark_id: 'pelican-static-v1',
+                confirmation_token: 'late-quote',
+                expires_at: Math.floor(Date.now() / 1000) + 300,
+              },
+            },
+          })
+      })
+  )
+  const user = userEvent.setup()
+  const { client } = renderWithQuery(<IntelligenceDashboard />)
+  await user.click(
+    await screen.findByRole('button', { name: 'Review cost and start' })
+  )
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+  act(() =>
+    client.setQueryData(['model-tests', 'history'], {
+      ...history(),
+      enabled: false,
+    })
+  )
+  expect(
+    await screen.findByText(
+      'New model tests are disabled. You can still view your history and cancel active tests.'
+    )
+  ).toBeVisible()
+  act(() => client.setQueryData(['model-tests', 'history'], history()))
+  await screen.findByRole('button', { name: 'Estimating…' })
+  await act(async () => resolve(undefined))
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: 'Review cost and start' })
+    ).toBeEnabled()
+  )
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  expect(post).toHaveBeenCalledTimes(1)
+})
+
+test('disabled unknown-outcome requests retain cancellation without offering a paid retry', async () => {
+  mockReads()
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url, body) => {
+    if (String(url).endsWith('/estimate')) {
+      return {
+        data: {
+          success: true,
+          data: {
+            ...(body as TestSelection),
+            estimated_quota: 100,
+            quota_per_unit: 500000,
+            estimate_is_cap: false,
+            timeout_seconds: 90,
+            benchmark_id: 'pelican-static-v1',
+            confirmation_token: 'quote',
+            expires_at: Math.floor(Date.now() / 1000) + 300,
+          },
+        },
+      }
+    }
+    if (String(url).endsWith('/cancel')) {
+      return { data: { success: true, data: run({ cancel_requested: true }) } }
+    }
+    throw new Error('Unknown upstream outcome')
+  })
+  const user = userEvent.setup()
+  const { client } = renderWithQuery(<IntelligenceDashboard />)
+  await user.click(
+    await screen.findByRole('button', { name: 'Review cost and start' })
+  )
+  await user.click(
+    await screen.findByRole('button', { name: 'Accept charges and run once' })
+  )
+  await screen.findByRole('button', { name: 'Retry the same request' })
+  const request = post.mock.calls[1][1] as TestRequest
+  act(() =>
+    client.setQueryData(['model-tests', 'history'], {
+      ...history(),
+      enabled: false,
+    })
+  )
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: 'Retry the same request' })
+    ).toBeDisabled()
+  )
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  expect(post.mock.calls[2][0]).toBe(
+    `/api/user/model-tests/runs/${request.request_id}/cancel`
+  )
+  expect(
+    post.mock.calls.filter(([url]) => String(url).endsWith('/runs'))
+  ).toHaveLength(1)
+})
+
+test('a fresh failed history request never enables cached paid controls on a new mount', async () => {
+  const get = vi.spyOn(api, 'get').mockRejectedValue(new Error('offline'))
+  const post = vi.spyOn(api, 'post')
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  client.setQueryData(['model-tests', 'history'], history([run()]))
+  client.setQueryData(['status'], { model_test_enabled: true })
+  render(
+    <QueryClientProvider client={client}>
+      <IntelligenceDashboard />
+    </QueryClientProvider>
+  )
+  expect(
+    await screen.findByText(
+      'Model test availability could not be verified. New tests are blocked; history and cancellation remain available.'
+    )
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('button', { name: 'Review cost and start' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('heading', { name: 'My latest 60 tests' })
+  ).toBeVisible()
+  expect(post).not.toHaveBeenCalled()
+  expect(
+    get.mock.calls.some(([url]) => String(url).endsWith('/bootstrap'))
+  ).toBe(false)
 })

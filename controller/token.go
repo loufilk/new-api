@@ -201,14 +201,25 @@ func GetToken(c *gin.Context) {
 }
 
 func GetTokenAutoGroups(c *gin.Context) {
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
+
 	userGroup, err := getTokenRequestUserGroup(c)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	groups := service.GetUserAutoGroup(userGroup)
+	maxCount := setting.GetMaxTokenAutoGroups()
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
 	common.ApiSuccess(c, gin.H{
-		"groups":    service.GetUserAutoGroup(userGroup),
-		"max_count": setting.GetMaxTokenAutoGroups(),
+		"groups":    groups,
+		"max_count": maxCount,
 	})
 }
 
@@ -287,6 +298,12 @@ func PreviewTokenModels(c *gin.Context) {
 		return
 	}
 
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
+
 	userID := c.GetInt("id")
 	user, err := model.GetUserCache(userID)
 	if err != nil {
@@ -320,6 +337,9 @@ func PreviewTokenModels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
 	common.ApiSuccess(c, models)
 }
 
@@ -341,6 +361,12 @@ func GetTokenRoutableModels(c *gin.Context) {
 }
 
 func respondWithTokenModels(c *gin.Context, allow func(*model.Channel, string) bool) {
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
+
 	c.Header("Cache-Control", "no-store")
 	tokenID, err := strconv.Atoi(c.Param("id"))
 	if err != nil || tokenID <= 0 {
@@ -373,6 +399,9 @@ func respondWithTokenModels(c *gin.Context, allow func(*model.Channel, string) b
 	})
 	if err != nil {
 		common.ApiError(c, err)
+		return
+	}
+	if !finishControllerGroupConfigRead(c, guard) {
 		return
 	}
 	common.ApiSuccess(c, models)
@@ -494,6 +523,11 @@ func AddToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	guard, ok := beginControllerGroupConfigRead(c)
+	if !ok {
+		return
+	}
+	defer guard.Close()
 	token := request.Token
 	if len(token.Name) > 50 {
 		common.ApiErrorT(c, "Token name is too long")
@@ -558,7 +592,14 @@ func AddToken(c *gin.Context) {
 		AutoGroups:         token.AutoGroups,
 	}
 	cleanToken.AllowUserQuotaQuery = request.AllowUserQuotaQuery == nil || *request.AllowUserQuotaQuery
-	err = cleanToken.Insert(c.GetInt64("auth_version"))
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
+	err = cleanToken.InsertAtGroupConfigVersion(c.GetInt64("auth_version"), guard.Version)
+	if errors.Is(err, model.ErrGroupConfigChanged) {
+		groupConfigReadFailure(c)
+		return
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -602,6 +643,11 @@ func UpdateToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	guard, ok := beginControllerGroupConfigRead(c)
+	if !ok {
+		return
+	}
+	defer guard.Close()
 	token := request.Token
 	params := tokenAuditParams(c)
 	if token.Id > 0 {
@@ -670,7 +716,14 @@ func UpdateToken(c *gin.Context) {
 			}
 		}
 	}
-	err = cleanToken.Update(c.GetInt64("auth_version"))
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
+	err = cleanToken.UpdateAtGroupConfigVersion(c.GetInt64("auth_version"), guard.Version)
+	if errors.Is(err, model.ErrGroupConfigChanged) {
+		groupConfigReadFailure(c)
+		return
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return

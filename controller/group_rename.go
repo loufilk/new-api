@@ -5,35 +5,52 @@ import (
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
 )
 
 type groupRenameRequest struct {
-	Renames  []model.GroupRenameMapping `json:"renames"`
-	Options  map[string]string          `json:"options"`
-	Expected map[string]string          `json:"expected"`
+	RequestID string                     `json:"request_id"`
+	Renames   []model.GroupRenameMapping `json:"renames"`
+	Options   map[string]string          `json:"options"`
+	Expected  map[string]string          `json:"expected"`
 }
 
 func RenameGroups(c *gin.Context) {
 	var request groupRenameRequest
-	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+	if err := common.DecodeJsonStrict(c.Request.Body, &request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"message": "invalid request body",
 		})
 		return
 	}
+	identity, ok := middleware.GetStepUpIdentity(c)
+	if !ok || identity.UserID != c.GetInt("id") {
+		common.ApiErrorStatus(c, http.StatusForbidden, model.ErrGroupRenamePermission)
+		return
+	}
 	result, err := model.ApplyGroupRename(model.GroupRenameApplyRequest{
-		Mappings: request.Renames,
-		Options:  request.Options,
-		Expected: request.Expected,
+		Identity:  &identity,
+		Mappings:  request.Renames,
+		RequestID: request.RequestID,
+		ActorID:   c.GetInt("id"),
+		ActorRole: c.GetInt("role"),
+		Options:   request.Options,
+		Expected:  request.Expected,
 	})
 	if err != nil {
 		status := http.StatusBadRequest
 		code := "GROUP_RENAME_REJECTED"
 		switch {
+		case errors.Is(err, model.ErrGroupRenamePermission):
+			status = http.StatusForbidden
+			code = "GROUP_RENAME_PERMISSION"
+		case errors.Is(err, model.ErrGroupRenameRequestConflict):
+			status = http.StatusConflict
+			code = "GROUP_RENAME_REQUEST_CONFLICT"
 		case errors.Is(err, model.ErrGroupRenameStale):
 			status = http.StatusConflict
 			code = "GROUP_RENAME_STALE"
@@ -48,8 +65,16 @@ func RenameGroups(c *gin.Context) {
 		return
 	}
 	recordManageAudit(c, "option.group_rename", map[string]any{
-		"renames": request.Renames,
-		"options": len(request.Options),
+		"renames":            result.Renames,
+		"request_id":         result.RequestID,
+		"replayed":           result.Replayed,
+		"options":            result.Options,
+		"tokens":             result.Tokens,
+		"users":              result.Users,
+		"channels":           result.Channels,
+		"abilities":          result.Abilities,
+		"subscription_plans": result.SubscriptionPlans,
+		"user_subscriptions": result.UserSubscriptions,
 	})
 	common.ApiSuccess(c, result)
 }

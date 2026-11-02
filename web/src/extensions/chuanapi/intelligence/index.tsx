@@ -39,7 +39,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
 
-import { getTestCatalogue, getTestHistory } from './api'
+import { getTestCatalogue } from './api'
 import { BudgetDialog } from './budget-dialog'
 import { TestHistoryList } from './history-list'
 import { ModelTestCard } from './model-card'
@@ -65,26 +65,10 @@ export function IntelligenceDashboard() {
   const [tokens, setTokens] = useState(2048)
   const [selected, setSelected] = useState<TestRun | null>(null)
   const test = useModelTest()
-  const history = useQuery({
-    queryKey: ['model-tests', 'history'],
-    queryFn: ({ signal }) => getTestHistory(signal),
-    retry: false,
-    refetchInterval: (query) => {
-      const saved = query.state.data?.items.find(
-        (run) => run.id === test.pending?.request_id
-      )
-      const unresolved =
-        !!test.pending && (!saved || saved.status === 'running')
-      return test.start.isPending ||
-        unresolved ||
-        query.state.data?.items.some((run) => run.status === 'running')
-        ? 3_000
-        : false
-    },
-    meta: { errorToast: false },
-  })
+  const history = test.history
   const catalogue = useQuery({
     queryKey: ['model-tests', 'catalogue'],
+    enabled: test.enabled,
     queryFn: ({ signal }) => getTestCatalogue(signal),
     retry: false,
     meta: { errorToast: false },
@@ -138,8 +122,21 @@ export function IntelligenceDashboard() {
       <Alert role='note'>
         <AlertDescription>{t('intelligence.scope')}</AlertDescription>
       </Alert>
-      {(history.isPending || catalogue.isPending) && <LoadingState />}
-      {(history.isError || catalogue.isError) && (
+      {!history.isPending && !test.enabled && (
+        <Alert role='status'>
+          <AlertDescription>
+            {t(
+              history.isError || data?.availability_error
+                ? 'Model test availability could not be verified. New tests are blocked; history and cancellation remain available.'
+                : 'New model tests are disabled. You can still view your history and cancel active tests.'
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+      {(history.isPending || (test.enabled && catalogue.isPending)) && (
+        <LoadingState />
+      )}
+      {(history.isError || (test.enabled && catalogue.isError)) && (
         <ErrorState
           onRetry={() => {
             void history.refetch()
@@ -149,96 +146,108 @@ export function IntelligenceDashboard() {
       )}
       {data && (
         <>
-          <section
-            className='flex flex-col gap-3'
-            aria-label={t('intelligence.siteResults')}
-          >
-            <h2 className='text-xl font-semibold'>
-              {t('intelligence.siteResults')}
-            </h2>
-            <EmptyState
-              className='min-h-32'
-              title={t('intelligence.siteUnpublished')}
-              description={t('intelligence.noScheduler')}
-            />
-          </section>
+          {test.enabled && (
+            <section
+              className='flex flex-col gap-3'
+              aria-label={t('intelligence.siteResults')}
+            >
+              <h2 className='text-xl font-semibold'>
+                {t('intelligence.siteResults')}
+              </h2>
+              <EmptyState
+                className='min-h-32'
+                title={t('intelligence.siteUnpublished')}
+                description={t('intelligence.noScheduler')}
+              />
+            </section>
+          )}
           <section
             className='flex flex-col gap-4'
             aria-label={t('intelligence.myTests')}
           >
-            <div className='flex flex-col gap-2'>
-              <h2 className='text-xl font-semibold'>
-                {t('intelligence.myTests')}
-              </h2>
-              <p className='text-muted-foreground text-sm'>
-                {t('intelligence.limits', {
-                  count: data.limits.runs_per_hour,
-                  concurrency: data.limits.concurrency_per_user,
-                })}
-              </p>
-            </div>
-            <Collapsible className='rounded-lg border p-3'>
-              <CollapsibleTrigger
-                render={
-                  <Button
-                    variant='outline'
-                    className='h-auto min-h-8 max-w-full py-2 text-start whitespace-normal'
-                  />
-                }
-              >
-                {t('intelligence.publicPrompt')} · {data.benchmark.id} ·{' '}
-                {data.benchmark.license}
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <pre className='mt-3 text-sm break-words whitespace-pre-wrap'>
-                  {data.benchmark.prompt}
-                </pre>
-              </CollapsibleContent>
-            </Collapsible>
-            <div className='grid gap-3 sm:grid-cols-3'>
-              <div className='flex min-w-0 flex-col gap-2'>
-                <Label htmlFor='test-group'>{t('pool.group')}</Label>
-                <NativeSelect
-                  id='test-group'
-                  className='w-full'
-                  value={activeGroup}
-                  onChange={(event) => setGroup(event.target.value)}
-                >
-                  {catalogue.data?.groups.map((item) => (
-                    <NativeSelectOption key={item.name} value={item.name}>
-                      {item.name} · {formatNumber(item.ratio, locale)}×
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </div>
-              <div className='flex flex-col gap-2'>
-                <Label htmlFor='test-model-search'>{t('monitor.search')}</Label>
-                <Input
-                  id='test-model-search'
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                />
-              </div>
-              <div className='flex flex-col gap-2'>
-                <Label htmlFor='test-tokens'>
-                  {t('intelligence.outputLimit')}
-                </Label>
-                <NativeSelect
-                  id='test-tokens'
-                  className='w-full'
-                  value={tokens}
-                  onChange={(event) => setTokens(Number(event.target.value))}
-                >
-                  {[2048, 4096]
-                    .filter((value) => value <= data.limits.max_output_tokens)
-                    .map((value) => (
-                      <NativeSelectOption key={value} value={value}>
-                        {formatNumber(value, locale)}
-                      </NativeSelectOption>
-                    ))}
-                </NativeSelect>
-              </div>
-            </div>
+            {test.enabled && (
+              <>
+                <div className='flex flex-col gap-2'>
+                  <h2 className='text-xl font-semibold'>
+                    {t('intelligence.myTests')}
+                  </h2>
+                  <p className='text-muted-foreground text-sm'>
+                    {t('intelligence.limits', {
+                      count: data.limits.runs_per_hour,
+                      concurrency: data.limits.concurrency_per_user,
+                    })}
+                  </p>
+                </div>
+                <Collapsible className='rounded-lg border p-3'>
+                  <CollapsibleTrigger
+                    render={
+                      <Button
+                        variant='outline'
+                        className='h-auto min-h-8 max-w-full py-2 text-start whitespace-normal'
+                      />
+                    }
+                  >
+                    {t('intelligence.publicPrompt')} · {data.benchmark.id} ·{' '}
+                    {data.benchmark.license}
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <pre className='mt-3 text-sm break-words whitespace-pre-wrap'>
+                      {data.benchmark.prompt}
+                    </pre>
+                  </CollapsibleContent>
+                </Collapsible>
+                <div className='grid gap-3 sm:grid-cols-3'>
+                  <div className='flex min-w-0 flex-col gap-2'>
+                    <Label htmlFor='test-group'>{t('pool.group')}</Label>
+                    <NativeSelect
+                      id='test-group'
+                      className='w-full'
+                      value={activeGroup}
+                      onChange={(event) => setGroup(event.target.value)}
+                    >
+                      {catalogue.data?.groups.map((item) => (
+                        <NativeSelectOption key={item.name} value={item.name}>
+                          {item.name} · {formatNumber(item.ratio, locale)}×
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                  </div>
+                  <div className='flex flex-col gap-2'>
+                    <Label htmlFor='test-model-search'>
+                      {t('monitor.search')}
+                    </Label>
+                    <Input
+                      id='test-model-search'
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                    />
+                  </div>
+                  <div className='flex flex-col gap-2'>
+                    <Label htmlFor='test-tokens'>
+                      {t('intelligence.outputLimit')}
+                    </Label>
+                    <NativeSelect
+                      id='test-tokens'
+                      className='w-full'
+                      value={tokens}
+                      onChange={(event) =>
+                        setTokens(Number(event.target.value))
+                      }
+                    >
+                      {[2048, 4096]
+                        .filter(
+                          (value) => value <= data.limits.max_output_tokens
+                        )
+                        .map((value) => (
+                          <NativeSelectOption key={value} value={value}>
+                            {formatNumber(value, locale)}
+                          </NativeSelectOption>
+                        ))}
+                    </NativeSelect>
+                  </div>
+                </div>
+              </>
+            )}
             {unresolvedPending && (
               <Alert>
                 <AlertDescription>
@@ -254,7 +263,7 @@ export function IntelligenceDashboard() {
                       <Button
                         variant='outline'
                         onClick={test.retry}
-                        disabled={test.start.isPending}
+                        disabled={!test.enabled || test.start.isPending}
                       >
                         {t('intelligence.retrySame')}
                       </Button>
@@ -274,43 +283,48 @@ export function IntelligenceDashboard() {
                 </AlertDescription>
               </Alert>
             )}
-            <h3 className='font-semibold break-all'>
-              {activeGroup} · {formatNumber(groupInfo?.ratio ?? 1, locale)}×
-            </h3>
-            {models.length ? (
-              <div className='grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3'>
-                {models.map((model) => (
-                  <ModelTestCard
-                    key={`${activeGroup}:${model}`}
-                    model={model}
-                    group={activeGroup}
-                    runs={data.items.filter(
-                      (run) => run.model === model && run.group === activeGroup
-                    )}
-                    disabled={
-                      running ||
-                      test.estimate.isPending ||
-                      unresolvedPending ||
-                      history.isError ||
-                      catalogue.isError
-                    }
-                    estimating={
-                      test.estimate.isPending &&
-                      test.estimate.variables?.model === model
-                    }
-                    onEstimate={() =>
-                      test.estimate.mutate({
-                        model,
-                        group: activeGroup,
-                        max_output_tokens: tokens,
-                      })
-                    }
-                    onSelect={setSelected}
-                  />
-                ))}
-              </div>
-            ) : (
-              <EmptyState title={t('intelligence.noModels')} />
+            {test.enabled && (
+              <>
+                <h3 className='font-semibold break-all'>
+                  {activeGroup} · {formatNumber(groupInfo?.ratio ?? 1, locale)}×
+                </h3>
+                {models.length ? (
+                  <div className='grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3'>
+                    {models.map((model) => (
+                      <ModelTestCard
+                        key={`${activeGroup}:${model}`}
+                        model={model}
+                        group={activeGroup}
+                        runs={data.items.filter(
+                          (run) =>
+                            run.model === model && run.group === activeGroup
+                        )}
+                        disabled={
+                          running ||
+                          test.estimate.isPending ||
+                          unresolvedPending ||
+                          history.isError ||
+                          catalogue.isError
+                        }
+                        estimating={
+                          test.estimate.isPending &&
+                          test.estimate.variables?.model === model
+                        }
+                        onEstimate={() =>
+                          test.estimate.mutate({
+                            model,
+                            group: activeGroup,
+                            max_output_tokens: tokens,
+                          })
+                        }
+                        onSelect={setSelected}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState title={t('intelligence.noModels')} />
+                )}
+              </>
             )}
           </section>
           <section className='flex flex-col gap-3'>

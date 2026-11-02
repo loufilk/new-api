@@ -114,7 +114,10 @@ func CreateSupportTicket(ticket *SupportTicket, message *SupportTicketMessage) e
 			return err
 		}
 		message.TicketID = ticket.ID
-		return tx.Create(message).Error
+		if err := tx.Create(message).Error; err != nil {
+			return err
+		}
+		return enqueueSupportEmail(tx, ticket, message, true)
 	})
 }
 
@@ -172,7 +175,10 @@ func AppendSupportTicketMessage(ticketID int64, userID int, adminView bool, cont
 		if err := tx.Model(&SupportTicket{}).Where("id = ?", updated.ID).Updates(updates).Error; err != nil {
 			return err
 		}
-		return tx.Where("id = ?", updated.ID).First(&updated).Error
+		if err := tx.Where("id = ?", updated.ID).First(&updated).Error; err != nil {
+			return err
+		}
+		return enqueueSupportEmail(tx, &updated, &message, false)
 	})
 	if err != nil {
 		return nil, err

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
@@ -102,21 +101,10 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	textOutTokens := usage.OutputTokenDetails.TextTokens
 	audioInputTokens := usage.InputTokenDetails.AudioTokens
 	audioOutTokens := usage.OutputTokenDetails.AudioTokens
-	groupRatio := ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
+	// Admission already froze this request's group ratio. A rename while the
+	// realtime stream is open must not fall back to the missing old key's 1x.
+	actualGroupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
 	modelRatio, _, _ := ratio_setting.GetModelRatio(billingModelName)
-
-	autoGroup, exists := common.GetContextKey(ctx, constant.ContextKeyAutoGroup)
-	if exists {
-		groupRatio = ratio_setting.GetGroupRatio(autoGroup.(string))
-		logger.LogDebug(ctx, "final group ratio: %f", groupRatio)
-		relayInfo.UsingGroup = autoGroup.(string)
-	}
-
-	actualGroupRatio := groupRatio
-	userGroupRatio, ok := ratio_setting.GetGroupGroupRatio(relayInfo.UserGroup, relayInfo.UsingGroup)
-	if ok {
-		actualGroupRatio = userGroupRatio
-	}
 
 	quotaInfo := QuotaInfo{
 		InputDetails: TokenDetails{

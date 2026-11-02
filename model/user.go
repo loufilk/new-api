@@ -77,46 +77,49 @@ func resolveUserSortOptions(sortOptions []UserSortOptions) UserSortOptions {
 // User if you add sensitive fields, don't forget to clean them in setupLogin function.
 // Otherwise, the sensitive information will be saved on local storage in plain text!
 type User struct {
-	Id                   int                        `json:"id"`
-	Username             string                     `json:"username" gorm:"unique;index" validate:"max=20"`
-	Password             string                     `json:"password" gorm:"not null;" validate:"min=8,max=128"`
-	HasPassword          bool                       `json:"-" gorm:"-:all"`
-	AccessTokenCreatedAt *int64                     `json:"-" gorm:"type:bigint;column:access_token_created_at"`
-	OriginalPassword     string                     `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
-	DisplayName          string                     `json:"display_name" gorm:"index" validate:"max=20"`
-	Role                 int                        `json:"role" gorm:"type:int;default:1"`   // admin, common
-	Status               int                        `json:"status" gorm:"type:int;default:1"` // enabled, disabled
-	Email                string                     `json:"email" gorm:"index" validate:"max=50"`
-	GitHubId             string                     `json:"github_id" gorm:"column:github_id;index"`
-	DiscordId            string                     `json:"discord_id" gorm:"column:discord_id;index"`
-	OidcId               string                     `json:"oidc_id" gorm:"column:oidc_id;index"`
-	GoogleId             string                     `json:"google_id" gorm:"column:google_id;type:varchar(255);index"`
-	WeChatId             string                     `json:"wechat_id" gorm:"column:wechat_id;index"`
-	TelegramId           string                     `json:"telegram_id" gorm:"column:telegram_id;index"`
-	VerificationCode     string                     `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
-	AccessToken          *string                    `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
-	Quota                int                        `json:"quota" gorm:"type:bigint;default:0"`
-	QuotaPaid            int                        `json:"quota_paid" gorm:"type:bigint;default:0;column:quota_paid"`     // 付费账户余额（quota units），quota 为三账户合计的兼容镜像
-	QuotaBonus           int                        `json:"quota_bonus" gorm:"type:bigint;default:0;column:quota_bonus"`   // 赠金账户余额（仅 bonus_eligible 模型可用）
-	QuotaReward          int                        `json:"quota_reward" gorm:"type:bigint;default:0;column:quota_reward"` // 邀请奖励余额（由 aff_quota 划转而来，全部模型可用）
-	UsedQuota            int                        `json:"used_quota" gorm:"type:bigint;default:0;column:used_quota"`     // used quota
-	RequestCount         int                        `json:"request_count" gorm:"type:int;default:0;"`                      // request number
-	Group                string                     `json:"group" gorm:"type:varchar(64);default:'default'"`
-	AffCode              string                     `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
-	AffCount             int                        `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
-	AffQuota             int                        `json:"aff_quota" gorm:"type:bigint;default:0;column:aff_quota"`           // 待使用邀请奖励（quota units）
-	AffHistoryQuota      int                        `json:"aff_history_quota" gorm:"type:bigint;default:0;column:aff_history"` // 邀请奖励累计值（不因划转减少）
-	InviterId            int                        `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
-	DeletedAt            gorm.DeletedAt             `gorm:"index"`
-	LinuxDOId            string                     `json:"linux_do_id" gorm:"column:linux_do_id;index"`
-	Setting              string                     `json:"setting" gorm:"type:text;column:setting"`
-	Remark               string                     `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
-	StripeCustomer       string                     `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
-	CreatedAt            int64                      `json:"created_at" gorm:"autoCreateTime;column:created_at"`
-	LastLoginAt          int64                      `json:"last_login_at" gorm:"default:0;column:last_login_at"`
-	CacheRevision        int64                      `json:"-" gorm:"type:bigint;not null;default:1"`
-	AuthVersion          int64                      `json:"-" gorm:"type:bigint;not null;default:1;column:auth_version"`
-	AdminPermissions     map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`
+	Id                       int                        `json:"id"`
+	Username                 string                     `json:"username" gorm:"unique;index" validate:"max=20"`
+	Password                 string                     `json:"password" gorm:"not null;" validate:"min=8,max=128"`
+	HasPassword              bool                       `json:"-" gorm:"-:all"`
+	AccessTokenCreatedAt     *int64                     `json:"-" gorm:"type:bigint;column:access_token_created_at"`
+	OriginalPassword         string                     `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
+	DisplayName              string                     `json:"display_name" gorm:"index" validate:"max=20"`
+	Role                     int                        `json:"role" gorm:"type:int;default:1"`   // admin, common
+	Status                   int                        `json:"status" gorm:"type:int;default:1"` // enabled, disabled
+	Email                    string                     `json:"email" gorm:"index" validate:"max=50"`
+	EmailVerifiedAddress     string                     `json:"-" gorm:"size:254"`
+	EmailVerificationVersion int64                      `json:"-"`
+	EmailVerifiedAt          int64                      `json:"-"`
+	GitHubId                 string                     `json:"github_id" gorm:"column:github_id;index"`
+	DiscordId                string                     `json:"discord_id" gorm:"column:discord_id;index"`
+	OidcId                   string                     `json:"oidc_id" gorm:"column:oidc_id;index"`
+	GoogleId                 string                     `json:"google_id" gorm:"column:google_id;type:varchar(255);index"`
+	WeChatId                 string                     `json:"wechat_id" gorm:"column:wechat_id;index"`
+	TelegramId               string                     `json:"telegram_id" gorm:"column:telegram_id;index"`
+	VerificationCode         string                     `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
+	AccessToken              *string                    `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
+	Quota                    int                        `json:"quota" gorm:"type:bigint;default:0"`
+	QuotaPaid                int                        `json:"quota_paid" gorm:"type:bigint;default:0;column:quota_paid"`     // 付费账户余额（quota units），quota 为三账户合计的兼容镜像
+	QuotaBonus               int                        `json:"quota_bonus" gorm:"type:bigint;default:0;column:quota_bonus"`   // 赠金账户余额（仅 bonus_eligible 模型可用）
+	QuotaReward              int                        `json:"quota_reward" gorm:"type:bigint;default:0;column:quota_reward"` // 邀请奖励余额（由 aff_quota 划转而来，全部模型可用）
+	UsedQuota                int                        `json:"used_quota" gorm:"type:bigint;default:0;column:used_quota"`     // used quota
+	RequestCount             int                        `json:"request_count" gorm:"type:int;default:0;"`                      // request number
+	Group                    string                     `json:"group" gorm:"type:varchar(64);default:'default'"`
+	AffCode                  string                     `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
+	AffCount                 int                        `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
+	AffQuota                 int                        `json:"aff_quota" gorm:"type:bigint;default:0;column:aff_quota"`           // 待使用邀请奖励（quota units）
+	AffHistoryQuota          int                        `json:"aff_history_quota" gorm:"type:bigint;default:0;column:aff_history"` // 邀请奖励累计值（不因划转减少）
+	InviterId                int                        `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
+	DeletedAt                gorm.DeletedAt             `gorm:"index"`
+	LinuxDOId                string                     `json:"linux_do_id" gorm:"column:linux_do_id;index"`
+	Setting                  string                     `json:"setting" gorm:"type:text;column:setting"`
+	Remark                   string                     `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
+	StripeCustomer           string                     `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
+	CreatedAt                int64                      `json:"created_at" gorm:"autoCreateTime;column:created_at"`
+	LastLoginAt              int64                      `json:"last_login_at" gorm:"default:0;column:last_login_at"`
+	CacheRevision            int64                      `json:"-" gorm:"type:bigint;not null;default:1"`
+	AuthVersion              int64                      `json:"-" gorm:"type:bigint;not null;default:1;column:auth_version"`
+	AdminPermissions         map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
@@ -861,8 +864,16 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 		}
 	}
 	current := User{}
-	if err = tx.First(&current, user.Id).Error; err != nil {
+	if err = lockForUpdate(tx).First(&current, user.Id).Error; err != nil {
 		return err
+	}
+	if newUser.Email != "" {
+		newUser.Email = NormalizeEmail(newUser.Email)
+		if newUser.Email != NormalizeEmail(current.Email) {
+			if err := invalidateVerifiedEmailWithTx(tx, user.Id); err != nil {
+				return err
+			}
+		}
 	}
 	// Updates(struct) ignores zero values. Match that behavior when deciding
 	// whether this request actually changes authentication-sensitive state;
@@ -878,7 +889,7 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 			return err
 		}
 	}
-	if err = tx.Model(&current).Omit("quota", "quota_paid", "quota_bonus", "quota_reward", "used_quota", "request_count", "access_token", "aff_count", "aff_quota", "aff_history", "inviter_id", "auth_version", "cache_revision").Updates(newUser).Error; err != nil {
+	if err = tx.Model(&current).Omit("quota", "quota_paid", "quota_bonus", "quota_reward", "used_quota", "request_count", "access_token", "aff_count", "aff_quota", "aff_history", "inviter_id", "auth_version", "cache_revision", "email_verified_address", "email_verification_version", "email_verified_at").Updates(newUser).Error; err != nil {
 		return err
 	}
 	return tx.First(user, user.Id).Error
@@ -975,6 +986,11 @@ func (user *User) ClearBinding(bindingType string) error {
 	if err := DB.Transaction(func(tx *gorm.DB) error {
 		if bindingType == ExternalIdentityProviderGoogle {
 			return UpdateGoogleBindingWithTx(tx, user.Id, "")
+		}
+		if bindingType == "email" {
+			if err := invalidateVerifiedEmailWithTx(tx, user.Id); err != nil {
+				return err
+			}
 		}
 		if err := tx.Model(&User{}).Where("id = ?", user.Id).Update(column, "").Error; err != nil {
 			return err

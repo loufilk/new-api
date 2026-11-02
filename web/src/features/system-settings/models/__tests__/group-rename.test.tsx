@@ -24,6 +24,7 @@ import {
   waitFor,
   within,
 } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { assert, expect, test, vi } from 'vitest'
@@ -366,6 +367,9 @@ test('saving in visual mode forwards explicit renames', async () => {
   })
   fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
 
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Rename and update API keys' })
+  )
   await waitFor(() => expect(calls).toHaveLength(1))
   expect(calls[0].renames).toEqual([{ from: 'vip', to: 'vip2' }])
   expect(JSON.parse(calls[0].values.GroupRatio)).toEqual({
@@ -391,6 +395,9 @@ test('a pending rename survives a mode round-trip and is still saved', async () 
   expect(screen.getByDisplayValue('vip2')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
 
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Rename and update API keys' })
+  )
   await waitFor(() => expect(calls).toHaveLength(1))
   expect(calls[0].renames).toEqual([{ from: 'vip', to: 'vip2' }])
   expect(JSON.parse(calls[0].values.GroupRatio)).toEqual({
@@ -511,6 +518,9 @@ test('pending renames do not crash the conflict preview while unrelated JSON is 
     target: { value: '["default"]' },
   })
   fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Rename and update API keys' })
+  )
   await waitFor(() => expect(calls).toHaveLength(1))
   expect(calls[0].renames).toEqual([{ from: 'vip', to: 'enterprise' }])
 })
@@ -559,3 +569,184 @@ test.each([
     expect(calls).toHaveLength(0)
   }
 )
+
+test('renaming asks for confirmation and cancelling preserves edits without saving', async () => {
+  const { calls, onSave } = createSaveSpy()
+  render(<GroupFormFixture onSave={onSave} />)
+  fireEvent.change(screen.getByDisplayValue('vip'), {
+    target: { value: 'vip2' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+
+  const dialog = await screen.findByRole('alertdialog', {
+    name: 'Rename groups and update API keys?',
+  })
+  expect(calls).toHaveLength(0)
+  expect(within(dialog).getByText('vip → vip2')).toBeInTheDocument()
+  expect(dialog).toHaveTextContent(
+    'API key strings, account and key status, balances and IP restrictions stay unchanged.'
+  )
+  expect(dialog).toHaveTextContent(
+    'Past usage logs and financial records keep their original group names.'
+  )
+  within(dialog).getByRole('button', { name: 'Cancel' }).focus()
+  await userEvent.setup().keyboard('{Enter}')
+  await waitFor(() =>
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  )
+  expect(calls).toHaveLength(0)
+  expect(screen.getByDisplayValue('vip2')).toBeInTheDocument()
+
+  fireEvent.change(screen.getByDisplayValue('vip2'), {
+    target: { value: 'gold' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+  const reopened = await screen.findByRole('alertdialog')
+  expect(within(reopened).getByText('vip → gold')).toBeInTheDocument()
+  expect(within(reopened).queryByText('vip → vip2')).not.toBeInTheDocument()
+  fireEvent.click(
+    within(reopened).getByRole('button', { name: 'Rename and update API keys' })
+  )
+  await waitFor(() => expect(calls).toHaveLength(1))
+  expect(calls[0].renames).toEqual([{ from: 'vip', to: 'gold' }])
+})
+
+test('confirmed renames reject repeated clicks and retain the mapping after a failed save', async () => {
+  let finishSave: (outcome: GroupRatioSaveOutcome) => void = () => {}
+  const pendingSave = new Promise<GroupRatioSaveOutcome>((resolve) => {
+    finishSave = resolve
+  })
+  const onSave = vi
+    .fn()
+    .mockReturnValueOnce(pendingSave)
+    .mockResolvedValue('saved')
+  render(<GroupFormFixture onSave={onSave} />)
+  fireEvent.change(screen.getByDisplayValue('vip'), {
+    target: { value: 'vip2' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+  const dialog = await screen.findByRole('alertdialog')
+  const confirm = within(dialog).getByRole('button', {
+    name: 'Rename and update API keys',
+  })
+  fireEvent.click(confirm)
+  fireEvent.click(confirm)
+  expect(onSave).toHaveBeenCalledTimes(1)
+  expect(confirm).toBeDisabled()
+  expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled()
+
+  await act(async () => finishSave('failed'))
+  expect(confirm).toBeEnabled()
+  expect(within(dialog).getByText('vip → vip2')).toBeInTheDocument()
+  fireEvent.click(confirm)
+  await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2))
+  expect(onSave.mock.calls[1][1]).toEqual([{ from: 'vip', to: 'vip2' }])
+  await waitFor(() =>
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  )
+})
+
+test('a new settings baseline invalidates an open rename confirmation', async () => {
+  const { calls, onSave } = createSaveSpy()
+  const fixture = render(<GroupFormFixture onSave={onSave} />)
+  fireEvent.change(screen.getByDisplayValue('vip'), {
+    target: { value: 'vip2' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+  await screen.findByRole('alertdialog')
+
+  fixture.rerender(
+    <GroupFormFixture
+      onSave={onSave}
+      baseline={{ ...GROUP_FORM_VALUES, GroupRatio: '{"default":1,"vip":2}' }}
+    />
+  )
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Rename and update API keys' })
+  )
+
+  await waitFor(() =>
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  )
+  expect(calls).toHaveLength(0)
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    'The group settings changed on the server. Reload the page and apply your edits again.'
+  )
+})
+
+test('an explicitly resolved JSON rename also requires confirmation before updating keys', async () => {
+  const { calls, onSave } = createSaveSpy()
+  render(<GroupFormFixture onSave={onSave} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Switch to JSON' }))
+  fireEvent.input(screen.getByLabelText('Group ratios'), {
+    target: { value: '{"default":1,"gold":1}' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Resolve group changes' }))
+  fireEvent.click(await screen.findByRole('option', { name: 'gold' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+
+  const dialog = await screen.findByRole('alertdialog')
+  expect(within(dialog).getByText('vip → gold')).toBeInTheDocument()
+  expect(calls).toHaveLength(0)
+  fireEvent.click(
+    within(dialog).getByRole('button', { name: 'Rename and update API keys' })
+  )
+  await waitFor(() => expect(calls).toHaveLength(1))
+  expect(calls[0].renames).toEqual([{ from: 'vip', to: 'gold' }])
+})
+
+test('confirmation keeps the reviewed save revision instead of rebasing after a background refresh', async () => {
+  const reviewedSave = vi.fn().mockResolvedValue('saved')
+  const refreshedSave = vi.fn().mockResolvedValue('saved')
+  const fixture = render(<GroupFormFixture onSave={reviewedSave} />)
+  fireEvent.change(screen.getByDisplayValue('vip'), {
+    target: { value: 'vip2' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+  await screen.findByRole('alertdialog')
+  fixture.rerender(<GroupFormFixture onSave={refreshedSave} />)
+
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Rename and update API keys' })
+  )
+
+  await waitFor(() => expect(reviewedSave).toHaveBeenCalledTimes(1))
+  expect(refreshedSave).not.toHaveBeenCalled()
+  expect(reviewedSave.mock.calls[0][1]).toEqual([{ from: 'vip', to: 'vip2' }])
+})
+
+test('confirmation lists every mapping and wraps long group names within a bounded scrolling list', async () => {
+  const firstGroup = 'a'.repeat(64)
+  const secondGroup = 'b'.repeat(64)
+  const { calls, onSave } = createSaveSpy()
+  render(
+    <GroupFormFixture
+      onSave={onSave}
+      values={{
+        ...GROUP_FORM_VALUES,
+        GroupRatio: JSON.stringify({ [firstGroup]: 1, [secondGroup]: 2 }),
+        UserUsableGroups: '{}',
+        AutoGroups: '[]',
+      }}
+    />
+  )
+  fireEvent.change(screen.getByDisplayValue(firstGroup), {
+    target: { value: 'premium' },
+  })
+  fireEvent.change(screen.getByDisplayValue(secondGroup), {
+    target: { value: 'enterprise' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+
+  const dialog = await screen.findByRole('alertdialog')
+  const list = within(dialog).getByRole('list')
+  expect(list).toHaveClass('max-h-48', 'overflow-y-auto')
+  expect(within(list).getAllByRole('listitem')).toHaveLength(2)
+  expect(within(list).getByText(`${firstGroup} → premium`)).toHaveClass(
+    'break-words'
+  )
+  expect(within(list).getByText(`${secondGroup} → enterprise`)).toHaveClass(
+    'break-words'
+  )
+  expect(calls).toHaveLength(0)
+})

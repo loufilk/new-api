@@ -1,6 +1,7 @@
 package service
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -16,14 +18,23 @@ func useSupportTicketTestDB(t *testing.T) {
 	t.Helper()
 	previousDB := model.DB
 	previousType := common.MainDatabaseType()
-	db, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "_")+"?mode=memory&cache=shared"), &gorm.Config{})
+	var driver gorm.Dialector = sqlite.Open("file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared")
+	databaseType := common.DatabaseTypeSQLite
+	if dsn := os.Getenv("TEST_SERVICE_POSTGRES_DSN"); dsn != "" {
+		driver = postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
+		databaseType = common.DatabaseTypePostgreSQL
+	}
+	db, err := gorm.Open(driver, &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&model.SupportTicket{}, &model.SupportTicketMessage{}))
+	require.NoError(t, db.AutoMigrate(&model.SupportTicket{}, &model.SupportTicketMessage{}, &model.SupportEmailSettings{}, &model.SupportEmailOutbox{}, &model.SupportEmailPreference{}, &model.SupportEmailRate{}))
 	model.DB = db
-	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	common.SetMainDatabaseType(databaseType)
+	for _, table := range []string{"support_tickets", "support_ticket_messages", "support_email_settings", "support_email_outboxes", "support_email_preferences", "support_email_rates"} {
+		require.NoError(t, db.Exec("DELETE FROM "+table).Error)
+	}
 	t.Cleanup(func() {
 		model.DB = previousDB
 		common.SetMainDatabaseType(previousType)

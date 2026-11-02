@@ -94,7 +94,7 @@ func TestGroupPermissionEditsDoNotDeleteDefinitions(t *testing.T) {
 			// A permission-only edit must not scan unrelated legacy snapshots as
 			// though the group were being renamed or deleted.
 			require.NoError(t, db.Create(&model.Token{UserId: user.Id, Key: "synthetic-malformed", Group: "a", AutoGroups: "["}).Error)
-			ctx, rec := newAuthenticatedContext(t, http.MethodPost, "/api/option/group-rename", map[string]any{"options": map[string]string{tc.key: tc.after}, "expected": map[string]string{tc.key: tc.before}}, 1)
+			ctx, rec := newGroupRenameContext(t, http.MethodPost, "/api/option/group-rename", map[string]any{"options": map[string]string{tc.key: tc.after}, "expected": map[string]string{tc.key: tc.before}}, 1)
 			RenameGroups(ctx)
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 			var response groupRenameAPIResponse
@@ -118,7 +118,7 @@ func TestGroupPermissionConflictRejectsAtomicWrite(t *testing.T) {
 			require.NoError(t, db.Create(&model.Option{Key: key, Value: `{"default":{}}`}).Error)
 			require.NoError(t, db.Create(&model.Option{Key: "MaxTokenAutoGroups", Value: "5"}).Error)
 			conflicting := fmt.Sprintf(`{"default":{%q:"Visible","-:a":"Hidden"}}`, visible)
-			ctx, rec := newAuthenticatedContext(t, http.MethodPost, "/api/option/group-rename", map[string]any{"options": map[string]string{key: conflicting, "MaxTokenAutoGroups": "6"}}, 1)
+			ctx, rec := newGroupRenameContext(t, http.MethodPost, "/api/option/group-rename", map[string]any{"options": map[string]string{key: conflicting, "MaxTokenAutoGroups": "6"}}, 1)
 			RenameGroups(ctx)
 			require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 			var message struct {

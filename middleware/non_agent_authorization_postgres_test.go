@@ -31,7 +31,7 @@ func TestLegacyConsumerRoleAuthorizationPostgres(t *testing.T) {
 	var version string
 	require.NoError(t, db.Raw("SHOW server_version_num").Scan(&version).Error)
 	require.Equal(t, "180006", version)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.UserAccessToken{}, &model.Token{}, &model.AuditLog{}, &model.Option{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.UserAccessToken{}, &model.Token{}, &model.AuditLog{}, &model.Option{}, &model.SubscriptionPlan{}, &model.Channel{}, &model.Ability{}))
 	oldDB, oldLog, oldRedis, oldSecret := model.DB, model.LOG_DB, common.RedisEnabled, common.SessionSecret
 	oldMain, oldLogType := common.MainDatabaseType(), common.LogDatabaseType()
 	model.DB, model.LOG_DB, common.RedisEnabled, common.SessionSecret = db, db, false, "synthetic-agent-session-test"
