@@ -209,18 +209,34 @@ func visibleModelNames(c *gin.Context) (names []string, resultErr error) {
 			tokenModelLimit = map[string]bool{}
 		}
 	}
-	models := service.GetGroupsEnabledModels(ownerGroups)
-	for _, modelName := range models {
-		if modelLimitEnable {
-			matchingName := ratio_setting.RoutingMatchModelName(modelName)
-			if !tokenModelLimit[modelName] && !tokenModelLimit[matchingName] {
+	// Share the live-channel capability predicate used by token model previews.
+	// This is a model inventory, not a promise that every protocol can use it.
+	abilities, err := model.GetEnabledAbilitiesWithChannelsForGroups(ownerGroups)
+	if err != nil {
+		return nil, err
+	}
+	modelsByGroup := make(map[string][]string)
+	for _, ability := range abilities {
+		modelsByGroup[ability.Group] = append(modelsByGroup[ability.Group], ability.Model)
+	}
+	seen := make(map[string]bool)
+	for _, group := range ownerGroups {
+		for _, modelName := range modelsByGroup[group] {
+			if seen[modelName] {
 				continue
 			}
+			seen[modelName] = true
+			if modelLimitEnable {
+				matchingName := ratio_setting.RoutingMatchModelName(modelName)
+				if !tokenModelLimit[modelName] && !tokenModelLimit[matchingName] {
+					continue
+				}
+			}
+			if !acceptUnsetRatioModel && !helper.HasModelBillingConfig(modelName) {
+				continue
+			}
+			userModelNames = append(userModelNames, modelName)
 		}
-		if !acceptUnsetRatioModel && !helper.HasModelBillingConfig(modelName) {
-			continue
-		}
-		userModelNames = append(userModelNames, modelName)
 	}
 
 	return userModelNames, nil

@@ -70,6 +70,28 @@ func ValidateTokenGroup(userGroup, tokenGroup string) error {
 	return nil
 }
 
+// ValidateTokenRoutingScope distinguishes an explicit manual group list from
+// permission to inherit the virtual Auto group. Runtime revocation filters the
+// explicit list and never falls back to global Auto when it becomes empty.
+func ValidateTokenRoutingScope(userGroup string, token *model.Token) error {
+	if token == nil {
+		return fmt.Errorf("token is nil")
+	}
+	if token.Group == "auto" {
+		groups, err := token.GetAutoGroups()
+		if err != nil {
+			return err
+		}
+		if len(groups) > 0 {
+			if len(FilterUserTokenAutoGroups(userGroup, groups)) > 0 {
+				return nil
+			}
+			return ErrTokenGroupForbidden
+		}
+	}
+	return ValidateTokenGroup(userGroup, token.Group)
+}
+
 func IsUserSelectableGroup(userGroup, groupName string) bool {
 	if groupName == "" || groupName == "auto" {
 		return false
@@ -141,8 +163,11 @@ func GetTokenEffectiveGroups(userGroup string, token *model.Token) ([]string, er
 		return GetUserSelectableGroups(userGroup), nil
 	}
 	tokenGroup := token.Group
-	if err := ValidateTokenGroup(userGroup, tokenGroup); err != nil {
-		return []string{}, nil
+	if err := ValidateTokenRoutingScope(userGroup, token); err != nil {
+		if errors.Is(err, ErrTokenGroupForbidden) || errors.Is(err, ErrTokenGroupDeprecated) {
+			return []string{}, nil
+		}
+		return nil, err
 	}
 	switch tokenGroup {
 	case "":

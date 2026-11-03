@@ -129,7 +129,8 @@ func getTokenRequestUserGroup(c *gin.Context) (string, error) {
 	return model.GetUserGroup(c.GetInt("id"), false)
 }
 
-func validateTokenRequestGroup(c *gin.Context, tokenGroup string) bool {
+func validateTokenRequestRoutingScope(c *gin.Context, token *model.Token) bool {
+	tokenGroup := token.Group
 	if tokenGroup == "" {
 		return true
 	}
@@ -138,7 +139,7 @@ func validateTokenRequestGroup(c *gin.Context, tokenGroup string) bool {
 		common.ApiError(c, err)
 		return false
 	}
-	if err := service.ValidateTokenGroup(userGroup, tokenGroup); err != nil {
+	if err := service.ValidateTokenRoutingScope(userGroup, token); err != nil {
 		message := i18n.MsgAuthTokenGroupForbidden
 		if errors.Is(err, service.ErrTokenGroupDeprecated) {
 			message = i18n.MsgAuthTokenGroupDeprecated
@@ -394,10 +395,6 @@ func PreviewTokenModels(c *gin.Context) {
 	}
 
 	token := &model.Token{Group: request.Group, SmartRouting: request.SmartRouting}
-	if err := service.ValidateTokenGroup(user.Group, token.Group); err != nil && !token.SmartRouting {
-		common.ApiSuccess(c, []string{})
-		return
-	}
 	var groups []string
 	if !token.SmartRouting && token.Group == "auto" && request.AutoGroupsMode == "custom" {
 		groups = service.FilterUserTokenAutoGroups(user.Group, request.AutoGroups)
@@ -644,9 +641,6 @@ func AddToken(c *gin.Context) {
 		common.ApiErrorT(c, "Maximum number of tokens reached ({{max}})", map[string]any{"max": maxTokens})
 		return
 	}
-	if !(token.SmartRouting && token.Group == "auto") && !validateTokenRequestGroup(c, token.Group) {
-		return
-	}
 	if token.Group == "auto" || token.SmartRouting {
 		if !setTokenAutoGroups(c, &token, request.AutoGroups.Groups) {
 			return
@@ -654,6 +648,9 @@ func AddToken(c *gin.Context) {
 	} else {
 		token.CrossGroupRetry = false
 		_ = token.SetAutoGroups(nil)
+	}
+	if !(token.SmartRouting && token.Group == "auto") && !validateTokenRequestRoutingScope(c, &token) {
+		return
 	}
 	key, err := common.GenerateKey()
 	if err != nil {
@@ -776,7 +773,7 @@ func UpdateToken(c *gin.Context) {
 		}
 	}
 	if statusOnly != "" {
-		if token.Status == common.TokenStatusEnabled && !cleanToken.SmartRouting && !validateTokenRequestGroup(c, cleanToken.Group) {
+		if token.Status == common.TokenStatusEnabled && !cleanToken.SmartRouting && !validateTokenRequestRoutingScope(c, cleanToken) {
 			return
 		}
 		cleanToken.Status = token.Status
@@ -790,9 +787,6 @@ func UpdateToken(c *gin.Context) {
 		// an internal dispatch mode for smart routing, never a new group grant.
 		validateManualGroup := !cleanToken.SmartRouting ||
 			(cleanToken.Group != "auto" && cleanToken.Group != previous.Group)
-		if validateManualGroup && !validateTokenRequestGroup(c, cleanToken.Group) {
-			return
-		}
 		// If you add more fields, please also update token.Update()
 		cleanToken.Name = token.Name
 		cleanToken.ExpiredTime = token.ExpiredTime
@@ -813,6 +807,18 @@ func UpdateToken(c *gin.Context) {
 			if !retainedDraft && !setTokenAutoGroups(c, cleanToken, request.AutoGroups.Groups) {
 				return
 			}
+		} else if !cleanToken.SmartRouting && cleanToken.Group == "auto" {
+			groups, err := cleanToken.GetAutoGroups()
+			if err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			if !setTokenAutoGroups(c, cleanToken, groups) {
+				return
+			}
+		}
+		if validateManualGroup && !validateTokenRequestRoutingScope(c, cleanToken) {
+			return
 		}
 	}
 	if !finishControllerGroupConfigRead(c, guard) {

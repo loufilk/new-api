@@ -41,6 +41,7 @@ import {
   type ApiKeyGroupOption,
 } from './api-key-group-combobox'
 import { ApiKeyGroupPresets } from './api-key-group-presets'
+import { AutoGroupOrderEditor } from './auto-group-order-editor'
 
 export function ApiKeyRoutingFields(props: {
   options: ApiKeyGroupOption[]
@@ -65,17 +66,19 @@ export function ApiKeyRoutingFields(props: {
   } else if (userGroup) {
     selectedGroups = [userGroup]
   }
-  const maxCount = props.allowAuto ? props.maxCount : 1
+  // Explicit manual selections use concrete group permissions, not the
+  // separate permission to inherit the global virtual Auto group.
+  const maxCount = props.maxCount
 
   const setGroups = (groups: string[]) => {
     if (smart || props.disabled) return
     const next = [...groups]
     if (next.length === 1) {
       form.setValue('group', next[0], { shouldDirty: true })
-    } else if (props.allowAuto) {
-      form.setValue('group', 'auto', { shouldDirty: true })
     } else {
-      form.setValue('group', '', { shouldDirty: true })
+      // An empty custom list stays invalid until explicitly filled or reset.
+      // Never silently replace it with the account/global default.
+      form.setValue('group', 'auto', { shouldDirty: true })
     }
     form.setValue('auto_groups_mode', 'custom', { shouldDirty: true })
     form.setValue('auto_groups', next, {
@@ -217,6 +220,11 @@ export function ApiKeyRoutingFields(props: {
               'Smart routing is off — requests are routed by the groups you select below.'
             )}
       </p>
+      <p className='text-muted-foreground text-xs leading-relaxed'>
+        {t(
+          'Routing selects a group and channel for the model in your API request. It does not replace the requested model.'
+        )}
+      </p>
       <fieldset
         disabled={smart || props.disabled}
         aria-label={t('Manual routing groups')}
@@ -251,9 +259,22 @@ export function ApiKeyRoutingFields(props: {
               </FormControl>
               <FormDescription className='text-xs'>
                 {t(
-                  'Only groups you can access are shown. Selection order determines manual routing order.'
+                  'Select multiple authorized groups. Drag or use the arrow buttons to set the order from top to bottom.'
                 )}
               </FormDescription>
+              {selectedGroups.length > 0 && (
+                <AutoGroupOrderEditor
+                  selectionOnly
+                  aria-label={t('Manual routing groups')}
+                  value={selectedGroups}
+                  mode='custom'
+                  options={props.options}
+                  globalOptions={[]}
+                  maxCount={maxCount}
+                  onChange={({ groups }) => setGroups(groups)}
+                  className='min-w-0'
+                />
+              )}
               <FormMessage />
             </FormItem>
           )}

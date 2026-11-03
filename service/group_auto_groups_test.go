@@ -92,3 +92,29 @@ func TestSmartTokenScopeUsesLiveAuthorizedGroupsNotVirtualAuto(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, groups, "turning smart routing off must restore named-group permission checks")
 }
+
+func TestManualTokenEffectiveGroupsWithoutVirtualAutoPreservesOrderAndFailsClosed(t *testing.T) {
+	configureRequestAutoGroupsTest(t)
+	token := &model.Token{Group: "auto", AutoGroups: `["svip","vip"]`}
+	groups, err := GetTokenEffectiveGroups("default", token)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"svip", "vip"}, groups)
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","vip":"VIP"}`))
+	groups, err = GetTokenEffectiveGroups("default", token)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"vip"}, groups)
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default"}`))
+	groups, err = GetTokenEffectiveGroups("default", token)
+	require.NoError(t, err)
+	assert.Empty(t, groups)
+	for _, snapshot := range []string{"", `[]`, `null`} {
+		token.AutoGroups = snapshot
+		groups, err = GetTokenEffectiveGroups("default", token)
+		require.NoError(t, err)
+		assert.Empty(t, groups, "empty inherited Auto still requires its separate permission")
+	}
+	token.AutoGroups = `invalid-json`
+	groups, err = GetTokenEffectiveGroups("default", token)
+	require.Error(t, err)
+	assert.Empty(t, groups)
+}

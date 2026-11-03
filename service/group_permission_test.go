@@ -56,11 +56,14 @@ func TestTokenEffectiveGroupScopeLegacySnapshots(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, groups)
 	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","vip":"VIP"}`))
-	for _, raw := range []string{"", `["vip"]`} {
+	for _, raw := range []string{"", "[]", "null", `["revoked"]`} {
 		groups, err = GetTokenEffectiveGroups("default", &model.Token{Group: "auto", AutoGroups: raw})
 		require.NoError(t, err)
-		assert.Empty(t, groups)
+		assert.Empty(t, groups, "inherited Auto and revoked selections remain forbidden")
 	}
+	groups, err = GetTokenEffectiveGroups("default", &model.Token{Group: "auto", AutoGroups: `["vip"]`})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"vip"}, groups, "explicit authorized selections do not require the virtual Auto grant")
 }
 
 func TestTokenGroupPolicySpecialRules(t *testing.T) {

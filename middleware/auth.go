@@ -692,7 +692,7 @@ func TokenAuth() func(c *gin.Context) {
 			// Only the virtual Auto gate is bypassed. Candidate selection still
 			// intersects every request with the user's live concrete permissions.
 			tokenGroup = "auto"
-		} else if err := service.ValidateTokenGroup(userGroup, tokenGroup); err != nil {
+		} else if err := service.ValidateTokenRoutingScope(userGroup, token); err != nil {
 			message := i18n.MsgAuthTokenGroupForbidden
 			if errors.Is(err, service.ErrTokenGroupDeprecated) {
 				message = i18n.MsgAuthTokenGroupDeprecated

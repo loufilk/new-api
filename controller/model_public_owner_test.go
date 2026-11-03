@@ -21,6 +21,8 @@ func TestPublicModelsShareOwnerAndVisibility(t *testing.T) {
 	t.Cleanup(func() { setting.LoadPublicModelOwnedBy(owner) })
 	withSelfUseModeEnabled(t)
 	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.Channel{Id: 1, Type: constant.ChannelTypeOpenAI, Key: "synthetic-public-owner", Status: common.ChannelStatusEnabled}).Error)
+	require.NoError(t, db.Create(&model.Channel{Id: 2, Type: constant.ChannelTypeOpenAI, Key: "synthetic-private-owner", Status: common.ChannelStatusEnabled, Group: "private"}).Error)
 	require.NoError(t, db.Create(&[]model.Ability{
 		{Group: "default", Model: "gpt-4o", ChannelId: 1, Enabled: true},
 		{Group: "default", Model: "custom-public-model", ChannelId: 1, Enabled: true},
@@ -83,6 +85,7 @@ func TestPublicModelDetailPreservesNativeSchemasAndBillingVisibility(t *testing.
 	withSelfUseModeDisabled(t)
 	withTieredBillingConfig(t, map[string]string{"priced-public-model": "tiered_expr"}, map[string]string{"priced-public-model": `tier("request", fixed(0.01))`})
 	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.Channel{Id: 1, Type: constant.ChannelTypeOpenAI, Key: "synthetic-public-owner", Status: common.ChannelStatusEnabled}).Error)
 	require.NoError(t, db.Create(&[]model.Ability{
 		{Group: "default", Model: "priced-public-model", ChannelId: 1, Enabled: true},
 		{Group: "default", Model: "unpriced-public-model", ChannelId: 1, Enabled: true},

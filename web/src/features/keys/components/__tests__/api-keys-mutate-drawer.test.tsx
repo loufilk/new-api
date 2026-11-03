@@ -56,7 +56,10 @@ const originalGet = apiClient.get
 const originalPost = apiClient.post
 let renderedDrawer: RenderedDrawer | null = null
 
-function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
+function installApiFixtures(
+  createdPayloads: Array<Record<string, unknown>>,
+  allowGlobalAuto = true
+) {
   apiClient.get = async (url) => {
     switch (url) {
       case '/api/status':
@@ -68,7 +71,9 @@ function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
           data: {
             success: true,
             data: {
-              auto: { desc: 'Automatic routing', ratio: 'auto' },
+              ...(allowGlobalAuto
+                ? { auto: { desc: 'Automatic routing', ratio: 'auto' } }
+                : {}),
               default: { desc: 'Standard access', ratio: 1 },
               vip: { desc: 'Priority access', ratio: 2 },
             },
@@ -232,6 +237,33 @@ describe('API keys mutate drawer Auto group integration', () => {
       expect(payload.auto_groups).toEqual([])
       expect(payload.cross_group_retry).toBe(true)
     }
+  })
+
+  test('submits ordered manual groups without virtual Auto access through the real drawer form', async () => {
+    const createdPayloads: Array<Record<string, unknown>> = []
+    installApiFixtures(createdPayloads, false)
+    await renderCreateDrawer()
+    expect(
+      screen.queryByRole('button', { name: 'Restore global Auto' })
+    ).not.toBeInTheDocument()
+    fireEvent.click(getControlByLabel('Group'))
+    fireEvent.click(screen.getByRole('option', { name: /^vip/ }))
+    fireEvent.click(screen.getByRole('option', { name: /^default/ }))
+    fireEvent.keyDown(screen.getByPlaceholderText('Search group name'), {
+      key: 'Escape',
+    })
+    expect(getControlByLabel('Group')).toHaveTextContent('vip → default')
+    fireEvent.click(screen.getByRole('button', { name: 'Move default up' }))
+    expect(getControlByLabel('Group')).toHaveTextContent('default → vip')
+    changeInput(getControlByLabel('Token Name'), 'manual-without-global-auto')
+    fireEvent.click(findButton('Add', true))
+    await waitFor(() => expect(createdPayloads).toHaveLength(1))
+    expect(createdPayloads[0]).toMatchObject({
+      group: 'auto',
+      auto_groups: ['default', 'vip'],
+      smart_routing: false,
+      cross_group_retry: true,
+    })
   })
 
   test('preserves an unsaved manual order when smart routing is toggled on and off', async () => {

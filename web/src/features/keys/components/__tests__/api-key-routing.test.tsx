@@ -193,21 +193,52 @@ describe('API key routing controls', () => {
     })
   })
 
-  it('replaces a single selected group without requiring Auto permission', async () => {
+  it('selects and reorders multiple authorized groups without virtual Auto permission', async () => {
     const user = userEvent.setup()
     render(<RoutingForm allowAuto={false} defaults={{ group: 'default' }} />)
     await user.click(screen.getByRole('combobox', { name: 'Group' }))
     await user.click(screen.getByRole('option', { name: /^vip/ }))
     await user.keyboard('{Escape}')
     expect(screen.getByRole('combobox', { name: 'Group' })).toHaveTextContent(
-      'vip'
+      'default → vip'
     )
     expect(
       screen.queryByRole('button', { name: 'Restore global Auto' })
     ).not.toBeInTheDocument()
+    const move = screen.getByRole('button', { name: 'Move vip up' })
+    move.focus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('combobox', { name: 'Group' })).toHaveTextContent(
+      'vip → default'
+    )
+    await user.click(screen.getByRole('switch', { name: 'Smart Routing' }))
+    expect(screen.getByRole('button', { name: 'Move vip down' })).toBeDisabled()
+    await user.click(screen.getByRole('switch', { name: 'Smart Routing' }))
     await user.click(screen.getByRole('button', { name: 'Submit key' }))
     await waitFor(() => expect(submitted).toHaveBeenCalled())
-    expect(submitted.mock.calls[0][0]).toMatchObject({ group: 'vip' })
+    expect(submitted.mock.calls[0][0]).toMatchObject({
+      group: 'auto',
+      auto_groups_mode: 'custom',
+      auto_groups: ['vip', 'default'],
+      smart_routing: false,
+      cross_group_retry: true,
+    })
+  })
+
+  it('keeps an emptied manual selection explicit instead of silently inheriting another group', async () => {
+    const user = userEvent.setup()
+    render(<RoutingForm allowAuto={false} defaults={{ group: 'default' }} />)
+    await user.click(screen.getByRole('button', { name: 'Remove default' }))
+    expect(screen.getByRole('combobox', { name: 'Group' })).toHaveTextContent(
+      'Select groups in routing order'
+    )
+    await user.click(screen.getByRole('button', { name: 'Submit key' }))
+    await waitFor(() => expect(submitted).toHaveBeenCalled())
+    expect(submitted.mock.calls[0][0]).toMatchObject({
+      group: 'auto',
+      auto_groups_mode: 'custom',
+      auto_groups: [],
+    })
   })
 
   it('saves only group names in the current account preset and hides them after an account switch', async () => {
