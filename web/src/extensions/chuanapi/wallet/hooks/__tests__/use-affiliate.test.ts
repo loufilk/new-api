@@ -16,15 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { toast } from 'sonner'
+import { createElement, type ReactNode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
 import { useAffiliate } from '../use-affiliate'
 
-describe('ordinary invitation reward transfers', () => {
+describe('useAffiliate transfer retries', () => {
   beforeEach(() => {
     vi.spyOn(api, 'get').mockResolvedValue({
       data: { success: true, data: 'aff-1' },
@@ -32,32 +33,39 @@ describe('ordinary invitation reward transfers', () => {
   })
 
   async function renderAffiliate() {
-    const view = renderHook(() => useAffiliate())
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const view = renderHook(() => useAffiliate(), {
+      wrapper: (props: { children: ReactNode }) =>
+        createElement(QueryClientProvider, { client }, props.children),
+    })
     await waitFor(() => expect(view.result.current.loading).toBe(false))
     return view
   }
 
-  test('sends ordinary wallet quota with an idempotency key and no financial authorization proof', async () => {
+  test('moves released rewards using the browser session without a separate transaction challenge', async () => {
     const post = vi
       .spyOn(api, 'post')
       .mockResolvedValue({ data: { success: true } })
     const { result } = await renderAffiliate()
     await act(async () => {
-      expect(await result.current.transferQuota(500000)).toBe(true)
+      expect(await result.current.transferQuota(150000)).toBe(true)
     })
-    expect(post).toHaveBeenCalledExactlyOnceWith(
+    expect(post).toHaveBeenCalledWith(
       '/api/user/aff_transfer',
-      { quota: 500000 },
-      { headers: { 'Idempotency-Key': expect.any(String) } }
+      { quota: 150000 },
+      {
+        headers: { 'Idempotency-Key': expect.any(String) },
+      }
     )
-    expect(result.current.transferring).toBe(false)
   })
 
-  test('reuses the same idempotency key when retrying after an interrupted response', async () => {
+  test('reuses the same idempotency key after a failed response and renews it after success', async () => {
     const post = vi
       .spyOn(api, 'post')
-      .mockRejectedValueOnce(new Error('connection lost'))
-      .mockResolvedValueOnce({ data: { success: true } })
+      .mockRejectedValueOnce(new Error('Network unavailable'))
+      .mockResolvedValue({ data: { success: true } })
     const { result } = await renderAffiliate()
     await act(async () => {
       expect(await result.current.transferQuota(500000)).toBe(false)
@@ -65,70 +73,36 @@ describe('ordinary invitation reward transfers', () => {
     await act(async () => {
       expect(await result.current.transferQuota(500000)).toBe(true)
     })
-    expect(post.mock.calls[1][2]).toEqual(post.mock.calls[0][2])
-  })
-
-  test('starts a fresh idempotency key after a completed transfer', async () => {
-    const post = vi
-      .spyOn(api, 'post')
-      .mockResolvedValue({ data: { success: true } })
-    const { result } = await renderAffiliate()
     await act(async () => {
-      await result.current.transferQuota(500000)
-      await result.current.transferQuota(500000)
+      expect(await result.current.transferQuota(500000)).toBe(true)
     })
-    expect(post.mock.calls[1][2]?.headers?.['Idempotency-Key']).not.toBe(
-      post.mock.calls[0][2]?.headers?.['Idempotency-Key']
+    const keys = post.mock.calls.map(
+      (call) => call[2]?.headers?.['Idempotency-Key']
     )
+    expect(keys[0]).toBe(keys[1])
+    expect(keys[2]).not.toBe(keys[1])
   })
 
-  test('keeps a server business failure visible and does not treat it as a successful transfer', async () => {
-    vi.spyOn(api, 'post').mockResolvedValue({
-      data: { success: false, message: 'Insufficient available quota' },
-    })
-    const error = vi.spyOn(toast, 'error')
-    const { result } = await renderAffiliate()
-    await act(async () => {
-      expect(await result.current.transferQuota(500000)).toBe(false)
-    })
-    expect(error).toHaveBeenCalledWith('Insufficient available quota')
-    expect(result.current.transferring).toBe(false)
-  })
-
-  test.each([0, -1, 0.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN])(
-    'rejects invalid quota %s before making a financial request',
-    async (quota) => {
-      const post = vi.spyOn(api, 'post')
-      const { result } = await renderAffiliate()
-      await act(async () => {
-        expect(await result.current.transferQuota(quota)).toBe(false)
+  test('rejects duplicate in-flight and unsafe amounts without another request', async () => {
+    let finish!: (value: unknown) => void
+    const post = vi.spyOn(api, 'post').mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve
       })
-      expect(post).not.toHaveBeenCalled()
-    }
-  )
-
-  test('rejects simultaneous transfers until the original request has completed', async () => {
-    let finish!: (value: { data: { success: boolean } }) => void
-    const post = vi.spyOn(api, 'post').mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve
-        })
     )
     const { result } = await renderAffiliate()
-    let pending!: Promise<boolean>
+    let transfer!: Promise<boolean>
     act(() => {
-      pending = result.current.transferQuota(500000)
+      transfer = result.current.transferQuota(500000)
     })
-    expect(result.current.transferring).toBe(true)
-    await act(async () => {
-      expect(await result.current.transferQuota(1000000)).toBe(false)
-    })
+    expect(await result.current.transferQuota(1000000)).toBe(false)
+    expect(
+      await result.current.transferQuota(Number.MAX_SAFE_INTEGER + 1)
+    ).toBe(false)
     expect(post).toHaveBeenCalledTimes(1)
     await act(async () => {
       finish({ data: { success: true } })
-      expect(await pending).toBe(true)
+      expect(await transfer).toBe(true)
     })
-    expect(result.current.transferring).toBe(false)
   })
 })

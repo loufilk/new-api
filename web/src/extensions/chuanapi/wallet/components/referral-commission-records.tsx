@@ -95,6 +95,25 @@ export function ReferralCommissionRecords(
       className: 'text-right',
       cell: (row) => formatReferralRate(row.rate),
     },
+    {
+      id: 'status',
+      header: t('Status'),
+      cell: (row) => {
+        if (row.status === 'cancelled') return t('Reward cancelled')
+        if (row.reversed_quota > 0) return t('Partially reversed')
+        if (row.status === 'released') return t('Reward released')
+        return t('Reward pending')
+      },
+    },
+    {
+      id: 'matures',
+      header: t('Expected arrival'),
+      cell: (row) =>
+        row.status === 'frozen' && row.matures_at > 0
+          ? formatTime(row.matures_at, locale)
+          : '—',
+      className: 'w-40',
+    },
   ]
 
   if (props.loading) {

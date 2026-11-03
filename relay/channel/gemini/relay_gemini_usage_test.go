@@ -811,3 +811,56 @@ func TestGeminiHandlersCountGroundingQueries(t *testing.T) {
 		})
 	}
 }
+
+func TestGeminiEmbeddingHandlersPreferReportedUsageAndPreserveFallback(t *testing.T) {
+	for _, mode := range []string{"openai", "native_single", "native_batch"} {
+		for _, tc := range []struct {
+			name       string
+			metadata   string
+			wantPrompt int
+		}{
+			{name: "reported", metadata: `,"usageMetadata":{"promptTokenCount":37}`, wantPrompt: 37},
+			{name: "missing", wantPrompt: 123},
+			{name: "zero", metadata: `,"usageMetadata":{"promptTokenCount":0}`, wantPrompt: 123},
+			{name: "negative", metadata: `,"usageMetadata":{"promptTokenCount":-1}`, wantPrompt: 123},
+		} {
+			t.Run(mode+"/"+tc.name, func(t *testing.T) {
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/embeddings", nil)
+				info := &relaycommon.RelayInfo{
+					OriginModelName:        "public-embedding-alias",
+					IsGeminiBatchEmbedding: mode == "native_batch",
+					ChannelMeta:            &relaycommon.ChannelMeta{UpstreamModelName: "gemini-embedding-001"},
+				}
+				info.SetEstimatePromptTokens(123)
+				body := `{"embeddings":[{"values":[0.1,0.2]}]` + tc.metadata + `}`
+				if mode == "native_single" {
+					body = `{"embedding":{"values":[0.1,0.2]}` + tc.metadata + `}`
+				}
+				response := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}
+				var usage *dto.Usage
+				var apiErr *types.NewAPIError
+				if mode == "openai" {
+					usage, apiErr = GeminiEmbeddingHandler(c, info, response)
+				} else {
+					usage, apiErr = NativeGeminiEmbeddingHandler(c, response, info)
+				}
+				require.Nil(t, apiErr)
+				require.NotNil(t, usage)
+				assert.Equal(t, tc.wantPrompt, usage.PromptTokens)
+				assert.Equal(t, tc.wantPrompt, usage.TotalTokens)
+				assert.Zero(t, usage.CompletionTokens)
+				if mode == "openai" {
+					var converted dto.OpenAIEmbeddingResponse
+					require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &converted))
+					assert.Equal(t, "public-embedding-alias", converted.Model)
+					assert.Equal(t, tc.wantPrompt, converted.Usage.PromptTokens)
+					require.Len(t, converted.Data, 1)
+				} else {
+					assert.JSONEq(t, body, recorder.Body.String())
+				}
+			})
+		}
+	}
+}

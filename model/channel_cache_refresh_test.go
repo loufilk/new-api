@@ -18,6 +18,7 @@ import (
 func channelRefreshFixture(t *testing.T) *Channel {
 	t.Helper()
 	oldDB, oldMemory := DB, common.MemoryCacheEnabled
+	oldMainType, oldLogType := common.MainDatabaseType(), common.LogDatabaseType()
 	oldRoutes, oldChannels, oldConfigs := group2model2channels, channelsIDM, channel2advancedCustomConfig
 	oldRevision, oldTime, oldFailures := channelCacheRevision, channelCacheLastRefresh.Load(), channelCacheRefreshFailures.Load()
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "cache.db")), &gorm.Config{})
@@ -26,9 +27,13 @@ func channelRefreshFixture(t *testing.T) *Channel {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&Channel{}, &Ability{}))
 	DB, common.MemoryCacheEnabled = db, true
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, oldLogType)
+	initCol()
 	channelCacheLastRefresh.Store(0)
 	t.Cleanup(func() {
 		DB, common.MemoryCacheEnabled = oldDB, oldMemory
+		common.SetDatabaseTypes(oldMainType, oldLogType)
+		initCol()
 		channelSyncLock.Lock()
 		group2model2channels, channelsIDM, channel2advancedCustomConfig = oldRoutes, oldChannels, oldConfigs
 		channelCacheRevision = oldRevision

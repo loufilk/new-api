@@ -139,6 +139,26 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
               <div className='text-muted-foreground mt-1 hidden text-xs md:block'>
                 {item.description}
               </div>
+              {item.key === 'bonus' &&
+                props.summary?.agent_test_bonus?.status === 'granted' && (
+                  <p className='text-muted-foreground mt-2 text-xs'>
+                    {t(
+                      'Your $3 agent invitation test credit was added to bonus balance and follows its model restrictions.'
+                    )}
+                  </p>
+                )}
+              {item.key === 'bonus' &&
+                props.summary?.agent_test_bonus?.status ===
+                  'payment_compliance_required' && (
+                  <p
+                    role='status'
+                    className='text-muted-foreground mt-2 text-xs'
+                  >
+                    {t(
+                      'Agent invitation test credit was not granted because payment compliance was not confirmed at registration. Contact support for details.'
+                    )}
+                  </p>
+                )}
             </>
           )}
         </div>

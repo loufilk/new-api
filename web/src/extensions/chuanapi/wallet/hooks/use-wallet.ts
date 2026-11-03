@@ -60,6 +60,7 @@ export function useReferralRewards(page: number, pageSize: number) {
   return {
     records: query.data?.items ?? [],
     total: query.data?.total ?? 0,
+    availableQuota: query.data?.available_quota ?? 0,
     loading: query.isFetching,
     error: query.error,
     refetch: query.refetch,

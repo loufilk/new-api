@@ -29,14 +29,13 @@ function source(relativePath: string): string {
 }
 
 describe('ChuanAPI wallet surface contract', () => {
-  test('wallet page composes the supported funding surfaces and the native transfer dialog', () => {
+  test('wallet page composes supported funding surfaces and the shared referral panel', () => {
     const wallet = source('index.tsx')
     const required = [
       'WalletStatsCard',
       'RechargeFormCard',
-      'AffiliateRewardsCard',
+      'ReferralPanel',
       'LedgerTable',
-      'TransferDialog',
     ]
     for (const component of required) {
       expect(wallet).toMatch(new RegExp(`<${component}`))

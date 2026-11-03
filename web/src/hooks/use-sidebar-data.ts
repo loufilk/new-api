@@ -42,7 +42,9 @@ import { useTranslation } from 'react-i18next'
 
 import type { SidebarBadges, SidebarData } from '@/components/layout/types'
 import { useStatus } from '@/hooks/use-status'
+import { isAgentWorkspaceUser } from '@/lib/agent-permissions'
 import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 /**
  * Root navigation groups for the application sidebar.
@@ -53,8 +55,36 @@ import { ROLE } from '@/lib/roles'
 export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
   const { t } = useTranslation()
   const { status } = useStatus()
+  const user = useAuthStore((state) => state.auth.user)
+  const agentGroups: SidebarData['navGroups'] = isAgentWorkspaceUser(user)
+    ? [
+        {
+          id: 'agent',
+          title: t('Agent'),
+          items: [
+            {
+              title: t('Agent Overview'),
+              url: '/agent-platform',
+              icon: Users,
+            },
+            {
+              title: t('Redemption Code Center'),
+              url: '/redemption-codes?view=center',
+              icon: Ticket,
+            },
+            {
+              title: t('Redemption Code Records'),
+              url: '/redemption-codes?view=records',
+              icon: ClipboardList,
+            },
+          ],
+        },
+      ]
+    : []
+
   return {
     navGroups: [
+      ...agentGroups,
       {
         id: 'chat',
         title: t('Chat'),
@@ -186,6 +216,12 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             title: t('Redemption Codes'),
             url: '/redemption-codes',
             icon: Ticket,
+          },
+          {
+            title: t('Agent management'),
+            url: '/agent-platform/finance',
+            icon: Users,
+            requiredRole: ROLE.SUPER_ADMIN,
           },
           {
             title: t('Subscriptions'),

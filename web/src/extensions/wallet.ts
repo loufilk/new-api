@@ -27,6 +27,7 @@ export type WalletPage = (props: WalletPageProps) => ReactNode
 export type WalletExtension = {
   id: string
   page: WalletPage
+  referralPanel?: () => ReactNode
 }
 
 let walletExtension: WalletExtension | null = null

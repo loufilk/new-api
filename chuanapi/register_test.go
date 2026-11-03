@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/extension"
 	"github.com/QuantumNous/new-api/model"
+	agentmodule "github.com/QuantumNous/new-api/modules/chuanapi/agents"
 	paymentmodule "github.com/QuantumNous/new-api/modules/chuanapi/payment"
 
 	"github.com/gin-gonic/gin"
@@ -41,37 +42,24 @@ var expectedSupportModelOrder = []any{
 func TestRegisterContributesWalletModelsInMigrationOrder(t *testing.T) {
 	reg := extension.NewRegistry()
 	require.NoError(t, Register(reg))
-
+	expected := append([]any{}, expectedWalletModelOrder...)
+	expected = append(expected, expectedAffiliateModelOrder...)
+	expected = append(expected, agentmodule.Models()...)
+	expected = append(expected, expectedPaymentModelOrder...)
+	expected = append(expected, expectedSupportModelOrder...)
 	models := reg.ModelsFor(extension.PhaseAfterCoreModels)
-	require.Len(t, models, len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+len(expectedPaymentModelOrder)+len(expectedSupportModelOrder))
-	for i, expected := range expectedWalletModelOrder {
-		assert.IsType(t, expected, models[i], "wallet model at index %d changed", i)
+	require.Len(t, models, len(expected))
+	for i, want := range expected {
+		assert.IsType(t, want, models[i], "registered model at index %d changed", i)
 	}
-	for i, expected := range expectedAffiliateModelOrder {
-		assert.IsType(t, expected, models[len(expectedWalletModelOrder)+i], "affiliate model at index %d changed", i)
-	}
-	for i, expected := range expectedPaymentModelOrder {
-		assert.IsType(t, expected, models[len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+i], "payment model at index %d changed", i)
-	}
-
-	for i, expected := range expectedSupportModelOrder {
-		assert.IsType(t, expected, models[len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+len(expectedPaymentModelOrder)+i], "support model at index %d changed", i)
-	}
-
 	sets := reg.ModelSets()
-	require.Len(t, sets, 4)
-	assert.Equal(t, ExtensionName, sets[0].Extension)
-	assert.Equal(t, WalletModelsName, sets[0].Name)
-	assert.Equal(t, extension.PhaseAfterCoreModels, sets[0].Phase)
-	assert.Equal(t, ExtensionName, sets[1].Extension)
-	assert.Equal(t, AffiliateModelsName, sets[1].Name)
-	assert.Equal(t, extension.PhaseAfterCoreModels, sets[1].Phase)
-	assert.Equal(t, ExtensionName, sets[2].Extension)
-	assert.Equal(t, PaymentModelsName, sets[2].Name)
-	assert.Equal(t, extension.PhaseAfterCoreModels, sets[2].Phase)
-	assert.Equal(t, ExtensionName, sets[3].Extension)
-	assert.Equal(t, SupportModelsName, sets[3].Name)
-	assert.Equal(t, extension.PhaseAfterCoreModels, sets[3].Phase)
+	names := []string{WalletModelsName, AffiliateModelsName, agentmodule.ModelsName, PaymentModelsName, SupportModelsName}
+	require.Len(t, sets, len(names))
+	for i, name := range names {
+		assert.Equal(t, ExtensionName, sets[i].Extension)
+		assert.Equal(t, name, sets[i].Name)
+		assert.Equal(t, extension.PhaseAfterCoreModels, sets[i].Phase)
+	}
 }
 
 // The backfill mutates balances, so it must run only after the wallet schema
@@ -81,10 +69,12 @@ func TestRegisterContributesBackfillStepAfterCoreData(t *testing.T) {
 	require.NoError(t, Register(reg))
 
 	steps := reg.StepsFor(extension.PhaseAfterCoreData)
-	require.Len(t, steps, 1)
+	require.Len(t, steps, 2)
 	assert.Equal(t, ExtensionName, steps[0].Extension)
 	assert.Equal(t, LegacyQuotaBackfillName, steps[0].Name)
 	require.NotNil(t, steps[0].Run)
+	assert.Equal(t, agentmodule.MigrationName, steps[1].Name)
+	require.NotNil(t, steps[1].Run)
 
 	assert.Empty(t, reg.ModelsFor(extension.PhaseAfterCoreData))
 	assert.Empty(t, reg.StepsFor(extension.PhaseAfterCoreModels))
@@ -93,24 +83,14 @@ func TestRegisterContributesBackfillStepAfterCoreData(t *testing.T) {
 func TestRegisterContributesModuleRoutesBeforePluginSnapshot(t *testing.T) {
 	reg := extension.NewRegistry()
 	require.NoError(t, Register(reg))
-
 	sets := reg.RouteSetsFor(extension.PriorityBeforePlugin)
-	require.Len(t, sets, 5)
-	assert.Equal(t, ExtensionName, sets[0].Extension)
-	assert.Equal(t, WalletPolicyRoutesName, sets[0].Name)
-	require.NotNil(t, sets[0].RegisterScoped)
-	assert.Equal(t, ExtensionName, sets[1].Extension)
-	assert.Equal(t, PaymentRoutesName, sets[1].Name)
-	require.NotNil(t, sets[1].RegisterScoped)
-	assert.Equal(t, ExtensionName, sets[2].Extension)
-	assert.Equal(t, LlmsRoutesName, sets[2].Name)
-	require.NotNil(t, sets[2].Register)
-	assert.Equal(t, ExtensionName, sets[3].Extension)
-	assert.Equal(t, ConsolePublicRoutesName, sets[3].Name)
-	require.NotNil(t, sets[3].RegisterScoped)
-	assert.Equal(t, ExtensionName, sets[4].Extension)
-	assert.Equal(t, SupportRoutesName, sets[4].Name)
-	require.NotNil(t, sets[4].Register)
+	names := []string{WalletPolicyRoutesName, agentmodule.RoutesName, PaymentRoutesName, LlmsRoutesName, ConsolePublicRoutesName, SupportRoutesName}
+	require.Len(t, sets, len(names))
+	for i, name := range names {
+		assert.Equal(t, ExtensionName, sets[i].Extension)
+		assert.Equal(t, name, sets[i].Name)
+		assert.True(t, sets[i].Register != nil || sets[i].RegisterScoped != nil)
+	}
 	assert.Empty(t, reg.RouteSetsFor(extension.PriorityAfterPlugin))
 }
 
@@ -147,9 +127,9 @@ func TestRegisterTwiceIsRejectedWithoutDuplicatingModels(t *testing.T) {
 	require.NoError(t, Register(reg))
 	require.Error(t, Register(reg))
 
-	assert.Len(t, reg.ModelsFor(extension.PhaseAfterCoreModels), len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+len(expectedPaymentModelOrder)+len(expectedSupportModelOrder))
-	assert.Len(t, reg.StepsFor(extension.PhaseAfterCoreData), 1)
-	assert.Len(t, reg.RouteSetsFor(extension.PriorityBeforePlugin), 5)
+	assert.Len(t, reg.ModelsFor(extension.PhaseAfterCoreModels), len(expectedWalletModelOrder)+len(expectedAffiliateModelOrder)+len(agentmodule.Models())+len(expectedPaymentModelOrder)+len(expectedSupportModelOrder))
+	assert.Len(t, reg.StepsFor(extension.PhaseAfterCoreData), 2)
+	assert.Len(t, reg.RouteSetsFor(extension.PriorityBeforePlugin), 6)
 }
 
 func TestSupportRouteSetRegistersUserAndAdminTicketAPIs(t *testing.T) {
@@ -157,10 +137,10 @@ func TestSupportRouteSetRegistersUserAndAdminTicketAPIs(t *testing.T) {
 	reg := extension.NewRegistry()
 	require.NoError(t, Register(reg))
 	sets := reg.RouteSetsFor(extension.PriorityBeforePlugin)
-	require.Len(t, sets, 5)
+	require.Len(t, sets, 6)
 
 	engine := gin.New()
-	require.NoError(t, sets[4].Register(engine))
+	require.NoError(t, sets[5].Register(engine))
 	routes := make(map[string]struct{})
 	for _, route := range engine.Routes() {
 		routes[route.Method+" "+route.Path] = struct{}{}

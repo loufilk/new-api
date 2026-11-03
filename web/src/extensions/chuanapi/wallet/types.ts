@@ -21,6 +21,7 @@ For commercial licensing, please contact support@quantumnous.com
 // ============================================================================
 
 import type { CreemProduct } from '@/lib/creem'
+import type { AgentProfile } from '@/stores/auth-store'
 
 export type { CreemProduct } from '@/lib/creem'
 
@@ -204,6 +205,7 @@ export interface AmountRequest {
  * User wallet data
  */
 export interface UserWalletData {
+  agent_profile?: AgentProfile | null
   /** User ID */
   id: number
   /** Username */
@@ -289,10 +291,17 @@ export interface WalletRules {
  * Wallet account summary (paid / bonus / reward)
  */
 export interface WalletSummary {
+  agent_test_bonus?: {
+    quota: number
+    status: 'granted' | 'payment_compliance_required'
+  } | null
   total: number
   paid: number
   bonus: number
   reward: number
+  referral_available_quota: number
+  referral_total_quota: number
+  referral_invite_count: number
   rules: WalletRules
 }
 
@@ -338,11 +347,15 @@ export interface ReferralCommissionItem {
   source_name: string
   paid_quota: number
   reward_quota: number
+  reversed_quota: number
   rate: number
+  status: 'frozen' | 'released' | 'partially_reversed' | 'cancelled' | string
+  matures_at: number
   created_at: number
 }
 
 export interface ReferralCommissionPage {
   items: ReferralCommissionItem[]
   total: number
+  available_quota: number
 }

@@ -136,3 +136,35 @@ func TestPaymentReceiptHistoricalOtherPurposeCannotBecomeWalletCredit(t *testing
 	assert.Equal(t, "purchase", stored.Purpose)
 	assert.Equal(t, receipt.PaidMinor, stored.PaidMinor)
 }
+
+func TestPaymentReceiptSharedWithA07UsesOneImmutableRegistry(t *testing.T) {
+	receipt := paymentReceiptFixture(t)
+	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+		_, err := ClaimPaymentReceiptTx(tx, &receipt)
+		return err
+	}))
+	a07 := receipt
+	a07.Purpose, a07.LocalOrderKey = "payment_code", "a07-same-provider-payment"
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		_, err := ClaimAgentPaymentReceiptTx(tx, &a07)
+		return err
+	})
+	require.ErrorIs(t, err, ErrAgentPaymentReceiptConflict)
+	var count int64
+	require.NoError(t, DB.Model(&AgentPaymentReceipt{}).Count(&count).Error)
+	assert.EqualValues(t, 1, count)
+	a07.ProviderReference = "pi_synthetic_separate_a07_payment"
+	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+		_, err := ClaimAgentPaymentReceiptTx(tx, &a07)
+		return err
+	}))
+	ordinary := a07
+	ordinary.Purpose, ordinary.LocalOrderKey = "topup", "ordinary-reuse-a07"
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		_, err := ClaimPaymentReceiptTx(tx, &ordinary)
+		return err
+	})
+	require.ErrorIs(t, err, ErrPaymentReceiptConflict)
+	require.NoError(t, DB.Model(&PaymentReceipt{}).Count(&count).Error)
+	assert.EqualValues(t, 2, count)
+}

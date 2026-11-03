@@ -52,6 +52,9 @@ func NewVerifiedPaymentFacts(provider, reference, merchant, environment, currenc
 }
 
 func applyVerifiedPaymentTx(tx *gorm.DB, topup *TopUp, facts []VerifiedPaymentFacts) error {
+	if topup.AgentSimpleTopUp {
+		return applyAgentVerifiedPaymentTx(tx, topup, facts)
+	}
 	if len(facts) == 0 {
 		return nil
 	}

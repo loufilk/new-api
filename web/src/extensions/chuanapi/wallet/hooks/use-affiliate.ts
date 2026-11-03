@@ -16,8 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import i18next from 'i18next'
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { toast } from 'sonner'
 
 import { handleServerError } from '@/lib/handle-server-error'
@@ -46,33 +47,21 @@ function createTransferIdempotencyKey(): string {
 }
 
 export function useAffiliate() {
-  const [affiliateCode, setAffiliateCode] = useState<string>('')
-  const [affiliateLink, setAffiliateLink] = useState<string>('')
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<unknown>(null)
   const [transferring, setTransferring] = useState(false)
   const transferInFlight = useRef(false)
   const pendingTransferRef = useRef<{ quota: number; key: string } | null>(null)
 
-  // Fetch affiliate code
-  const fetchAffiliateCode = useCallback(async () => {
-    try {
-      setLoading(true)
-      setError(null)
+  const invitation = useQuery({
+    queryKey: ['wallet', 'affiliate-code'],
+    queryFn: async () => {
       const response = requireServerSuccess(await getAffiliateCode())
-
-      if (response.success && response.data) {
-        setAffiliateCode(response.data)
-        const link = generateAffiliateLink(response.data)
-        setAffiliateLink(link)
-      }
-    } catch (error) {
-      setError(error)
-      handleServerError(error)
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+      return response.data ?? ''
+    },
+  })
+  const affiliateCode = invitation.data ?? ''
+  const affiliateLink = affiliateCode
+    ? generateAffiliateLink(affiliateCode)
+    : ''
 
   const transferQuota = useCallback(async (quota: number): Promise<boolean> => {
     if (
@@ -96,10 +85,9 @@ export function useAffiliate() {
         await transferAffiliateQuota({ quota }, pendingTransferRef.current.key)
       )
       pendingTransferRef.current = null
-      toast.success(i18next.t('Transfer successful'))
       return true
     } catch (error) {
-      handleServerError(error, i18next.t('Transfer failed'))
+      handleServerError(error)
       return false
     } finally {
       transferInFlight.current = false
@@ -107,17 +95,13 @@ export function useAffiliate() {
     }
   }, [])
 
-  useEffect(() => {
-    fetchAffiliateCode()
-  }, [fetchAffiliateCode])
-
   return {
     affiliateCode,
     affiliateLink,
-    error,
-    loading,
+    loading: invitation.isPending,
+    error: invitation.error,
     transferring,
     transferQuota,
-    refetch: fetchAffiliateCode,
+    refetch: invitation.refetch,
   }
 }

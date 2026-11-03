@@ -50,6 +50,7 @@ function readResponses(quota = 1000000) {
         paid: 0,
         bonus: 0,
         reward: 0,
+        referral_available_quota: quota,
         rules: { referral_bonus_rate: 0.0333 },
       }
     }
@@ -87,6 +88,9 @@ describe('ordinary referral page', () => {
     expect(
       screen.getByRole('button', { name: 'Transfer to Balance' })
     ).toBeDisabled()
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Commission Records' })
+    )
     expect(screen.getByText(/No commission records yet/)).toBeVisible()
     expect(post).not.toHaveBeenCalled()
   })

@@ -466,7 +466,21 @@ func buildSelfUserDataWithRole(user *model.User, permissionRole int) map[string]
 	userSetting := user.GetSetting()
 	permissions := calculateUserPermissions(common.EffectiveUserRole(permissionRole))
 	permissions["admin_permissions"] = authz.Capabilities(user.Id, common.EffectiveUserRole(permissionRole))
+	profile, profileErr := model.GetAgentProfile(user.Id)
+	if profileErr != nil {
+		profile = nil
+	}
+	permissionUser := *user
+	permissionUser.Role = common.EffectiveUserRole(permissionRole)
+	capabilities, capabilityErr := model.GetAgentSimpleCapabilities(&permissionUser, profile)
+	if capabilityErr != nil {
+		capabilities = model.AgentCapabilities{}
+	}
+	permissions["agent_history"], permissions["agent_sales"] = capabilities.History, capabilities.Sales
+	permissions["agent_settlement"], permissions["agent_admin"] = capabilities.Settlement, capabilities.Admin
+	permissions["agent_redemption"] = capabilities.History
 	return map[string]interface{}{
+		"agent_profile":     profile,
 		"has_password":      user.HasPassword,
 		"id":                user.Id,
 		"username":          user.Username,

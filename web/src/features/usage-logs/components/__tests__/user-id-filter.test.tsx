@@ -23,6 +23,7 @@ import {
   createRoute,
   createRouter,
   RouterProvider,
+  type ErrorComponentProps,
 } from '@tanstack/react-router'
 import {
   cleanup,
@@ -50,8 +51,12 @@ const captureDescriptor = Object.getOwnPropertyDescriptor(
   'setPointerCapture'
 )
 
-function RouteError(props: { error: Error }) {
-  return <div role='alert'>{props.error.message}</div>
+function RouteError(props: ErrorComponentProps) {
+  return (
+    <div role='alert'>
+      {props.error instanceof Error ? props.error.message : String(props.error)}
+    </div>
+  )
 }
 
 function LogsFixture() {

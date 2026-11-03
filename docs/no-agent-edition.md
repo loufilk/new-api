@@ -1,3 +1,5 @@
+> Historical boundary for the pre-A07 edition. The current integration adds only the simplified A07 surface; its migration must preserve the financial safety requirements below.
+
 # 独立无代理版本 / Non-agent edition
 
 ## 基线与范围

@@ -58,11 +58,17 @@ const record: ReferralCommissionItem = {
   source_name: 'a***',
   paid_quota: 1000000,
   reward_quota: 50000,
+  reversed_quota: 0,
+  status: 'released',
+  matures_at: 0,
   rate: 0.05,
   created_at: 1735689600,
 }
 
-function renderCard(overrides: Record<string, unknown> = {}) {
+function renderCard(
+  overrides: Record<string, unknown> = {},
+  expandSections = true
+) {
   const onTransfer = vi.fn()
   const onRecordsPageChange = vi.fn()
   const onRecordsRetry = vi.fn()
@@ -70,6 +76,7 @@ function renderCard(overrides: Record<string, unknown> = {}) {
     <I18nextProvider i18n={testI18n}>
       <AffiliateRewardsCard
         user={user}
+        availableQuota={user.aff_quota ?? 0}
         affiliateLink={affiliateLink}
         onTransfer={onTransfer}
         complianceConfirmed
@@ -83,10 +90,27 @@ function renderCard(overrides: Record<string, unknown> = {}) {
       />
     </I18nextProvider>
   )
+  if (expandSections && !overrides.loading) {
+    fireEvent.click(screen.getByRole('button', { name: 'Reward Rules' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Commission Records' }))
+  }
   return { ...result, onTransfer, onRecordsPageChange, onRecordsRetry }
 }
 
 describe('affiliate rewards card', () => {
+  test('keeps rules and invitation records collapsed until opened', async () => {
+    renderCard({}, false)
+    expect(
+      screen.getByRole('button', { name: 'Reward Rules' })
+    ).toHaveAttribute('aria-expanded', 'false')
+    expect(
+      screen.queryByRole('region', { name: 'Commission Records' })
+    ).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Commission Records' }))
+    expect(
+      await screen.findByRole('region', { name: 'Commission Records' })
+    ).toBeVisible()
+  })
   test('shows the invitation link, native reward stats, and configured rule', () => {
     renderCard()
 
@@ -94,15 +118,13 @@ describe('affiliate rewards card', () => {
     expect(
       screen.getByRole('button', { name: 'Copy referral link' })
     ).toBeInTheDocument()
-    expect(screen.getByText('Pending Rewards')).toBeInTheDocument()
-    expect(screen.getByText('Total Rewards')).toBeInTheDocument()
+    expect(screen.getByText('Referral Rewards Available')).toBeInTheDocument()
+    expect(screen.getByText('Cumulative referral rewards')).toBeInTheDocument()
     expect(screen.getByText('Invited Users')).toBeInTheDocument()
     expect(screen.getByText('2')).toBeInTheDocument()
 
     expect(
-      screen.getByText(
-        /For the first 3 recharges of an invited friend, you will receive 5\.0% of the recharge amount as a reward\./
-      )
+      screen.getByText(/Earn 5\.0% from every qualifying top-up, with no cap\./)
     ).toBeInTheDocument()
   })
 
@@ -113,6 +135,12 @@ describe('affiliate rewards card', () => {
     expect(records).toHaveClass('overflow-auto', 'max-h-24')
     expect(records).toHaveAttribute('tabindex', '0')
     screen.getByRole('button', { name: 'Copy referral link' }).focus()
+    await keyboard.tab()
+    expect(screen.getByRole('button', { name: 'Reward Rules' })).toHaveFocus()
+    await keyboard.tab()
+    expect(
+      screen.getByRole('button', { name: 'Commission Records' })
+    ).toHaveFocus()
     await keyboard.tab()
     expect(records).toHaveFocus()
     expect(records).not.toContainElement(
@@ -132,9 +160,7 @@ describe('affiliate rewards card', () => {
     renderCard({ referralRate: 0.0333 })
 
     expect(
-      screen.getByText(
-        /you will receive 3\.33% of the recharge amount as a reward/
-      )
+      screen.getByText(/Earn 3\.33% from every qualifying top-up, with no cap/)
     ).toBeInTheDocument()
   })
 
@@ -142,7 +168,7 @@ describe('affiliate rewards card', () => {
     renderCard({ referralRate: 0 })
 
     expect(
-      screen.getByText(/you will receive 0% of the recharge amount/)
+      screen.getByText(/Earn 0% from every qualifying top-up/)
     ).toBeInTheDocument()
   })
 
@@ -167,7 +193,7 @@ describe('affiliate rewards card', () => {
   })
 
   test('hides the transfer button when there are no pending rewards', () => {
-    renderCard({ user: { ...user, aff_quota: 0 } })
+    renderCard({ user: { ...user, aff_quota: 0 }, availableQuota: 0 })
 
     expect(
       screen.queryByRole('button', { name: 'Transfer to Balance' })

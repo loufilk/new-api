@@ -94,7 +94,7 @@ func openReferralPostgreSQLFixture(t *testing.T) *referralPGFixture {
 		&model.Option{},
 		&model.SystemTask{},
 		&model.Log{},
-	}, append(model.BonusSourceModels(), model.ReferralRewardModels()...)...)...))
+	}, append(append(model.AgentPlatformModels(), model.BonusSourceModels()...), model.ReferralRewardModels()...)...)...))
 
 	return &referralPGFixture{db: db, schema: schema}
 }
@@ -115,13 +115,13 @@ func countReferralPGCommissions(t *testing.T, inviterId int) int64 {
 	return count
 }
 
-// TestReferralPostgreSQLCommissionConcurrentCapAndBoundary 在真实 PostgreSQL 上
+// TestReferralPostgreSQLCommissionConcurrentAwardsAndBoundary 在真实 PostgreSQL 上
 // 验证并发充值计次上限；邀请人余额异常只阻止返佣，不回滚实付本金。
-func TestReferralPostgreSQLCommissionConcurrentCapAndBoundary(t *testing.T) {
+func TestReferralPostgreSQLCommissionConcurrentAwardsAndBoundary(t *testing.T) {
 	openReferralPostgreSQLFixture(t)
 	setReferralRewardConfig(t, true, 0.05)
 
-	// 场景一：同一被邀请人 5 笔并发充值，只允许前三次返佣。
+	// 场景一：同一被邀请人 5 笔并发充值，每笔均产生返佣。
 	seedReferralPGUser(t, 8301, 0, 0, 0)
 	seedReferralPGUser(t, 8302, 8301, 0, 0)
 	const events = 5
@@ -142,12 +142,12 @@ func TestReferralPostgreSQLCommissionConcurrentCapAndBoundary(t *testing.T) {
 		require.NoError(t, err, "topup %d", i)
 	}
 	drainReferralOutbox(t)
-	assert.EqualValues(t, 3, countReferralPGCommissions(t, 8301), "前三次后不再返佣")
+	assert.EqualValues(t, 5, countReferralPGCommissions(t, 8301), "五笔充值分别奖励一次")
 	assert.Equal(t, 150_000, getUserBalances(t, 8301).AffQuota)
 	assert.Equal(t, 5_000_000, getUserBalances(t, 8302).QuotaPaid, "充值本身必须全部入账")
 
 	// 场景二：两笔本金均成功；邀请人上限只允许一笔返佣，另一笔保留重试。
-	seedReferralPGUser(t, 8303, 0, common.MaxWalletQuota-50_000, 0)
+	seedReferralPGUser(t, 8303, 0, common.MaxWalletQuota-30_000, 0)
 	seedReferralPGUser(t, 8304, 8303, 0, 0)
 	seedReferralPGUser(t, 8305, 8303, 0, 0)
 	seedPendingOnlineTopUp(t, 8304, 2, "PG-BOUNDARY-1")
@@ -167,10 +167,10 @@ func TestReferralPostgreSQLCommissionConcurrentCapAndBoundary(t *testing.T) {
 		require.NoError(t, boundaryErrs[i])
 		assert.Equal(t, 1_000_000, getUserBalances(t, userID).QuotaPaid)
 	}
-	_, processErr := model.ProcessReferralRewardOutbox(context.Background(), 200)
+	_, processErr := model.ProcessAgentCommissionOutbox(context.Background(), 200)
 	require.Error(t, processErr, "only the failed commission remains retryable; both principals committed")
 	var failed int64
-	require.NoError(t, model.DB.Model(&model.ReferralRewardOutbox{}).Where("status = ?", "failed").Count(&failed).Error)
+	require.NoError(t, model.DB.Model(&model.AgentCommissionOutbox{}).Where("status = ?", "failed").Count(&failed).Error)
 	assert.EqualValues(t, 1, failed)
 
 	assert.EqualValues(t, 1, countReferralPGCommissions(t, 8303))
@@ -187,7 +187,7 @@ func TestReferralPostgreSQLCommissionOverflowPreservesPrincipal(t *testing.T) {
 	seedPendingOnlineTopUp(t, 8312, 2, "PG-OVERFLOW-RETRY")
 	_, err := model.RechargeEpay("PG-OVERFLOW-RETRY", "alipay", "2.00", "127.0.0.1")
 	require.NoError(t, err)
-	_, err = model.ProcessReferralRewardOutbox(context.Background(), 200)
+	_, err = model.ProcessAgentCommissionOutbox(context.Background(), 200)
 	require.Error(t, err)
 	assertReferralPrincipalPreserved(t, 8312, 8311, "PG-OVERFLOW-RETRY")
 	assert.Equal(t, common.MaxWalletQuota, getUserBalances(t, 8311).AffQuota)
@@ -224,7 +224,8 @@ func TestReferralPostgreSQLTransferReplayAndConcurrency(t *testing.T) {
 
 	user := getUserBalances(t, 8321)
 	assert.Equal(t, 500_000, user.AffQuota)
-	assert.Equal(t, 500_000, user.QuotaReward)
+	assert.Equal(t, 500_000, user.QuotaPaid)
+	assert.Zero(t, user.QuotaReward)
 	assert.Equal(t, 1_000_000, user.AffHistoryQuota)
 	var ledgerRows int64
 	require.NoError(t, model.DB.Model(&model.BalanceLedger{}).

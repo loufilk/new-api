@@ -41,6 +41,36 @@ func accessTokenScopeRule(scope string) accessTokenRouteRule {
 // Casbin-guarded routes declare themselves through
 // DeclareAccessTokenPermissionRoute when they are registered.
 var accessTokenRouteRules = map[string]accessTokenRouteRule{
+	// Agent financial/business endpoints are browser-session-only. Declare their
+	// existing deny-PAT boundary explicitly; these rules never grant token scopes.
+	"GET /api/agent-platform/self":                              accessTokenSessionRule,
+	"GET /api/agent-platform/simple/finance/agents":             accessTokenSessionRule,
+	"GET /api/agent-platform/simple/finance/history/:kind":      accessTokenSessionRule,
+	"POST /api/agent-platform/simple/finance/codes/:id/reveal":  accessTokenSessionRule,
+	"POST /api/agent-platform/simple/finance/withdrawal":        accessTokenSessionRule,
+	"POST /api/agent-platform/simple/finance/referral-transfer": accessTokenSessionRule,
+	"POST /api/agent-platform/simple/finance/exit":              accessTokenSessionRule,
+	"GET /api/agent-platform/simple/balance":                    accessTokenSessionRule,
+	"GET /api/agent-platform/simple/codes":                      accessTokenSessionRule,
+	"GET /api/agent-platform/simple/payment-fees":               accessTokenSessionRule,
+	"GET /api/agent-platform/simple/payment-methods":            accessTokenSessionRule,
+	"GET /api/agent-platform/simple/payment-orders":             accessTokenSessionRule,
+	"POST /api/agent-platform/simple/codes":                     accessTokenSessionRule,
+	"POST /api/agent-platform/simple/codes/:id/cancel":          accessTokenSessionRule,
+	"POST /api/agent-platform/simple/finance/adjust":            accessTokenSessionRule,
+	"POST /api/agent-platform/simple/finance/credit-limit":      accessTokenSessionRule,
+	"POST /api/agent-platform/simple/finance/repayment":         accessTokenSessionRule,
+	"POST /api/agent-platform/simple/finance/status":            accessTokenSessionRule,
+	"POST /api/agent-platform/simple/payment":                   accessTokenSessionRule,
+	"POST /api/agent-platform/simple/payment-fees":              accessTokenSessionRule,
+	"POST /api/agent-platform/simple/payment/quote":             accessTokenSessionRule,
+	"POST /api/agent-platform/simple/payment/refunds":           accessTokenSessionRule,
+	"POST /api/agent-platform/simple/payment/transfer":          accessTokenSessionRule,
+	"POST /api/agent-platform/simple/payment/withdrawals":       accessTokenSessionRule,
+	"POST /api/agent-platform/simple/recharge":                  accessTokenSessionRule,
+	"GET /api/agent-platform/simple/reminders/unread":           accessTokenSessionRule,
+	"POST /api/agent-platform/simple/reminders/acknowledge":     accessTokenSessionRule,
+
 	// router/api-router.go: top level
 	"GET /api/models":                     accessTokenScopeRule("profile:read"),
 	"GET /api/status/test":                accessTokenScopeRule("log:read"),

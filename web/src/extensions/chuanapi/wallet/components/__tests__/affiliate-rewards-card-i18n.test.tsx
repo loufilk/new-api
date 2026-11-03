@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { beforeAll, describe, expect, test, vi } from 'vitest'
@@ -46,6 +46,9 @@ const record: ReferralCommissionItem = {
   source_name: 'a***',
   paid_quota: 1000000,
   reward_quota: 50000,
+  reversed_quota: 0,
+  status: 'released',
+  matures_at: 0,
   rate: 0.05,
   created_at: 1735689600,
 }
@@ -65,10 +68,11 @@ beforeAll(async () => {
 })
 
 function renderChineseCard(overrides: Record<string, unknown> = {}) {
-  return render(
+  const result = render(
     <I18nextProvider i18n={testI18n}>
       <AffiliateRewardsCard
         user={user}
+        availableQuota={user.aff_quota ?? 0}
         affiliateLink={affiliateLink}
         onTransfer={vi.fn()}
         complianceConfirmed
@@ -81,16 +85,19 @@ function renderChineseCard(overrides: Record<string, unknown> = {}) {
       />
     </I18nextProvider>
   )
+  fireEvent.click(screen.getByRole('button', { name: '奖励说明' }))
+  fireEvent.click(screen.getByRole('button', { name: '返佣记录' }))
+  return result
 }
 
 describe('affiliate rewards card Chinese copy', () => {
-  test('renders the approved Chinese titles, stats, and four rule sentences', () => {
+  test('renders the approved Chinese titles, available rewards, and unlimited five-day reward rules', () => {
     renderChineseCard()
 
     expect(screen.getByText('邀请奖励')).toBeInTheDocument()
     expect(screen.getByText('邀请好友获得额外奖励')).toBeInTheDocument()
-    expect(screen.getByText('待使用收益')).toBeInTheDocument()
-    expect(screen.getByText('总收益')).toBeInTheDocument()
+    expect(screen.getByText('邀请返利可提现')).toBeInTheDocument()
+    expect(screen.getByText('累计邀请返利')).toBeInTheDocument()
     expect(screen.getByText('邀请人数')).toBeInTheDocument()
     expect(screen.getByLabelText('邀请链接')).toHaveDisplayValue(affiliateLink)
     expect(
@@ -103,18 +110,14 @@ describe('affiliate rewards card Chinese copy', () => {
       screen.getByRole('button', { name: '划转到余额' })
     ).toBeInTheDocument()
 
+    expect(screen.getByText('仅官网在线充值参与邀请返利。')).toBeInTheDocument()
     expect(
-      screen.getByText('邀请好友注册，好友充值后您可获得相应奖励')
+      screen.getByText('好友每次符合条件的充值均可获得 5.0% 返利，不封顶。')
     ).toBeInTheDocument()
     expect(
-      screen.getByText('好友前3次充值，您可获得充值额度的 5.0% 作为奖励')
+      screen.getByText('返利冻结 5 天后到账；退款时取消或扣回对应返利。')
     ).toBeInTheDocument()
-    expect(
-      screen.getByText('通过划转功能将奖励额度转入您的账户余额中')
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText('邀请的好友越多，获得的奖励就越多')
-    ).toBeInTheDocument()
+    expect(screen.getByText('已到账')).toBeVisible()
     expect(
       screen.getByText(new Date(record.created_at * 1000).toLocaleString('zh'))
     ).toBeInTheDocument()
@@ -124,7 +127,7 @@ describe('affiliate rewards card Chinese copy', () => {
     renderChineseCard({ referralRate: 0.0333 })
 
     expect(
-      screen.getByText('好友前3次充值，您可获得充值额度的 3.33% 作为奖励')
+      screen.getByText('好友每次符合条件的充值均可获得 3.33% 返利，不封顶。')
     ).toBeInTheDocument()
   })
 

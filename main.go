@@ -391,3 +391,5 @@ func InitResources(workers *lifecycle.Group) error {
 
 	return nil
 }
+
+func startExtensionRuntimeWorkers(workers *lifecycle.Group) { chuanapi.StartRuntimeWorkers(workers) }

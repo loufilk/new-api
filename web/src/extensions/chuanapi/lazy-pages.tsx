@@ -43,6 +43,11 @@ const LazyApiReferencePage = lazy(() =>
 const LazyWalletPage = lazy(() =>
   import('./wallet').then(({ Wallet }) => ({ default: Wallet }))
 )
+const LazyReferralPanel = lazy(() =>
+  import('./wallet/components/referral-panel').then(({ ReferralPanel }) => ({
+    default: ReferralPanel,
+  }))
+)
 const LazyPaymentSettingsPage = lazy(() =>
   import('./payment').then(({ chuanapiPaymentSettingsExtension }) => ({
     default: ({ settings }: { settings: unknown }) => (
@@ -70,6 +75,8 @@ export const LazyHelpApiReference: HelpApiReferencePage = (props) =>
 
 export const LazyWallet: WalletPage = (props) =>
   withLoading(<LazyWalletPage {...props} />)
+
+export const LazyWalletReferralPanel = () => withLoading(<LazyReferralPanel />)
 
 export function LazyPaymentSettingsRenderer({
   settings,

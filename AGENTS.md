@@ -2,13 +2,18 @@
 
 DO NOT send optional commentary
 
-## Non-agent edition boundary
+## A07 integration boundary
 
-This branch removes the business reseller/agent system, not HTTP proxying or AI-provider agents.
-Read `docs/no-agent-edition.md` before changing retirement guards or shared financial code.
-Do not reintroduce agent routes, workers, policy/Profile models or mutate historical liabilities.
-Keep ordinary referral rewards, payment receipt uniqueness, wallet source accounting and all
-inherited relay/interception fixes. Historical role 5 is ordinary-user compatibility only.
+This branch integrates the explicitly requested simplified A07 reseller system into
+our current New API line. It supersedes the previous no-agent edition scope only
+for A07. Preserve current smart-key routing, support attachments, account pools,
+Google sign-in, relay/interception fixes and ordinary financial safeguards.
+Do not restore retired legacy agent budget, procurement, campaign or claim routes.
+Historical schema and internal accounting helpers remain only for A07 dependencies
+and fail-closed upgrade checks. Never erase liabilities to pass a cutover check.
+Refunds are registered only after manual refund, then invalidate unused codes;
+withdrawals are registered only after manual payment, then deduct the balance.
+No automatic payout, production database access or deployment is authorized.
 
 ## Overview
 
@@ -16,7 +21,7 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 
 ## Tech Stack
 
-- **Backend**: Go 1.26 for the root module and `tokenkit/`, Go 1.25.1 for `relaykit/` (see each module’s `go.mod`), Gin web framework, GORM v2 ORM
+- **Backend**: Go 1.27.3 for the root module and `relaykit/`, Go 1.26 for `tokenkit/` (see each module’s `go.mod`), Gin web framework, GORM v2 ORM
 - **Frontend**: React 19, TypeScript, Rsbuild 2, TanStack Router/Query/Table, Zustand, Base UI, Tailwind CSS 4
 - **Databases**: SQLite, MySQL, PostgreSQL for the primary database (all three must be supported); a separately configured log database also supports ClickHouse
 - **Cache**: Redis (go-redis) + in-memory cache

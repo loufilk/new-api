@@ -31,6 +31,7 @@ func newApplicationRuntime() *applicationRuntime {
 // claimed before the adaptor factory and handlers have been installed.
 func (app *applicationRuntime) Start(balanceInterval time.Duration, enablePprof bool) {
 	model.StartRuntimeWorkers(app.workers, common.SyncFrequency)
+	startExtensionRuntimeWorkers(app.workers)
 	controller.StartRuntimeWorkers(app.workers, balanceInterval)
 	service.StartRuntimeWorkers(app.workers)
 	app.workers.Go("websocket-invalidation", func(schedule, _ context.Context) { wsmanager.RunSubscriber(schedule) })

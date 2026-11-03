@@ -17,6 +17,7 @@ import (
 
 	"github.com/QuantumNous/new-api/extension"
 	affiliatemodule "github.com/QuantumNous/new-api/modules/chuanapi/affiliate"
+	agentmodule "github.com/QuantumNous/new-api/modules/chuanapi/agents"
 	consolemodule "github.com/QuantumNous/new-api/modules/chuanapi/console"
 	paymentmodule "github.com/QuantumNous/new-api/modules/chuanapi/payment"
 	supportmodule "github.com/QuantumNous/new-api/modules/chuanapi/support"
@@ -75,6 +76,9 @@ func Register(reg *extension.Registry) error {
 		return err
 	}
 	if err := affiliatemodule.RegisterSchema(reg); err != nil {
+		return err
+	}
+	if err := agentmodule.Register(reg); err != nil {
 		return err
 	}
 	if err := paymentmodule.Register(reg); err != nil {

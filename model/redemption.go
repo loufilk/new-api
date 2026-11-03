@@ -18,6 +18,11 @@ import (
 // Legacy source markers are retained solely to reject historical restricted
 // codes. They are not exposed by the ordinary administrator API or rewritten.
 type Redemption struct {
+	AgentSimpleMode      string `json:"agent_simple_mode,omitempty" gorm:"type:varchar(16);index"`
+	AgentSimpleCredit    bool   `json:"agent_simple_credit,omitempty" gorm:"not null;default:false"`
+	AgentSimpleCostQuota int64  `json:"agent_simple_cost_quota,omitempty" gorm:"type:bigint;not null;default:0"`
+	AgentSimplePaymentID int64  `json:"agent_simple_payment_id,omitempty" gorm:"type:bigint;not null;default:0;index"`
+
 	CustomerUserID      int            `json:"-" gorm:"not null;default:0;index"`
 	DeliveryID          int            `json:"-" gorm:"not null;default:0;index"`
 	SourceProtected     bool           `json:"-" gorm:"not null;default:false"`
@@ -57,6 +62,7 @@ type RedemptionCreateRequest struct {
 	RequestID   string `json:"request_id"`
 }
 type RedemptionUpdateRequest struct {
+	Version     int64  `json:"version"`
 	RequestID   string `json:"request_id"`
 	ID          int    `json:"id"`
 	Name        string `json:"name"`
@@ -80,10 +86,10 @@ func (*RedemptionMutation) BeforeUpdate(*gorm.DB) error { return ErrLedgerImmuta
 func (*RedemptionMutation) BeforeDelete(*gorm.DB) error { return ErrLedgerImmutable }
 
 func (r *Redemption) restrictedSource() bool {
-	return r.BudgetAgentID != 0 || r.BudgetReserved || r.CustomerUserID != 0 || r.DeliveryID != 0 || r.SourceProtected
+	return r.AgentSimpleMode != "" || r.AgentSimpleCredit || r.AgentSimpleCostQuota != 0 || r.AgentSimplePaymentID != 0 || r.BudgetAgentID != 0 || r.BudgetReserved || r.CustomerUserID != 0 || r.DeliveryID != 0 || r.SourceProtected
 }
 func ordinaryRedemptions(tx *gorm.DB) *gorm.DB {
-	return tx.Where("budget_agent_id = 0 AND budget_reserved = ? AND customer_user_id = 0 AND delivery_id = 0 AND source_protected = ?", false, false)
+	return tx.Where("COALESCE(agent_simple_mode, '') = '' AND agent_simple_credit = ? AND agent_simple_cost_quota = 0 AND agent_simple_payment_id = 0", false).Where("budget_agent_id = 0 AND budget_reserved = ? AND customer_user_id = 0 AND delivery_id = 0 AND source_protected = ?", false, false)
 }
 func validateRedemptionValue(name string, quota int, expires int64) error {
 	if strings.TrimSpace(name) == "" || utf8.RuneCountInString(name) > 20 || quota <= 0 || expires < 0 {
@@ -241,25 +247,59 @@ func Redeem(key string, userID int) (int, error) {
 	}
 	var redemption Redemption
 	var totalAfter int
+	expired := false
 	err := DB.Session(&gorm.Session{Logger: DB.Logger.LogMode(gormlogger.Silent)}).Transaction(func(tx *gorm.DB) error {
 		// SQL predicates also reject NULL legacy markers before GORM can scan
 		// an unknown source as a zero-valued ordinary code.
-		if err := ordinaryRedemptions(lockForUpdate(tx)).Where(clause.Eq{Column: clause.Column{Name: "key"}, Value: key}).First(&redemption).Error; err != nil {
+		if err := lockForUpdate(tx).Where(clause.Eq{Column: clause.Column{Name: "key"}, Value: key}).First(&redemption).Error; err != nil {
 			return err
 		}
-		if redemption.restrictedSource() {
-			return ErrRedemptionRestrictedSource
+		if redemption.AgentSimpleMode == "" {
+			// Keep SQL-level provenance checks: NULL historical markers are not ordinary.
+			var ordinary int64
+			if err := ordinaryRedemptions(tx.Model(&Redemption{})).Where("id = ?", redemption.Id).Count(&ordinary).Error; err != nil {
+				return err
+			}
+			if ordinary != 1 || redemption.restrictedSource() {
+				return ErrRedemptionRestrictedSource
+			}
+		} else {
+			if redemption.BudgetAgentID <= 0 || redemption.DeliveryID != 0 || redemption.SourceProtected || (redemption.CustomerUserID != 0 && redemption.CustomerUserID != userID) {
+				return ErrRedemptionRestrictedSource
+			}
+			switch redemption.AgentSimpleMode {
+			case AgentSimpleCodeDirect, AgentSimpleCodeCredit, AgentSimpleCodePayment:
+			default:
+				return ErrRedemptionRestrictedSource
+			}
 		}
 		if redemption.Status != common.RedemptionCodeStatusEnabled || redemption.UsedUserId != 0 || redemption.RedeemedTime != 0 {
 			return ErrRedemptionUsedImmutable
 		}
 		if redemption.ExpiredTime != 0 && redemption.ExpiredTime < common.GetTimestamp() {
+			if redemption.AgentSimpleMode != "" && redemption.AgentSimpleMode != AgentSimpleCodePayment && redemption.BudgetReserved {
+				if err := ExpireAgentSimpleCodeTx(tx, &redemption, 0); err != nil {
+					return err
+				}
+				expired = true
+				return tx.Model(&redemption).Updates(map[string]any{"status": common.RedemptionCodeStatusDisabled, "budget_reserved": redemption.BudgetReserved, "budget_version": redemption.BudgetVersion}).Error
+			}
 			return ErrRedemptionInvalidRequest
 		}
 		if redemption.Quota <= 0 || common.ValidateWalletQuota(redemption.Quota) != nil {
 			return ErrRedemptionInvalidRequest
 		}
-		result := tx.Model(&Redemption{}).Where("id = ? AND status = ? AND used_user_id = 0 AND redeemed_time = 0", redemption.Id, common.RedemptionCodeStatusEnabled).Updates(map[string]any{"redeemed_time": common.GetTimestamp(), "status": common.RedemptionCodeStatusUsed, "used_user_id": userID})
+		if redemption.AgentSimpleMode != "" {
+			if !redemption.BudgetReserved {
+				return ErrAgentSimpleInvariant
+			}
+			if redemption.BudgetReserved {
+				if err := RedeemAgentSimpleCodeTx(tx, &redemption, userID); err != nil {
+					return err
+				}
+			}
+		}
+		result := tx.Model(&Redemption{}).Where("id = ? AND status = ? AND used_user_id = 0 AND redeemed_time = 0", redemption.Id, common.RedemptionCodeStatusEnabled).Updates(map[string]any{"redeemed_time": common.GetTimestamp(), "status": common.RedemptionCodeStatusUsed, "used_user_id": userID, "budget_reserved": redemption.BudgetReserved, "budget_version": redemption.BudgetVersion})
 		if result.Error != nil {
 			return result.Error
 		}
@@ -278,6 +318,9 @@ func Redeem(key string, userID int) (int, error) {
 	})
 	if err != nil {
 		common.SysError("redemption failed") // Never log a usable code or SQL diagnostic.
+		return 0, ErrRedeemFailed
+	}
+	if expired {
 		return 0, ErrRedeemFailed
 	}
 	RefreshUserQuotaCache(userID, totalAfter)

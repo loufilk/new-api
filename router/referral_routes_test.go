@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	walletroutes "github.com/QuantumNous/new-api/modules/chuanapi/wallet/routes"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
@@ -51,6 +52,9 @@ func setupReferralRouteTest(t *testing.T) (*gin.Engine, *gorm.DB) {
 		&model.Log{},
 		&model.AuditLog{},
 		&model.UserAccessToken{}}, model.BonusSourceModels()...)...))
+	require.NoError(t, db.AutoMigrate(&model.UserSession{}))
+	require.NoError(t, db.AutoMigrate(&model.AgentInvitation{}))
+	require.NoError(t, db.AutoMigrate(model.AgentPlatformModels()...))
 
 	t.Cleanup(func() {
 		model.DB, model.LOG_DB = previousDB, previousLogDB
@@ -201,6 +205,9 @@ func TestReferralTransferRouteValidatesInput(t *testing.T) {
 	confirmReferralRouteCompliance(t)
 	token := model.AccessTokenPrefix + strings.Repeat("e", 32)
 	seedReferralRouteUser(t, db, 706, token, 1_000_000, common.UserStatusEnabled)
+	bundle, err := service.CreateLoginSession(706, "password", "127.0.0.1", "referral-route-test")
+	require.NoError(t, err)
+	token = bundle.AccessToken
 
 	// 缺少 Idempotency-Key
 	response := performReferralRouteRequest(engine, http.MethodPost, "/api/user/aff_transfer", `{"quota":500000}`, token)
@@ -243,6 +250,9 @@ func TestReferralTransferRouteReplaysSameKeyOnce(t *testing.T) {
 	confirmReferralRouteCompliance(t)
 	token := model.AccessTokenPrefix + strings.Repeat("g", 32)
 	seedReferralRouteUser(t, db, 708, token, 1_000_000, common.UserStatusEnabled)
+	bundle, err := service.CreateLoginSession(708, "password", "127.0.0.1", "referral-route-test")
+	require.NoError(t, err)
+	token = bundle.AccessToken
 
 	keyHeader := routeHeader{key: "Idempotency-Key", value: "route-replay-key"}
 
@@ -255,7 +265,7 @@ func TestReferralTransferRouteReplaysSameKeyOnce(t *testing.T) {
 	var user model.User
 	require.NoError(t, db.Where("id = ?", 708).First(&user).Error)
 	assert.Equal(t, 500_000, user.AffQuota, "重放不得重复扣减")
-	assert.Equal(t, 500_000, user.QuotaReward, "重放不得重复入账")
+	assert.Equal(t, 500_000, user.QuotaPaid, "重放不得重复入账")
 	assert.EqualValues(t, 1, countReferralRouteLedgerRows(t, db, 708))
 
 	conflict := performReferralRouteRequest(engine, http.MethodPost, "/api/user/aff_transfer", `{"quota":600000}`, token, keyHeader)

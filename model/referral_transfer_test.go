@@ -35,7 +35,7 @@ func countReferralTransferLedgerRows(t *testing.T, userId int) int64 {
 	return count
 }
 
-func TestTransferAffQuotaMovesPendingRewardToRewardAccount(t *testing.T) {
+func TestTransferAffQuotaMovesReleasedRewardToPaidAccount(t *testing.T) {
 	setupLedgerTestState(t)
 	seedAffQuotaUser(t, 301, 1_000_000, 1_000_000)
 
@@ -45,14 +45,14 @@ func TestTransferAffQuotaMovesPendingRewardToRewardAccount(t *testing.T) {
 
 	user := getUserBalances(t, 301)
 	assert.Equal(t, 500_000, user.AffQuota, "划转后待使用收益减少")
-	assert.Equal(t, 500_000, user.QuotaReward, "划转金额进入 reward 账户")
+	assert.Equal(t, 500_000, user.QuotaPaid, "划转金额进入 reward 账户")
 	assert.Equal(t, 1_000_000, user.AffHistoryQuota, "累计收益不因划转减少")
 	assert.Equal(t, 500_000, user.Quota, "quota 镜像 = paid + bonus + reward")
 	assertQuotaInvariant(t, user)
 
 	var row BalanceLedger
 	require.NoError(t, DB.Where("user_id = ? AND reason = ?", 301, LedgerReasonReferralTransfer).First(&row).Error)
-	assert.Equal(t, string(AccountReward), row.Account)
+	assert.Equal(t, string(AccountPaid), row.Account)
 	assert.Equal(t, 500_000, row.Delta)
 	assert.Equal(t, "aff_transfer", row.ReferenceType)
 	assert.Equal(t, "transfer-model-1", row.ReferenceId)
@@ -73,7 +73,7 @@ func TestTransferAffQuotaReplayBySameKeyDoesNotDebitAgain(t *testing.T) {
 
 	user := getUserBalances(t, 302)
 	assert.Equal(t, 400_000, user.AffQuota)
-	assert.Equal(t, 500_000, user.QuotaReward)
+	assert.Equal(t, 500_000, user.QuotaPaid)
 	assert.EqualValues(t, 1, countReferralTransferLedgerRows(t, 302))
 }
 
@@ -89,7 +89,7 @@ func TestTransferAffQuotaSameKeyDifferentAmountConflicts(t *testing.T) {
 
 	user := getUserBalances(t, 303)
 	assert.Equal(t, 400_000, user.AffQuota, "冲突请求不得再次扣减")
-	assert.Equal(t, 500_000, user.QuotaReward)
+	assert.Equal(t, 500_000, user.QuotaPaid)
 	assert.EqualValues(t, 1, countReferralTransferLedgerRows(t, 303))
 }
 
@@ -102,7 +102,7 @@ func TestTransferAffQuotaInsufficientLeavesNoLedgerEffect(t *testing.T) {
 
 	user := getUserBalances(t, 304)
 	assert.Equal(t, 500_000, user.AffQuota)
-	assert.Zero(t, user.QuotaReward)
+	assert.Zero(t, user.QuotaPaid)
 	assert.Zero(t, user.Quota)
 	assert.Zero(t, countReferralTransferLedgerRows(t, 304))
 }
@@ -111,7 +111,7 @@ func TestTransferAffQuotaRejectsInvalidAmounts(t *testing.T) {
 	setupLedgerTestState(t)
 	seedAffQuotaUser(t, 305, common.MaxWalletQuota, common.MaxWalletQuota)
 
-	for _, amount := range []int{0, -1, int(common.QuotaPerUnit) - 1, common.MaxWalletQuota + 1} {
+	for _, amount := range []int{0, -1, common.MaxWalletQuota + 1} {
 		_, err := TransferAffQuota(305, amount, fmt.Sprintf("invalid-%d", amount))
 		require.ErrorIs(t, err, ErrReferralTransferInvalid, "amount=%d", amount)
 	}
@@ -181,6 +181,21 @@ func TestTransferAffQuotaConcurrentSameKeyCreditsOnce(t *testing.T) {
 
 	user := getUserBalances(t, 306)
 	assert.Equal(t, 500_000, user.AffQuota, "并发同键只允许扣减一次")
-	assert.Equal(t, 500_000, user.QuotaReward, "并发同键只允许入账一次")
+	assert.Equal(t, 500_000, user.QuotaPaid, "并发同键只允许入账一次")
 	assert.EqualValues(t, 1, countReferralTransferLedgerRows(t, 306))
+}
+
+func TestTransferAffQuotaReplaysPreA07RewardAccountWithoutMovingIt(t *testing.T) {
+	setupLedgerTestState(t)
+	seedAffQuotaUser(t, 308, 500_000, 1_000_000)
+	legacyEntry := LedgerEntry{UserId: 308, Account: AccountReward, Delta: 500_000, Reason: LedgerReasonReferralTransfer, ReferenceType: "aff_transfer", ReferenceId: "pre-a07-transfer", IdempotencyKey: "aff_transfer:308:pre-a07-transfer"}
+	_, err := CreditQuota(legacyEntry)
+	require.NoError(t, err)
+	result, err := TransferAffQuota(308, 500_000, "pre-a07-transfer")
+	require.NoError(t, err)
+	assert.True(t, result.Replayed)
+	user := getUserBalances(t, 308)
+	assert.Equal(t, 500_000, user.QuotaReward)
+	assert.Zero(t, user.QuotaPaid)
+	assert.Equal(t, 500_000, user.AffQuota)
 }

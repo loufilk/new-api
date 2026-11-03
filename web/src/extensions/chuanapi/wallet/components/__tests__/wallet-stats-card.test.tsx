@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { describe, expect, test } from 'vitest'
 
 import type { UserWalletData, WalletSummary } from '../../types'
@@ -33,6 +33,9 @@ const user: UserWalletData = {
 }
 
 const summary: WalletSummary = {
+  referral_available_quota: 1_000_000,
+  referral_total_quota: 3_000_000,
+  referral_invite_count: 2,
   total: 2_000_000,
   paid: 1_000_000,
   bonus: 500_000,
@@ -54,6 +57,37 @@ function getStat(container: HTMLElement, key: string): HTMLElement {
 }
 
 describe('wallet stats card', () => {
+  test('shows a granted agent test credit inside bonus balance without treating it as withdrawable income', () => {
+    render(
+      <WalletStatsCard
+        user={user}
+        summary={{
+          ...summary,
+          agent_test_bonus: { quota: 1_500_000, status: 'granted' },
+        }}
+      />
+    )
+    expect(
+      screen.getByText(
+        'Your $3 agent invitation test credit was added to bonus balance and follows its model restrictions.'
+      )
+    ).toBeVisible()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+  test('explains why the invitation test credit was not granted', () => {
+    render(
+      <WalletStatsCard
+        user={user}
+        summary={{
+          ...summary,
+          agent_test_bonus: { quota: 0, status: 'payment_compliance_required' },
+        }}
+      />
+    )
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Agent invitation test credit was not granted because payment compliance was not confirmed at registration. Contact support for details.'
+    )
+  })
   test('renders paid, bonus, usage, and request metrics in the required order', () => {
     const { container } = render(
       <WalletStatsCard user={user} summary={summary} />

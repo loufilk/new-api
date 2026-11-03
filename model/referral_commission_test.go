@@ -65,10 +65,6 @@ func TestRecordReferralCommissionRequiresValidPaidEvidence(t *testing.T) {
 		assert.Zero(t, getUserBalances(t, 701).AffQuota, "%s 邀请人收益不得变化", tc.name)
 	}
 
-	totalInvalidEvents, err := countQualifyingTopUpEventsTx(DB, 702)
-	require.NoError(t, err)
-	assert.Zero(t, totalInvalidEvents, "伪订单不得计入充值计次")
-
 	legacyTradeNo := "MODEL-EVIDENCE-LEGACY-PROVIDER"
 	require.NoError(t, DB.Create(&TopUp{
 		UserId: 702, Amount: 2, Money: 2, TradeNo: legacyTradeNo,
@@ -82,5 +78,5 @@ func TestRecordReferralCommissionRequiresValidPaidEvidence(t *testing.T) {
 	var legacyCommissions int64
 	require.NoError(t, DB.Model(&ReferralCommission{}).Where("user_id = ? AND reference_id = ?", 701, legacyTradeNo).Count(&legacyCommissions).Error)
 	assert.EqualValues(t, 1, legacyCommissions)
-	assert.Equal(t, 50_000, getUserBalances(t, 701).AffQuota)
+	assert.Equal(t, 30_000, getUserBalances(t, 701).AffQuota)
 }

@@ -30,45 +30,7 @@ export { getPaymentErrorTranslation } from '@/lib/server-error-message'
 // Payment Processing Functions
 // ============================================================================
 
-/**
- * Check if browser is Safari
- */
-function isSafariBrowser(): boolean {
-  return (
-    navigator.userAgent.includes('Safari') &&
-    !navigator.userAgent.includes('Chrome')
-  )
-}
-
-/**
- * Submit payment form (for non-Stripe payments)
- */
-export function submitPaymentForm(
-  url: string,
-  params: Record<string, unknown>
-): void {
-  const form = document.createElement('form')
-  form.action = url
-  form.method = 'POST'
-
-  // Don't open in new tab for Safari
-  if (!isSafariBrowser()) {
-    form.target = '_blank'
-  }
-
-  // Add form parameters
-  Object.entries(params).forEach(([key, value]) => {
-    const input = document.createElement('input')
-    input.type = 'hidden'
-    input.name = key
-    input.value = String(value)
-    form.appendChild(input)
-  })
-
-  document.body.appendChild(form)
-  form.submit()
-  document.body.removeChild(form)
-}
+export { submitPaymentForm } from '@/lib/payment-form'
 
 /**
  * Check if payment method is Stripe

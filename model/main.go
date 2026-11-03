@@ -175,7 +175,7 @@ func InitDB() (err error) {
 			db = db.Debug()
 		}
 		DB = db
-		if _, err := NonAgentCutoverPreflight(DB); err != nil {
+		if _, err := AgentSimpleCutoverPreflight(DB); err != nil {
 			return err
 		}
 		// MySQL charset/collation startup check: ensure Chinese-capable charset

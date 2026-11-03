@@ -66,6 +66,54 @@ afterEach(() => {
   useAuthStore.getState().auth.reset()
 })
 
+function agentSidebarWrapper(props: { children: ReactNode }) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  client.setQueryData(['status'], {})
+  return (
+    <QueryClientProvider client={client}>{props.children}</QueryClientProvider>
+  )
+}
+
+it('root uses one agent management entry while only agents see the sales workspace', () => {
+  for (const role of [ROLE.SUPER_ADMIN, ROLE.ADMIN, ROLE.USER]) {
+    useAuthStore.getState().auth.setUser({
+      id: 1,
+      username: 'operator',
+      role,
+      permissions: { agent_history: role !== ROLE.USER },
+    })
+    const view = renderHook(() => useSidebarData(), {
+      wrapper: agentSidebarWrapper,
+    })
+    expect(
+      view.result.current.navGroups.find((group) => group.id === 'agent')
+    ).toBeUndefined()
+    const adminGroup = view.result.current.navGroups.find(
+      (group) => group.id === 'admin'
+    )
+    expect(
+      adminGroup?.items.filter(
+        (item) => 'url' in item && item.url === '/agent-platform/finance'
+      )
+    ).toHaveLength(1)
+    view.unmount()
+  }
+  useAuthStore.getState().auth.setUser({
+    id: 2,
+    username: 'agent',
+    role: ROLE.USER,
+    permissions: { agent_history: true },
+  })
+  const view = renderHook(() => useSidebarData(), {
+    wrapper: agentSidebarWrapper,
+  })
+  expect(
+    view.result.current.navGroups.find((group) => group.id === 'agent')?.items
+  ).toHaveLength(3)
+})
+
 function sidebarFor(admin?: object, user?: object, canConfigure = true) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },

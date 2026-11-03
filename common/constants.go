@@ -220,7 +220,7 @@ const (
 	RoleGuestUser  = 0
 	RoleCommonUser = 1
 	// RoleAgentUser is a read-only compatibility value for historical accounts.
-	// It grants only ordinary consumer privileges in this non-agent build.
+	// Ordinary role access remains unchanged; A07 uses current Profile capabilities.
 	RoleAgentUser = 5
 	RoleAdminUser = 10
 	RoleRootUser  = 100

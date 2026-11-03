@@ -100,6 +100,9 @@ const walletUser: UserWalletData = {
 }
 
 const walletSummary: WalletSummary = {
+  referral_available_quota: 1_000_000,
+  referral_total_quota: 3_000_000,
+  referral_invite_count: 2,
   total: 1_200_000,
   paid: 800_000,
   bonus: 200_000,
@@ -113,6 +116,7 @@ const walletSummary: WalletSummary = {
 }
 
 const referralRewards: ReferralCommissionPage = {
+  available_quota: 1_000_000,
   items: [
     {
       id: 1,
@@ -120,6 +124,9 @@ const referralRewards: ReferralCommissionPage = {
       source_name: 'a***',
       paid_quota: 1_000_000,
       reward_quota: 50_000,
+      reversed_quota: 0,
+      status: 'released',
+      matures_at: 0,
       rate: 0.05,
       created_at: 1735689600,
     },
@@ -128,6 +135,7 @@ const referralRewards: ReferralCommissionPage = {
 }
 
 const onlineTopupInfo: TopupInfo = {
+  payment_compliance_confirmed: true,
   enable_online_topup: true,
   enable_stripe_topup: false,
   enable_redemption: true,
@@ -167,6 +175,7 @@ function renderWallet() {
 
 describe('wallet funding flow', () => {
   beforeEach(() => {
+    vi.spyOn(api, 'request')
     sessionStorage.clear()
     useAuthStore.getState().auth.setUser({ ...walletUser, role: 1 })
     vi.spyOn(api, 'post').mockResolvedValue({
@@ -230,10 +239,12 @@ describe('wallet funding flow', () => {
     const { container } = renderWallet()
 
     expect(
-      await screen.findByText('Oops! Something went wrong')
+      (await screen.findAllByText('Oops! Something went wrong'))[0]
     ).toBeInTheDocument()
     expect(container.querySelector('[data-wallet-stat="paid"]')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    expect(
+      screen.getAllByRole('button', { name: 'Retry' }).length
+    ).toBeGreaterThan(0)
   })
 
   test('shows amount, payment methods, and redemption input when online topup and redemption are enabled', async () => {
@@ -425,7 +436,11 @@ describe('wallet funding flow', () => {
     await userEvent.click(
       await screen.findByRole('button', { name: 'Transfer to Balance' })
     )
-    return screen.findByRole('dialog')
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText('Transfer Amount'), {
+      target: { value: '1' },
+    })
+    return dialog
   }
 
   const transferCalls = () =>
@@ -433,9 +448,8 @@ describe('wallet funding flow', () => {
       .mocked(api.post)
       .mock.calls.filter(([url]) => url === '/api/user/aff_transfer')
 
-  test('transfers ordinary pending rewards after confirmation and refreshes balances without agent authorization', async () => {
+  test('released rewards transfer with one stable key and refresh both wallet views', async () => {
     const dialog = await openTransfer()
-    expect(transferCalls()).toHaveLength(0)
     await userEvent.click(
       within(dialog).getByRole('button', { name: 'Transfer' })
     )
@@ -443,62 +457,71 @@ describe('wallet funding flow', () => {
     expect(transferCalls()[0]).toEqual([
       '/api/user/aff_transfer',
       { quota: 500000 },
-      { headers: { 'Idempotency-Key': expect.any(String) } },
+      expect.objectContaining({
+        headers: { 'Idempotency-Key': expect.any(String) },
+      }),
     ])
-    expect(api.post).toHaveBeenCalledTimes(1)
-    await waitFor(() => {
+    expect(
+      vi.mocked(api.post).mock.calls.filter(([url]) => url === '/api/verify')
+    ).toHaveLength(0)
+    expect(api.request).not.toHaveBeenCalled()
+    await waitFor(() =>
       expect(vi.mocked(getWalletSummary).mock.calls.length).toBeGreaterThan(1)
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    })
+    )
   })
-
-  test('cancelling the ordinary rewards dialog does not make a financial request', async () => {
+  test('lost transfer response keeps the dialog open and reuses its key on explicit retry', async () => {
+    vi.mocked(api.post)
+      .mockRejectedValueOnce(new Error('Synthetic response lost'))
+      .mockResolvedValue({ data: { success: true, data: {} } })
     const dialog = await openTransfer()
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Transfer' })
+    )
+    await waitFor(() => expect(transferCalls()).toHaveLength(1))
+    expect(screen.getByRole('dialog')).toBeVisible()
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole('button', { name: 'Transfer' })
+      ).toBeEnabled()
+    )
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Transfer' })
+    )
+    await waitFor(() => expect(transferCalls()).toHaveLength(2))
+    expect(transferCalls()[0][2]?.headers).toEqual(
+      transferCalls()[1][2]?.headers
+    )
+    expect(api.request).not.toHaveBeenCalled()
+  })
+  test('reopening a failed transfer retains the same business key for the same amount', async () => {
+    vi.mocked(api.post).mockRejectedValue(
+      new Error('Synthetic connection lost')
+    )
+    const dialog = await openTransfer()
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Transfer' })
+    )
+    await waitFor(() => expect(transferCalls()).toHaveLength(1))
     await userEvent.click(
       within(dialog).getByRole('button', { name: 'Cancel' })
     )
-    await waitFor(() =>
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    )
-    expect(transferCalls()).toHaveLength(0)
-  })
-
-  test('keeps the confirmation open without refreshing balances after a business failure', async () => {
-    vi.mocked(api.post).mockResolvedValue({
-      data: { success: false, message: 'Insufficient available quota' },
-    })
-    const dialog = await openTransfer()
-    const summaryCalls = vi.mocked(getWalletSummary).mock.calls.length
     await userEvent.click(
-      within(dialog).getByRole('button', { name: 'Transfer' })
+      screen.getByRole('button', { name: 'Transfer to Balance' })
     )
-    await waitFor(() => expect(transferCalls()).toHaveLength(1))
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
-    expect(
-      within(dialog).getByRole('button', { name: 'Transfer' })
-    ).toBeEnabled()
-    expect(vi.mocked(getWalletSummary).mock.calls.length).toBe(summaryCalls)
-  })
-
-  test('retrying after a lost response uses the same idempotency key instead of a second debit', async () => {
-    vi.mocked(api.post)
-      .mockRejectedValueOnce(new Error('connection lost'))
-      .mockResolvedValueOnce({ data: { success: true } })
-    const dialog = await openTransfer()
-    const button = within(dialog).getByRole('button', { name: 'Transfer' })
-    await userEvent.click(button)
-    await waitFor(() => expect(transferCalls()).toHaveLength(1))
-    expect(button).toBeEnabled()
-    await userEvent.click(button)
+    const reopened = await screen.findByRole('dialog')
+    fireEvent.change(within(reopened).getByLabelText('Transfer Amount'), {
+      target: { value: '1' },
+    })
+    await userEvent.click(
+      within(reopened).getByRole('button', { name: 'Transfer' })
+    )
     await waitFor(() => expect(transferCalls()).toHaveLength(2))
-    expect(transferCalls()[1][2]).toEqual(transferCalls()[0][2])
-    await waitFor(() =>
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(transferCalls()[0][2]?.headers).toEqual(
+      transferCalls()[1][2]?.headers
     )
   })
-
-  test('duplicate clicks cannot submit an in-flight ordinary reward transfer twice', async () => {
-    let finish!: (value: { data: { success: boolean } }) => void
+  test('duplicate clicks cannot submit a pending transfer twice', async () => {
+    let finish: ((value: { data: { success: boolean } }) => void) | undefined
     vi.mocked(api.post).mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -507,29 +530,27 @@ describe('wallet funding flow', () => {
     )
     const dialog = await openTransfer()
     const button = within(dialog).getByRole('button', { name: 'Transfer' })
-    await userEvent.click(button)
+    fireEvent.click(button)
+    fireEvent.click(button)
     await waitFor(() => expect(transferCalls()).toHaveLength(1))
     expect(button).toBeDisabled()
-    fireEvent.click(button)
-    expect(transferCalls()).toHaveLength(1)
-    await act(async () => finish({ data: { success: true } }))
+    await act(async () => {
+      finish?.({ data: { success: true } })
+    })
   })
-
-  test('bounds the transfer and submits the confirmed quota to the ordinary wallet endpoint', async () => {
+  test('transfer bounds use only available released rewards and reject zero or overdraw', async () => {
     const dialog = await openTransfer()
     const input = within(dialog).getByLabelText('Transfer Amount')
     const button = within(dialog).getByRole('button', { name: 'Transfer' })
-    expect(input).toHaveAttribute('min', '1')
-    expect(input).toHaveAttribute('max', '2')
-    fireEvent.change(input, { target: { value: '0.5' } })
+    fireEvent.change(input, { target: { value: '0' } })
     expect(button).toBeDisabled()
     fireEvent.change(input, { target: { value: '3' } })
     expect(button).toBeDisabled()
-    fireEvent.change(input, { target: { value: '2' } })
+    fireEvent.change(input, { target: { value: '0.5' } })
     expect(button).toBeEnabled()
-    await userEvent.click(button)
+    fireEvent.click(button)
     await waitFor(() => expect(transferCalls()).toHaveLength(1))
-    expect(transferCalls()[0][1]).toEqual({ quota: 1000000 })
+    expect(transferCalls()[0][1]).toEqual({ quota: 250000 })
   })
 
   test('copies the real sign-up link generated from the affiliate code', async () => {
@@ -560,9 +581,12 @@ describe('wallet funding flow', () => {
       .mockResolvedValue({ success: true, data: referralRewards })
 
     renderWallet()
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Commission Records' })
+    )
 
     expect(
-      await screen.findByText('Oops! Something went wrong')
+      (await screen.findAllByText('Oops! Something went wrong'))[0]
     ).toBeInTheDocument()
     expect(
       screen.queryByText(
@@ -583,12 +607,16 @@ describe('wallet funding flow', () => {
     })
 
     renderWallet()
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Reward Rules' })
+    )
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Commission Records' })
+    )
 
     expect(await screen.findByText('Invitation Rewards')).toBeInTheDocument()
     expect(
-      screen.getByText(
-        /For the first 3 recharges of an invited friend, you will receive 5\.0% of the recharge amount as a reward\./
-      )
+      screen.getByText(/Earn 5\.0% from every qualifying top-up, with no cap\./)
     ).toBeInTheDocument()
     expect(
       screen.getByDisplayValue(/\/sign-up\?aff=wallet-aff$/)

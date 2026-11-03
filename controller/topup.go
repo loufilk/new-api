@@ -21,6 +21,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 )
 
 func GetTopUpInfo(c *gin.Context) {
@@ -416,14 +417,38 @@ func EpayNotify(c *gin.Context) {
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 webhook 验签成功 trade_no=%s callback_type=%s trade_status=%s callback_money=%s client_ip=%s", verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.TradeStatus, verifyInfo.Money, c.ClientIP()))
 
 	if verifyInfo.TradeStatus == epay.StatusTradeSuccess {
-		// 进程内锁只是优化；重复/并发回调的正确性由 RechargeEpay 的
-		// 数据库行锁 + 事务内状态校验保证（多实例部署下同样安全）。
+		// Payment-code orders use the same verified provider callback but must not
+		// enter the ordinary wallet top-up ledger.
 		LockOrder(verifyInfo.ServiceTradeNo)
 		defer UnlockOrder(verifyInfo.ServiceTradeNo)
 		var paymentFacts []model.VerifiedPaymentFacts
 		if fact, ok := model.NewVerifiedPaymentFacts(model.PaymentProviderEpay, params["trade_no"], operation_setting.EpayId, "live", "CNY", verifyInfo.Money, false); ok {
 			paymentFacts = append(paymentFacts, fact)
 		}
+		var simpleDone bool
+		simpleErr := model.DB.Transaction(func(tx *gorm.DB) error {
+			var settlementErr error
+			simpleDone, settlementErr = model.SettleAgentSimplePaymentCallbackTx(tx, verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.Money, common.GetTimestamp(), paymentFacts...)
+			return settlementErr
+		})
+		if simpleErr == nil {
+			if simpleDone {
+				logger.LogInfo(c.Request.Context(), common.LogText("Epay duplicate payment-code callback ignored trade_no=%s callback_type=%s client_ip=%s", verifyInfo.ServiceTradeNo, verifyInfo.Type, c.ClientIP()))
+			} else {
+				logger.LogInfo(c.Request.Context(), common.LogText("Epay payment-code settled trade_no=%s callback_type=%s client_ip=%s", verifyInfo.ServiceTradeNo, verifyInfo.Type, c.ClientIP()))
+			}
+			if _, writeErr := c.Writer.Write([]byte("success")); writeErr != nil {
+				logger.LogError(c.Request.Context(), common.LogText("Epay payment-code webhook response failed trade_no=%s client_ip=%s error=%q", verifyInfo.ServiceTradeNo, c.ClientIP(), writeErr.Error()))
+			}
+			return
+		}
+		if !errors.Is(simpleErr, model.ErrAgentSimplePaymentNotFound) {
+			logger.LogWarn(c.Request.Context(), common.LogText("Epay payment-code settlement failed trade_no=%s client_ip=%s", verifyInfo.ServiceTradeNo, c.ClientIP()))
+			_, _ = c.Writer.Write([]byte("fail"))
+			return
+		}
+		// 进程内锁只是优化；重复/并发回调的正确性由 RechargeEpay 的
+		// 数据库行锁 + 事务内状态校验保证（多实例部署下同样安全）。
 		alreadyDone, err := model.RechargeEpay(verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.Money, c.ClientIP(), paymentFacts...)
 		if err != nil {
 			switch {

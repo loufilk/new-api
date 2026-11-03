@@ -21,13 +21,30 @@ import { create } from 'zustand'
 import type { LoginChallenge } from '@/features/auth/secure-verification/types'
 import type { AdminCapabilities } from '@/lib/admin-permissions'
 
+export interface AgentProfile {
+  user_id: number
+  status: 'active' | 'exited'
+  sales_frozen: boolean
+  settlement_frozen: boolean
+  version: number
+  created_at: number
+  updated_at: number
+  updated_by: number
+  reason: string
+}
+
 export type UserPermissions = {
+  agent_history?: boolean
+  agent_sales?: boolean
+  agent_settlement?: boolean
+  agent_admin?: boolean
   sidebar_settings?: boolean
   sidebar_modules?: Record<string, unknown>
   admin_permissions?: AdminCapabilities
 }
 
 export interface AuthUser {
+  agent_profile?: AgentProfile | null
   has_password?: boolean
   id: number
   username: string

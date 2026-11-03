@@ -32,9 +32,9 @@ func TestOrdinaryTopupPreservesPrincipalAndRetriesRewardSnapshot(t *testing.T) {
 	assert.Equal(t, common.TopUpStatusSuccess, after.Status)
 	assert.Positive(t, after.PaymentReceiptID)
 	assert.Equal(t, 1_000_000, getUserBalances(t, buyer.Id).QuotaPaid)
-	_, err = ProcessReferralRewardOutbox(t.Context(), 100)
-	require.ErrorIs(t, err, ErrReferralRewardInvariant)
-	var event ReferralRewardOutbox
+	_, err = ProcessAgentCommissionOutbox(t.Context(), 100)
+	require.ErrorIs(t, err, ErrAgentCommissionInvariant)
+	var event AgentCommissionOutbox
 	require.NoError(t, DB.Where("reference_id = ?", order.TradeNo).First(&event).Error)
 	assert.Equal(t, "failed", event.Status)
 	originalPayload := event.Payload
@@ -42,19 +42,19 @@ func TestOrdinaryTopupPreservesPrincipalAndRetriesRewardSnapshot(t *testing.T) {
 	common.AffiliateRewardRate = 0.5 // Retry must use payment-time terms, not this later rate.
 	require.NoError(t, DB.Model(&event).Update("next_attempt_at", 0).Error)
 	for range 2 {
-		_, err = ProcessReferralRewardOutbox(t.Context(), 100)
+		_, err = ProcessAgentCommissionOutbox(t.Context(), 100)
 		require.NoError(t, err)
 	}
 	done, err := RechargeEpay(order.TradeNo, "alipay", "2.00", "127.0.0.1", facts)
 	require.NoError(t, err)
 	assert.True(t, done)
 	assert.Equal(t, 1_000_000, getUserBalances(t, buyer.Id).QuotaPaid)
-	assert.Equal(t, 50_000, getUserBalances(t, inviter.Id).AffQuota)
-	assert.Equal(t, 50_000, getUserBalances(t, inviter.Id).AffHistoryQuota)
+	assert.Equal(t, 30_000, getUserBalances(t, inviter.Id).AffQuota)
+	assert.Equal(t, 30_000, getUserBalances(t, inviter.Id).AffHistoryQuota)
 	require.NoError(t, DB.First(&event, event.ID).Error)
 	assert.Equal(t, originalPayload, event.Payload)
 	assert.Equal(t, "done", event.Status)
-	for _, schema := range []any{&PaymentReceipt{}, &ReferralRewardInbox{}, &ReferralCommission{}} {
+	for _, schema := range []any{&PaymentReceipt{}, &AgentCommissionInbox{}, &ReferralCommission{}} {
 		var count int64
 		require.NoError(t, DB.Model(schema).Count(&count).Error)
 		assert.EqualValues(t, 1, count)
@@ -80,7 +80,7 @@ func TestOrdinaryRewardEventFailureRollsBackPaymentReceiptAndPrincipal(t *testin
 	injected := errors.New("synthetic reward event storage failure")
 	callback := "ordinary-reward-event-failure"
 	require.NoError(t, DB.Callback().Create().Before("gorm:create").Register(callback, func(tx *gorm.DB) {
-		if tx.Statement.Table == "referral_reward_outboxes" {
+		if tx.Statement.Table == "agent_commission_outboxes" {
 			tx.AddError(injected)
 		}
 	}))
@@ -92,7 +92,7 @@ func TestOrdinaryRewardEventFailureRollsBackPaymentReceiptAndPrincipal(t *testin
 	assert.Equal(t, common.TopUpStatusPending, stored.Status)
 	assert.Zero(t, stored.PaymentReceiptID)
 	assert.Zero(t, getUserBalances(t, 97111).QuotaPaid)
-	for _, schema := range []any{&PaymentReceipt{}, &BalanceLedger{}, &ReferralRewardOutbox{}} {
+	for _, schema := range []any{&PaymentReceipt{}, &BalanceLedger{}, &AgentCommissionOutbox{}} {
 		var count int64
 		require.NoError(t, DB.Model(schema).Count(&count).Error)
 		assert.Zero(t, count)
@@ -178,7 +178,7 @@ func TestOrdinaryReferralTransferRevokedSessionRollsBack(t *testing.T) {
 	require.NoError(t, DB.Model(&session).Update("status", UserSessionStatusRevoked).Error)
 	_, err = TransferAffQuota(user.Id, 500_000, "ordinary-transfer", identity)
 	require.True(t, errors.Is(err, ErrUserSessionInactive))
-	assert.Equal(t, 500_000, getUserBalances(t, user.Id).QuotaReward)
+	assert.Equal(t, 500_000, getUserBalances(t, user.Id).QuotaPaid)
 	assert.Equal(t, 500_000, getUserBalances(t, user.Id).AffQuota)
 }
 

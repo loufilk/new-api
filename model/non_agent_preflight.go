@@ -34,6 +34,10 @@ type nonAgentRetirementRule struct {
 // Missing schemas are normal for a new site. Unknown/nonempty business tables,
 // unreadable schemas, and unknown states fail closed rather than imply zero.
 func NonAgentCutoverPreflight(db *gorm.DB) ([]NonAgentCutoverBlock, error) {
+	return nonAgentCutoverPreflight(db, false)
+}
+
+func nonAgentCutoverPreflight(db *gorm.DB, a07 bool) ([]NonAgentCutoverBlock, error) {
 	if db == nil {
 		return nil, errors.New("non-agent cutover preflight: database unavailable")
 	}
@@ -91,6 +95,18 @@ agent_agreements agent_agreement_approvals agent_agreement_audits
 agent_statement_imports agent_statement_lines agent_statement_matches agent_statement_confirmed_matches
 agent_statement_audits agent_statement_evidences agent_statement_evidence_decisions
 agent_governances agent_governance_submissions agent_governance_audits agent_governance_risk_usages`)
+	if a07 {
+		// These models belong to the new live A07 ledger, not retired legacy liabilities.
+		for _, schema := range append(AgentSimpleModels(), &AgentSimpleBill{}, &AgentSimpleCreditDebt{}, &AgentSimpleReminder{}, &AgentSimpleCodeViewAudit{}, &AgentSimpleExitRecord{}, &AgentSimpleReminderReceipt{}, &AgentSimpleMigration{}) {
+			statement := &gorm.Statement{DB: db}
+			if err := statement.Parse(schema); err != nil {
+				return nil, err
+			}
+			archives = append(archives, statement.Schema.Table)
+		}
+		rules["agent_payment_receipts"] = nonAgentRetirementRule{predicate: "purpose IS NULL OR purpose NOT IN ?", args: []any{[]string{"topup", "payment_code", "agent_recharge"}}}
+		rules["agent_commission_outboxes"] = nonAgentRetirementRule{predicate: "(status IS NULL OR status <> ?) AND (route IS NULL OR route <> ?)", args: []any{"done", "referral"}}
+	}
 	var blocks []NonAgentCutoverBlock
 	err := db.Transaction(func(tx *gorm.DB) error {
 		var tables []string
@@ -193,7 +209,25 @@ agent_governances agent_governance_submissions agent_governance_audits agent_gov
 				if hasReserved {
 					predicate = "(" + predicate + ") OR budget_reserved IS NULL OR budget_reserved = TRUE"
 				}
-				if err := tx.Table("redemptions").Where(predicate, []int{common.RedemptionCodeStatusDisabled, common.RedemptionCodeStatusUsed}).Count(&count).Error; err != nil {
+				query := tx.Table("redemptions").Where(predicate, []int{common.RedemptionCodeStatusDisabled, common.RedemptionCodeStatusUsed})
+				if a07 {
+					// A completed migration distinguishes new live code obligations
+					// from retired legacy markers. Unknown or NULL provenance never
+					// qualifies for this exception, including on used/disabled codes.
+					validA07 := strings.Join([]string{
+						"agent_simple_mode IN ('direct', 'credit', 'payment')",
+						"budget_agent_id > 0 AND user_id = budget_agent_id",
+						"customer_user_id = 0 AND delivery_id = 0 AND source_protected = FALSE",
+						"budget_reserved IS NOT NULL AND agent_simple_credit IS NOT NULL AND budget_version > 0",
+						"quota > 0 AND quota <= ? AND agent_simple_cost_quota >= 0 AND agent_simple_cost_quota <= ?",
+						"((status = ? AND budget_reserved = TRUE AND used_user_id = 0 AND redeemed_time = 0) OR (status = ? AND budget_reserved = FALSE AND used_user_id = 0 AND redeemed_time = 0) OR (status = ? AND budget_reserved = FALSE AND used_user_id > 0 AND redeemed_time > 0))",
+						"EXISTS (SELECT 1 FROM agent_simple_accounts AS a WHERE a.agent_user_id = redemptions.budget_agent_id)",
+						"((agent_simple_mode IN ('direct', 'credit') AND agent_simple_payment_id = 0 AND creation_operation_id > 0) OR (agent_simple_mode = 'payment' AND agent_simple_payment_id > 0 AND agent_simple_credit = FALSE AND agent_simple_cost_quota = 0 AND EXISTS (SELECT 1 FROM agent_simple_payment_orders AS p WHERE p.id = redemptions.agent_simple_payment_id AND p.redemption_id = redemptions.id AND p.agent_user_id = redemptions.budget_agent_id)))",
+					}, " AND ")
+					query = tx.Table("redemptions").Where("(("+predicate+") OR (agent_simple_mode IS NOT NULL AND agent_simple_mode <> ''))", []int{common.RedemptionCodeStatusDisabled, common.RedemptionCodeStatusUsed}).
+						Where("COALESCE(("+validA07+"), FALSE) = FALSE", common.MaxWalletQuota, common.MaxWalletQuota, common.RedemptionCodeStatusEnabled, common.RedemptionCodeStatusDisabled, common.RedemptionCodeStatusUsed)
+				}
+				if err := query.Count(&count).Error; err != nil {
 					return errors.New("non-agent cutover preflight: cannot inspect legacy redemption obligations")
 				}
 				if count > 0 {

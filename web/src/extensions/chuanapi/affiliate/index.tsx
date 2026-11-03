@@ -96,6 +96,7 @@ export function AffiliatePage() {
             {ready && !loadFailed && (
               <AffiliateRewardsCard
                 standalone
+                availableQuota={wallet.summary?.referral_available_quota ?? 0}
                 user={user.data ?? null}
                 affiliateCode={affiliate.affiliateCode}
                 affiliateLink={affiliate.affiliateLink}
@@ -121,7 +122,7 @@ export function AffiliatePage() {
         open={transferOpen}
         onOpenChange={setTransferOpen}
         onConfirm={transfer}
-        availableQuota={user.data?.aff_quota ?? 0}
+        availableQuota={wallet.summary?.referral_available_quota ?? 0}
         transferring={affiliate.transferring}
       />
     </>
