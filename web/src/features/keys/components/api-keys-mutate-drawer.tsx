@@ -441,7 +441,9 @@ export function ApiKeysMutateDrawer({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
-        className={sideDrawerContentClassName('max-w-none sm:!max-w-[516px]')}
+        className={sideDrawerContentClassName(
+          'min-w-0 max-w-[100dvw] sm:!max-w-[516px]'
+        )}
       >
         <SheetHeader className={sideDrawerHeaderClassName()}>
           <SheetTitle>
@@ -473,7 +475,7 @@ export function ApiKeysMutateDrawer({
             aria-busy={!isFormInitialized}
             inert={!isFormInitialized || isSubmitting ? true : undefined}
             className={sideDrawerFormClassName(
-              'gap-0 px-5 py-6 sm:px-8 sm:py-6'
+              'min-w-0 gap-0 px-5 py-6 sm:px-8 sm:py-6'
             )}
           >
             <SideDrawerSection className='before:bg-border relative ml-1 gap-6 border-b-0 border-l pb-9 pl-7 before:absolute before:top-0 before:-left-[5px] before:size-2.5 before:rounded-full'>
@@ -761,12 +763,15 @@ export function ApiKeysMutateDrawer({
           </form>
         </Form>
         <SheetFooter
-          className={sideDrawerFooterClassName(
-            'flex flex-row-reverse justify-end sm:flex-row-reverse sm:justify-end'
-          )}
+          className={sideDrawerFooterClassName('sm:flex-row-reverse')}
         >
           <SheetClose
-            render={<Button variant='outline' className='w-full sm:w-auto' />}
+            render={
+              <Button
+                variant='outline'
+                className='order-2 w-full min-w-0 sm:order-none sm:w-auto'
+              />
+            }
           >
             {t('Close')}
           </SheetClose>
@@ -774,7 +779,7 @@ export function ApiKeysMutateDrawer({
             type='button'
             onClick={form.handleSubmit(onSubmit, onInvalid)}
             disabled={!isFormInitialized || isSubmitting}
-            className='w-full sm:w-auto'
+            className='order-1 w-full min-w-0 sm:order-none sm:w-auto'
           >
             {isSubmitting ? t('Saving...') : submitLabel}
           </Button>

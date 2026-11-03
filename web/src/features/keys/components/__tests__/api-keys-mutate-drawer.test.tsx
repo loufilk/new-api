@@ -290,7 +290,9 @@ describe('API key expiry across editing sessions', () => {
       const getFixture = apiClient.get
       const get = vi.spyOn(apiClient, 'get').mockImplementation((url) => {
         if (url === '/api/token/1') {
-          return Promise.resolve({ data: { success: true, data: first } })
+          return Promise.resolve({
+            data: { success: true, data: { ...first, routing_strategy: '' } },
+          })
         }
         if (url === '/api/token/2') return detail
         return getFixture(url)
@@ -337,6 +339,12 @@ describe('API key expiry across editing sessions', () => {
           id: 1,
           expired_time: 2000000000,
           model_limits: 'retired-model',
+          routing_strategy: 'auto',
+          smart_routing: false,
+          no_retry_within_group: false,
+          group: 'default',
+          unlimited_quota: true,
+          allow_user_quota_query: true,
         })
       } else {
         fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0])
@@ -443,4 +451,18 @@ describe('API keys persisted routing policy', () => {
       allow_user_quota_query: true,
     })
   })
+})
+
+test('keeps mobile action buttons in bounded equal grid columns instead of two full-width non-shrinking flex items', async () => {
+  installApiFixtures([])
+  await renderCreateDrawer()
+  const footer = findButton('Add', true).closest('[data-slot="sheet-footer"]')
+  expect(footer).toHaveClass('grid', 'grid-cols-2')
+  expect(footer).not.toHaveClass('flex')
+  expect(footer).not.toHaveClass('flex-row-reverse')
+  expect(footer).toHaveClass('sm:flex', 'sm:flex-row-reverse')
+  expect(findButton('Add', true)).toHaveClass('order-1', 'min-w-0')
+  expect(findButton('Close', true)).toHaveClass('order-2', 'min-w-0')
+  expect(screen.getByRole('dialog')).toHaveClass('min-w-0', 'max-w-[100dvw]')
+  expect(document.querySelector('#api-key-form')).toHaveClass('min-w-0')
 })

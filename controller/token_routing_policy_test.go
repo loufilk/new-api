@@ -127,6 +127,12 @@ func TestSmartTokenPolicyValidationAndOwnership(t *testing.T) {
 			AddToken(ctx)
 			response := decodeAPIResponse(t, recorder)
 			assert.Equal(t, tc.want, response.Success, response.Message)
+			if tc.want {
+				var persisted model.Token
+				require.NoError(t, model.DB.Where("name = ?", tc.name).First(&persisted).Error)
+				assert.Equal(t, "auto", persisted.RoutingStrategy)
+				assert.False(t, persisted.SmartRouting)
+			}
 		})
 	}
 	token := seedToken(t, model.DB, user.Id, "owner-policy", "synthetic-owner-policy")
@@ -182,8 +188,61 @@ func TestSmartTokenMigrationIsAdditiveAndIdempotentPostgres(t *testing.T) {
 	assert.False(t, token.NoRetryWithinGroup)
 	assert.Empty(t, token.ProjectLabel)
 	assert.Equal(t, "auto", token.GetRoutingStrategy())
+	assert.Empty(t, token.RoutingStrategy, "legacy database NULL remains unconfigured in storage")
+	assert.Equal(t, "auto", buildMaskedTokenResponse(&token).RoutingStrategy)
 	assert.Equal(t, strings.Repeat("k", 48), token.Key)
 	assert.Equal(t, "default", token.Group)
+}
+
+func TestMaskedTokenRoutingStrategyCanonicalizesOnlyLegacyDefault(t *testing.T) {
+	for _, strategy := range []string{"", "auto", "success_rate", "price", "speed", "unknown"} {
+		t.Run("strategy_"+strategy, func(t *testing.T) {
+			token := &model.Token{
+				Id: 1, Key: "synthetic-contract-token-not-a-credential", RoutingStrategy: strategy,
+				Group: "restricted", SmartRouting: false, NoRetryWithinGroup: true,
+				CacheRevision: 7, ModelLimitsEnabled: true, ModelLimits: "allowed-model",
+			}
+			before := *token
+			response := buildMaskedTokenResponse(token)
+			want := strategy
+			if want == "" {
+				want = "auto"
+			}
+			assert.Equal(t, want, response.RoutingStrategy)
+			assert.Equal(t, before, *token, "serialization must not mutate cached or persisted policy")
+			assert.Equal(t, token.GetMaskedKey(), response.Key)
+			assert.False(t, response.SmartRouting, "default strategy must not enable smart routing")
+			assert.True(t, response.NoRetryWithinGroup)
+			assert.Equal(t, "restricted", response.Group)
+			assert.True(t, response.ModelLimitsEnabled)
+			assert.Equal(t, "allowed-model", response.ModelLimits)
+		})
+	}
+}
+
+func TestTokenRequestNormalizesDefaultWithoutChangingRoutingScope(t *testing.T) {
+	for _, tc := range []struct {
+		name, payload, existing, want string
+	}{
+		{"create omitted", `{}`, "", "auto"},
+		{"create null", `{"routing_strategy":null}`, "", "auto"},
+		{"explicit empty", `{"routing_strategy":""}`, "speed", "auto"},
+		{"update omitted", `{}`, "speed", "speed"},
+		{"update null", `{"routing_strategy":null}`, "price", "price"},
+		{"explicit strategy", `{"routing_strategy":"success_rate"}`, "", "success_rate"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var request tokenRequest
+			require.NoError(t, common.UnmarshalJsonStr(tc.payload, &request))
+			token := &model.Token{Key: "synthetic-request-contract", RoutingStrategy: tc.existing,
+				SmartRouting: false, Group: "restricted", AutoGroups: `["restricted"]`,
+				NoRetryWithinGroup: true, RemainQuota: 73, UsedQuota: 19, CacheRevision: 3}
+			want := *token
+			want.RoutingStrategy = tc.want
+			require.NoError(t, request.applyRoutingSettings(token))
+			assert.Equal(t, want, *token)
+		})
+	}
 }
 
 func TestSmartTokenAuthUsesLiveConcreteScopeAndRetainsAccountRestrictions(t *testing.T) {

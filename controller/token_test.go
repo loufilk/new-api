@@ -41,10 +41,11 @@ type tokenPageResponse struct {
 }
 
 type tokenResponseItem struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	Key    string `json:"key"`
-	Status int    `json:"status"`
+	ID              int    `json:"id"`
+	Name            string `json:"name"`
+	Key             string `json:"key"`
+	Status          int    `json:"status"`
+	RoutingStrategy string `json:"routing_strategy"`
 }
 
 type tokenKeyResponse struct {
@@ -478,6 +479,7 @@ func TestGetAllTokensMasksKeyInResponse(t *testing.T) {
 	if len(page.Items) != 1 {
 		t.Fatalf("expected exactly one token, got %d", len(page.Items))
 	}
+	assert.Equal(t, "auto", page.Items[0].RoutingStrategy)
 	if page.Items[0].Key != token.GetMaskedKey() {
 		t.Fatalf("expected masked key %q, got %q", token.GetMaskedKey(), page.Items[0].Key)
 	}
@@ -505,6 +507,7 @@ func TestSearchTokensMasksKeyInResponse(t *testing.T) {
 	if len(page.Items) != 1 {
 		t.Fatalf("expected exactly one search result, got %d", len(page.Items))
 	}
+	assert.Equal(t, "auto", page.Items[0].RoutingStrategy)
 	if page.Items[0].Key != token.GetMaskedKey() {
 		t.Fatalf("expected masked search key %q, got %q", token.GetMaskedKey(), page.Items[0].Key)
 	}
@@ -533,6 +536,7 @@ func TestGetTokenMasksKeyInResponse(t *testing.T) {
 	if detail.Key != token.GetMaskedKey() {
 		t.Fatalf("expected masked detail key %q, got %q", token.GetMaskedKey(), detail.Key)
 	}
+	assert.Equal(t, "auto", detail.RoutingStrategy)
 	if strings.Contains(recorder.Body.String(), token.Key) {
 		t.Fatalf("detail response leaked raw token key: %s", recorder.Body.String())
 	}
@@ -571,6 +575,7 @@ func TestUpdateTokenMasksKeyInResponse(t *testing.T) {
 	if detail.Key != token.GetMaskedKey() {
 		t.Fatalf("expected masked update key %q, got %q", token.GetMaskedKey(), detail.Key)
 	}
+	assert.Equal(t, "auto", detail.RoutingStrategy)
 	if strings.Contains(recorder.Body.String(), token.Key) {
 		t.Fatalf("update response leaked raw token key: %s", recorder.Body.String())
 	}

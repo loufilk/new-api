@@ -18,20 +18,33 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
 
-import type {
-  ApiKey,
-  ApiResponse,
-  GetApiKeysParams,
-  GetApiKeysResponse,
-  SearchApiKeysParams,
-  ApiKeyFormData,
-  TokenAutoGroupsConfig,
-  CCSwitchApp,
+import { ERROR_MESSAGES } from './constants'
+import {
+  apiKeySchema,
+  type ApiKey,
+  type ApiResponse,
+  type GetApiKeysParams,
+  type GetApiKeysResponse,
+  type SearchApiKeysParams,
+  type ApiKeyFormData,
+  type TokenAutoGroupsConfig,
+  type CCSwitchApp,
 } from './types'
 
 // ============================================================================
 // API Key Management
 // ============================================================================
+
+function parseApiKeysResponse(
+  response: GetApiKeysResponse
+): GetApiKeysResponse {
+  if (!response.success || !response.data) return response
+
+  const parsed = apiKeySchema.array().safeParse(response.data.items)
+  // Never expose raw token data or schema issues through the UI error path.
+  if (!parsed.success) throw new Error(ERROR_MESSAGES.LOAD_FAILED)
+  return { ...response, data: { ...response.data, items: parsed.data } }
+}
 
 // Get paginated API keys list
 export async function getApiKeys(
@@ -39,7 +52,7 @@ export async function getApiKeys(
 ): Promise<GetApiKeysResponse> {
   const { p = 1, size = 10 } = params
   const res = await api.get(`/api/token/?p=${p}&size=${size}`)
-  return res.data
+  return parseApiKeysResponse(res.data)
 }
 
 // Search API keys by keyword or token (with pagination)
@@ -53,13 +66,18 @@ export async function searchApiKeys(
   if (p != null) queryParams.set('p', String(p))
   if (size != null) queryParams.set('size', String(size))
   const res = await api.get(`/api/token/search?${queryParams.toString()}`)
-  return res.data
+  return parseApiKeysResponse(res.data)
 }
 
 // Get single API key by ID
 export async function getApiKey(id: number): Promise<ApiResponse<ApiKey>> {
   const res = await api.get(`/api/token/${id}`)
-  return res.data
+  const response: ApiResponse<ApiKey> = res.data
+  if (!response.success || !response.data) return response
+
+  const parsed = apiKeySchema.safeParse(response.data)
+  if (!parsed.success) throw new Error(ERROR_MESSAGES.LOAD_FAILED)
+  return { ...response, data: parsed.data }
 }
 
 // Get the current user's global Auto order and the per-token selection limit.

@@ -73,6 +73,8 @@ func (request *tokenRequest) applyRoutingSettings(token *model.Token) error {
 	if request.ProjectLabel != nil {
 		token.ProjectLabel = strings.TrimSpace(*request.ProjectLabel)
 	}
+	// Persist the existing default semantics for legacy clients, without enabling smart routing.
+	token.RoutingStrategy = token.GetRoutingStrategy()
 	return token.ValidateRoutingSettings()
 }
 
@@ -97,6 +99,7 @@ func buildMaskedTokenResponse(token *model.Token) *tokenResponse {
 	}
 	maskedToken := *token
 	maskedToken.Key = token.GetMaskedKey()
+	maskedToken.RoutingStrategy = token.GetRoutingStrategy()
 	autoGroups, err := token.GetAutoGroups()
 	if err != nil {
 		common.SysError(common.LogText("failed to parse auto groups for token %d: %v", token.Id, err))

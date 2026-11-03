@@ -57,7 +57,7 @@ import { handleServerError } from '@/lib/handle-server-error'
 
 import { updateApiKeyStatus } from '../api'
 import { API_KEY_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
-import { apiKeySchema } from '../types'
+import type { ApiKey } from '../types'
 import { useApiKeys } from './api-keys-provider'
 
 function getServerAddress(): string {
@@ -75,15 +75,13 @@ function getServerAddress(): string {
   return window.location.origin
 }
 
-type DataTableRowActionsProps<TData> = {
-  row: Row<TData>
+type DataTableRowActionsProps = {
+  row: Row<ApiKey>
 }
 
-export function DataTableRowActions<TData>({
-  row,
-}: DataTableRowActionsProps<TData>) {
+export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
-  const apiKey = apiKeySchema.parse(row.original)
+  const apiKey = row.original
   const {
     setOpen,
     setCurrentRow,

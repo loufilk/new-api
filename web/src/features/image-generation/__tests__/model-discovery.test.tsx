@@ -125,7 +125,27 @@ test('refresh reloads pricing, token limits and owned token models after configu
       }
     }
     if (url === '/api/token/?p=1&size=100') {
-      return { data: { success: true, data: { items: [key], total: 1 } } }
+      return {
+        data: {
+          success: true,
+          data: {
+            items: [
+              {
+                ...key,
+                key: 'masked',
+                remain_quota: 1000000,
+                used_quota: 0,
+                unlimited_quota: false,
+                expired_time: -1,
+                created_time: 1,
+                accessed_time: 0,
+                routing_strategy: '',
+              },
+            ],
+            total: 1,
+          },
+        },
+      }
     }
     if (url === '/api/token/7/models') {
       return { data: { success: true, data: [name] } }

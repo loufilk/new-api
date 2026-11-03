@@ -35,7 +35,11 @@ export const apiKeySchema = z.object({
   accessed_time: z.number(),
   smart_routing: z.boolean().optional(),
   routing_strategy: z
-    .enum(['auto', 'success_rate', 'price', 'speed'])
+    .preprocess(
+      // Legacy Go tokens use the empty string for the default strategy.
+      (value) => (value === '' ? 'auto' : value),
+      z.enum(['auto', 'success_rate', 'price', 'speed'])
+    )
     .optional(),
   no_retry_within_group: z.boolean().optional(),
   project_label: z.string().nullish(),

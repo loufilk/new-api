@@ -303,7 +303,13 @@ function KeysPage() {
   )
 }
 
-async function renderKeysPage(status = 1, overrides: Partial<ApiKey> = {}) {
+async function renderKeysPage(
+  status = 1,
+  overrides: Partial<Omit<ApiKey, 'routing_strategy'>> & {
+    routing_strategy?: unknown
+  } = {},
+  waitForRow = true
+) {
   let currentKey = { ...key, status, ...overrides }
   vi.mocked(api.get).mockImplementation(async (url) => {
     if (url.startsWith('/api/token/')) {
@@ -345,7 +351,7 @@ async function renderKeysPage(status = 1, overrides: Partial<ApiKey> = {}) {
       </QueryClientProvider>
     </I18nextProvider>
   )
-  await screen.findByText(currentKey.name)
+  if (waitForRow) await screen.findByText(currentKey.name)
   return { post, put }
 }
 
@@ -524,4 +530,48 @@ it('keeps mobile quota readable and opens complete model and IP restrictions by 
   details = await screen.findByRole('dialog')
   expect(within(details).getByText('192.0.2.1')).toBeVisible()
   expect(within(details).getByText('2001:db8::1')).toBeVisible()
+})
+
+it('renders a legacy empty-strategy key with working row actions instead of a route-level ZodError', async () => {
+  await renderKeysPage(1, {
+    name: 'legacy empty strategy',
+    routing_strategy: '',
+  })
+  expect(screen.getByText('legacy empty strategy')).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Edit' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Disable' })).toBeEnabled()
+})
+
+it('shows a retryable local error for an invalid key response and recovers without discarding a row', async () => {
+  await renderKeysPage(1, { routing_strategy: 'invalid-private-input' }, false)
+  expect(await screen.findByText('Failed to load API keys')).toBeVisible()
+  expect(screen.queryByText(key.name)).not.toBeInTheDocument()
+  expect(screen.queryByText('No API Keys Found')).not.toBeInTheDocument()
+  expect(screen.queryByText(/invalid-private-input/)).not.toBeInTheDocument()
+  vi.mocked(api.get).mockResolvedValue({
+    data: { success: true, data: { items: [key], total: 1 } },
+  })
+  await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  expect(await screen.findByText(key.name)).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Edit' })).toBeEnabled()
+})
+
+it('hides cached row actions if a refresh returns invalid data', async () => {
+  await renderKeysPage()
+  expect(screen.getByRole('button', { name: 'Edit' })).toBeEnabled()
+  vi.mocked(api.get).mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        items: [{ ...key, routing_strategy: 'invalid-private-input' }],
+        total: 1,
+      },
+    },
+  })
+  await act(async () => {
+    await clients.at(-1)?.invalidateQueries({ queryKey: ['keys'] })
+  })
+  expect(await screen.findByText('Failed to load API keys')).toBeVisible()
+  expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
+  expect(screen.queryByText(key.name)).not.toBeInTheDocument()
 })

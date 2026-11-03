@@ -73,7 +73,25 @@ beforeEach(() => {
           data: {
             success: true,
             data: {
-              items: [{ id: 1, name: 'App key', key: 'masked', status: 1 }],
+              items: [
+                {
+                  id: 1,
+                  name: 'App key',
+                  key: 'masked',
+                  status: 1,
+                  remain_quota: 1000000,
+                  used_quota: 0,
+                  unlimited_quota: false,
+                  expired_time: -1,
+                  created_time: 1,
+                  accessed_time: 0,
+                  model_limits_enabled: false,
+                  routing_strategy: '',
+                },
+              ],
+              total: 1,
+              page: 1,
+              page_size: 10,
             },
           },
         }

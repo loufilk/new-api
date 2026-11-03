@@ -30,6 +30,7 @@ import {
   useDebouncedColumnFilter,
   useDataTable,
 } from '@/components/data-table'
+import { ErrorState } from '@/components/error-state'
 import { StatusBadge } from '@/components/status-badge'
 import {
   Empty,
@@ -261,7 +262,7 @@ export function ApiKeysTable() {
 
   // Fetch data with React Query
   // eslint-disable-next-line @tanstack/query/exhaustive-deps
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: [
       'keys',
       pagination.pageIndex + 1,
@@ -337,6 +338,19 @@ export function ApiKeysTable() {
       }))
     }
   }, [columnVisibility, table])
+
+  if (isError) {
+    return (
+      <ErrorState
+        title={t(
+          shouldSearch
+            ? ERROR_MESSAGES.SEARCH_FAILED
+            : ERROR_MESSAGES.LOAD_FAILED
+        )}
+        onRetry={() => void refetch()}
+      />
+    )
+  }
 
   return (
     <DataTablePage
