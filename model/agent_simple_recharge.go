@@ -156,7 +156,7 @@ func CreateAgentSimpleRecharge(identity AuthSessionIdentity, request AgentSimple
 func DrainAgentSimpleDeferredCash(ctx context.Context, limit int) (int, error) {
 	limit = min(max(limit, 1), 200)
 	var ids []int
-	if err := DB.WithContext(ctx).Table("top_ups AS p").Select("p.id").Joins("JOIN agent_simple_accounts a ON a.agent_user_id = p.user_id").Where("p.agent_simple_top_up = ? AND p.status = ? AND p.payment_receipt_id > 0 AND p.agent_simple_deferred_quota > 0", true, common.TopUpStatusSuccess).Where("a.cash_quota + a.reward_quota + a.root_quota + a.payment_quota < ?", common.MaxWalletQuota).Order("p.id").Limit(limit).Scan(&ids).Error; err != nil {
+	if err := DB.WithContext(ctx).Table("top_ups AS p").Select("p.id").Joins("JOIN agent_simple_accounts a ON a.agent_user_id = p.user_id").Where("p.agent_simple_top_up = ? AND p.status = ? AND p.payment_receipt_id > 0 AND p.agent_simple_deferred_quota > 0", true, common.TopUpStatusSuccess).Where("a.cash_quota + a.reward_quota + a.root_quota + a.payment_quota + a.wallet_quota < ?", common.MaxWalletQuota).Order("p.id").Limit(limit).Scan(&ids).Error; err != nil {
 		return 0, err
 	}
 	count := 0

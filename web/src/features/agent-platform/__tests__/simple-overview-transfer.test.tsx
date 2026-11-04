@@ -1,3 +1,19 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
 
@@ -75,3 +91,37 @@ test.each([
     })
   }
 )
+
+test('recent-code errors offer retry while both funding entry points remain available', async () => {
+  let fail = true
+  vi.mocked(api.get).mockImplementation(async (url) => {
+    if (String(url).endsWith('/self')) return ok({ profile: {} })
+    if (String(url).endsWith('/simple/balance')) {
+      return ok({
+        status: 'active',
+        wallet_quota: 500_000,
+        available_quota: 500_000,
+        available_credit_quota: 0,
+        amount_due_quota: 0,
+        payment_available_quota: 0,
+        payment_debt_quota: 0,
+      })
+    }
+    if (fail) throw new Error('History unavailable')
+    return ok(page([]))
+  })
+  await mountExpansion(<AgentPortal />)
+  const retry = await screen.findByRole('button', { name: 'Retry' })
+  expect(screen.queryByText('No redemption codes yet')).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('button', {
+      name: 'Transfer wallet balance to agent balance',
+    })
+  ).toBeEnabled()
+  expect(
+    screen.getByRole('button', { name: 'Recharge agent balance' })
+  ).toBeEnabled()
+  fail = false
+  fireEvent.click(retry)
+  expect(await screen.findByText('No redemption codes yet')).toBeVisible()
+})

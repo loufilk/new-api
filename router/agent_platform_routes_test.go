@@ -26,7 +26,7 @@ func TestAgentPlatformModuleMountsCompleteBrowserSurface(t *testing.T) {
 	expected := []string{
 		"GET /simple/reminders/unread", "POST /simple/reminders/acknowledge",
 		"GET /self", "GET /simple/balance", "GET /simple/codes", "POST /simple/codes", "POST /simple/codes/:id/cancel",
-		"POST /simple/recharge", "POST /simple/payment/quote", "GET /simple/payment-methods", "POST /simple/payment", "GET /simple/payment-orders",
+		"POST /simple/recharge", "POST /simple/wallet-transfer", "POST /simple/payment/quote", "GET /simple/payment-methods", "POST /simple/payment", "GET /simple/payment-orders",
 		"GET /simple/payment-fees", "POST /simple/payment-fees", "POST /simple/payment/refunds", "POST /simple/payment/withdrawals", "POST /simple/payment/transfer",
 		"POST /simple/finance/status", "POST /simple/finance/adjust", "POST /simple/finance/credit-limit", "POST /simple/finance/repayment",
 		"GET /simple/finance/agents", "GET /simple/finance/history/:kind", "POST /simple/finance/codes/:id/reveal", "POST /simple/finance/withdrawal", "POST /simple/finance/referral-transfer", "POST /simple/finance/exit",

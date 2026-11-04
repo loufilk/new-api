@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -23,13 +24,65 @@ func TestAgentSimpleTransfersShareWalletComplianceGate(t *testing.T) {
 	t.Cleanup(func() { *operation_setting.GetPaymentSetting() = previous; model.DB = previousDB })
 	operation_setting.GetPaymentSetting().ComplianceConfirmed = false
 	model.DB = nil
-	for _, handler := range []gin.HandlerFunc{TransferReferralToAgentBalance, TransferAgentSimplePaymentProfit} {
+	for _, handler := range []gin.HandlerFunc{TransferReferralToAgentBalance, TransferAgentSimplePaymentProfit, TransferWalletToAgentSimple} {
 		response := httptest.NewRecorder()
 		ctx, _ := gin.CreateTestContext(response)
 		ctx.Request = httptest.NewRequest(http.MethodPost, "/synthetic", strings.NewReader(`{"quota":500000,"request_id":"synthetic-transfer"}`))
 		handler(ctx)
 		assert.Equal(t, http.StatusForbidden, response.Code)
 		assert.Contains(t, response.Body.String(), "Payment compliance terms are not confirmed")
+	}
+}
+
+func TestAgentSimpleWalletTransferHTTPRejectsInvalidIntentBeforeDatabaseAccess(t *testing.T) {
+	confirmPaymentComplianceForTest(t)
+	previousDB := model.DB
+	model.DB = nil
+	t.Cleanup(func() { model.DB = previousDB })
+	for _, body := range []string{
+		`{"request_id":"wallet-http-invalid","quota":0,"expected_user_id":1}`,
+		`{"request_id":"wallet-http-invalid","quota":-1,"expected_user_id":1}`,
+		`{"request_id":"wallet-http-invalid","quota":1.5,"expected_user_id":1}`,
+		`{"request_id":"wallet-http-invalid","quota":"100","expected_user_id":1}`,
+		`{"request_id":"wallet-http-invalid","quota":9223372036854775807,"expected_user_id":1}`,
+		`{"request_id":"short","quota":100,"expected_user_id":1}`,
+		`{"request_id":"wallet-http-invalid","quota":100,"agent_user_id":2,"expected_user_id":1}`,
+		`{"request_id":"wallet-http-invalid","quota":100,"source":"bonus","expected_user_id":1}`,
+		`{"request_id":"wallet-http-invalid","quota":100}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(response)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/api/agent-platform/simple/wallet-transfer", strings.NewReader(body))
+			ctx.Set("id", 1)
+			ctx.Set("session_id", "wallet-http-session")
+			ctx.Set("auth_version", int64(1))
+			ctx.Set("session_version", int64(1))
+			TransferWalletToAgentSimple(ctx)
+			assert.Equal(t, http.StatusBadRequest, response.Code)
+		})
+	}
+}
+
+func TestAgentSimpleWalletTransferHTTPRequiresMatchingSessionAccount(t *testing.T) {
+	confirmPaymentComplianceForTest(t)
+	previousDB := model.DB
+	model.DB = nil
+	t.Cleanup(func() { model.DB = previousDB })
+	for _, signedIn := range []bool{false, true} {
+		t.Run(strconv.FormatBool(signedIn), func(t *testing.T) {
+			response := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(response)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/api/agent-platform/simple/wallet-transfer", strings.NewReader(`{"request_id":"wallet-http-account-switch","quota":100,"expected_user_id":1}`))
+			if signedIn {
+				ctx.Set("id", 2)
+				ctx.Set("session_id", "wallet-new-account-session")
+				ctx.Set("auth_version", int64(1))
+				ctx.Set("session_version", int64(1))
+			}
+			TransferWalletToAgentSimple(ctx)
+			assert.Equal(t, http.StatusForbidden, response.Code)
+		})
 	}
 }
 

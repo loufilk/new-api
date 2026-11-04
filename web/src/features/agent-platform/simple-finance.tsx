@@ -135,12 +135,23 @@ const actionFields: Record<string, ActionField[]> = {
       options: [
         { value: 'cash', label: 'Cash recharge' },
         { value: 'income', label: 'Transferred income' },
+        {
+          value: 'wallet',
+          label: 'Transferred wallet balance',
+          updates: { target: 'wallet' },
+        },
       ],
     },
     {
       name: 'target',
       label: 'Target',
       kind: 'select',
+      description:
+        'Transferred wallet balance can only return to the original wallet.',
+      validate: (value, values) =>
+        values.source === 'wallet' && value !== 'wallet'
+          ? 'Transferred wallet balance can only return to the original wallet.'
+          : undefined,
       options: [
         { value: 'wallet', label: 'User wallet' },
         { value: 'refund', label: 'Cash refund' },
@@ -419,6 +430,10 @@ export function SimpleAgentFinance() {
           <dl className='mb-4 grid grid-cols-2 gap-3 text-sm'>
             {[
               [t('Cash recharge'), formatQuota(detailsAgent.cash_quota)],
+              [
+                t('Transferred wallet balance'),
+                formatQuota(detailsAgent.wallet_quota ?? 0),
+              ],
               [
                 t('Referral reward ($)'),
                 formatQuota(detailsAgent.reward_quota),

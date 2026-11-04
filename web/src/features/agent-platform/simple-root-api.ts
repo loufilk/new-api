@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { getPlatform, postPlatform } from './api'
 
 export interface SimpleAgentRow {
+  wallet_quota?: number
   cash_quota: number
   reward_quota: number
   root_quota: number

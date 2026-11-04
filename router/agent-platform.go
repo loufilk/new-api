@@ -39,6 +39,7 @@ func RegisterAgentPlatformRoutes(scopes extension.RouteScopes) error {
 	group.POST("/simple/codes", controller.CreateAgentSimpleCode)
 	group.POST("/simple/codes/:id/cancel", controller.CancelAgentSimpleCode)
 	group.POST("/simple/recharge", controller.RequestAgentSimpleRecharge)
+	group.POST("/simple/wallet-transfer", controller.TransferWalletToAgentSimple)
 	group.POST("/simple/payment/quote", controller.QuoteAgentSimplePayment)
 	group.GET("/simple/payment-methods", controller.GetAgentSimplePaymentMethods)
 	group.POST("/simple/payment", controller.CreateAgentSimplePayment)

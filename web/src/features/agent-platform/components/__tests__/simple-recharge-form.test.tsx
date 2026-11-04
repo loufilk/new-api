@@ -1,5 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
+import { useState } from 'react'
 import { beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
@@ -19,6 +26,11 @@ function mount(
       <SimpleRechargeForm kind={kind} amountDue={amountDue} onClose={vi.fn()} />
     </QueryClientProvider>
   )
+}
+
+function RechargeFlow() {
+  const [open, setOpen] = useState(true)
+  return open ? <SimpleRechargeForm onClose={() => setOpen(false)} /> : null
 }
 
 beforeEach(() => {
@@ -41,6 +53,54 @@ beforeEach(() => {
     },
   })
   vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {})
+})
+
+test('pending payment methods stay in a dismissible recharge dialog', async () => {
+  const request = vi.spyOn(api, 'request')
+  vi.mocked(api.get).mockImplementation(() => new Promise(() => {}))
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <RechargeFlow />
+    </QueryClientProvider>
+  )
+
+  const dialog = await screen.findByRole('dialog', {
+    name: 'Recharge agent balance',
+  })
+  expect(within(dialog).getByText('Loading...')).toBeVisible()
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(request).not.toHaveBeenCalled()
+})
+
+test('failed payment methods can be retried without losing the recharge dialog', async () => {
+  const request = vi.spyOn(api, 'request')
+  vi.mocked(api.get)
+    .mockRejectedValueOnce(new Error('Synthetic payment methods unavailable'))
+    .mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: [
+          { payment_method: 'alipay', enabled: true, fee_bps: 0, version: 1 },
+        ],
+      },
+    })
+  mount()
+
+  const dialog = await screen.findByRole('dialog', {
+    name: 'Recharge agent balance',
+  })
+  fireEvent.click(await within(dialog).findByRole('button', { name: 'Retry' }))
+  expect(
+    await screen.findByRole('textbox', { name: 'Agent balance to add ($)' })
+  ).toBeVisible()
+  expect(api.get).toHaveBeenCalledTimes(2)
+  expect(request).not.toHaveBeenCalled()
 })
 
 test('a lost recharge response retries the same intent and preserves decimal input', async () => {

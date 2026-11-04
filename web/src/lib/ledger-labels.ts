@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 // 账本 reason 到 i18n 文案键的映射。未知 reason 原样展示（后端兼容旧数据）。
 const REASON_LABEL_KEYS: Record<string, string> = {
   topup: 'Top-up',
+  agent_wallet_transfer: 'Transfer wallet balance to agent balance',
   admin_topup: 'Admin Top-up',
   redemption: 'Redemption',
   checkin: 'Check-in',

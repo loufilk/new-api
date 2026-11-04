@@ -30,6 +30,7 @@ const (
 	AgentSimpleCodeCredit                    = "credit"
 	AgentSimpleCodePayment                   = "payment"
 	AgentSimpleSourceCash                    = "cash"
+	AgentSimpleSourceWallet                  = "wallet"
 	AgentSimpleSourceReward                  = "reward"
 	AgentSimpleSourceRoot                    = "root"
 	AgentSimpleSourcePayment                 = "payment"
@@ -65,6 +66,7 @@ type AgentSimpleAccount struct {
 	AgentUserID             int    `json:"agent_user_id" gorm:"primaryKey;autoIncrement:false"`
 	Status                  string `json:"status" gorm:"type:varchar(16);not null"`
 	CashQuota               int64  `json:"cash_quota" gorm:"type:bigint;not null;default:0"`
+	WalletQuota             int64  `json:"wallet_quota" gorm:"type:bigint;not null;default:0"`
 	RewardQuota             int64  `json:"reward_quota" gorm:"type:bigint;not null;default:0"`
 	RootQuota               int64  `json:"root_quota" gorm:"type:bigint;not null;default:0"`
 	CreditLimitQuota        int64  `json:"credit_limit_quota" gorm:"type:bigint;not null;default:0"`
@@ -97,6 +99,7 @@ type AgentSimpleLedger struct {
 	ReferenceID             string `json:"reference_id" gorm:"type:varchar(128);not null"`
 	RequestID               string `json:"request_id" gorm:"type:varchar(96)"`
 	DeltaCashQuota          int64  `json:"delta_cash_quota" gorm:"type:bigint;not null"`
+	DeltaWalletQuota        int64  `json:"delta_wallet_quota" gorm:"type:bigint;not null;default:0"`
 	DeltaRewardQuota        int64  `json:"delta_reward_quota" gorm:"type:bigint;not null"`
 	DeltaRootQuota          int64  `json:"delta_root_quota" gorm:"type:bigint;not null"`
 	DeltaCreditReserved     int64  `json:"delta_credit_reserved" gorm:"type:bigint;not null"`
@@ -111,6 +114,7 @@ type AgentSimpleLedger struct {
 	DeltaPaymentTransferred int64  `json:"delta_payment_transferred" gorm:"type:bigint;not null"`
 	DeltaPaymentOffset      int64  `json:"delta_payment_offset" gorm:"type:bigint;not null"`
 	CashAfter               int64  `json:"cash_after" gorm:"type:bigint;not null"`
+	WalletAfter             int64  `json:"wallet_after" gorm:"type:bigint;not null;default:0"`
 	RewardAfter             int64  `json:"reward_after" gorm:"type:bigint;not null"`
 	RootAfter               int64  `json:"root_after" gorm:"type:bigint;not null"`
 	CreditReservedAfter     int64  `json:"credit_reserved_after" gorm:"type:bigint;not null"`
@@ -315,6 +319,7 @@ type AgentSimpleAccountView struct {
 	AgentUserID             int    `json:"agent_user_id"`
 	Status                  string `json:"status"`
 	CashQuota               int64  `json:"cash_quota"`
+	WalletQuota             int64  `json:"wallet_quota"`
 	RewardQuota             int64  `json:"reward_quota"`
 	RootQuota               int64  `json:"root_quota"`
 	CreditLimitQuota        int64  `json:"credit_limit_quota,omitempty"`
@@ -1321,12 +1326,12 @@ func validateAgentSimpleAccount(a *AgentSimpleAccount) error {
 	if a == nil || a.AgentUserID <= 0 || a.Version <= 0 {
 		return ErrAgentSimpleInvariant
 	}
-	for _, v := range []int64{a.CashQuota, a.RewardQuota, a.RootQuota, a.PaymentQuota, a.CreditLimitQuota, a.CreditReservedQuota, a.CreditOutstandingQuota, a.PaymentPendingQuota, a.PaymentAvailableQuota, a.PaymentTotalQuota, a.PaymentDebtQuota, a.PaymentReversedQuota, a.PaymentWithdrawnQuota, a.PaymentTransferredQuota, a.PaymentOffsetQuota} {
+	for _, v := range []int64{a.CashQuota, a.WalletQuota, a.RewardQuota, a.RootQuota, a.PaymentQuota, a.CreditLimitQuota, a.CreditReservedQuota, a.CreditOutstandingQuota, a.PaymentPendingQuota, a.PaymentAvailableQuota, a.PaymentTotalQuota, a.PaymentDebtQuota, a.PaymentReversedQuota, a.PaymentWithdrawnQuota, a.PaymentTransferredQuota, a.PaymentOffsetQuota} {
 		if v < 0 || v > int64(common.MaxWalletQuota) {
 			return ErrAgentSimpleInvariant
 		}
 	}
-	if a.CashQuota > int64(common.MaxWalletQuota)-a.RewardQuota || a.RootQuota > int64(common.MaxWalletQuota)-a.CashQuota-a.RewardQuota || a.PaymentQuota > int64(common.MaxWalletQuota)-a.CashQuota-a.RewardQuota-a.RootQuota {
+	if a.CashQuota > int64(common.MaxWalletQuota)-a.RewardQuota || a.RootQuota > int64(common.MaxWalletQuota)-a.CashQuota-a.RewardQuota || a.PaymentQuota > int64(common.MaxWalletQuota)-a.CashQuota-a.RewardQuota-a.RootQuota || a.WalletQuota > int64(common.MaxWalletQuota)-a.CashQuota-a.RewardQuota-a.RootQuota-a.PaymentQuota {
 		return ErrAgentSimpleInvariant
 	}
 	if a.CreditReservedQuota > a.CreditLimitQuota || a.CreditOutstandingQuota > a.CreditLimitQuota-a.CreditReservedQuota {
@@ -1344,7 +1349,7 @@ func validateAgentSimpleAccount(a *AgentSimpleAccount) error {
 	return nil
 }
 func simpleAvailableQuota(a *AgentSimpleAccount) int64 {
-	return a.CashQuota + a.RewardQuota + a.RootQuota + a.PaymentQuota
+	return a.CashQuota + a.RewardQuota + a.RootQuota + a.PaymentQuota + a.WalletQuota
 }
 func simpleAvailableCredit(a *AgentSimpleAccount) int64 {
 	return a.CreditLimitQuota - a.CreditReservedQuota - a.CreditOutstandingQuota
@@ -1352,7 +1357,7 @@ func simpleAvailableCredit(a *AgentSimpleAccount) int64 {
 
 func agentSimpleAccountView(account *AgentSimpleAccount, includeCreditLimit bool) *AgentSimpleAccountView {
 	view := &AgentSimpleAccountView{
-		AgentUserID: account.AgentUserID, Status: account.Status, CashQuota: account.CashQuota,
+		AgentUserID: account.AgentUserID, Status: account.Status, CashQuota: account.CashQuota, WalletQuota: account.WalletQuota,
 		RewardQuota: account.RewardQuota, RootQuota: account.RootQuota,
 		CreditReservedQuota: account.CreditReservedQuota, CreditOutstandingQuota: account.CreditOutstandingQuota,
 		PaymentPendingQuota: account.PaymentPendingQuota, PaymentAvailableQuota: account.PaymentAvailableQuota,
@@ -1464,14 +1469,14 @@ func saveAgentSimpleAccountTx(tx *gorm.DB, before AgentSimpleAccount, after *Age
 	}
 	after.Version++
 	after.UpdatedAt = common.GetTimestamp()
-	result := tx.Model(&AgentSimpleAccount{}).Where("agent_user_id = ? AND version = ?", after.AgentUserID, before.Version).Updates(map[string]any{"status": after.Status, "cash_quota": after.CashQuota, "reward_quota": after.RewardQuota, "root_quota": after.RootQuota, "payment_quota": after.PaymentQuota, "payment_reversed_quota": after.PaymentReversedQuota, "payment_withdrawn_quota": after.PaymentWithdrawnQuota, "payment_transferred_quota": after.PaymentTransferredQuota, "payment_offset_quota": after.PaymentOffsetQuota, "credit_limit_quota": after.CreditLimitQuota, "credit_reserved_quota": after.CreditReservedQuota, "credit_outstanding_quota": after.CreditOutstandingQuota, "payment_pending_quota": after.PaymentPendingQuota, "payment_available_quota": after.PaymentAvailableQuota, "payment_total_quota": after.PaymentTotalQuota, "payment_debt_quota": after.PaymentDebtQuota, "version": after.Version, "last_activity_at": after.LastActivityAt, "updated_at": after.UpdatedAt})
+	result := tx.Model(&AgentSimpleAccount{}).Where("agent_user_id = ? AND version = ?", after.AgentUserID, before.Version).Updates(map[string]any{"status": after.Status, "cash_quota": after.CashQuota, "wallet_quota": after.WalletQuota, "reward_quota": after.RewardQuota, "root_quota": after.RootQuota, "payment_quota": after.PaymentQuota, "payment_reversed_quota": after.PaymentReversedQuota, "payment_withdrawn_quota": after.PaymentWithdrawnQuota, "payment_transferred_quota": after.PaymentTransferredQuota, "payment_offset_quota": after.PaymentOffsetQuota, "credit_limit_quota": after.CreditLimitQuota, "credit_reserved_quota": after.CreditReservedQuota, "credit_outstanding_quota": after.CreditOutstandingQuota, "payment_pending_quota": after.PaymentPendingQuota, "payment_available_quota": after.PaymentAvailableQuota, "payment_total_quota": after.PaymentTotalQuota, "payment_debt_quota": after.PaymentDebtQuota, "version": after.Version, "last_activity_at": after.LastActivityAt, "updated_at": after.UpdatedAt})
 	if result.Error != nil {
 		return result.Error
 	}
 	if result.RowsAffected != 1 {
 		return ErrAgentSimpleConflict
 	}
-	event := AgentSimpleLedger{DeltaCreditLimit: after.CreditLimitQuota - before.CreditLimitQuota, CreditLimitAfter: after.CreditLimitQuota, EventKey: fmt.Sprintf("simple:%d:%s:%s:%d", after.AgentUserID, kind, referenceID, after.Version), AgentUserID: after.AgentUserID, ActorUserID: actorID, Kind: kind, ReferenceType: referenceType, ReferenceID: referenceID, RequestID: requestID, Reason: reason, DeltaCashQuota: after.CashQuota - before.CashQuota, DeltaRewardQuota: after.RewardQuota - before.RewardQuota, DeltaRootQuota: after.RootQuota - before.RootQuota, DeltaCreditReserved: after.CreditReservedQuota - before.CreditReservedQuota, DeltaCreditOutstanding: after.CreditOutstandingQuota - before.CreditOutstandingQuota, DeltaPaymentPending: after.PaymentPendingQuota - before.PaymentPendingQuota, DeltaPaymentAvailable: after.PaymentAvailableQuota - before.PaymentAvailableQuota, DeltaPaymentTotal: after.PaymentTotalQuota - before.PaymentTotalQuota, DeltaPaymentDebt: after.PaymentDebtQuota - before.PaymentDebtQuota, DeltaPaymentQuota: after.PaymentQuota - before.PaymentQuota, DeltaPaymentReversed: after.PaymentReversedQuota - before.PaymentReversedQuota, DeltaPaymentWithdrawn: after.PaymentWithdrawnQuota - before.PaymentWithdrawnQuota, DeltaPaymentTransferred: after.PaymentTransferredQuota - before.PaymentTransferredQuota, DeltaPaymentOffset: after.PaymentOffsetQuota - before.PaymentOffsetQuota, CashAfter: after.CashQuota, RewardAfter: after.RewardQuota, RootAfter: after.RootQuota, CreditReservedAfter: after.CreditReservedQuota, CreditOutstandingAfter: after.CreditOutstandingQuota, PaymentPendingAfter: after.PaymentPendingQuota, PaymentAvailableAfter: after.PaymentAvailableQuota, PaymentTotalAfter: after.PaymentTotalQuota, PaymentDebtAfter: after.PaymentDebtQuota, PaymentAfter: after.PaymentQuota, PaymentReversedAfter: after.PaymentReversedQuota, PaymentWithdrawnAfter: after.PaymentWithdrawnQuota, PaymentTransferredAfter: after.PaymentTransferredQuota, PaymentOffsetAfter: after.PaymentOffsetQuota}
+	event := AgentSimpleLedger{DeltaCreditLimit: after.CreditLimitQuota - before.CreditLimitQuota, CreditLimitAfter: after.CreditLimitQuota, EventKey: fmt.Sprintf("simple:%d:%s:%s:%d", after.AgentUserID, kind, referenceID, after.Version), AgentUserID: after.AgentUserID, ActorUserID: actorID, Kind: kind, ReferenceType: referenceType, ReferenceID: referenceID, RequestID: requestID, Reason: reason, DeltaCashQuota: after.CashQuota - before.CashQuota, DeltaWalletQuota: after.WalletQuota - before.WalletQuota, DeltaRewardQuota: after.RewardQuota - before.RewardQuota, DeltaRootQuota: after.RootQuota - before.RootQuota, DeltaCreditReserved: after.CreditReservedQuota - before.CreditReservedQuota, DeltaCreditOutstanding: after.CreditOutstandingQuota - before.CreditOutstandingQuota, DeltaPaymentPending: after.PaymentPendingQuota - before.PaymentPendingQuota, DeltaPaymentAvailable: after.PaymentAvailableQuota - before.PaymentAvailableQuota, DeltaPaymentTotal: after.PaymentTotalQuota - before.PaymentTotalQuota, DeltaPaymentDebt: after.PaymentDebtQuota - before.PaymentDebtQuota, DeltaPaymentQuota: after.PaymentQuota - before.PaymentQuota, DeltaPaymentReversed: after.PaymentReversedQuota - before.PaymentReversedQuota, DeltaPaymentWithdrawn: after.PaymentWithdrawnQuota - before.PaymentWithdrawnQuota, DeltaPaymentTransferred: after.PaymentTransferredQuota - before.PaymentTransferredQuota, DeltaPaymentOffset: after.PaymentOffsetQuota - before.PaymentOffsetQuota, CashAfter: after.CashQuota, WalletAfter: after.WalletQuota, RewardAfter: after.RewardQuota, RootAfter: after.RootQuota, CreditReservedAfter: after.CreditReservedQuota, CreditOutstandingAfter: after.CreditOutstandingQuota, PaymentPendingAfter: after.PaymentPendingQuota, PaymentAvailableAfter: after.PaymentAvailableQuota, PaymentTotalAfter: after.PaymentTotalQuota, PaymentDebtAfter: after.PaymentDebtQuota, PaymentAfter: after.PaymentQuota, PaymentReversedAfter: after.PaymentReversedQuota, PaymentWithdrawnAfter: after.PaymentWithdrawnQuota, PaymentTransferredAfter: after.PaymentTransferredQuota, PaymentOffsetAfter: after.PaymentOffsetQuota}
 	return tx.Create(&event).Error
 }
 
@@ -1480,7 +1485,7 @@ func allocateAgentSimpleSourcesTx(tx *gorm.DB, account *AgentSimpleAccount, rede
 	for _, source := range []struct {
 		name  string
 		value *int64
-	}{{AgentSimpleSourceReward, &account.RewardQuota}, {AgentSimpleSourceRoot, &account.RootQuota}, {AgentSimpleSourcePayment, &account.PaymentQuota}, {AgentSimpleSourceCash, &account.CashQuota}} {
+	}{{AgentSimpleSourceReward, &account.RewardQuota}, {AgentSimpleSourceRoot, &account.RootQuota}, {AgentSimpleSourcePayment, &account.PaymentQuota}, {AgentSimpleSourceWallet, &account.WalletQuota}, {AgentSimpleSourceCash, &account.CashQuota}} {
 		take := min(*source.value, remaining)
 		if take <= 0 {
 			continue
@@ -1579,20 +1584,24 @@ func releaseAgentSimpleCodeTx(tx *gorm.DB, account *AgentSimpleAccount, code *Re
 	if err := lockForUpdate(tx).Where("redemption_id = ? AND state = ?", code.Id, AgentSimpleAllocationReserved).Find(&allocations).Error; err != nil {
 		return err
 	}
-	var ownReturned int64
+	var ownReturned, offsetEligibleFace int64
 	for _, allocation := range allocations {
 		if allocation.AgentUserID != account.AgentUserID || allocation.Quota <= 0 || allocation.Quota > int64(code.Quota)-ownReturned {
 			return ErrAgentSimpleInvariant
 		}
 		if allocation.Source != AgentSimpleSourceCredit {
 			ownReturned += allocation.Quota
+			if allocation.Source != AgentSimpleSourceWallet {
+				offsetEligibleFace += allocation.Quota
+			}
 		}
 	}
 	var offsetFace, repayment int64
-	if code.AgentSimpleCredit && ownReturned > 0 && account.CreditOutstandingQuota > 0 {
+	if code.AgentSimpleCredit && offsetEligibleFace > 0 && account.CreditOutstandingQuota > 0 {
 		// Returned own funding pays existing discounted debt first. Releasing
 		// unused credit restores capacity only and never creates a repayment.
-		offsetFace = min(ownReturned, account.CreditOutstandingQuota*10/9)
+		// Wallet transfers retain their full 1:1 source and never fund this discount.
+		offsetFace = min(offsetEligibleFace, account.CreditOutstandingQuota*10/9)
 		if offsetFace > 0 {
 			repayment = agentSimpleCodeCost(offsetFace)
 		}
@@ -1602,7 +1611,7 @@ func releaseAgentSimpleCodeTx(tx *gorm.DB, account *AgentSimpleAccount, code *Re
 		a := &allocations[i]
 		total += a.Quota
 		restored := a.Quota
-		if a.Source != AgentSimpleSourceCredit {
+		if a.Source != AgentSimpleSourceCredit && a.Source != AgentSimpleSourceWallet {
 			used := min(offsetFace, restored)
 			restored -= used
 			offsetFace -= used
@@ -1610,6 +1619,8 @@ func releaseAgentSimpleCodeTx(tx *gorm.DB, account *AgentSimpleAccount, code *Re
 		switch a.Source {
 		case AgentSimpleSourceCash:
 			account.CashQuota += restored
+		case AgentSimpleSourceWallet:
+			account.WalletQuota += restored
 		case AgentSimpleSourceReward:
 			account.RewardQuota += restored
 		case AgentSimpleSourceRoot:

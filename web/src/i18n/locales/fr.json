@@ -9261,6 +9261,17 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Transfer wallet balance to agent balance": "Transférer le solde du portefeuille vers le solde agent",
+    "Transferred wallet balance": "Solde transféré du portefeuille",
+    "Paid wallet balance": "Solde payé du portefeuille",
+    "Retry transfer": "Réessayer le transfert",
+    "Transferred wallet balance can only return to the original wallet.": "Le solde transféré ne peut être reversé que dans le portefeuille d’origine.",
+    "Enter a valid amount within your paid wallet balance.": "Saisissez un montant valide ne dépassant pas le solde payé du portefeuille.",
+    "Only paid wallet balance can be transferred, at 1:1. No extra discount or commission applies. Unused funds can only return to the original wallet, never as cash.": "Seul le solde payé peut être transféré, à 1:1, sans réduction ni commission supplémentaire. Les fonds inutilisés ne peuvent revenir que dans le portefeuille d’origine, jamais en espèces.",
+    "A transfer is awaiting confirmation. Retry the same transfer to check its result. Closing this dialog does not cancel a submitted transfer.": "Un transfert attend confirmation. Réessayez le même transfert pour vérifier son résultat. Fermer cette fenêtre n’annule pas un transfert soumis.",
+    "Transfer paid wallet quota to agent balance at face value": "Transférer le solde payé du portefeuille vers le solde agent à sa valeur nominale",
+    "The transfer changed in another page. Review it before continuing.": "Le transfert a changé dans une autre page. Vérifiez-le avant de continuer.",
+    "This browser cannot safely coordinate wallet transfers.": "Ce navigateur ne peut pas coordonner les transferts du portefeuille en toute sécurité."
   }
 }

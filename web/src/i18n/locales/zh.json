@@ -9261,6 +9261,17 @@
     "Zhipu": "智谱",
     "Zhipu GLM": "智谱GLM",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "Transfer wallet balance to agent balance": "从钱包转入代理余额",
+    "Transferred wallet balance": "钱包转入余额",
+    "Paid wallet balance": "钱包付费余额",
+    "Retry transfer": "重试转入",
+    "Transferred wallet balance can only return to the original wallet.": "钱包转入余额只能退回原钱包。",
+    "Enter a valid amount within your paid wallet balance.": "请输入不超过钱包付费余额的有效金额。",
+    "Only paid wallet balance can be transferred, at 1:1. No extra discount or commission applies. Unused funds can only return to the original wallet, never as cash.": "仅支持钱包付费余额，按 1:1 转入，不再享受折扣或返佣。未使用部分只能退回原钱包，不能退为现金。",
+    "A transfer is awaiting confirmation. Retry the same transfer to check its result. Closing this dialog does not cancel a submitted transfer.": "有一笔转入等待确认。请重试同一笔转入以确认结果。关闭此窗口不会撤销已提交的转入。",
+    "Transfer paid wallet quota to agent balance at face value": "按面值将钱包付费余额转入代理余额",
+    "The transfer changed in another page. Review it before continuing.": "转入状态已在其他页面发生变化，请确认后再继续。",
+    "This browser cannot safely coordinate wallet transfers.": "此浏览器无法安全协调钱包转入操作。"
   }
 }

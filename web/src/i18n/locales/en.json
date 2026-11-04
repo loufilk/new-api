@@ -9261,6 +9261,17 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Transfer wallet balance to agent balance": "Transfer wallet balance to agent balance",
+    "Transferred wallet balance": "Transferred wallet balance",
+    "Paid wallet balance": "Paid wallet balance",
+    "Retry transfer": "Retry transfer",
+    "Transferred wallet balance can only return to the original wallet.": "Transferred wallet balance can only return to the original wallet.",
+    "Enter a valid amount within your paid wallet balance.": "Enter a valid amount within your paid wallet balance.",
+    "Only paid wallet balance can be transferred, at 1:1. No extra discount or commission applies. Unused funds can only return to the original wallet, never as cash.": "Only paid wallet balance can be transferred, at 1:1. No extra discount or commission applies. Unused funds can only return to the original wallet, never as cash.",
+    "A transfer is awaiting confirmation. Retry the same transfer to check its result. Closing this dialog does not cancel a submitted transfer.": "A transfer is awaiting confirmation. Retry the same transfer to check its result. Closing this dialog does not cancel a submitted transfer.",
+    "Transfer paid wallet quota to agent balance at face value": "Transfer paid wallet quota to agent balance at face value",
+    "The transfer changed in another page. Review it before continuing.": "The transfer changed in another page. Review it before continuing.",
+    "This browser cannot safely coordinate wallet transfers.": "This browser cannot safely coordinate wallet transfers."
   }
 }

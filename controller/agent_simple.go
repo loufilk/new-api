@@ -24,7 +24,7 @@ func writeAgentSimpleError(c *gin.Context, err error) {
 		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage(err.Error()))
 	case errors.Is(err, model.ErrAgentSimpleUnavailable):
 		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage(err.Error()))
-	case errors.Is(err, model.ErrAgentSimpleInsufficient), errors.Is(err, model.ErrAgentSimpleConflict), errors.Is(err, model.ErrAgentQuotaConflict), errors.Is(err, model.ErrAgentPaymentReceiptConflict), errors.Is(err, model.ErrAgentSimpleState), errors.Is(err, model.ErrAgentSimpleInvariant):
+	case errors.Is(err, model.ErrAgentSimpleInsufficient), errors.Is(err, model.ErrWalletQuotaLimitExceeded), errors.Is(err, model.ErrAgentSimpleConflict), errors.Is(err, model.ErrAgentQuotaConflict), errors.Is(err, model.ErrAgentPaymentReceiptConflict), errors.Is(err, model.ErrAgentSimpleState), errors.Is(err, model.ErrAgentSimpleInvariant):
 		common.ApiErrorStatus(c, http.StatusConflict, common.NewMessage(err.Error()))
 	case errors.Is(err, model.ErrAgentSimpleInvalid):
 		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage(err.Error()))
@@ -43,6 +43,40 @@ func GetAgentSimpleBalance(c *gin.Context) {
 	}
 	agentID, _ := strconv.Atoi(c.Query("agent_user_id"))
 	account, err := model.GetAgentSimpleAccount(identity, agentID)
+	if err != nil {
+		writeAgentSimpleError(c, err)
+		return
+	}
+	common.ApiSuccess(c, account)
+}
+
+// TransferWalletToAgentSimple binds the wallet intent to the account the form
+// displayed, so an intervening session/account switch cannot debit another user.
+func TransferWalletToAgentSimple(c *gin.Context) {
+	if !operation_setting.IsPaymentComplianceConfirmed() {
+		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Payment compliance terms are not confirmed"))
+		return
+	}
+	identity, ok := agentPlatformIdentity(c)
+	if !ok {
+		writeAgentSimpleError(c, model.ErrAgentSimplePermission)
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
+	var request struct {
+		RequestID      string `json:"request_id"`
+		Quota          int64  `json:"quota"`
+		ExpectedUserID int    `json:"expected_user_id"`
+	}
+	if err := common.DecodeJsonStrict(c.Request.Body, &request); err != nil || request.ExpectedUserID <= 0 {
+		writeAgentSimpleError(c, model.ErrAgentSimpleInvalid)
+		return
+	}
+	if request.ExpectedUserID != identity.UserID {
+		writeAgentSimpleError(c, model.ErrAgentSimplePermission)
+		return
+	}
+	account, err := model.TransferWalletToAgentSimple(identity, model.AgentSimpleTransferRequest{RequestID: request.RequestID, Quota: request.Quota})
 	if err != nil {
 		writeAgentSimpleError(c, err)
 		return

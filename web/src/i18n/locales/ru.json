@@ -9261,6 +9261,17 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Transfer wallet balance to agent balance": "Перевести баланс кошелька на баланс агента",
+    "Transferred wallet balance": "Баланс, переведённый из кошелька",
+    "Paid wallet balance": "Оплаченный баланс кошелька",
+    "Retry transfer": "Повторить перевод",
+    "Transferred wallet balance can only return to the original wallet.": "Переведённый баланс можно вернуть только в исходный кошелёк.",
+    "Enter a valid amount within your paid wallet balance.": "Введите корректную сумму в пределах оплаченного баланса кошелька.",
+    "Only paid wallet balance can be transferred, at 1:1. No extra discount or commission applies. Unused funds can only return to the original wallet, never as cash.": "Переводится только оплаченный баланс кошелька по курсу 1:1, без дополнительных скидок или комиссионных выплат. Неиспользованные средства возвращаются только в исходный кошелёк, не наличными.",
+    "A transfer is awaiting confirmation. Retry the same transfer to check its result. Closing this dialog does not cancel a submitted transfer.": "Перевод ожидает подтверждения. Повторите тот же перевод, чтобы проверить результат. Закрытие окна не отменяет отправленный перевод.",
+    "Transfer paid wallet quota to agent balance at face value": "Перевести оплаченный баланс кошелька на баланс агента по номиналу",
+    "The transfer changed in another page. Review it before continuing.": "Перевод изменился на другой странице. Проверьте его перед продолжением.",
+    "This browser cannot safely coordinate wallet transfers.": "Этот браузер не может безопасно координировать переводы кошелька."
   }
 }

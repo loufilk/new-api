@@ -19,6 +19,18 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  'Transfer wallet balance to agent balance',
+  'Transferred wallet balance',
+  'Paid wallet balance',
+  'Retry transfer',
+  'Transferred wallet balance can only return to the original wallet.',
+  'Enter a valid amount within your paid wallet balance.',
+  'Only paid wallet balance can be transferred, at 1:1. No extra discount or commission applies. Unused funds can only return to the original wallet, never as cash.',
+  'A transfer is awaiting confirmation. Retry the same transfer to check its result. Closing this dialog does not cancel a submitted transfer.',
+  'Transfer paid wallet quota to agent balance at face value',
+  'The transfer changed in another page. Review it before continuing.',
+  'This browser cannot safely coordinate wallet transfers.',
+
   // Group rename backend/runtime errors.
   'Group settings changed or are temporarily unavailable. Retry the request.',
   'group rename requires a current root identity',

@@ -9261,6 +9261,17 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "Transfer wallet balance to agent balance": "ウォレット残高を代理店残高へ振替",
+    "Transferred wallet balance": "ウォレットからの振替残高",
+    "Paid wallet balance": "ウォレットの有料残高",
+    "Retry transfer": "振替を再試行",
+    "Transferred wallet balance can only return to the original wallet.": "振替残高は元のウォレットにのみ返却できます。",
+    "Enter a valid amount within your paid wallet balance.": "ウォレットの有料残高以内の有効な金額を入力してください。",
+    "Only paid wallet balance can be transferred, at 1:1. No extra discount or commission applies. Unused funds can only return to the original wallet, never as cash.": "有料残高のみ1:1で振り替えられます。追加割引や紹介報酬はありません。未使用分は元のウォレットにのみ返却でき、現金での返金はできません。",
+    "A transfer is awaiting confirmation. Retry the same transfer to check its result. Closing this dialog does not cancel a submitted transfer.": "確認待ちの振替があります。同じ振替を再試行して結果を確認してください。この画面を閉じても送信済みの振替は取り消されません。",
+    "Transfer paid wallet quota to agent balance at face value": "ウォレットの有料残高を額面どおり代理店残高へ振替",
+    "The transfer changed in another page. Review it before continuing.": "別のページで振替が変更されました。確認してから続けてください。",
+    "This browser cannot safely coordinate wallet transfers.": "このブラウザーではウォレット振替を安全に調整できません。"
   }
 }

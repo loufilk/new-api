@@ -53,6 +53,7 @@ import { SimpleHistory } from './components/simple-history'
 import { SimpleIncomeTransferForm } from './components/simple-income-transfer-form'
 import { SimplePaymentForm } from './components/simple-payment-form'
 import { SimpleRechargeForm } from './components/simple-recharge-form'
+import { SimpleWalletTransferForm } from './components/simple-wallet-transfer-form'
 import { formatAgentCash, formatAgentQuota as formatQuota } from './lib/money'
 import {
   getSimpleAgentBalance,
@@ -89,6 +90,7 @@ export function AgentPortal() {
   const RewardsPanel = extensionWalletPage().referralPanel
   const [simpleCodeOpen, setSimpleCodeOpen] = useState(false)
   const [simpleRechargeOpen, setSimpleRechargeOpen] = useState(false)
+  const [walletTransferOpen, setWalletTransferOpen] = useState(false)
   const [repaymentOpen, setRepaymentOpen] = useState(false)
   const [incomeTransferOpen, setIncomeTransferOpen] = useState(false)
   const [simplePaymentOpen, setSimplePaymentOpen] = useState(false)
@@ -119,6 +121,8 @@ export function AgentPortal() {
   let recentContent
   if (recent.isLoading) {
     recentContent = <LoadingState inline />
+  } else if (recent.isError) {
+    recentContent = <ErrorState onRetry={() => void recent.refetch()} />
   } else if (redemptions.length === 0) {
     recentContent = (
       <EmptyState
@@ -172,6 +176,10 @@ export function AgentPortal() {
                       emphasis
                     />
                     <Metric
+                      label={t('Transferred wallet balance')}
+                      value={formatQuota(account.wallet_quota ?? 0)}
+                    />
+                    <Metric
                       label={t('Available credit')}
                       value={formatAgentCash(account.available_credit_quota)}
                     />
@@ -211,6 +219,14 @@ export function AgentPortal() {
                     >
                       <Ticket className='size-4' />
                       {t('Issue directly')}
+                    </Button>
+                    <Button
+                      className='border-white/25 bg-transparent text-white hover:bg-white/10'
+                      variant='outline'
+                      onClick={() => setWalletTransferOpen(true)}
+                      disabled={account.status !== 'active'}
+                    >
+                      {t('Transfer wallet balance to agent balance')}
                     </Button>
                     <Button
                       className='border-white/25 bg-transparent text-white hover:bg-white/10'
@@ -342,6 +358,12 @@ export function AgentPortal() {
       )}
       {simpleRechargeOpen && (
         <SimpleRechargeForm onClose={() => setSimpleRechargeOpen(false)} />
+      )}
+      {walletTransferOpen && userId && (
+        <SimpleWalletTransferForm
+          userId={userId}
+          onClose={() => setWalletTransferOpen(false)}
+        />
       )}
       {repaymentOpen && (
         <SimpleRechargeForm

@@ -42,8 +42,7 @@ export function SimpleRechargeForm(props: {
     queryFn: () => getSimplePaymentMethods(kind),
   })
 
-  if (info.isPending) return <LoadingState />
-  if (info.isError || !info.data) {
+  if (info.isPending || info.isError || !info.data) {
     return (
       <Dialog
         open
@@ -52,7 +51,11 @@ export function SimpleRechargeForm(props: {
           if (!open) props.onClose()
         }}
       >
-        <ErrorState onRetry={() => void info.refetch()} />
+        {info.isPending ? (
+          <LoadingState />
+        ) : (
+          <ErrorState onRetry={() => void info.refetch()} />
+        )}
       </Dialog>
     )
   }

@@ -15,12 +15,17 @@ You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 import type { Redemption } from '@/features/redemption-codes/types'
+import {
+  getServerErrorSources,
+  getServerErrorStatus,
+} from '@/lib/server-error-message'
 
 import { getPlatform, postPlatform } from './api'
 
 export interface SimpleAgentBalance {
   agent_user_id: number
   status: string
+  wallet_quota?: number
   cash_quota: number
   reward_quota: number
   root_quota: number
@@ -202,5 +207,26 @@ export async function getSimplePaymentMethods(
 ): Promise<SimplePaymentMethod[]> {
   return getPlatform<SimplePaymentMethod[]>('/simple/payment-methods', {
     purpose,
+  })
+}
+
+export function transferWalletToAgent(payload: {
+  request_id: string
+  quota: number
+  expected_user_id: number
+}) {
+  return postPlatform<SimpleAgentBalance>('/simple/wallet-transfer', payload)
+}
+export function isWalletTransferRejected(error: unknown): boolean {
+  const status = getServerErrorStatus(error)
+  return getServerErrorSources(error).some((source) => {
+    if (source.success !== false) return false
+    const key = source.message_key ?? source.message
+    if (status === 400) return key === 'invalid simplified agent request'
+    return (
+      status === 409 &&
+      (key === 'insufficient agent balance or credit' ||
+        key === 'Wallet quota limit exceeded')
+    )
   })
 }

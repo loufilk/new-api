@@ -1,3 +1,19 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
@@ -160,4 +176,33 @@ test('weekly bill and daily reminder history show real due and reminder dates', 
   })
   expect(await screen.findByText('2027-01-18')).toBeVisible()
   await waitFor(() => expect(screen.getByText('¥4.50')).toBeVisible())
+})
+
+test('wallet source is distinct in ledger and exit settlement', async () => {
+  vi.spyOn(api, 'get')
+    .mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: { items: [{ id: 1, delta_wallet_quota: 500_000 }], total: 1 },
+      },
+    })
+    .mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          items: [
+            { id: 2, quota: 500_000, source: 'wallet', target: 'wallet' },
+          ],
+          total: 1,
+        },
+      },
+    })
+  mount()
+  expect(await screen.findByText('Transferred wallet balance')).toBeVisible()
+  fireEvent.change(screen.getByRole('combobox', { name: 'History type' }), {
+    target: { value: 'exits' },
+  })
+  expect(await screen.findByText('User wallet')).toBeVisible()
+  expect(screen.getByText('Transferred wallet balance')).toBeVisible()
+  expect(screen.queryByText('Cash refund')).not.toBeInTheDocument()
 })

@@ -42,8 +42,13 @@ export function agentRepaymentAmount(quota: number): string {
   return minorMoneyInput(fen.toString(), 2)
 }
 
-export function formatAgentQuota(quota: number): string {
-  return `$${(quota / getCurrencyDisplay().config.quotaPerUnit).toLocaleString('en-US', { maximumFractionDigits: 2 })}`
+export function formatAgentQuota(
+  quota: number,
+  quotaPerUnit = getCurrencyDisplay().config.quotaPerUnit
+): string {
+  const unit =
+    quotaPerUnit > 0 ? quotaPerUnit : getCurrencyDisplay().config.quotaPerUnit
+  return `$${(quota / unit).toLocaleString('en-US', { maximumFractionDigits: 2 })}`
 }
 
 /** A07 face values and CNY cost units do not use the wallet display exchange rate. */

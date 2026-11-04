@@ -59,7 +59,10 @@ export interface ActionField {
   placeholder?: string
   required?: boolean
   mustBeTrue?: boolean
-  validate?: (value: string | boolean) => string | undefined
+  validate?: (
+    value: string | boolean,
+    values: ActionValues
+  ) => string | undefined
   readOnly?: boolean
   min?: number
   max?: number
@@ -115,7 +118,7 @@ export function ActionForm(props: {
           invalid ||= text.length > (field.max ?? 255)
         }
         if (field.mustBeTrue && value !== true) invalid = true
-        const customError = field.validate?.(value ?? '')
+        const customError = field.validate?.(value ?? '', values)
         if (invalid || customError) {
           context.addIssue({
             code: 'custom',

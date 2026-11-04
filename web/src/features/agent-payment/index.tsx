@@ -30,8 +30,10 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { formatAgentQuota } from '@/features/agent-platform/lib/money'
 import { api } from '@/lib/api'
 import { submitPaymentForm } from '@/lib/payment-form'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 interface PublicPayment {
   public_id: string
@@ -68,6 +70,9 @@ async function getPayment(
 
 export function AgentPaymentPage(props: { publicID: string }) {
   const { t } = useTranslation()
+  const quotaPerUnit = useSystemConfigStore(
+    (state) => state.config.currency.quotaPerUnit
+  )
   const [paying, setPaying] = useState(false)
   const token = getToken()
   const query = useQuery({
@@ -104,16 +109,33 @@ export function AgentPaymentPage(props: { publicID: string }) {
     content = <LoadingState />
   } else if (query.isError || !query.data) {
     content = <ErrorState onRetry={() => void query.refetch()} />
+  } else if (
+    query.data.status === 'expired' ||
+    query.data.status === 'closed' ||
+    query.data.status === 'refunded'
+  ) {
+    content = (
+      <ErrorState
+        title={t('Payment link is no longer available')}
+        description={t('Ask the agent to create a new payment link.')}
+      />
+    )
   } else if (query.data.redemption_key) {
     content = (
       <Card>
         <CardHeader>
-          <CardTitle>{t('Payment successful')}</CardTitle>
-          <CardDescription>
-            {t(
-              'Your redemption code is ready. Copy it to your account wallet.'
-            )}
-          </CardDescription>
+          <CardTitle>
+            {query.data.status === 'redeemed'
+              ? t('Code redeemed')
+              : t('Payment successful')}
+          </CardTitle>
+          {query.data.status !== 'redeemed' && (
+            <CardDescription>
+              {t(
+                'Your redemption code is ready. Copy it to your account wallet.'
+              )}
+            </CardDescription>
+          )}
         </CardHeader>
         <CardContent className='space-y-3'>
           <div className='flex items-center gap-2 rounded-lg border p-3'>
@@ -131,17 +153,6 @@ export function AgentPaymentPage(props: { publicID: string }) {
         </CardContent>
       </Card>
     )
-  } else if (
-    query.data.status === 'expired' ||
-    query.data.status === 'closed' ||
-    query.data.status === 'refunded'
-  ) {
-    content = (
-      <ErrorState
-        title={t('Payment link is no longer available')}
-        description={t('Ask the agent to create a new payment link.')}
-      />
-    )
   } else {
     content = (
       <Card>
@@ -151,7 +162,7 @@ export function AgentPaymentPage(props: { publicID: string }) {
         </CardHeader>
         <CardContent className='space-y-5'>
           <div className='text-primary text-4xl font-semibold tabular-nums'>
-            ${query.data.quota / 500_000}
+            {formatAgentQuota(query.data.quota, quotaPerUnit)}
           </div>
           <p className='text-muted-foreground text-sm'>
             {t(

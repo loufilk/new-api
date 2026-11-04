@@ -1,3 +1,19 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -7,6 +23,7 @@ import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { formatTimestampToDate } from '@/lib/format'
+import { translateServerText } from '@/lib/server-error-message'
 
 import { formatAgentCash, formatAgentQuota } from '../lib/money'
 import { getSimpleHistory } from '../simple-root-api'
@@ -112,6 +129,7 @@ function HistoryRow(props: {
   }
   if (props.kind === 'ledger') {
     for (const [key, label] of [
+      ['delta_wallet_quota', 'Transferred wallet balance'],
       ['delta_cash_quota', 'Cash recharge'],
       ['delta_reward_quota', 'Referral reward ($)'],
       ['delta_root_quota', 'Root allocation'],
@@ -156,7 +174,13 @@ function HistoryRow(props: {
     details.push(
       [
         t('Source'),
-        t(row.source === 'cash' ? 'Cash recharge' : 'Transferred income'),
+        t(
+          {
+            cash: 'Cash recharge',
+            wallet: 'Transferred wallet balance',
+            income: 'Transferred income',
+          }[String(row.source)] ?? String(row.source)
+        ),
       ],
       [t('Target'), t(row.target === 'refund' ? 'Cash refund' : 'User wallet')]
     )
@@ -215,7 +239,7 @@ function HistoryRow(props: {
       </dl>
       {row.reason && (
         <p className='break-words'>
-          {t('Reason')}: {String(row.reason)}
+          {t('Reason')}: {translateServerText(t, String(row.reason))}
         </p>
       )}
       {row.evidence && (
