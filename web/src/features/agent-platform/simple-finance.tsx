@@ -177,43 +177,57 @@ export function SimpleAgentFinance() {
   const agents = query.data?.items ?? []
   return (
     <>
-      <SectionPageLayout>
+      <SectionPageLayout stackActionsOnMobile>
         <SectionPageLayout.Title>
           {t('Agent management')}
         </SectionPageLayout.Title>
+        <SectionPageLayout.Actions>
+          <div
+            role='group'
+            aria-label={t('Agent management')}
+            className='flex max-w-full flex-wrap items-center gap-2'
+          >
+            <Button
+              className='max-sm:flex-auto'
+              onClick={() => setOpenAgent(true)}
+            >
+              {t('Open agent')}
+            </Button>
+            <Button
+              className='max-sm:flex-auto'
+              variant='outline'
+              onClick={() => setFeesOpen(true)}
+            >
+              {t('Payment channel fees')}
+            </Button>
+            <Button
+              className='max-sm:flex-auto'
+              variant='outline'
+              onClick={() => setUserWithdrawalOpen(true)}
+            >
+              {t('Record user withdrawal')}
+            </Button>
+            <Button
+              className='max-sm:flex-auto'
+              variant='outline'
+              onClick={() => setHistoryOpen(true)}
+            >
+              {t('All financial history')}
+            </Button>
+          </div>
+        </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
-          <div className='space-y-4'>
+          <div className='flex flex-col gap-4'>
             <Card>
               <CardHeader>
                 <CardTitle>{t('Agents')}</CardTitle>
-                <Button className='w-fit' onClick={() => setOpenAgent(true)}>
-                  {t('Open agent')}
-                </Button>
-                <Button
-                  className='w-fit'
-                  variant='outline'
-                  onClick={() => setFeesOpen(true)}
-                >
-                  {t('Payment channel fees')}
-                </Button>
-                <Button
-                  className='w-fit'
-                  variant='outline'
-                  onClick={() => setUserWithdrawalOpen(true)}
-                >
-                  {t('Record user withdrawal')}
-                </Button>
-                <Button
-                  className='w-fit'
-                  variant='outline'
-                  onClick={() => setHistoryOpen(true)}
-                >
-                  {t('All financial history')}
-                </Button>
               </CardHeader>
-              <CardContent className='space-y-3'>
+              <CardContent className='flex flex-col gap-3'>
                 {!agents.length ? (
-                  <EmptyState title={t('No agents found')} />
+                  <EmptyState
+                    title={t('No agents found')}
+                    className='min-h-48 sm:min-h-60'
+                  />
                 ) : (
                   agents.map((agent) => (
                     <div
@@ -348,11 +362,13 @@ export function SimpleAgentFinance() {
                     </div>
                   ))
                 )}
-                <SimpleRecordPager
-                  page={page}
-                  total={query.data.total}
-                  onChange={setPage}
-                />
+                {(query.data.total > 0 || page > 1) && (
+                  <SimpleRecordPager
+                    page={page}
+                    total={query.data.total}
+                    onChange={setPage}
+                  />
+                )}
               </CardContent>
             </Card>
             {recordsAgent ? (
