@@ -137,12 +137,7 @@ function ModelTestSettingsForm(props: {
         />
         <p className='text-muted-foreground text-sm'>
           {t(
-            'Automatic fingerprint tests are off by default. Each run makes 3 paid calls. Quota is reserved conservatively before dispatch; this is not a dollar spending cap. Saving targets alone does not run tests.'
-          )}
-        </p>
-        <p className='text-muted-foreground text-sm'>
-          {t(
-            'Automatic site tests support standard OpenAI channels with static pricing only. Dynamic pricing expressions require a manually confirmed personal test.'
+            'Automatic fingerprint tests are off by default. Each run makes 3 paid calls using normal billing. Saving targets alone does not run tests.'
           )}
         </p>
         <div className='grid gap-4 sm:grid-cols-2'>
@@ -160,21 +155,10 @@ function ModelTestSettingsForm(props: {
               {...form.register('default_period_secs', { valueAsNumber: true })}
             />
           </div>
-          <div className='space-y-2'>
-            <Label htmlFor='model-test-budget'>{t('Daily quota budget')}</Label>
-            <Input
-              id='model-test-budget'
-              type='number'
-              min={0}
-              step={1}
-              disabled={mutation.isPending}
-              {...form.register('daily_budget_quota', { valueAsNumber: true })}
-            />
-          </div>
         </div>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'Choose an explicit group, model and channel. Start with a GPT model; no channel is selected automatically. The default interval is one hour. Each group and model can have only one target.'
+            'Choose a group and a model within that group. Tests use normal group routing. The default interval is one hour. Each group and model can have only one target.'
           )}
         </p>
         {values.targets.map((target, index) => (
@@ -215,7 +199,7 @@ function ModelTestSettingsForm(props: {
                   channel_id: 0,
                   enabled: true,
                   period_secs: 0,
-                  max_output_tokens: 2048,
+                  max_output_tokens: 0,
                   max_run_quota: 0,
                 },
               ],
@@ -236,7 +220,7 @@ function ModelTestSettingsForm(props: {
           controlId='model-test-automatic'
           label={t('Enable automatic fingerprint tests')}
           description={t(
-            'Requires enabled tests, a positive daily budget and at least one enabled target with a positive per-run quota no greater than the daily budget.'
+            'Requires enabled tests and at least one enabled target.'
           )}
           checked={values.automatic_enabled}
           onCheckedChange={(enabled) =>
@@ -249,7 +233,7 @@ function ModelTestSettingsForm(props: {
         {!valid && (
           <p role='alert' className='text-destructive text-sm'>
             {t(
-              'Complete all target selections and valid quota limits before saving. Intervals must be 60–604800 seconds, or 0 to inherit for a target.'
+              'Complete all target selections before saving. Intervals must be 60–604800 seconds, or 0 to inherit for a target.'
             )}
           </p>
         )}

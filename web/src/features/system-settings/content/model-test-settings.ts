@@ -25,10 +25,14 @@ export const modelTestTargetSchema = z.object({
   id: z.string().uuid(),
   group: z.string().min(1),
   model: z.string().min(1),
-  channel_id: z.number().int().positive(),
+  channel_id: z.number().int().nonnegative(),
   enabled: z.boolean(),
   period_secs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  max_output_tokens: z.union([z.literal(2048), z.literal(4096)]),
+  max_output_tokens: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(Number.MAX_SAFE_INTEGER),
   max_run_quota: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 })
 export const modelTestSettingsSchema = z.object({
@@ -58,17 +62,7 @@ export type ModelTestSettings = ModelTestSettingsInput & {
 export function canEnableAutomaticTests(
   settings: ModelTestSettingsInput
 ): boolean {
-  const enabled = settings.targets.filter((target) => target.enabled)
-  return (
-    settings.enabled &&
-    settings.daily_budget_quota > 0 &&
-    enabled.length > 0 &&
-    enabled.every(
-      (target) =>
-        target.max_run_quota > 0 &&
-        target.max_run_quota <= settings.daily_budget_quota
-    )
-  )
+  return settings.enabled && settings.targets.some((target) => target.enabled)
 }
 
 export function validateModelTestTargets(
@@ -89,15 +83,8 @@ export function validateModelTestTargets(
     (target) =>
       (target.period_secs === 0 ||
         (target.period_secs >= 60 && target.period_secs <= 604800)) &&
-      (!target.enabled || target.max_run_quota > 0) &&
       catalogue.groups.includes(target.group) &&
-      catalogue.models_by_group[target.group]?.includes(target.model) &&
-      catalogue.routes.some(
-        (route) =>
-          route.id === target.channel_id &&
-          route.group === target.group &&
-          route.model === target.model
-      )
+      catalogue.models_by_group[target.group]?.includes(target.model)
   )
 }
 
@@ -111,18 +98,27 @@ export async function getModelTestSettings(
     .object({
       groups: z.array(z.string()),
       models_by_group: z.record(z.string(), z.array(z.string())),
-      routes: z.array(
-        z.object({
-          id: z.number().int().positive(),
-          name: z.string(),
-          group: z.string(),
-          model: z.string(),
-        })
-      ),
+      routes: z
+        .array(
+          z.object({
+            id: z.number().int().positive(),
+            name: z.string(),
+            group: z.string(),
+            model: z.string(),
+          })
+        )
+        .default([]),
     })
     .parse(result.data.catalogue)
   return {
     ...parsed,
+    daily_budget_quota: 0,
+    targets: parsed.targets.map((target) => ({
+      ...target,
+      channel_id: 0,
+      max_output_tokens: 0,
+      max_run_quota: 0,
+    })),
     catalogue,
     engine_ready: result.data.engine_ready === true,
   }
@@ -131,8 +127,16 @@ export async function getModelTestSettings(
 export async function saveModelTestSettings(
   settings: ModelTestSettingsInput
 ): Promise<void> {
+  const parsed = modelTestSettingsSchema.parse(settings)
   const response = await api.put('/api/model-tests/settings', {
-    ...modelTestSettingsSchema.parse(settings),
+    ...parsed,
+    daily_budget_quota: 0,
+    targets: parsed.targets.map((target) => ({
+      ...target,
+      channel_id: 0,
+      max_output_tokens: 0,
+      max_run_quota: 0,
+    })),
     expected_version: settings.version,
   })
   requireServerSuccess(response.data)

@@ -97,7 +97,9 @@ func executeModelFingerprint(c *gin.Context) {
 			return
 		}
 		estimate := estimateModelTestQuota(c.GetInt("id"), selected, challenges)
-		if estimate == nil || *estimate != c.GetInt("model_test_estimated_quota") {
+		confirmedEstimate, _ := c.Get("model_test_estimated_quota")
+		confirmedQuota, validEstimate := confirmedEstimate.(*int)
+		if !validEstimate || !modelTestQuotaEstimateMatches(estimate, confirmedQuota) {
 			c.Set("model_test_error_code", "confirmation_price_changed")
 			return
 		}
@@ -127,7 +129,7 @@ func executeModelFingerprint(c *gin.Context) {
 			c.Set("model_test_error_code", "history_unavailable")
 			return
 		}
-		body, err := common.Marshal(gin.H{"model": selected.Model, "stream": false, "max_tokens": selected.MaxOutputTokens, "messages": []gin.H{{"role": "user", "content": challenge.Prompt}}})
+		body, err := common.Marshal(gin.H{"model": selected.Model, "stream": false, "messages": []gin.H{{"role": "user", "content": challenge.Prompt}}})
 		if err != nil {
 			c.Set("model_test_error_code", "invalid_request")
 			return
@@ -212,7 +214,7 @@ func executeModelFingerprint(c *gin.Context) {
 		challenge := challenges[len(samples)]
 		samples = append(samples, modelfingerprint.Sample{ChallengeID: challenge.ID, ExpectedCount: challenge.ExpectedCount, Error: "not_dispatched"})
 	}
-	result, err := modelfingerprint.Analyze(samples, true)
+	result, err := modelFingerprintScorer.analyze(samples, true)
 	if err != nil {
 		c.Set("model_test_error_code", "fingerprint_analysis_failed")
 		return

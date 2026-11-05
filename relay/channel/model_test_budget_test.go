@@ -72,7 +72,7 @@ func TestModelTestFinalOutputGuardRejectsMissingConflictingAndRaisedLimits(t *te
 	var calls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
 	defer upstream.Close()
-	for _, body := range []string{`{}`, `{"max_tokens":8193}`, `{"max_tokens":2048,"max_completion_tokens":4096}`, `{"max_tokens":0}`, `{"max_tokens":"2048"}`} {
+	for _, body := range []string{`{}`, `{"max_tokens":8193}`, `{"max_tokens":2048,"max_completion_tokens":4096}`, `{"max_tokens":0}`, `{"max_tokens":"2048"}`, `{"generationConfig":{"maxOutputTokens":4096}}`, `{"generationConfig":{"maxOutputTokens":0}}`, `{"max_tokens":2048,"generationConfig":{"maxOutputTokens":4096}}`, `{"generationConfig":{"maxOutputTokens":"2048"}}`} {
 		c, _ := gin.CreateTestContext(httptest.NewRecorder())
 		c.Request = httptest.NewRequest("POST", "/test", nil)
 		common.SetContextKey(c, constant.ContextKeyModelTestSingleAttempt, true)

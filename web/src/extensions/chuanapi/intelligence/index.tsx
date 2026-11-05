@@ -17,28 +17,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Link } from '@tanstack/react-router'
-import { RefreshCw } from 'lucide-react'
+import { Fingerprint, Info, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
-import { SectionPageLayout } from '@/components/layout'
+import { Main } from '@/components/layout'
 import { LoadingState } from '@/components/loading-state'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
-import { ROLE } from '@/lib/roles'
-import { useAuthStore } from '@/stores/auth-store'
 
 import { getSiteTests, getTestCatalogue } from './api'
 import { BudgetDialog } from './budget-dialog'
-import { TestHistoryList } from './history-list'
 import { ModelTestCard } from './model-card'
 import { TestResultDialog } from './result-dialog'
 import { SelfTestDialog } from './self-test-dialog'
@@ -47,21 +41,17 @@ import { useModelTest } from './use-model-test'
 
 export function IntelligencePage() {
   return (
-    <SectionPageLayout>
-      <SectionPageLayout.Content>
+    <Main>
+      <div className='bg-muted/15 min-h-0 flex-1 overflow-auto p-3 sm:p-5 lg:p-6'>
         <IntelligenceDashboard />
-      </SectionPageLayout.Content>
-    </SectionPageLayout>
+      </div>
+    </Main>
   )
 }
 
 export function IntelligenceDashboard() {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
-  const isAdmin = useAuthStore(
-    (state) => (state.auth.user?.role ?? 0) >= ROLE.ADMIN
-  )
-  const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<TestRun | null>(null)
   const [selfTest, setSelfTest] = useState<{
     model: string
@@ -95,9 +85,11 @@ export function IntelligenceDashboard() {
   const running =
     test.start.isPending ||
     !!data?.items.some((run) => run.status === 'running')
-  const currentSelection =
-    data?.items.find((run) => run.id === selected?.id) ?? selected
-  const personalPoints = data?.effective_points ?? data?.items ?? []
+  const currentOutcome = pendingRun ?? test.start.data
+  const activeRuns = (data?.items ?? []).filter(
+    (run) => run.status === 'running' && run.id !== test.pending?.request_id
+  )
+  const sharedPoints = site.data?.user_items ?? []
   const groupNames = [
     ...new Set([
       ...Object.keys(
@@ -105,9 +97,7 @@ export function IntelligenceDashboard() {
       ),
       ...(site.data?.targets ?? []).map((target) => target.group),
       ...(site.data?.items ?? []).map((run) => run.group),
-      ...personalPoints
-        .filter((run) => run.fingerprint_result)
-        .map((run) => run.group),
+      ...sharedPoints.map((run) => run.group),
     ]),
   ].sort()
   const visibleGroups = groupNames
@@ -123,15 +113,11 @@ export function IntelligenceDashboard() {
           ...(site.data?.items ?? [])
             .filter((run) => run.group === group)
             .map((run) => run.model),
-          ...personalPoints
-            .filter((run) => run.group === group && run.fingerprint_result)
+          ...sharedPoints
+            .filter((run) => run.group === group)
             .map((run) => run.model),
         ]),
-      ]
-        .filter((model) =>
-          `${group} ${model}`.toLowerCase().includes(search.toLowerCase())
-        )
-        .sort()
+      ].sort()
       return { group, models }
     })
     .filter((entry) => entry.models.length)
@@ -142,50 +128,54 @@ export function IntelligenceDashboard() {
     if (test.enabled) void catalogue.refetch()
   }
   return (
-    <div className='mx-auto flex max-w-[100rem] flex-col gap-5 py-4'>
-      <header className='flex flex-wrap items-start justify-between gap-4'>
-        <div className='flex min-w-0 flex-col gap-2'>
-          <h1 className='text-2xl font-semibold tracking-tight'>
+    <div className='flex w-full min-w-0 flex-col gap-4'>
+      <header className='flex flex-wrap items-start justify-between gap-3'>
+        <div className='flex min-w-0 flex-col gap-1.5'>
+          <h1 className='text-xl font-semibold tracking-tight'>
             {t('fingerprint.title')}
           </h1>
-          <p className='text-muted-foreground text-sm'>
+          <p className='text-muted-foreground text-xs leading-relaxed'>
             {t('fingerprint.subtitle')}
           </p>
         </div>
-        <Button
-          variant='outline'
-          disabled={history.isFetching || site.isFetching}
-          onClick={refresh}
-        >
-          <RefreshCw aria-hidden />
-          {t('monitor.refresh')}
-        </Button>
+        <div className='flex shrink-0 items-center gap-2'>
+          <Button
+            variant='outline'
+            size='sm'
+            className='bg-card min-h-9 sm:min-h-7'
+            disabled={history.isFetching || site.isFetching}
+            onClick={refresh}
+          >
+            <RefreshCw aria-hidden className='size-3.5' />
+            {t('monitor.refresh')}
+          </Button>
+        </div>
       </header>
-      {isAdmin && (
-        <Button
-          variant='outline'
-          className='w-fit'
-          render={
-            <Link
-              to='/system-settings/content/$section'
-              params={{ section: 'model-tests' }}
+      <div className='flex flex-wrap items-center justify-between gap-3'>
+        <div className='text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-2 text-xs'>
+          <span className='inline-flex items-center gap-1.5'>
+            <span aria-hidden className='size-2 rounded-full bg-emerald-500' />
+            {t('fingerprint.effectiveResults')}
+          </span>
+          <span className='inline-flex items-center gap-1.5'>
+            <span
+              aria-hidden
+              className='bg-muted-foreground/30 size-2 rounded-full'
             />
-          }
-        >
-          {t('fingerprint.settings')}
-        </Button>
-      )}
-      <Alert role='note'>
-        <AlertDescription>{t('fingerprint.disclaimer')}</AlertDescription>
-      </Alert>
+            {t('fingerprint.emptySlot')}
+          </span>
+        </div>
+        <p className='text-muted-foreground text-[11px]'>
+          {t('fingerprint.browserTimezone')}
+        </p>
+      </div>
       {!history.isPending && !test.enabled && (
-        <Alert role='status'>
-          <AlertDescription>
-            {t(
-              history.isError || data?.availability_error
-                ? 'Model test availability could not be verified. New tests are blocked; history and cancellation remain available.'
-                : 'New model tests are disabled. You can still view your history and cancel active tests.'
-            )}
+        <Alert role='status' className='border-border/70 bg-muted/30'>
+          <Info aria-hidden />
+          <AlertDescription className='text-xs'>
+            {history.isError || data?.availability_error
+              ? t('fingerprint.availabilityUnknown')
+              : t('fingerprint.testsDisabled')}
           </AlertDescription>
         </Alert>
       )}
@@ -195,19 +185,6 @@ export function IntelligenceDashboard() {
         (test.enabled && catalogue.isError)) && (
         <ErrorState onRetry={refresh} />
       )}
-      <div className='flex flex-wrap items-end justify-between gap-3'>
-        <p className='text-muted-foreground text-xs'>
-          {t('fingerprint.timelineHelp')}
-        </p>
-        <div className='flex flex-col gap-1'>
-          <Label htmlFor='fingerprint-search'>{t('monitor.search')}</Label>
-          <Input
-            id='fingerprint-search'
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-        </div>
-      </div>
       {unresolvedPending && (
         <Alert>
           <AlertDescription>
@@ -241,6 +218,42 @@ export function IntelligenceDashboard() {
           </AlertDescription>
         </Alert>
       )}
+      {currentOutcome &&
+        !unresolvedPending &&
+        currentOutcome.status !== 'running' && (
+          <p
+            role='status'
+            className='text-muted-foreground flex flex-wrap items-center gap-2 text-xs'
+          >
+            <span className='min-w-0 break-all'>{currentOutcome.model}</span>
+            <Badge variant='outline'>
+              {t(`intelligence.status.${currentOutcome.status}`)}
+            </Badge>
+          </p>
+        )}
+      {activeRuns.map((run) => (
+        <Alert
+          key={run.id}
+          role='status'
+          className='border-border/70 bg-muted/30'
+        >
+          <AlertDescription className='flex flex-wrap items-center justify-between gap-3'>
+            <span className='min-w-0 break-all'>
+              {run.group} · {run.model} · {t('intelligence.status.running')}
+            </span>
+            <Button
+              variant='outline'
+              size='sm'
+              disabled={test.cancel.isPending || run.cancel_requested}
+              onClick={() => test.cancel.mutate(run.id)}
+            >
+              {run.cancel_requested
+                ? t('intelligence.cancelRequested')
+                : t('Cancel')}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ))}
       {visibleGroups.map(({ group, models }) => {
         const groupInfo = catalogue.data?.groups.find(
           (item) => item.name === group
@@ -248,14 +261,17 @@ export function IntelligenceDashboard() {
         return (
           <section
             key={group}
-            className='bg-card min-w-0 overflow-hidden rounded-xl border'
+            className='bg-card border-border/70 min-w-0 overflow-hidden rounded-xl border'
             aria-label={group}
           >
-            <header className='flex flex-wrap items-center gap-3 px-4 py-3'>
-              <h2 className='font-semibold break-all'>{group}</h2>
+            <header className='flex flex-wrap items-center gap-2.5 px-4 py-2.5'>
+              <h2 className='text-sm font-semibold break-all'>{group}</h2>
               {groupInfo && (
-                <Badge variant='secondary'>
-                  {formatNumber(groupInfo.ratio, locale)}×
+                <Badge
+                  variant='secondary'
+                  className='rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700 dark:bg-sky-950 dark:text-sky-300'
+                >
+                  {t('Ratio')} {formatNumber(groupInfo.ratio, locale)}×
                 </Badge>
               )}
             </header>
@@ -264,17 +280,9 @@ export function IntelligenceDashboard() {
                 key={model}
                 model={model}
                 group={group}
-                runs={[
-                  ...personalPoints.filter(
-                    (run) => run.group === group && run.model === model
-                  ),
-                  ...(data?.items ?? []).filter(
-                    (run) =>
-                      run.group === group &&
-                      run.model === model &&
-                      !personalPoints.some((point) => point.id === run.id)
-                  ),
-                ]}
+                runs={sharedPoints.filter(
+                  (run) => run.group === group && run.model === model
+                )}
                 siteRuns={(site.data?.items ?? []).filter(
                   (run) => run.group === group && run.model === model
                 )}
@@ -304,33 +312,21 @@ export function IntelligenceDashboard() {
       })}
       {!history.isPending && !site.isPending && !visibleGroups.length && (
         <EmptyState
-          title={t(
-            search ? 'intelligence.noModels' : 'fingerprint.noConfiguredModels'
-          )}
+          icon={Fingerprint}
+          bordered
+          className='bg-card min-h-48 rounded-xl'
+          title={t('fingerprint.noConfiguredModels')}
         />
       )}
-      {data && (
-        <section className='flex flex-col gap-3'>
-          <h2 className='text-xl font-semibold'>
-            {t('intelligence.myHistory')}
-          </h2>
-          <p className='text-muted-foreground text-xs'>
-            {t('fingerprint.legacyHistory')}
-          </p>
-          <TestHistoryList
-            runs={data.items}
-            onSelect={setSelected}
-            onCancel={(id) => test.cancel.mutate(id)}
-            cancelling={test.cancel.isPending}
-          />
-        </section>
-      )}
+      <p className='text-muted-foreground text-[11px] leading-relaxed'>
+        {t('fingerprint.timelineHelp')}
+      </p>
       {selfTest && test.enabled && !test.quote && (
         <SelfTestDialog
           key={`${selfTest.group}:${selfTest.model}`}
           {...selfTest}
           tokens={data?.eligible_tokens_by_group?.[selfTest.group] ?? []}
-          maxOutputTokens={data?.limits.default_output_tokens ?? 2048}
+          maxOutputTokens={0}
           pending={test.estimate.isPending}
           disabled={running || unresolvedPending}
           onClose={() => {
@@ -351,11 +347,8 @@ export function IntelligenceDashboard() {
           }}
         />
       )}
-      {currentSelection && (
-        <TestResultDialog
-          run={currentSelection}
-          onClose={() => setSelected(null)}
-        />
+      {selected && (
+        <TestResultDialog run={selected} onClose={() => setSelected(null)} />
       )}
     </div>
   )

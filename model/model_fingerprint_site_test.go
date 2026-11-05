@@ -2,7 +2,6 @@ package model
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -65,10 +64,10 @@ func fingerprintSiteFixture(t *testing.T) (context.Context, *ModelFingerprintSit
 }
 func TestFingerprintSiteDefaultsAndConfigurationCAS(t *testing.T) {
 	ctx, c, _ := fingerprintSiteFixture(t)
-	c.DailyBudgetQuota = 0
+	c.DefaultPeriodSecs = 0
 	_, err := UpdateModelFingerprintSiteConfig(ctx, c.Version, 7, *c)
-	require.ErrorIs(t, err, ErrFingerprintSiteBudget)
-	c.DailyBudgetQuota = 250
+	require.Error(t, err)
+	c.DefaultPeriodSecs = 3600
 	_, err = UpdateModelFingerprintSiteConfig(ctx, 0, 7, *c)
 	require.ErrorIs(t, err, ErrFingerprintSiteConflict)
 	var auditCount int64
@@ -92,13 +91,13 @@ func TestFingerprintSiteDefaultsAndConfigurationCAS(t *testing.T) {
 	require.NoError(t, DB.Model(&ModelFingerprintSiteConfig{}).Count(&count).Error)
 	require.Zero(t, count, "read must not create enabled defaults")
 }
-func TestFingerprintSiteAdmissionReservationAndNoReplay(t *testing.T) {
+func TestFingerprintSiteAdmissionWithoutBudgetAndNoReplay(t *testing.T) {
 	ctx, c, now := fingerprintSiteFixture(t)
 	run, err := ReserveModelFingerprintSiteRun(ctx, "fixture-task", "fixture-runner", c.Targets[0].ID, c.Version, now)
 	require.NoError(t, err)
 	after, err := GetModelFingerprintSiteConfig(ctx)
 	require.NoError(t, err)
-	require.EqualValues(t, 100, after.ReservedQuota)
+	require.Zero(t, after.ReservedQuota)
 	_, err = ReserveModelFingerprintSiteRun(ctx, "fixture-task", "fixture-runner", c.Targets[0].ID, c.Version, now)
 	require.ErrorIs(t, err, ErrFingerprintSiteNotDue)
 	require.NoError(t, AuthorizeModelFingerprintSiteProbe(ctx, run.ID, "fixture-task", "fixture-runner", "probe-1"))
@@ -114,39 +113,34 @@ func TestFingerprintSiteAdmissionReservationAndNoReplay(t *testing.T) {
 	_, requestIDErr := uuid.Parse(probe.RequestID)
 	require.NoError(t, requestIDErr)
 
-	actual := int64(25)
-	require.NoError(t, FinishModelFingerprintSiteRun(ctx, run.ID, ModelFingerprintSiteResult{Status: "succeeded", FingerprintResult: `{"assessment":"fixture"}`}, &actual))
+	require.NoError(t, FinishModelFingerprintSiteRun(ctx, run.ID, ModelFingerprintSiteResult{Status: "succeeded", FingerprintResult: `{"assessment":"fixture"}`}, true))
 	after, err = GetModelFingerprintSiteConfig(ctx)
 	require.NoError(t, err)
-	require.EqualValues(t, 25, after.ReservedQuota)
-	require.ErrorIs(t, FinishModelFingerprintSiteRun(ctx, run.ID, ModelFingerprintSiteResult{Status: "succeeded"}, &actual), ErrFingerprintSiteConflict)
+	require.Zero(t, after.ReservedQuota)
+	require.ErrorIs(t, FinishModelFingerprintSiteRun(ctx, run.ID, ModelFingerprintSiteResult{Status: "succeeded"}, true), ErrFingerprintSiteConflict)
 	require.ErrorIs(t, AuthorizeModelFingerprintSiteProbe(ctx, run.ID, "fixture-task", "fixture-runner", "probe-2"), ErrFingerprintSiteConflict)
 	_, err = ReserveModelFingerprintSiteRun(ctx, "fixture-task", "fixture-runner", c.Targets[0].ID, c.Version, now)
 	require.ErrorIs(t, err, ErrFingerprintSiteNotDue)
 }
-func TestFingerprintSiteUnknownRetainsReservationAndPauses(t *testing.T) {
-	for _, amount := range []*int64{nil, ptrFingerprintQuota(-1), ptrFingerprintQuota(101)} {
-		t.Run(fmt.Sprint(amount), func(t *testing.T) {
-			ctx, c, now := fingerprintSiteFixture(t)
-			run, err := ReserveModelFingerprintSiteRun(ctx, "fixture-task", "fixture-runner", c.Targets[0].ID, c.Version, now)
-			require.NoError(t, err)
-			require.NoError(t, FinishModelFingerprintSiteRun(ctx, run.ID, ModelFingerprintSiteResult{Status: "failed"}, amount))
-			after, err := GetModelFingerprintSiteConfig(ctx)
-			require.NoError(t, err)
-			require.EqualValues(t, 100, after.ReservedQuota)
-			require.False(t, after.AutomaticEnabled)
-			require.Greater(t, after.Version, c.Version)
-			_, staleErr := UpdateModelFingerprintSiteConfig(ctx, c.Version, 7, *c)
-			require.ErrorIs(t, staleErr, ErrFingerprintSiteConflict)
-			var stored ModelFingerprintSiteRun
-			require.NoError(t, DB.First(&stored, "id = ?", run.ID).Error)
-			require.Equal(t, "unknown", stored.Status)
-			require.Equal(t, "unknown", stored.UsageState)
-		})
-	}
+func TestFingerprintSiteUnknownPausesWithoutChangingLegacyLedger(t *testing.T) {
+	ctx, c, now := fingerprintSiteFixture(t)
+	require.NoError(t, DB.Model(&ModelFingerprintSiteConfig{}).Where("id = ?", 1).Update("reserved_quota", 100).Error)
+	run, err := ReserveModelFingerprintSiteRun(ctx, "fixture-task", "fixture-runner", c.Targets[0].ID, c.Version, now)
+	require.NoError(t, err)
+	require.NoError(t, FinishModelFingerprintSiteRun(ctx, run.ID, ModelFingerprintSiteResult{Status: "failed"}, false))
+	after, err := GetModelFingerprintSiteConfig(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 100, after.ReservedQuota)
+	require.False(t, after.AutomaticEnabled)
+	require.Greater(t, after.Version, c.Version)
+	_, staleErr := UpdateModelFingerprintSiteConfig(ctx, c.Version, 7, *c)
+	require.ErrorIs(t, staleErr, ErrFingerprintSiteConflict)
+	var stored ModelFingerprintSiteRun
+	require.NoError(t, DB.First(&stored, "id = ?", run.ID).Error)
+	require.Equal(t, "unknown", stored.Status)
+	require.Equal(t, "unknown", stored.UsageState)
 }
-func ptrFingerprintQuota(n int64) *int64 { return &n }
-func TestFingerprintSiteBudgetAndConcurrentAdmission(t *testing.T) {
+func TestFingerprintSiteUnlimitedBudgetAndConcurrentAdmission(t *testing.T) {
 	ctx, c, now := fingerprintSiteFixture(t)
 	var wg sync.WaitGroup
 	results := make(chan error, 8)
@@ -171,16 +165,16 @@ func TestFingerprintSiteBudgetAndConcurrentAdmission(t *testing.T) {
 	require.Equal(t, 1, success)
 	var run ModelFingerprintSiteRun
 	require.NoError(t, DB.First(&run).Error)
-	actual := int64(100)
-	require.NoError(t, FinishModelFingerprintSiteRun(ctx, run.ID, ModelFingerprintSiteResult{Status: "succeeded"}, &actual))
+
+	require.NoError(t, FinishModelFingerprintSiteRun(ctx, run.ID, ModelFingerprintSiteResult{Status: "succeeded"}, true))
 	next, err := ReserveModelFingerprintSiteRun(ctx, "fixture-task", "fixture-runner", c.Targets[0].ID, c.Version, now+3600)
 	require.NoError(t, err)
-	require.NoError(t, FinishModelFingerprintSiteRun(ctx, next.ID, ModelFingerprintSiteResult{Status: "succeeded"}, &actual))
+	require.NoError(t, FinishModelFingerprintSiteRun(ctx, next.ID, ModelFingerprintSiteResult{Status: "succeeded"}, true))
 	_, err = ReserveModelFingerprintSiteRun(ctx, "fixture-task", "fixture-runner", c.Targets[0].ID, c.Version, now+7200)
-	require.ErrorIs(t, err, ErrFingerprintSiteBudget)
+	require.NoError(t, err)
 	after, err := GetModelFingerprintSiteConfig(ctx)
 	require.NoError(t, err)
-	require.EqualValues(t, 200, after.ReservedQuota)
+	require.Zero(t, after.ReservedQuota)
 }
 func TestFingerprintSiteProbeRechecksLeaseGenerationAndGlobalSwitch(t *testing.T) {
 	for _, cause := range []string{"lease", "generation", "global", "automatic"} {
@@ -248,23 +242,24 @@ func TestFingerprintSitePublicHistoryIsPerTargetAndRedacted(t *testing.T) {
 		require.Equal(t, 65, n)
 	}
 }
-func TestFingerprintSiteConfigBounds(t *testing.T) {
-	for _, maxTokens := range []int{-1, 1, 2047, 2049, 4097, 1 << 30} {
-		c := ModelFingerprintSiteConfig{DefaultPeriodSecs: 3600, Targets: []ModelFingerprintSiteTarget{{Group: "default", Model: "gpt-test", ChannelID: 1, MaxOutputTokens: maxTokens}}}
-		require.Error(t, ValidateModelFingerprintSiteConfig(&c))
+func TestFingerprintSiteConfigRemovesLegacyLimits(t *testing.T) {
+	for _, maxTokens := range []int{-1, 1, 2048, 4096, 100000} {
+		c := ModelFingerprintSiteConfig{DefaultPeriodSecs: 3600, DailyBudgetQuota: 1, AutomaticEnabled: true, Targets: []ModelFingerprintSiteTarget{{Group: "default", Model: "gpt-test", ChannelID: 1, Enabled: true, MaxOutputTokens: maxTokens, MaxRunQuota: 1}}}
+		require.NoError(t, ValidateModelFingerprintSiteConfig(&c))
+		require.Zero(t, c.DailyBudgetQuota)
+		require.Zero(t, c.Targets[0].ChannelID)
+		require.Zero(t, c.Targets[0].MaxOutputTokens)
+		require.Zero(t, c.Targets[0].MaxRunQuota)
 	}
-	c := ModelFingerprintSiteConfig{DefaultPeriodSecs: 3600, Targets: []ModelFingerprintSiteTarget{{Group: "default", Model: "gpt-test", ChannelID: 1, Enabled: true}}}
-	require.Error(t, ValidateModelFingerprintSiteConfig(&c))
 }
-
-func TestFingerprintSiteDailyRolloverDoesNotRefundPreviousDay(t *testing.T) {
+func TestFingerprintSiteFinishDoesNotModifyLegacyReservations(t *testing.T) {
 	ctx, c, now := fingerprintSiteFixture(t)
 	run, err := ReserveModelFingerprintSiteRun(ctx, "fixture-task", "fixture-runner", c.Targets[0].ID, c.Version, now)
 	require.NoError(t, err)
 	// Simulate an admin-day rollover while an already dispatched response is pending.
 	require.NoError(t, DB.Model(&ModelFingerprintSiteConfig{}).Where("id = ?", 1).Updates(map[string]any{"budget_day": "2099-01-01", "reserved_quota": 70}).Error)
-	actual := int64(25)
-	require.NoError(t, FinishModelFingerprintSiteRun(ctx, run.ID, ModelFingerprintSiteResult{Status: "succeeded"}, &actual))
+
+	require.NoError(t, FinishModelFingerprintSiteRun(ctx, run.ID, ModelFingerprintSiteResult{Status: "succeeded"}, true))
 	after, err := GetModelFingerprintSiteConfig(ctx)
 	require.NoError(t, err)
 	require.EqualValues(t, 70, after.ReservedQuota)
@@ -294,8 +289,8 @@ func TestFingerprintSiteElapsedPeriodSurvivesBoundaryAndConfigEdit(t *testing.T)
 	require.NoError(t, DB.Model(&SystemTaskLock{}).Where("type = ?", SystemTaskTypeModelFingerprintSite).Update("locked_until", start+86400).Error)
 	run, err := ReserveModelFingerprintSiteRun(ctx, "fixture-task", "fixture-runner", c.Targets[0].ID, c.Version, start)
 	require.NoError(t, err)
-	actual := int64(25)
-	require.NoError(t, FinishModelFingerprintSiteRun(ctx, run.ID, ModelFingerprintSiteResult{Status: "succeeded"}, &actual))
+
+	require.NoError(t, FinishModelFingerprintSiteRun(ctx, run.ID, ModelFingerprintSiteResult{Status: "succeeded"}, true))
 	// The next calendar bucket starts in one minute, but the configured hour has not elapsed.
 	_, err = ReserveModelFingerprintSiteRun(ctx, "fixture-task", "fixture-runner", c.Targets[0].ID, c.Version, start+60)
 	require.ErrorIs(t, err, ErrFingerprintSiteNotDue)
@@ -305,7 +300,7 @@ func TestFingerprintSiteElapsedPeriodSurvivesBoundaryAndConfigEdit(t *testing.T)
 	require.ErrorIs(t, err, ErrFingerprintSiteNotDue, "a configuration save must not reset elapsed-time admission")
 	next, err := ReserveModelFingerprintSiteRun(ctx, "fixture-task", "fixture-runner", c.Targets[0].ID, c.Version, start+3600)
 	require.NoError(t, err)
-	require.NoError(t, FinishModelFingerprintSiteRun(ctx, next.ID, ModelFingerprintSiteResult{Status: "succeeded"}, &actual))
+	require.NoError(t, FinishModelFingerprintSiteRun(ctx, next.ID, ModelFingerprintSiteResult{Status: "succeeded"}, true))
 	delayed, err := ReserveModelFingerprintSiteRun(ctx, "fixture-task", "fixture-runner", c.Targets[0].ID, c.Version, start+8*3600)
 	require.NoError(t, err)
 	require.Equal(t, (start+8*3600)/3600, delayed.Window)
@@ -314,7 +309,7 @@ func TestFingerprintSiteElapsedPeriodSurvivesBoundaryAndConfigEdit(t *testing.T)
 	require.EqualValues(t, 3, count, "missed periods must not create catch-up runs")
 	after, err := GetModelFingerprintSiteConfig(ctx)
 	require.NoError(t, err)
-	require.EqualValues(t, 150, after.ReservedQuota)
+	require.Zero(t, after.ReservedQuota)
 }
 func TestFingerprintSiteAdmissionRejectsInvalidStoredPeriod(t *testing.T) {
 	ctx, c, now := fingerprintSiteFixture(t)
@@ -335,7 +330,7 @@ func TestFingerprintSiteAutomaticConfigurationRequiresRunnableTargets(t *testing
 	require.Error(t, ValidateModelFingerprintSiteConfig(&disabled))
 	disabled.Targets[0].Enabled = true
 	disabled.Targets[0].MaxRunQuota = 101
-	require.ErrorIs(t, ValidateModelFingerprintSiteConfig(&disabled), ErrFingerprintSiteBudget)
+	require.NoError(t, ValidateModelFingerprintSiteConfig(&disabled))
 	disabled.Targets[0].MaxRunQuota = 100
 	require.NoError(t, ValidateModelFingerprintSiteConfig(&disabled))
 }

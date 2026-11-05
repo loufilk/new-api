@@ -29,6 +29,7 @@ import type {
   TestSelection,
   SiteTests,
   SiteRun,
+  PublicTestRun,
 } from './types'
 
 type Response<T> = { success: boolean; data: T }
@@ -96,19 +97,42 @@ export async function getTestDetail(
 export async function getSiteTests(signal?: AbortSignal): Promise<SiteTests> {
   const response = requireServerSuccess(
     (
-      await api.get<Response<Omit<SiteTests, 'items'> & { items: SiteRun[] }>>(
-        `${endpoint}/site`,
-        {
-          signal,
-        }
-      )
+      await api.get<
+        Response<
+          Omit<SiteTests, 'items' | 'user_items'> & {
+            items: SiteRun[]
+            user_items?: PublicTestRun[]
+          }
+        >
+      >(`${endpoint}/site`, {
+        signal,
+      })
     ).data
   ).data
   return {
     ...response,
+    user_items: (response.user_items ?? []).map((run) => ({
+      id: run.id,
+      model: run.model,
+      group: run.group,
+      benchmark_id: run.benchmark_id,
+      status: run.status,
+      assessment: run.assessment,
+      fingerprint_result: run.fingerprint_result,
+      created_at: run.created_at,
+      completed_at: run.completed_at,
+      source: 'user' as const,
+      visibility: 'public' as const,
+      max_output_tokens: 0,
+      estimated_quota: null,
+      request_id: '',
+      error_code: '',
+      cancel_requested: false,
+    })),
     items: response.items.map((run) => ({
       ...run,
       source: 'site' as const,
+      visibility: 'public' as const,
       status: run.status === 'succeeded' ? ('completed' as const) : run.status,
       max_output_tokens: 0,
       estimated_quota: null,

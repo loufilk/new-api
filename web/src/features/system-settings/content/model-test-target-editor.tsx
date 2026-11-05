@@ -40,16 +40,13 @@ export function ModelTestTargetEditor(props: {
   ].sort(
     (left, right) => Number(/gpt/i.test(right)) - Number(/gpt/i.test(left))
   )
-  const routes = props.catalogue.routes.filter(
-    (route) => route.group === target.group && route.model === target.model
-  )
   return (
     <fieldset
       disabled={props.disabled}
       className='min-w-0 space-y-3 rounded-lg border p-4'
     >
       <legend className='px-1 text-sm'>{t('Fingerprint target')}</legend>
-      <div className='grid min-w-0 gap-4 sm:grid-cols-3'>
+      <div className='grid min-w-0 gap-4 sm:grid-cols-2'>
         <div className='min-w-0 space-y-2'>
           <Label htmlFor={`${target.id}-group`}>{t('Group')}</Label>
           <NativeSelect
@@ -99,29 +96,6 @@ export function ModelTestTargetEditor(props: {
             ))}
           </NativeSelect>
         </div>
-        <div className='min-w-0 space-y-2'>
-          <Label htmlFor={`${target.id}-channel`}>{t('Channel')}</Label>
-          <NativeSelect
-            id={`${target.id}-channel`}
-            className='w-full'
-            value={target.channel_id}
-            onChange={(event) =>
-              props.onChange({
-                ...target,
-                channel_id: Number(event.target.value),
-              })
-            }
-          >
-            <NativeSelectOption value={0}>
-              {t('Select channel')}
-            </NativeSelectOption>
-            {routes.map((route) => (
-              <NativeSelectOption key={route.id} value={route.id}>
-                {route.name} (#{route.id})
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </div>
         <div className='space-y-2'>
           <Label htmlFor={`${target.id}-period`}>
             {t('Target interval (seconds, 0 inherits)')}
@@ -139,43 +113,6 @@ export function ModelTestTargetEditor(props: {
               })
             }
           />
-        </div>
-        <div className='space-y-2'>
-          <Label htmlFor={`${target.id}-quota`}>
-            {t('Maximum quota reserved per run')}
-          </Label>
-          <Input
-            id={`${target.id}-quota`}
-            type='number'
-            min={0}
-            step={1}
-            value={target.max_run_quota}
-            onChange={(event) =>
-              props.onChange({
-                ...target,
-                max_run_quota: Number(event.target.value),
-              })
-            }
-          />
-        </div>
-        <div className='space-y-2'>
-          <Label htmlFor={`${target.id}-tokens`}>
-            {t('Maximum output tokens per call')}
-          </Label>
-          <NativeSelect
-            id={`${target.id}-tokens`}
-            className='w-full'
-            value={target.max_output_tokens}
-            onChange={(event) =>
-              props.onChange({
-                ...target,
-                max_output_tokens: Number(event.target.value) as 2048 | 4096,
-              })
-            }
-          >
-            <NativeSelectOption value={2048}>2048</NativeSelectOption>
-            <NativeSelectOption value={4096}>4096</NativeSelectOption>
-          </NativeSelect>
         </div>
       </div>
       <SettingsSwitchField

@@ -1,11 +1,9 @@
-// Adapted from Ikaleio/lm-detector sdk/go at f920cfe2ff0bab94989ce01ac061e21425b6e321.
-// Copyright (c) 2026 xqy2006. MIT license: see LICENSE.lm-detector.
-package modelfingerprint
+package lmfpd
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"errors"
-	"github.com/QuantumNous/new-api/common"
 	"math"
 )
 
@@ -68,7 +66,7 @@ type f32Ref struct {
 
 func (r *f32Ref) UnmarshalJSON(data []byte) error {
 	var plain []float64
-	if common.Unmarshal(data, &plain) == nil {
+	if json.Unmarshal(data, &plain) == nil {
 		if len(plain) > 0 {
 			return errors.New("unencoded float array")
 		}
@@ -79,7 +77,7 @@ func (r *f32Ref) UnmarshalJSON(data []byte) error {
 		Offset *int `json:"$f32"`
 		N      int  `json:"n"`
 	}
-	if err := common.Unmarshal(data, &ref); err != nil {
+	if err := json.Unmarshal(data, &ref); err != nil {
 		return err
 	}
 	if ref.Offset == nil || *ref.Offset < 0 || ref.N < 0 {
@@ -201,7 +199,7 @@ func decodeDetector(data []byte) (*detector, error) {
 		floats[i] = float64(math.Float32frombits(bits))
 	}
 	var raw rawHeader
-	if err := common.Unmarshal(data[4:4+headerLength], &raw); err != nil {
+	if err := json.Unmarshal(data[4:4+headerLength], &raw); err != nil {
 		return nil, err
 	}
 	t := &floatTable{floats: floats}

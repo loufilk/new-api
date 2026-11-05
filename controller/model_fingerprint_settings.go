@@ -6,31 +6,24 @@ import (
 	"slices"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/pkg/modelfingerprint"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
 
-type fingerprintRouteOption struct {
-	ID    int    `json:"id"`
-	Name  string `json:"name"`
-	Group string `json:"group"`
-	Model string `json:"model"`
-}
 type fingerprintSettingsCatalogue struct {
-	Groups        []string                 `json:"groups"`
-	ModelsByGroup map[string][]string      `json:"models_by_group"`
-	Routes        []fingerprintRouteOption `json:"routes"`
+	Groups        []string            `json:"groups"`
+	ModelsByGroup map[string][]string `json:"models_by_group"`
 }
 
-// This catalogue contains identifiers, not complete channel or credential objects.
+// Users select a group and model. Channel priority, weight and availability are
+// resolved by the ordinary request router when a run starts.
 func fingerprintSiteCatalogue() (fingerprintSettingsCatalogue, error) {
-	result := fingerprintSettingsCatalogue{Groups: []string{}, ModelsByGroup: map[string][]string{}, Routes: []fingerprintRouteOption{}}
+	result := fingerprintSettingsCatalogue{Groups: []string{}, ModelsByGroup: map[string][]string{}}
 	for group := range ratio_setting.GetGroupRatioCopy() {
 		if group != "auto" && group != "" {
 			result.Groups = append(result.Groups, group)
+			result.ModelsByGroup[group] = []string{}
 		}
 	}
 	slices.Sort(result.Groups)
@@ -38,27 +31,10 @@ func fingerprintSiteCatalogue() (fingerprintSettingsCatalogue, error) {
 	if err != nil {
 		return result, err
 	}
-	var channels []struct {
-		ID   int
-		Name string
-	}
-	if err = model.DB.Model(&model.Channel{}).Select("id", "name").Where("status = ?", common.ChannelStatusEnabled).Find(&channels).Error; err != nil {
-		return result, err
-	}
-	names := map[int]string{}
-	for _, channel := range channels {
-		names[channel.ID] = channel.Name
-	}
 	for _, ability := range abilities {
-		// Automatic probes currently use the standard OpenAI HTTP adaptor. Other
-		// transports require a separately reviewed bounded operational billing path.
-		if ability.ChannelType != constant.ChannelTypeOpenAI {
-			continue
-		}
 		if !slices.Contains(result.ModelsByGroup[ability.Group], ability.Model) {
 			result.ModelsByGroup[ability.Group] = append(result.ModelsByGroup[ability.Group], ability.Model)
 		}
-		result.Routes = append(result.Routes, fingerprintRouteOption{ability.ChannelId, names[ability.ChannelId], ability.Group, ability.Model})
 	}
 	for group := range result.ModelsByGroup {
 		slices.Sort(result.ModelsByGroup[group])
@@ -80,6 +56,9 @@ func GetModelFingerprintSettings(c *gin.Context) {
 		modelTestError(c, 503, "catalogue_unavailable")
 		return
 	}
+	for i := range config.Targets {
+		config.Targets[i].ChannelID = 0
+	}
 	body, err := common.Marshal(config)
 	if err != nil {
 		modelTestError(c, 503, "model_test_settings_unavailable")
@@ -91,9 +70,8 @@ func GetModelFingerprintSettings(c *gin.Context) {
 		return
 	}
 	values["catalogue"] = catalogue
-	values["engine_ready"] = modelfingerprint.Ready() == nil
+	values["engine_ready"] = modelFingerprintScorer.ready() == nil
 	values["default_model_filter"] = "gpt"
-	values["budget_note"] = "Quota reservations are not a provider spending cap. Unknown usage stops automatic tests."
 	common.ApiSuccess(c, values)
 }
 
@@ -125,21 +103,15 @@ func UpdateModelFingerprintSettings(c *gin.Context) {
 		modelTestError(c, 503, "catalogue_unavailable")
 		return
 	}
-	for _, target := range request.Targets {
-		if request.AutomaticEnabled && target.Enabled {
-			if _, pricingErr := fingerprintSitePricing(target); pricingErr != nil {
-				modelTestError(c, http.StatusBadRequest, "automatic_static_pricing_required")
-				return
-			}
-		}
-		if !slices.ContainsFunc(catalogue.Routes, func(route fingerprintRouteOption) bool {
-			return route.ID == target.ChannelID && route.Group == target.Group && route.Model == target.Model
-		}) {
+	for i := range request.Targets {
+		target := &request.Targets[i]
+		target.ChannelID = 0
+		if !slices.Contains(catalogue.ModelsByGroup[target.Group], target.Model) {
 			modelTestError(c, 400, "model_or_group_unavailable")
 			return
 		}
 	}
-	if request.AutomaticEnabled && (!request.Enabled || modelfingerprint.Ready() != nil) {
+	if request.AutomaticEnabled && (!request.Enabled || modelFingerprintScorer.ready() != nil) {
 		modelTestError(c, 400, "fingerprint_unavailable")
 		return
 	}
@@ -169,6 +141,11 @@ func GetSiteModelFingerprints(c *gin.Context) {
 		modelTestError(c, 503, "history_unavailable")
 		return
 	}
+	userRuns, err := model.ListPublicModelTestRuns(c.Request.Context())
+	if err != nil {
+		modelTestError(c, 503, "history_unavailable")
+		return
+	}
 	config, err := model.GetModelFingerprintSiteConfig(c.Request.Context())
 	if err != nil {
 		modelTestError(c, 503, "model_test_settings_unavailable")
@@ -182,5 +159,5 @@ func GetSiteModelFingerprints(c *gin.Context) {
 		}
 		targets = append(targets, gin.H{"id": target.ID, "group": target.Group, "model": target.Model, "enabled": target.Enabled, "period_secs": period})
 	}
-	common.ApiSuccess(c, gin.H{"items": runs, "targets": targets, "automatic_enabled": config.AutomaticEnabled, "enabled": config.Enabled})
+	common.ApiSuccess(c, gin.H{"items": runs, "user_items": userRuns, "targets": targets, "automatic_enabled": config.AutomaticEnabled, "enabled": config.Enabled})
 }

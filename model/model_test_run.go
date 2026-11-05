@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 // ModelTestRun is a user-owned, explicitly requested playground invocation.
 // It is not an assertion about model identity and never schedules paid work.
 type ModelTestRun struct {
+	HistoryPrunedAt   int64     `json:"-" gorm:"not null;default:0;index"`
 	Source            string    `json:"source" gorm:"type:varchar(16);not null;default:user;index"`
 	TokenID           int       `json:"token_id"`
 	ConfirmationID    *string   `json:"-" gorm:"type:varchar(64);uniqueIndex"`
@@ -126,13 +128,13 @@ func CreateModelTestRun(run *ModelTestRun) (replayed bool, err error) {
 
 func GetModelTestRun(userID int, id string) (*ModelTestRun, error) {
 	var run ModelTestRun
-	err := DB.Where("id = ? AND user_id = ? AND source = ?", id, userID, "user").First(&run).Error
+	err := DB.Where("id = ? AND user_id = ? AND source = ?", id, userID, "user").Where("status = ? OR created_at >= ?", "running", time.Now().Unix()-ModelTestTransientHistorySeconds).First(&run).Error
 	return &run, err
 }
 
 func ListModelTestRuns(userID int) ([]ModelTestRun, error) {
 	runs := make([]ModelTestRun, 0)
-	err := DB.Select("source", "token_id", "fingerprint_result", "id", "user_id", "model", "group", "benchmark_id", "status", "assessment", "created_at", "completed_at", "expires_at", "max_output_tokens", "estimated_quota", "request_id", "error_code", "cancel_requested").Where("user_id = ? AND source = ?", userID, "user").Order("created_at DESC, id DESC").Limit(60).Find(&runs).Error
+	err := DB.Select("source", "token_id", "id", "user_id", "model", "group", "benchmark_id", "status", "assessment", "created_at", "completed_at", "expires_at", "max_output_tokens", "estimated_quota", "request_id", "error_code", "cancel_requested").Where("user_id = ? AND source = ? AND created_at >= ?", userID, "user", time.Now().Unix()-ModelTestTransientHistorySeconds).Order("created_at DESC, id DESC").Limit(60).Find(&runs).Error
 	now := time.Now().Unix()
 	for i := range runs {
 		if runs[i].Status == "running" && runs[i].ExpiresAt < now {
@@ -143,7 +145,15 @@ func ListModelTestRuns(userID int) ([]ModelTestRun, error) {
 }
 
 func FinishModelTestRun(run *ModelTestRun) error {
-	return DB.Model(&ModelTestRun{}).Where("id = ? AND user_id = ? AND status = ?", run.ID, run.UserID, "running").Updates(map[string]any{"status": run.Status, "assessment": run.Assessment, "completed_at": run.CompletedAt, "request_id": run.RequestID, "error_code": run.ErrorCode, "artwork_html": run.ArtworkHTML, "fingerprint_result": run.FingerprintResult, "samples_json": run.SamplesJSON, "channel_id": run.ChannelID, "channel_key_index": run.ChannelKeyIndex}).Error
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockModelFingerprintRetention(tx); err != nil {
+			return err
+		}
+		if err := tx.Model(&ModelTestRun{}).Where("id = ? AND user_id = ? AND status = ?", run.ID, run.UserID, "running").Updates(map[string]any{"status": run.Status, "assessment": run.Assessment, "completed_at": run.CompletedAt, "request_id": run.RequestID, "error_code": run.ErrorCode, "artwork_html": run.ArtworkHTML, "fingerprint_result": run.FingerprintResult, "samples_json": run.SamplesJSON, "channel_id": run.ChannelID, "channel_key_index": run.ChannelKeyIndex}).Error; err != nil {
+			return err
+		}
+		return pruneModelFingerprintReports(tx, time.Now().Unix(), false, run.Group, run.Model)
+	})
 }
 
 func CancelModelTestRun(userID int, id string) (*ModelTestRun, error) {
@@ -165,23 +175,63 @@ func SaveModelTestSamples(run *ModelTestRun) error {
 	return nil
 }
 
-// ListEffectiveModelTestRuns returns the most recent sixty scored observations
-// per owned model/group, independent of intervening failed attempts.
+// Personal history no longer stores a second view of shared observations.
+// Keep the legacy response field empty for older clients during the transition.
 func ListEffectiveModelTestRuns(userID int) ([]ModelTestRun, error) {
+	return []ModelTestRun{}, nil
+}
+
+// ModelTestPublicRun is deliberately independent of the owner-only audit model.
+// Never embed ModelTestRun here: newly added private fields must stay private.
+type ModelTestPublicRun struct {
+	ID                string `json:"id"`
+	Source            string `json:"source"`
+	Model             string `json:"model"`
+	Group             string `json:"group"`
+	BenchmarkID       string `json:"benchmark_id"`
+	Status            string `json:"status"`
+	Assessment        string `json:"assessment"`
+	FingerprintResult any    `json:"fingerprint_result"`
+	CreatedAt         int64  `json:"created_at"`
+	CompletedAt       int64  `json:"completed_at"`
+}
+
+// PublicFingerprint shares only the same typed report whitelist as site probes.
+func (r ModelTestRun) PublicFingerprint() ModelTestPublicRun {
+	report := (ModelFingerprintSiteRun{FingerprintResult: string(r.FingerprintResult)}).Public().FingerprintResult
+	return ModelTestPublicRun{ID: r.ID, Source: "user", Model: r.Model, Group: r.Group, BenchmarkID: r.BenchmarkID, Status: r.Status, Assessment: r.Assessment, FingerprintResult: report, CreatedAt: r.CreatedAt, CompletedAt: r.CompletedAt}
+}
+
+// ListPublicModelTestRuns shares terminal fingerprint observations across users.
+// Per-model/group limits keep noisy failures from displacing scored observations.
+// This does not grant access to owner-only detail, samples or cancellation APIs.
+func ListPublicModelTestRuns(ctx context.Context) ([]ModelTestPublicRun, error) {
+	terminal := []string{"completed", "failed", "unknown", "cancelled", "intercepted", "timeout"}
+	base := DB.WithContext(ctx).Model(&ModelTestRun{}).Where("source = ? AND benchmark_id = ? AND status IN ? AND history_pruned_at = ?", "user", "local-fingerprint-v1", terminal, 0)
 	var pairs []struct {
 		Model string
 		Group string
 	}
-	if err := DB.Model(&ModelTestRun{}).Select("model", commonGroupCol).Where("user_id = ? AND source = ? AND status = ? AND assessment = ?", userID, "user", "completed", "scored").Distinct().Find(&pairs).Error; err != nil {
+	if err := base.Session(&gorm.Session{}).Select("model", commonGroupCol).Distinct().Order("model").Order(commonGroupCol).Find(&pairs).Error; err != nil {
 		return nil, err
 	}
-	result := make([]ModelTestRun, 0)
+	result := make([]ModelTestPublicRun, 0)
 	for _, pair := range pairs {
-		var runs []ModelTestRun
-		if err := DB.Omit("artwork_html", "samples_json").Where("user_id = ? AND source = ? AND status = ? AND assessment = ? AND model = ? AND "+commonGroupCol+" = ?", userID, "user", "completed", "scored", pair.Model, pair.Group).Order("created_at DESC, id DESC").Limit(60).Find(&runs).Error; err != nil {
-			return nil, err
+		for _, scored := range []bool{true, false} {
+			query := base.Session(&gorm.Session{}).Where("model = ? AND "+commonGroupCol+" = ?", pair.Model, pair.Group)
+			if scored {
+				query = query.Where("status = ? AND assessment = ?", "completed", "scored").Limit(60)
+			} else {
+				query = query.Where("NOT (status = ? AND assessment = ?) OR assessment IS NULL", "completed", "scored").Limit(5)
+			}
+			var runs []ModelTestRun
+			if err := query.Select("id", "model", "group", "benchmark_id", "status", "assessment", "fingerprint_result", "created_at", "completed_at").Order("created_at DESC, id DESC").Find(&runs).Error; err != nil {
+				return nil, err
+			}
+			for _, run := range runs {
+				result = append(result, run.PublicFingerprint())
+			}
 		}
-		result = append(result, runs...)
 	}
 	return result, nil
 }

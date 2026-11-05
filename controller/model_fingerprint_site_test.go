@@ -58,7 +58,7 @@ func TestFingerprintSitePostgresExecutionBoundaries(t *testing.T) {
 					return
 				}
 				assert.Equal(t, "gpt-fixture-mapped", request["model"])
-				assert.Equal(t, float64(2048), request["max_tokens"])
+				assert.NotContains(t, request, "max_tokens")
 				assert.Equal(t, false, request["stream"])
 				var probes []model.ModelFingerprintSiteProbe
 				if assert.NoError(t, db.Where("run_id = ?", run.ID).Order("id").Find(&probes).Error) && assert.Len(t, probes, int(n)) {
@@ -120,12 +120,12 @@ func TestFingerprintSitePostgresExecutionBoundaries(t *testing.T) {
 			require.NoError(t, db.First(&saved, "id = ?", run.ID).Error)
 			config, err := model.GetModelFingerprintSiteConfig(context.Background())
 			require.NoError(t, err)
-			if mode == "success" {
+			if mode == "success" || mode == "output-limit" {
 				require.NoError(t, executionErr)
 				assert.EqualValues(t, 3, calls.Load())
 				assert.Equal(t, "succeeded", saved.Status)
 				assert.Equal(t, "known", saved.UsageState)
-				assert.EqualValues(t, 1500, saved.ActualQuota)
+				assert.Zero(t, saved.ActualQuota)
 				assert.Equal(t, saved.ActualQuota, config.ReservedQuota)
 				assert.Equal(t, "gpt-fixture-mapped", saved.MappedModel)
 				response := httptest.NewRecorder()
@@ -157,7 +157,7 @@ func TestFingerprintSitePostgresExecutionBoundaries(t *testing.T) {
 				if mode != "disabled-after-first" && mode != "shutdown-after-first" {
 					assert.Equal(t, "unknown", saved.Status)
 					assert.Equal(t, "unknown", saved.UsageState)
-					assert.Equal(t, target.MaxRunQuota, config.ReservedQuota)
+					assert.Zero(t, config.ReservedQuota)
 					assert.False(t, config.AutomaticEnabled)
 				}
 			}

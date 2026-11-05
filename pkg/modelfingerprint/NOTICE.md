@@ -1,57 +1,38 @@
-# Offline lm-detector integration
+# Local fingerprint service client
 
-The `sdk_*.go` files and `templates.json` are adapted from the MIT-licensed
-[Ikaleio/lm-detector](https://github.com/Ikaleio/lm-detector/tree/f920cfe2ff0bab94989ce01ac061e21425b6e321/sdk/go)
-at immutable commit `f920cfe2ff0bab94989ce01ac061e21425b6e321`.
-Copyright (c) 2026 xqy2006. Full license is in `LICENSE.lm-detector`.
-Upstream acknowledges xqy2006/ModelTrace for algorithm ideas and some original data.
+This package is only the protocol client and public result types for the separate
+`tools/fingerprint-service` module. NewAPI does not compile or embed the detector,
+reference data, or upstream SDK. No third-party HTTP API is used at runtime.
 
-Only offline challenge generation, numeric parsing, feature extraction, binary
-codec, ranking and calibration are included. Transport, request construction,
-credentials, online downloads, cache refresh and SDK live detection are omitted.
-JSON decoding uses the host's `common.Unmarshal`. Public wrapper adds three-sample
-validation, strict completeness checks, input size bounds, top-three projection,
-and immutable embedded-data verification.
+`MODEL_FINGERPRINT_SOCKET` selects an absolute Unix-domain socket path; the default
+is `/run/new-api/fingerprint.sock`. Requests cannot use TCP, environment proxies,
+redirects or an arbitrary URL. Only synthetic numeric probe responses and bounded
+execution metadata are sent. Keys, provider addresses, HTTP headers, user history
+and failed/intercepted response bodies have no place in the protocol. Provider
+error text is normalized rather than sent to the service.
 
-## Reference provenance
+Start the independent service before enabling tests. A missing service, protocol
+mismatch or wrong data hash fails `Ready()` before any paid request. Failures are
+not cached, so the next request can recover after the service starts. A failure
+while scoring does not imply that preceding model calls were free and must not
+trigger another paid probe automatically. Existing NewAPI routing, confirmation,
+billing and audit code remains responsible for model calls.
 
-Data comes from that same pinned commit's `data/` directory. It was retrieved
-once during development, not at runtime. The trained library contains 66 model
-entries and reports build time `2026-11-03T12:06:39.864352+00:00`.
-
-- `reference/detector.bin` is byte-for-byte `data/shared_detector.bin`.
-  Git blob SHA-1: `3386798a7465e30a5138d7ef7b412d79e5ef0382`.
-  SHA-256: `59dffad8128dca8bcf0cfb024f0fcebe7f0b7d7fbae3583b4b5d1418c18e601f`.
-- Upstream full `data/unified_bank.json` Git blob SHA-1:
-  `6f71ea7dc1d2fa1dfbafce83a06ba053622d5bac`. SHA-256:
-  `5460e6d79e0245aa695d9e63063c767712dee8faec52c9ab1b215aae473454ce`.
-- `reference/bank.json` is a lossless projection of fields used by the SDK:
-  `built_at` and each model's `id`, `display_name`, `family`, `family_name`,
-  `response_count`, preserving upstream model order. Serialized as UTF-8 JSON
-  with no whitespace (`ensure_ascii=False`, separators `(',', ':')`).
-  SHA-256: `dc478b8eb023ba5aa14718b7633fda3695bb7c9f5485add0c4c02417a953ebc0`.
-
-The loader hashes both embedded files against code-pinned SHA-256 values before
-any parsing. It additionally verifies schema, build time, model order and response
-counts match the detector. Updating data requires a reviewed source change and
-new digests; there is no online or background update mechanism.
-
-Strict mode requires three successfully completed, nontruncated transport
-responses, each with at least `max(80, ceil(expected_count * 0.55))` parsed
-numbers. It does not require every requested number. A shorter complete
-response is reported with `short=true`; provider truncation is a separate flag.
-This preserves the pinned SDK's strict threshold semantics.
-
-A result is a closed-set comparison against this reference library, not proof of
-identity. Unknown models may rank highly. Partial results have no probability.
+See `tools/fingerprint-service/README.md` for build/run instructions, source and
+data provenance, offline behavior and service tests. The fixed `SDKCommit` value
+identifies compatible scoring core files; the uploaded archive itself contained
+no Git metadata, so its complete Git revision is not independently established.
 
 ## Offline regression samples
 
-`testdata/reference_samples.json` contains only three existing numeric responses,
-challenge IDs/counts and model labels projected from the pinned commit's
-`data/unified_reference.jsonl`. Full upstream source SHA-256:
+`testdata/reference_samples.json` contains only three public numeric responses,
+challenge IDs/counts and model labels projected from the previously pinned
+upstream `data/unified_reference.jsonl`. Full upstream source SHA-256:
 `ce430f0de948c3f14da1143c693b4e4d69754169bb2856e766eb223cf5a4bacb`.
 The selected rows are the first three responses with expected counts 292–332 and
 at least that many in-range values, all labeled `claude-haiku-4.5` upstream.
-No live model calls were used to create the fixtures. These are regression
-fixtures, not independent validation of the detector's real-world accuracy.
+These are regression fixtures, not independent evidence of real-world accuracy.
+The original MIT license is retained as `LICENSE.lm-detector`.
+
+The service performs a closed-set ranking, not model identity authentication.
+Unknown models can rank highly, and partial results do not carry probabilities.

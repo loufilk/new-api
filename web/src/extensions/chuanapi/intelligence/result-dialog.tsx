@@ -36,10 +36,12 @@ export function TestResultDialog(props: { run: TestRun; onClose: () => void }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const legacy = props.run.benchmark_id === 'pelican-static-v1'
+  const privateLegacy =
+    legacy && props.run.source !== 'site' && props.run.visibility !== 'public'
   const query = useQuery({
     queryKey: ['model-tests', 'detail', props.run.id, props.run.status],
     queryFn: ({ signal }) => getTestDetail(props.run.id, signal),
-    enabled: legacy && props.run.source !== 'site',
+    enabled: privateLegacy,
     retry: false,
     meta: { errorToast: false },
   })
@@ -68,7 +70,7 @@ export function TestResultDialog(props: { run: TestRun; onClose: () => void }) {
           {new Date(props.run.created_at * 1000).toLocaleString(locale)}
         </p>
         {!legacy && <FingerprintReport run={props.run} />}
-        {legacy && props.run.source !== 'site' && (
+        {privateLegacy && (
           <Alert>
             <AlertDescription>{t('intelligence.staticOnly')}</AlertDescription>
           </Alert>

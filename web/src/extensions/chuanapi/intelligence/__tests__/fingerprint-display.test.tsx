@@ -107,7 +107,7 @@ test('effective history keeps latest sixty scored results oldest first while exc
   expect(effective[0].id).toBe('r5')
   expect(effective.at(-1)?.id).toBe('r64')
 })
-test('timeline has grey empty slots and opens private report by keyboard with oldest point first', async () => {
+test('timeline has grey empty slots and opens shared report by keyboard with oldest point first', async () => {
   const select = vi.fn()
   render(
     <ModelTestCard
@@ -121,7 +121,7 @@ test('timeline has grey empty slots and opens private report by keyboard with ol
       onSelect={select}
     />
   )
-  const timeline = screen.getByRole('list', { name: /My private results/ })
+  const timeline = screen.getByRole('list', { name: /User tests/ })
   const points = within(timeline).getAllByRole('button')
   expect(
     within(timeline).getAllByRole('listitem', { hidden: true })
@@ -164,4 +164,33 @@ test('site report opens without requesting an owned-user run detail endpoint', (
   )
   expect(screen.getByRole('dialog')).toHaveTextContent('Reference model')
   expect(get).not.toHaveBeenCalled()
+})
+
+test('empty model rows retain two sixty-slot timelines without creating report buttons', () => {
+  render(
+    <ModelTestCard
+      model='long-model-name-that-must-wrap-on-mobile'
+      group='default'
+      runs={[]}
+      siteRuns={[]}
+      disabled={false}
+      estimating={false}
+      allowTest={false}
+      onEstimate={() => undefined}
+      onSelect={() => undefined}
+    />
+  )
+  const timelines = screen.getAllByRole('list', {
+    name: new RegExp(en.translation['intelligence.timeline']),
+  })
+  expect(timelines).toHaveLength(2)
+  for (const timeline of timelines) {
+    expect(
+      within(timeline).getAllByRole('listitem', { hidden: true })
+    ).toHaveLength(60)
+    expect(within(timeline).queryByRole('button')).not.toBeInTheDocument()
+  }
+  expect(
+    screen.queryByRole('button', { name: 'Self-test' })
+  ).not.toBeInTheDocument()
 })

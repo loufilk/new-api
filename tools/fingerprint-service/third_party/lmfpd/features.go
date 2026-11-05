@@ -1,6 +1,4 @@
-// Adapted from Ikaleio/lm-detector sdk/go at f920cfe2ff0bab94989ce01ac061e21425b6e321.
-// Copyright (c) 2026 xqy2006. MIT license: see LICENSE.lm-detector.
-package modelfingerprint
+package lmfpd
 
 import (
 	"math"

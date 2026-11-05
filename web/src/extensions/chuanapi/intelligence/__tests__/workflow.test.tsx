@@ -197,7 +197,7 @@ describe('explicit model test workflow', () => {
     expect(post.mock.calls[1][1]).toMatchObject({
       model: 'test-model',
       group: 'default',
-      max_output_tokens: 2048,
+      max_output_tokens: 0,
       token_id: 7,
       confirmation_token: 'confirmation',
       confirmed: true,
@@ -406,16 +406,14 @@ describe('model test availability', () => {
       const user = userEvent.setup()
       renderWithQuery(<IntelligenceDashboard />)
       expect(
-        await screen.findByText(
-          'New model tests are disabled. You can still view your history and cancel active tests.'
-        )
+        await screen.findByText(en.translation['fingerprint.testsDisabled'])
       ).toBeVisible()
       expect(
         screen.queryByRole('button', { name: 'Self-test' })
       ).not.toBeInTheDocument()
       expect(
-        screen.getByRole('heading', { name: 'My latest 60 tests' })
-      ).toBeVisible()
+        screen.queryByRole('heading', { name: 'My latest 60 tests' })
+      ).not.toBeInTheDocument()
       await user.click(screen.getByRole('button', { name: 'Cancel' }))
       expect(post).toHaveBeenCalledExactlyOnceWith(
         '/api/user/model-tests/runs/test-run/cancel'
@@ -531,9 +529,7 @@ test('an estimate response from before a disable-enable cycle cannot reopen the 
     })
   )
   expect(
-    await screen.findByText(
-      'New model tests are disabled. You can still view your history and cancel active tests.'
-    )
+    await screen.findByText(en.translation['fingerprint.testsDisabled'])
   ).toBeVisible()
   act(() => client.setQueryData(['model-tests', 'history'], history()))
   await screen.findAllByRole('button', { name: 'Estimating…' })
@@ -612,16 +608,14 @@ test('a fresh failed history request never enables cached paid controls on a new
     </QueryClientProvider>
   )
   expect(
-    await screen.findByText(
-      'Model test availability could not be verified. New tests are blocked; history and cancellation remain available.'
-    )
+    await screen.findByText(en.translation['fingerprint.availabilityUnknown'])
   ).toBeVisible()
   expect(
     screen.queryByRole('button', { name: 'Self-test' })
   ).not.toBeInTheDocument()
   expect(
-    screen.getByRole('heading', { name: 'My latest 60 tests' })
-  ).toBeVisible()
+    screen.queryByRole('heading', { name: 'My latest 60 tests' })
+  ).not.toBeInTheDocument()
   expect(post).not.toHaveBeenCalled()
   expect(
     get.mock.calls.some(([url]) => String(url).endsWith('/bootstrap'))
@@ -664,16 +658,22 @@ test('closing key selection while an estimate is pending prevents its late respo
   expect(post).toHaveBeenCalledTimes(1)
 })
 
-test('searching for an absent model shows an empty state without hiding private attempt history', async () => {
-  mockReads()
-  const user = userEvent.setup()
+test('the display page shows group models without search controls or a personal history section', async () => {
+  mockReads([
+    run({ model: 'old-personal-model', group: 'Personal-only group' }),
+  ])
   renderWithQuery(<IntelligenceDashboard />)
-  await screen.findByRole('button', { name: 'Self-test' })
-  await user.type(screen.getByRole('textbox'), 'absent-model')
   expect(
-    screen.getByText(en.translation['intelligence.noModels'])
+    await screen.findByRole('heading', { name: 'test-model' })
   ).toBeVisible()
+  expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
   expect(
-    screen.getByRole('heading', { name: 'My latest 60 tests' })
-  ).toBeVisible()
+    screen.queryByRole('heading', { name: 'My latest 60 tests' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('heading', { name: 'Personal-only group' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: 'Details' })
+  ).not.toBeInTheDocument()
 })

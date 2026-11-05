@@ -1,19 +1,17 @@
-// Adapted from Ikaleio/lm-detector sdk/go at f920cfe2ff0bab94989ce01ac061e21425b6e321.
-// Copyright (c) 2026 xqy2006. MIT license: see LICENSE.lm-detector.
-package modelfingerprint
+package lmfpd
 
 import (
 	"crypto/rand"
 	_ "embed"
 	"encoding/hex"
-	"github.com/QuantumNous/new-api/common"
+	"encoding/json"
 	"math/big"
 	"strconv"
 	"strings"
 )
 
 //go:embed templates.json
-var templatesJSON string
+var templatesJSON []byte
 
 type language struct {
 	ID         string   `json:"id"`
@@ -31,7 +29,7 @@ var languages = func() []language {
 	var t struct {
 		Languages []language `json:"languages"`
 	}
-	if err := common.Unmarshal([]byte(templatesJSON), &t); err != nil {
+	if err := json.Unmarshal(templatesJSON, &t); err != nil {
 		panic("lmfpd: invalid embedded templates.json: " + err.Error())
 	}
 	return t.Languages

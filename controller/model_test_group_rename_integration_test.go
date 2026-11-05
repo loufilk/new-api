@@ -89,7 +89,7 @@ func modelTestGroupRenameQuotedRequest(t *testing.T, engine *gin.Engine, group, 
 	t.Helper()
 	var token model.Token
 	require.NoError(t, model.DB.Where("name = ?", "Test token").First(&token).Error)
-	selection := modelTestSelection{TokenID: token.Id, Model: "gpt-4o-mini", Group: group, MaxOutputTokens: 2048}
+	selection := modelTestSelection{TokenID: token.Id, Model: "gpt-4o-mini", Group: group, MaxOutputTokens: 0}
 	input, err := common.Marshal(selection)
 	require.NoError(t, err)
 	response := httptest.NewRecorder()
@@ -132,7 +132,7 @@ func TestModelTestGroupRenamePostgresOldQuoteCannotUseNewScopeOrPrice(t *testing
 	_, after := modelTestGroupRenameQuotedRequest(t, engine, "new", uuid.NewString())
 	assert.Equal(t, before*3, after, "a new quote uses the renamed group's new price, not the old confirmation")
 	denied := httptest.NewRecorder()
-	engine.ServeHTTP(denied, httptest.NewRequest(http.MethodPost, "/estimate", strings.NewReader(`{"model":"gpt-4o-mini","group":"premium","max_output_tokens":2048}`)))
+	engine.ServeHTTP(denied, httptest.NewRequest(http.MethodPost, "/estimate", strings.NewReader(`{"model":"gpt-4o-mini","group":"premium","max_output_tokens":0}`)))
 	assert.Equal(t, http.StatusBadRequest, denied.Code, denied.Body.String())
 	assert.Contains(t, denied.Body.String(), "model_or_group_unavailable", "the old exclusion must follow the owner, not broaden permission")
 	for _, table := range []any{&model.ModelTestRun{}, &model.BillingFinalization{}, &model.BalanceLedger{}} {
@@ -151,7 +151,7 @@ func TestModelTestGroupRenamePostgresDisabledHistorySurvivesNewerGroupSnapshot(t
 		return
 	}
 	db, userID, _ := setupModelTestGroupRename(t)
-	run := &model.ModelTestRun{ID: uuid.NewString(), UserID: userID, Model: "gpt-4o-mini", Group: "old", BenchmarkID: modelTestVersion, Status: "running", MaxOutputTokens: 2048, CreatedAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Minute).Unix()}
+	run := &model.ModelTestRun{ID: uuid.NewString(), UserID: userID, Model: "gpt-4o-mini", Group: "old", BenchmarkID: modelTestVersion, Status: "running", MaxOutputTokens: 0, CreatedAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Minute).Unix()}
 	_, err := model.CreateModelTestRun(run)
 	require.NoError(t, err)
 	admitted, err := model.BeginGroupConfigRead(t.Context())
@@ -186,7 +186,7 @@ func TestModelTestGroupRenamePostgresEnabledHistorySurvivesUnavailableCatalogue(
 		return
 	}
 	db, userID, _ := setupModelTestGroupRename(t)
-	run := &model.ModelTestRun{ID: uuid.NewString(), UserID: userID, Model: "gpt-4o-mini", Group: "old", BenchmarkID: modelTestVersion, Status: "running", MaxOutputTokens: 2048, CreatedAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Minute).Unix()}
+	run := &model.ModelTestRun{ID: uuid.NewString(), UserID: userID, Model: "gpt-4o-mini", Group: "old", BenchmarkID: modelTestVersion, Status: "running", MaxOutputTokens: 0, CreatedAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Minute).Unix()}
 	_, err := model.CreateModelTestRun(run)
 	require.NoError(t, err)
 	enabled, err := model.ModelTestEnabled(t.Context())

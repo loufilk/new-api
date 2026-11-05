@@ -18,7 +18,6 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
-	"github.com/QuantumNous/new-api/pkg/modelfingerprint"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
@@ -33,8 +32,8 @@ import (
 )
 
 func TestModelTestConfirmationBindsOwnerSelectionVersionAndExpiry(t *testing.T) {
-	selection := modelTestSelection{Model: "synthetic-model", Group: "default", MaxOutputTokens: 2048}
-	ticket := modelTestConfirmation{modelTestSelection: selection, UserID: 17, Version: modelTestVersion, ExpiresAt: time.Now().Add(time.Minute).Unix()}
+	selection := modelTestSelection{Model: "synthetic-model", Group: "default", MaxOutputTokens: 0}
+	ticket := modelTestConfirmation{OutputUnbounded: true, modelTestSelection: selection, UserID: 17, Version: modelTestVersion, ExpiresAt: time.Now().Add(time.Minute).Unix()}
 	value := signModelTestConfirmation(ticket)
 	_, ok := verifyModelTestConfirmation(value, 17, selection)
 	require.True(t, ok)
@@ -71,6 +70,7 @@ func setupModelTestsPostgres(t *testing.T) (*gorm.DB, int) {
 	if dsn == "" {
 		t.Skip("requires owned PostgreSQL 18.6 TEST_POSTGRES_DSN")
 	}
+	setupFingerprintScoringFixture(t)
 	db, isolatedDSN := newAuditTestDatabase(t, "postgres", dsn)
 	require.NoError(t, db.AutoMigrate(&model.Option{}))
 	oldDB, oldLog := model.DB, model.LOG_DB
@@ -145,7 +145,7 @@ func TestModelTestPostgresRealPlaygroundRelayBillsOnceAndPreservesCancel(t *test
 				assert.Equal(t, "/v1/chat/completions", r.URL.Path)
 				var input map[string]any
 				require.NoError(t, common.DecodeJson(r.Body, &input))
-				assert.Equal(t, float64(2048), input["max_tokens"])
+				assert.NotContains(t, input, "max_tokens")
 				startOnce.Do(func() { close(started) })
 				if mode == "cancel" {
 					<-r.Context().Done()
@@ -234,7 +234,7 @@ func TestModelTestPostgresRealPlaygroundRelayBillsOnceAndPreservesCancel(t *test
 
 func modelTestRequestBody(t *testing.T, userID int, id string) string {
 	t.Helper()
-	selection := modelTestSelection{Model: "gpt-4o-mini", Group: "default", MaxOutputTokens: 2048}
+	selection := modelTestSelection{Model: "gpt-4o-mini", Group: "default", MaxOutputTokens: 0}
 	var token model.Token
 	require.NoError(t, model.DB.Where("user_id = ?", userID).First(&token).Error)
 	selection.TokenID = token.Id
@@ -243,9 +243,9 @@ func modelTestRequestBody(t *testing.T, userID int, id string) string {
 	ctx.Set("id", userID)
 	_, identity, identityErr := selectedModelTestToken(ctx, selection)
 	require.NoError(t, identityErr)
-	challenges, challengeErr := modelfingerprint.GenerateChallenges()
+	challenges, challengeErr := modelFingerprintScorer.challenges()
 	require.NoError(t, challengeErr)
-	ticket := modelTestConfirmation{EstimatedQuota: estimateModelTestQuota(userID, selection, challenges), Challenges: challenges, TokenIdentity: identity, Nonce: uuid.NewString(), modelTestSelection: selection, UserID: userID, Version: modelTestVersion, ExpiresAt: time.Now().Add(time.Minute).Unix()}
+	ticket := modelTestConfirmation{OutputUnbounded: true, EstimatedQuota: estimateModelTestQuota(userID, selection, challenges), Challenges: challenges, TokenIdentity: identity, Nonce: uuid.NewString(), modelTestSelection: selection, UserID: userID, Version: modelTestVersion, ExpiresAt: time.Now().Add(time.Minute).Unix()}
 	pricingHash, err := modelTestPricingHash(userID, selection)
 	require.NoError(t, err)
 	ticket.PricingHash = pricingHash
@@ -268,7 +268,7 @@ func TestModelTestPostgresIdempotencyOwnershipAndInterception(t *testing.T) {
 		calls.Add(1)
 		var input map[string]any
 		require.NoError(t, common.UnmarshalBodyReusable(c, &input))
-		assert.Equal(t, float64(2048), input["max_tokens"])
+		assert.NotContains(t, input, "max_tokens")
 		assert.Equal(t, false, input["stream"])
 		assert.Equal(t, "/v1/chat/completions", c.Request.URL.Path)
 		c.JSON(200, gin.H{"choices": []gin.H{{"message": gin.H{"content": `<svg viewBox="0 0 360 200"><circle cx="50" cy="60" r="20"/></svg>`}, "finish_reason": "stop"}}})
@@ -301,7 +301,7 @@ func TestModelTestPostgresIdempotencyOwnershipAndInterception(t *testing.T) {
 func TestModelTestPostgresDistributedConcurrencyAndRateLimit(t *testing.T) {
 	db, userID := setupModelTestsPostgres(t)
 	newRun := func(id string) *model.ModelTestRun {
-		return &model.ModelTestRun{ID: id, UserID: userID, Model: "gpt-4o-mini", Group: "default", BenchmarkID: modelTestVersion, Status: "running", CreatedAt: time.Now().Unix(), ExpiresAt: time.Now().Add(2 * time.Minute).Unix(), MaxOutputTokens: 2048}
+		return &model.ModelTestRun{ID: id, UserID: userID, Model: "gpt-4o-mini", Group: "default", BenchmarkID: modelTestVersion, Status: "running", CreatedAt: time.Now().Unix(), ExpiresAt: time.Now().Add(2 * time.Minute).Unix(), MaxOutputTokens: 0}
 	}
 	start := make(chan struct{})
 	results := make(chan error, 2)
@@ -359,9 +359,9 @@ func TestModelTestPostgresPriceChangeRequiresNewConfirmationWithoutCreatingRun(t
 	assert.Equal(t, 1_000_000, user.QuotaPaid)
 }
 
-func TestModelTestPostgresCanonicalPricingAndOriginalExpressionBody(t *testing.T) {
+func TestModelTestPostgresCanonicalFixedPricingAndUnknownExpressionCost(t *testing.T) {
 	_, userID := setupModelTestsPostgres(t)
-	selection := modelTestSelection{Model: "gpt-4o-mini@effort:high", Group: "default", MaxOutputTokens: 2048}
+	selection := modelTestSelection{Model: "gpt-4o-mini@effort:high", Group: "default", MaxOutputTokens: 0}
 	first, err := modelTestPricingHash(userID, selection)
 	require.NoError(t, err)
 	oldPrices := ratio_setting.ModelPrice2JSONString()
@@ -370,27 +370,31 @@ func TestModelTestPostgresCanonicalPricingAndOriginalExpressionBody(t *testing.T
 	second, err := modelTestPricingHash(userID, selection)
 	require.NoError(t, err)
 	assert.NotEqual(t, first, second)
+	fixedChallenges, err := modelFingerprintScorer.challenges()
+	require.NoError(t, err)
+	fixedEstimate := estimateModelTestQuota(userID, selection, fixedChallenges)
+	require.NotNil(t, fixedEstimate)
+	assert.Equal(t, common.QuotaRound(3*0.02*common.QuotaPerUnit), *fixedEstimate)
 	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
 	oldMode, oldExpr := settings.BillingMode, settings.BillingExpr
 	t.Cleanup(func() { settings.BillingMode, settings.BillingExpr = oldMode, oldExpr })
 	settings.BillingMode = map[string]string{"gpt-4o-mini": billing_setting.BillingModeTieredExpr}
 	settings.BillingExpr = map[string]string{"gpt-4o-mini": `param("model") == "gpt-4o-mini@effort:high" ? 1000000 : 2000000`}
-	challenges, challengeErr := modelfingerprint.GenerateChallenges()
+	challenges, challengeErr := modelFingerprintScorer.challenges()
 	require.NoError(t, challengeErr)
 	estimate := estimateModelTestQuota(userID, selection, challenges)
-	require.NotNil(t, estimate)
-	assert.Equal(t, 3*int(common.QuotaPerUnit), *estimate)
+	assert.Nil(t, estimate, "token expression costs are unknown without an output bound")
 	selection.MaxOutputTokens = 1024
 	assert.Error(t, validateModelTestSelection(userID, selection))
 }
 
 func TestModelTestPostgresExpiredConfirmationCanOnlyReconcileExistingOwnedRun(t *testing.T) {
 	_, userID := setupModelTestsPostgres(t)
-	run := &model.ModelTestRun{ID: uuid.NewString(), UserID: userID, Model: "gpt-4o-mini", Group: "default", BenchmarkID: modelTestVersion, Status: "running", CreatedAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Minute).Unix(), MaxOutputTokens: 2048}
+	run := &model.ModelTestRun{ID: uuid.NewString(), UserID: userID, Model: "gpt-4o-mini", Group: "default", BenchmarkID: modelTestVersion, Status: "running", CreatedAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Minute).Unix(), MaxOutputTokens: 0}
 	_, err := model.CreateModelTestRun(run)
 	require.NoError(t, err)
 	selection := modelTestSelection{Model: run.Model, Group: run.Group, MaxOutputTokens: run.MaxOutputTokens}
-	ticket := modelTestConfirmation{modelTestSelection: selection, UserID: userID, Version: modelTestVersion, ExpiresAt: time.Now().Add(-time.Minute).Unix()}
+	ticket := modelTestConfirmation{OutputUnbounded: true, modelTestSelection: selection, UserID: userID, Version: modelTestVersion, ExpiresAt: time.Now().Add(-time.Minute).Unix()}
 	body, err := common.Marshal(modelTestRequest{modelTestSelection: selection, ConfirmationToken: signModelTestConfirmation(ticket), Confirmed: true, RequestID: run.ID})
 	require.NoError(t, err)
 	var calls atomic.Int32
@@ -408,10 +412,10 @@ func TestModelTestPostgresGlobalSlotsAndOverflowClassification(t *testing.T) {
 	for i := range 4 {
 		user := model.User{Username: fmt.Sprintf("synthetic-global-%d", i), AffCode: fmt.Sprintf("synthetic-global-aff-%d", i), Status: common.UserStatusEnabled, Role: common.RoleCommonUser, Group: "default"}
 		require.NoError(t, db.Create(&user).Error)
-		_, err := model.CreateModelTestRun(&model.ModelTestRun{ID: uuid.NewString(), UserID: user.Id, Model: "gpt-4o-mini", Group: "default", BenchmarkID: modelTestVersion, Status: "running", CreatedAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Minute).Unix(), MaxOutputTokens: 2048})
+		_, err := model.CreateModelTestRun(&model.ModelTestRun{ID: uuid.NewString(), UserID: user.Id, Model: "gpt-4o-mini", Group: "default", BenchmarkID: modelTestVersion, Status: "running", CreatedAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Minute).Unix(), MaxOutputTokens: 0})
 		require.NoError(t, err)
 	}
-	_, err := model.CreateModelTestRun(&model.ModelTestRun{ID: uuid.NewString(), UserID: userID, Model: "gpt-4o-mini", Group: "default", BenchmarkID: modelTestVersion, Status: "running", CreatedAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Minute).Unix(), MaxOutputTokens: 2048})
+	_, err := model.CreateModelTestRun(&model.ModelTestRun{ID: uuid.NewString(), UserID: userID, Model: "gpt-4o-mini", Group: "default", BenchmarkID: modelTestVersion, Status: "running", CreatedAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Minute).Unix(), MaxOutputTokens: 0})
 	assert.ErrorIs(t, err, model.ErrModelTestLimit)
 	require.NoError(t, db.Model(&model.ModelTestRun{}).Where("status = ?", "running").Update("status", "failed").Error)
 	engine := gin.New()
@@ -424,10 +428,10 @@ func TestModelTestPostgresGlobalSlotsAndOverflowClassification(t *testing.T) {
 }
 
 func TestModelTestConfirmationBindsTokenAndGroup(t *testing.T) {
-	selected := modelTestSelection{TokenID: 42, Model: "synthetic", Group: "default", MaxOutputTokens: 2048}
-	ticket := modelTestConfirmation{modelTestSelection: selected, UserID: 7, Version: modelTestVersion, ExpiresAt: time.Now().Add(time.Minute).Unix()}
+	selected := modelTestSelection{TokenID: 42, Model: "synthetic", Group: "default", MaxOutputTokens: 0}
+	ticket := modelTestConfirmation{OutputUnbounded: true, modelTestSelection: selected, UserID: 7, Version: modelTestVersion, ExpiresAt: time.Now().Add(time.Minute).Unix()}
 	signed := signModelTestConfirmation(ticket)
-	for _, mutation := range []modelTestSelection{{TokenID: 43, Model: "synthetic", Group: "default", MaxOutputTokens: 2048}, {TokenID: 42, Model: "synthetic", Group: "renamed", MaxOutputTokens: 2048}, {TokenID: 42, Model: "other", Group: "default", MaxOutputTokens: 2048}} {
+	for _, mutation := range []modelTestSelection{{TokenID: 43, Model: "synthetic", Group: "default", MaxOutputTokens: 0}, {TokenID: 42, Model: "synthetic", Group: "renamed", MaxOutputTokens: 0}, {TokenID: 42, Model: "other", Group: "default", MaxOutputTokens: 0}} {
 		_, ok := verifyModelTestConfirmation(signed, 7, mutation)
 		assert.False(t, ok)
 	}

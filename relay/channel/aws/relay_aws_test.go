@@ -1006,3 +1006,46 @@ func TestMantleCanceledRequestSkipsRetry(t *testing.T) {
 	require.ErrorAs(t, err, &apiError)
 	assert.True(t, relaytypes.IsSkipRetryError(apiError))
 }
+
+func TestAwsNovaHandlerRejectsMissingMessageContent(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		body  string
+		valid bool
+	}{
+		{name: "missing output", body: `{}`},
+		{name: "empty content", body: `{"output":{"message":{"content":[]}},"usage":{"inputTokens":5,"outputTokens":3,"totalTokens":8}}`},
+		{name: "valid text", body: `{"output":{"message":{"content":[{"text":"synthetic reply"}]}},"usage":{"inputTokens":5,"outputTokens":3,"totalTokens":8}}`, valid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			client := newAwsTestClient(awsHTTPClientFunc(func(request *http.Request) (*http.Response, error) {
+				calls++
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(tc.body)), Request: request}, nil
+			}))
+			writer := httptest.NewRecorder()
+			c := newAwsTestContext(writer, context.Background())
+			info := newAwsTestRelayInfo()
+			info.IsStream = false
+			adaptor := &Adaptor{AwsClient: client, AwsReq: newAwsInvokeModelInput(), IsNova: true}
+			apiErr, usage := handleNovaRequest(c, info, adaptor)
+			assert.Equal(t, 1, calls)
+			if !tc.valid {
+				require.NotNil(t, apiErr)
+				assert.Equal(t, relaytypes.ErrorCodeBadResponseBody, apiErr.GetErrorCode())
+				assert.Nil(t, usage)
+				assert.Empty(t, writer.Body.String(), "invalid provider responses must not emit a successful completion")
+				return
+			}
+			require.Nil(t, apiErr)
+			require.NotNil(t, usage)
+			assert.Equal(t, 5, usage.PromptTokens)
+			assert.Equal(t, 3, usage.CompletionTokens)
+			assert.Equal(t, 8, usage.TotalTokens)
+			var response dto.OpenAITextResponse
+			require.NoError(t, common.Unmarshal(writer.Body.Bytes(), &response))
+			require.Len(t, response.Choices, 1)
+			assert.Equal(t, "synthetic reply", response.Choices[0].Message.Content)
+		})
+	}
+}

@@ -76,7 +76,7 @@ test('key selection excludes other groups and disallowed model limits even when 
     eligibleTestTokens(tokens, 'gpt', 'gpt-test').map((token) => token.id)
   ).toEqual([1, 4])
 })
-test('self-test requires explicit key selection and submits only ID after reviewing private billing text', async () => {
+test('self-test requires explicit key selection and submits only ID after reviewing public result and billing text', async () => {
   const estimate = vi.fn()
   const user = userEvent.setup()
   render(
@@ -93,7 +93,9 @@ test('self-test requires explicit key selection and submits only ID after review
   )
   const button = screen.getByRole('button', { name: 'Review cost and start' })
   expect(button).toBeDisabled()
-  expect(screen.getByText(/Results are private to your account/)).toBeVisible()
+  expect(
+    screen.getByText(/Anonymous statistical results are visible to other users/)
+  ).toBeVisible()
   expect(
     screen.queryByRole('option', { name: /Other group|Other model/ })
   ).not.toBeInTheDocument()

@@ -31,6 +31,7 @@ export type TestRun = {
     | 'unknown'
   assessment: string
   source?: 'user' | 'site'
+  visibility?: 'public'
   token_id?: number
   fingerprint_result?: FingerprintResult | null
   created_at: number
@@ -88,6 +89,8 @@ export type TestEstimate = TestSelection & {
   estimated_quota: number | null
   quota_per_unit: number
   estimate_is_cap: false
+  output_unbounded?: boolean
+  cost_unknown?: boolean
   timeout_seconds: number
   benchmark_id: string
   confirmation_token: string
@@ -141,8 +144,21 @@ export type SiteRun = Pick<
   | 'created_at'
   | 'completed_at'
 > & { status: TestRun['status'] | 'succeeded'; finished_at: number }
+export type PublicTestRun = Pick<
+  TestRun,
+  | 'id'
+  | 'model'
+  | 'group'
+  | 'benchmark_id'
+  | 'status'
+  | 'assessment'
+  | 'fingerprint_result'
+  | 'created_at'
+  | 'completed_at'
+>
 export type SiteTests = {
   items: TestRun[]
+  user_items?: TestRun[]
   targets: {
     id: string
     group: string

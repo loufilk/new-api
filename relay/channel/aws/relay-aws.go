@@ -243,12 +243,30 @@ func getAwsModelID(requestModel string) string {
 	return requestModel
 }
 
+// SDK requests are only prepared by DoRequest. Check admission immediately
+// before Invoke, just like the ordinary HTTP transport's dispatch boundary.
+func authorizeAwsInvoke(c *gin.Context) *types.NewAPIError {
+	if stopped := service.RelayRequestCancellation(c); stopped != nil {
+		common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, true)
+		return stopped
+	}
+	if apiErr := service.CheckModelTestAccess(c); apiErr != nil {
+		common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, true)
+		return apiErr
+	}
+	common.SetContextKey(c, constant.ContextKeyUpstreamRequestAttempted, true)
+	return nil
+}
+
 func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types.NewAPIError, *dto.Usage) {
 
 	requestContext := c.Request.Context()
 	ctx, cancel := newAwsInvokeContext(requestContext)
 	defer cancel()
 
+	if apiErr := authorizeAwsInvoke(c); apiErr != nil {
+		return apiErr, nil
+	}
 	awsResp, err := a.AwsClient.InvokeModel(ctx, a.AwsReq.(*bedrockruntime.InvokeModelInput))
 	if err != nil {
 		return newAwsInvokeError(requestContext, err, "InvokeModel"), nil
@@ -279,6 +297,9 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
 	ctx, cancel := newAwsInvokeContext(requestContext)
 	defer cancel()
 
+	if apiErr := authorizeAwsInvoke(c); apiErr != nil {
+		return apiErr, nil
+	}
 	awsResp, err := a.AwsClient.InvokeModelWithResponseStream(ctx, a.AwsReq.(*bedrockruntime.InvokeModelWithResponseStreamInput))
 	if err != nil {
 		return newAwsInvokeError(requestContext, err, "InvokeModelWithResponseStream"), nil
@@ -337,6 +358,9 @@ func handleNovaRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) 
 	ctx, cancel := newAwsInvokeContext(requestContext)
 	defer cancel()
 
+	if apiErr := authorizeAwsInvoke(c); apiErr != nil {
+		return apiErr, nil
+	}
 	awsResp, err := a.AwsClient.InvokeModel(ctx, a.AwsReq.(*bedrockruntime.InvokeModelInput))
 	if err != nil {
 		return newAwsInvokeError(requestContext, err, "InvokeModel"), nil
@@ -360,6 +384,9 @@ func handleNovaRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) 
 
 	if err := json.Unmarshal(awsResp.Body, &novaResp); err != nil {
 		return types.NewError(errors.Wrap(err, "unmarshal nova response"), types.ErrorCodeBadResponseBody), nil
+	}
+	if len(novaResp.Output.Message.Content) == 0 {
+		return types.NewError(errors.New("nova response has no message content"), types.ErrorCodeBadResponseBody), nil
 	}
 
 	// 构造OpenAI格式响应

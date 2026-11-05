@@ -18,10 +18,10 @@ const SystemTaskTypeModelFingerprintSite = "model_fingerprint_site"
 
 var ErrFingerprintSiteConflict = errors.New("Fingerprint site configuration changed")
 var ErrFingerprintSiteNotDue = errors.New("Fingerprint site target already admitted in this period")
-var ErrFingerprintSiteBudget = errors.New("Fingerprint site daily budget is insufficient")
 var ErrFingerprintSiteDisabled = errors.New("Fingerprint site automatic testing is disabled")
 
-// Quota reservations are an offline scheduling guard, not a provider spending cap.
+// Legacy quota/output fields remain readable for compatibility; new settings
+// normalize them to zero and execution never treats them as limits.
 type ModelFingerprintSiteTarget struct {
 	ID              string `json:"id"`
 	Group           string `json:"group"`
@@ -55,6 +55,7 @@ type ModelFingerprintSiteAudit struct {
 	Configuration string `gorm:"type:text"`
 }
 type ModelFingerprintSiteRun struct {
+	HistoryPrunedAt    int64  `json:"-" gorm:"not null;default:0;index"`
 	ID                 string `json:"id" gorm:"type:varchar(36);primaryKey"`
 	TargetID           string `json:"target_id" gorm:"type:varchar(36);uniqueIndex:idx_fp_site_window;index"`
 	ConfigVersion      int64  `json:"config_version" gorm:"uniqueIndex:idx_fp_site_window"`
@@ -141,15 +142,22 @@ func GetModelFingerprintSiteConfig(ctx context.Context) (*ModelFingerprintSiteCo
 	if c.TargetsJSON != "" {
 		err = common.UnmarshalJsonStr(c.TargetsJSON, &c.Targets)
 	}
+	c.DailyBudgetQuota = 0
+	for i := range c.Targets {
+		c.Targets[i].ChannelID = 0
+		c.Targets[i].MaxOutputTokens = 0
+		c.Targets[i].MaxRunQuota = 0
+	}
 	return c, err
 }
 func ValidateModelFingerprintSiteConfig(c *ModelFingerprintSiteConfig) error {
-	if c.DefaultPeriodSecs < 60 || c.DefaultPeriodSecs > 604800 || c.DailyBudgetQuota < 0 || c.DailyBudgetQuota > common.MaxWalletQuota {
-		return errors.New("Invalid fingerprint site interval or budget")
+	if c.DefaultPeriodSecs < 60 || c.DefaultPeriodSecs > 604800 {
+		return errors.New("Invalid fingerprint site interval")
 	}
 	if len(c.Targets) > 100 {
 		return errors.New("Too many fingerprint site targets")
 	}
+	c.DailyBudgetQuota = 0
 	seen := map[string]bool{}
 	routes := map[string]bool{}
 	enabledTargets := 0
@@ -169,7 +177,7 @@ func ValidateModelFingerprintSiteConfig(c *ModelFingerprintSiteConfig) error {
 		seen[t.ID] = true
 		t.Group = strings.TrimSpace(t.Group)
 		t.Model = strings.TrimSpace(t.Model)
-		if t.Group == "" || len(t.Group) > 128 || t.Model == "" || len(t.Model) > 255 || t.ChannelID <= 0 || t.PeriodSecs < 0 || (t.PeriodSecs > 0 && t.PeriodSecs < 60) || t.PeriodSecs > 604800 || t.MaxRunQuota < 0 || t.MaxRunQuota > common.MaxWalletQuota {
+		if t.Group == "" || len(t.Group) > 128 || t.Model == "" || len(t.Model) > 255 || t.PeriodSecs < 0 || (t.PeriodSecs > 0 && t.PeriodSecs < 60) || t.PeriodSecs > 604800 {
 			return errors.New("Invalid fingerprint site target")
 		}
 		route := t.Group + "\x00" + t.Model
@@ -177,24 +185,10 @@ func ValidateModelFingerprintSiteConfig(c *ModelFingerprintSiteConfig) error {
 			return errors.New("Duplicate fingerprint site group and model")
 		}
 		routes[route] = true
-		if t.MaxOutputTokens == 0 {
-			t.MaxOutputTokens = 2048
-		}
-		if t.MaxOutputTokens != 2048 && t.MaxOutputTokens != 4096 {
-			return errors.New("Invalid fingerprint output token limit")
-		}
+		t.ChannelID, t.MaxOutputTokens, t.MaxRunQuota = 0, 0, 0
 		if t.Enabled {
 			enabledTargets++
-			if t.MaxRunQuota <= 0 {
-				return errors.New("Enabled fingerprint target requires a run budget")
-			}
-			if t.MaxRunQuota > c.DailyBudgetQuota {
-				return ErrFingerprintSiteBudget
-			}
 		}
-	}
-	if c.AutomaticEnabled && c.DailyBudgetQuota <= 0 {
-		return ErrFingerprintSiteBudget
 	}
 	if c.AutomaticEnabled && enabledTargets == 0 {
 		return errors.New("Automatic fingerprint testing requires an enabled target")
@@ -309,7 +303,7 @@ func ReserveModelFingerprintSiteRun(ctx context.Context, taskID, runnerID, targe
 				break
 			}
 		}
-		if target == nil || !target.Enabled || target.MaxRunQuota <= 0 {
+		if target == nil || !target.Enabled {
 			return ErrFingerprintSiteDisabled
 		}
 		period := target.PeriodSecs
@@ -345,22 +339,7 @@ func ReserveModelFingerprintSiteRun(ctx context.Context, taskID, runnerID, targe
 		if active > 0 {
 			return ErrFingerprintSiteNotDue
 		}
-		day := time.Unix(now, 0).UTC().Format("2006-01-02")
-		reserved := c.ReservedQuota
-		if c.BudgetDay != day {
-			reserved = 0
-		}
-		if reserved < 0 || c.DailyBudgetQuota <= 0 || target.MaxRunQuota > c.DailyBudgetQuota || reserved > c.DailyBudgetQuota-target.MaxRunQuota {
-			return ErrFingerprintSiteBudget
-		}
-		res := tx.Model(&ModelFingerprintSiteConfig{}).Where("id = ? AND version = ? AND budget_day = ? AND reserved_quota = ?", 1, version, c.BudgetDay, c.ReservedQuota).Updates(map[string]any{"budget_day": day, "reserved_quota": reserved + target.MaxRunQuota})
-		if res.Error != nil {
-			return res.Error
-		}
-		if res.RowsAffected != 1 {
-			return ErrFingerprintSiteConflict
-		}
-		run = ModelFingerprintSiteRun{ID: uuid.NewString(), TargetID: targetID, ConfigVersion: version, Window: window, TaskID: taskID, Group: target.Group, Model: target.Model, ChannelID: target.ChannelID, BudgetDay: day, ReservedQuota: target.MaxRunQuota, Status: "running", UsageState: "reserved", CreatedAt: now}
+		run = ModelFingerprintSiteRun{ID: uuid.NewString(), TargetID: targetID, ConfigVersion: version, Window: window, TaskID: taskID, Group: target.Group, Model: target.Model, Status: "running", UsageState: "pending", CreatedAt: now}
 		return tx.Create(&run).Error
 	})
 	return &run, err
@@ -403,7 +382,7 @@ func AuthorizeModelFingerprintSiteProbe(ctx context.Context, runID, taskID, runn
 		}
 		found := false
 		for _, target := range c.Targets {
-			if target.ID == run.TargetID && target.Enabled && target.ChannelID == run.ChannelID {
+			if target.ID == run.TargetID && target.Enabled && target.Group == run.Group && target.Model == run.Model {
 				found = true
 			}
 		}
@@ -414,9 +393,9 @@ func AuthorizeModelFingerprintSiteProbe(ctx context.Context, runID, taskID, runn
 	})
 }
 
-// Missing or inconsistent usage retains the entire reservation and stops automatic dispatch.
-// Caller may pass zero only when it can prove no upstream request was sent.
-func FinishModelFingerprintSiteRun(ctx context.Context, runID string, result ModelFingerprintSiteResult, knownQuota *int64) error {
+// An uncertain upstream outcome stops automatic dispatch. No quota reservation or
+// user-wallet settlement happens here; aggregate token usage is journaled per probe.
+func FinishModelFingerprintSiteRun(ctx context.Context, runID string, result ModelFingerprintSiteResult, usageKnown bool) error {
 	if result.Status != "succeeded" && result.Status != "failed" && result.Status != "unknown" {
 		return errors.New("Invalid fingerprint result status")
 	}
@@ -432,6 +411,9 @@ func FinishModelFingerprintSiteRun(ctx context.Context, runID string, result Mod
 		result.FingerprintResult = string(safe)
 	}
 	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockModelFingerprintRetention(tx); err != nil {
+			return err
+		}
 		var c ModelFingerprintSiteConfig
 		if err := lockForUpdate(tx).First(&c, 1).Error; err != nil {
 			return err
@@ -444,9 +426,7 @@ func FinishModelFingerprintSiteRun(ctx context.Context, runID string, result Mod
 			return ErrFingerprintSiteConflict
 		}
 		usageState := "known"
-		actual := int64(0)
-		unknown := knownQuota == nil || *knownQuota < 0 || *knownQuota > run.ReservedQuota
-		if unknown {
+		if !usageKnown {
 			usageState = "unknown"
 			result.Status = "unknown"
 			c.AutomaticEnabled = false
@@ -464,20 +444,11 @@ func FinishModelFingerprintSiteRun(ctx context.Context, runID string, result Mod
 			if err := tx.Create(&ModelFingerprintSiteAudit{Version: c.Version, CreatedAt: c.UpdatedAt, Configuration: string(audit)}).Error; err != nil {
 				return err
 			}
-		} else {
-			actual = *knownQuota
-			if c.BudgetDay == run.BudgetDay && run.ReservedQuota != actual {
-				refund := run.ReservedQuota - actual
-				res := tx.Model(&ModelFingerprintSiteConfig{}).Where("id = ? AND reserved_quota >= ?", 1, refund).Update("reserved_quota", gorm.Expr("reserved_quota - ?", refund))
-				if res.Error != nil {
-					return res.Error
-				}
-				if res.RowsAffected != 1 {
-					return ErrFingerprintSiteBudget
-				}
-			}
 		}
-		return tx.Model(&ModelFingerprintSiteRun{}).Where("id = ? AND status = ?", runID, "running").Updates(map[string]any{"status": result.Status, "usage_state": usageState, "actual_quota": actual, "benchmark_id": result.BenchmarkID, "fingerprint_version": result.FingerprintVersion, "assessment": result.Assessment, "fingerprint_result": result.FingerprintResult, "finished_at": time.Now().Unix()}).Error
+		if err := tx.Model(&ModelFingerprintSiteRun{}).Where("id = ? AND status = ?", runID, "running").Updates(map[string]any{"status": result.Status, "usage_state": usageState, "benchmark_id": result.BenchmarkID, "fingerprint_version": result.FingerprintVersion, "assessment": result.Assessment, "fingerprint_result": result.FingerprintResult, "finished_at": time.Now().Unix()}).Error; err != nil {
+			return err
+		}
+		return pruneModelFingerprintReports(tx, time.Now().Unix(), true, run.Group, run.Model)
 	})
 }
 
@@ -490,14 +461,14 @@ func ListModelFingerprintSitePublicRuns(ctx context.Context) ([]ModelFingerprint
 	result := []ModelFingerprintSitePublicRun{}
 	for _, target := range c.Targets {
 		var effective []ModelFingerprintSiteRun
-		if err := DB.WithContext(ctx).Where("target_id = ? AND status = ? AND assessment = ?", target.ID, "succeeded", "scored").Order("created_at DESC").Order("id DESC").Limit(60).Find(&effective).Error; err != nil {
+		if err := DB.WithContext(ctx).Where("target_id = ? AND status = ? AND assessment = ? AND history_pruned_at = ?", target.ID, "succeeded", "scored", 0).Order("created_at DESC").Order("id DESC").Limit(60).Find(&effective).Error; err != nil {
 			return nil, err
 		}
 		for _, run := range effective {
 			result = append(result, run.Public())
 		}
 		var failures []ModelFingerprintSiteRun
-		if err := DB.WithContext(ctx).Where("target_id = ? AND NOT (status = ? AND assessment = ?)", target.ID, "succeeded", "scored").Order("created_at DESC").Order("id DESC").Limit(5).Find(&failures).Error; err != nil {
+		if err := DB.WithContext(ctx).Where("target_id = ? AND NOT (status = ? AND assessment = ?) AND history_pruned_at = ?", target.ID, "succeeded", "scored", 0).Order("created_at DESC").Order("id DESC").Limit(5).Find(&failures).Error; err != nil {
 			return nil, err
 		}
 		for _, run := range failures {

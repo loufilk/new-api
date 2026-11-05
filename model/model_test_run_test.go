@@ -94,8 +94,8 @@ func TestModelFingerprintPostgresMigrationOwnershipReplayAndJournal(t *testing.T
 			require.NoError(t, db.Create(&user).Error)
 			require.NoError(t, db.Create(&Option{Key: ModelTestEnabledKey, Value: "true"}).Error)
 			if upgrade {
-				old, err := GetModelTestRun(1, "legacy")
-				require.NoError(t, err)
+				var old ModelTestRun
+				require.NoError(t, DB.First(&old, "id = ?", "legacy").Error)
 				assert.Equal(t, "user", old.Source)
 				assert.Equal(t, "<svg/>", old.ArtworkHTML)
 				assert.Nil(t, old.ConfirmationID)

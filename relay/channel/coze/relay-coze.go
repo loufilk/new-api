@@ -2,6 +2,7 @@ package coze
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -35,7 +37,7 @@ func convertCozeChatRequest(c *gin.Context, request dto.GeneralOpenAIRequest) *C
 	}
 	user := request.User
 	if len(user) == 0 {
-		user = json.RawMessage(helper.GetResponseID(c))
+		user, _ = common.Marshal(helper.GetResponseID(c))
 	}
 	cozeRequest := &CozeChatRequest{
 		BotId:              c.GetString("bot_id"),
@@ -68,6 +70,12 @@ func cozeChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Res
 	usage.PromptTokens = c.GetInt("coze_input_count")
 	usage.CompletionTokens = c.GetInt("coze_output_count")
 	usage.TotalTokens = c.GetInt("coze_token_count")
+	if value, ok := c.Get("coze_reported_usage"); ok {
+		if reported, ok := value.(*dto.Usage); ok && reported != nil {
+			snapshot := *reported
+			usage.BillingUsage = &dto.BillingUsage{Source: dto.BillingUsageSourceCozeChat, Semantic: dto.BillingUsageSemanticOpenAI, OpenAIUsage: &snapshot}
+		}
+	}
 	response.Usage = usage
 	response.Id = helper.GetResponseID(c)
 
@@ -218,7 +226,7 @@ func checkIfChatComplete(a *Adaptor, c *gin.Context, info *relaycommon.RelayInfo
 
 	requestURL = requestURL + "?conversation_id=" + c.GetString("coze_conversation_id") + "&chat_id=" + c.GetString("coze_chat_id")
 	// 将 conversationId和chatId作为参数发送get请求
-	req, err := http.NewRequest("GET", requestURL, nil)
+	req, err := http.NewRequestWithContext(c.Request.Context(), "GET", requestURL, nil)
 	if err != nil {
 		return err, false
 	}
@@ -227,7 +235,7 @@ func checkIfChatComplete(a *Adaptor, c *gin.Context, info *relaycommon.RelayInfo
 		return err, false
 	}
 
-	resp, err := doRequest(req, info) // 调用 doRequest
+	resp, err := doRequest(c, req, info) // 调用 doRequest
 	if err != nil {
 		return err, false
 	}
@@ -235,6 +243,9 @@ func checkIfChatComplete(a *Adaptor, c *gin.Context, info *relaycommon.RelayInfo
 		return fmt.Errorf("resp is nil"), false
 	}
 	defer resp.Body.Close() // 确保响应体被关闭
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("chat retrieve returned HTTP %d", resp.StatusCode), false
+	}
 
 	// 解析 resp 到 CozeChatResponse
 	var cozeResponse CozeChatResponse
@@ -246,7 +257,19 @@ func checkIfChatComplete(a *Adaptor, c *gin.Context, info *relaycommon.RelayInfo
 	if err != nil {
 		return fmt.Errorf("unmarshal response body failed: %w", err), false
 	}
+	if cozeResponse.Code != 0 {
+		return fmt.Errorf("chat retrieve returned code %d", cozeResponse.Code), false
+	}
 	if cozeResponse.Data.Status == "completed" {
+		// Only explicit, bounded upstream counters establish provenance. The
+		// separate detail response does not carry these completion counters.
+		if common.GetContextKeyBool(c, constant.ContextKeyModelTestSingleAttempt) {
+			usage, err := cozeReportedUsage(responseBody)
+			if err != nil {
+				return err, false
+			}
+			c.Set("coze_reported_usage", usage)
+		}
 		// 在上下文设置 usage
 		c.Set("coze_token_count", cozeResponse.Data.Usage.TokenCount)
 		c.Set("coze_output_count", cozeResponse.Data.Usage.OutputCount)
@@ -263,7 +286,7 @@ func getChatDetail(a *Adaptor, c *gin.Context, info *relaycommon.RelayInfo) (*ht
 	requestURL := fmt.Sprintf("%s/v3/chat/message/list", info.ChannelBaseUrl)
 
 	requestURL = requestURL + "?conversation_id=" + c.GetString("coze_conversation_id") + "&chat_id=" + c.GetString("coze_chat_id")
-	req, err := http.NewRequest("GET", requestURL, nil)
+	req, err := http.NewRequestWithContext(c.Request.Context(), "GET", requestURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
@@ -271,22 +294,60 @@ func getChatDetail(a *Adaptor, c *gin.Context, info *relaycommon.RelayInfo) (*ht
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
-	resp, err := doRequest(req, info)
+	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}
 	return resp, nil
 }
 
-func doRequest(req *http.Request, info *relaycommon.RelayInfo) (*http.Response, error) {
+func doRequest(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) (*http.Response, error) {
 	client, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
 	if err != nil {
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
-	resp, err := client.Do(req)
+	// Retrieval is not another generation. Keep the original request's
+	// attempted/unsent markers and do not reapply its dispatch switch.
+	pollClient := *client
+	modelTest := common.GetContextKeyBool(c, constant.ContextKeyModelTestSingleAttempt)
+	if modelTest {
+		pollClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	}
+	resp, err := pollClient.Do(req)
 	if err != nil { // 增加对 client.Do(req) 返回错误的检查
 		return nil, fmt.Errorf("client.Do failed: %w", err)
 	}
-	// _ = resp.Body.Close()
+	if modelTest {
+		const responseLimit = 512 << 10
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, responseLimit+1))
+		_ = resp.Body.Close()
+		if readErr != nil || len(body) > responseLimit {
+			return nil, errors.New("controlled model test response exceeds limit or is incomplete")
+		}
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		resp.ContentLength = int64(len(body))
+	}
 	return resp, nil
+}
+
+func cozeReportedUsage(body []byte) (*dto.Usage, error) {
+	var payload struct {
+		Data struct {
+			Usage *struct {
+				Input  *int64 `json:"input_count"`
+				Output *int64 `json:"output_count"`
+				Total  *int64 `json:"token_count"`
+			} `json:"usage"`
+		} `json:"data"`
+	}
+	if err := common.Unmarshal(body, &payload); err != nil {
+		return nil, errors.New("missing or invalid reported Coze usage")
+	}
+	u := payload.Data.Usage
+	if u == nil || u.Input == nil || u.Output == nil || u.Total == nil ||
+		*u.Input < 0 || *u.Input > common.MaxQuota || *u.Output < 0 || *u.Output > common.MaxQuota ||
+		*u.Total <= 0 || *u.Total > common.MaxQuota || *u.Total != *u.Input+*u.Output {
+		return nil, errors.New("missing or invalid reported Coze usage")
+	}
+	return &dto.Usage{PromptTokens: int(*u.Input), CompletionTokens: int(*u.Output), TotalTokens: int(*u.Total)}, nil
 }

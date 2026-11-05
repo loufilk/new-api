@@ -135,8 +135,15 @@ test.each([1, 5])('role %s cannot view or request admin settings', (role) => {
   expect(put).not.toHaveBeenCalled()
 })
 
-test('automatic tests stay disabled until explicit target and positive budget limits are configured', async () => {
-  const { user, put } = renderSettings(10, { enabled: true })
+test('group and model selection enables automatic tests without token or budget controls', async () => {
+  const { user, put } = renderSettings(10, {
+    enabled: true,
+    catalogue: {
+      groups: ['default', 'premium'],
+      models_by_group: { default: ['gpt-test'], premium: ['gpt-premium'] },
+      routes: [],
+    },
+  })
   const automatic = await screen.findByRole('switch', {
     name: 'Enable automatic fingerprint tests',
   })
@@ -148,17 +155,14 @@ test('automatic tests stay disabled until explicit target and positive budget li
   expect(
     screen.queryByRole('option', { name: 'gpt-premium' })
   ).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Channel')).not.toBeInTheDocument()
   expect(
-    screen.queryByRole('option', { name: 'Premium (#2)' })
+    screen.queryByLabelText('Maximum quota reserved per run')
   ).not.toBeInTheDocument()
-  await user.selectOptions(screen.getByLabelText('Channel'), '1')
-  await user.clear(screen.getByLabelText('Maximum quota reserved per run'))
-  await user.type(
-    screen.getByLabelText('Maximum quota reserved per run'),
-    '100'
-  )
-  await user.clear(screen.getByLabelText('Daily quota budget'))
-  await user.type(screen.getByLabelText('Daily quota budget'), '1000')
+  expect(
+    screen.queryByLabelText('Maximum output tokens per call')
+  ).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Daily quota budget')).not.toBeInTheDocument()
   expect(automatic).not.toHaveAttribute('aria-disabled', 'true')
   await user.click(automatic)
   expect(put).not.toHaveBeenCalled()
@@ -168,14 +172,14 @@ test('automatic tests stay disabled until explicit target and positive budget li
       '/api/model-tests/settings',
       expect.objectContaining({
         automatic_enabled: true,
-        daily_budget_quota: 1000,
+        daily_budget_quota: 0,
         targets: [
           expect.objectContaining({
             group: 'default',
             model: 'gpt-test',
-            channel_id: 1,
-            max_run_quota: 100,
-            max_output_tokens: 2048,
+            channel_id: 0,
+            max_run_quota: 0,
+            max_output_tokens: 0,
             period_secs: 0,
           }),
         ],
@@ -184,7 +188,7 @@ test('automatic tests stay disabled until explicit target and positive budget li
   )
 })
 
-test('changing group clears the model and channel and prevents saving stale selections', async () => {
+test('changing group clears the model and prevents saving stale selections', async () => {
   const { user } = renderSettings(10, {
     targets: [
       {
@@ -201,7 +205,13 @@ test('changing group clears the model and channel and prevents saving stale sele
   })
   await user.selectOptions(await screen.findByLabelText('Group'), 'premium')
   expect(screen.getByLabelText('Model')).toHaveValue('')
-  expect(screen.getByLabelText('Channel')).toHaveValue('0')
+  expect(screen.queryByLabelText('Channel')).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('option', { name: 'gpt-test' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('option', { name: 'gpt-premium' })
+  ).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
   await user.click(screen.getByRole('button', { name: 'Remove target' }))
   expect(screen.queryByLabelText('Group')).not.toBeInTheDocument()
@@ -266,12 +276,55 @@ test('missing fingerprint reference data disables automatic enable even with val
   ).toBeVisible()
 })
 
-test('admins see automatic static-pricing restrictions before saving or enabling tests', async () => {
+test('admins see group routing guidance before saving or enabling tests', async () => {
   const { put } = renderSettings()
   expect(
     await screen.findByText(
-      'Automatic site tests support standard OpenAI channels with static pricing only. Dynamic pricing expressions require a manually confirmed personal test.'
+      'Choose a group and a model within that group. Tests use normal group routing. The default interval is one hour. Each group and model can have only one target.'
     )
   ).toBeVisible()
   expect(put).not.toHaveBeenCalled()
+})
+
+test('saving legacy pinned targets uses normal group routing without selecting a channel', async () => {
+  const { user, put } = renderSettings(10, {
+    targets: [
+      {
+        id: '9ab0a56f-f0bf-46de-afae-e4874c62ed03',
+        group: 'default',
+        model: 'gpt-test',
+        channel_id: 99,
+        enabled: true,
+        period_secs: 0,
+        max_output_tokens: 2048,
+        max_run_quota: 100,
+      },
+    ],
+    catalogue: {
+      groups: ['default'],
+      models_by_group: { default: ['gpt-test'] },
+      routes: [],
+    },
+  })
+  await user.click(
+    await screen.findByRole('switch', {
+      name: 'Enable model performance tests',
+    })
+  )
+  expect(screen.queryByLabelText('Channel')).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() =>
+    expect(put).toHaveBeenCalledWith(
+      '/api/model-tests/settings',
+      expect.objectContaining({
+        targets: [
+          expect.objectContaining({
+            group: 'default',
+            model: 'gpt-test',
+            channel_id: 0,
+          }),
+        ],
+      })
+    )
+  )
 })

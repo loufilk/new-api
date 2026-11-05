@@ -137,6 +137,7 @@ export function useModelTest() {
     onSettled() {
       startLock.current = false
       void client.invalidateQueries({ queryKey: ['model-tests', 'history'] })
+      void client.invalidateQueries({ queryKey: ['model-tests', 'site'] })
     },
   })
   const cancel = useMutation({

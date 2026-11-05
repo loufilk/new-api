@@ -76,3 +76,25 @@ describe('test budget confirmation', () => {
     expect(confirm).not.toHaveBeenCalled()
   })
 })
+
+test('a no-limit quote states there is no output cap and still requires explicit paid confirmation', () => {
+  const confirm = vi.fn()
+  render(
+    <BudgetDialog
+      quote={{
+        ...quote,
+        max_output_tokens: 0,
+        estimated_quota: null,
+        expires_at: Math.floor(Date.now() / 1000) + 300,
+      }}
+      onClose={() => undefined}
+      onConfirm={confirm}
+    />
+  )
+  expect(screen.getByText(/No output token limit is set/)).toBeVisible()
+  expect(screen.queryByText(/Output limit: 0 tokens/)).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: 'Accept charges and run once' })
+  ).toBeEnabled()
+  expect(confirm).not.toHaveBeenCalled()
+})

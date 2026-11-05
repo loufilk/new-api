@@ -34,7 +34,7 @@ func (modelFingerprintSiteHandler) Enabled() bool {
 		return false
 	}
 	c, err := model.GetModelFingerprintSiteConfig(context.Background())
-	return err == nil && c.AutomaticEnabled && c.DailyBudgetQuota > 0
+	return err == nil && c.AutomaticEnabled
 }
 func (modelFingerprintSiteHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
 	fingerprintSiteExecutorMu.RLock()
@@ -45,14 +45,14 @@ func (modelFingerprintSiteHandler) Run(ctx context.Context, task *model.SystemTa
 		return
 	}
 	// Never replay a run after a crash. Any previous uncompleted run may have
-	// incurred provider charges: retain its full reservation and pause automation.
+	// incurred provider charges: pause automation rather than replaying the request.
 	var abandoned []model.ModelFingerprintSiteRun
 	if err := model.DB.WithContext(ctx).Where("status = ? AND task_id <> ?", "running", task.TaskID).Find(&abandoned).Error; err != nil {
 		failSystemTask(task, runnerID, err)
 		return
 	}
 	for _, run := range abandoned {
-		if err := model.FinishModelFingerprintSiteRun(ctx, run.ID, model.ModelFingerprintSiteResult{Status: "unknown", Assessment: "usage_unknown"}, nil); err != nil {
+		if err := model.FinishModelFingerprintSiteRun(ctx, run.ID, model.ModelFingerprintSiteResult{Status: "unknown", Assessment: "usage_unknown"}, false); err != nil {
 			failSystemTask(task, runnerID, err)
 			return
 		}
@@ -74,7 +74,7 @@ func (modelFingerprintSiteHandler) Run(ctx context.Context, task *model.SystemTa
 			continue
 		}
 		run, err := model.ReserveModelFingerprintSiteRun(ctx, task.TaskID, runnerID, target.ID, c.Version, time.Now().Unix())
-		if errors.Is(err, model.ErrFingerprintSiteNotDue) || errors.Is(err, model.ErrFingerprintSiteBudget) {
+		if errors.Is(err, model.ErrFingerprintSiteNotDue) {
 			continue
 		}
 		if err != nil {
@@ -89,7 +89,7 @@ func (modelFingerprintSiteHandler) Run(ctx context.Context, task *model.SystemTa
 			return
 		}
 		if stored.Status == "running" {
-			err = model.FinishModelFingerprintSiteRun(context.Background(), run.ID, model.ModelFingerprintSiteResult{Status: "unknown", Assessment: "usage_unknown"}, nil)
+			err = model.FinishModelFingerprintSiteRun(context.Background(), run.ID, model.ModelFingerprintSiteResult{Status: "unknown", Assessment: "usage_unknown"}, false)
 			if err != nil {
 				failSystemTask(task, runnerID, err)
 				return

@@ -12,15 +12,21 @@ import (
 )
 
 // Only server-created model tests set this flag. Validate the final converted
-// HTTP body, not the public model name or pre-conversion request. Unknown or
-// raised budgets fail before any upstream request; ordinary relay is unchanged.
+// HTTP body, not the public model name or pre-conversion request. A positive
+// legacy limit is still enforced exactly; zero selects the current policy with
+// no fingerprint-specific output ceiling. Ordinary relay is unchanged.
 func validateModelTestOutputBudget(c *gin.Context, req *http.Request) error {
 	if !common.GetContextKeyBool(c, constant.ContextKeyModelTestSingleAttempt) {
 		return nil
 	}
 	limit := common.GetContextKeyInt(c, constant.ContextKeyModelTestOutputLimit)
 	fail := errors.New("controlled model test output budget changed or missing")
-	if limit <= 0 || limit > 4096 || req == nil || req.Body == nil {
+	// Zero is the server-selected unbounded policy, not a zero-token request.
+	// Keep ordinary relay validation and provider-required defaults unchanged.
+	if limit == 0 {
+		return nil
+	}
+	if limit < 0 || limit > 4096 || req == nil || req.Body == nil {
 		return fail
 	}
 	body, err := io.ReadAll(io.LimitReader(req.Body, 64<<10+1))
@@ -36,12 +42,15 @@ func validateModelTestOutputBudget(c *gin.Context, req *http.Request) error {
 		MaxTokens           *int `json:"max_tokens"`
 		MaxCompletionTokens *int `json:"max_completion_tokens"`
 		MaxOutputTokens     *int `json:"max_output_tokens"`
+		GenerationConfig    struct {
+			MaxOutputTokens *int `json:"maxOutputTokens"`
+		} `json:"generationConfig"`
 	}
 	if common.Unmarshal(body, &payload) != nil {
 		return fail
 	}
 	found := false
-	for _, value := range []*int{payload.MaxTokens, payload.MaxCompletionTokens, payload.MaxOutputTokens} {
+	for _, value := range []*int{payload.MaxTokens, payload.MaxCompletionTokens, payload.MaxOutputTokens, payload.GenerationConfig.MaxOutputTokens} {
 		if value == nil {
 			continue
 		}
