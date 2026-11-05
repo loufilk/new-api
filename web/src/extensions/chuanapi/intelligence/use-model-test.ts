@@ -157,6 +157,7 @@ export function useModelTest() {
     }
     startLock.current = true
     const request: TestRequest = {
+      token_id: quote.token_id,
       model: quote.model,
       group: quote.group,
       max_output_tokens: quote.max_output_tokens,
@@ -181,6 +182,10 @@ export function useModelTest() {
     enabled,
     quote: enabled ? quote : null,
     setQuote,
+    dismissEstimate: () => {
+      availability.current.generation += 1
+      setQuote(null)
+    },
     pending,
     uncertain,
     estimate,

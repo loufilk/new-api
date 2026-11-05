@@ -22,6 +22,17 @@ import {
 } from '@/lib/server-error-message'
 
 export const modelTestErrorKeys: Record<string, string> = {
+  automatic_static_pricing_required:
+    'Automatic site tests support standard OpenAI channels with static pricing only. Dynamic pricing expressions require a manually confirmed personal test.',
+  confirmation_token_changed:
+    'The selected API key changed. Select a valid key and confirm a new estimate.',
+  token_unavailable:
+    'This API key is unavailable for the selected group and model. Select another valid key or create one.',
+  fingerprint_unavailable:
+    'Fingerprint reference data is unavailable. New tests are blocked.',
+  invalid_selection:
+    'Select a valid group, model and API key before requesting a test.',
+
   model_tests_disabled:
     'New model tests are disabled. You can still view your history and cancel active tests.',
   model_test_settings_unavailable:
@@ -52,6 +63,37 @@ export const modelTestErrorKeys: Record<string, string> = {
     'The test result could not be saved. Check history before retrying.',
 }
 export const modelTestFailureKeys: Record<string, string> = {
+  fingerprint_unavailable: modelTestErrorKeys.fingerprint_unavailable,
+  usage_unknown:
+    'The upstream outcome or usage is unknown. This is not a model mismatch.',
+  upstream_outcome_unknown:
+    'The upstream outcome or usage is unknown. This is not a model mismatch.',
+  run_budget_insufficient:
+    'The site test exceeded or could not reserve its configured quota budget.',
+  budget_exceeded:
+    'The site test exceeded or could not reserve its configured quota budget.',
+  fingerprint_analysis_failed:
+    'Fingerprint analysis failed. This is not a model mismatch.',
+  group_configuration_changed:
+    'The route or configuration changed. The site test was stopped safely.',
+  channel_changed:
+    'The route or configuration changed. The site test was stopped safely.',
+  channel_unavailable:
+    'The route or configuration changed. The site test was stopped safely.',
+  pricing_changed:
+    'The route or configuration changed. The site test was stopped safely.',
+  model_mapping_changed:
+    'The route or configuration changed. The site test was stopped safely.',
+  model_mapping_failed:
+    'The route or configuration changed. The site test was stopped safely.',
+  dispatch_not_authorized:
+    'The route or configuration changed. The site test was stopped safely.',
+  history_unavailable: modelTestErrorKeys.history_unavailable,
+  invalid_response: 'The model response was incomplete.',
+  invalid_request: 'The model request failed.',
+  request_interrupted:
+    'The test worker was interrupted. This is not a valid model result.',
+
   model_tests_disabled: modelTestErrorKeys.model_tests_disabled,
   model_test_settings_unavailable:
     modelTestErrorKeys.model_test_settings_unavailable,
@@ -96,6 +138,10 @@ export function rejectedBeforeModelTestStart(error: unknown): boolean {
   return (
     !!code &&
     [
+      'confirmation_token_changed',
+      'token_unavailable',
+      'fingerprint_unavailable',
+      'invalid_selection',
       'model_tests_disabled',
       'model_test_settings_unavailable',
       'confirmation_required',

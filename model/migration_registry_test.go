@@ -37,6 +37,10 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 		&UserCallInterceptionAudit{},
 		&ModelTestRun{},
 		&ModelTestGate{},
+		&ModelFingerprintSiteConfig{},
+		&ModelFingerprintSiteAudit{},
+		&ModelFingerprintSiteRun{},
+		&ModelFingerprintSiteProbe{},
 		&UserSession{},
 		&AuthFlow{},
 		&ExternalIdentityClaim{},
@@ -99,7 +103,7 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 
 func TestMainAutoMigrateModelsWithoutRegistryKeepsCoreModels(t *testing.T) {
 	models := mainAutoMigrateModels(nil)
-	require.Len(t, models, 56)
+	require.Len(t, models, 60)
 	assert.IsType(t, &Channel{}, models[0])
 	assert.IsType(t, &ReferralRewardInbox{}, models[len(models)-1])
 }

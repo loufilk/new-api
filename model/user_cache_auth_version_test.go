@@ -85,7 +85,7 @@ func TestPendingUserAuthFenceRejectsStaleCacheWrite(t *testing.T) {
 	assert.False(t, server.Exists(getUserCacheKey(userID)))
 }
 
-func TestUserAuthFieldUpdateRejectsVersionMismatch(t *testing.T) {
+func TestUserAuthCacheUpdateRejectsVersionMismatch(t *testing.T) {
 	useUserCacheMiniRedis(t)
 	const userID = 4202
 	_, revision := userPermissionKeys(userID)
@@ -94,7 +94,7 @@ func TestUserAuthFieldUpdateRejectsVersionMismatch(t *testing.T) {
 		Id: userID, Group: "current", Username: "cached", AuthVersion: 3, CacheRevision: 1,
 	}, true))
 
-	err := updateUserCacheFieldAtVersion(userID, "Email", "stale", 2)
+	err := writeUserCache(&UserBase{Id: userID, Group: "stale", AuthVersion: 2, CacheRevision: 1}, false)
 
 	assert.ErrorIs(t, err, ErrUserAuthCachePending)
 	group, err := common.RDB.HGet(t.Context(), getUserCacheKey(userID), "Group").Result()

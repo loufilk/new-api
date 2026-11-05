@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
+	"github.com/QuantumNous/new-api/pkg/modelfingerprint"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
@@ -87,11 +88,12 @@ func setupModelTestsPostgres(t *testing.T) (*gorm.DB, int) {
 		common.IsMasterNode, common.RedisEnabled = oldMaster, oldRedis
 		model.InvalidatePricingCache()
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}, &model.ModelTestRun{}, &model.ModelTestGate{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.UserCallInterception{}, &model.UserCallInterceptionHit{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}, &model.ModelTestRun{}, &model.ModelTestGate{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.UserCallInterception{}, &model.UserCallInterceptionHit{}))
 	// Existing execution scenarios explicitly opt in; switch tests remove/disable it.
 	require.NoError(t, db.Create(&model.Option{Key: model.ModelTestEnabledKey, Value: "true"}).Error)
 	user := model.User{Username: "synthetic-model-test-user", AffCode: "synthetic-test-aff", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", Quota: 1_000_000, QuotaPaid: 1_000_000}
 	require.NoError(t, db.Create(&user).Error)
+	require.NoError(t, db.Create(&model.Token{UserId: user.Id, Name: "Test token", Key: "synthetic-user-token", Status: common.TokenStatusEnabled, Group: "default", ExpiredTime: -1, RemainQuota: 1000000}).Error)
 	ch := model.Channel{Name: "Synthetic channel", Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Models: "gpt-4o-mini", Group: "default", Key: "synthetic-not-a-real-key"}
 	require.NoError(t, db.Create(&ch).Error)
 	require.NoError(t, db.Create(&model.Ability{ChannelId: ch.Id, Group: "default", Model: "gpt-4o-mini", Enabled: true}).Error)
@@ -109,7 +111,7 @@ func TestModelTestPostgresRealPlaygroundRelayBillsOnceAndPreservesCancel(t *test
 	for _, mode := range []string{"success", "cancel", "upstream-failure"} {
 		t.Run(mode, func(t *testing.T) {
 			db, userID := setupModelTestsPostgres(t)
-			require.NoError(t, db.AutoMigrate(append([]any{&model.Token{}, &model.Log{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.SubscriptionPlan{}, &model.UserSubscription{}, &model.SubscriptionPreConsumeRecord{}, &model.Task{}}, model.BonusSourceModels()...)...))
+			require.NoError(t, db.AutoMigrate(append([]any{&model.TokenRoutingMetric{}, &model.Token{}, &model.Log{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.SubscriptionPlan{}, &model.UserSubscription{}, &model.SubscriptionPreConsumeRecord{}, &model.Task{}}, model.BonusSourceModels()...)...))
 			oldMemory, oldBatch, oldLogs, oldExport, oldRetry := common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled, common.RetryTimes
 			oldTrust := operation_setting.GetQuotaSetting().TrustQuotaUSD
 			common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled = false, false, false, false
@@ -207,19 +209,24 @@ func TestModelTestPostgresRealPlaygroundRelayBillsOnceAndPreservesCancel(t *test
 					if mode == "success" {
 						assert.Contains(t, string(raw), `"status":"completed"`)
 					} else {
-						assert.Contains(t, string(raw), `"status":"failed"`)
+						assert.Contains(t, string(raw), `"status":"unknown"`)
+						assert.Contains(t, string(raw), "upstream_outcome_uncertain")
 					}
 				}
 			}
-			assert.EqualValues(t, 1, calls.Load(), "paid self-test must never retry or replay upstream")
+			if mode == "success" {
+				assert.EqualValues(t, 3, calls.Load())
+			} else {
+				assert.EqualValues(t, 1, calls.Load(), "failed calls must never retry")
+			}
 			if mode == "success" {
 				var user model.User
 				require.NoError(t, db.First(&user, userID).Error)
-				assert.Equal(t, 999500, user.QuotaPaid)
-				assert.Equal(t, 999500, user.Quota)
+				assert.Equal(t, 998500, user.QuotaPaid)
+				assert.Equal(t, 998500, user.Quota)
 				var settled int64
 				require.NoError(t, db.Model(&model.BillingFinalization{}).Where("user_id = ? AND state = ?", userID, model.BillingSettled).Count(&settled).Error)
-				assert.EqualValues(t, 1, settled)
+				assert.EqualValues(t, 3, settled)
 			}
 		})
 	}
@@ -228,7 +235,17 @@ func TestModelTestPostgresRealPlaygroundRelayBillsOnceAndPreservesCancel(t *test
 func modelTestRequestBody(t *testing.T, userID int, id string) string {
 	t.Helper()
 	selection := modelTestSelection{Model: "gpt-4o-mini", Group: "default", MaxOutputTokens: 2048}
-	ticket := modelTestConfirmation{modelTestSelection: selection, UserID: userID, Version: modelTestVersion, ExpiresAt: time.Now().Add(time.Minute).Unix()}
+	var token model.Token
+	require.NoError(t, model.DB.Where("user_id = ?", userID).First(&token).Error)
+	selection.TokenID = token.Id
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("POST", "/runs", nil)
+	ctx.Set("id", userID)
+	_, identity, identityErr := selectedModelTestToken(ctx, selection)
+	require.NoError(t, identityErr)
+	challenges, challengeErr := modelfingerprint.GenerateChallenges()
+	require.NoError(t, challengeErr)
+	ticket := modelTestConfirmation{EstimatedQuota: estimateModelTestQuota(userID, selection, challenges), Challenges: challenges, TokenIdentity: identity, Nonce: uuid.NewString(), modelTestSelection: selection, UserID: userID, Version: modelTestVersion, ExpiresAt: time.Now().Add(time.Minute).Unix()}
 	pricingHash, err := modelTestPricingHash(userID, selection)
 	require.NoError(t, err)
 	ticket.PricingHash = pricingHash
@@ -253,7 +270,7 @@ func TestModelTestPostgresIdempotencyOwnershipAndInterception(t *testing.T) {
 		require.NoError(t, common.UnmarshalBodyReusable(c, &input))
 		assert.Equal(t, float64(2048), input["max_tokens"])
 		assert.Equal(t, false, input["stream"])
-		assert.Equal(t, "/api/user/playground/chat", c.Request.URL.Path)
+		assert.Equal(t, "/v1/chat/completions", c.Request.URL.Path)
 		c.JSON(200, gin.H{"choices": []gin.H{{"message": gin.H{"content": `<svg viewBox="0 0 360 200"><circle cx="50" cy="60" r="20"/></svg>`}, "finish_reason": "stop"}}})
 	})
 	id := uuid.NewString()
@@ -262,14 +279,14 @@ func TestModelTestPostgresIdempotencyOwnershipAndInterception(t *testing.T) {
 		response := httptest.NewRecorder()
 		engine.ServeHTTP(response, httptest.NewRequest("POST", "/runs", strings.NewReader(body)))
 		require.Equal(t, 200, response.Code, response.Body.String())
-		assert.Contains(t, response.Body.String(), `"status":"completed"`)
+		assert.Contains(t, response.Body.String(), `"status":"failed"`)
 		assert.NotContains(t, response.Body.String(), "artwork_html")
 	}
 	assert.EqualValues(t, 1, calls.Load())
 	stored, err := model.GetModelTestRun(userID, id)
 	require.NoError(t, err)
-	assert.Equal(t, "renderable", stored.Assessment)
-	assert.NotEmpty(t, stored.ArtworkHTML)
+	assert.Equal(t, "unassessed", stored.Assessment)
+	assert.Empty(t, stored.ArtworkHTML)
 	_, err = model.GetModelTestRun(userID+1, id)
 	assert.Error(t, err)
 	require.NoError(t, db.Create(&model.UserCallInterception{UserID: userID, Enabled: true, Reply: "synthetic notice is not a test result", Revision: 1}).Error)
@@ -358,9 +375,11 @@ func TestModelTestPostgresCanonicalPricingAndOriginalExpressionBody(t *testing.T
 	t.Cleanup(func() { settings.BillingMode, settings.BillingExpr = oldMode, oldExpr })
 	settings.BillingMode = map[string]string{"gpt-4o-mini": billing_setting.BillingModeTieredExpr}
 	settings.BillingExpr = map[string]string{"gpt-4o-mini": `param("model") == "gpt-4o-mini@effort:high" ? 1000000 : 2000000`}
-	estimate := estimateModelTestQuota(userID, selection)
+	challenges, challengeErr := modelfingerprint.GenerateChallenges()
+	require.NoError(t, challengeErr)
+	estimate := estimateModelTestQuota(userID, selection, challenges)
 	require.NotNil(t, estimate)
-	assert.Equal(t, int(common.QuotaPerUnit), *estimate)
+	assert.Equal(t, 3*int(common.QuotaPerUnit), *estimate)
 	selection.MaxOutputTokens = 1024
 	assert.Error(t, validateModelTestSelection(userID, selection))
 }
@@ -402,4 +421,116 @@ func TestModelTestPostgresGlobalSlotsAndOverflowClassification(t *testing.T) {
 	engine.ServeHTTP(response, httptest.NewRequest("POST", "/runs", strings.NewReader(modelTestRequestBody(t, userID, uuid.NewString()))))
 	require.Equal(t, 200, response.Code, response.Body.String())
 	assert.Contains(t, response.Body.String(), "response_too_large")
+}
+
+func TestModelTestConfirmationBindsTokenAndGroup(t *testing.T) {
+	selected := modelTestSelection{TokenID: 42, Model: "synthetic", Group: "default", MaxOutputTokens: 2048}
+	ticket := modelTestConfirmation{modelTestSelection: selected, UserID: 7, Version: modelTestVersion, ExpiresAt: time.Now().Add(time.Minute).Unix()}
+	signed := signModelTestConfirmation(ticket)
+	for _, mutation := range []modelTestSelection{{TokenID: 43, Model: "synthetic", Group: "default", MaxOutputTokens: 2048}, {TokenID: 42, Model: "synthetic", Group: "renamed", MaxOutputTokens: 2048}, {TokenID: 42, Model: "other", Group: "default", MaxOutputTokens: 2048}} {
+		_, ok := verifyModelTestConfirmation(signed, 7, mutation)
+		assert.False(t, ok)
+	}
+}
+
+func TestModelTestTokenRejectsOwnerStatusExpiryBudgetAndAutomaticRouting(t *testing.T) {
+	base := model.Token{Id: 4, UserId: 7, Status: common.TokenStatusEnabled, ExpiredTime: -1, RemainQuota: 100, Group: "default"}
+	cases := []struct {
+		name   string
+		change func(*model.Token)
+	}{
+		{"other-owner", func(t *model.Token) { t.UserId = 8 }},
+		{"disabled", func(t *model.Token) { t.Status = common.TokenStatusDisabled }},
+		{"expired", func(t *model.Token) { t.ExpiredTime = time.Now().Unix() - 1 }},
+		{"quota", func(t *model.Token) { t.RemainQuota = 0 }},
+		{"auto", func(t *model.Token) { t.Group = "auto" }},
+		{"smart", func(t *model.Token) { t.SmartRouting = true }},
+		{"different-group", func(t *model.Token) { t.Group = "other" }},
+		{"model-limit", func(t *model.Token) { t.ModelLimitsEnabled = true; t.ModelLimits = "other" }},
+		{"ip-limit", func(t *model.Token) { ip := "192.0.2.1"; t.AllowIps = &ip }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			token := base
+			tc.change(&token)
+			assert.False(t, modelTestTokenAllowed(&token, 7, "default", "default", "synthetic", "198.51.100.1"))
+		})
+	}
+}
+
+func TestModelTestPostgresConfirmationCannotStartAnotherRequest(t *testing.T) {
+	db, userID := setupModelTestsPostgres(t)
+	confirmation := "synthetic-confirmation-digest"
+	first := &model.ModelTestRun{ID: uuid.NewString(), UserID: userID, TokenID: 1, Source: "user", ConfirmationID: &confirmation, Model: "synthetic", Group: "default", BenchmarkID: modelTestVersion, Status: "running", CreatedAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Minute).Unix()}
+	_, err := model.CreateModelTestRun(first)
+	require.NoError(t, err)
+	require.NoError(t, db.Model(first).Update("status", "unknown").Error)
+	second := *first
+	second.ID = uuid.NewString()
+	second.Status = "running"
+	_, err = model.CreateModelTestRun(&second)
+	require.ErrorIs(t, err, model.ErrModelTestConflict)
+	replay := *first
+	replayed, err := model.CreateModelTestRun(&replay)
+	require.NoError(t, err)
+	assert.True(t, replayed)
+	assert.Equal(t, "unknown", replay.Status)
+}
+
+func TestModelFingerprintPostgresChangedTokenCannotConsumeQuote(t *testing.T) {
+	for _, mutation := range []struct {
+		name   string
+		fields map[string]any
+	}{
+		{"key", map[string]any{"key": "rotated-synthetic-key"}},
+		{"owner", map[string]any{"user_id": 999999}},
+		{"group", map[string]any{"group": "other"}},
+		{"disabled", map[string]any{"status": common.TokenStatusDisabled}},
+		{"expired", map[string]any{"expired_time": int64(1)}},
+		{"quota", map[string]any{"remain_quota": 0}},
+		{"model-limits", map[string]any{"model_limits_enabled": true, "model_limits": "other"}},
+		{"ip", map[string]any{"allow_ips": "192.0.2.123"}},
+	} {
+		t.Run(mutation.name, func(t *testing.T) {
+			db, userID := setupModelTestsPostgres(t)
+			id := uuid.NewString()
+			body := modelTestRequestBody(t, userID, id)
+			require.NoError(t, db.Model(&model.Token{}).Where("user_id = ?", userID).Updates(mutation.fields).Error)
+			var calls atomic.Int32
+			engine := gin.New()
+			engine.Use(func(c *gin.Context) { c.Set("id", userID); c.Next() })
+			engine.POST("/runs", PrepareModelTest, func(c *gin.Context) { calls.Add(1) })
+			response := httptest.NewRecorder()
+			engine.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(body)))
+			assert.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+			assert.Contains(t, response.Body.String(), "confirmation_token_changed")
+			assert.Zero(t, calls.Load())
+			var count int64
+			require.NoError(t, db.Model(&model.ModelTestRun{}).Count(&count).Error)
+			assert.Zero(t, count)
+		})
+	}
+}
+
+func TestModelFingerprintPostgresTokenCatalogueUsesProductionModelLimits(t *testing.T) {
+	db, userID := setupModelTestsPostgres(t)
+	require.NoError(t, db.Model(&model.Token{}).Where("user_id = ?", userID).Updates(map[string]any{"model_limits_enabled": true, "model_limits": "gpt-4o-mini"}).Error)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	ctx.Set("id", userID)
+	catalogue := map[string][]string{"default": {"gpt-4o-mini", "gpt-4o-mini@effort:high", "other"}}
+	tokens, err := modelTestTokens(ctx, catalogue)
+	require.NoError(t, err)
+	require.Len(t, tokens["default"], 1)
+	expected := make([]string, 0)
+	for _, name := range catalogue["default"] {
+		if middleware.TokenModelLimitAllows(map[string]bool{"gpt-4o-mini": true}, name) {
+			expected = append(expected, name)
+		}
+	}
+	assert.Equal(t, expected, tokens["default"][0].EligibleModels)
+	encoded, err := common.Marshal(tokens)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "synthetic-user-token")
+	assert.NotContains(t, string(encoded), `"key"`)
 }

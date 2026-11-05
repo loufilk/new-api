@@ -27,6 +27,7 @@ import {
 import { getCoreRowModel, useReactTable } from '@tanstack/react-table'
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -45,6 +46,18 @@ const pointerCaptureDescriptor = Object.getOwnPropertyDescriptor(
   HTMLElement.prototype,
   'setPointerCapture'
 )
+
+function setMobileViewport() {
+  Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', {
+    configurable: true,
+    value: vi.fn(),
+  })
+  const originalMatchMedia = window.matchMedia
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+    ...originalMatchMedia(query),
+    matches: query === '(max-width: 640px)',
+  }))
+}
 
 function FilterFixture() {
   const table = useReactTable({
@@ -235,15 +248,7 @@ it('keeps the compact input and masks the dropdown together with other sensitive
 })
 
 it('lets mobile users select a long group name inside the filter drawer and submit it', async () => {
-  Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', {
-    configurable: true,
-    value: vi.fn(),
-  })
-  const originalMatchMedia = window.matchMedia
-  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
-    ...originalMatchMedia(query),
-    matches: query === '(max-width: 640px)',
-  }))
+  setMobileViewport()
   const longGroup = 'enterprise-team-with-a-long-group-name'
   const router = await renderFilter('/usage-logs/common', {
     [longGroup]: { desc: '', ratio: 1 },
@@ -253,7 +258,10 @@ it('lets mobile users select a long group name inside the filter drawer and subm
   await userEvent.click(input)
   const option = await within(dialog).findByRole('option', { name: longGroup })
   expect(option).toBeVisible()
-  await userEvent.click(option)
+  expect(within(option).getByText(longGroup)).toHaveClass('break-all')
+  fireEvent.pointerDown(option, { pointerType: 'touch', pointerId: 1 })
+  fireEvent.pointerUp(option, { pointerType: 'touch', pointerId: 1 })
+  fireEvent.click(option)
   expect(input).toHaveValue(longGroup)
   expect(dialog).toBeVisible()
   await userEvent.click(within(dialog).getByRole('button', { name: 'Search' }))
@@ -300,5 +308,43 @@ it('keeps historical auto values editable when auto is the only available group'
   await userEvent.click(screen.getByRole('button', { name: 'Search' }))
   await waitFor(() =>
     expect(router.state.location.search).toMatchObject({ group: 'retired' })
+  )
+})
+
+it('selects a group on a touch click without relying on compatibility mouse events', async () => {
+  const router = await renderFilter()
+  const input = screen.getByRole('combobox', { name: 'Group' })
+  await userEvent.click(input)
+  const option = await screen.findByRole('option', { name: 'premium' })
+
+  fireEvent.pointerDown(option, { pointerId: 1, pointerType: 'touch' })
+  fireEvent.pointerUp(option, { pointerId: 1, pointerType: 'touch' })
+  fireEvent.click(option)
+
+  expect(input).toHaveValue('premium')
+  expect(input).toHaveAttribute('aria-expanded', 'false')
+  expect(router.state.location.search).not.toHaveProperty('group')
+  await userEvent.click(screen.getByRole('button', { name: 'Search' }))
+  await waitFor(() =>
+    expect(router.state.location.search).toMatchObject({ group: 'premium' })
+  )
+})
+
+it('dismisses the mobile group list on Escape before dismissing the filter drawer', async () => {
+  setMobileViewport()
+  const router = await renderFilter()
+  const dialog = screen.getByRole('dialog')
+  const input = within(dialog).getByRole('combobox', { name: 'Group' })
+  await userEvent.click(input)
+  await within(dialog).findByRole('option', { name: 'premium' })
+
+  await userEvent.keyboard('{Escape}')
+  expect(input).toHaveAttribute('aria-expanded', 'false')
+  expect(dialog).toBeVisible()
+  expect(router.state.location.search).not.toHaveProperty('group')
+
+  await userEvent.keyboard('{Escape}')
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   )
 })

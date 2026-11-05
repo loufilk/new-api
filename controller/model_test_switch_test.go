@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -46,8 +47,10 @@ func TestModelTestSwitchPostgresIssuedConfirmationCannotStartAfterDisable(t *tes
 	engine.Use(func(c *gin.Context) { c.Set("id", userID) })
 	engine.POST("/estimate", EstimateModelTest)
 	engine.POST("/runs", PrepareModelTest, func(c *gin.Context) { t.Error("old confirmation reached execution") })
+	var token model.Token
+	require.NoError(t, db.Where("user_id = ?", userID).First(&token).Error)
 	quote := httptest.NewRecorder()
-	engine.ServeHTTP(quote, httptest.NewRequest(http.MethodPost, "/estimate", strings.NewReader(`{"model":"gpt-4o-mini","group":"default","max_output_tokens":2048}`)))
+	engine.ServeHTTP(quote, httptest.NewRequest(http.MethodPost, "/estimate", strings.NewReader(fmt.Sprintf(`{"token_id":%d,"model":"gpt-4o-mini","group":"default","max_output_tokens":2048}`, token.Id))))
 	require.Equal(t, 200, quote.Code, quote.Body.String())
 	var response struct {
 		Data struct {
@@ -57,7 +60,7 @@ func TestModelTestSwitchPostgresIssuedConfirmationCannotStartAfterDisable(t *tes
 	require.NoError(t, common.Unmarshal(quote.Body.Bytes(), &response))
 	require.NotEmpty(t, response.Data.ConfirmationToken)
 	require.NoError(t, db.Model(&model.Option{}).Where(model.Option{Key: model.ModelTestEnabledKey}).Update("value", "false").Error)
-	body, err := common.Marshal(modelTestRequest{modelTestSelection: modelTestSelection{Model: "gpt-4o-mini", Group: "default", MaxOutputTokens: 2048}, ConfirmationToken: response.Data.ConfirmationToken, Confirmed: true, RequestID: uuid.NewString()})
+	body, err := common.Marshal(modelTestRequest{modelTestSelection: modelTestSelection{TokenID: token.Id, Model: "gpt-4o-mini", Group: "default", MaxOutputTokens: 2048}, ConfirmationToken: response.Data.ConfirmationToken, Confirmed: true, RequestID: uuid.NewString()})
 	require.NoError(t, err)
 	for range 2 {
 		recorder := httptest.NewRecorder()
@@ -75,7 +78,9 @@ func TestModelTestSwitchPostgresIssuedConfirmationCannotStartAfterDisable(t *tes
 
 func TestModelTestSwitchPostgresHistoryCancellationAndReconciliationRemainOwnerOnly(t *testing.T) {
 	db, userID := setupModelTestsPostgres(t)
-	run := &model.ModelTestRun{ID: uuid.NewString(), UserID: userID, Model: "gpt-4o-mini", Group: "default", BenchmarkID: modelTestVersion, Status: "running", MaxOutputTokens: 2048, CreatedAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Minute).Unix()}
+	var token model.Token
+	require.NoError(t, db.Where("user_id = ?", userID).First(&token).Error)
+	run := &model.ModelTestRun{TokenID: token.Id, ID: uuid.NewString(), UserID: userID, Model: "gpt-4o-mini", Group: "default", BenchmarkID: modelTestVersion, Status: "running", MaxOutputTokens: 2048, CreatedAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Minute).Unix()}
 	_, err := model.CreateModelTestRun(run)
 	require.NoError(t, err)
 	replayBody := modelTestRequestBody(t, userID, run.ID)

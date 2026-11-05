@@ -28,6 +28,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { SettingsPageProvider } from '../../components/settings-page-context'
 import { ModelTestSection } from '../model-test-section'
+import type { ModelTestSettings } from '../model-test-settings'
 
 function Settings() {
   const [actions, setActions] = useState<HTMLDivElement | null>(null)
@@ -39,27 +40,49 @@ function Settings() {
     </SettingsPageProvider>
   )
 }
-
-function renderSettings(
-  enabled = false,
-  role = 100,
-  otherCapabilities: Record<string, unknown> = {}
-) {
-  useAuthStore.getState().auth.setUser({ id: 7, username: 'owner', role })
+function renderSettings(role = 10, overrides: Partial<ModelTestSettings> = {}) {
+  useAuthStore.getState().auth.setUser({ id: 7, username: 'admin', role })
+  const settings: ModelTestSettings = {
+    engine_ready: true,
+    enabled: false,
+    version: 1,
+    automatic_enabled: false,
+    default_period_secs: 3600,
+    daily_budget_quota: 0,
+    targets: [],
+    catalogue: {
+      groups: ['default', 'premium'],
+      models_by_group: { default: ['gpt-test'], premium: ['gpt-premium'] },
+      routes: [
+        { id: 1, name: 'Primary', group: 'default', model: 'gpt-test' },
+        { id: 2, name: 'Premium', group: 'premium', model: 'gpt-premium' },
+      ],
+    },
+    ...overrides,
+  }
+  const get = vi
+    .spyOn(api, 'get')
+    .mockResolvedValue({ data: { success: true, data: settings } })
+  const put = vi.spyOn(api, 'put').mockImplementation(async (_, input) => {
+    Object.assign(settings, input, { version: settings.version + 1 })
+    return { data: { success: true, data: settings } }
+  })
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    defaultOptions: {
+      queries: { retry: false, gcTime: Infinity },
+      mutations: { retry: false },
+    },
   })
   client.setQueryData(['status'], {
-    ...otherCapabilities,
-    model_test_enabled: enabled,
-    model_test_settings_available: true,
+    model_test_enabled: false,
+    account_pool_enabled: true,
   })
-  vi.spyOn(api, 'get').mockImplementation(async () => ({
-    data: { success: true, data: client.getQueryData(['status']) },
-  }))
   return {
-    client,
     user: userEvent.setup(),
+    client,
+    get,
+    put,
+    settings,
     ...render(
       <QueryClientProvider client={client}>
         <Settings />
@@ -67,201 +90,188 @@ function renderSettings(
     ),
   }
 }
-afterEach(() => useAuthStore.getState().auth.reset())
-
-test('root explicitly saves the accessible default-off switch without changing unrelated options', async () => {
-  const put = vi
-    .spyOn(api, 'put')
-    .mockResolvedValue({ data: { success: true } })
-  const { client, user } = renderSettings()
-  const toggle = await screen.findByRole('switch', {
-    name: 'Enable model performance tests',
-  })
-  expect(toggle).not.toBeChecked()
-  expect(toggle).toHaveAttribute(
-    'aria-describedby',
-    'model-test-enabled-description'
-  )
-  expect(toggle).toHaveClass('shrink-0')
-  expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
-  toggle.focus()
-  await user.keyboard(' ')
-  expect(toggle).toBeChecked()
-  expect(put).not.toHaveBeenCalled()
-  await user.click(screen.getByRole('button', { name: 'Save Changes' }))
-  await waitFor(() =>
-    expect(put).toHaveBeenCalledExactlyOnceWith('/api/option/', {
-      key: 'ModelTestEnabled',
-      value: true,
-    })
-  )
-  expect(await screen.findByText('Setting updated successfully')).toBeVisible()
-  expect(client.getQueryData(['status'])).toMatchObject({
-    model_test_enabled: true,
-  })
+afterEach(() => {
+  useAuthStore.getState().auth.reset()
+  vi.restoreAllMocks()
 })
 
-test('saving disabled state keeps owned history and changes only the model-test availability', async () => {
-  vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
-  const otherCapabilities = {
-    account_pool_enabled: true,
-    google_oauth: true,
-    announcements_enabled: true,
-  }
-  const { client, user } = renderSettings(true, 100, otherCapabilities)
-  client.setQueryData(['model-tests', 'history'], {
-    enabled: true,
-    items: [{ id: 'running-owned' }],
-  })
-  client.setQueryData(['account-pool', 'snapshot'], { items: ['pool'] })
-  await user.click(
-    await screen.findByRole('switch', {
+test.each([10, 100])(
+  'role %s can save only dedicated fingerprint settings with expected version',
+  async (role) => {
+    const { user, put, get, client } = renderSettings(role)
+    const toggle = await screen.findByRole('switch', {
       name: 'Enable model performance tests',
     })
-  )
-  await user.click(screen.getByRole('button', { name: 'Save Changes' }))
-  await waitFor(() =>
-    expect(client.getQueryData(['status'])).toMatchObject({
-      ...otherCapabilities,
-      model_test_enabled: false,
-    })
-  )
-  expect(client.getQueryData(['model-tests', 'history'])).toEqual({
-    enabled: false,
-    items: [{ id: 'running-owned' }],
-  })
-  expect(client.getQueryData(['account-pool', 'snapshot'])).toEqual({
-    items: ['pool'],
-  })
-})
-
-test('failed save reports the error without changing the effective flag or clearing the draft', async () => {
-  vi.spyOn(api, 'put').mockResolvedValue({
-    data: { success: false, message: 'Saving is unavailable' },
-  })
-  const { client, user } = renderSettings()
-  await user.click(
-    await screen.findByRole('switch', {
-      name: 'Enable model performance tests',
-    })
-  )
-  await user.click(screen.getByRole('button', { name: 'Save Changes' }))
-  expect(await screen.findByText('Saving is unavailable')).toBeVisible()
-  expect(screen.getByRole('switch')).toBeChecked()
-  expect(client.getQueryData(['status'])).toMatchObject({
-    model_test_enabled: false,
-  })
-  expect(
-    screen.queryByText('Setting updated successfully')
-  ).not.toBeInTheDocument()
-})
-
-test.each([1, 5, 10])(
-  'role %s cannot see or change root-only model test settings',
-  (role) => {
-    const put = vi.spyOn(api, 'put')
-    renderSettings(false, role)
-    expect(screen.queryByRole('switch')).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole('button', { name: 'Save Changes' })
-    ).not.toBeInTheDocument()
+    expect(toggle).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
+    toggle.focus()
+    await user.keyboard(' ')
     expect(put).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith(
+        '/api/model-tests/settings',
+        expect.objectContaining({
+          enabled: true,
+          expected_version: 1,
+          automatic_enabled: false,
+        })
+      )
+    )
+    expect(
+      get.mock.calls.every(([url]) => url === '/api/model-tests/settings')
+    ).toBe(true)
+    expect(client.getQueryData(['status'])).toMatchObject({
+      model_test_enabled: true,
+      account_pool_enabled: true,
+    })
   }
 )
 
-test('root sees the fresh database flag instead of a stale enabled option or status cache', async () => {
-  const { client } = renderSettings(true)
-  vi.mocked(api.get).mockResolvedValue({
-    data: {
-      success: true,
-      data: { model_test_enabled: false, model_test_settings_available: true },
-    },
+test.each([1, 5])('role %s cannot view or request admin settings', (role) => {
+  const { get, put } = renderSettings(role)
+  expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+  expect(get).not.toHaveBeenCalled()
+  expect(put).not.toHaveBeenCalled()
+})
+
+test('automatic tests stay disabled until explicit target and positive budget limits are configured', async () => {
+  const { user, put } = renderSettings(10, { enabled: true })
+  const automatic = await screen.findByRole('switch', {
+    name: 'Enable automatic fingerprint tests',
   })
-  await client.invalidateQueries({ queryKey: ['status'] })
+  expect(automatic).toHaveAttribute('aria-disabled', 'true')
+  await user.click(screen.getByRole('button', { name: 'Add target' }))
+  expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
+  await user.selectOptions(screen.getByLabelText('Group'), 'default')
+  await user.selectOptions(screen.getByLabelText('Model'), 'gpt-test')
+  expect(
+    screen.queryByRole('option', { name: 'gpt-premium' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('option', { name: 'Premium (#2)' })
+  ).not.toBeInTheDocument()
+  await user.selectOptions(screen.getByLabelText('Channel'), '1')
+  await user.clear(screen.getByLabelText('Maximum quota reserved per run'))
+  await user.type(
+    screen.getByLabelText('Maximum quota reserved per run'),
+    '100'
+  )
+  await user.clear(screen.getByLabelText('Daily quota budget'))
+  await user.type(screen.getByLabelText('Daily quota budget'), '1000')
+  expect(automatic).not.toHaveAttribute('aria-disabled', 'true')
+  await user.click(automatic)
+  expect(put).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('button', { name: 'Save Changes' }))
   await waitFor(() =>
-    expect(
-      screen.getByRole('switch', { name: 'Enable model performance tests' })
-    ).not.toBeChecked()
+    expect(put).toHaveBeenCalledWith(
+      '/api/model-tests/settings',
+      expect.objectContaining({
+        automatic_enabled: true,
+        daily_budget_quota: 1000,
+        targets: [
+          expect.objectContaining({
+            group: 'default',
+            model: 'gpt-test',
+            channel_id: 1,
+            max_run_quota: 100,
+            max_output_tokens: 2048,
+            period_secs: 0,
+          }),
+        ],
+      })
+    )
   )
 })
 
-test('a pending save disables both the switch and save action against repeated clicks', async () => {
-  let resolve: (value: unknown) => void = () => undefined
-  const put = vi.spyOn(api, 'put').mockImplementation(
-    () =>
-      new Promise((done) => {
-        resolve = done
-      })
-  )
-  const { user } = renderSettings()
+test('changing group clears the model and channel and prevents saving stale selections', async () => {
+  const { user } = renderSettings(10, {
+    targets: [
+      {
+        id: '9ab0a56f-f0bf-46de-afae-e4874c62ed03',
+        group: 'default',
+        model: 'gpt-test',
+        channel_id: 1,
+        enabled: true,
+        period_secs: 0,
+        max_output_tokens: 2048,
+        max_run_quota: 100,
+      },
+    ],
+  })
+  await user.selectOptions(await screen.findByLabelText('Group'), 'premium')
+  expect(screen.getByLabelText('Model')).toHaveValue('')
+  expect(screen.getByLabelText('Channel')).toHaveValue('0')
+  expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: 'Remove target' }))
+  expect(screen.queryByLabelText('Group')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled()
+})
+
+test('failed versioned save preserves the draft and reports the error', async () => {
+  const { user, put } = renderSettings()
+  put.mockResolvedValue({
+    data: { success: false, message: 'Settings changed; reload and try again' },
+  })
   await user.click(
     await screen.findByRole('switch', {
       name: 'Enable model performance tests',
     })
   )
   await user.click(screen.getByRole('button', { name: 'Save Changes' }))
-  expect(screen.getByRole('switch')).toHaveAttribute('aria-disabled', 'true')
-  const save = screen.getByRole('button', { name: 'Saving...' })
-  expect(save).toBeDisabled()
-  await user.click(save)
-  expect(put).toHaveBeenCalledTimes(1)
-  resolve({ data: { success: true } })
-  expect(await screen.findByText('Setting updated successfully')).toBeVisible()
+  expect(
+    await screen.findByText('Settings changed; reload and try again')
+  ).toBeVisible()
+  expect(
+    screen.getByRole('switch', { name: 'Enable model performance tests' })
+  ).toBeChecked()
 })
 
-test('an unreachable current flag never exposes a cached editable setting', async () => {
-  const { client } = renderSettings(true)
-  await screen.findByRole('switch')
-  vi.mocked(api.get).mockRejectedValue(new Error('offline'))
-  await client.invalidateQueries({ queryKey: ['status'] })
+test('unavailable settings fail closed rather than presenting cached writable controls', async () => {
+  const { client, get } = renderSettings()
+  await screen.findByRole('switch', { name: 'Enable model performance tests' })
+  get.mockRejectedValue(new Error('offline'))
+  await client.invalidateQueries({ queryKey: ['model-test-settings'] })
   expect(await screen.findByText('Failed to load settings')).toBeVisible()
   expect(screen.queryByRole('switch')).not.toBeInTheDocument()
 })
 
-test.each([
-  { model_test_enabled: false, model_test_settings_available: false },
-  { model_test_enabled: false },
-  { model_test_settings_available: true },
-  { model_test_enabled: 'true', model_test_settings_available: true },
-])(
-  'an unavailable or invalid authoritative status cannot be edited: %j',
-  async (status) => {
-    const put = vi.spyOn(api, 'put')
-    const { client } = renderSettings(true)
-    await screen.findByRole('switch')
-    vi.mocked(api.get).mockResolvedValue({
-      data: { success: true, data: status },
+test('missing fingerprint reference data disables automatic enable even with valid budgets', async () => {
+  renderSettings(10, {
+    engine_ready: false,
+    enabled: true,
+    daily_budget_quota: 1000,
+    targets: [
+      {
+        id: '9ab0a56f-f0bf-46de-afae-e4874c62ed03',
+        group: 'default',
+        model: 'gpt-test',
+        channel_id: 1,
+        enabled: true,
+        period_secs: 0,
+        max_output_tokens: 2048,
+        max_run_quota: 100,
+      },
+    ],
+  })
+  expect(
+    await screen.findByRole('switch', {
+      name: 'Enable automatic fingerprint tests',
     })
-    await client.invalidateQueries({ queryKey: ['status'] })
-    expect(await screen.findByText('Failed to load settings')).toBeVisible()
-    expect(screen.queryByRole('switch')).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole('button', { name: 'Save Changes' })
-    ).not.toBeInTheDocument()
-    expect(put).not.toHaveBeenCalled()
-  }
-)
+  ).toHaveAttribute('aria-disabled', 'true')
+  expect(
+    screen.getByText(
+      'Fingerprint reference data is not ready. Automatic tests cannot be enabled.'
+    )
+  ).toBeVisible()
+})
 
-test('a recovered authoritative read restores the current setting without saving a stale draft', async () => {
-  const put = vi.spyOn(api, 'put')
-  const { client, user } = renderSettings(false)
-  await user.click(await screen.findByRole('switch'))
-  vi.mocked(api.get).mockResolvedValue({
-    data: {
-      success: true,
-      data: { model_test_enabled: false, model_test_settings_available: false },
-    },
-  })
-  await client.invalidateQueries({ queryKey: ['status'] })
-  await screen.findByText('Failed to load settings')
-  vi.mocked(api.get).mockResolvedValue({
-    data: {
-      success: true,
-      data: { model_test_enabled: false, model_test_settings_available: true },
-    },
-  })
-  await user.click(screen.getByRole('button', { name: 'Retry' }))
-  expect(await screen.findByRole('switch')).not.toBeChecked()
-  expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
+test('admins see automatic static-pricing restrictions before saving or enabling tests', async () => {
+  const { put } = renderSettings()
+  expect(
+    await screen.findByText(
+      'Automatic site tests support standard OpenAI channels with static pricing only. Dynamic pricing expressions require a manually confirmed personal test.'
+    )
+  ).toBeVisible()
   expect(put).not.toHaveBeenCalled()
 })

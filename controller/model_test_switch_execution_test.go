@@ -32,7 +32,7 @@ import (
 func setupModelTestSwitchExecution(t *testing.T) (*gorm.DB, int) {
 	t.Helper()
 	db, userID := setupModelTestsPostgres(t)
-	require.NoError(t, db.AutoMigrate(append([]any{&model.Token{}, &model.Log{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.SubscriptionPlan{}, &model.UserSubscription{}, &model.SubscriptionPreConsumeRecord{}, &model.Task{}}, model.BonusSourceModels()...)...))
+	require.NoError(t, db.AutoMigrate(append([]any{&model.TokenRoutingMetric{}, &model.Token{}, &model.Log{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.SubscriptionPlan{}, &model.UserSubscription{}, &model.SubscriptionPreConsumeRecord{}, &model.Task{}}, model.BonusSourceModels()...)...))
 	oldMemory, oldBatch, oldLogs, oldExport, oldRetry := common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled, common.RetryTimes
 	oldTrust := operation_setting.GetQuotaSetting().TrustQuotaUSD
 	oldAutoDisable, oldErrorLog := common.AutomaticDisableChannelEnabled, constant.ErrorLogEnabled
@@ -293,7 +293,8 @@ func TestModelTestSwitchPostgresDisableAfterSendPreservesSettlementAndCancellati
 			assert.Equal(t, 999500, user.QuotaPaid)
 			assert.Equal(t, user.QuotaPaid, user.Quota)
 			if outcome != "cancel" {
-				assert.Equal(t, "completed", run.Status)
+				assert.Equal(t, "failed", run.Status)
+				assert.Equal(t, "model_tests_disabled", run.ErrorCode)
 				assert.Equal(t, model.BillingSettled, owner.State)
 				assert.Equal(t, 500, owner.ActualQuota)
 			} else {

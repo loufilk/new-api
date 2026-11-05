@@ -99,6 +99,16 @@ test('switching between registered support and model settings saves only the sel
     account_pool_enabled: true,
     google_oauth: true,
   }
+  const fingerprint = {
+    enabled: false,
+    version: 1,
+    automatic_enabled: false,
+    default_period_secs: 3600,
+    daily_budget_quota: 0,
+    targets: [],
+    catalogue: { groups: [], models_by_group: {}, routes: [] },
+  }
+  client.setQueryData(['status'], status)
   const support = {
     enabled: false,
     admin_recipients: ['support@example.com'],
@@ -113,6 +123,7 @@ test('switching between registered support and model settings saves only the sel
     let data: unknown = { items: [], total: 0 }
     if (url === '/api/support-email/settings') data = { ...support }
     if (url === '/api/status') data = { ...status }
+    if (url === '/api/model-tests/settings') data = { ...fingerprint }
     return { data: { success: true, data } }
   })
   const put = vi.spyOn(api, 'put').mockImplementation(async (url, input) => {
@@ -127,11 +138,13 @@ test('switching between registered support and model settings saves only the sel
       support.enabled = input.enabled
     }
     if (
-      url === '/api/option/' &&
-      'value' in input &&
-      typeof input.value === 'boolean'
+      url === '/api/model-tests/settings' &&
+      'enabled' in input &&
+      typeof input.enabled === 'boolean'
     ) {
-      status.model_test_enabled = input.value
+      status.model_test_enabled = input.enabled
+      fingerprint.enabled = input.enabled
+      fingerprint.version += 1
     }
     return { data: { success: true } }
   })
@@ -163,10 +176,10 @@ test('switching between registered support and model settings saves only the sel
   await user.click(modelSwitch)
   await user.click(screen.getByRole('button', { name: 'Save Changes' }))
   await waitFor(() =>
-    expect(put).toHaveBeenLastCalledWith('/api/option/', {
-      key: 'ModelTestEnabled',
-      value: true,
-    })
+    expect(put).toHaveBeenLastCalledWith(
+      '/api/model-tests/settings',
+      expect.objectContaining({ enabled: true, expected_version: 1 })
+    )
   )
   expect(support.enabled).toBe(true)
   expect(client.getQueryData(['status'])).toMatchObject({

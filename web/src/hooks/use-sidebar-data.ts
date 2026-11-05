@@ -162,7 +162,7 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
                 },
               ]
             : []),
-          ...(status?.model_test_enabled === true
+          ...(user
             ? [
                 {
                   title: t('intelligence.title'),

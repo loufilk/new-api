@@ -54,6 +54,7 @@ func setupModelTestGroupRename(t *testing.T) (*gorm.DB, int, *gin.Engine) {
 		require.NoError(t, db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "key"}}, DoUpdates: clause.AssignmentColumns([]string{"value"})}).Create(&model.Option{Key: key, Value: value}).Error)
 	}
 	require.NoError(t, db.Model(&model.User{}).Where("id = ?", userID).Update("group", "old").Error)
+	require.NoError(t, db.Model(&model.Token{}).Where("user_id = ?", userID).Update("group", "old").Error)
 	var channel model.Channel
 	require.NoError(t, db.Where("models = ?", "gpt-4o-mini").First(&channel).Error)
 	require.NoError(t, db.Model(&channel).Update("group", "old,premium").Error)
@@ -86,7 +87,9 @@ func setupModelTestGroupRename(t *testing.T) (*gorm.DB, int, *gin.Engine) {
 
 func modelTestGroupRenameQuotedRequest(t *testing.T, engine *gin.Engine, group, requestID string) ([]byte, int) {
 	t.Helper()
-	selection := modelTestSelection{Model: "gpt-4o-mini", Group: group, MaxOutputTokens: 2048}
+	var token model.Token
+	require.NoError(t, model.DB.Where("name = ?", "Test token").First(&token).Error)
+	selection := modelTestSelection{TokenID: token.Id, Model: "gpt-4o-mini", Group: group, MaxOutputTokens: 2048}
 	input, err := common.Marshal(selection)
 	require.NoError(t, err)
 	response := httptest.NewRecorder()

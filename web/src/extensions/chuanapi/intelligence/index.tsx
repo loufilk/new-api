@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -16,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import { RefreshCw } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/empty-state'
@@ -28,22 +29,19 @@ import { LoadingState } from '@/components/loading-state'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { getTestCatalogue } from './api'
+import { getSiteTests, getTestCatalogue } from './api'
 import { BudgetDialog } from './budget-dialog'
 import { TestHistoryList } from './history-list'
 import { ModelTestCard } from './model-card'
 import { TestResultDialog } from './result-dialog'
+import { SelfTestDialog } from './self-test-dialog'
 import type { TestRun } from './types'
 import { useModelTest } from './use-model-test'
 
@@ -60,11 +58,19 @@ export function IntelligencePage() {
 export function IntelligenceDashboard() {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
-  const [group, setGroup] = useState('')
+  const isAdmin = useAuthStore(
+    (state) => (state.auth.user?.role ?? 0) >= ROLE.ADMIN
+  )
   const [search, setSearch] = useState('')
-  const [tokens, setTokens] = useState(2048)
   const [selected, setSelected] = useState<TestRun | null>(null)
+  const [selfTest, setSelfTest] = useState<{
+    model: string
+    group: string
+  } | null>(null)
   const test = useModelTest()
+  useEffect(() => {
+    if (!test.enabled) setSelfTest(null)
+  }, [test.enabled])
   const history = test.history
   const catalogue = useQuery({
     queryKey: ['model-tests', 'catalogue'],
@@ -73,54 +79,104 @@ export function IntelligenceDashboard() {
     retry: false,
     meta: { errorToast: false },
   })
+  const site = useQuery({
+    queryKey: ['model-tests', 'site'],
+    queryFn: ({ signal }) => getSiteTests(signal),
+    retry: false,
+    refetchInterval: 30_000,
+    meta: { errorToast: false },
+  })
   const data = history.data
   const pendingRun = data?.items.find(
     (run) => run.id === test.pending?.request_id
   )
   const unresolvedPending =
     !!test.pending && (!pendingRun || pendingRun.status === 'running')
-  const activeGroup = group || catalogue.data?.groups[0]?.name || ''
-  const groupInfo = catalogue.data?.groups.find(
-    (item) => item.name === activeGroup
-  )
-  const eligible = data?.eligible_models_by_group?.[activeGroup] ?? []
-  const models = (catalogue.data?.models_by_group[activeGroup] ?? []).filter(
-    (model) =>
-      eligible.includes(model) &&
-      model.toLowerCase().includes(search.toLowerCase())
-  )
   const running =
     test.start.isPending ||
     !!data?.items.some((run) => run.status === 'running')
   const currentSelection =
     data?.items.find((run) => run.id === selected?.id) ?? selected
+  const personalPoints = data?.effective_points ?? data?.items ?? []
+  const groupNames = [
+    ...new Set([
+      ...Object.keys(
+        test.enabled ? (data?.eligible_models_by_group ?? {}) : {}
+      ),
+      ...(site.data?.targets ?? []).map((target) => target.group),
+      ...(site.data?.items ?? []).map((run) => run.group),
+      ...personalPoints
+        .filter((run) => run.fingerprint_result)
+        .map((run) => run.group),
+    ]),
+  ].sort()
+  const visibleGroups = groupNames
+    .map((group) => {
+      const models = [
+        ...new Set([
+          ...(test.enabled
+            ? (data?.eligible_models_by_group?.[group] ?? [])
+            : []),
+          ...(site.data?.targets ?? [])
+            .filter((target) => target.group === group)
+            .map((target) => target.model),
+          ...(site.data?.items ?? [])
+            .filter((run) => run.group === group)
+            .map((run) => run.model),
+          ...personalPoints
+            .filter((run) => run.group === group && run.fingerprint_result)
+            .map((run) => run.model),
+        ]),
+      ]
+        .filter((model) =>
+          `${group} ${model}`.toLowerCase().includes(search.toLowerCase())
+        )
+        .sort()
+      return { group, models }
+    })
+    .filter((entry) => entry.models.length)
 
+  const refresh = () => {
+    void history.refetch()
+    void site.refetch()
+    if (test.enabled) void catalogue.refetch()
+  }
   return (
-    <div className='mx-auto flex max-w-7xl flex-col gap-6 py-4'>
+    <div className='mx-auto flex max-w-[100rem] flex-col gap-5 py-4'>
       <header className='flex flex-wrap items-start justify-between gap-4'>
         <div className='flex min-w-0 flex-col gap-2'>
-          <Badge variant='secondary'>{t('intelligence.reference')}</Badge>
-          <h1 className='text-3xl font-semibold tracking-tight'>
-            {t('intelligence.title')}
+          <h1 className='text-2xl font-semibold tracking-tight'>
+            {t('fingerprint.title')}
           </h1>
           <p className='text-muted-foreground text-sm'>
-            {t('intelligence.subtitle')}
+            {t('fingerprint.subtitle')}
           </p>
         </div>
         <Button
           variant='outline'
-          disabled={history.isFetching || catalogue.isFetching}
-          onClick={() => {
-            void history.refetch()
-            void catalogue.refetch()
-          }}
+          disabled={history.isFetching || site.isFetching}
+          onClick={refresh}
         >
           <RefreshCw aria-hidden />
           {t('monitor.refresh')}
         </Button>
       </header>
+      {isAdmin && (
+        <Button
+          variant='outline'
+          className='w-fit'
+          render={
+            <Link
+              to='/system-settings/content/$section'
+              params={{ section: 'model-tests' }}
+            />
+          }
+        >
+          {t('fingerprint.settings')}
+        </Button>
+      )}
       <Alert role='note'>
-        <AlertDescription>{t('intelligence.scope')}</AlertDescription>
+        <AlertDescription>{t('fingerprint.disclaimer')}</AlertDescription>
       </Alert>
       {!history.isPending && !test.enabled && (
         <Alert role='status'>
@@ -133,219 +189,166 @@ export function IntelligenceDashboard() {
           </AlertDescription>
         </Alert>
       )}
-      {(history.isPending || (test.enabled && catalogue.isPending)) && (
-        <LoadingState />
+      {(history.isPending || site.isPending) && <LoadingState />}
+      {(history.isError ||
+        site.isError ||
+        (test.enabled && catalogue.isError)) && (
+        <ErrorState onRetry={refresh} />
       )}
-      {(history.isError || (test.enabled && catalogue.isError)) && (
-        <ErrorState
-          onRetry={() => {
-            void history.refetch()
-            void catalogue.refetch()
-          }}
+      <div className='flex flex-wrap items-end justify-between gap-3'>
+        <p className='text-muted-foreground text-xs'>
+          {t('fingerprint.timelineHelp')}
+        </p>
+        <div className='flex flex-col gap-1'>
+          <Label htmlFor='fingerprint-search'>{t('monitor.search')}</Label>
+          <Input
+            id='fingerprint-search'
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </div>
+      </div>
+      {unresolvedPending && (
+        <Alert>
+          <AlertDescription>
+            <div className='flex flex-wrap items-center gap-3'>
+              <span>
+                {t(
+                  test.uncertain
+                    ? 'intelligence.uncertain'
+                    : 'intelligence.submitted'
+                )}
+              </span>
+              {test.uncertain && (
+                <Button
+                  variant='outline'
+                  onClick={test.retry}
+                  disabled={!test.enabled || test.start.isPending}
+                >
+                  {t('intelligence.retrySame')}
+                </Button>
+              )}
+              <Button
+                variant='outline'
+                onClick={() => {
+                  if (test.pending) test.cancel.mutate(test.pending.request_id)
+                }}
+                disabled={test.cancel.isPending}
+              >
+                {t('Cancel')}
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+      {visibleGroups.map(({ group, models }) => {
+        const groupInfo = catalogue.data?.groups.find(
+          (item) => item.name === group
+        )
+        return (
+          <section
+            key={group}
+            className='bg-card min-w-0 overflow-hidden rounded-xl border'
+            aria-label={group}
+          >
+            <header className='flex flex-wrap items-center gap-3 px-4 py-3'>
+              <h2 className='font-semibold break-all'>{group}</h2>
+              {groupInfo && (
+                <Badge variant='secondary'>
+                  {formatNumber(groupInfo.ratio, locale)}×
+                </Badge>
+              )}
+            </header>
+            {models.map((model) => (
+              <ModelTestCard
+                key={model}
+                model={model}
+                group={group}
+                runs={[
+                  ...personalPoints.filter(
+                    (run) => run.group === group && run.model === model
+                  ),
+                  ...(data?.items ?? []).filter(
+                    (run) =>
+                      run.group === group &&
+                      run.model === model &&
+                      !personalPoints.some((point) => point.id === run.id)
+                  ),
+                ]}
+                siteRuns={(site.data?.items ?? []).filter(
+                  (run) => run.group === group && run.model === model
+                )}
+                allowTest={
+                  test.enabled &&
+                  (data?.eligible_models_by_group?.[group] ?? []).includes(
+                    model
+                  )
+                }
+                disabled={
+                  running ||
+                  test.estimate.isPending ||
+                  unresolvedPending ||
+                  history.isError
+                }
+                estimating={
+                  test.estimate.isPending &&
+                  test.estimate.variables?.model === model &&
+                  test.estimate.variables?.group === group
+                }
+                onEstimate={() => setSelfTest({ model, group })}
+                onSelect={setSelected}
+              />
+            ))}
+          </section>
+        )
+      })}
+      {!history.isPending && !site.isPending && !visibleGroups.length && (
+        <EmptyState
+          title={t(
+            search ? 'intelligence.noModels' : 'fingerprint.noConfiguredModels'
+          )}
         />
       )}
       {data && (
-        <>
-          {test.enabled && (
-            <section
-              className='flex flex-col gap-3'
-              aria-label={t('intelligence.siteResults')}
-            >
-              <h2 className='text-xl font-semibold'>
-                {t('intelligence.siteResults')}
-              </h2>
-              <EmptyState
-                className='min-h-32'
-                title={t('intelligence.siteUnpublished')}
-                description={t('intelligence.noScheduler')}
-              />
-            </section>
-          )}
-          <section
-            className='flex flex-col gap-4'
-            aria-label={t('intelligence.myTests')}
-          >
-            {test.enabled && (
-              <>
-                <div className='flex flex-col gap-2'>
-                  <h2 className='text-xl font-semibold'>
-                    {t('intelligence.myTests')}
-                  </h2>
-                  <p className='text-muted-foreground text-sm'>
-                    {t('intelligence.limits', {
-                      count: data.limits.runs_per_hour,
-                      concurrency: data.limits.concurrency_per_user,
-                    })}
-                  </p>
-                </div>
-                <Collapsible className='rounded-lg border p-3'>
-                  <CollapsibleTrigger
-                    render={
-                      <Button
-                        variant='outline'
-                        className='h-auto min-h-8 max-w-full py-2 text-start whitespace-normal'
-                      />
-                    }
-                  >
-                    {t('intelligence.publicPrompt')} · {data.benchmark.id} ·{' '}
-                    {data.benchmark.license}
-                  </CollapsibleTrigger>
-                  <CollapsibleContent>
-                    <pre className='mt-3 text-sm break-words whitespace-pre-wrap'>
-                      {data.benchmark.prompt}
-                    </pre>
-                  </CollapsibleContent>
-                </Collapsible>
-                <div className='grid gap-3 sm:grid-cols-3'>
-                  <div className='flex min-w-0 flex-col gap-2'>
-                    <Label htmlFor='test-group'>{t('pool.group')}</Label>
-                    <NativeSelect
-                      id='test-group'
-                      className='w-full'
-                      value={activeGroup}
-                      onChange={(event) => setGroup(event.target.value)}
-                    >
-                      {catalogue.data?.groups.map((item) => (
-                        <NativeSelectOption key={item.name} value={item.name}>
-                          {item.name} · {formatNumber(item.ratio, locale)}×
-                        </NativeSelectOption>
-                      ))}
-                    </NativeSelect>
-                  </div>
-                  <div className='flex flex-col gap-2'>
-                    <Label htmlFor='test-model-search'>
-                      {t('monitor.search')}
-                    </Label>
-                    <Input
-                      id='test-model-search'
-                      value={search}
-                      onChange={(event) => setSearch(event.target.value)}
-                    />
-                  </div>
-                  <div className='flex flex-col gap-2'>
-                    <Label htmlFor='test-tokens'>
-                      {t('intelligence.outputLimit')}
-                    </Label>
-                    <NativeSelect
-                      id='test-tokens'
-                      className='w-full'
-                      value={tokens}
-                      onChange={(event) =>
-                        setTokens(Number(event.target.value))
-                      }
-                    >
-                      {[2048, 4096]
-                        .filter(
-                          (value) => value <= data.limits.max_output_tokens
-                        )
-                        .map((value) => (
-                          <NativeSelectOption key={value} value={value}>
-                            {formatNumber(value, locale)}
-                          </NativeSelectOption>
-                        ))}
-                    </NativeSelect>
-                  </div>
-                </div>
-              </>
-            )}
-            {unresolvedPending && (
-              <Alert>
-                <AlertDescription>
-                  <div className='flex flex-wrap items-center gap-3'>
-                    <span>
-                      {t(
-                        test.uncertain
-                          ? 'intelligence.uncertain'
-                          : 'intelligence.submitted'
-                      )}
-                    </span>
-                    {test.uncertain && (
-                      <Button
-                        variant='outline'
-                        onClick={test.retry}
-                        disabled={!test.enabled || test.start.isPending}
-                      >
-                        {t('intelligence.retrySame')}
-                      </Button>
-                    )}
-                    <Button
-                      variant='outline'
-                      onClick={() => {
-                        if (test.pending) {
-                          test.cancel.mutate(test.pending.request_id)
-                        }
-                      }}
-                      disabled={test.cancel.isPending}
-                    >
-                      {t('Cancel')}
-                    </Button>
-                  </div>
-                </AlertDescription>
-              </Alert>
-            )}
-            {test.enabled && (
-              <>
-                <h3 className='font-semibold break-all'>
-                  {activeGroup} · {formatNumber(groupInfo?.ratio ?? 1, locale)}×
-                </h3>
-                {models.length ? (
-                  <div className='grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3'>
-                    {models.map((model) => (
-                      <ModelTestCard
-                        key={`${activeGroup}:${model}`}
-                        model={model}
-                        group={activeGroup}
-                        runs={data.items.filter(
-                          (run) =>
-                            run.model === model && run.group === activeGroup
-                        )}
-                        disabled={
-                          running ||
-                          test.estimate.isPending ||
-                          unresolvedPending ||
-                          history.isError ||
-                          catalogue.isError
-                        }
-                        estimating={
-                          test.estimate.isPending &&
-                          test.estimate.variables?.model === model
-                        }
-                        onEstimate={() =>
-                          test.estimate.mutate({
-                            model,
-                            group: activeGroup,
-                            max_output_tokens: tokens,
-                          })
-                        }
-                        onSelect={setSelected}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <EmptyState title={t('intelligence.noModels')} />
-                )}
-              </>
-            )}
-          </section>
-          <section className='flex flex-col gap-3'>
-            <h2 className='text-xl font-semibold'>
-              {t('intelligence.myHistory')}
-            </h2>
-            <TestHistoryList
-              runs={data.items}
-              onSelect={setSelected}
-              onCancel={(id) => test.cancel.mutate(id)}
-              cancelling={test.cancel.isPending}
-            />
-          </section>
-        </>
+        <section className='flex flex-col gap-3'>
+          <h2 className='text-xl font-semibold'>
+            {t('intelligence.myHistory')}
+          </h2>
+          <p className='text-muted-foreground text-xs'>
+            {t('fingerprint.legacyHistory')}
+          </p>
+          <TestHistoryList
+            runs={data.items}
+            onSelect={setSelected}
+            onCancel={(id) => test.cancel.mutate(id)}
+            cancelling={test.cancel.isPending}
+          />
+        </section>
+      )}
+      {selfTest && test.enabled && !test.quote && (
+        <SelfTestDialog
+          key={`${selfTest.group}:${selfTest.model}`}
+          {...selfTest}
+          tokens={data?.eligible_tokens_by_group?.[selfTest.group] ?? []}
+          maxOutputTokens={data?.limits.default_output_tokens ?? 2048}
+          pending={test.estimate.isPending}
+          disabled={running || unresolvedPending}
+          onClose={() => {
+            test.dismissEstimate()
+            setSelfTest(null)
+          }}
+          onEstimate={(selection) => test.estimate.mutate(selection)}
+        />
       )}
       {test.quote && (
         <BudgetDialog
           key={test.quote.confirmation_token}
           quote={test.quote}
           onClose={() => test.setQuote(null)}
-          onConfirm={test.confirm}
+          onConfirm={() => {
+            setSelfTest(null)
+            test.confirm()
+          }}
         />
       )}
       {currentSelection && (

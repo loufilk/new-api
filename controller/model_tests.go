@@ -17,8 +17,10 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/modelfingerprint"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
@@ -29,15 +31,16 @@ import (
 	"golang.org/x/net/html"
 )
 
-const modelTestVersion = "pelican-static-v1"
+const modelTestVersion = "local-fingerprint-v1"
 
 // Original task text, dedicated to the public domain under CC0-1.0. This is a
 // public visual programming exercise, not a secret identity test or an IQ test.
 const modelTestPrompt = "Create one self-contained HTML document showing a cheerful pelican riding a bicycle beside a pond. Include two wheels, a visible beak, pedals and a blue pond. Use only inline SVG and CSS; no JavaScript, links, fonts, images, external resources, forms, embedded documents or network requests. Output only the complete HTML, without markdown fences. Keep the illustration readable at 360 pixels wide."
 const modelTestTimeout = 90 * time.Second
-const modelTestResponseLimit = 512 << 10
+const modelTestResponseLimit = 64 << 10
 
 type modelTestSelection struct {
+	TokenID         int    `json:"token_id"`
 	Model           string `json:"model"`
 	Group           string `json:"group"`
 	MaxOutputTokens int    `json:"max_output_tokens"`
@@ -50,11 +53,14 @@ type modelTestRequest struct {
 }
 type modelTestConfirmation struct {
 	modelTestSelection
-	UserID         int    `json:"user_id"`
-	Version        string `json:"version"`
-	ExpiresAt      int64  `json:"expires_at"`
-	EstimatedQuota *int   `json:"estimated_quota"`
-	PricingHash    string `json:"pricing_hash"`
+	UserID         int                          `json:"user_id"`
+	Version        string                       `json:"version"`
+	ExpiresAt      int64                        `json:"expires_at"`
+	EstimatedQuota *int                         `json:"estimated_quota"`
+	Challenges     []modelfingerprint.Challenge `json:"challenges"`
+	TokenIdentity  string                       `json:"token_identity"`
+	Nonce          string                       `json:"nonce"`
+	PricingHash    string                       `json:"pricing_hash"`
 }
 
 // Bind confirmation to current configuration, not merely a displayed amount.
@@ -71,7 +77,7 @@ func modelTestPricingHash(userID int, selected modelTestSelection) (string, erro
 	expression, expressionExists := billing_setting.GetBillingExpr(selected.Model)
 	cache, _ := ratio_setting.GetCacheRatio(selected.Model)
 	creation, _ := ratio_setting.GetCreateCacheRatio(selected.Model)
-	body, err := common.Marshal(gin.H{"model": originalSelection.Model, "billing_model": selected.Model, "group": selected.Group, "group_ratio": service.GetUserGroupRatio(user.Group, selected.Group), "mode": billing_setting.GetBillingMode(selected.Model), "expression": expression, "expression_exists": expressionExists, "price": price, "priced": priced, "ratio": ratio, "ratio_exists": ratioExists, "completion": ratio_setting.GetCompletionRatio(selected.Model), "cache": cache, "creation": creation, "quota_per_unit": common.QuotaPerUnit, "scenario_quota": estimateModelTestQuota(userID, originalSelection)})
+	body, err := common.Marshal(gin.H{"model": originalSelection.Model, "billing_model": selected.Model, "group": selected.Group, "group_ratio": service.GetUserGroupRatio(user.Group, selected.Group), "mode": billing_setting.GetBillingMode(selected.Model), "expression": expression, "expression_exists": expressionExists, "price": price, "priced": priced, "ratio": ratio, "ratio_exists": ratioExists, "completion": ratio_setting.GetCompletionRatio(selected.Model), "cache": cache, "creation": creation, "quota_per_unit": common.QuotaPerUnit})
 	if err != nil {
 		return "", err
 	}
@@ -136,47 +142,55 @@ func validateModelTestSelection(userID int, selected modelTestSelection) error {
 	return nil
 }
 
-func modelTestBody(selected modelTestSelection) []byte {
-	body, _ := common.Marshal(gin.H{"model": selected.Model, "group": selected.Group, "stream": false, "max_tokens": selected.MaxOutputTokens, "messages": []gin.H{{"role": "user", "content": modelTestPrompt}}})
+func modelTestBody(selected modelTestSelection, prompt string) []byte {
+	body, _ := common.Marshal(gin.H{"model": selected.Model, "stream": false, "max_tokens": selected.MaxOutputTokens, "messages": []gin.H{{"role": "user", "content": prompt}}})
 	return body
 }
 
 // This is a scenario estimate (uncached text, full chosen output), NOT a
 // monetary ceiling. Actual pricing/usage and channel configuration remain the
 // ordinary relay's responsibility. No duplicate reserve or settlement exists.
-func estimateModelTestQuota(userID int, selected modelTestSelection) *int {
+func estimateModelTestQuota(userID int, selected modelTestSelection, challenges []modelfingerprint.Challenge) *int {
+	if len(challenges) != 3 {
+		return nil
+	}
 	user, err := model.GetUserCache(userID)
 	if err != nil {
 		return nil
 	}
-	originalBody := modelTestBody(selected)
-	prompt := float64(service.CountTokenInput(modelTestPrompt, selected.Model) + 8)
+	originalModel := selected.Model
 	selected.Model = helper.ResolveBillingModelName(selected.Model)
 	groupRatio := service.GetUserGroupRatio(user.Group, selected.Group)
-	var value float64
-	if billing_setting.GetBillingMode(selected.Model) == billing_setting.BillingModeTieredExpr {
-		expression, exists := billing_setting.GetBillingExpr(selected.Model)
-		if !exists {
+	var total float64
+	for _, challenge := range challenges {
+		var value float64
+		originalBody := modelTestBody(modelTestSelection{Model: originalModel, Group: selected.Group, MaxOutputTokens: selected.MaxOutputTokens, TokenID: selected.TokenID}, challenge.Prompt)
+		prompt := float64(service.CountTokenInput(challenge.Prompt, originalModel) + 8)
+		if billing_setting.GetBillingMode(selected.Model) == billing_setting.BillingModeTieredExpr {
+			expression, exists := billing_setting.GetBillingExpr(selected.Model)
+			if !exists {
+				return nil
+			}
+			value, _, err = billingexpr.RunExprWithRequest(expression, billingexpr.TokenParams{P: prompt, Len: prompt, C: float64(selected.MaxOutputTokens)}, billingexpr.RequestInput{Body: originalBody, Headers: map[string]string{"content-type": "application/json"}, Timestamp: time.Now().Unix()})
+			if err != nil {
+				return nil
+			}
+			value *= common.QuotaPerUnit * groupRatio / 1_000_000
+		} else if price, ok := ratio_setting.GetModelPrice(selected.Model, false); ok {
+			value = price * common.QuotaPerUnit * groupRatio
+		} else {
+			ratio, ok, _ := ratio_setting.GetModelRatio(selected.Model)
+			if !ok {
+				return nil
+			}
+			value = (prompt + float64(selected.MaxOutputTokens)*ratio_setting.GetCompletionRatio(selected.Model)) * ratio * groupRatio
+		}
+		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 			return nil
 		}
-		value, _, err = billingexpr.RunExprWithRequest(expression, billingexpr.TokenParams{P: prompt, Len: prompt, C: float64(selected.MaxOutputTokens)}, billingexpr.RequestInput{Body: originalBody, Headers: map[string]string{"content-type": "application/json"}, Timestamp: time.Now().Unix()})
-		if err != nil {
-			return nil
-		}
-		value *= common.QuotaPerUnit * groupRatio / 1_000_000
-	} else if price, ok := ratio_setting.GetModelPrice(selected.Model, false); ok {
-		value = price * common.QuotaPerUnit * groupRatio
-	} else {
-		ratio, ok, _ := ratio_setting.GetModelRatio(selected.Model)
-		if !ok {
-			return nil
-		}
-		value = (prompt + float64(selected.MaxOutputTokens)*ratio_setting.GetCompletionRatio(selected.Model)) * ratio * groupRatio
+		total += math.Ceil(value)
 	}
-	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-		return nil
-	}
-	quota, err := common.QuotaFromFloatStrict(math.Ceil(value))
+	quota, err := common.QuotaFromFloatStrict(total)
 	if err != nil {
 		return nil
 	}
@@ -192,7 +206,7 @@ func signModelTestConfirmation(ticket modelTestConfirmation) string {
 }
 
 func verifyModelTestConfirmation(value string, userID int, selection modelTestSelection) (*modelTestConfirmation, bool) {
-	if len(value) > 4096 {
+	if len(value) > 16384 {
 		return nil, false
 	}
 	bodyPart, signaturePart, ok := strings.Cut(value, ".")
@@ -226,6 +240,11 @@ func GetModelTests(c *gin.Context) {
 		modelTestError(c, 503, "history_unavailable")
 		return
 	}
+	effectivePoints, effectiveErr := model.ListEffectiveModelTestRuns(c.GetInt("id"))
+	if effectiveErr != nil {
+		modelTestError(c, 503, "history_unavailable")
+		return
+	}
 	enabled, settingsErr := model.ModelTestEnabled(c.Request.Context())
 	availabilityError := ""
 	if settingsErr != nil {
@@ -248,7 +267,12 @@ func GetModelTests(c *gin.Context) {
 			availabilityError = "model_test_settings_unavailable"
 		}
 	}
-	common.ApiSuccess(c, gin.H{"enabled": enabled, "availability_error": availabilityError, "benchmark": gin.H{"id": modelTestVersion, "name": "Pelican static illustration", "prompt": modelTestPrompt, "license": "CC0-1.0", "public_prompt": true, "assessment": "structural-only"}, "limits": gin.H{"max_output_tokens": 4096, "default_output_tokens": 2048, "allowed_output_tokens": []int{2048, 4096}, "timeout_seconds": 90, "runs_per_hour": 3, "concurrency_per_user": 1, "concurrency_global": 4}, "eligible_models_by_group": catalogue, "site_results": []any{}, "items": items})
+	tokens, tokenErr := modelTestTokens(c, catalogue)
+	if tokenErr != nil {
+		enabled = false
+		availabilityError = "token_catalogue_unavailable"
+	}
+	common.ApiSuccess(c, gin.H{"effective_points": effectivePoints, "eligible_tokens_by_group": tokens, "enabled": enabled, "availability_error": availabilityError, "benchmark": gin.H{"id": modelTestVersion, "name": "Local statistical model fingerprint", "public_prompt": true, "assessment": "statistical-not-proof", "sample_count": 3}, "limits": gin.H{"max_output_tokens": 4096, "default_output_tokens": 2048, "allowed_output_tokens": []int{2048, 4096}, "timeout_seconds": 90, "runs_per_hour": 3, "concurrency_per_user": 1, "concurrency_global": 4}, "eligible_models_by_group": catalogue, "site_results": []any{}, "items": items})
 }
 
 // Reads primary storage every time; neither a signed quote nor an administrator
@@ -271,6 +295,10 @@ func EstimateModelTest(c *gin.Context) {
 	if !requireModelTestEnabled(c) {
 		return
 	}
+	if modelfingerprint.Ready() != nil {
+		modelTestError(c, 503, "fingerprint_unavailable")
+		return
+	}
 	var selected modelTestSelection
 	if common.DecodeJsonStrict(http.MaxBytesReader(c.Writer, c.Request.Body, 4096), &selected) != nil {
 		modelTestError(c, 400, "invalid_selection")
@@ -286,6 +314,11 @@ func EstimateModelTest(c *gin.Context) {
 		modelTestError(c, 400, "model_or_group_unavailable")
 		return
 	}
+	_, identity, tokenErr := selectedModelTestToken(c, selected)
+	if tokenErr != nil {
+		modelTestError(c, 400, "token_unavailable")
+		return
+	}
 	pricingHash, err := modelTestPricingHash(c.GetInt("id"), selected)
 	if err != nil {
 		modelTestError(c, 503, "catalogue_unavailable")
@@ -294,11 +327,20 @@ func EstimateModelTest(c *gin.Context) {
 	if !requireModelTestEnabled(c) {
 		return
 	}
-	ticket := modelTestConfirmation{modelTestSelection: selected, UserID: c.GetInt("id"), Version: modelTestVersion, ExpiresAt: time.Now().Add(5 * time.Minute).Unix(), EstimatedQuota: estimateModelTestQuota(c.GetInt("id"), selected), PricingHash: pricingHash}
+	challenges, err := modelfingerprint.GenerateChallenges()
+	if err != nil || len(challenges) != 3 {
+		modelTestError(c, 503, "fingerprint_unavailable")
+		return
+	}
+	ticket := modelTestConfirmation{Challenges: challenges, TokenIdentity: identity, Nonce: uuid.NewString(), modelTestSelection: selected, UserID: c.GetInt("id"), Version: modelTestVersion, ExpiresAt: time.Now().Add(5 * time.Minute).Unix(), EstimatedQuota: estimateModelTestQuota(c.GetInt("id"), selected, challenges), PricingHash: pricingHash}
+	if ticket.EstimatedQuota == nil {
+		modelTestError(c, 503, "pricing_unavailable")
+		return
+	}
 	if !finishControllerGroupConfigRead(c, guard) {
 		return
 	}
-	common.ApiSuccess(c, gin.H{"model": selected.Model, "group": selected.Group, "max_output_tokens": selected.MaxOutputTokens, "estimated_quota": ticket.EstimatedQuota, "quota_per_unit": common.QuotaPerUnit, "estimate_is_cap": false, "timeout_seconds": 90, "benchmark_id": modelTestVersion, "confirmation_token": signModelTestConfirmation(ticket), "expires_at": ticket.ExpiresAt})
+	common.ApiSuccess(c, gin.H{"token_id": selected.TokenID, "sample_count": 3, "model": selected.Model, "group": selected.Group, "max_output_tokens": selected.MaxOutputTokens, "estimated_quota": ticket.EstimatedQuota, "quota_per_unit": common.QuotaPerUnit, "estimate_is_cap": false, "timeout_seconds": 90, "benchmark_id": modelTestVersion, "confirmation_token": signModelTestConfirmation(ticket), "expires_at": ticket.ExpiresAt})
 }
 
 func GetModelTest(c *gin.Context) {
@@ -307,11 +349,15 @@ func GetModelTest(c *gin.Context) {
 		modelTestError(c, 404, "run_not_found")
 		return
 	}
+	prompt := ""
+	if run.BenchmarkID == "pelican-static-v1" {
+		prompt = modelTestPrompt
+	}
 	common.ApiSuccess(c, struct {
 		*model.ModelTestRun
 		ArtworkHTML string `json:"artwork_html"`
-		Prompt      string `json:"prompt"`
-	}{run, run.ArtworkHTML, modelTestPrompt})
+		Prompt      string `json:"prompt,omitempty"`
+	}{run, run.ArtworkHTML, prompt})
 }
 
 func CancelModelTest(c *gin.Context) {
@@ -323,12 +369,12 @@ func CancelModelTest(c *gin.Context) {
 	common.ApiSuccess(c, run)
 }
 
-// PrepareModelTest wraps the *same* UserCallInterception -> Distribute ->
-// Playground chain as /user/playground/chat. It replaces the client body with
-// the versioned task before that chain can see it. No API key is minted.
+// PrepareModelTest uses a validated existing owned API token with normal relay
+// accounting. It replaces all client-controlled input before interception and
+// distribution. No key is minted, returned, or accepted from the browser.
 func PrepareModelTest(c *gin.Context) {
 	var request modelTestRequest
-	if common.DecodeJsonStrict(http.MaxBytesReader(c.Writer, c.Request.Body, 8192), &request) != nil || !request.Confirmed {
+	if common.DecodeJsonStrict(http.MaxBytesReader(c.Writer, c.Request.Body, 24576), &request) != nil || !request.Confirmed {
 		modelTestError(c, 400, "confirmation_required")
 		return
 	}
@@ -341,7 +387,7 @@ func PrepareModelTest(c *gin.Context) {
 	// Reconciliation of an owned, already-created request never initiates work.
 	// It remains possible after a confirmation expires or prices change.
 	if previous, lookupErr := model.GetModelTestRun(userID, request.RequestID); lookupErr == nil {
-		if previous.Model != request.Model || previous.Group != request.Group || previous.MaxOutputTokens != request.MaxOutputTokens || previous.BenchmarkID != modelTestVersion {
+		if previous.TokenID != request.TokenID || previous.Model != request.Model || previous.Group != request.Group || previous.MaxOutputTokens != request.MaxOutputTokens || previous.BenchmarkID != modelTestVersion {
 			modelTestError(c, 409, "request_id_conflict")
 			return
 		}
@@ -350,6 +396,10 @@ func PrepareModelTest(c *gin.Context) {
 		return
 	}
 	if !requireModelTestEnabled(c) {
+		return
+	}
+	if modelfingerprint.Ready() != nil {
+		modelTestError(c, 503, "fingerprint_unavailable")
 		return
 	}
 	ticket, ok := verifyModelTestConfirmation(request.ConfirmationToken, userID, request.modelTestSelection)
@@ -367,13 +417,39 @@ func PrepareModelTest(c *gin.Context) {
 		modelTestError(c, 400, "model_or_group_unavailable")
 		return
 	}
+	token, identity, tokenErr := selectedModelTestToken(c, request.modelTestSelection)
+	if tokenErr != nil || identity != ticket.TokenIdentity {
+		modelTestError(c, 409, "confirmation_token_changed")
+		return
+	}
+	if ticket.Nonce == "" || len(ticket.Challenges) != 3 {
+		modelTestError(c, 400, "confirmation_expired_or_invalid")
+		return
+	}
+	userCache, cacheErr := model.GetUserCache(userID)
+	if cacheErr != nil {
+		modelTestError(c, 503, "token_unavailable")
+		return
+	}
+	userCache.WriteContext(c)
+	if middleware.SetupContextForToken(c, token) != nil {
+		modelTestError(c, 400, "token_unavailable")
+		return
+	}
+	common.SetContextKey(c, constant.ContextKeyUsingGroup, request.Group)
+	currentEstimate := estimateModelTestQuota(userID, request.modelTestSelection, ticket.Challenges)
+	if currentEstimate == nil || ticket.EstimatedQuota == nil || *currentEstimate != *ticket.EstimatedQuota {
+		modelTestError(c, 409, "confirmation_price_changed")
+		return
+	}
 	pricingHash, err := modelTestPricingHash(userID, request.modelTestSelection)
 	if err != nil || pricingHash != ticket.PricingHash {
 		modelTestError(c, 409, "confirmation_price_changed")
 		return
 	}
 	now := time.Now()
-	run := &model.ModelTestRun{ID: request.RequestID, UserID: userID, Model: request.Model, Group: request.Group, BenchmarkID: modelTestVersion, Status: "running", Assessment: "unassessed", CreatedAt: now.Unix(), ExpiresAt: now.Add(modelTestTimeout + 30*time.Second).Unix(), MaxOutputTokens: request.MaxOutputTokens, EstimatedQuota: ticket.EstimatedQuota, RequestID: c.GetString(common.RequestIdKey)}
+	confirmationID := fmt.Sprintf("%x", sha256.Sum256([]byte(request.ConfirmationToken)))
+	run := &model.ModelTestRun{Source: "user", TokenID: request.TokenID, ConfirmationID: &confirmationID, ID: request.RequestID, UserID: userID, Model: request.Model, Group: request.Group, BenchmarkID: modelTestVersion, Status: "running", Assessment: "unassessed", CreatedAt: now.Unix(), ExpiresAt: now.Add(modelTestTimeout + 30*time.Second).Unix(), MaxOutputTokens: request.MaxOutputTokens, EstimatedQuota: ticket.EstimatedQuota, RequestID: c.GetString(common.RequestIdKey)}
 	if !finishControllerGroupConfigRead(c, guard) {
 		return
 	}
@@ -428,7 +504,7 @@ func PrepareModelTest(c *gin.Context) {
 	buffer := &modelTestWriter{ResponseWriter: originalWriter, header: make(http.Header), status: 200, cancel: cancel}
 	c.Writer = buffer
 	defer func() { c.Writer = originalWriter }()
-	body := modelTestBody(request.modelTestSelection)
+	body := modelTestBody(request.modelTestSelection, ticket.Challenges[0].Prompt)
 	common.CleanupBodyStorage(c)
 	c.Set(common.KeyRequestBody, body)
 	c.Request = c.Request.WithContext(ctx)
@@ -436,19 +512,26 @@ func PrepareModelTest(c *gin.Context) {
 	c.Request.ContentLength = int64(len(body))
 	// Authentication is complete. A controlled task accepts no user-selected
 	// upstream or pricing headers, and does not retain browser credentials.
+	c.Set("model_test_client_ip", c.ClientIP())
 	c.Request.Header = make(http.Header)
 	c.Request.Header.Set("Content-Type", "application/json")
-	c.Request.URL.Path = "/api/user/playground/chat"
+	c.Request.URL.Path = "/v1/chat/completions"
 	common.SetContextKey(c, constant.ContextKeyModelTestSingleAttempt, true)
+	common.SetContextKey(c, constant.ContextKeyTokenNoRetryWithinGroup, true)
+	common.SetContextKey(c, constant.ContextKeyTokenCrossGroupRetry, false)
 	common.SetContextKey(c, constant.ContextKeyModelTestOutputLimit, request.MaxOutputTokens)
 	c.Set("model_test_confirmed_pricing_hash", ticket.PricingHash)
 	c.Set("model_test_selection", request.modelTestSelection)
+	c.Set("model_test_run", run)
+	c.Set("model_test_token_identity", identity)
+	c.Set("model_test_challenges", ticket.Challenges)
+	c.Set("model_test_estimated_quota", *ticket.EstimatedQuota)
 	c.Next()
 	requestErr := ctx.Err()
 	cancel()
 	<-watchDone
 	c.Writer = originalWriter
-	run.CompletedAt, run.RequestID = time.Now().Unix(), c.GetString(common.RequestIdKey)
+	run.CompletedAt = time.Now().Unix()
 	current, currentErr := model.GetModelTestRun(userID, run.ID)
 	if currentErr != nil {
 		run.Status, run.ErrorCode = "unknown", "history_unavailable"
@@ -462,25 +545,31 @@ func PrepareModelTest(c *gin.Context) {
 		run.Status, run.ErrorCode = "failed", "response_too_large"
 	} else if requestErr != nil {
 		run.Status, run.ErrorCode = "cancelled", "request_cancelled"
+	} else if c.GetBool("model_test_uncertain") {
+		run.Status, run.ErrorCode = "unknown", "upstream_outcome_uncertain"
 	} else if code := c.GetString("model_test_error_code"); code != "" {
 		run.Status, run.ErrorCode = "failed", code
 	} else if buffer.status < 200 || buffer.status >= 300 {
 		run.Status, run.ErrorCode = "failed", "relay_failed"
 	} else {
-		var response struct {
-			Choices []struct {
-				Message struct {
-					Content string `json:"content"`
-				} `json:"message"`
-				FinishReason string `json:"finish_reason"`
-			} `json:"choices"`
-		}
-		if common.Unmarshal(buffer.body.Bytes(), &response) != nil || len(response.Choices) != 1 || response.Choices[0].FinishReason != "stop" {
+		result, exists := c.Get("model_test_fingerprint_result")
+		if !exists {
 			run.Status, run.ErrorCode = "failed", "incomplete_response"
-		} else if artwork, err := staticModelTestArtwork(response.Choices[0].Message.Content); err != nil {
-			run.Status, run.Assessment, run.ErrorCode = "completed", "invalid", "unsafe_or_invalid_artwork"
 		} else {
-			run.Status, run.Assessment, run.ArtworkHTML = "completed", "renderable", artwork
+			data, marshalErr := common.Marshal(result)
+			if marshalErr != nil {
+				run.Status, run.ErrorCode = "failed", "invalid_result"
+			} else {
+				run.Status, run.Assessment, run.FingerprintResult = "completed", "statistical", data
+				if fingerprint, ok := result.(modelfingerprint.Result); ok {
+					run.Assessment = fingerprint.Status
+				}
+			}
+		}
+	}
+	if result, exists := c.Get("model_test_fingerprint_result"); exists {
+		if data, err := common.Marshal(result); err == nil {
+			run.FingerprintResult = data
 		}
 	}
 	if model.FinishModelTestRun(run) != nil {
@@ -518,15 +607,22 @@ func ModelTestPlayground(c *gin.Context) {
 		c.AbortWithStatusJSON(409, gin.H{"error": gin.H{"code": "confirmation_price_changed"}})
 		return
 	}
-	if settings, ok := common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting); ok && settings.SystemPrompt != "" {
+	if settings, ok := common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting); ok && (settings.SystemPrompt != "" || settings.SystemPromptOverride || settings.ThinkingToContent || settings.PassThroughBodyEnabled) {
 		c.Set("model_test_error_code", "channel_overrides_not_supported")
 		c.AbortWithStatus(400)
 		return
 	}
 	if raw, exists := common.GetContextKey(c, constant.ContextKeyChannelParamOverride); exists {
-		if overrides, ok := raw.(map[string]any); ok && len(overrides) != 0 {
+		if overrides, ok := raw.(map[string]any); !ok || len(overrides) != 0 {
 			c.Set("model_test_error_code", "channel_overrides_not_supported")
 			c.AbortWithStatusJSON(400, gin.H{"error": gin.H{"code": "channel_overrides_not_supported"}})
+			return
+		}
+	}
+	if raw, exists := common.GetContextKey(c, constant.ContextKeyChannelHeaderOverride); exists {
+		if overrides, ok := raw.(map[string]any); !ok || len(overrides) != 0 {
+			c.Set("model_test_error_code", "channel_overrides_not_supported")
+			c.AbortWithStatus(400)
 			return
 		}
 	}
@@ -536,7 +632,7 @@ func ModelTestPlayground(c *gin.Context) {
 	if !requireModelTestEnabled(c) {
 		return
 	}
-	Playground(c)
+	executeModelFingerprint(c)
 }
 
 type modelTestWriter struct {

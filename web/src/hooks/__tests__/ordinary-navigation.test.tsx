@@ -149,14 +149,14 @@ it.each([1, 5, 10, 100])(
 )
 
 it.each([1, 5, 10, 100])(
-  'role %s sees model test entry only when enabled without hiding ordinary playground',
+  'role %s sees read-only model history even when new tests are disabled without hiding playground',
   async (role) => {
     await renderNavigation(role, true, 'true')
     expect(
       screen
         .getAllByRole('link')
         .some((link) => link.getAttribute('href') === '/intelligence')
-    ).toBe(false)
+    ).toBe(true)
     expect(
       screen.getByRole('link', { name: 'Text Generation' })
     ).toHaveAttribute('href', '/playground')

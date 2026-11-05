@@ -28,15 +28,18 @@ import { toIntlLocale } from '@/i18n/languages'
 
 import { getTestDetail } from './api'
 import { modelTestFailureKeys } from './errors'
+import { FingerprintReport } from './fingerprint-report'
 import { StaticArtwork } from './static-artwork'
 import type { TestRun } from './types'
 
 export function TestResultDialog(props: { run: TestRun; onClose: () => void }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const legacy = props.run.benchmark_id === 'pelican-static-v1'
   const query = useQuery({
     queryKey: ['model-tests', 'detail', props.run.id, props.run.status],
     queryFn: ({ signal }) => getTestDetail(props.run.id, signal),
+    enabled: legacy && props.run.source !== 'site',
     retry: false,
     meta: { errorToast: false },
   })
@@ -64,13 +67,19 @@ export function TestResultDialog(props: { run: TestRun; onClose: () => void }) {
         <p className='text-muted-foreground text-xs'>
           {new Date(props.run.created_at * 1000).toLocaleString(locale)}
         </p>
-        <Alert>
-          <AlertDescription>{t('intelligence.staticOnly')}</AlertDescription>
-        </Alert>
-        {query.isPending && <LoadingState />}
+        {!legacy && <FingerprintReport run={props.run} />}
+        {legacy && props.run.source !== 'site' && (
+          <Alert>
+            <AlertDescription>{t('intelligence.staticOnly')}</AlertDescription>
+          </Alert>
+        )}
+        {query.isLoading && <LoadingState />}
         {query.isError && <ErrorState onRetry={() => void query.refetch()} />}
         {query.data && (
           <>
+            {query.data.fingerprint_result && (
+              <FingerprintReport run={query.data} />
+            )}
             {query.data.artwork_html ? (
               <StaticArtwork html={query.data.artwork_html} />
             ) : (

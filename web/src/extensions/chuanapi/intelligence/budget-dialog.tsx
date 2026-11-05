@@ -63,6 +63,9 @@ export function BudgetDialog(props: {
           {props.quote.group} / {props.quote.model}
         </p>
         <p>
+          {t('fingerprint.selectKey')}: #{props.quote.token_id}
+        </p>
+        <p>
           {t('intelligence.budget', {
             tokens: props.quote.max_output_tokens,
             seconds: props.quote.timeout_seconds,

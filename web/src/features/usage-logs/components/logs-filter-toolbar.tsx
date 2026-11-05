@@ -202,7 +202,19 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
           )}
         </DataTableMobileFilterPanel>
 
-        <DrawerContent className='max-h-[85dvh] p-0'>
+        <DrawerContent
+          className='max-h-[85dvh] p-0'
+          onEscapeKeyDown={(event) => {
+            // Vaul handles Escape in document capture before nested comboboxes.
+            // Let an open field dismiss its own list before closing the drawer.
+            if (
+              event.target instanceof Element &&
+              event.target.closest('[role="combobox"][aria-expanded="true"]')
+            ) {
+              event.preventDefault()
+            }
+          }}
+        >
           <div className='mx-auto flex w-full max-w-md flex-1 flex-col overflow-hidden'>
             <DrawerHeader className='border-border/70 border-b px-4 py-3 text-left'>
               <DrawerTitle>{t('Filter')}</DrawerTitle>

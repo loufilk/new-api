@@ -26,7 +26,6 @@ import en from '@/i18n/locales/en.json'
 import { api } from '@/lib/api'
 
 import { IntelligenceDashboard } from '../index'
-import { ModelTestCard } from '../model-card'
 import type { TestHistory, TestRun, TestSelection, TestRequest } from '../types'
 
 function history(items: TestRun[] = []): TestHistory {
@@ -50,6 +49,18 @@ function history(items: TestRun[] = []): TestHistory {
     site_results: [],
     items,
     eligible_models_by_group: { default: ['test-model'] },
+    eligible_tokens_by_group: {
+      default: [
+        {
+          id: 7,
+          name: 'My matching key',
+          group: 'default',
+          model_limits_enabled: false,
+          model_limits: [],
+          eligible_models: ['test-model'],
+        },
+      ],
+    },
   }
 }
 function run(overrides: Partial<TestRun> = {}): TestRun {
@@ -89,6 +100,9 @@ function mockReads(
   availability: { enabled?: unknown } = { enabled: true }
 ) {
   return vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (String(url).endsWith('/site')) {
+      return { data: { success: true, data: { items: [], targets: [] } } }
+    }
     if (String(url).endsWith('/bootstrap')) {
       return {
         data: {
@@ -117,6 +131,17 @@ function mockReads(
     }
   })
 }
+async function beginEstimate(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole('button', { name: 'Self-test' }))
+  await user.selectOptions(
+    await screen.findByLabelText('Select an existing API key'),
+    '7'
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Review cost and start' })
+  )
+}
+
 beforeEach(async () => {
   i18next.addResourceBundle('en', 'translation', en.translation, true, true)
   await i18next.changeLanguage('en')
@@ -152,11 +177,8 @@ describe('explicit model test workflow', () => {
     expect(
       screen.queryByRole('heading', { name: 'not-eligible' })
     ).not.toBeInTheDocument()
-    expect(screen.getByText('No site results published')).toBeVisible()
     expect(post).not.toHaveBeenCalled()
-    await user.click(
-      screen.getByRole('button', { name: 'Review cost and start' })
-    )
+    await beginEstimate(user)
     const dialog = await screen.findByRole('alertdialog')
     expect(within(dialog).getByText(/not a hard monetary cap/)).toBeVisible()
     expect(
@@ -176,6 +198,7 @@ describe('explicit model test workflow', () => {
       model: 'test-model',
       group: 'default',
       max_output_tokens: 2048,
+      token_id: 7,
       confirmation_token: 'confirmation',
       confirmed: true,
     })
@@ -217,9 +240,7 @@ describe('explicit model test workflow', () => {
       })
       const user = userEvent.setup()
       renderWithQuery(<IntelligenceDashboard />)
-      await user.click(
-        await screen.findByRole('button', { name: 'Review cost and start' })
-      )
+      await beginEstimate(user)
       await user.click(
         await screen.findByRole('button', {
           name: 'Accept charges and run once',
@@ -234,13 +255,11 @@ describe('explicit model test workflow', () => {
             screen.getByRole('button', { name: 'Retry the same request' })
           ).toBeEnabled()
         )
-        expect(
-          screen.getByRole('button', { name: 'Review cost and start' })
-        ).toBeDisabled()
+        expect(screen.getByRole('button', { name: 'Self-test' })).toBeDisabled()
       } else {
         await waitFor(() =>
           expect(
-            screen.getByRole('button', { name: 'Review cost and start' })
+            screen.getByRole('button', { name: 'Self-test' })
           ).toBeEnabled()
         )
         expect(
@@ -260,7 +279,7 @@ describe('explicit model test workflow', () => {
     const user = userEvent.setup()
     renderWithQuery(<IntelligenceDashboard />)
     expect(
-      await screen.findByRole('button', { name: 'Review cost and start' })
+      await screen.findByRole('button', { name: 'Self-test' })
     ).toBeDisabled()
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(post).toHaveBeenCalledWith(
@@ -294,9 +313,7 @@ describe('explicit model test workflow', () => {
     })
     const user = userEvent.setup()
     renderWithQuery(<IntelligenceDashboard />)
-    await user.click(
-      await screen.findByRole('button', { name: 'Review cost and start' })
-    )
+    await beginEstimate(user)
     await user.click(
       await screen.findByRole('button', { name: 'Accept charges and run once' })
     )
@@ -310,6 +327,9 @@ describe('explicit model test workflow', () => {
     let saved: TestRun | null = null
     const get = mockReads()
     get.mockImplementation(async (url) => {
+      if (String(url).endsWith('/site')) {
+        return { data: { success: true, data: { items: [], targets: [] } } }
+      }
       if (String(url).endsWith('/bootstrap')) {
         return {
           data: {
@@ -350,62 +370,24 @@ describe('explicit model test workflow', () => {
     })
     const user = userEvent.setup()
     renderWithQuery(<IntelligenceDashboard />)
-    await user.click(
-      await screen.findByRole('button', { name: 'Review cost and start' })
-    )
+    await beginEstimate(user)
     await user.click(
       await screen.findByRole('button', { name: 'Accept charges and run once' })
     )
     await waitFor(() =>
-      expect(
-        screen.getByRole('button', { name: 'Review cost and start' })
-      ).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Self-test' })).toBeEnabled()
     )
     expect(
       screen.queryByRole('button', { name: 'Retry the same request' })
     ).not.toBeInTheDocument()
     expect(screen.getByText('Failed')).toBeVisible()
   })
-  test('counts only completed renderable results and leaves empty timeline slots unrecorded', async () => {
-    mockReads()
-    const onSelect = vi.fn()
-    renderWithQuery(
-      <ModelTestCard
-        model='test-model'
-        group='default'
-        runs={[
-          run(),
-          run({ id: 'failed', status: 'failed' }),
-          run({ id: 'intercepted', status: 'intercepted' }),
-          run({ id: 'invalid', assessment: 'invalid' }),
-        ]}
-        disabled={false}
-        estimating={false}
-        onEstimate={() => undefined}
-        onSelect={onSelect}
-      />
-    )
-    expect(
-      screen.getByText('Structurally valid: 1 of 4 recent runs')
-    ).toBeVisible()
-    const timeline = screen.getByRole('list', { name: '60-slot test timeline' })
-    expect(
-      within(timeline).getAllByRole('listitem', { hidden: true })
-    ).toHaveLength(60)
-    expect(within(timeline).getAllByRole('button')).toHaveLength(4)
-    await userEvent.click(
-      screen.getByRole('button', { name: 'View latest valid result' })
-    )
-    expect(onSelect).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'test-run' })
-    )
-  })
   test('reports request failures without treating errors as valid model results', async () => {
     vi.spyOn(api, 'get').mockRejectedValue(new Error('Offline'))
     renderWithQuery(<IntelligenceDashboard />)
     expect(await screen.findByRole('button', { name: 'Retry' })).toBeVisible()
     expect(
-      screen.queryByRole('button', { name: 'Review cost and start' })
+      screen.queryByRole('button', { name: 'Self-test' })
     ).not.toBeInTheDocument()
   })
 })
@@ -429,7 +411,7 @@ describe('model test availability', () => {
         )
       ).toBeVisible()
       expect(
-        screen.queryByRole('button', { name: 'Review cost and start' })
+        screen.queryByRole('button', { name: 'Self-test' })
       ).not.toBeInTheDocument()
       expect(
         screen.getByRole('heading', { name: 'My latest 60 tests' })
@@ -465,9 +447,7 @@ describe('model test availability', () => {
       }))
     const user = userEvent.setup()
     const { client } = renderWithQuery(<IntelligenceDashboard />)
-    await user.click(
-      await screen.findByRole('button', { name: 'Review cost and start' })
-    )
+    await beginEstimate(user)
     expect(await screen.findByRole('alertdialog')).toBeVisible()
     client.setQueryData(['model-tests', 'history'], {
       ...history(),
@@ -478,7 +458,7 @@ describe('model test availability', () => {
     )
     client.setQueryData(['model-tests', 'history'], history())
     expect(
-      await screen.findByRole('button', { name: 'Review cost and start' })
+      await screen.findByRole('button', { name: 'Self-test' })
     ).toBeEnabled()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(post).toHaveBeenCalledTimes(1)
@@ -503,9 +483,7 @@ describe('model test availability', () => {
     }))
     const user = userEvent.setup()
     const { client } = renderWithQuery(<IntelligenceDashboard />)
-    await user.click(
-      await screen.findByRole('button', { name: 'Review cost and start' })
-    )
+    await beginEstimate(user)
     expect(await screen.findByRole('alertdialog')).toBeVisible()
     get.mockRejectedValue(new Error('offline'))
     await client.invalidateQueries({ queryKey: ['model-tests', 'history'] })
@@ -513,7 +491,7 @@ describe('model test availability', () => {
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     )
     expect(
-      screen.queryByRole('button', { name: 'Review cost and start' })
+      screen.queryByRole('button', { name: 'Self-test' })
     ).not.toBeInTheDocument()
   })
 })
@@ -544,9 +522,7 @@ test('an estimate response from before a disable-enable cycle cannot reopen the 
   )
   const user = userEvent.setup()
   const { client } = renderWithQuery(<IntelligenceDashboard />)
-  await user.click(
-    await screen.findByRole('button', { name: 'Review cost and start' })
-  )
+  await beginEstimate(user)
   await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
   act(() =>
     client.setQueryData(['model-tests', 'history'], {
@@ -560,12 +536,10 @@ test('an estimate response from before a disable-enable cycle cannot reopen the 
     )
   ).toBeVisible()
   act(() => client.setQueryData(['model-tests', 'history'], history()))
-  await screen.findByRole('button', { name: 'Estimating…' })
+  await screen.findAllByRole('button', { name: 'Estimating…' })
   await act(async () => resolve(undefined))
   await waitFor(() =>
-    expect(
-      screen.getByRole('button', { name: 'Review cost and start' })
-    ).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Self-test' })).toBeEnabled()
   )
   expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   expect(post).toHaveBeenCalledTimes(1)
@@ -598,9 +572,7 @@ test('disabled unknown-outcome requests retain cancellation without offering a p
   })
   const user = userEvent.setup()
   const { client } = renderWithQuery(<IntelligenceDashboard />)
-  await user.click(
-    await screen.findByRole('button', { name: 'Review cost and start' })
-  )
+  await beginEstimate(user)
   await user.click(
     await screen.findByRole('button', { name: 'Accept charges and run once' })
   )
@@ -645,7 +617,7 @@ test('a fresh failed history request never enables cached paid controls on a new
     )
   ).toBeVisible()
   expect(
-    screen.queryByRole('button', { name: 'Review cost and start' })
+    screen.queryByRole('button', { name: 'Self-test' })
   ).not.toBeInTheDocument()
   expect(
     screen.getByRole('heading', { name: 'My latest 60 tests' })
@@ -654,4 +626,54 @@ test('a fresh failed history request never enables cached paid controls on a new
   expect(
     get.mock.calls.some(([url]) => String(url).endsWith('/bootstrap'))
   ).toBe(false)
+})
+
+test('closing key selection while an estimate is pending prevents its late response opening a cost confirmation', async () => {
+  mockReads()
+  let completeEstimate: () => void = () => undefined
+  const post = vi.spyOn(api, 'post').mockImplementation(
+    (_url, body) =>
+      new Promise((resolve) => {
+        completeEstimate = () =>
+          resolve({
+            data: {
+              success: true,
+              data: {
+                ...(body as TestSelection),
+                estimated_quota: 100,
+                quota_per_unit: 500000,
+                estimate_is_cap: false,
+                timeout_seconds: 90,
+                benchmark_id: 'local-fingerprint-v1',
+                confirmation_token: 'late-dismissed',
+                expires_at: Math.floor(Date.now() / 1000) + 300,
+              },
+            },
+          })
+      })
+  )
+  const user = userEvent.setup()
+  renderWithQuery(<IntelligenceDashboard />)
+  await beginEstimate(user)
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  await act(async () => completeEstimate())
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Self-test' })).toBeEnabled()
+  )
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  expect(post).toHaveBeenCalledTimes(1)
+})
+
+test('searching for an absent model shows an empty state without hiding private attempt history', async () => {
+  mockReads()
+  const user = userEvent.setup()
+  renderWithQuery(<IntelligenceDashboard />)
+  await screen.findByRole('button', { name: 'Self-test' })
+  await user.type(screen.getByRole('textbox'), 'absent-model')
+  expect(
+    screen.getByText(en.translation['intelligence.noModels'])
+  ).toBeVisible()
+  expect(
+    screen.getByRole('heading', { name: 'My latest 60 tests' })
+  ).toBeVisible()
 })

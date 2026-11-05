@@ -35,7 +35,7 @@ describe('pool, tests and referral translations', () => {
       const entries = bundle.translation as Record<string, string>
       for (const [key, value] of Object.entries(en.translation).filter(
         ([key]) =>
-          /^(pool|intelligence|affiliate)\./.test(key) ||
+          /^(pool|intelligence|fingerprint|affiliate)\./.test(key) ||
           key === 'Enable model performance tests' ||
           key.startsWith(
             'Disabled by default. Turning this off hides the test entry'

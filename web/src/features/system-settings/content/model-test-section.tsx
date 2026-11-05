@@ -16,48 +16,53 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { handleServerError } from '@/lib/handle-server-error'
 import { ROLE } from '@/lib/roles'
-import { statusQueryOptions } from '@/lib/status-query'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { SettingsSwitchField } from '../components/settings-form-layout'
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
-import { useUpdateOption } from '../hooks/use-update-option'
+import {
+  canEnableAutomaticTests,
+  getModelTestSettings,
+  modelTestSettingsSchema,
+  saveModelTestSettings,
+  validateModelTestTargets,
+  type ModelTestSettings,
+  type ModelTestSettingsInput,
+} from './model-test-settings'
+import { ModelTestTargetEditor } from './model-test-target-editor'
 
 export function ModelTestSection() {
+  const user = useAuthStore((state) => state.auth.user)
+  if (!user || user.role < ROLE.ADMIN) return null
+  return <AdminModelTestSettings key={user.id} userId={user.id} />
+}
+
+function AdminModelTestSettings(props: { userId: number }) {
   const { t } = useTranslation()
-  const isRoot = useAuthStore(
-    (state) => state.auth.user?.role === ROLE.SUPER_ADMIN
-  )
-  // The periodic options map can lag on another node. Read the authoritative
-  // bool from status before presenting an editable value, with no cache fallback.
   const query = useQuery({
-    ...statusQueryOptions,
-    enabled: isRoot,
+    queryKey: ['model-test-settings', props.userId],
+    queryFn: ({ signal }) => getModelTestSettings(signal),
     staleTime: 0,
-    placeholderData: undefined,
     refetchOnMount: 'always',
+    refetchOnWindowFocus: false,
     retry: false,
     meta: { errorToast: false },
   })
-  const settingsAvailable =
-    query.data?.model_test_settings_available === true &&
-    typeof query.data?.model_test_enabled === 'boolean'
-  const savedEnabled = query.data?.model_test_enabled === true
-  const [enabled, setEnabled] = useState(false)
-  const updateOption = useUpdateOption()
-  useEffect(() => {
-    if (query.isFetchedAfterMount && settingsAvailable) setEnabled(savedEnabled)
-  }, [query.isFetchedAfterMount, savedEnabled, settingsAvailable])
-  if (!isRoot) return null
-  if (query.isError || (query.isFetchedAfterMount && !settingsAvailable)) {
+  if (query.isError) {
     return (
       <ErrorState
         title={t('Failed to load settings')}
@@ -65,32 +70,199 @@ export function ModelTestSection() {
       />
     )
   }
-  if (!query.isFetchedAfterMount) return <LoadingState />
+  if (!query.isFetchedAfterMount || !query.data) return <LoadingState />
+  return (
+    <ModelTestSettingsForm
+      key={query.data.version}
+      settings={query.data}
+      userId={props.userId}
+    />
+  )
+}
 
+function ModelTestSettingsForm(props: {
+  settings: ModelTestSettings
+  userId: number
+}) {
+  const { t } = useTranslation()
+  const client = useQueryClient()
+  const form = useForm<ModelTestSettingsInput>({
+    resolver: zodResolver(modelTestSettingsSchema),
+    defaultValues: modelTestSettingsSchema.parse(props.settings),
+  })
+  const values = form.watch()
+  const valid =
+    validateModelTestTargets(values, props.settings.catalogue) &&
+    (!values.automatic_enabled || props.settings.engine_ready)
+  const automaticReady =
+    props.settings.engine_ready && valid && canEnableAutomaticTests(values)
+  const mutation = useMutation({
+    mutationFn: saveModelTestSettings,
+    onSuccess: async (_, input) => {
+      client.setQueryData<Record<string, unknown>>(
+        ['status'],
+        (previous) =>
+          previous && { ...previous, model_test_enabled: input.enabled }
+      )
+      await client.invalidateQueries({ queryKey: ['model-tests'] })
+      await client.invalidateQueries({
+        queryKey: ['model-test-settings', props.userId],
+      })
+      toast.success(t('Setting updated successfully'))
+    },
+    onError: (error) => handleServerError(error, t('Failed to update setting')),
+  })
   return (
     <SettingsSection title={t('intelligence.title')}>
-      <SettingsSwitchField
-        controlId='model-test-enabled'
-        label={t('Enable model performance tests')}
-        description={t(
-          'Disabled by default. Turning this off hides the test entry and blocks new tests, including confirmed requests not yet admitted for dispatch. Normal model calls, account pool and referral rewards are unaffected.'
+      <form
+        className='space-y-5'
+        onSubmit={form.handleSubmit((input) => {
+          if (valid) mutation.mutate(input)
+        })}
+      >
+        <SettingsSwitchField
+          controlId='model-test-enabled'
+          label={t('Enable model performance tests')}
+          description={t(
+            'Turning tests off prevents new runs. Admitted calls can still finish and incur charges; saved history remains available.'
+          )}
+          checked={values.enabled}
+          onCheckedChange={(enabled) => {
+            form.setValue('enabled', enabled, { shouldDirty: true })
+            if (!enabled) {
+              form.setValue('automatic_enabled', false, { shouldDirty: true })
+            }
+          }}
+          disabled={mutation.isPending}
+        />
+        <p className='text-muted-foreground text-sm'>
+          {t(
+            'Automatic fingerprint tests are off by default. Each run makes 3 paid calls. Quota is reserved conservatively before dispatch; this is not a dollar spending cap. Saving targets alone does not run tests.'
+          )}
+        </p>
+        <p className='text-muted-foreground text-sm'>
+          {t(
+            'Automatic site tests support standard OpenAI channels with static pricing only. Dynamic pricing expressions require a manually confirmed personal test.'
+          )}
+        </p>
+        <div className='grid gap-4 sm:grid-cols-2'>
+          <div className='space-y-2'>
+            <Label htmlFor='model-test-period'>
+              {t('Default interval (seconds)')}
+            </Label>
+            <Input
+              id='model-test-period'
+              type='number'
+              min={60}
+              max={604800}
+              step={1}
+              disabled={mutation.isPending}
+              {...form.register('default_period_secs', { valueAsNumber: true })}
+            />
+          </div>
+          <div className='space-y-2'>
+            <Label htmlFor='model-test-budget'>{t('Daily quota budget')}</Label>
+            <Input
+              id='model-test-budget'
+              type='number'
+              min={0}
+              step={1}
+              disabled={mutation.isPending}
+              {...form.register('daily_budget_quota', { valueAsNumber: true })}
+            />
+          </div>
+        </div>
+        <p className='text-muted-foreground text-sm'>
+          {t(
+            'Choose an explicit group, model and channel. Start with a GPT model; no channel is selected automatically. The default interval is one hour. Each group and model can have only one target.'
+          )}
+        </p>
+        {values.targets.map((target, index) => (
+          <ModelTestTargetEditor
+            key={target.id}
+            target={target}
+            catalogue={props.settings.catalogue}
+            disabled={mutation.isPending}
+            onChange={(next) =>
+              form.setValue(
+                'targets',
+                values.targets.map((item, i) => (i === index ? next : item)),
+                { shouldDirty: true }
+              )
+            }
+            onRemove={() =>
+              form.setValue(
+                'targets',
+                values.targets.filter((_, i) => i !== index),
+                { shouldDirty: true }
+              )
+            }
+          />
+        ))}
+        <Button
+          type='button'
+          variant='outline'
+          disabled={mutation.isPending}
+          onClick={() =>
+            form.setValue(
+              'targets',
+              [
+                ...values.targets,
+                {
+                  id: crypto.randomUUID(),
+                  group: '',
+                  model: '',
+                  channel_id: 0,
+                  enabled: true,
+                  period_secs: 0,
+                  max_output_tokens: 2048,
+                  max_run_quota: 0,
+                },
+              ],
+              { shouldDirty: true }
+            )
+          }
+        >
+          {t('Add target')}
+        </Button>
+        {!props.settings.engine_ready && (
+          <p role='status' className='text-muted-foreground text-sm'>
+            {t(
+              'Fingerprint reference data is not ready. Automatic tests cannot be enabled.'
+            )}
+          </p>
         )}
-        checked={enabled}
-        onCheckedChange={setEnabled}
-        disabled={updateOption.isPending}
-      />
-      <p className='text-muted-foreground text-sm'>
-        {t(
-          'Saved changes take effect without a restart. Your test history and cancellation remain available. Requests already admitted for dispatch may still be sent, complete and incur charges.'
+        <SettingsSwitchField
+          controlId='model-test-automatic'
+          label={t('Enable automatic fingerprint tests')}
+          description={t(
+            'Requires enabled tests, a positive daily budget and at least one enabled target with a positive per-run quota no greater than the daily budget.'
+          )}
+          checked={values.automatic_enabled}
+          onCheckedChange={(enabled) =>
+            form.setValue('automatic_enabled', enabled, { shouldDirty: true })
+          }
+          disabled={
+            mutation.isPending || (!values.automatic_enabled && !automaticReady)
+          }
+        />
+        {!valid && (
+          <p role='alert' className='text-destructive text-sm'>
+            {t(
+              'Complete all target selections and valid quota limits before saving. Intervals must be 60–604800 seconds, or 0 to inherit for a target.'
+            )}
+          </p>
         )}
-      </p>
-      <SettingsPageFormActions
-        onSave={() =>
-          updateOption.mutate({ key: 'ModelTestEnabled', value: enabled })
-        }
-        isSaving={updateOption.isPending}
-        isSaveDisabled={enabled === savedEnabled}
-      />
+        <SettingsPageFormActions
+          onSave={() =>
+            void form.handleSubmit((input) => {
+              if (valid) mutation.mutate(input)
+            })()
+          }
+          isSaving={mutation.isPending}
+          isSaveDisabled={!valid || !form.formState.isDirty}
+        />
+      </form>
     </SettingsSection>
   )
 }

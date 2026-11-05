@@ -91,7 +91,7 @@ test.each([
       { isAuthenticated: true, status }
     )
     expect(result.some((link) => link.href === '/account-pool')).toBe(false)
-    expect(result.some((link) => link.href === '/intelligence')).toBe(false)
+    expect(result.some((link) => link.href === '/intelligence')).toBe(true)
     expect(result.some((link) => link.href === '/affiliate')).toBe(true)
   }
 )
@@ -110,13 +110,13 @@ test.each([
   { model_test_enabled: false },
   { model_test_enabled: 'true' },
 ])(
-  'model test navigation requires an explicit boolean enablement (%j)',
+  'signed-in users can read model history regardless of the new-test switch (%j)',
   (status) => {
     const result = applyNavigationExtensions(
       [{ title: 'Tests', href: '/intelligence' }],
       { isAuthenticated: true, status }
     )
-    expect(result.some((link) => link.href === '/intelligence')).toBe(false)
+    expect(result.some((link) => link.href === '/intelligence')).toBe(true)
     expect(result.some((link) => link.href === '/affiliate')).toBe(true)
   }
 )

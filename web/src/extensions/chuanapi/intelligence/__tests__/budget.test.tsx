@@ -27,6 +27,7 @@ import { BudgetDialog } from '../budget-dialog'
 import type { TestEstimate } from '../types'
 
 const quote: TestEstimate = {
+  token_id: 7,
   model: 'test',
   group: 'default',
   max_output_tokens: 2048,

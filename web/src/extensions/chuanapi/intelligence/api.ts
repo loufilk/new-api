@@ -27,6 +27,8 @@ import type {
   TestRequest,
   TestRun,
   TestSelection,
+  SiteTests,
+  SiteRun,
 } from './types'
 
 type Response<T> = { success: boolean; data: T }
@@ -89,4 +91,33 @@ export async function getTestDetail(
       )
     ).data
   ).data
+}
+
+export async function getSiteTests(signal?: AbortSignal): Promise<SiteTests> {
+  const response = requireServerSuccess(
+    (
+      await api.get<Response<Omit<SiteTests, 'items'> & { items: SiteRun[] }>>(
+        `${endpoint}/site`,
+        {
+          signal,
+        }
+      )
+    ).data
+  ).data
+  return {
+    ...response,
+    items: response.items.map((run) => ({
+      ...run,
+      source: 'site' as const,
+      status: run.status === 'succeeded' ? ('completed' as const) : run.status,
+      max_output_tokens: 0,
+      estimated_quota: null,
+      request_id: '',
+      error_code:
+        run.status === 'succeeded' || run.status === 'completed'
+          ? ''
+          : run.assessment,
+      cancel_requested: false,
+    })),
+  }
 }

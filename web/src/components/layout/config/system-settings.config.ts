@@ -36,6 +36,8 @@ import { getOperationsSectionNavItems } from '@/features/system-settings/operati
 import { getPolicySectionNavItems } from '@/features/system-settings/request-policies/section-registry'
 import { getSecuritySectionNavItems } from '@/features/system-settings/security/section-registry.tsx'
 import { getSiteSectionNavItems } from '@/features/system-settings/site/section-registry.tsx'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import type { NavGroup, SidebarBadges, SidebarView } from '../types'
 
@@ -50,6 +52,19 @@ function getSystemSettingsNavGroups(
   t: TFunction,
   badges: SidebarBadges
 ): NavGroup[] {
+  const role = useAuthStore.getState().auth.user?.role ?? 0
+  if (role !== ROLE.SUPER_ADMIN) {
+    if (role < ROLE.ADMIN) return []
+    return [
+      {
+        id: 'system-administration',
+        title: t('System Administration'),
+        items: getContentSectionNavItems(t).filter(
+          (item) => item.url === '/system-settings/content/model-tests'
+        ),
+      },
+    ]
+  }
   return [
     {
       id: 'system-administration',

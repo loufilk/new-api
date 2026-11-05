@@ -78,6 +78,7 @@ function Combobox(
     return (
       <LegacyComboboxInput
         id={props.id}
+        disabled={props.disabled}
         aria-label={props['aria-label']}
         aria-labelledby={props['aria-labelledby']}
         aria-invalid={props['aria-invalid']}

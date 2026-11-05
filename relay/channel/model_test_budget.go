@@ -55,3 +55,25 @@ func validateModelTestOutputBudget(c *gin.Context, req *http.Request) error {
 	}
 	return nil
 }
+
+// Bound the upstream bytes before any adaptor decodes or buffers them. The
+// controller separately caps the normalized response and the analyzer caps text.
+func limitModelTestResponse(c *gin.Context, resp *http.Response) error {
+	if !common.GetContextKeyBool(c, constant.ContextKeyModelTestSingleAttempt) {
+		return nil
+	}
+	if resp == nil || resp.Body == nil {
+		return errors.New("missing controlled model test response")
+	}
+	const limit = 512 << 10
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	_ = resp.Body.Close()
+	if err != nil || len(body) > limit {
+		common.SetContextKey(c, constant.ContextKeyUpstreamResponseDecodeFailed, true)
+		c.Set("model_test_error_code", "response_too_large_or_incomplete")
+		return errors.New("controlled model test response exceeds limit or is incomplete")
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
+	return nil
+}
