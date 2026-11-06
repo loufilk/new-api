@@ -90,6 +90,25 @@ func modelTestError(c *gin.Context, status int, code string) {
 }
 
 func modelTestCatalogue(userID int) (map[string][]string, error) {
+	// The fingerprint catalogue is an allowlist, not the complete relay catalogue.
+	// Apply the administrator's enabled targets before exposing models to users
+	// or admitting manual probes through validateModelTestSelection.
+	config, err := model.GetModelFingerprintSiteConfig(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	allowedTargets := make(map[string]map[string]struct{})
+	if config.Enabled {
+		for _, target := range config.Targets {
+			if !target.Enabled {
+				continue
+			}
+			if allowedTargets[target.Group] == nil {
+				allowedTargets[target.Group] = make(map[string]struct{})
+			}
+			allowedTargets[target.Group][target.Model] = struct{}{}
+		}
+	}
 	user, err := model.GetUserCache(userID)
 	if err != nil {
 		return nil, err
@@ -104,7 +123,7 @@ func modelTestCatalogue(userID int) (map[string][]string, error) {
 	result := make(map[string][]string)
 	var allowedGroups []string
 	for group := range groups {
-		if service.IsUserSelectableGroup(user.Group, group) {
+		if service.IsUserSelectableGroup(user.Group, group) && len(allowedTargets[group]) > 0 {
 			allowedGroups = append(allowedGroups, group)
 			result[group] = []string{}
 		}
@@ -114,7 +133,10 @@ func modelTestCatalogue(userID int) (map[string][]string, error) {
 		return nil, err
 	}
 	for _, ability := range abilities {
-		if _, priced := pricingSet[ability.Model]; priced && !slices.Contains(result[ability.Group], ability.Model) {
+		if _, priced := pricingSet[ability.Model]; priced && allowedTargets[ability.Group] != nil && !slices.Contains(result[ability.Group], ability.Model) {
+			if _, enabled := allowedTargets[ability.Group][ability.Model]; !enabled {
+				continue
+			}
 			result[ability.Group] = append(result[ability.Group], ability.Model)
 		}
 	}
