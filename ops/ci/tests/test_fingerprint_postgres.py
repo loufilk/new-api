@@ -18,7 +18,8 @@ SPEC.loader.exec_module(profile)
 
 def package(path="./model", extra=(), functions=None, envs=(), function_envs=None):
     names = (profile.FINGERPRINT | set(profile.SPECIAL) | set(profile.EMPTY_DATABASE_ENVS)
-             | profile.POSTGRES_CHILD | profile.POSTGRES_STANDALONE | set(profile.MATRIX_REQUIRED_NODES) | set(extra))
+             | profile.POSTGRES_CHILD | profile.POSTGRES_STANDALONE | set(profile.MATRIX_REQUIRED_NODES)
+             | set(profile.REDIS_REQUIRED_NODES) | set(extra))
     return profile.Package(path, sorted(names), functions or {}, function_envs or {}, set(envs), set())
 
 
@@ -31,6 +32,7 @@ def runner_for_test(directory, pkg, phase="postgres"):
     runner.container = "a" * 64
     runner.port = 5432
     runner.password = "synthetic-test-password"
+    runner.redis_port = None
     return runner
 
 
@@ -50,6 +52,18 @@ class FingerprintPostgresProfileTests(unittest.TestCase):
         for top, children in profile.MATRIX_REQUIRED_NODES.items():
             self.assertEqual([top, *(top + "/" + child for child in children)], suites[top].required)
             self.assertNotIn(top + "/postgres", suites[top].required)
+
+    def test_redis_contracts_require_real_children_and_preserve_the_unit_selector(self):
+        suites = profile.build_plan([package()])
+        selected = [suite for suite in suites if suite.phase == "redis"]
+        self.assertEqual(set(profile.REDIS_REQUIRED_NODES), {suite.label for suite in selected})
+        unit = next(suite for suite in suites if suite.phase == "unit")
+        for suite in selected:
+            self.assertEqual("^" + suite.label + "$", suite.pattern)
+            self.assertEqual([suite.label, *(suite.label + "/" + child for child in profile.REDIS_REQUIRED_NODES[suite.label])],
+                             suite.required)
+            self.assertIn(suite.label, unit.tests)
+            self.assertNotIn(suite.label, unit.skip)
 
     def test_task_fixture_callers_are_separated_transitively(self):
         functions = {"TestTaskFinancialContract": {"taskHelper"}, "taskHelper": {"openTaskDialectDatabase"},
@@ -73,6 +87,8 @@ class FingerprintPostgresProfileTests(unittest.TestCase):
                   "TEST_MYSQL_DSN": "ambient-mysql", "TEST_MODEL_POSTGRES_DSN": "ambient-postgres",
                   "AUDIT_POSTGRES_DSN": "ambient-audit", "TEST_DATABASE_COMPAT": "1",
                   "NEW_API_TEST_RECOVERY_RESTART_PHASE": "resume", "PAYMENT_STALE_FIXTURE_CHILD": "1",
+                  "TEST_RUNTIME_REDIS": "1", "TEST_SETTLEMENT_DEADLINE_REDIS_ADDR": "untrusted-cache:6379",
+                  "TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE": "1",
                   "TEST_REDIS_DSN": "redis://127.0.0.1:6379/2", "TEST_AUTH_REDIS_DSN": "redis://127.0.0.1:6379/1"}
         env = profile.clean_environment(source)
         self.assertEqual("", env["SQL_DSN"])
@@ -83,6 +99,31 @@ class FingerprintPostgresProfileTests(unittest.TestCase):
         self.assertEqual("postgres", env["TEST_FINGERPRINT_DIALECT"])
         self.assertEqual(source["TEST_REDIS_DSN"], env["TEST_REDIS_DSN"])
         self.assertEqual(source["TEST_AUTH_REDIS_DSN"], env["TEST_AUTH_REDIS_DSN"])
+        for key in ("TEST_RUNTIME_REDIS", "TEST_SETTLEMENT_DEADLINE_REDIS_ADDR", "TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE"):
+            self.assertEqual("", env[key])
+
+    def test_redis_opt_ins_use_only_the_verified_service_and_a_fresh_service_database(self):
+        pkg = package("./service", envs={"TEST_SERVICE_POSTGRES_DSN"},
+                      function_envs={"TestMain": {"TEST_SERVICE_POSTGRES_DSN"}})
+        with tempfile.TemporaryDirectory() as directory:
+            runner = runner_for_test(directory, pkg, "redis")
+            runner.redis_port = 16379
+            created = []
+            runner.database = lambda name: created.append(name) or "postgres://127.0.0.1/" + name
+            for index, top in enumerate(profile.REDIS_REQUIRED_NODES, 1):
+                env, owned = runner.suite_environment(profile.Suite("redis", pkg.path, top, [top]), index)
+                self.assertNotEqual(env["TEST_POSTGRES_DSN"], env["TEST_SERVICE_POSTGRES_DSN"])
+                if top == "TestModelRateLimitRealRedis":
+                    self.assertEqual("1", env["TEST_RUNTIME_REDIS"])
+                    self.assertEqual("redis://127.0.0.1:16379/3", env["TEST_REDIS_DSN"])
+                    self.assertEqual("", env["TEST_SETTLEMENT_DEADLINE_REDIS_ADDR"])
+                    self.assertEqual("", env["TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE"])
+                else:
+                    self.assertEqual("", env["TEST_RUNTIME_REDIS"])
+                    self.assertEqual("127.0.0.1:16379", env["TEST_SETTLEMENT_DEADLINE_REDIS_ADDR"])
+                    self.assertEqual("1", env["TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE"])
+                self.assertEqual(len(owned), len(set(owned)))
+            self.assertEqual(len(created), len(set(created)))
 
     def test_financial_empty_databases_are_distinct_from_testmain_and_other_suites(self):
         all_keys = set(profile.EMPTY_DATABASE_ENVS.values()) | {"TEST_POSTGRES_DSN", "TEST_MODEL_POSTGRES_DSN"}
@@ -141,6 +182,39 @@ class FingerprintPostgresProfileTests(unittest.TestCase):
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(profile.subprocess, "check_output", return_value="180005\n"):
             with self.assertRaisesRegex(ValueError, "production PostgreSQL 18.6"):
                 profile.Runner("postgres", Path("unused"), [])
+
+    def test_redis_rejects_unowned_wrong_version_or_non_loopback_services(self):
+        base = {"PG_ID": "a" * 64, "PG_TEST_PASSWORD": "synthetic", "NO_AGENT_FIXTURE_OWNED": "1",
+                "REDIS_ID": "b" * 64, "REDIS_PORT": "16379"}
+        cases = [
+            ({"REDIS_ID": "unowned"}, "127.0.0.1:16379\n", "8.8.0", "6379"),
+            ({"REDIS_PORT": "0"}, "127.0.0.1:16379\n", "8.8.0", "6379"),
+            ({}, "0.0.0.0:16379\n", "8.8.0", "6379"),
+            ({}, "127.0.0.1:16380\n", "8.8.0", "6379"),
+            ({}, "127.0.0.1:16379\n[::]:16379\n", "8.8.0", "6379"),
+            ({}, "127.0.0.1:16379\n", "8.7.0", "6379"),
+            ({}, "127.0.0.1:16379\n", "8.8.0", "6380"),
+        ]
+        for changed, bindings, version, port in cases:
+            with self.subTest(changed=changed, bindings=bindings, version=version, port=port):
+                replies = ["180006\n", bindings, f"redis_version:{version}\r\ntcp_port:{port}\r\n"]
+                with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, base | changed, clear=True), \
+                        mock.patch.object(profile.subprocess, "check_output", side_effect=replies), \
+                        mock.patch.object(profile.subprocess, "run") as mutation:
+                    with self.assertRaises(ValueError):
+                        profile.Runner("redis", Path(directory) / "redis", [])
+                    mutation.assert_not_called()
+
+    def test_owned_redis_records_its_verified_version_and_binding(self):
+        env = {"PG_ID": "a" * 64, "PG_TEST_PASSWORD": "synthetic", "NO_AGENT_FIXTURE_OWNED": "1",
+               "REDIS_ID": "b" * 64, "REDIS_PORT": "16379"}
+        replies = ["180006\n", "127.0.0.1:16379\n", "redis_version:8.8.0\r\ntcp_port:6379\r\n"]
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch.object(profile.subprocess, "check_output", side_effect=replies):
+            runner = profile.Runner("redis", Path(directory), [])
+            self.assertEqual(16379, runner.redis_port)
+            evidence = json.loads((Path(directory) / "redis-runtime.json").read_text())
+            self.assertEqual({"container": "b" * 64, "version": "8.8.0", "bindings": ["127.0.0.1:16379"]}, evidence)
 
     def test_required_skip_rejects_successful_go_exit_without_starting_any_database(self):
         real_run = subprocess.run

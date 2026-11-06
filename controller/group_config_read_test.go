@@ -57,6 +57,7 @@ func TestGroupConfigAdmissionHTTP(t *testing.T) {
 		return
 	}
 	require.NoError(t, i18n.Init())
+	setupFingerprintScoringFixture(t)
 	db := setupGroupRenameControllerTest(t)
 	writeOptions := func(values map[string]string) {
 		for key, value := range values {
@@ -158,8 +159,8 @@ func TestGroupConfigAdmissionHTTP(t *testing.T) {
 	// A slow body must not retain a runtime read lock. On the first body read,
 	// perform a remote commit and synchronous writer refresh. This would deadlock
 	// if these handlers acquired their policy guard before decoding JSON.
-	selection := modelTestSelection{Model: "synthetic-model", Group: "new", MaxOutputTokens: 2048}
-	ticket := signModelTestConfirmation(modelTestConfirmation{modelTestSelection: selection, UserID: user.Id, Version: modelTestVersion, ExpiresAt: time.Now().Add(time.Minute).Unix()})
+	selection := modelTestSelection{TokenID: token.Id, Model: "synthetic-model", Group: "new"}
+	ticket := signModelTestConfirmation(modelTestConfirmation{modelTestSelection: selection, OutputUnbounded: true, UserID: user.Id, Version: modelTestVersion, ExpiresAt: time.Now().Add(time.Minute).Unix()})
 	submitBody, err := common.Marshal(modelTestRequest{modelTestSelection: selection, Confirmed: true, RequestID: uuid.NewString(), ConfirmationToken: ticket})
 	require.NoError(t, err)
 	estimateBody, err := common.Marshal(selection)

@@ -35,6 +35,20 @@ import (
 	"gorm.io/gorm"
 )
 
+// Disposable billing schemas and cleanup share the additive payment models.
+// Replacing TestMain's database must not leave transaction or cleanup tables
+// behind in the original database only.
+func serviceFinancialAuxiliaryModels() []any {
+	models := []any{
+		&model.PaymentReceipt{}, &model.RedemptionMutation{},
+		&model.AgentRedemptionAccount{}, &model.AgentRedemptionLedger{}, &model.AgentRedemptionOperation{},
+		&model.AgentInvitation{}, &model.AgentInvitationPolicy{}, &model.AgentInvitationPolicyAudit{},
+	}
+	models = append(models, model.AgentPlatformModels()...)
+	models = append(models, model.BonusSourceModels()...)
+	return append(models, model.ReferralRewardModels()...)
+}
+
 func TestMain(m *testing.M) {
 	var driver gorm.Dialector = sqlite.Open(":memory:")
 	databaseType := common.DatabaseTypeSQLite
@@ -96,7 +110,7 @@ func TestMain(m *testing.M) {
 		&model.SubscriptionPlan{},
 		&model.SubscriptionOrder{},
 		&model.SubscriptionPreConsumeRecord{},
-	}, append(append(append([]any{&model.PaymentReceipt{}, &model.RedemptionMutation{}, &model.AgentRedemptionAccount{}, &model.AgentRedemptionLedger{}, &model.AgentRedemptionOperation{}, &model.AgentInvitation{}, &model.AgentInvitationPolicy{}, &model.AgentInvitationPolicyAudit{}}, model.AgentPlatformModels()...), model.BonusSourceModels()...), model.ReferralRewardModels()...)...)...); err != nil {
+	}, serviceFinancialAuxiliaryModels()...)...); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
 
@@ -143,7 +157,7 @@ func initServiceTestDatabaseDialect() error {
 func truncate(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
-		for _, schema := range append(append(append([]any{&model.PaymentReceipt{}, &model.RedemptionMutation{}, &model.AgentRedemptionAccount{}, &model.AgentRedemptionLedger{}, &model.AgentRedemptionOperation{}, &model.AgentInvitation{}, &model.AgentInvitationPolicy{}, &model.AgentInvitationPolicyAudit{}}, model.AgentPlatformModels()...), model.BonusSourceModels()...), model.ReferralRewardModels()...) {
+		for _, schema := range serviceFinancialAuxiliaryModels() {
 			statement := &gorm.Statement{DB: model.DB}
 			require.NoError(t, statement.Parse(schema))
 			require.NoError(t, model.DB.Exec("DELETE FROM "+statement.Schema.Table).Error)
@@ -899,21 +913,11 @@ func TestSettleMidjourneyTaskBillingFundingFailurePreservesPreparedMarkers(t *te
 	require.True(t, prepared)
 	require.NoError(t, task.Insert())
 
-	require.NoError(t, model.DB.Exec(`
-		CREATE TRIGGER fail_midjourney_user_update
-		BEFORE UPDATE ON users
-		WHEN OLD.id = 52
-		BEGIN
-			SELECT RAISE(ABORT, 'forced user quota failure');
-		END;
-	`).Error)
-	t.Cleanup(func() {
-		model.DB.Exec("DROP TRIGGER IF EXISTS fail_midjourney_user_update")
-	})
+	removeTrigger := installBillingUpdateFailure(t, model.DB, "fail_midjourney_user_update", "users", userID, "forced user quota failure")
 
 	billed, err := SettleMidjourneyTaskBilling(relayInfo, task, prepared)
 
-	require.Error(t, err)
+	require.ErrorContains(t, err, "forced user quota failure", "must reach the actual SQL trigger")
 	assert.False(t, billed)
 	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
 	assert.Equal(t, initialTokenQuota, getTokenRemainQuota(t, tokenID))
@@ -932,7 +936,7 @@ func TestSettleMidjourneyTaskBillingFundingFailurePreservesPreparedMarkers(t *te
 	assert.Zero(t, requestCount)
 	assert.Zero(t, getChannelUsedQuota(t, channelID))
 	assert.Zero(t, countLogs(t))
-	require.NoError(t, model.DB.Exec("DROP TRIGGER fail_midjourney_user_update").Error)
+	removeTrigger()
 	billed, err = SettleMidjourneyTaskBilling(relayInfo, &persisted, prepared)
 	require.NoError(t, err)
 	require.True(t, billed)
@@ -968,21 +972,11 @@ func TestSettleMidjourneyTaskBillingTokenFailureRollsBackFundingAtomically(t *te
 	require.True(t, prepared)
 	require.NoError(t, task.Insert())
 
-	require.NoError(t, model.DB.Exec(`
-		CREATE TRIGGER fail_midjourney_token_update
-		BEFORE UPDATE ON tokens
-		WHEN OLD.id = 53
-		BEGIN
-			SELECT RAISE(ABORT, 'forced token quota failure');
-		END;
-	`).Error)
-	t.Cleanup(func() {
-		model.DB.Exec("DROP TRIGGER IF EXISTS fail_midjourney_token_update")
-	})
+	removeTrigger := installBillingUpdateFailure(t, model.DB, "fail_midjourney_token_update", "tokens", tokenID, "forced token quota failure")
 
 	billed, err := SettleMidjourneyTaskBilling(relayInfo, task, prepared)
 
-	require.Error(t, err)
+	require.ErrorContains(t, err, "forced token quota failure", "must reach the actual SQL trigger")
 	require.False(t, billed)
 	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
 	assert.Equal(t, initialTokenQuota, getTokenRemainQuota(t, tokenID))
@@ -1002,7 +996,7 @@ func TestSettleMidjourneyTaskBillingTokenFailureRollsBackFundingAtomically(t *te
 	assert.Zero(t, requestCount)
 	assert.Zero(t, getChannelUsedQuota(t, channelID))
 	assert.Zero(t, countLogs(t))
-	require.NoError(t, model.DB.Exec("DROP TRIGGER fail_midjourney_token_update").Error)
+	removeTrigger()
 	billed, err = SettleMidjourneyTaskBilling(relayInfo, &persisted, prepared)
 	require.NoError(t, err)
 	require.True(t, billed)

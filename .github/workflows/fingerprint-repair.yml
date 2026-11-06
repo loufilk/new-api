@@ -44,6 +44,7 @@ jobs:
     env:
       NO_AGENT_FIXTURE_OWNED: '1'
       PG_PORT: '5432'
+      REDIS_PORT: '6379'
       PG_TEST_PASSWORD: fingerprint
       TEST_FINGERPRINT_DIALECT: postgres
       TEST_SECURITY_DIALECT: postgres
@@ -75,6 +76,7 @@ jobs:
           git rev-parse HEAD > verification/commit.txt
           go version > verification/go-version.txt
           printf 'PG_ID=%s\n' "$PG_ID" >> "$GITHUB_ENV"
+          printf 'REDIS_ID=%s\nREDIS_PORT=%s\n' "$REDIS_ID" "$REDIS_PORT" >> "$GITHUB_ENV"
           docker exec "$PG_ID" psql -U postgres -d no_agent_test -Atc 'SHOW server_version;' | tee verification/postgresql-version.txt
           docker exec "$REDIS_ID" redis-server --version | tee verification/redis-version.txt
       - name: Validate PostgreSQL verification plan
@@ -102,6 +104,11 @@ jobs:
       - name: Task read and rate limits on an empty PostgreSQL database
         if: success() || failure()
         run: python3 ops/ci/verify_fingerprint_postgres.py router-task
+      - name: Redis rate limits and settlement deadlines on the owned service
+        if: success() || failure()
+        # SCRIPT FLUSH and CLIENT PAUSE affect the whole temporary server.
+        # Steps are serial; no other Go verification runs during this phase.
+        run: python3 ops/ci/verify_fingerprint_postgres.py redis
       - name: Independent Go modules and real Unix socket service
         if: success() || failure()
         run: |

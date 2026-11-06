@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -23,7 +24,12 @@ import (
 )
 
 func TestModelTestFinalConvertedThinkingBudgetIsEnforcedBeforeHTTP(t *testing.T) {
-	setupModelTestSwitchPostgres(t)
+	db := setupModelTestSwitchPostgres(t)
+	const modelName = "claude-3-7-sonnet@thinking:8192"
+	targets, err := common.Marshal([]model.ModelFingerprintSiteTarget{{Group: "default", Model: modelName, Enabled: true}})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.ModelFingerprintSiteConfig{ID: 1, TargetsJSON: string(targets)}).Error)
+	require.NoError(t, model.RequireModelTestTarget(t.Context(), "default", modelName))
 	service.InitHttpClient()
 	for _, selected := range []uint{1024, 2048, 4096} {
 		t.Run(fmt.Sprint(selected), func(t *testing.T) {
@@ -40,7 +46,9 @@ func TestModelTestFinalConvertedThinkingBudgetIsEnforcedBeforeHTTP(t *testing.T)
 			c.Request = httptest.NewRequest("POST", "/test", bytes.NewReader(nil))
 			common.SetContextKey(c, constant.ContextKeyModelTestSingleAttempt, true)
 			common.SetContextKey(c, constant.ContextKeyModelTestOutputLimit, int(selected))
-			original := &dto.GeneralOpenAIRequest{Model: "claude-3-7-sonnet@thinking:8192", MaxTokens: &selected, Messages: []dto.Message{{Role: "user", Content: "Draw a pelican"}}}
+			common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+			common.SetContextKey(c, constant.ContextKeyOriginalModel, modelName)
+			original := &dto.GeneralOpenAIRequest{Model: modelName, MaxTokens: &selected, Messages: []dto.Message{{Role: "user", Content: "Draw a pelican"}}}
 			info := &relaycommon.RelayInfo{OriginModelName: original.Model, Request: original, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: original.Model}}
 			outbound, err := common.DeepCopy(original)
 			require.NoError(t, err)

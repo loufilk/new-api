@@ -118,8 +118,7 @@ func TestPostConsumeQuotaRollsBackWalletWhenTokenUpdateFails(t *testing.T) {
 	const userID = 9450
 	seedBonusUser(t, userID, 0, 10_000)
 	seedToken(t, 999_999, userID, "existing-token", 10_000)
-	require.NoError(t, model.DB.Exec(`CREATE TRIGGER fail_legacy_settle_token BEFORE UPDATE ON tokens BEGIN SELECT RAISE(ABORT, 'forced token update failure'); END`).Error)
-	t.Cleanup(func() { model.DB.Exec("DROP TRIGGER IF EXISTS fail_legacy_settle_token") })
+	installBillingUpdateFailure(t, model.DB, "fail_legacy_settle_token", "tokens", 0, "forced token update failure")
 	relayInfo := &relaycommon.RelayInfo{
 		UserId:          userID,
 		TokenId:         999_999,
@@ -130,7 +129,7 @@ func TestPostConsumeQuotaRollsBackWalletWhenTokenUpdateFails(t *testing.T) {
 	}
 
 	err := PostConsumeQuota(relayInfo, 100, 0, false)
-	require.Error(t, err)
+	require.ErrorContains(t, err, "forced token update failure", "must reach the actual SQL trigger")
 	assertUserBalances(t, userID, 0, 10_000, 0)
 	assert.Empty(t, ledgerRowsFor(t, userID))
 }
@@ -162,16 +161,7 @@ func TestBillingSessionWalletSettleRollsBackFundingWhenTokenUpdateFails(t *testi
 	require.Equal(t, preConsumed, held.SourceHeld)
 	require.Equal(t, preConsumed, held.TokenHeld)
 
-	const trigger = "fail_billing_session_token_update"
-	require.NoError(t, model.DB.Exec(`
-		CREATE TRIGGER `+trigger+`
-		BEFORE UPDATE ON tokens
-		WHEN OLD.id = 9461
-		BEGIN
-			SELECT RAISE(ABORT, 'forced billing session token failure');
-		END;
-	`).Error)
-	t.Cleanup(func() { model.DB.Exec("DROP TRIGGER IF EXISTS " + trigger) })
+	removeTrigger := installBillingUpdateFailure(t, model.DB, "fail_billing_session_token_update", "tokens", tokenID, "forced billing session token failure")
 
 	err := session.Settle(actualQuota)
 	require.ErrorContains(t, err, "forced billing session token failure", "must reach the actual SQL trigger, not fail owner admission")
@@ -200,7 +190,7 @@ func TestBillingSessionWalletSettleRollsBackFundingWhenTokenUpdateFails(t *testi
 		IdempotencyKey: "billing:preconsume:" + requestID,
 	}}, ledgerRowsFor(t, userID), "failed atomic settlement must not leave a settle ledger row")
 
-	require.NoError(t, model.DB.Exec("DROP TRIGGER IF EXISTS "+trigger).Error)
+	removeTrigger()
 	require.NoError(t, session.Settle(actualQuota))
 	require.NoError(t, session.Settle(actualQuota), "same-amount recovery cannot charge twice")
 	session.Refund(c)
@@ -245,16 +235,7 @@ func TestBillingSessionWalletRefundSettleRollsBackFundingWhenTokenUpdateFails(t 
 	require.Equal(t, preConsumed, held.SourceHeld)
 	require.Equal(t, preConsumed, held.TokenHeld)
 
-	const trigger = "fail_billing_session_refund_token_update"
-	require.NoError(t, model.DB.Exec(`
-		CREATE TRIGGER `+trigger+`
-		BEFORE UPDATE ON tokens
-		WHEN OLD.id = 9471
-		BEGIN
-			SELECT RAISE(ABORT, 'forced billing session refund token failure');
-		END;
-	`).Error)
-	t.Cleanup(func() { model.DB.Exec("DROP TRIGGER IF EXISTS " + trigger) })
+	removeTrigger := installBillingUpdateFailure(t, model.DB, "fail_billing_session_refund_token_update", "tokens", tokenID, "forced billing session refund token failure")
 
 	err := session.Settle(actualQuota)
 	require.ErrorContains(t, err, "forced billing session refund token failure", "must reach the actual SQL trigger, not fail owner admission")
@@ -283,7 +264,7 @@ func TestBillingSessionWalletRefundSettleRollsBackFundingWhenTokenUpdateFails(t 
 		IdempotencyKey: "billing:preconsume:" + requestID,
 	}}, ledgerRowsFor(t, userID), "failed atomic refund settlement must not leave a refund ledger row")
 
-	require.NoError(t, model.DB.Exec("DROP TRIGGER IF EXISTS "+trigger).Error)
+	removeTrigger()
 	require.NoError(t, session.Settle(actualQuota))
 	require.NoError(t, session.Settle(actualQuota), "same-amount recovery cannot credit twice")
 	session.Refund(c)

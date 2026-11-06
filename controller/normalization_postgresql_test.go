@@ -23,6 +23,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	waffoutils "github.com/waffo-com/waffo-go/utils"
@@ -61,6 +62,9 @@ func openNormalizationPostgres(t *testing.T) *gorm.DB {
 		&model.BalanceLedgerOperation{},
 		&model.BalanceLedger{},
 		&model.ReferralCommission{},
+		&model.AgentProfile{},
+		&model.AgentCommissionOutbox{},
+		&model.AgentCommissionInbox{},
 		&model.Log{},
 		&paymentcore.PaymentOrderBinding{},
 	}, append([]any{&model.PaymentReceipt{}, &model.RedemptionMutation{}}, append(model.BonusSourceModels(), model.ReferralRewardModels()...)...)...)...))
@@ -83,6 +87,8 @@ func openNormalizationPostgres(t *testing.T) *gorm.DB {
 	// through the fixture rows' operation_id before those rows, so a re-run
 	// cannot replay a stale operation and silently skip the credit.
 	for _, stmt := range []string{
+		`DELETE FROM agent_commission_inboxes WHERE event_id IN (SELECT id FROM agent_commission_outboxes WHERE reference_id LIKE 'WAFFO-NORM-%')`,
+		`DELETE FROM agent_commission_outboxes WHERE reference_id LIKE 'WAFFO-NORM-%'`,
 		`DELETE FROM referral_reward_inboxes WHERE event_id IN (SELECT id FROM referral_reward_outboxes WHERE reference_id LIKE 'WAFFO-NORM-%')`,
 		`DELETE FROM referral_reward_outboxes WHERE reference_id LIKE 'WAFFO-NORM-%'`,
 		`DELETE FROM agent_payment_receipts WHERE local_order_key LIKE 'WAFFO-NORM-%'`,
@@ -341,9 +347,11 @@ func TestWaffoPancakeNormalizationPostgreSQL(t *testing.T) {
 
 	assertReferralCommissionOnce := func(t *testing.T, buyer *model.User, ledgerRef string, paid int) {
 		t.Helper()
-		_, processErr := model.ProcessReferralRewardOutbox(context.Background(), 200)
+		_, processErr := model.ProcessAgentCommissionOutbox(context.Background(), 200)
 		require.NoError(t, processErr)
-		expectedReward := int(float64(paid) * 0.05)
+		// The fixture inviter is an ordinary user without active A07 sales eligibility.
+		expectedReward, err := common.WalletQuotaFromDecimalStrict(decimal.NewFromInt(int64(paid)).Mul(decimal.RequireFromString("0.03")))
+		require.NoError(t, err)
 		require.Positive(t, expectedReward)
 
 		var commissions []model.ReferralCommission
@@ -353,7 +361,7 @@ func TestWaffoPancakeNormalizationPostgreSQL(t *testing.T) {
 		assert.Equal(t, buyer.Id, commissions[0].SourceUserId)
 		assert.Equal(t, paid, commissions[0].PaidQuota)
 		assert.Equal(t, expectedReward, commissions[0].RewardQuota)
-		assert.InDelta(t, 0.05, commissions[0].Rate, 0.000001)
+		assert.InDelta(t, 0.03, commissions[0].Rate, 0.000001)
 
 		var refreshedInviter model.User
 		require.NoError(t, db.Where("id = ?", inviter.Id).First(&refreshedInviter).Error)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -209,7 +210,11 @@ func TestUsageLogRouteAuthorizationPostgres(t *testing.T) {
 	}
 	db, _ := newAuditTestDatabase(t, "postgres", dsn)
 	useLogExportDatabases(t, db, db, common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Channel{}, &model.Log{}))
+	require.NoError(t, i18n.Init())
+	require.NoError(t, db.AutoMigrate(
+		&model.Option{}, &model.User{}, &model.UserSession{}, &model.Token{},
+		&model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{}, &model.Log{},
+	))
 	previousSecret := common.SessionSecret
 	common.SessionSecret = "synthetic-usage-log-auth-secret"
 	t.Cleanup(func() { common.SessionSecret = previousSecret })

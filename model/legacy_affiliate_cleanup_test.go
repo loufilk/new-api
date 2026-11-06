@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"sort"
 	"testing"
 	"time"
 
@@ -261,8 +262,9 @@ func TestInspectLegacyAffiliateDataIsReadOnly(t *testing.T) {
 	require.NoError(t, DB.Exec("INSERT INTO options (key, value) VALUES ('AffiliateRewardFreezeDays', '7')").Error)
 
 	tableSnapshot := func() []string {
-		var names []string
-		require.NoError(t, DB.Table("sqlite_master").Where("type = ?", "table").Order("name").Pluck("name", &names).Error)
+		names, err := DB.Migrator().GetTables()
+		require.NoError(t, err)
+		sort.Strings(names)
 		return names
 	}
 	optionSnapshot := func() []Option {

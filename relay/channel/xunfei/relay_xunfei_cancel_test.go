@@ -30,6 +30,10 @@ func xunfeiTestContext(ctx context.Context, modelTest bool) *gin.Context {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
 	common.SetContextKey(c, constant.ContextKeyModelTestSingleAttempt, modelTest)
+	if modelTest {
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+		common.SetContextKey(c, constant.ContextKeyOriginalModel, "lite")
+	}
 	return c
 }
 
@@ -206,8 +210,11 @@ func setupXunfeiPostgres(t *testing.T) *gorm.DB {
 	parsed.RawQuery = query.Encode()
 	db, err := gorm.Open(postgres.Open(parsed.String()), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.Option{}))
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.ModelFingerprintSiteConfig{}))
 	require.NoError(t, db.Create(&model.Option{Key: model.ModelTestEnabledKey, Value: "true"}).Error)
+	targets, err := common.Marshal([]model.ModelFingerprintSiteTarget{{Group: "default", Model: "lite", Enabled: true}})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.ModelFingerprintSiteConfig{ID: 1, TargetsJSON: string(targets)}).Error)
 	oldDB := model.DB
 	model.DB = db
 	t.Cleanup(func() {
@@ -220,6 +227,7 @@ func setupXunfeiPostgres(t *testing.T) *gorm.DB {
 		require.NoError(t, err)
 		require.NoError(t, conn.Close())
 	})
+	require.NoError(t, model.RequireModelTestTarget(t.Context(), "default", "lite"))
 	return db
 }
 

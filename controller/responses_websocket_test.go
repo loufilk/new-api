@@ -63,15 +63,19 @@ func openResponsesWSPostgres(t *testing.T, dsn string) (*gorm.DB, *sql.DB, func(
 	require.NoError(t, err)
 
 	var (
-		sqlDB     *sql.DB
-		schema    string
-		closeOnce sync.Once
+		sqlDB        *sql.DB
+		bootstrapSQL *sql.DB
+		schema       string
+		closeOnce    sync.Once
 	)
 	closeDB := func() {
 		closeOnce.Do(func() {
 			// The admin connection must be released even when a failing
 			// assertion aborts the drop below.
 			defer func() { _ = adminSQL.Close() }()
+			if bootstrapSQL != nil {
+				_ = bootstrapSQL.Close()
+			}
 			if sqlDB != nil {
 				_ = sqlDB.Close()
 			}
@@ -95,6 +99,15 @@ func openResponsesWSPostgres(t *testing.T, dsn string) (*gorm.DB, *sql.DB, func(
 	query := parsed.Query()
 	query.Set("search_path", schema)
 	parsed.RawQuery = query.Encode()
+	// Non-master startup still persists the legacy-token retirement deadline.
+	// Create its options dependency inside this new schema before InitDB.
+	bootstrap, err := gorm.Open(postgres.New(postgres.Config{DSN: parsed.String(), PreferSimpleProtocol: true}), &gorm.Config{Logger: gormlogger.Default.LogMode(gormlogger.Silent)})
+	require.NoError(t, err)
+	bootstrapSQL, err = bootstrap.DB()
+	require.NoError(t, err)
+	require.NoError(t, bootstrap.AutoMigrate(&model.Option{}))
+	require.NoError(t, bootstrapSQL.Close())
+	bootstrapSQL = nil
 	// model.InitDB reads SQL_DSN; never log the resulting connection string.
 	t.Setenv("SQL_DSN", parsed.String())
 	require.NoError(t, model.InitDB())
@@ -163,9 +176,12 @@ func setupResponsesWSRequestTest(t *testing.T) (*model.User, *model.Token) {
 		setting.ModelRequestRateLimitMutex.Unlock()
 		closeDB()
 	})
-	// PostgreSQL model writes validate group references through options; keep
-	// the fixture complete rather than weakening that production safety check.
-	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.User{}, &model.Token{}, &model.UserCallInterception{}, &model.UserCallInterceptionHit{}, &model.UserCallInterceptionAudit{}))
+	// Real authentication refreshes group policy and dependent routing/token
+	// caches. Include every table required by that admission snapshot.
+	require.NoError(t, db.AutoMigrate(
+		&model.Option{}, &model.User{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{},
+		&model.UserCallInterception{}, &model.UserCallInterceptionHit{}, &model.UserCallInterceptionAudit{},
+	))
 	// The shared in-memory limiter outlives each database fixture. Give every
 	// user a separate quota bucket, including when the tests run with -count.
 	user := &model.User{Id: 5062000 + int(responsesWSTestUserSequence.Add(1)), Username: "responses-ws-user", Status: common.UserStatusEnabled, Group: "default", Quota: 1000, AuthVersion: 1}

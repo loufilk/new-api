@@ -18,7 +18,7 @@ import sys
 from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[2]
-PHASES = ("unit", "postgres", "fingerprint", "token-migration", "task-financial", "router-task")
+PHASES = ("unit", "postgres", "fingerprint", "token-migration", "task-financial", "router-task", "redis")
 FINGERPRINT = {
     "TestModelTestTargetAuthorizationDatabaseMatrix",
     "TestGroupRenameFingerprintTargetsDatabaseMatrix",
@@ -89,6 +89,12 @@ EMPTY_DATABASE_ENVS = {
 MATRIX_REQUIRED_NODES = {
     "TestIndependentAuditLogStores": ["postgres/upgrade=false", "postgres/upgrade=true"],
     "TestAPITokenAuditDatabaseMatrix": ["postgres/separate_log=false", "postgres/separate_log=true"],
+}
+# These opt-in contracts issue server-wide SCRIPT FLUSH / CLIENT PAUSE. Run
+# them serially on the owned Redis service, outside the ordinary unit phase.
+REDIS_REQUIRED_NODES = {
+    "TestModelRateLimitRealRedis": ["reservation_replay_and_expiry", "script_flush_resumes_request_pipeline"],
+    "TestBillingSettlementDeadlineNativeRedisFence": [],
 }
 FUNCTION = re.compile(r"^func (\w+)\(", re.MULTILINE)
 CALL = re.compile(r"(?<![\w.])(\w+)\(")
@@ -182,6 +188,11 @@ def build_plan(packages: list[Package]) -> list[Suite]:
         excluded = []
         for name in package.tests:
             discovered.add(name)
+            if name in REDIS_REQUIRED_NODES:
+                suites.append(Suite("redis", package.path, name, [name], pattern="^" + name + "$",
+                                    required=[name, *(name + "/" + child for child in REDIS_REQUIRED_NODES[name])]))
+                # Keep the ordinary selector intact. Its opt-in skip remains
+                # visible even though this separate phase executes the contract.
             phase = SPECIAL.get(name)
             if name in OTHER_DATABASE_COMPATIBILITY:
                 excluded.append(name)
@@ -210,7 +221,7 @@ def build_plan(packages: list[Package]) -> list[Suite]:
         suites.append(Suite("unit", package.path, label,
                             kept, skip=skip, required=required))
     mandatory = (FINGERPRINT | set(SPECIAL) | set(EMPTY_DATABASE_ENVS) | POSTGRES_CHILD
-                 | POSTGRES_STANDALONE | set(MATRIX_REQUIRED_NODES))
+                 | POSTGRES_STANDALONE | set(MATRIX_REQUIRED_NODES) | set(REDIS_REQUIRED_NODES))
     missing = mandatory - discovered
     if missing:
         raise ValueError("configured required tests disappeared: " + ", ".join(sorted(missing)))
@@ -226,7 +237,8 @@ def clean_environment(source: dict[str, str]) -> dict[str, str]:
                 or key.startswith(("NEW_API_TEST_RECOVERY_", "PAYMENT_STALE_"))):
             env.pop(key)
     for key in ("SQL_DSN", "LOG_SQL_DSN", "REDIS_CONN_STRING", "TEST_DATABASE_COMPAT", "TEST_DATABASE_DIALECT",
-                "TEST_RELEASE_UPGRADE_PHASE", "TEST_RELEASE_SQLITE_PATH", "TEST_A07_SCHEMA_COMPAT"):
+                "TEST_RELEASE_UPGRADE_PHASE", "TEST_RELEASE_SQLITE_PATH", "TEST_A07_SCHEMA_COMPAT",
+                "TEST_RUNTIME_REDIS", "TEST_SETTLEMENT_DEADLINE_REDIS_ADDR", "TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE"):
         env[key] = ""
     env.update(NO_AGENT_FIXTURE_OWNED="1", TEST_SECURITY_DIALECT="postgres", TEST_TASK_DB_DIALECT="postgres",
                TEST_FINGERPRINT_DIALECT="postgres", GOWORK="off", GOTOOLCHAIN="local")
@@ -254,7 +266,25 @@ class Runner:
                                            "-Atc", "SHOW server_version_num;"], text=True).strip()
         if version != "180006":
             raise ValueError("this verification requires production PostgreSQL 18.6, got " + version)
+        self.redis_port = None
+        redis_evidence = None
+        if phase == "redis":
+            redis_container = os.environ["REDIS_ID"]
+            redis_port = int(os.environ["REDIS_PORT"])
+            if not re.fullmatch(r"[a-f0-9]{12,64}", redis_container) or not 1 <= redis_port <= 65535:
+                raise ValueError("an explicitly owned Redis CI service container and valid port are required")
+            bindings = subprocess.check_output(["docker", "port", redis_container, "6379/tcp"], text=True).splitlines()
+            if bindings != [f"127.0.0.1:{redis_port}"]:
+                raise ValueError("owned Redis must publish only the specified IPv4 loopback port")
+            info = subprocess.check_output(["docker", "exec", redis_container, "redis-cli", "--raw", "INFO", "server"], text=True)
+            fields = dict(line.split(":", 1) for line in info.splitlines() if ":" in line)
+            if fields.get("redis_version") != "8.8.0" or fields.get("tcp_port") != "6379":
+                raise ValueError("this verification requires owned Redis 8.8.0 listening on container port 6379")
+            self.redis_port = redis_port
+            redis_evidence = {"container": redis_container, "version": fields["redis_version"], "bindings": bindings}
         self.out.mkdir(parents=True, exist_ok=True)
+        if redis_evidence:
+            (self.out / "redis-runtime.json").write_text(json.dumps(redis_evidence, indent=2) + "\n")
 
     def database(self, name: str) -> str:
         if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", name):
@@ -298,6 +328,16 @@ class Runner:
         if suite.label in {"TestAgentSimpleSchemaFreshUpgradeAndRepeatedMigration",
                            "TestAgentSimpleWalletSchemaUpgradePreservesBalancesAndLedgerUniqueness"}:
             env["TEST_A07_SCHEMA_COMPAT"] = "1"
+        if suite.phase == "redis":
+            if not self.redis_port:
+                raise ValueError("Redis opt-ins require the verified owned service")
+            if suite.label == "TestModelRateLimitRealRedis":
+                env.update(TEST_RUNTIME_REDIS="1", TEST_REDIS_DSN=f"redis://127.0.0.1:{self.redis_port}/3")
+            elif suite.label == "TestBillingSettlementDeadlineNativeRedisFence":
+                env.update(TEST_SETTLEMENT_DEADLINE_REDIS_ADDR=f"127.0.0.1:{self.redis_port}",
+                           TEST_SETTLEMENT_DEADLINE_REDIS_DISPOSABLE="1")
+            else:
+                raise ValueError("unknown required Redis contract")
         return env, databases
 
     def run(self, suite: Suite, index: int) -> bool:

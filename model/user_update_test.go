@@ -208,13 +208,17 @@ func TestRevokeUserAccessTokenRejectsSoftDeletedUser(t *testing.T) {
 	user.SetAccessToken("old-token")
 	require.NoError(t, DB.Create(&user).Error)
 	require.NoError(t, DB.Delete(&user).Error)
+	var before User
+	require.NoError(t, DB.Unscoped().First(&before, user.Id).Error)
+	require.NotEmpty(t, before.GetAccessToken())
 
 	_, err := RevokeUserAccessToken(user.Id)
 	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
 
 	var got User
 	require.NoError(t, DB.Unscoped().First(&got, user.Id).Error)
-	assert.Equal(t, "old-token", got.GetAccessToken())
+	// Compare persisted bytes, including PostgreSQL CHAR(32) padding.
+	assert.Equal(t, before.GetAccessToken(), got.GetAccessToken())
 }
 
 func TestUpdateUserSettingOnlyUpdatesSetting(t *testing.T) {

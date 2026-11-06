@@ -102,6 +102,7 @@ func TestQuotaReminderFiresOncePerDrop(t *testing.T) {
 // root receives them and other administrators do not; other users never do.
 func TestChannelNoticesFollowEachAdministratorsSwitch(t *testing.T) {
 	previousDB := model.DB
+	previousMainType := common.MainDatabaseType()
 	previousCache, previousRedis := common.MemoryCacheEnabled, common.RedisEnabled
 	previousNotifyLimit := constant.NotifyLimitCount
 	previousClient, previousWorker := httpClient, system_setting.WorkerUrl
@@ -109,6 +110,7 @@ func TestChannelNoticesFollowEachAdministratorsSwitch(t *testing.T) {
 	previousFetch := *fetch
 	t.Cleanup(func() {
 		model.DB = previousDB
+		common.SetMainDatabaseType(previousMainType)
 		common.MemoryCacheEnabled, common.RedisEnabled = previousCache, previousRedis
 		constant.NotifyLimitCount = previousNotifyLimit
 		httpClient, system_setting.WorkerUrl = previousClient, previousWorker
@@ -122,6 +124,7 @@ func TestChannelNoticesFollowEachAdministratorsSwitch(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
 	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.User{}))
 	model.DB = database
+	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
 	common.MemoryCacheEnabled, common.RedisEnabled = false, false
 	constant.NotifyLimitCount = 100
 

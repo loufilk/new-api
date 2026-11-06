@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 
@@ -35,6 +36,8 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 // Gin panics at registration time when routes sharing a path position use
@@ -82,16 +85,29 @@ func TestTaskSubmissionRateLimitDoesNotBlockTaskReads(t *testing.T) {
 	}
 	t.Setenv("SQL_DSN", os.Getenv("TEST_POSTGRES_DSN"))
 	t.Setenv("LOG_SQL_DSN", "")
+	require.NoError(t, i18n.Init())
+	bootstrap, err := gorm.Open(postgres.New(postgres.Config{DSN: os.Getenv("TEST_POSTGRES_DSN"), PreferSimpleProtocol: true}), &gorm.Config{})
+	require.NoError(t, err)
+	bootstrapSQL, err := bootstrap.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, bootstrapSQL.Close()) })
+	fixtures := []any{
+		&model.Option{}, &model.User{}, &model.Token{}, &model.Task{},
+		&model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{},
+		&model.UserCallInterception{}, &model.UserCallInterceptionHit{}, &model.UserCallInterceptionAudit{},
+	}
+	for _, fixture := range fixtures {
+		require.False(t, bootstrap.Migrator().HasTable(fixture), "fixture refuses existing tables")
+	}
+	// InitDB reads the legacy credential deadline even on a non-migrating node.
+	require.NoError(t, bootstrap.AutoMigrate(&model.Option{}))
 	common.IsMasterNode = false
 	require.NoError(t, model.InitDB())
 	db := model.DB
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-	fixtures := []any{&model.User{}, &model.Token{}, &model.Task{}, &model.Option{}, &model.UserCallInterception{}, &model.UserCallInterceptionHit{}, &model.UserCallInterceptionAudit{}}
-	for _, fixture := range fixtures {
-		require.False(t, db.Migrator().HasTable(fixture), "fixture refuses existing tables")
-	}
+	// Real TokenAuth refreshes the channel and subscription-plan snapshots.
 	require.NoError(t, db.AutoMigrate(fixtures...))
 	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(fixtures...)) })
 	var version string

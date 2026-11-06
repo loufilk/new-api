@@ -33,6 +33,9 @@ func TestGroupPermissionNativeRevocationChain(t *testing.T) {
 	if os.Getenv("TEST_TASK_DB_DIALECT") != "postgres" || os.Getenv("TEST_REDIS_DSN") == "" {
 		t.Skip("requires owned PostgreSQL and Redis fixtures")
 	}
+	if groupRenameControllerIsolatedProcess(t) {
+		return
+	}
 	db := setupGroupRenameControllerTest(t)
 	require.NoError(t, db.AutoMigrate(&model.UserSession{}))
 	require.NoError(t, i18n.Init())
@@ -178,9 +181,9 @@ func TestGroupPermissionNativeRevocationChain(t *testing.T) {
 	assert.Empty(t, invalidation.Mappings)
 	for _, group := range []string{"privateA", "auto"} {
 		token := tokens[group]
-		cachedGroup, err := rdb.HGet(ctx, "token:"+common.GenerateHMAC(token.Key), "Group").Result()
+		cached, err := rdb.Exists(ctx, "token:"+common.GenerateHMAC(token.Key)).Result()
 		require.NoError(t, err)
-		assert.Equal(t, group, cachedGroup)
+		assert.Zero(t, cached, "policy revocation must evict the preheated token hash")
 		denied = request(http.MethodGet, "/runtime", "sk-"+token.Key, nil)
 		assert.Equal(t, http.StatusForbidden, denied.Code, denied.Body.String())
 		assert.NotContains(t, denied.Body.String(), "gpt-")
@@ -196,6 +199,7 @@ func TestGroupPermissionNativeRevocationChain(t *testing.T) {
 		var stored model.Token
 		require.NoError(t, db.First(&stored, token.Id).Error)
 		assert.Equal(t, token.Name, stored.Name)
+		assert.Equal(t, group, stored.Group, "revocation must not rewrite the token's configured group")
 	}
 	// A still-granted group stays usable; revocation must not hide legal models.
 	allowed := request(http.MethodGet, "/runtime", "sk-"+tokens["privateB"].Key, nil)

@@ -38,10 +38,14 @@ func testCreemManualQuotaUnits(t *testing.T) {
 			} else {
 				require.NoError(t, model.RechargeCreem(order.TradeNo, "", "", ""))
 			}
+			var initialTopupLogs int64
+			require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("user_id = ? AND type = ?", user.Id, model.LogTypeTopup).Count(&initialTopupLogs).Error)
+			require.EqualValues(t, 1, initialTopupLogs, "the first completed credit must record one success log")
 			require.NoError(t, model.ManualCompleteTopUp(order.TradeNo, ""))
-			if manualFirst {
-				require.Error(t, model.RechargeCreem(order.TradeNo, "", "", ""))
-			}
+			require.NoError(t, model.RechargeCreem(order.TradeNo, "", "", ""), "a completed order acknowledges callback replay without a second credit")
+			var replayedTopupLogs int64
+			require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("user_id = ? AND type = ?", user.Id, model.LogTypeTopup).Count(&replayedTopupLogs).Error)
+			assert.Equal(t, initialTopupLogs, replayedTopupLogs, "completion replay must not append a zero-credit success log")
 			var stored model.User
 			require.NoError(t, model.DB.First(&stored, user.Id).Error)
 			assert.Equal(t, quota, stored.QuotaPaid)
@@ -50,6 +54,17 @@ func testCreemManualQuotaUnits(t *testing.T) {
 			require.NoError(t, model.DB.Where("user_id = ?", user.Id).Find(&entries).Error)
 			require.Len(t, entries, 1)
 			assert.Equal(t, quota, entries[0].Delta)
+			var completed model.TopUp
+			require.NoError(t, model.DB.First(&completed, order.Id).Error)
+			assert.Equal(t, common.TopUpStatusSuccess, completed.Status)
+			assert.EqualValues(t, quota, completed.Amount)
+			var rewardEvents int64
+			require.NoError(t, model.DB.Model(&model.AgentCommissionOutbox{}).Where("reference_id = ? AND source_user_id = ?", order.TradeNo, user.Id).Count(&rewardEvents).Error)
+			if manualFirst {
+				assert.Zero(t, rewardEvents, "a later callback must not turn an administrator credit into a paid reward event")
+			} else {
+				assert.EqualValues(t, 1, rewardEvents, "callback replay must retain the single original payment event")
+			}
 		})
 	}
 }
