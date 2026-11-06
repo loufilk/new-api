@@ -153,6 +153,9 @@ func GetSiteModelFingerprints(c *gin.Context) {
 	}
 	targets := make([]gin.H, 0, len(config.Targets))
 	for _, target := range config.Targets {
+		if !config.Enabled || !target.Enabled {
+			continue
+		}
 		period := target.PeriodSecs
 		if period == 0 {
 			period = config.DefaultPeriodSecs
