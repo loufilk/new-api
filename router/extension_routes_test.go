@@ -102,7 +102,7 @@ func TestLlmsRoutesAreIncludedInPluginStaticSnapshot(t *testing.T) {
 	require.NoError(t, pluginRegistry.SetGenerationPreparer(builder.prepare))
 	require.Empty(t, pluginRegistry.RoutingErrors())
 	require.Equal(t, []jsplugin.SkippedRoute{{
-		PluginKey: "llms-shadow-equivalence", Route: plugin.Meta.Routes[0], Reason: "host_namespace",
+		PluginKey: "llms-shadow-equivalence", Route: plugin.Meta.Routes[0], Reason: "host_route",
 	}}, pluginRegistry.Generation().SkippedRoutes())
 	engine.NoRoute((&pluginRouteDispatcher{registry: pluginRegistry}).dispatch,
 		func(c *gin.Context) { c.String(http.StatusNotFound, "fallback") })

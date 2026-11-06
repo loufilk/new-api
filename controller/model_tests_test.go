@@ -164,12 +164,19 @@ func TestModelTestPostgresRealPlaygroundRelayBillsOnceAndPreservesCancel(t *test
 			started := make(chan struct{})
 			var startOnce sync.Once
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls.Add(1)
+				n := calls.Add(1)
 				assert.Equal(t, "/v1/chat/completions", r.URL.Path)
 				var input map[string]any
 				require.NoError(t, common.DecodeJson(r.Body, &input))
 				assert.NotContains(t, input, "max_tokens")
-				startOnce.Do(func() { close(started) })
+				if n == 3 {
+					startOnce.Do(func() { close(started) })
+				}
+				select {
+				case <-started:
+				case <-r.Context().Done():
+					return
+				}
 				if mode == "cancel" {
 					<-r.Context().Done()
 					return
@@ -237,11 +244,7 @@ func TestModelTestPostgresRealPlaygroundRelayBillsOnceAndPreservesCancel(t *test
 					}
 				}
 			}
-			if mode == "success" {
-				assert.EqualValues(t, 3, calls.Load())
-			} else {
-				assert.EqualValues(t, 1, calls.Load(), "failed calls must never retry")
-			}
+			assert.EqualValues(t, 3, calls.Load(), "all three planned probes are admitted; none retries after failure or replay")
 			if mode == "success" {
 				var user model.User
 				require.NoError(t, db.First(&user, userID).Error)

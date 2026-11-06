@@ -1,12 +1,14 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -210,13 +212,16 @@ func TestModelTestTargetRevocationDatabaseMatrix(t *testing.T) {
 				config, err := model.GetModelFingerprintSiteConfig(t.Context())
 				require.NoError(t, err)
 				var revoked atomic.Bool
+				type revocationContextKey struct{}
 				revoke := func() error {
 					config.Targets[0].Enabled = false
-					_, err := model.UpdateModelFingerprintSiteConfig(t.Context(), config.Version, userID, *config)
+					ctx := context.WithValue(t.Context(), revocationContextKey{}, true)
+					_, err := model.UpdateModelFingerprintSiteConfig(ctx, config.Version, userID, *config)
 					return err
 				}
 				var beforeExecution gin.HandlerFunc
 				var reservedBalance int
+				var cutoffMu sync.Mutex
 				if boundary == "after-prepare" {
 					beforeExecution = func(c *gin.Context) {
 						require.NoError(t, revoke())
@@ -234,28 +239,29 @@ func TestModelTestTargetRevocationDatabaseMatrix(t *testing.T) {
 						}
 					}))
 					t.Cleanup(func() { require.NoError(t, model.DB.Callback().Update().Remove(callback)) })
-				} else if boundary == "after-reservation" || boundary == "after-final-admission" {
+				} else if boundary == "after-reservation" {
 					cut := func(tx *gorm.DB) {
-						if tx.Statement.Table != "options" || tx.Error != nil || revoked.Load() {
+						if tx.Statement.Table != "options" || tx.Error != nil || tx.Statement.Context.Value(revocationContextKey{}) != nil {
+							return
+						}
+						// Other probes must wait for the target update to commit,
+						// not treat an early cutoff flag as a completed revocation.
+						cutoffMu.Lock()
+						defer cutoffMu.Unlock()
+						if revoked.Load() {
 							return
 						}
 						var held int64
 						if !assert.NoError(t, db.Model(&model.BillingFinalization{}).Where("user_id = ? AND state = ?", userID, model.BillingHeld).Count(&held).Error) || held == 0 {
 							return
 						}
-						if revoked.CompareAndSwap(false, true) {
-							var user model.User
-							assert.NoError(t, db.First(&user, userID).Error)
-							reservedBalance = user.QuotaPaid
-							assert.NoError(t, revoke())
-						}
+						var user model.User
+						assert.NoError(t, db.First(&user, userID).Error)
+						reservedBalance = user.QuotaPaid
+						revoked.Store(assert.NoError(t, revoke()))
 					}
 					callback := "test:model-test-target-final-admission"
-					if boundary == "after-reservation" {
-						require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register(callback, cut))
-					} else {
-						require.NoError(t, model.DB.Callback().Query().After("gorm:query").Register(callback, cut))
-					}
+					require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register(callback, cut))
 					t.Cleanup(func() { require.NoError(t, model.DB.Callback().Query().Remove(callback)) })
 				}
 				client, err := service.GetHttpClientWithProxySettings("", dto.ChannelSettings{})
@@ -263,35 +269,69 @@ func TestModelTestTargetRevocationDatabaseMatrix(t *testing.T) {
 				oldClient := *client
 				t.Cleanup(func() { *client = oldClient })
 				var calls atomic.Int32
+				var admitted atomic.Int32
+				allAdmitted := make(chan struct{})
+				var revokeOnce sync.Once
+				var revokeErr error
 				client.Transport = modelDiscoveryRoundTripper(func(req *http.Request) (*http.Response, error) {
 					if req.URL.Host != "fingerprint-fixture.invalid" {
 						return nil, fmt.Errorf("unexpected fixture destination")
 					}
-					n := calls.Add(1)
 					var request map[string]any
 					if !assert.NoError(t, common.DecodeJson(req.Body, &request)) {
 						return nil, fmt.Errorf("invalid fixture request")
 					}
 					assert.Equal(t, "gpt-mapped-fixture", request["model"], "the allowlist binds the original model, before channel mapping")
-					if boundary == "after-first-send" && n == 1 {
-						if !revoked.CompareAndSwap(false, true) {
-							return nil, fmt.Errorf("unexpected repeated revocation")
+					firstSent := false
+					if boundary == "after-final-admission" || boundary == "after-first-send" {
+						// RoundTrip is reached only after this probe's real final
+						// permission read. Hold all three there before revoking;
+						// another probe's held wallet row cannot prove admission.
+						if admitted.Add(1) == 3 {
+							close(allAdmitted)
 						}
-						if err := revoke(); err != nil {
-							return nil, err
+						select {
+						case <-allAdmitted:
+						case <-req.Context().Done():
+							return nil, req.Context().Err()
+						case <-time.After(10 * time.Second):
+							return nil, fmt.Errorf("three probes did not reach final admission concurrently")
 						}
+						revokeOnce.Do(func() {
+							if boundary == "after-first-send" {
+								calls.Add(1)
+								firstSent = true
+							}
+							revokeErr = revoke()
+							revoked.Store(revokeErr == nil)
+						})
+						if revokeErr != nil {
+							return nil, revokeErr
+						}
+					}
+					if !firstSent {
+						calls.Add(1)
 					}
 					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"fixture-completion","object":"chat.completion","model":"gpt-mapped-fixture","choices":[{"index":0,"message":{"role":"assistant","content":"0.1, 0.2, 0.3"},"finish_reason":"stop"}],"usage":{"prompt_tokens":120,"completion_tokens":100,"total_tokens":220}}`)), Request: req}, nil
 				})
 				engine := modelTestSwitchEngine(userID, beforeExecution)
 				id := uuid.NewString()
 				body := modelTestRequestBody(t, userID, id)
+				newBody := modelTestRequestBody(t, userID, uuid.NewString())
 				response := httptest.NewRecorder()
 				engine.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(body)))
 				require.True(t, revoked.Load(), "the intended boundary must have been reached")
 				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-				assert.Contains(t, response.Body.String(), `"status":"failed"`)
-				assert.Contains(t, response.Body.String(), "model_or_group_unavailable")
+				if boundary == "after-final-admission" || boundary == "after-first-send" {
+					assert.Contains(t, response.Body.String(), `"status":"completed"`, "revocation preserves work already admitted for all three samples")
+				} else {
+					assert.Contains(t, response.Body.String(), `"status":"failed"`)
+					assert.Contains(t, response.Body.String(), "model_or_group_unavailable")
+				}
+				denied := httptest.NewRecorder()
+				engine.ServeHTTP(denied, httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(newBody)))
+				require.Equal(t, http.StatusBadRequest, denied.Code, denied.Body.String())
+				assert.Contains(t, denied.Body.String(), "model_or_group_unavailable", "a quoted request still needs current target authorization")
 				waitTaskSubmissionFixtureQuiescence(t)
 				run, err := model.GetModelTestRun(userID, id)
 				require.NoError(t, err)
@@ -309,27 +349,59 @@ func TestModelTestTargetRevocationDatabaseMatrix(t *testing.T) {
 					assert.Empty(t, ledger, "rejection before reservation cannot debit the wallet")
 				case "after-reservation":
 					assert.Zero(t, calls.Load())
-					assert.Equal(t, 999500, reservedBalance)
+					assert.Less(t, reservedBalance, 1_000_000, "a real reservation preceded the cutoff")
+					assert.GreaterOrEqual(t, reservedBalance, 998500)
+					assert.Zero(t, (1_000_000-reservedBalance)%500)
 					assert.Equal(t, 1_000_000, user.QuotaPaid)
-					require.Len(t, owners, 1)
-					assert.Equal(t, model.BillingRefunded, owners[0].State)
-					assert.Equal(t, run.RequestID, owners[0].RequestID)
-					require.Len(t, ledger, 2)
-					assert.Equal(t, model.LedgerReasonBillingPreConsume, ledger[0].Reason)
-					assert.Equal(t, -500, ledger[0].Delta)
-					assert.Equal(t, model.LedgerReasonBillingRefund, ledger[1].Reason)
-					assert.Equal(t, 500, ledger[1].Delta)
+					require.NotEmpty(t, owners)
+					require.LessOrEqual(t, len(owners), 3)
+					var audits []modelFingerprintSampleAudit
+					require.NoError(t, common.UnmarshalJsonStr(run.SamplesJSON, &audits))
+					require.Len(t, audits, 3)
+					auditIDs := make(map[string]bool, len(audits))
+					for _, audit := range audits {
+						require.NotEmpty(t, audit.RequestID)
+						assert.False(t, auditIDs[audit.RequestID])
+						auditIDs[audit.RequestID] = true
+					}
+					assert.Contains(t, auditIDs, run.RequestID)
+					require.Len(t, ledger, 2*len(owners))
+					for _, owner := range owners {
+						assert.Contains(t, auditIDs, owner.RequestID)
+						assert.Equal(t, model.BillingRefunded, owner.State)
+						assert.Equal(t, 500, owner.SourceHeld)
+						assert.Equal(t, 500, owner.TokenHeld)
+						var reasons []string
+						var deltas []int
+						for _, entry := range ledger {
+							if entry.RequestId == owner.RequestID {
+								reasons = append(reasons, entry.Reason)
+								deltas = append(deltas, entry.Delta)
+							}
+						}
+						assert.Equal(t, []string{model.LedgerReasonBillingPreConsume, model.LedgerReasonBillingRefund}, reasons)
+						assert.Equal(t, []int{-500, 500}, deltas, "each undispatched reservation is refunded exactly once")
+					}
 				default:
-					assert.EqualValues(t, 1, calls.Load(), "an admitted probe may finish; later challenges need new authorization")
-					assert.Equal(t, 999500, user.QuotaPaid)
-					require.Len(t, owners, 1)
-					assert.Equal(t, model.BillingSettled, owners[0].State)
-					assert.Equal(t, 500, owners[0].ActualQuota)
+					assert.EqualValues(t, 3, admitted.Load())
+					assert.EqualValues(t, 3, calls.Load(), "each of the three admitted challenges finishes without replay")
+					assert.Equal(t, 998500, user.QuotaPaid)
+					require.Len(t, owners, 3)
+					require.Len(t, ledger, 3)
+					for _, owner := range owners {
+						assert.Equal(t, model.BillingSettled, owner.State)
+						assert.Equal(t, 500, owner.ActualQuota)
+					}
 					for _, entry := range ledger {
 						assert.NotEqual(t, model.LedgerReasonBillingRefund, entry.Reason, "revocation does not refund already admitted work")
+						assert.Equal(t, model.LedgerReasonBillingPreConsume, entry.Reason)
+						assert.Equal(t, -500, entry.Delta)
 					}
 				}
 				assert.Equal(t, user.QuotaPaid, user.Quota)
+				var token model.Token
+				require.NoError(t, db.Where("user_id = ?", userID).First(&token).Error)
+				assert.Equal(t, user.QuotaPaid, token.RemainQuota, "token and wallet settlement remain aligned")
 				var channel model.Channel
 				require.NoError(t, db.Where("models = ?", "gpt-4o-mini").Take(&channel).Error)
 				assert.Equal(t, common.ChannelStatusEnabled, channel.Status, "local permission denial is not an upstream outage")

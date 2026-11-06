@@ -35,7 +35,8 @@ const modelTestVersion = "local-fingerprint-v1"
 // Original task text, dedicated to the public domain under CC0-1.0. This is a
 // public visual programming exercise, not a secret identity test or an IQ test.
 const modelTestPrompt = "Create one self-contained HTML document showing a cheerful pelican riding a bicycle beside a pond. Include two wheels, a visible beak, pedals and a blue pond. Use only inline SVG and CSS; no JavaScript, links, fonts, images, external resources, forms, embedded documents or network requests. Output only the complete HTML, without markdown fences. Keep the illustration readable at 360 pixels wide."
-const modelTestTimeout = 90 * time.Second
+const modelTestSampleTimeout = 120 * time.Second
+const modelTestTimeout = modelTestSampleTimeout + 30*time.Second
 const modelTestResponseLimit = 64 << 10
 
 type modelTestSelection struct {
@@ -274,7 +275,7 @@ func GetModelTests(c *gin.Context) {
 		enabled = false
 		availabilityError = "token_catalogue_unavailable"
 	}
-	common.ApiSuccess(c, gin.H{"effective_points": effectivePoints, "eligible_tokens_by_group": tokens, "enabled": enabled, "availability_error": availabilityError, "benchmark": gin.H{"id": modelTestVersion, "name": "Local statistical model fingerprint", "public_prompt": true, "assessment": "statistical-not-proof", "sample_count": 3}, "limits": gin.H{"max_output_tokens": 0, "default_output_tokens": 0, "allowed_output_tokens": []int{0}, "timeout_seconds": 90, "runs_per_hour": 3, "concurrency_per_user": 1, "concurrency_global": 4}, "eligible_models_by_group": catalogue, "site_results": []any{}, "items": items})
+	common.ApiSuccess(c, gin.H{"effective_points": effectivePoints, "eligible_tokens_by_group": tokens, "enabled": enabled, "availability_error": availabilityError, "benchmark": gin.H{"id": modelTestVersion, "name": "Local statistical model fingerprint", "public_prompt": true, "assessment": "statistical-not-proof", "sample_count": 3}, "limits": gin.H{"max_output_tokens": 0, "default_output_tokens": 0, "allowed_output_tokens": []int{0}, "timeout_seconds": int(modelTestTimeout.Seconds()), "sample_timeout_seconds": int(modelTestSampleTimeout.Seconds()), "runs_per_hour": 3, "concurrency_per_user": 1, "concurrency_global": 4}, "eligible_models_by_group": catalogue, "site_results": []any{}, "items": items})
 }
 
 // Reads primary storage every time; neither a signed quote nor an administrator
@@ -338,7 +339,7 @@ func EstimateModelTest(c *gin.Context) {
 	if !finishControllerGroupConfigRead(c, guard) {
 		return
 	}
-	common.ApiSuccess(c, gin.H{"token_id": selected.TokenID, "sample_count": 3, "model": selected.Model, "group": selected.Group, "max_output_tokens": selected.MaxOutputTokens, "estimated_quota": ticket.EstimatedQuota, "quota_per_unit": common.QuotaPerUnit, "estimate_is_cap": false, "output_unbounded": true, "cost_unknown": ticket.EstimatedQuota == nil, "timeout_seconds": 90, "benchmark_id": modelTestVersion, "confirmation_token": signModelTestConfirmation(ticket), "expires_at": ticket.ExpiresAt})
+	common.ApiSuccess(c, gin.H{"token_id": selected.TokenID, "sample_count": 3, "model": selected.Model, "group": selected.Group, "max_output_tokens": selected.MaxOutputTokens, "estimated_quota": ticket.EstimatedQuota, "quota_per_unit": common.QuotaPerUnit, "estimate_is_cap": false, "output_unbounded": true, "cost_unknown": ticket.EstimatedQuota == nil, "timeout_seconds": int(modelTestTimeout.Seconds()), "sample_timeout_seconds": int(modelTestSampleTimeout.Seconds()), "benchmark_id": modelTestVersion, "confirmation_token": signModelTestConfirmation(ticket), "expires_at": ticket.ExpiresAt})
 }
 
 func GetModelTest(c *gin.Context) {
@@ -541,7 +542,7 @@ func PrepareModelTest(c *gin.Context) {
 		run.Status, run.ErrorCode, run.CancelRequested = "cancelled", "cancel_requested", true
 	} else if buffer.header.Get("X-Newapi-Call-Intercepted") == "true" {
 		run.Status, run.ErrorCode = "intercepted", "user_call_intercepted"
-	} else if errors.Is(requestErr, context.DeadlineExceeded) {
+	} else if errors.Is(requestErr, context.DeadlineExceeded) || c.GetBool("model_test_sample_timeout") {
 		run.Status, run.ErrorCode = "timeout", "request_timeout"
 	} else if buffer.overflow {
 		run.Status, run.ErrorCode = "failed", "response_too_large"

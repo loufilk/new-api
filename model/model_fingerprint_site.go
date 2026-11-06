@@ -504,8 +504,31 @@ func ListModelFingerprintSitePublicRuns(ctx context.Context) ([]ModelFingerprint
 	return result, nil
 }
 
+// MarkModelFingerprintSiteProbeUnsent closes an admitted intent only when the
+// transport has proved that no upstream request was sent. It records no measured
+// usage and never makes the probe eligible for another dispatch.
+func MarkModelFingerprintSiteProbeUnsent(ctx context.Context, runID, probeID string) error {
+	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var run ModelFingerprintSiteRun
+		if err := lockForUpdate(tx).First(&run, "id = ?", runID).Error; err != nil {
+			return err
+		}
+		if run.Status != "running" {
+			return ErrFingerprintSiteConflict
+		}
+		result := tx.Model(&ModelFingerprintSiteProbe{}).Where("run_id = ? AND probe_id = ? AND status = ?", runID, probeID, "dispatching").Updates(map[string]any{"status": "not_sent", "completed_at": time.Now().Unix()})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrFingerprintSiteConflict
+		}
+		return nil
+	})
+}
+
 // CompleteModelFingerprintSiteProbe records only validated aggregate usage, never response bodies.
-// A failed or interrupted request stays dispatching and is never automatically replayed.
+// An ambiguous failed or interrupted request stays dispatching and is never automatically replayed.
 func CompleteModelFingerprintSiteProbe(ctx context.Context, runID, probeID string, prompt, completion int, responseModel string) error {
 	if prompt < 0 || completion < 0 || int64(prompt) > 1<<31-1 || int64(completion) > 1<<31-1 || len(responseModel) > 255 {
 		return errors.New("Invalid fingerprint probe usage")

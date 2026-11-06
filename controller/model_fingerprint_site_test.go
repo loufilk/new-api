@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -44,12 +45,14 @@ func setupFingerprintSiteExecution(t *testing.T) (*gorm.DB, int, *model.SystemTa
 }
 
 func TestFingerprintSitePostgresExecutionBoundaries(t *testing.T) {
-	for _, mode := range []string{"success", "missing-usage", "contradictory-usage", "output-limit", "http-error", "oversize", "disabled-after-first", "shutdown-after-first"} {
+	for _, mode := range []string{"success", "missing-usage", "contradictory-usage", "output-limit", "http-error", "oversize", "disabled-after-admission", "shutdown-after-admission"} {
 		t.Run(mode, func(t *testing.T) {
 			db, userID, task, target, run := setupFingerprintSiteExecution(t)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			var calls atomic.Int32
+			allStarted := make(chan struct{})
+			var startedOnce sync.Once
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				n := calls.Add(1)
 				assert.Equal(t, "/v1/chat/completions", r.URL.Path)
@@ -63,11 +66,21 @@ func TestFingerprintSitePostgresExecutionBoundaries(t *testing.T) {
 				assert.NotContains(t, request, "max_tokens")
 				assert.Equal(t, false, request["stream"])
 				var probes []model.ModelFingerprintSiteProbe
-				if assert.NoError(t, db.Where("run_id = ?", run.ID).Order("id").Find(&probes).Error) && assert.Len(t, probes, int(n)) {
-					assert.Equal(t, "dispatching", probes[n-1].Status, "dispatch must be committed before HTTP")
-					assert.NotEmpty(t, probes[n-1].RequestID)
+				if n == 3 {
+					startedOnce.Do(func() { close(allStarted) })
 				}
-				if mode == "disabled-after-first" {
+				select {
+				case <-allStarted:
+				case <-r.Context().Done():
+					return
+				}
+				if assert.NoError(t, db.Where("run_id = ?", run.ID).Order("id").Find(&probes).Error) && assert.Len(t, probes, 3) {
+					for _, probe := range probes {
+						assert.Contains(t, []string{"dispatching", "completed"}, probe.Status, "dispatch must be committed before HTTP")
+						assert.NotEmpty(t, probe.RequestID)
+					}
+				}
+				if mode == "disabled-after-admission" && n == 1 {
 					assert.NoError(t, db.Model(&model.Option{}).Where("key = ?", model.ModelTestEnabledKey).Update("value", "false").Error)
 				}
 				if mode == "http-error" {
@@ -107,8 +120,8 @@ func TestFingerprintSitePostgresExecutionBoundaries(t *testing.T) {
 					return nil, fmt.Errorf("unexpected fixture destination")
 				}
 				response, err := transport.RoundTrip(req)
-				// Cancel after a response arrives, so the next probe must observe shutdown.
-				if mode == "shutdown-after-first" {
+				// All probes are already admitted; cancellation reaches each in-flight response.
+				if mode == "shutdown-after-admission" {
 					cancel()
 				}
 				return response, err
@@ -122,7 +135,7 @@ func TestFingerprintSitePostgresExecutionBoundaries(t *testing.T) {
 			require.NoError(t, db.First(&saved, "id = ?", run.ID).Error)
 			config, err := model.GetModelFingerprintSiteConfig(context.Background())
 			require.NoError(t, err)
-			if mode == "success" || mode == "output-limit" {
+			if mode == "success" || mode == "output-limit" || mode == "disabled-after-admission" {
 				require.NoError(t, executionErr)
 				assert.EqualValues(t, 3, calls.Load())
 				assert.Equal(t, "succeeded", saved.Status)
@@ -143,20 +156,26 @@ func TestFingerprintSitePostgresExecutionBoundaries(t *testing.T) {
 					} `json:"data"`
 				}
 				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
-				require.Len(t, payload.Data.Items, 1)
+				require.Len(t, payload.Data.Items, 1, "safe historical reports remain visible after the feature is disabled")
 				assert.IsType(t, map[string]any{}, payload.Data.Items[0]["fingerprint_result"])
 				for _, field := range []string{"channel_id", "channel_key_index", "mapped_model", "reserved_quota", "task_id"} {
 					assert.NotContains(t, payload.Data.Items[0], field)
 				}
-				require.Len(t, payload.Data.Targets, 1)
-				assert.NotContains(t, payload.Data.Targets[0], "channel_id")
+				if mode == "disabled-after-admission" {
+					assert.Empty(t, payload.Data.Targets)
+					assert.True(t, config.AutomaticEnabled, "known completed usage must not trigger an automatic safety pause")
+					assert.Equal(t, run.ConfigVersion, config.Version)
+				} else {
+					require.Len(t, payload.Data.Targets, 1)
+					assert.NotContains(t, payload.Data.Targets[0], "channel_id")
+				}
 				assert.NotContains(t, response.Body.String(), "synthetic-not-a-real-key")
 				assert.NotContains(t, response.Body.String(), upstream.URL)
 
 			} else {
 				require.Error(t, executionErr)
-				assert.EqualValues(t, 1, calls.Load(), "automatic execution never retries or proceeds after cutoff")
-				if mode != "disabled-after-first" && mode != "shutdown-after-first" {
+				assert.EqualValues(t, 3, calls.Load(), "three admitted probes never retry after a failure")
+				if mode != "shutdown-after-admission" {
 					assert.Equal(t, "unknown", saved.Status)
 					assert.Equal(t, "unknown", saved.UsageState)
 					assert.Zero(t, config.ReservedQuota)

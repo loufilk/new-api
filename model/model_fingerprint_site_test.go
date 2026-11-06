@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -122,6 +123,106 @@ func TestFingerprintSiteAdmissionWithoutBudgetAndNoReplay(t *testing.T) {
 	_, err = ReserveModelFingerprintSiteRun(ctx, "fixture-task", "fixture-runner", c.Targets[0].ID, c.Version, now)
 	require.ErrorIs(t, err, ErrFingerprintSiteNotDue)
 }
+func TestFingerprintSitePostgresUnsentProbeLifecycle(t *testing.T) {
+	t.Run("unsent_intent_has_no_observed_usage_or_safety_pause", func(t *testing.T) {
+		ctx, config, now := fingerprintSiteFixture(t)
+		run, err := ReserveModelFingerprintSiteRun(ctx, "fixture-task", "fixture-runner", config.Targets[0].ID, config.Version, now)
+		require.NoError(t, err)
+		requestID := uuid.NewString()
+		require.NoError(t, AuthorizeModelFingerprintSiteProbe(ctx, run.ID, "fixture-task", "fixture-runner", "unsent", requestID))
+		require.NoError(t, AuthorizeModelFingerprintSiteProbe(ctx, run.ID, "fixture-task", "fixture-runner", "completed"))
+		require.NoError(t, CompleteModelFingerprintSiteProbe(ctx, run.ID, "completed", 10, 20, "fixture-model"))
+		var before ModelFingerprintSiteProbe
+		require.NoError(t, DB.Where("run_id = ? AND probe_id = ?", run.ID, "unsent").Take(&before).Error)
+
+		// Final dispatch can be denied after the durable intent was admitted.
+		// Recording that fact remains possible after the switch was closed.
+		require.NoError(t, DB.Model(&Option{}).Where("key = ?", ModelTestEnabledKey).Update("value", "false").Error)
+		require.NoError(t, MarkModelFingerprintSiteProbeUnsent(ctx, run.ID, "unsent"))
+		var unsent ModelFingerprintSiteProbe
+		require.NoError(t, DB.Where("run_id = ? AND probe_id = ?", run.ID, "unsent").Take(&unsent).Error)
+		assert.Equal(t, "not_sent", unsent.Status)
+		assert.GreaterOrEqual(t, unsent.CompletedAt, before.DispatchedAt)
+		assert.NotZero(t, unsent.CompletedAt)
+		assert.Equal(t, requestID, unsent.RequestID)
+		assert.Zero(t, unsent.PromptTokens)
+		assert.Zero(t, unsent.CompletionTokens)
+		assert.Empty(t, unsent.ResponseModel)
+		expected := before
+		expected.Status, expected.CompletedAt = "not_sent", unsent.CompletedAt
+		assert.Equal(t, expected, unsent, "closing an unused intent preserves its identity and all usage fields")
+
+		require.ErrorIs(t, MarkModelFingerprintSiteProbeUnsent(ctx, run.ID, "unsent"), ErrFingerprintSiteConflict)
+		require.ErrorIs(t, CompleteModelFingerprintSiteProbe(ctx, run.ID, "unsent", 50, 60, "contradictory-model"), ErrFingerprintSiteConflict)
+		require.ErrorIs(t, MarkModelFingerprintSiteProbeUnsent(ctx, run.ID, "completed"), ErrFingerprintSiteConflict)
+		require.ErrorIs(t, MarkModelFingerprintSiteProbeUnsent(ctx, run.ID, "missing"), ErrFingerprintSiteConflict)
+		var completed ModelFingerprintSiteProbe
+		require.NoError(t, DB.Where("run_id = ? AND probe_id = ?", run.ID, "completed").Take(&completed).Error)
+		assert.Equal(t, "completed", completed.Status)
+		assert.Equal(t, 10, completed.PromptTokens)
+		assert.Equal(t, 20, completed.CompletionTokens)
+		assert.Equal(t, "fixture-model", completed.ResponseModel)
+
+		require.NoError(t, FinishModelFingerprintSiteRun(ctx, run.ID, ModelFingerprintSiteResult{Status: "failed", Assessment: "dispatch_not_authorized"}, true))
+		var saved ModelFingerprintSiteRun
+		require.NoError(t, DB.First(&saved, "id = ?", run.ID).Error)
+		assert.Equal(t, "failed", saved.Status)
+		assert.Equal(t, "known", saved.UsageState)
+		after, err := GetModelFingerprintSiteConfig(ctx)
+		require.NoError(t, err)
+		assert.True(t, after.AutomaticEnabled, "definite non-delivery does not trigger an unknown-usage safety pause")
+		assert.Equal(t, config.Version, after.Version)
+	})
+
+	t.Run("concurrent_terminal_writes_have_one_winner", func(t *testing.T) {
+		ctx, config, now := fingerprintSiteFixture(t)
+		run, err := ReserveModelFingerprintSiteRun(ctx, "fixture-task", "fixture-runner", config.Targets[0].ID, config.Version, now)
+		require.NoError(t, err)
+		require.NoError(t, AuthorizeModelFingerprintSiteProbe(ctx, run.ID, "fixture-task", "fixture-runner", "probe"))
+		start := make(chan struct{})
+		results := make(chan error, 2)
+		var workers sync.WaitGroup
+		for range 2 {
+			workers.Go(func() {
+				<-start
+				results <- MarkModelFingerprintSiteProbeUnsent(ctx, run.ID, "probe")
+			})
+		}
+		close(start)
+		workers.Wait()
+		close(results)
+		applied := 0
+		for err := range results {
+			if err == nil {
+				applied++
+			} else {
+				require.ErrorIs(t, err, ErrFingerprintSiteConflict)
+			}
+		}
+		assert.Equal(t, 1, applied)
+		var probe ModelFingerprintSiteProbe
+		require.NoError(t, DB.Where("run_id = ? AND probe_id = ?", run.ID, "probe").Take(&probe).Error)
+		assert.Equal(t, "not_sent", probe.Status)
+		assert.NotZero(t, probe.CompletedAt)
+		assert.Zero(t, probe.PromptTokens)
+		assert.Zero(t, probe.CompletionTokens)
+	})
+
+	t.Run("terminal_run_preserves_its_unknown_intent", func(t *testing.T) {
+		ctx, config, now := fingerprintSiteFixture(t)
+		run, err := ReserveModelFingerprintSiteRun(ctx, "fixture-task", "fixture-runner", config.Targets[0].ID, config.Version, now)
+		require.NoError(t, err)
+		require.NoError(t, AuthorizeModelFingerprintSiteProbe(ctx, run.ID, "fixture-task", "fixture-runner", "probe"))
+		var before ModelFingerprintSiteProbe
+		require.NoError(t, DB.Where("run_id = ? AND probe_id = ?", run.ID, "probe").Take(&before).Error)
+		require.NoError(t, FinishModelFingerprintSiteRun(ctx, run.ID, ModelFingerprintSiteResult{Status: "failed"}, false))
+		require.ErrorIs(t, MarkModelFingerprintSiteProbeUnsent(ctx, run.ID, "probe"), ErrFingerprintSiteConflict)
+		var after ModelFingerprintSiteProbe
+		require.NoError(t, DB.Where("run_id = ? AND probe_id = ?", run.ID, "probe").Take(&after).Error)
+		assert.Equal(t, before, after, "late non-delivery claims cannot rewrite a finalized unknown run")
+	})
+}
+
 func TestFingerprintSiteUnknownPausesWithoutChangingLegacyLedger(t *testing.T) {
 	ctx, c, now := fingerprintSiteFixture(t)
 	require.NoError(t, DB.Model(&ModelFingerprintSiteConfig{}).Where("id = ?", 1).Update("reserved_quota", 100).Error)

@@ -75,6 +75,7 @@ export function useModelTest() {
   const client = useQueryClient()
   const [quote, setQuote] = useState<TestEstimate | null>(null)
   const [pending, setPending] = useState<TestRequest | null>(null)
+  const pendingTimeoutSeconds = useRef(0)
   const [uncertain, setUncertain] = useState(false)
   const startLock = useRef(false)
   const hadUncertainAttempt = useRef(false)
@@ -146,7 +147,8 @@ export function useModelTest() {
     onError: report,
   })
   const start = useMutation({
-    mutationFn: startTest,
+    mutationFn: (request: TestRequest) =>
+      startTest(request, pendingTimeoutSeconds.current),
     retry: false,
     onSuccess() {
       setPending(null)
@@ -195,6 +197,7 @@ export function useModelTest() {
       confirmed: true,
       request_id: crypto.randomUUID(),
     }
+    pendingTimeoutSeconds.current = quote.timeout_seconds
     setQuote(null)
     hadUncertainAttempt.current = false
     setPending(request)

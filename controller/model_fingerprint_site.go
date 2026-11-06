@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -52,7 +53,7 @@ func fingerprintSiteChannel(target model.ModelFingerprintSiteTarget) (*model.Cha
 }
 
 func executeSiteModelFingerprint(parent context.Context, task *model.SystemTask, runnerID string, target model.ModelFingerprintSiteTarget, run *model.ModelFingerprintSiteRun) (resultErr error) {
-	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
+	ctx, cancel := context.WithTimeout(parent, modelTestTimeout)
 	defer cancel()
 	result := model.ModelFingerprintSiteResult{Status: "failed", BenchmarkID: "lm-detector-v1", FingerprintVersion: modelfingerprint.SDKCommit}
 	usageKnown := true
@@ -117,166 +118,50 @@ func executeSiteModelFingerprint(parent context.Context, task *model.SystemTask,
 	if guard.Finish() != nil {
 		return fail("group_configuration_changed")
 	}
-	samples := make([]modelfingerprint.Sample, 0, 3)
+	// Resolve the identity once, then run three isolated samples concurrently.
+	// Mapped-model persistence is serialized, while HTTP work is independent.
+	var mappingMu sync.Mutex
 	var mappedModel string
-	for _, challenge := range challenges {
-		if ctx.Err() != nil {
-			return fail("request_interrupted")
+	setMappedModel := func(probe *gin.Context, name string) error {
+		mappingMu.Lock()
+		defer mappingMu.Unlock()
+		if mappedModel != "" && mappedModel != name {
+			return errors.New("model_mapping_changed")
 		}
-		currentGuard, err := model.BeginRequestGroupConfigRead(base)
-		if err != nil {
-			return fail("group_configuration_changed")
+		if mappedModel != "" {
+			return nil
 		}
-		current, err := fingerprintSiteChannel(target)
-		if err != nil {
-			currentGuard.Close()
-			return fail("channel_changed")
+		if err := model.DB.WithContext(probe.Request.Context()).Model(&model.ModelFingerprintSiteRun{}).Where("id = ? AND status = ?", run.ID, "running").Updates(map[string]any{"channel_id": channel.Id, "channel_key_index": common.GetContextKeyInt(probe, constant.ContextKeyChannelMultiKeyIndex), "mapped_model": name}).Error; err != nil {
+			return errors.New("history_unavailable")
 		}
-		currentBytes, err := modelFingerprintChannelSnapshot(current)
-		if err != nil || sha256.Sum256(currentBytes) != channelHash {
-			currentGuard.Close()
-			return fail("channel_changed")
-		}
-		body, err := common.Marshal(gin.H{"model": target.Model, "stream": false, "messages": []gin.H{{"role": "user", "content": challenge.Prompt}}})
-		if err != nil {
-			currentGuard.Close()
-			return fail("invalid_request")
-		}
-		request := &dto.GeneralOpenAIRequest{}
-		if err = common.Unmarshal(body, request); err != nil {
-			currentGuard.Close()
-			return fail("invalid_request")
-		}
-		probe := base.Copy()
-		probe.Request = base.Request.Clone(ctx)
-		probe.Request.Body = io.NopCloser(bytes.NewReader(body))
-		probe.Request.ContentLength = int64(len(body))
-		probe.Set(common.KeyRequestBody, body)
-		probe.Set(common.RequestIdKey, uuid.NewString())
-		buffer := &modelTestWriter{ResponseWriter: base.Writer, header: make(http.Header), status: 200, cancel: cancel}
-		probe.Writer = buffer
-		info, err := relaycommon.GenRelayInfo(probe, types.RelayFormatOpenAI, request, nil)
-		if err != nil {
-			currentGuard.Close()
-			return fail("invalid_request")
-		}
-		info.IsChannelTest = true
-		info.InitChannelMeta(probe)
-		if err = helper.ModelMappedHelper(probe, info, request); err != nil {
-			currentGuard.Close()
-			return fail("model_mapping_failed")
-		}
-		if err = helper.ApplyReasoningModelSuffix(probe, info, request); err != nil {
-			currentGuard.Close()
-			return fail("model_mapping_failed")
-		}
-		if mappedModel != "" && info.UpstreamModelName != mappedModel {
-			currentGuard.Close()
-			return fail("model_mapping_changed")
-		}
-		mappedModel = info.UpstreamModelName
-		if err = model.DB.WithContext(ctx).Model(&model.ModelFingerprintSiteRun{}).Where("id = ? AND status = ?", run.ID, "running").Updates(map[string]any{"channel_id": channel.Id, "channel_key_index": common.GetContextKeyInt(base, constant.ContextKeyChannelMultiKeyIndex), "mapped_model": mappedModel}).Error; err != nil {
-			currentGuard.Close()
-			return fail("history_unavailable")
-		}
-		request.SetModelName(mappedModel)
-		apiType, _ := common.ChannelType2APIType(channel.Type)
-		adaptor := relay.GetAdaptor(apiType)
-		if adaptor == nil {
-			currentGuard.Close()
-			return fail("unsupported_test_channel")
-		}
-		adaptor.Init(info)
-		converted, err := adaptor.ConvertOpenAIRequest(probe, info, request)
-		if err != nil {
-			currentGuard.Close()
-			return fail("unsupported_test_protocol")
-		}
-		wire, err := common.Marshal(converted)
-		if err != nil {
-			currentGuard.Close()
-			return fail("invalid_request")
-		}
-		if currentGuard.Finish() != nil {
-			return fail("group_configuration_changed")
-		}
-		if err = model.AuthorizeModelFingerprintSiteProbe(ctx, run.ID, task.TaskID, runnerID, challenge.ID, info.RequestId); err != nil {
-			return fail("dispatch_not_authorized")
-		}
-		usageKnown = false // Durable dispatch intent exists; no retry after this boundary.
-		response, err := adaptor.DoRequest(probe, info, bytes.NewReader(wire))
-		if err != nil {
-			return fail("upstream_outcome_unknown")
-		}
-		var httpResponse *http.Response
-		var raw []byte
-		if response != nil {
-			var ok bool
-			httpResponse, ok = response.(*http.Response)
-			if !ok {
-				return fail("invalid_response")
-			}
-		}
-		// HTTP adaptors expose raw bytes here; SDK/WebSocket adaptors perform
-		// their ordinary response step below and return normalized usage instead.
-		if httpResponse != nil && httpResponse.Body != nil {
-			var readErr error
-			raw, readErr = io.ReadAll(io.LimitReader(httpResponse.Body, modelTestResponseLimit+1))
-			_ = httpResponse.Body.Close()
-			if readErr != nil || len(raw) > modelTestResponseLimit || httpResponse.StatusCode != http.StatusOK {
-				return fail("upstream_outcome_unknown")
-			}
-			httpResponse.Body = io.NopCloser(bytes.NewReader(raw))
-		}
-		reportedUsage, responseErr := adaptor.DoResponse(probe, httpResponse, info)
-		if responseErr != nil || buffer.overflow || buffer.status != http.StatusOK {
-			return fail("invalid_response")
-		}
-		var parsed struct {
-			Model   string `json:"model"`
-			Choices []struct {
-				Message struct {
-					Content string `json:"content"`
-				} `json:"message"`
-				FinishReason string `json:"finish_reason"`
-			} `json:"choices"`
-		}
-		// Normalize provider-native responses through the selected adaptor. Real
-		// reported usage is checked separately, never replaced by local estimates.
-		if common.Unmarshal(buffer.body.Bytes(), &parsed) != nil || len(parsed.Choices) != 1 {
-			return fail("invalid_response")
-		}
-		var usage modelFingerprintUsage
-		if len(raw) > 0 {
-			usage, err = fingerprintSiteReportedUsage(raw)
-			// Coze returns message detail here, while its explicit usage belongs
-			// to the preceding completed-chat response. Only that adaptor may
-			// use its independently validated upstream usage snapshot.
-			if err != nil && apiType == constant.APITypeCoze {
-				usage, err = fingerprintSiteCozeUsage(reportedUsage)
-			}
-		} else {
-			usage, err = fingerprintSiteAdaptorUsage(reportedUsage)
-		}
-		if err != nil {
-			return fail("usage_unknown")
-		}
-		if err = model.CompleteModelFingerprintSiteProbe(ctx, run.ID, challenge.ID, int(usage.PromptTokens), int(usage.CompletionTokens), parsed.Model); err != nil {
-			return fail("history_unavailable")
-		}
-		usageKnown = true
-		sample := modelfingerprint.Sample{ChallengeID: challenge.ID, ExpectedCount: challenge.ExpectedCount, Response: parsed.Choices[0].Message.Content}
-		if parsed.Choices[0].FinishReason != "stop" {
-			sample.Error = "incomplete_response"
-		}
-		samples = append(samples, sample)
-		if sample.Error != "" {
-			break
-		}
+		mappedModel = name
+		return nil
 	}
-	for len(samples) < 3 {
-		challenge := challenges[len(samples)]
-		samples = append(samples, modelfingerprint.Sample{ChallengeID: challenge.ID, ExpectedCount: challenge.ExpectedCount, Error: "not_dispatched"})
+	probes := make([]*gin.Context, len(challenges))
+	for i := range probes {
+		probes[i] = copyModelFingerprintContext(base)
+	}
+	outcomes := make([]modelFingerprintSiteProbeOutcome, len(challenges))
+	var workers sync.WaitGroup
+	for i, challenge := range challenges {
+		workers.Go(func() {
+			outcomes[i] = executeSiteModelFingerprintProbe(probes[i], challenge, target, channelHash, run.ID, task.TaskID, runnerID, setMappedModel)
+		})
+	}
+	workers.Wait()
+	samples := make([]modelfingerprint.Sample, len(challenges))
+	var failure string
+	for i, outcome := range outcomes {
+		samples[i] = outcome.sample
+		if !outcome.usageKnown {
+			// A later success must never erase another probe's uncertain send.
+			if usageKnown {
+				failure = outcome.errorCode
+			}
+			usageKnown = false
+		} else if failure == "" {
+			failure = outcome.errorCode
+		}
 	}
 	analysis, err := modelFingerprintScorer.analyze(samples, true)
 	if err != nil {
@@ -287,7 +172,201 @@ func executeSiteModelFingerprint(parent context.Context, task *model.SystemTask,
 		return fail("fingerprint_analysis_failed")
 	}
 	result.FingerprintResult = string(safeResult)
+	if failure != "" {
+		return fail(failure)
+	}
 	result.Assessment = analysis.Status
 	result.Status = "succeeded"
 	return nil
+}
+
+type modelFingerprintSiteProbeOutcome struct {
+	sample     modelfingerprint.Sample
+	errorCode  string
+	usageKnown bool
+}
+
+func executeSiteModelFingerprintProbe(probe *gin.Context, challenge modelfingerprint.Challenge, target model.ModelFingerprintSiteTarget, channelHash [32]byte, runID, taskID, runnerID string, setMappedModel func(*gin.Context, string) error) (outcome modelFingerprintSiteProbeOutcome) {
+	outcome.sample = modelfingerprint.Sample{ChallengeID: challenge.ID, ExpectedCount: challenge.ExpectedCount, Error: "not_dispatched"}
+	outcome.usageKnown = true
+	ctx, cancel := context.WithTimeout(probe.Request.Context(), modelTestSampleTimeout)
+	defer cancel()
+	defer common.CleanupBodyStorage(probe)
+	defer func() {
+		if recover() != nil {
+			outcome.errorCode = "upstream_outcome_unknown"
+		}
+		if outcome.errorCode != "" {
+			outcome.sample.Error = outcome.errorCode
+		}
+	}()
+	fail := func(code string) modelFingerprintSiteProbeOutcome {
+		outcome.errorCode = code
+		return outcome
+	}
+	buffer, err := prepareModelFingerprintProbe(probe, ctx, cancel, target.Model, challenge, uuid.NewString())
+	if err != nil {
+		return fail("invalid_request")
+	}
+	if ctx.Err() != nil {
+		return fail("request_interrupted")
+	}
+	currentGuard, err := model.BeginRequestGroupConfigRead(probe)
+	if err != nil {
+		return fail("group_configuration_changed")
+	}
+	defer currentGuard.Close()
+	current, err := fingerprintSiteChannel(target)
+	if err != nil {
+		return fail("channel_changed")
+	}
+	currentBytes, err := modelFingerprintChannelSnapshot(current)
+	if err != nil || sha256.Sum256(currentBytes) != channelHash {
+		return fail("channel_changed")
+	}
+	request := &dto.GeneralOpenAIRequest{}
+	body, _ := probe.Get(common.KeyRequestBody)
+	if err = common.Unmarshal(body.([]byte), request); err != nil {
+		return fail("invalid_request")
+	}
+	info, err := relaycommon.GenRelayInfo(probe, types.RelayFormatOpenAI, request, nil)
+	if err != nil {
+		return fail("invalid_request")
+	}
+	info.IsChannelTest = true
+	info.InitChannelMeta(probe)
+	if err = helper.ModelMappedHelper(probe, info, request); err != nil {
+		return fail("model_mapping_failed")
+	}
+	if err = helper.ApplyReasoningModelSuffix(probe, info, request); err != nil {
+		return fail("model_mapping_failed")
+	}
+	if err = setMappedModel(probe, info.UpstreamModelName); err != nil {
+		return fail(err.Error())
+	}
+	request.SetModelName(info.UpstreamModelName)
+	apiType, _ := common.ChannelType2APIType(current.Type)
+	adaptor := relay.GetAdaptor(apiType)
+	if adaptor == nil {
+		return fail("unsupported_test_channel")
+	}
+	adaptor.Init(info)
+	converted, err := adaptor.ConvertOpenAIRequest(probe, info, request)
+	if err != nil {
+		return fail("unsupported_test_protocol")
+	}
+	wire, err := common.Marshal(converted)
+	if err != nil {
+		return fail("invalid_request")
+	}
+	if currentGuard.Finish() != nil {
+		return fail("group_configuration_changed")
+	}
+	if err = model.AuthorizeModelFingerprintSiteProbe(ctx, runID, taskID, runnerID, challenge.ID, info.RequestId); err != nil {
+		return fail("dispatch_not_authorized")
+	}
+	outcome.usageKnown = false // Durable intent exists; never replay this probe.
+	finishUnsent := func() modelFingerprintSiteProbeOutcome {
+		persistCtx, persistCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer persistCancel()
+		if model.MarkModelFingerprintSiteProbeUnsent(persistCtx, runID, challenge.ID) != nil {
+			return fail("history_unavailable")
+		}
+		outcome.usageKnown = true
+		if code := probe.GetString("model_test_error_code"); code != "" {
+			return fail(code)
+		}
+		if ctx.Err() != nil {
+			return fail("request_interrupted")
+		}
+		return fail("dispatch_not_authorized")
+	}
+	response, err := adaptor.DoRequest(probe, info, bytes.NewReader(wire))
+	if err != nil {
+		if common.GetContextKeyBool(probe, constant.ContextKeyUpstreamRequestUnsent) {
+			return finishUnsent()
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fail("request_timeout")
+		}
+		return fail("upstream_outcome_unknown")
+	}
+	var httpResponse *http.Response
+	var raw []byte
+	if response != nil {
+		var ok bool
+		httpResponse, ok = response.(*http.Response)
+		if !ok {
+			return fail("invalid_response")
+		}
+	}
+	// HTTP adaptors expose raw bytes here; SDK/WebSocket adaptors perform
+	// their ordinary response step below and return normalized usage instead.
+	if httpResponse != nil && httpResponse.Body != nil {
+		var readErr error
+		raw, readErr = io.ReadAll(io.LimitReader(httpResponse.Body, modelTestResponseLimit+1))
+		_ = httpResponse.Body.Close()
+		if readErr != nil || len(raw) > modelTestResponseLimit || httpResponse.StatusCode != http.StatusOK {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return fail("request_timeout")
+			}
+			return fail("upstream_outcome_unknown")
+		}
+		httpResponse.Body = io.NopCloser(bytes.NewReader(raw))
+	}
+	reportedUsage, responseErr := adaptor.DoResponse(probe, httpResponse, info)
+	if responseErr != nil || buffer.overflow || buffer.status != http.StatusOK {
+		// SDK/WebSocket adaptors can perform their final dispatch gate during
+		// DoResponse, rather than during the earlier request preparation.
+		if common.GetContextKeyBool(probe, constant.ContextKeyUpstreamRequestUnsent) {
+			return finishUnsent()
+		}
+		return fail("invalid_response")
+	}
+	var parsed struct {
+		Model   string `json:"model"`
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if common.Unmarshal(buffer.body.Bytes(), &parsed) != nil || len(parsed.Choices) != 1 {
+		return fail("invalid_response")
+	}
+	var usage modelFingerprintUsage
+	if len(raw) > 0 {
+		usage, err = fingerprintSiteReportedUsage(raw)
+		// Coze's explicit usage belongs to the preceding completed-chat
+		// response; only that adaptor may use its validated usage snapshot.
+		if err != nil && apiType == constant.APITypeCoze {
+			usage, err = fingerprintSiteCozeUsage(reportedUsage)
+		}
+	} else {
+		usage, err = fingerprintSiteAdaptorUsage(reportedUsage)
+	}
+	if err != nil {
+		return fail("usage_unknown")
+	}
+	// A response can finish just as the client or scheduler cancels. Preserve
+	// observed usage with a bounded independent write before the final join.
+	persistCtx, persistCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer persistCancel()
+	if err = model.CompleteModelFingerprintSiteProbe(persistCtx, runID, challenge.ID, int(usage.PromptTokens), int(usage.CompletionTokens), parsed.Model); err != nil {
+		return fail("history_unavailable")
+	}
+	outcome.usageKnown = true
+	outcome.sample.Response, outcome.sample.Error = parsed.Choices[0].Message.Content, ""
+	if parsed.Choices[0].FinishReason != "stop" {
+		outcome.sample.Error = "incomplete_response"
+		outcome.sample.Truncated = parsed.Choices[0].FinishReason == "length"
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fail("request_timeout")
+	}
+	if ctx.Err() != nil {
+		return fail("request_interrupted")
+	}
+	return outcome
 }

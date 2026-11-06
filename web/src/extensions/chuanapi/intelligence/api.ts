@@ -60,12 +60,15 @@ export async function estimateTest(
       .data
   ).data
 }
-export async function startTest(request: TestRequest): Promise<TestRun> {
-  // Longer than the server's 90-second deadline; transport timeout is not cancellation.
+export async function startTest(
+  request: TestRequest,
+  timeoutSeconds: number
+): Promise<TestRun> {
+  // Allow the confirmed round budget plus time to persist and return its result.
   return requireServerSuccess(
     (
       await api.post<Response<TestRun>>(`${endpoint}/runs`, request, {
-        timeout: 110_000,
+        timeout: timeoutSeconds * 1000 + 20_000,
         skipAuthRefresh: true,
       })
     ).data

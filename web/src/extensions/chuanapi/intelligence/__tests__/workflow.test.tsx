@@ -308,43 +308,56 @@ describe('explicit model test workflow', () => {
       '/api/user/model-tests/runs/test-run/cancel'
     )
   })
-  test('retries a lost response with the same idempotent request identity', async () => {
-    mockReads()
-    let attempts = 0
-    const post = vi.spyOn(api, 'post').mockImplementation(async (url, body) => {
-      if (String(url).endsWith('/estimate')) {
-        return {
-          data: {
-            success: true,
-            data: {
-              ...(body as TestSelection),
-              estimated_quota: 100,
-              quota_per_unit: 500000,
-              estimate_is_cap: false,
-              timeout_seconds: 90,
-              benchmark_id: 'pelican-static-v1',
-              confirmation_token: 'confirmation',
-              expires_at: Math.floor(Date.now() / 1000) + 300,
-            },
-          },
-        }
+  test.each([90, 150])(
+    'retries a lost response with the same request identity and confirmed %s-second deadline',
+    async (timeoutSeconds) => {
+      mockReads()
+      let attempts = 0
+      const post = vi
+        .spyOn(api, 'post')
+        .mockImplementation(async (url, body) => {
+          if (String(url).endsWith('/estimate')) {
+            return {
+              data: {
+                success: true,
+                data: {
+                  ...(body as TestSelection),
+                  estimated_quota: 100,
+                  quota_per_unit: 500000,
+                  estimate_is_cap: false,
+                  timeout_seconds: timeoutSeconds,
+                  benchmark_id: 'pelican-static-v1',
+                  confirmation_token: 'confirmation',
+                  expires_at: Math.floor(Date.now() / 1000) + 300,
+                },
+              },
+            }
+          }
+          attempts++
+          if (attempts === 1) throw new Error('Connection lost')
+          return { data: { success: true, data: run() } }
+        })
+      const user = userEvent.setup()
+      renderWithQuery(<IntelligenceDashboard />)
+      await beginEstimate(user)
+      await user.click(
+        await screen.findByRole('button', {
+          name: 'Accept charges and run once',
+        })
+      )
+      await user.click(
+        await screen.findByRole('button', { name: 'Retry the same request' })
+      )
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(3))
+      expect(post.mock.calls[2][1]).toEqual(post.mock.calls[1][1])
+      for (const call of post.mock.calls.slice(1)) {
+        expect(call[2]).toMatchObject({
+          timeout: timeoutSeconds * 1000 + 20_000,
+          skipAuthRefresh: true,
+        })
       }
-      attempts++
-      if (attempts === 1) throw new Error('Connection lost')
-      return { data: { success: true, data: run() } }
-    })
-    const user = userEvent.setup()
-    renderWithQuery(<IntelligenceDashboard />)
-    await beginEstimate(user)
-    await user.click(
-      await screen.findByRole('button', { name: 'Accept charges and run once' })
-    )
-    await user.click(
-      await screen.findByRole('button', { name: 'Retry the same request' })
-    )
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(3))
-    expect(post.mock.calls[2][1]).toEqual(post.mock.calls[1][1])
-  })
+    }
+  )
   test('unlocks new tests after a lost response is reconciled to a saved terminal result', async () => {
     let saved: TestRun | null = null
     const get = mockReads()

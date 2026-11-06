@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -227,14 +228,15 @@ func TestModelTestGroupRenamePostgresDisableAfterReservationRefundsFrozenAmountO
 	id := uuid.NewString()
 	body, _ := modelTestGroupRenameQuotedRequest(t, engine, "old", id)
 	var cut atomic.Bool
+	var cutoffMu sync.Mutex
 	var reservedBalance int
 	const callback = "test:joint-rename-disable-after-held"
 	require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register(callback, func(tx *gorm.DB) {
 		if tx.Statement.Table != "options" || cut.Load() {
 			return
 		}
-		// Only the final feature authority read can inject the write. A group
-		// version read may own the policy RLock and must not synchronously rename.
+		// Only a feature authority read can inject the write. Group-version
+		// reads may own the policy RLock and must remain free to finish.
 		where, ok := tx.Statement.Clauses["WHERE"].Expression.(clause.Where)
 		if !ok || len(where.Exprs) != 1 {
 			return
@@ -247,54 +249,124 @@ func TestModelTestGroupRenamePostgresDisableAfterReservationRefundsFrozenAmountO
 		if !ok || column.Name != "key" {
 			return
 		}
-		var held int64
-		if !assert.NoError(t, db.Model(&model.BillingFinalization{}).Where("user_id = ? AND state = ?", userID, model.BillingHeld).Count(&held).Error) || held == 0 {
+		// Serialize admission until the database cutoff commits. Publishing a
+		// flag before the UPDATE lets another probe read true and dispatch.
+		cutoffMu.Lock()
+		if cut.Load() {
+			cutoffMu.Unlock()
 			return
 		}
-		if !cut.CompareAndSwap(false, true) {
+		var held int64
+		if !assert.NoError(t, db.Model(&model.BillingFinalization{}).Where("user_id = ? AND state = ?", userID, model.BillingHeld).Count(&held).Error) || held == 0 {
+			cutoffMu.Unlock()
 			return
 		}
 		var user model.User
-		require.NoError(t, db.First(&user, userID).Error)
+		if !assert.NoError(t, db.First(&user, userID).Error) {
+			cutoffMu.Unlock()
+			return
+		}
 		reservedBalance = user.QuotaPaid
+		if !assert.NoError(t, db.Model(&model.Option{}).Where("key = ?", model.ModelTestEnabledKey).Update("value", "false").Error) {
+			cutoffMu.Unlock()
+			return
+		}
+		cut.Store(true)
+		cutoffMu.Unlock()
+		// With the switch durably closed, every subsequent admission can read
+		// false. Release the test mutex before rename takes the policy write
+		// lock, so concurrent group readers can finish and release their RLock.
 		_, err := model.ApplyGroupRename(model.GroupRenameApplyRequest{Mappings: []model.GroupRenameMapping{{From: "old", To: "new"}}, Options: map[string]string{"GroupRatio": `{"new":99,"premium":2}`}})
-		require.NoError(t, err)
-		require.NoError(t, db.Model(&model.Option{}).Where("key = ?", model.ModelTestEnabledKey).Update("value", "false").Error)
+		assert.NoError(t, err)
 	}))
 	t.Cleanup(func() { require.NoError(t, model.DB.Callback().Query().Remove(callback)) })
 	response := httptest.NewRecorder()
 	engine.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader(body)))
 	require.True(t, cut.Load(), "the committed-hold/final-dispatch boundary must be reached")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Contains(t, response.Body.String(), "model_tests_disabled")
 	waitTaskSubmissionFixtureQuiescence(t)
-	assert.Equal(t, 1_000_000-125, reservedBalance)
+	assert.Less(t, reservedBalance, 1_000_000, "a committed reservation preceded the cutoff")
+	assert.GreaterOrEqual(t, reservedBalance, 1_000_000-3*125)
+	assert.Zero(t, (1_000_000-reservedBalance)%125)
 	assert.Zero(t, calls.Load())
 	run, err := model.GetModelTestRun(userID, id)
 	require.NoError(t, err)
 	assert.Equal(t, "failed", run.Status)
+	assert.NotEmpty(t, run.ErrorCode, "revocation or the renamed admission snapshot rejects every probe")
+	assert.NotZero(t, run.CompletedAt)
 	assert.Equal(t, "old", run.Group)
-	for range 2 {
-		replay := httptest.NewRecorder()
-		engine.ServeHTTP(replay, httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader(body)))
-		require.Equal(t, http.StatusOK, replay.Code, replay.Body.String())
+	var audits []modelFingerprintSampleAudit
+	require.NoError(t, common.UnmarshalJsonStr(run.SamplesJSON, &audits))
+	require.Len(t, audits, 3)
+	auditIDs := make(map[string]bool, len(audits))
+	for _, audit := range audits {
+		require.NotEmpty(t, audit.RequestID)
+		assert.NotContains(t, auditIDs, audit.RequestID, "parallel probes have independent financial identities")
+		auditIDs[audit.RequestID] = true
+		assert.Equal(t, "failed", audit.Status)
+		assert.Nil(t, audit.Usage, "no upstream usage exists for a refused probe")
+		assert.Empty(t, audit.ResponseSHA256)
 	}
+	assert.Contains(t, auditIDs, run.RequestID)
 	var user model.User
 	require.NoError(t, db.First(&user, userID).Error)
 	assert.Equal(t, "new", user.Group)
 	assert.Equal(t, 1_000_000, user.QuotaPaid)
 	assert.Equal(t, user.QuotaPaid, user.Quota)
+	var token model.Token
+	require.NoError(t, db.Where("user_id = ?", userID).First(&token).Error)
+	assert.Equal(t, "new", token.Group)
+	assert.Equal(t, 1_000_000, token.RemainQuota)
+	assert.Zero(t, token.UsedQuota)
 	var owners []model.BillingFinalization
 	require.NoError(t, db.Where("user_id = ?", userID).Find(&owners).Error)
-	require.Len(t, owners, 1)
-	assert.Equal(t, model.BillingRefunded, owners[0].State)
-	assert.Equal(t, run.RequestID, owners[0].RequestID)
+	require.NotEmpty(t, owners)
+	require.LessOrEqual(t, len(owners), 3)
+	assert.LessOrEqual(t, 1_000_000-reservedBalance, 125*len(owners))
 	var ledger []model.BalanceLedger
 	require.NoError(t, db.Where("user_id = ?", userID).Order("id").Find(&ledger).Error)
-	require.Len(t, ledger, 2)
-	assert.Equal(t, model.LedgerReasonBillingPreConsume, ledger[0].Reason)
-	assert.Equal(t, -125, ledger[0].Delta)
-	assert.Equal(t, model.LedgerReasonBillingRefund, ledger[1].Reason)
-	assert.Equal(t, 125, ledger[1].Delta)
+	require.Len(t, ledger, 2*len(owners))
+	for _, owner := range owners {
+		assert.Contains(t, auditIDs, owner.RequestID)
+		assert.Equal(t, model.BillingRefunded, owner.State)
+		assert.Equal(t, 125, owner.SourceHeld)
+		assert.Equal(t, 125, owner.TokenHeld)
+		assert.Zero(t, owner.ActualQuota)
+		var reasons []string
+		var deltas []int
+		for _, row := range ledger {
+			if row.RequestId == owner.RequestID {
+				reasons = append(reasons, row.Reason)
+				deltas = append(deltas, row.Delta)
+			}
+		}
+		assert.Equal(t, []string{model.LedgerReasonBillingPreConsume, model.LedgerReasonBillingRefund}, reasons)
+		assert.Equal(t, []int{-125, 125}, deltas, "each refund uses its frozen hold, independent of the renamed group's price")
+	}
+	for range 2 {
+		replay := httptest.NewRecorder()
+		engine.ServeHTTP(replay, httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader(body)))
+		require.Equal(t, http.StatusOK, replay.Code, replay.Body.String())
+	}
+	var fresh modelTestRequest
+	require.NoError(t, common.Unmarshal(body, &fresh))
+	fresh.RequestID = uuid.NewString()
+	freshBody, err := common.Marshal(fresh)
+	require.NoError(t, err)
+	denied := httptest.NewRecorder()
+	engine.ServeHTTP(denied, httptest.NewRequest(http.MethodPost, "/runs", bytes.NewReader(freshBody)))
+	require.Equal(t, http.StatusForbidden, denied.Code, denied.Body.String())
+	assert.Contains(t, denied.Body.String(), "model_tests_disabled")
+	var ownerCount, ledgerCount int64
+	require.NoError(t, db.Model(&model.BillingFinalization{}).Where("user_id = ?", userID).Count(&ownerCount).Error)
+	require.NoError(t, db.Model(&model.BalanceLedger{}).Where("user_id = ?", userID).Count(&ledgerCount).Error)
+	assert.EqualValues(t, len(owners), ownerCount)
+	assert.EqualValues(t, len(ledger), ledgerCount, "replay and revoked admission cannot create duplicate charges or refunds")
+	require.NoError(t, db.First(&user, userID).Error)
+	require.NoError(t, db.First(&token, token.Id).Error)
+	assert.Equal(t, 1_000_000, user.QuotaPaid)
+	assert.Equal(t, user.QuotaPaid, user.Quota)
+	assert.Equal(t, 1_000_000, token.RemainQuota)
+	assert.Zero(t, token.UsedQuota)
 	assert.Zero(t, calls.Load(), "reconciliation must not reserve or dispatch again")
 }

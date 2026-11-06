@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -72,9 +73,18 @@ func TestFingerprintSitePostgresAWSUsesSDKResponseAndRealUsage(t *testing.T) {
 			catalogue, err := fingerprintSiteCatalogue()
 			require.NoError(t, err)
 			assert.Contains(t, catalogue.ModelsByGroup[target.Group], target.Model, "AWS follows the same group/model catalogue")
+			challenges, err := modelFingerprintScorer.challenges()
+			require.NoError(t, err)
+			require.Len(t, challenges, 3)
 			var calls atomic.Int32
+			var callsMu sync.Mutex
+			callsByChallenge := make(map[string]int, len(challenges))
+			allStarted := make(chan struct{})
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				n := calls.Add(1)
+				if n == 3 {
+					close(allStarted)
+				}
 				assert.Equal(t, http.MethodPost, r.Method)
 				assert.Equal(t, "/model/"+invokeModel+"/invoke", r.URL.Path)
 				assert.Contains(t, r.Header.Get("Authorization"), "Credential=SYNTHETICFIRST/", "all probes retain the first selected credential slot")
@@ -91,10 +101,40 @@ func TestFingerprintSitePostgresAWSUsesSDKResponseAndRealUsage(t *testing.T) {
 					assert.Equal(t, "bedrock-2023-05-31", request["anthropic_version"])
 					assert.Greater(t, request["max_tokens"], float64(0), "Claude keeps its ordinary required provider default")
 				}
-				var probes []model.ModelFingerprintSiteProbe
-				if assert.NoError(t, db.Where("run_id = ?", run.ID).Order("id").Find(&probes).Error) && assert.Len(t, probes, int(n)) {
-					assert.Equal(t, "dispatching", probes[n-1].Status, "dispatch intent precedes the SDK request")
-					assert.NotEmpty(t, probes[n-1].RequestID)
+				messages, err := common.Marshal(request["messages"])
+				if !assert.NoError(t, err) {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				var challengeID string
+				for _, challenge := range challenges {
+					if strings.Contains(string(messages), challenge.Prompt) {
+						challengeID = challenge.ID
+						break
+					}
+				}
+				if !assert.NotEmpty(t, challengeID, "the SDK request retains one of the three fixed challenges") {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				callsMu.Lock()
+				callsByChallenge[challengeID]++
+				callsMu.Unlock()
+				var probe model.ModelFingerprintSiteProbe
+				if assert.NoError(t, db.Where("run_id = ? AND probe_id = ?", run.ID, challengeID).Take(&probe).Error) {
+					assert.Equal(t, "dispatching", probe.Status, "this probe's durable intent precedes its SDK request")
+					assert.NotEmpty(t, probe.RequestID)
+				}
+				// Each sample must reach the provider before any response is
+				// released, including failures that the SDK must not retry.
+				select {
+				case <-allStarted:
+				case <-r.Context().Done():
+					return
+				case <-time.After(10 * time.Second):
+					t.Error("three AWS samples did not reach the provider concurrently")
+					w.WriteHeader(http.StatusGatewayTimeout)
+					return
 				}
 				w.Header().Set("Content-Type", "application/json")
 				if mode == "http-error" {
@@ -123,23 +163,39 @@ func TestFingerprintSitePostgresAWSUsesSDKResponseAndRealUsage(t *testing.T) {
 			assert.Zero(t, saved.ActualQuota)
 			var probes []model.ModelFingerprintSiteProbe
 			require.NoError(t, db.Where("run_id = ?", run.ID).Order("id").Find(&probes).Error)
+			assert.EqualValues(t, 3, calls.Load(), "three planned samples each get one SDK invocation")
+			callsMu.Lock()
+			for _, challenge := range challenges {
+				assert.Equal(t, 1, callsByChallenge[challenge.ID], "AWS SDK must not retry challenge %s", challenge.ID)
+			}
+			callsMu.Unlock()
+			require.Len(t, probes, 3)
+			requestIDs := make(map[string]bool, len(probes))
+			for _, probe := range probes {
+				require.NotEmpty(t, probe.RequestID)
+				assert.False(t, requestIDs[probe.RequestID], "parallel probes retain distinct journal identities")
+				requestIDs[probe.RequestID] = true
+			}
 			if mode == "http-error" || mode == "missing-usage" {
 				require.Error(t, executionErr)
-				assert.EqualValues(t, 1, calls.Load(), "neither AWS SDK retries nor later probes are allowed")
 				assert.Equal(t, "unknown", saved.Status)
 				assert.Equal(t, "unknown", saved.UsageState)
-				require.Len(t, probes, 1)
-				assert.Zero(t, probes[0].PromptTokens)
-				assert.Zero(t, probes[0].CompletionTokens)
+				for _, probe := range probes {
+					assert.Equal(t, "dispatching", probe.Status, "an unknown SDK outcome cannot be marked completed")
+					assert.Zero(t, probe.PromptTokens)
+					assert.Zero(t, probe.CompletionTokens)
+				}
+				config, err := model.GetModelFingerprintSiteConfig(t.Context())
+				require.NoError(t, err)
+				assert.False(t, config.AutomaticEnabled, "unknown usage pauses subsequent automatic runs")
 				return
 			}
 			require.NoError(t, executionErr)
-			assert.EqualValues(t, 3, calls.Load())
 			assert.Equal(t, "succeeded", saved.Status)
 			assert.Equal(t, "known", saved.UsageState)
 			assert.Equal(t, mappedModel, saved.MappedModel)
-			require.Len(t, probes, 3)
 			for _, probe := range probes {
+				assert.Equal(t, "completed", probe.Status)
 				assert.Equal(t, 150, probe.PromptTokens, "native cache read/write tokens are preserved, not replaced by estimates")
 				assert.Equal(t, 100, probe.CompletionTokens)
 			}
