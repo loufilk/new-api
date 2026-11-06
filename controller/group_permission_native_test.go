@@ -134,13 +134,13 @@ func TestGroupPermissionNativeRevocationChain(t *testing.T) {
 	for _, group := range []string{"privateA", "privateB", "auto"} {
 		body := baseAutoTokenRequest("native-" + group)
 		body["group"] = group
-		if group == "auto" {
-			body["auto_groups"] = []string{"privateA", "privateB"}
-		}
 		saved := request(http.MethodPost, "/api/token/", enterpriseJWT, body)
 		require.True(t, decodeAPIResponse(t, saved).Success, saved.Body.String())
 		token := &model.Token{}
 		require.NoError(t, db.Where("name = ?", "native-"+group).First(token).Error)
+		if group == "auto" {
+			require.Empty(t, token.AutoGroups, "this sample must inherit virtual Auto permission")
+		}
 		tokens[group] = token
 		actual := request(http.MethodGet, "/runtime", "sk-"+token.Key, nil)
 		require.Equal(t, http.StatusOK, actual.Code, actual.Body.String())
@@ -155,7 +155,7 @@ func TestGroupPermissionNativeRevocationChain(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, token.Id, cachedID, "runtime must preheat a complete Redis token hash")
 	}
-	preview := request(http.MethodPost, "/api/token/models", enterpriseJWT, tokenModelScopeRequest{Group: "auto", AutoGroupsMode: "custom", AutoGroups: []string{"privateA", "privateB"}})
+	preview := request(http.MethodPost, "/api/token/models", enterpriseJWT, tokenModelScopeRequest{Group: "auto"})
 	var models []string
 	response := decodeAPIResponse(t, preview)
 	require.True(t, response.Success)
@@ -187,7 +187,7 @@ func TestGroupPermissionNativeRevocationChain(t *testing.T) {
 		denied = request(http.MethodGet, "/runtime", "sk-"+token.Key, nil)
 		assert.Equal(t, http.StatusForbidden, denied.Code, denied.Body.String())
 		assert.NotContains(t, denied.Body.String(), "gpt-")
-		preview = request(http.MethodPost, "/api/token/models", enterpriseJWT, tokenModelScopeRequest{Group: group, AutoGroupsMode: "custom", AutoGroups: []string{"privateA", "privateB"}})
+		preview = request(http.MethodPost, "/api/token/models", enterpriseJWT, tokenModelScopeRequest{Group: group})
 		response = decodeAPIResponse(t, preview)
 		require.True(t, response.Success)
 		require.NoError(t, common.Unmarshal(response.Data, &models))
@@ -200,6 +200,7 @@ func TestGroupPermissionNativeRevocationChain(t *testing.T) {
 		require.NoError(t, db.First(&stored, token.Id).Error)
 		assert.Equal(t, token.Name, stored.Name)
 		assert.Equal(t, group, stored.Group, "revocation must not rewrite the token's configured group")
+		assert.Equal(t, token.AutoGroups, stored.AutoGroups, "revocation must not rewrite the token's routing selection")
 	}
 	// A still-granted group stays usable; revocation must not hide legal models.
 	allowed := request(http.MethodGet, "/runtime", "sk-"+tokens["privateB"].Key, nil)
