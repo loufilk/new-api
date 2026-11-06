@@ -16,10 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 
 import '@/extensions/bootstrap'
 import { extensionWalletPage } from '@/extensions'
+import { api } from '@/lib/api'
 
 describe('wallet extension composition', () => {
   test('publishes the wallet page through the generic bridge', () => {
@@ -27,5 +28,27 @@ describe('wallet extension composition', () => {
 
     expect(wallet.id).toBe('chuanapi/wallet')
     expect(typeof wallet.page).toBe('function')
+  })
+
+  test('preserves the complete wallet cache response while exposing the paid balance capability', async () => {
+    const summary = { paid: 15, bonus: 20, reward: 30, total: 65 }
+    const get = vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: summary },
+    })
+    expect(await extensionWalletPage().loadSummary()).toEqual(summary)
+    expect(get).toHaveBeenCalledWith('/api/user/wallet')
+  })
+
+  test('failed wallet responses cannot provide a spendable cached balance', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: {
+        success: false,
+        message: 'Wallet unavailable',
+        data: { paid: 15 },
+      },
+    })
+    await expect(extensionWalletPage().loadSummary()).rejects.toThrow(
+      'Wallet unavailable'
+    )
   })
 })

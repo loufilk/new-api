@@ -18,7 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { createElement } from 'react'
 
+import { requireServerSuccess } from '@/lib/server-error-message'
+
 import type { BrandExtension } from '../brand'
+import type { ConsoleToolsExtension } from '../console-tools'
 import type { HelpExtension } from '../help'
 import type { I18nExtension } from '../i18n'
 import type { PaymentSettingsExtension } from '../payment-settings'
@@ -26,9 +29,13 @@ import type { WalletExtension } from '../wallet'
 import { CHUANAPI_BRAND_FAVICON, CHUANAPI_BRAND_LOGO } from './brand'
 import { loadChuanapiI18nOverride } from './i18n'
 import {
+  LazyAccountPool,
+  LazyAccountPoolDiagnostics,
+  LazyAffiliate,
   LazyHelpApiReference,
   LazyHelpGuide,
   LazyHelpIndex,
+  LazyIntelligence,
   LazyPaymentSettingsRenderer,
   LazyWallet,
   LazyWalletReferralPanel,
@@ -66,6 +73,22 @@ export const chuanapiWalletExtension: WalletExtension = {
   id: 'chuanapi/wallet',
   page: LazyWallet,
   referralPanel: LazyWalletReferralPanel,
+  loadSummary: async () => {
+    const { getWalletSummary } = await import('./wallet/api')
+    return requireServerSuccess(await getWalletSummary()).data
+  },
+}
+
+export const chuanapiConsoleToolsExtension: ConsoleToolsExtension = {
+  id: 'chuanapi/console-tools',
+  accountPoolPage: LazyAccountPool,
+  accountPoolDiagnostics: LazyAccountPoolDiagnostics,
+  verifyAccountPoolAccess: async (client) => {
+    const { verifyAccountPoolAccess } = await import('./account-pool/access')
+    return verifyAccountPoolAccess(client)
+  },
+  affiliatePage: LazyAffiliate,
+  intelligencePage: LazyIntelligence,
 }
 
 export const chuanapiPaymentSettingsExtension: PaymentSettingsExtension = {

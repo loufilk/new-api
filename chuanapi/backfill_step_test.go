@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/extension"
 	"github.com/QuantumNous/new-api/model"
+	agentmodule "github.com/QuantumNous/new-api/modules/chuanapi/agents"
 
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -49,6 +50,9 @@ func newWalletDB(t *testing.T) *gorm.DB {
 	})
 
 	require.NoError(t, db.AutoMigrate(append(append([]any{&model.User{}, &model.Redemption{}}, WalletModels()...), append(append([]any{&model.PaymentReceipt{}, &model.RedemptionMutation{}}, model.BonusSourceModels()...), model.ReferralRewardModels()...)...)...))
+	// Register now runs the A07 cutover step alongside wallet backfill; its
+	// evidence tables must exist before either production data step executes.
+	require.NoError(t, db.AutoMigrate(agentmodule.Models()...))
 	return db
 }
 

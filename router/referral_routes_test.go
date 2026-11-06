@@ -53,6 +53,7 @@ func setupReferralRouteTest(t *testing.T) (*gin.Engine, *gorm.DB) {
 		&model.AuditLog{},
 		&model.UserAccessToken{}}, model.BonusSourceModels()...)...))
 	require.NoError(t, db.AutoMigrate(&model.UserSession{}))
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{}))
 	require.NoError(t, db.AutoMigrate(&model.AgentInvitation{}))
 	require.NoError(t, db.AutoMigrate(model.AgentPlatformModels()...))
 

@@ -27,7 +27,7 @@ func TestAccountPoolCollectorStopsPaginationAfterDisable(t *testing.T) {
 		fmt.Fprint(w, `{"code":0,"data":{"page":1,"total":2,"items":[{"id":1,"group_ids":[7]}]}}`)
 	}))
 	defer upstream.Close()
-	s := New()
+	s := New(nil, nil)
 	s.enabled = func(context.Context) (bool, error) { return enabled.Load(), nil }
 	_, err := s.collect(context.Background(), upstream.URL, "synthetic-key", Binding{ChannelID: 1, GroupMap: map[string]string{"7": "default"}})
 	require.Error(t, err)

@@ -95,13 +95,35 @@ function renderWithQuery(content: React.ReactNode) {
     ),
   }
 }
+function siteHistory(enabled = true) {
+  return {
+    enabled,
+    items: [],
+    targets: enabled
+      ? [
+          {
+            id: 'test-target',
+            group: 'default',
+            model: 'test-model',
+            enabled: true,
+            period_secs: 3600,
+          },
+        ]
+      : [],
+  }
+}
 function mockReads(
   items: TestRun[] = [],
   availability: { enabled?: unknown } = { enabled: true }
 ) {
   return vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (String(url).endsWith('/site')) {
-      return { data: { success: true, data: { items: [], targets: [] } } }
+      return {
+        data: {
+          success: true,
+          data: siteHistory(availability.enabled === true),
+        },
+      }
     }
     if (String(url).endsWith('/bootstrap')) {
       return {
@@ -328,7 +350,7 @@ describe('explicit model test workflow', () => {
     const get = mockReads()
     get.mockImplementation(async (url) => {
       if (String(url).endsWith('/site')) {
-        return { data: { success: true, data: { items: [], targets: [] } } }
+        return { data: { success: true, data: siteHistory() } }
       }
       if (String(url).endsWith('/bootstrap')) {
         return {

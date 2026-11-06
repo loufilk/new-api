@@ -6,6 +6,7 @@ import (
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/extension"
 	"github.com/QuantumNous/new-api/middleware"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 
 	// Import oauth package to register providers via init()
@@ -16,7 +17,9 @@ import (
 )
 
 func SetApiRouter(router *gin.Engine) extension.RouteScopes {
-	scopes := extension.RouteScopes{Engine: router}
+	scopes := extension.RouteScopes{
+		Engine: router, UserUsableGroups: service.GetUserUsableGroups, UserGroupRatio: service.GetUserGroupRatio,
+	}
 	// Probes must stay independent of the Redis-backed API limiter and caches.
 	for _, method := range []string{"GET", "HEAD"} {
 		router.Handle(method, "/api/healthz", middleware.DisableCache(), controller.GetHealthz)

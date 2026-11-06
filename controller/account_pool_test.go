@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/modules/chuanapi/console/accountpool"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,7 +45,7 @@ func TestAccountPoolPostgresToggleDeniesCachedSnapshotsAcrossInstances(t *testin
 	require.NoError(t, db.Create(&channel).Error)
 	t.Setenv("SUB2_POOL_CHANNELS", fmt.Sprintf(`[{"channel_id":%d,"origin":%q,"group_map":{"7":"default"}}]`, channel.Id, upstream.URL))
 	t.Setenv(fmt.Sprintf("SUB2_POOL_ADMIN_KEY_%d", channel.Id), "synthetic-admin-key")
-	first, second := accountpool.New(), accountpool.New()
+	first, second := accountpool.New(service.GetUserUsableGroups, service.GetUserGroupRatio), accountpool.New(service.GetUserUsableGroups, service.GetUserGroupRatio)
 	off := poolHandlerRequest(first.List, userID)
 	assert.Equal(t, 403, off.Code)
 	assert.Contains(t, off.Body.String(), "ACCOUNT_POOL_DISABLED")
@@ -61,7 +62,7 @@ func TestAccountPoolPostgresToggleDeniesCachedSnapshotsAcrossInstances(t *testin
 	assert.EqualValues(t, 2, calls.Load())
 	require.NoError(t, model.UpdateOption(model.AccountPoolEnabledKey, "false"))
 	common.OptionMap[model.AccountPoolEnabledKey] = "true" // stale sibling process
-	for _, instance := range []*accountpool.Service{first, second, accountpool.New()} {
+	for _, instance := range []*accountpool.Service{first, second, accountpool.New(service.GetUserUsableGroups, service.GetUserGroupRatio)} {
 		response := poolHandlerRequest(instance.List, userID)
 		assert.Equal(t, 403, response.Code)
 		assert.NotContains(t, response.Body.String(), "AC-")
@@ -96,7 +97,7 @@ func TestAccountPoolPostgresDisableDuringCollectionDiscardsResponse(t *testing.T
 	t.Setenv("SUB2_POOL_CHANNELS", fmt.Sprintf(`[{"channel_id":%d,"origin":%q,"group_map":{"7":"default"}}]`, channel.Id, upstream.URL))
 	t.Setenv(fmt.Sprintf("SUB2_POOL_ADMIN_KEY_%d", channel.Id), "synthetic-key")
 	require.NoError(t, model.UpdateOption(model.AccountPoolEnabledKey, "true"))
-	instance := accountpool.New()
+	instance := accountpool.New(service.GetUserUsableGroups, service.GetUserGroupRatio)
 	finished := make(chan *httptest.ResponseRecorder, 1)
 	go func() { finished <- poolHandlerRequest(instance.List, userID) }()
 	<-started

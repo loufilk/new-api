@@ -31,7 +31,9 @@ func setupFingerprintSiteExecution(t *testing.T) (*gorm.DB, int, *model.SystemTa
 	require.NoError(t, db.Where("models = ?", "gpt-4o-mini").Take(&channel).Error)
 	require.NoError(t, db.Model(&channel).Update("model_mapping", `{"gpt-4o-mini":"gpt-fixture-mapped"}`).Error)
 	target := model.ModelFingerprintSiteTarget{ID: uuid.NewString(), Group: "default", Model: "gpt-4o-mini", ChannelID: channel.Id, Enabled: true, MaxOutputTokens: 2048, MaxRunQuota: 10000}
-	config, err := model.UpdateModelFingerprintSiteConfig(context.Background(), 0, userID, model.ModelFingerprintSiteConfig{Enabled: true, AutomaticEnabled: true, DefaultPeriodSecs: 3600, DailyBudgetQuota: 100000, Targets: []model.ModelFingerprintSiteTarget{target}})
+	previous, err := model.GetModelFingerprintSiteConfig(t.Context())
+	require.NoError(t, err)
+	config, err := model.UpdateModelFingerprintSiteConfig(context.Background(), previous.Version, userID, model.ModelFingerprintSiteConfig{Enabled: true, AutomaticEnabled: true, DefaultPeriodSecs: 3600, DailyBudgetQuota: 100000, Targets: []model.ModelFingerprintSiteTarget{target}})
 	require.NoError(t, err)
 	task := &model.SystemTask{TaskID: "fingerprint-controller-fixture", Type: model.SystemTaskTypeModelFingerprintSite, Status: model.SystemTaskStatusRunning, LockedBy: "fixture-runner"}
 	require.NoError(t, db.Create(task).Error)

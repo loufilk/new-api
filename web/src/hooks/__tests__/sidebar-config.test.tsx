@@ -151,13 +151,14 @@ describe('security sidebar visibility', () => {
     expect(
       result.current
         .find((group) => group.id === 'personal')
-        ?.items.map((item) => item.title)
+        ?.items.flatMap((item) => ('url' in item ? [item.url] : []))
     ).toEqual([
-      'Wallet',
-      'Invitation Rewards',
-      'Support Center',
-      'Profile',
-      'Security & Access',
+      '/wallet',
+      '/intelligence',
+      '/affiliate',
+      '/support',
+      '/profile',
+      '/security',
     ])
     expect(
       result.current

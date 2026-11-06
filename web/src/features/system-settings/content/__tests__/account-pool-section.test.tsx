@@ -23,6 +23,7 @@ import { useState } from 'react'
 import { Toaster } from 'sonner'
 import { afterEach, expect, test, vi } from 'vitest'
 
+import '@/extensions/bootstrap'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -233,7 +234,9 @@ test('saving disabled state removes already open diagnostic node details', async
             },
     },
   }))
-  await user.click(screen.getByRole('button', { name: 'pool.diagnostics' }))
+  await user.click(
+    await screen.findByRole('button', { name: 'pool.diagnostics' })
+  )
   expect(await screen.findByText('42')).toBeVisible()
   await user.click(screen.getByRole('switch'))
   await user.click(screen.getByRole('button', { name: 'Save Changes' }))

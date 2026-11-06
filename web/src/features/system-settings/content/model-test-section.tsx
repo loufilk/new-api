@@ -91,6 +91,7 @@ function ModelTestSettingsForm(props: {
     defaultValues: modelTestSettingsSchema.parse(props.settings),
   })
   const values = form.watch()
+  const { isDirty } = form.formState
   const valid =
     validateModelTestTargets(values, props.settings.catalogue) &&
     (!values.automatic_enabled || props.settings.engine_ready)
@@ -244,7 +245,7 @@ function ModelTestSettingsForm(props: {
             })()
           }
           isSaving={mutation.isPending}
-          isSaveDisabled={!valid || !form.formState.isDirty}
+          isSaveDisabled={!valid || !isDirty}
         />
       </form>
     </SettingsSection>

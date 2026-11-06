@@ -28,6 +28,7 @@ export type WalletExtension = {
   id: string
   page: WalletPage
   referralPanel?: () => ReactNode
+  loadSummary: () => Promise<{ paid: number } | undefined>
 }
 
 let walletExtension: WalletExtension | null = null

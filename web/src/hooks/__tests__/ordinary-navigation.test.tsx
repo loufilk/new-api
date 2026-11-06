@@ -81,7 +81,7 @@ async function renderNavigation(
 }
 
 it.each([1, 5])(
-  'role %s retains ordinary navigation without administrative or retired reseller workspaces',
+  'role %s retains ordinary navigation and only its authorized A07 workspace',
   async (role) => {
     await renderNavigation(role)
     expect(await screen.findByRole('link', { name: 'Wallet' })).toHaveAttribute(
@@ -108,7 +108,21 @@ it.each([1, 5])(
         .getAllByRole('link')
         .map((link) => link.getAttribute('href'))
         .filter((href) => href?.startsWith('/agent-'))
-    ).toEqual([])
+    ).toEqual(role === 5 ? ['/agent-platform'] : [])
+    for (const view of ['center', 'records']) {
+      const codes = screen
+        .getAllByRole('link')
+        .filter(
+          (link) =>
+            link.getAttribute('href') === `/redemption-codes?view=${view}`
+        )
+      expect(codes).toHaveLength(role === 5 ? 1 : 0)
+    }
+    expect(
+      screen
+        .getAllByRole('link')
+        .some((link) => link.getAttribute('href') === '/agent-platform/finance')
+    ).toBe(false)
   }
 )
 

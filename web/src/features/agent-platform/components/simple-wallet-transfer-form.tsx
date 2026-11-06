@@ -21,8 +21,7 @@ import { useTranslation } from 'react-i18next'
 import { Dialog } from '@/components/dialog'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
-import { getWalletSummary } from '@/extensions/chuanapi/wallet/api'
-import { requireServerSuccess } from '@/lib/server-error-message'
+import { extensionWalletPage } from '@/extensions'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { formatAgentQuota, parseAgentQuota } from '../lib/money'
@@ -67,7 +66,7 @@ function WalletTransferSession(props: Props) {
   const pending = snapshot?.status === 'pending' ? snapshot : null
   const wallet = useQuery({
     queryKey: ['wallet', 'summary', props.userId],
-    queryFn: async () => requireServerSuccess(await getWalletSummary()).data,
+    queryFn: () => extensionWalletPage().loadSummary(),
   })
   const transfer = useMutation({
     mutationFn: transferWalletToAgent,

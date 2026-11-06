@@ -13,19 +13,23 @@ import (
 
 // CheckModelTestAccess is a paid-test-only check, applied immediately before
 // reserving quota and again at final HTTP dispatch. Ordinary requests do not
-// query the switch and continue to work even if its configuration is unavailable.
+// query the settings and continue to work even if they are unavailable.
 // A rejection after reservation is definitely unsent and follows the existing
 // refund/finalization path; a later disable never interrupts admitted delivery.
 func CheckModelTestAccess(c *gin.Context) *types.NewAPIError {
 	if !common.GetContextKeyBool(c, constant.ContextKeyModelTestSingleAttempt) {
 		return nil
 	}
-	err := model.RequireModelTestEnabled(c.Request.Context())
+	err := model.RequireModelTestTarget(c.Request.Context(),
+		common.GetContextKeyString(c, constant.ContextKeyUsingGroup),
+		common.GetContextKeyString(c, constant.ContextKeyOriginalModel))
 	if err == nil {
 		return nil
 	}
 	code, status := "model_tests_disabled", http.StatusForbidden
-	if !errors.Is(err, model.ErrModelTestsDisabled) {
+	if errors.Is(err, model.ErrModelTestTargetUnavailable) {
+		code = "model_or_group_unavailable"
+	} else if !errors.Is(err, model.ErrModelTestsDisabled) {
 		code, status = "model_test_settings_unavailable", http.StatusServiceUnavailable
 	}
 	c.Set("model_test_error_code", code)

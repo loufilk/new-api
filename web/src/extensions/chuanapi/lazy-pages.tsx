@@ -55,6 +55,26 @@ const LazyPaymentSettingsPage = lazy(() =>
     ),
   }))
 )
+const LazyAccountPoolPage = lazy(() =>
+  import('./account-pool').then(({ AccountPoolPage }) => ({
+    default: AccountPoolPage,
+  }))
+)
+const LazyPoolDiagnostics = lazy(() =>
+  import('./account-pool/diagnostics').then(({ PoolDiagnostics }) => ({
+    default: PoolDiagnostics,
+  }))
+)
+const LazyAffiliatePage = lazy(() =>
+  import('./affiliate').then(({ AffiliatePage }) => ({
+    default: AffiliatePage,
+  }))
+)
+const LazyIntelligencePage = lazy(() =>
+  import('./intelligence').then(({ IntelligencePage }) => ({
+    default: IntelligencePage,
+  }))
+)
 
 function ExtensionLoading() {
   return <div className='min-h-24' role='status' aria-label='Loading' />
@@ -77,6 +97,15 @@ export const LazyWallet: WalletPage = (props) =>
   withLoading(<LazyWalletPage {...props} />)
 
 export const LazyWalletReferralPanel = () => withLoading(<LazyReferralPanel />)
+
+export const LazyAccountPool = () => withLoading(<LazyAccountPoolPage />)
+
+export const LazyAccountPoolDiagnostics = () =>
+  withLoading(<LazyPoolDiagnostics />)
+
+export const LazyAffiliate = () => withLoading(<LazyAffiliatePage />)
+
+export const LazyIntelligence = () => withLoading(<LazyIntelligencePage />)
 
 export function LazyPaymentSettingsRenderer({
   settings,

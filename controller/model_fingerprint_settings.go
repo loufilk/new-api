@@ -93,38 +93,40 @@ func UpdateModelFingerprintSettings(c *gin.Context) {
 		modelTestError(c, 400, "invalid_selection")
 		return
 	}
+	config := model.ModelFingerprintSiteConfig{Enabled: request.Enabled, AutomaticEnabled: request.AutomaticEnabled, DefaultPeriodSecs: request.DefaultPeriodSecs, DailyBudgetQuota: request.DailyBudgetQuota, Targets: request.Targets}
+	if err := model.ValidateModelFingerprintSiteConfig(&config); err != nil {
+		modelTestError(c, 400, "invalid_selection")
+		return
+	}
 	guard, ok := beginControllerGroupConfigRead(c)
 	if !ok {
 		return
 	}
 	defer guard.Close()
-	catalogue, err := fingerprintSiteCatalogue()
-	if err != nil {
-		modelTestError(c, 503, "catalogue_unavailable")
-		return
-	}
-	for i := range request.Targets {
-		target := &request.Targets[i]
-		target.ChannelID = 0
-		if !slices.Contains(catalogue.ModelsByGroup[target.Group], target.Model) {
-			modelTestError(c, 400, "model_or_group_unavailable")
+	// Disabling a target or the whole feature must remain possible after its
+	// channel or group disappears. Only newly active work requires a live route.
+	if targets := config.EnabledTargets(); len(targets) > 0 {
+		catalogue, err := fingerprintSiteCatalogue()
+		if err != nil {
+			modelTestError(c, 503, "catalogue_unavailable")
 			return
+		}
+		for _, target := range targets {
+			if !slices.Contains(catalogue.ModelsByGroup[target.Group], target.Model) {
+				modelTestError(c, 400, "model_or_group_unavailable")
+				return
+			}
 		}
 	}
 	if request.AutomaticEnabled && (!request.Enabled || modelFingerprintScorer.ready() != nil) {
 		modelTestError(c, 400, "fingerprint_unavailable")
 		return
 	}
-	config := model.ModelFingerprintSiteConfig{Enabled: request.Enabled, AutomaticEnabled: request.AutomaticEnabled, DefaultPeriodSecs: request.DefaultPeriodSecs, DailyBudgetQuota: request.DailyBudgetQuota, Targets: request.Targets}
-	if err = model.ValidateModelFingerprintSiteConfig(&config); err != nil {
-		modelTestError(c, 400, "invalid_selection")
-		return
-	}
 	if !finishControllerGroupConfigRead(c, guard) {
 		return
 	}
-	_, err = model.UpdateModelFingerprintSiteConfig(c.Request.Context(), request.ExpectedVersion, identity.UserID, config)
-	if errors.Is(err, model.ErrFingerprintSiteConflict) {
+	_, err := model.UpdateModelFingerprintSiteConfig(c.Request.Context(), request.ExpectedVersion, identity.UserID, config)
+	if errors.Is(err, model.ErrFingerprintSiteConflict) || errors.Is(err, model.ErrGroupReferenceRenamed) {
 		modelTestError(c, 409, "configuration_changed")
 		return
 	}
@@ -152,10 +154,7 @@ func GetSiteModelFingerprints(c *gin.Context) {
 		return
 	}
 	targets := make([]gin.H, 0, len(config.Targets))
-	for _, target := range config.Targets {
-		if !config.Enabled || !target.Enabled {
-			continue
-		}
+	for _, target := range config.EnabledTargets() {
 		period := target.PeriodSecs
 		if period == 0 {
 			period = config.DefaultPeriodSecs

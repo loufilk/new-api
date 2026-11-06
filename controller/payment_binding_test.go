@@ -22,7 +22,7 @@ func withPaymentBindingDB(t *testing.T) *gorm.DB {
 	name := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
 	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", name)), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.TopUp{}, &model.SubscriptionOrder{}, &model.Option{}, &paymentcore.PaymentOrderBinding{}))
+	require.NoError(t, db.AutoMigrate(&model.TopUp{}, &model.SubscriptionOrder{}, &model.Option{}, &paymentcore.PaymentOrderBinding{}, &model.PaymentReceipt{}, &model.AgentCommissionOutbox{}))
 	model.DB = db
 	t.Cleanup(func() {
 		model.DB = previousDB

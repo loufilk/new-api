@@ -111,6 +111,7 @@ export async function getSiteTests(signal?: AbortSignal): Promise<SiteTests> {
   ).data
   return {
     ...response,
+    enabled: response.enabled === true,
     user_items: (response.user_items ?? []).map((run) => ({
       id: run.id,
       model: run.model,

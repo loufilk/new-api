@@ -88,11 +88,13 @@ func TestModelFingerprintPostgresMigrationOwnershipReplayAndJournal(t *testing.T
 				require.NoError(t, db.Create(&legacyFingerprintRun{ID: "legacy", UserID: 1, Model: "legacy", Group: "default", BenchmarkID: "pelican-static-v1", Status: "completed", ArtworkHTML: "<svg/>"}).Error)
 			}
 			for range 2 {
-				require.NoError(t, db.AutoMigrate(&User{}, &Option{}, &ModelTestRun{}, &ModelTestGate{}))
+				require.NoError(t, db.AutoMigrate(&User{}, &Option{}, &ModelTestRun{}, &ModelTestGate{}, &ModelFingerprintSiteConfig{}, &ModelFingerprintSiteAudit{}))
 			}
 			user := User{Username: "fingerprint-owner", AffCode: "fingerprint-owner", Status: common.UserStatusEnabled, Group: "default"}
 			require.NoError(t, db.Create(&user).Error)
 			require.NoError(t, db.Create(&Option{Key: ModelTestEnabledKey, Value: "true"}).Error)
+			_, err = UpdateModelFingerprintSiteConfig(t.Context(), 0, user.Id, ModelFingerprintSiteConfig{Enabled: true, DefaultPeriodSecs: 3600, Targets: []ModelFingerprintSiteTarget{{Group: "default", Model: "synthetic", Enabled: true}}})
+			require.NoError(t, err)
 			if upgrade {
 				var old ModelTestRun
 				require.NoError(t, DB.First(&old, "id = ?", "legacy").Error)

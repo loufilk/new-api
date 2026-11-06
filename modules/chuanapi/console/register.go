@@ -53,6 +53,9 @@ func registerPublicRoutes(scopes extension.RouteScopes) error {
 	if scopes.API == nil || scopes.PublicAPI == nil || scopes.BrowserSession == nil || scopes.RootOptions == nil || scopes.UserSelf == nil {
 		return fmt.Errorf("chuanapi console: required host API route scopes are unavailable")
 	}
+	if scopes.UserUsableGroups == nil || scopes.UserGroupRatio == nil {
+		return fmt.Errorf("chuanapi console: required host group policy is unavailable")
+	}
 	scopes.BrowserSession.GET("/session", GetAuthSession)
 	scopes.API.GET("/chuanapi/public-config", GetPublicConfig)
 	scopes.API.HEAD("/chuanapi/public-config", GetPublicConfig)
@@ -60,6 +63,6 @@ func registerPublicRoutes(scopes extension.RouteScopes) error {
 	scopes.PublicAPI.HEAD("/status", GetPublicConfig)
 	scopes.PublicAPI.GET("/pricing", GetPublicPricing)
 	scopes.PublicAPI.HEAD("/pricing", GetPublicPricing)
-	accountpool.New().Register(scopes.UserSelf, scopes.RootOptions)
+	accountpool.New(scopes.UserUsableGroups, scopes.UserGroupRatio).Register(scopes.UserSelf, scopes.RootOptions)
 	return nil
 }

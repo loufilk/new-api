@@ -17,19 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute } from '@tanstack/react-router'
-import { lazy, Suspense } from 'react'
 
-import { LoadingState } from '@/components/loading-state'
+import { extensionConsoleTools } from '@/extensions'
 
-const Page = lazy(() =>
-  import('@/extensions/chuanapi/affiliate').then((m) => ({
-    default: m.AffiliatePage,
-  }))
-)
 export const Route = createFileRoute('/_authenticated/affiliate/')({
-  component: () => (
-    <Suspense fallback={<LoadingState />}>
-      <Page />
-    </Suspense>
-  ),
+  component: () => {
+    const Page = extensionConsoleTools().affiliatePage
+    return <Page />
+  },
 })

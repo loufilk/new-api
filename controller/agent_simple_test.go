@@ -105,6 +105,7 @@ func TestAgentSimpleHTTPRechargeReplayAndSignedPaymentDelivery(t *testing.T) {
 	operation_setting.PayMethods = []map[string]string{{"type": "alipay"}}
 	system_setting.ServerAddress = "https://preview.example.test"
 	require.NoError(t, db.AutoMigrate(append([]any{&model.User{}, &model.UserSession{}, &model.TopUp{}, &model.Redemption{}, &model.AgentRedemptionOperation{}, &model.Log{}, &model.Option{}}, model.AgentPlatformModels()...)...))
+	require.NoError(t, db.AutoMigrate(&model.PaymentReceipt{}))
 	user := model.User{Username: "a07-http-agent", AffCode: "a07-http-agent", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1}
 	require.NoError(t, db.Create(&user).Error)
 	require.NoError(t, db.Create(&model.UserSession{SID: "synthetic-a07-http-session", UserID: user.Id, Version: 1, UserAuthVersion: 1, Status: model.UserSessionStatusActive, RefreshHash: strings.Repeat("a", 64), LoginMethod: "password", ExpiresAt: common.GetTimestamp() + 3600}).Error)

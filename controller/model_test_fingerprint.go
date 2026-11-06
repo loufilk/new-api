@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/modelfingerprint"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -85,7 +86,8 @@ func executeModelFingerprint(c *gin.Context) {
 	samples := make([]modelfingerprint.Sample, 0, 3)
 	audits := make([]modelFingerprintSampleAudit, 0, 3)
 	for _, challenge := range challenges {
-		if !requireModelTestEnabled(c) {
+		if accessErr := service.CheckModelTestAccess(c); accessErr != nil {
+			modelTestError(c, accessErr.StatusCode, c.GetString("model_test_error_code"))
 			return
 		}
 		if c.Request.Context().Err() != nil {

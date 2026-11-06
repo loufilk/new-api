@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { afterEach, expect, it } from 'vitest'
 
+import { hasAgentAdministration } from '@/lib/agent-permissions'
 import { ROLE } from '@/lib/roles'
 import { Route } from '@/routes/_authenticated/redemption-codes'
 import { useAuthStore } from '@/stores/auth-store'
@@ -26,7 +27,7 @@ const guard = Route.options.beforeLoad as () => unknown
 
 afterEach(() => useAuthStore.getState().auth.reset())
 
-it.each([undefined, ROLE.GUEST, ROLE.USER, 5, Number.NaN])(
+it.each([undefined, ROLE.GUEST, ROLE.USER, Number.NaN])(
   'identity with role %s cannot open redemption administration',
   (role) => {
     useAuthStore
@@ -41,6 +42,23 @@ it.each([undefined, ROLE.GUEST, ROLE.USER, 5, Number.NaN])(
       rejection = error
     }
     expect(rejection).toMatchObject({ options: { to: '/403' } })
+  }
+)
+
+it.each([
+  { id: 7, username: 'legacy-agent', role: 5 },
+  {
+    id: 7,
+    username: 'migrated-agent',
+    role: ROLE.USER,
+    permissions: { agent_history: true },
+  },
+])(
+  'authorized A07 agent $username can open its code workspace without finance authority',
+  (user) => {
+    useAuthStore.getState().auth.setUser(user)
+    expect(guard).not.toThrow()
+    expect(hasAgentAdministration(user)).toBe(false)
   }
 )
 

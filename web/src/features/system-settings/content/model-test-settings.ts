@@ -83,8 +83,10 @@ export function validateModelTestTargets(
     (target) =>
       (target.period_secs === 0 ||
         (target.period_secs >= 60 && target.period_secs <= 604800)) &&
-      catalogue.groups.includes(target.group) &&
-      catalogue.models_by_group[target.group]?.includes(target.model)
+      (!settings.enabled ||
+        !target.enabled ||
+        (catalogue.groups.includes(target.group) &&
+          catalogue.models_by_group[target.group]?.includes(target.model)))
   )
 }
 

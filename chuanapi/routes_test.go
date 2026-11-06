@@ -35,6 +35,8 @@ func TestLlmsRouteSetPreservesLegacyRouteTableAndHandlers(t *testing.T) {
 		// router/payment_routes_test.go against the production registrar.
 		PaymentRoutes:       func(extension.RouteScopes) error { return nil },
 		AgentPlatformRoutes: func(extension.RouteScopes) error { return nil },
+		UserUsableGroups:    func(string) map[string]string { return nil },
+		UserGroupRatio:      func(string, string) float64 { return 1 },
 	}
 	require.NoError(t, reg.ApplyRoutesWithScopes(scopes, extension.PriorityBeforePlugin))
 

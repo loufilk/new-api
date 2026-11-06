@@ -23,7 +23,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/sync/singleflight"
 )
@@ -92,21 +91,24 @@ type cached struct {
 	configured bool
 }
 type Service struct {
-	bindings []Binding
-	invalid  bool
-	client   *http.Client
-	mu       sync.Mutex
-	cache    cached
-	flight   singleflight.Group
-	now      func() time.Time
-	getenv   func(string) string
-	channel  func(int) (*model.Channel, error)
-	enabled  func(context.Context) (bool, error)
+	bindings     []Binding
+	invalid      bool
+	client       *http.Client
+	mu           sync.Mutex
+	cache        cached
+	flight       singleflight.Group
+	now          func() time.Time
+	getenv       func(string) string
+	channel      func(int) (*model.Channel, error)
+	enabled      func(context.Context) (bool, error)
+	usableGroups func(string) map[string]string
+	groupRatio   func(string, string) float64
 }
 
-func New() *Service {
+func New(usableGroups func(string) map[string]string, groupRatio func(string, string) float64) *Service {
 	s := &Service{client: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, now: time.Now, getenv: os.Getenv, channel: func(id int) (*model.Channel, error) { return model.GetChannelById(id, false) }}
 	s.enabled = model.AccountPoolEnabled
+	s.usableGroups, s.groupRatio = usableGroups, groupRatio
 	raw := os.Getenv("SUB2_POOL_CHANNELS")
 	if raw != "" && (len(raw) > 8192 || common.UnmarshalJsonStr(raw, &s.bindings) != nil || len(s.bindings) > 8) {
 		s.invalid = true
@@ -140,6 +142,10 @@ func (s *Service) List(c *gin.Context) {
 	if !s.requireEnabled(c) {
 		return
 	}
+	if s.usableGroups == nil || s.groupRatio == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "Account pool is unavailable"})
+		return
+	}
 	// Collection can block on a remote admin API; never hold the policy read
 	// guard across that I/O. Filter only a coherent authenticated snapshot.
 	result := s.snapshot(c.Request.Context())
@@ -154,7 +160,7 @@ func (s *Service) List(c *gin.Context) {
 		c.JSON(503, gin.H{"success": false, "message": "Account pool is unavailable"})
 		return
 	}
-	allowed := service.GetUserUsableGroups(user.Group)
+	allowed := s.usableGroups(user.Group)
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 	if page < 1 {
@@ -174,7 +180,7 @@ func (s *Service) List(c *gin.Context) {
 		visible := make([]Group, 0, len(item.Groups))
 		for _, g := range item.Groups {
 			if _, ok := allowed[g.Name]; ok {
-				g.Ratio = service.GetUserGroupRatio(user.Group, g.Name)
+				g.Ratio = s.groupRatio(user.Group, g.Name)
 				visible = append(visible, g)
 			}
 		}

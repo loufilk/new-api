@@ -84,7 +84,7 @@ func WriteUserCallInterception(c *gin.Context, policy *model.UserCallInterceptio
 	c.Header("X-Newapi-Call-Intercepted", "true")
 	if !reply.SupportsText() {
 		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{
-			"message": i18n.T(c, "relay.user_call_intercepted"),
+			"message": i18n.T(c, i18n.MsgRelayUserCallIntercepted),
 			"type":    "user_call_intercepted", "code": "user_call_intercepted",
 		}})
 		return
@@ -95,7 +95,7 @@ func WriteUserCallInterception(c *gin.Context, policy *model.UserCallInterceptio
 func WriteUserCallInterceptionUnavailable(c *gin.Context) {
 	c.Header("Cache-Control", "private, no-store")
 	c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
-		"message": i18n.T(c, "relay.user_call_interception_unavailable"),
+		"message": i18n.T(c, i18n.MsgRelayUserCallInterceptionUnavailable),
 		"type":    "user_call_interception_unavailable", "code": "user_call_interception_unavailable",
 	}})
 }

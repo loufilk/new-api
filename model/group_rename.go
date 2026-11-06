@@ -222,6 +222,13 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 		if err := lockGroupNamespace(tx); err != nil {
 			return err
 		}
+		// Session authorization locks the actor's user row. Take the fingerprint
+		// gate first, matching manual admission's gate -> owner lock order.
+		if len(request.Mappings) > 0 {
+			if err := lockModelFingerprintRetention(tx); err != nil {
+				return err
+			}
+		}
 		if err := authorizeGroupRenameTx(tx, request.Identity); err != nil {
 			return err
 		}
@@ -246,6 +253,22 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 		knownGroups, err := collectKnownGroupNames(tx, optionValues)
 		if err != nil {
 			return err
+		}
+		if len(request.Mappings) > 0 {
+			// Saved targets participate in rename collisions, but unrelated
+			// group-option edits do not depend on fingerprint configuration.
+			var fingerprintConfig ModelFingerprintSiteConfig
+			if err := tx.Select("targets_json").Where("id = ?", 1).Find(&fingerprintConfig).Error; err != nil {
+				return err
+			}
+			if fingerprintConfig.TargetsJSON != "" {
+				if err := common.UnmarshalJsonStr(fingerprintConfig.TargetsJSON, &fingerprintConfig.Targets); err != nil {
+					return err
+				}
+				for _, target := range fingerprintConfig.Targets {
+					knownGroups[target.Group] = struct{}{}
+				}
+			}
 		}
 		plan, err = buildGroupRenamePlan(request.Mappings, knownGroups)
 		if err != nil {
@@ -304,6 +327,9 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 			if err := invalidateTokenCacheForMutation(key); err != nil {
 				return err
 			}
+		}
+		if err := renameGroupFingerprintTargets(tx, plan, request.ActorID); err != nil {
+			return err
 		}
 		if err := renameGroupChannelReferences(tx, plan, &state.result); err != nil {
 			return err

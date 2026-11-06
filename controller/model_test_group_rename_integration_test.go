@@ -60,6 +60,11 @@ func setupModelTestGroupRename(t *testing.T) (*gorm.DB, int, *gin.Engine) {
 	require.NoError(t, db.Model(&channel).Update("group", "old,premium").Error)
 	require.NoError(t, db.Model(&model.Ability{}).Where("channel_id = ?", channel.Id).Update("group", "old").Error)
 	require.NoError(t, db.Create(&model.Ability{ChannelId: channel.Id, Group: "premium", Model: "gpt-4o-mini", Enabled: true}).Error)
+	config, err := model.GetModelFingerprintSiteConfig(t.Context())
+	require.NoError(t, err)
+	config.Targets[0].Group = "old"
+	_, err = model.UpdateModelFingerprintSiteConfig(t.Context(), config.Version, userID, *config)
+	require.NoError(t, err)
 	guard, err := model.BeginGroupConfigRead(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, guard.Finish())

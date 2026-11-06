@@ -68,6 +68,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/agent-platform/simple/payment/transfer":          accessTokenSessionRule,
 	"POST /api/agent-platform/simple/payment/withdrawals":       accessTokenSessionRule,
 	"POST /api/agent-platform/simple/recharge":                  accessTokenSessionRule,
+	"POST /api/agent-platform/simple/wallet-transfer":           accessTokenSessionRule,
 	"GET /api/agent-platform/simple/reminders/unread":           accessTokenSessionRule,
 	"POST /api/agent-platform/simple/reminders/acknowledge":     accessTokenSessionRule,
 
@@ -152,6 +153,9 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/user/account-pool":                 accessTokenSessionRule,
 	"GET /api/option/account-pool":               accessTokenSessionRule,
 	"GET /api/user/model-tests":                  accessTokenSessionRule,
+	"GET /api/user/model-tests/site":             accessTokenSessionRule,
+	"GET /api/model-tests/settings":              accessTokenSessionRule,
+	"PUT /api/model-tests/settings":              accessTokenSessionRule,
 	"POST /api/user/model-tests/estimate":        accessTokenSessionRule,
 	"POST /api/user/model-tests/runs":            accessTokenSessionRule,
 	"GET /api/user/model-tests/runs/:id":         accessTokenSessionRule,

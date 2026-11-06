@@ -25,12 +25,13 @@ const maxPermissionRevision int64 = 1<<53 - 1 // exact Redis Lua integer range
 var ErrPermissionCacheStale = fmt.Errorf("%w: stale permission cache revision", ErrUserAuthCachePending)
 
 func userPermissionKeys(id int) (pending, revision string) {
-	return fmt.Sprintf("permission:user:pending:%d", id), fmt.Sprintf("permission:user:revision:%d", id)
+	cacheKey := getUserCacheKey(id)
+	return fmt.Sprintf("permission:user:pending:{%s}", cacheKey), fmt.Sprintf("permission:user:revision:{%s}", cacheKey)
 }
 
 func tokenPermissionKeys(key string) (pending, revision string) {
-	fingerprint := common.GenerateHMAC(key)
-	return "permission:token:pending:" + fingerprint, "permission:token:revision:" + fingerprint
+	cacheKey := getTokenCacheKey(key)
+	return "permission:token:pending:{" + cacheKey + "}", "permission:token:revision:{" + cacheKey + "}"
 }
 
 func beginPermissionCacheMutation(ctx context.Context, pending, hash, revision string, preserveQuota bool) error {

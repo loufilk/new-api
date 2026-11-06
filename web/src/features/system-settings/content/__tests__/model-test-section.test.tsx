@@ -328,3 +328,52 @@ test('saving legacy pinned targets uses normal group routing without selecting a
     )
   )
 })
+
+test.each(['Enable target', 'Enable model performance tests'])(
+  'the %s switch can save revocation after routing disappears and blocks re-enabling',
+  async (switchName) => {
+    const { user, put } = renderSettings(10, {
+      enabled: true,
+      automatic_enabled: switchName === 'Enable model performance tests',
+      targets: [
+        {
+          id: '9ab0a56f-f0bf-46de-afae-e4874c62ed03',
+          group: 'retired-group',
+          model: 'retired-model',
+          channel_id: 0,
+          enabled: true,
+          period_secs: 0,
+          max_output_tokens: 0,
+          max_run_quota: 0,
+        },
+      ],
+    })
+    await user.click(await screen.findByRole('switch', { name: switchName }))
+    expect(screen.getByRole('switch', { name: switchName })).not.toBeChecked()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled()
+    )
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(put).toHaveBeenCalledOnce())
+    expect(put).toHaveBeenCalledWith(
+      '/api/model-tests/settings',
+      expect.objectContaining({
+        expected_version: 1,
+        enabled: switchName === 'Enable target',
+        automatic_enabled: false,
+        targets: [
+          expect.objectContaining({
+            group: 'retired-group',
+            model: 'retired-model',
+            enabled: switchName !== 'Enable target',
+          }),
+        ],
+      })
+    )
+    await screen.findByText('Setting updated successfully')
+    await user.click(screen.getByRole('switch', { name: switchName }))
+    expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
+    expect(put).toHaveBeenCalledOnce()
+  }
+)

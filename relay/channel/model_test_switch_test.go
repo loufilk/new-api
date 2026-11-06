@@ -48,7 +48,7 @@ func setupModelTestSwitchPostgres(t *testing.T) *gorm.DB {
 	parsed.RawQuery = query.Encode()
 	db, err := gorm.Open(postgres.Open(parsed.String()), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.Option{}))
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.ModelFingerprintSiteConfig{}))
 	require.NoError(t, db.Create(&model.Option{Key: model.ModelTestEnabledKey, Value: "true"}).Error)
 	oldDB := model.DB
 	model.DB = db

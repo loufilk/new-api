@@ -64,6 +64,7 @@ func TestBillingFinalizationSessionDatabaseMatrix(t *testing.T) {
 			// Match the service fixture cleanup and additive startup schema after the
 			// matrix replaces TestMain's database with this isolated topology.
 			require.NoError(t, db.AutoMigrate(append(append([]any{&model.PaymentReceipt{}, &model.RedemptionMutation{}}, model.BonusSourceModels()...), model.ReferralRewardModels()...)...))
+			require.NoError(t, db.AutoMigrate(append([]any{&model.AgentRedemptionAccount{}, &model.AgentRedemptionLedger{}, &model.AgentRedemptionOperation{}, &model.AgentInvitation{}, &model.AgentInvitationPolicy{}, &model.AgentInvitationPolicyAudit{}}, model.AgentPlatformModels()...)...))
 			var version string
 			q := "SELECT version()"
 			if dialect.name == common.DatabaseTypeSQLite {

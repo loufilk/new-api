@@ -58,6 +58,7 @@ func TestPaymentRoutesPreserveHostOwnedURLAndHandlerContract(t *testing.T) {
 // behind the host-owned middleware scopes: user payment creation requires an
 // authenticated session, while the anonymous webhook stays a public endpoint.
 func TestPaymentRoutesKeepHostAccessPolicy(t *testing.T) {
+	setupRelayRouterTestDB(t)
 	gin.SetMode(gin.TestMode)
 
 	originalWaffoEnabled := setting.WaffoEnabled

@@ -77,6 +77,9 @@ func openGroupPermissionPostgresTestDB(t *testing.T) *gorm.DB {
 }
 
 func TestGroupPermissionEditsDoNotDeleteDefinitions(t *testing.T) {
+	if groupRenameControllerIsolatedProcess(t) {
+		return
+	}
 	for _, tc := range []struct{ name, key, before, after string }{
 		{"user selectable", "UserUsableGroups", `{"default":"Default","a":"A"}`, `{"default":"Default"}`},
 		{"auto membership", "AutoGroups", `["a","default"]`, `["default"]`},
@@ -167,7 +170,7 @@ func TestTokenGroupPermissionSaveAndRuntime(t *testing.T) {
 			{name: "unknown", owner: "default", group: "unknown"},
 			{name: "enterprise grant", owner: "enterprise", group: "b", allowed: true},
 			{name: "auto denied inherited", owner: "default", group: "auto"},
-			{name: "auto denied custom", owner: "default", group: "auto", children: []string{"a"}},
+			{name: "manual groups without virtual auto", owner: "default", group: "auto", children: []string{"a"}, allowed: true},
 			{name: "auto scoped allowed", owner: "enterprise", group: "auto", autoAllowed: true, children: []string{"a", "b"}, allowed: true},
 			{name: "auto scoped unauthorized child", owner: "default", group: "auto", autoAllowed: true, children: []string{"a", "b"}},
 		} {
@@ -222,7 +225,7 @@ func TestGroupPermissionPreviewMatchesRuntime(t *testing.T) {
 	}{
 		{name: "private", owner: "default", group: "b"},
 		{name: "auto inherited denied", owner: "default", group: "auto"},
-		{name: "auto custom denied", owner: "default", group: "auto", mode: "custom", children: []string{"a"}},
+		{name: "manual groups without virtual auto", owner: "default", group: "auto", mode: "custom", children: []string{"a"}, models: []string{"gpt-4o"}, runtimeAllowed: true},
 		{name: "public", owner: "default", group: "a", models: []string{"gpt-4o"}, runtimeAllowed: true},
 		{name: "enterprise", owner: "enterprise", group: "b", models: []string{"gpt-4.1"}, runtimeAllowed: true},
 		{name: "auto scoped", owner: "enterprise", group: "auto", autoAllowed: true, mode: "custom", children: []string{"a", "b"}, models: []string{"gpt-4.1", "gpt-4o"}, runtimeAllowed: true},
@@ -327,7 +330,7 @@ func TestTokenGroupPermissionStatusOnly(t *testing.T) {
 	}
 }
 
-func TestTokenGroupPermissionOmittedSnapshotPreservesStoredScope(t *testing.T) {
+func TestTokenGroupPermissionOmittedSnapshotCannotRestoreRevokedScope(t *testing.T) {
 	db, user := setupTokenModelsControllerTest(t)
 	configureGroupPermissionScope(t, true)
 	token := seedTokenModelsToken(t, db, user.Id, "legacy-auto", "auto", []string{"a", "b"})
@@ -335,7 +338,7 @@ func TestTokenGroupPermissionOmittedSnapshotPreservesStoredScope(t *testing.T) {
 	request["id"] = token.Id
 	ctx, rec := newAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id)
 	UpdateToken(ctx)
-	require.True(t, decodeAPIResponse(t, rec).Success)
+	require.False(t, decodeAPIResponse(t, rec).Success)
 	require.NoError(t, db.First(token, token.Id).Error)
 	assert.JSONEq(t, `["a","b"]`, token.AutoGroups)
 	groups, err := service.GetTokenEffectiveGroups(user.Group, token)
@@ -347,11 +350,22 @@ func TestTokenGroupPermissionOmittedSnapshotPreservesStoredScope(t *testing.T) {
 	UpdateToken(ctx)
 	require.False(t, decodeAPIResponse(t, rec).Success)
 	require.NoError(t, db.First(token, token.Id).Error)
-	assert.Equal(t, "updated", token.Name)
+	assert.Equal(t, "legacy-auto", token.Name)
 	assert.JSONEq(t, `["a","b"]`, token.AutoGroups)
+	request["auto_groups"] = []string{"a"}
+	request["name"] = "updated"
+	ctx, rec = newAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id)
+	UpdateToken(ctx)
+	require.True(t, decodeAPIResponse(t, rec).Success)
+	require.NoError(t, db.First(token, token.Id).Error)
+	assert.Equal(t, "updated", token.Name)
+	assert.JSONEq(t, `["a"]`, token.AutoGroups)
 }
 
 func TestGroupPermissionEmptyRulesRoundTripAndHistoricalConflict(t *testing.T) {
+	if groupRenameControllerIsolatedProcess(t) {
+		return
+	}
 	db := setupGroupRenameControllerTest(t)
 	const key = "group_ratio_setting.group_special_usable_group"
 	const original = `{"empty1":{},"empty2":{},"empty3":{},"empty4":{},"empty5":{},"empty6":{}}`

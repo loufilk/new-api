@@ -91,12 +91,8 @@ func CreateModelTestRun(run *ModelTestRun) (replayed bool, err error) {
 		}
 		// Recheck after the cross-node queue/owner locks. A valid quote acquired
 		// before a disable is not authority to create work after waiting here.
-		enabled, settingsErr := modelTestEnabled(tx)
-		if settingsErr != nil {
-			return ErrModelTestSettingsUnavailable
-		}
-		if !enabled {
-			return ErrModelTestsDisabled
+		if err := requireModelTestTarget(tx, run.Group, run.Model); err != nil {
+			return err
 		}
 		now := time.Now().Unix()
 		// A crashed node is never retried automatically: the outcome and charge

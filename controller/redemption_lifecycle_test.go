@@ -306,21 +306,14 @@ func TestRedemptionLifecycleDatabaseMatrix(t *testing.T) {
 						path += "?status_only=true"
 					}
 					body := redemptionLifecyclePrepareMutation(t, gin.H{"id": code.Id, "name": "stale edit", "quota": 900, "status": common.RedemptionCodeStatusEnabled})
-					var interleaved atomic.Bool
-					var redeemErr error
-					// Complete the competing redemption after HTTP identity resolution,
-					// before UpdateRedemption locks the code. Redeeming inside a
-					// locked-code callback would deadlock instead of testing a stale edit.
-					const callback = "redemption-regression:redeem-after-admin-identity"
-					require.NoError(t, db.Callback().Query().After("gorm:query").Register(callback, func(tx *gorm.DB) {
-						if tx.Error == nil && tx.Statement.Schema != nil && tx.Statement.Schema.ModelType == reflect.TypeFor[model.User]() && interleaved.CompareAndSwap(false, true) {
-							_, redeemErr = model.Redeem(code.Key, user.Id)
-						}
-					}))
-					t.Cleanup(func() { require.NoError(t, db.Callback().Query().Remove(callback)) })
-					response := redemptionLifecycleRequest(t, UpdateRedemption, path, admin, body)
-					require.True(t, interleaved.Load())
+					// The administrator has already prepared an edit from the old
+					// code state. Commit the customer's redemption before that stale
+					// edit reaches the mutation transaction. Session validation now
+					// holds a write transaction, so nesting Redeem in its query
+					// callback would deadlock SQLite rather than model this ordering.
+					_, redeemErr := model.Redeem(code.Key, user.Id)
 					require.NoError(t, redeemErr)
+					response := redemptionLifecycleRequest(t, UpdateRedemption, path, admin, body)
 					assert.False(t, redemptionResponseSuccess(t, response), response.Body.String())
 					assert.Contains(t, response.Body.String(), model.ErrRedemptionUsedImmutable.Error())
 					var actual model.Redemption

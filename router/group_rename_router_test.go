@@ -3,6 +3,8 @@ package router
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -22,6 +24,17 @@ import (
 // unauthenticated callers are rejected, normal users and admins are denied, and
 // only root may commit the rename.
 func TestGroupRenameRouteRequiresRootAuth(t *testing.T) {
+	// A committed rename advances the process-wide group version. Subsequent
+	// route tests use unrelated disposable schemas and must not inherit it.
+	if os.Getenv("GROUP_RENAME_ROUTER_CHILD") != "1" {
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestGroupRenameRouteRequiresRootAuth$", "-test.v", "-test.count=1", "-test.timeout=1m")
+		cmd.Env = append(os.Environ(), "GROUP_RENAME_ROUTER_CHILD=1")
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		require.Contains(t, string(output), "--- PASS: "+t.Name())
+		t.Logf("GROUP_RENAME_ROUTER_CHILD_RESULT %q", output)
+		return
+	}
 	previousDB, previousLogDB := model.DB, model.LOG_DB
 	previousRedis := common.RedisEnabled
 	previousLimiter := common.GlobalApiRateLimitEnable
@@ -60,6 +73,7 @@ func TestGroupRenameRouteRequiresRootAuth(t *testing.T) {
 	})
 	require.NoError(t, db.AutoMigrate(
 		&model.Option{}, &model.GroupRenameOperation{}, &model.User{}, &model.Token{}, &model.Channel{},
+		&model.ModelTestGate{}, &model.ModelFingerprintSiteConfig{}, &model.ModelFingerprintSiteAudit{},
 		&model.Ability{}, &model.SubscriptionPlan{}, &model.UserSubscription{},
 		&model.Log{}, &model.AuditLog{}, &model.UserAccessToken{},
 	))

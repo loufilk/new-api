@@ -1,4 +1,3 @@
-import { useQuery } from '@tanstack/react-query'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -17,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import { Fingerprint, Info, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -28,12 +28,11 @@ import { LoadingState } from '@/components/loading-state'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { toIntlLocale } from '@/i18n/languages'
-import { formatNumber } from '@/lib/format'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 import { getSiteTests, getTestCatalogue } from './api'
 import { BudgetDialog } from './budget-dialog'
-import { ModelTestCard } from './model-card'
+import { ModelTestGroups } from './model-groups'
 import { TestResultDialog } from './result-dialog'
 import { SelfTestDialog } from './self-test-dialog'
 import type { TestRun } from './types'
@@ -50,17 +49,13 @@ export function IntelligencePage() {
 }
 
 export function IntelligenceDashboard() {
-  const { t, i18n } = useTranslation()
-  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const { t } = useTranslation()
   const [selected, setSelected] = useState<TestRun | null>(null)
   const [selfTest, setSelfTest] = useState<{
     model: string
     group: string
   } | null>(null)
   const test = useModelTest()
-  useEffect(() => {
-    if (!test.enabled) setSelfTest(null)
-  }, [test.enabled])
   const history = test.history
   const catalogue = useQuery({
     queryKey: ['model-tests', 'catalogue'],
@@ -73,10 +68,21 @@ export function IntelligenceDashboard() {
     queryKey: ['model-tests', 'site'],
     queryFn: ({ signal }) => getSiteTests(signal),
     retry: false,
+    staleTime: 0,
+    refetchOnMount: 'always',
     refetchInterval: 30_000,
     meta: { errorToast: false },
   })
   const data = history.data
+  const selectedModelAvailable =
+    test.enabled &&
+    !!selfTest &&
+    data?.eligible_models_by_group?.[selfTest.group]?.includes(
+      selfTest.model
+    ) === true
+  useEffect(() => {
+    if (!selectedModelAvailable) setSelfTest(null)
+  }, [selectedModelAvailable])
   const pendingRun = data?.items.find(
     (run) => run.id === test.pending?.request_id
   )
@@ -90,37 +96,15 @@ export function IntelligenceDashboard() {
     (run) => run.status === 'running' && run.id !== test.pending?.request_id
   )
   const sharedPoints = site.data?.user_items ?? []
-  const groupNames = [
-    ...new Set([
-      ...Object.keys(
-        test.enabled ? (data?.eligible_models_by_group ?? {}) : {}
-      ),
-      ...(site.data?.targets ?? []).map((target) => target.group),
-      ...(site.data?.items ?? []).map((run) => run.group),
-      ...sharedPoints.map((run) => run.group),
-    ]),
-  ].sort()
-  const visibleGroups = groupNames
-    .map((group) => {
-      const models = [
-        ...new Set([
-          ...(test.enabled
-            ? (data?.eligible_models_by_group?.[group] ?? [])
-            : []),
-          ...(site.data?.targets ?? [])
-            .filter((target) => target.group === group)
-            .map((target) => target.model),
-          ...(site.data?.items ?? [])
-            .filter((run) => run.group === group)
-            .map((run) => run.model),
-          ...sharedPoints
-            .filter((run) => run.group === group)
-            .map((run) => run.model),
-        ]),
-      ].sort()
-      return { group, models }
-    })
-    .filter((entry) => entry.models.length)
+  // Public history never expands the administrator's current target list.
+  // Refresh a cached target response on mount before displaying it as current.
+  const currentTargets =
+    site.isFetchedAfterMount && !site.isError && site.data?.enabled === true
+      ? site.data.targets.filter((target) => target.enabled === true)
+      : []
+  const historicalTargets = [...(site.data?.items ?? []), ...sharedPoints]
+  const testDisabled =
+    running || test.estimate.isPending || unresolvedPending || history.isError
 
   const refresh = () => {
     void history.refetch()
@@ -200,7 +184,7 @@ export function IntelligenceDashboard() {
                 <Button
                   variant='outline'
                   onClick={test.retry}
-                  disabled={!test.enabled || test.start.isPending}
+                  disabled={!test.canRetry || test.start.isPending}
                 >
                   {t('intelligence.retrySame')}
                 </Button>
@@ -254,74 +238,68 @@ export function IntelligenceDashboard() {
           </AlertDescription>
         </Alert>
       ))}
-      {visibleGroups.map(({ group, models }) => {
-        const groupInfo = catalogue.data?.groups.find(
-          (item) => item.name === group
-        )
-        return (
-          <section
-            key={group}
-            className='bg-card border-border/70 min-w-0 overflow-hidden rounded-xl border'
-            aria-label={group}
-          >
-            <header className='flex flex-wrap items-center gap-2.5 px-4 py-2.5'>
-              <h2 className='text-sm font-semibold break-all'>{group}</h2>
-              {groupInfo && (
-                <Badge
-                  variant='secondary'
-                  className='rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700 dark:bg-sky-950 dark:text-sky-300'
-                >
-                  {t('Ratio')} {formatNumber(groupInfo.ratio, locale)}×
-                </Badge>
-              )}
-            </header>
-            {models.map((model) => (
-              <ModelTestCard
-                key={model}
-                model={model}
-                group={group}
-                runs={sharedPoints.filter(
-                  (run) => run.group === group && run.model === model
-                )}
-                siteRuns={(site.data?.items ?? []).filter(
-                  (run) => run.group === group && run.model === model
-                )}
-                allowTest={
-                  test.enabled &&
-                  (data?.eligible_models_by_group?.[group] ?? []).includes(
-                    model
-                  )
-                }
-                disabled={
-                  running ||
-                  test.estimate.isPending ||
-                  unresolvedPending ||
-                  history.isError
-                }
-                estimating={
-                  test.estimate.isPending &&
-                  test.estimate.variables?.model === model &&
-                  test.estimate.variables?.group === group
-                }
-                onEstimate={() => setSelfTest({ model, group })}
-                onSelect={setSelected}
-              />
-            ))}
-          </section>
-        )
-      })}
-      {!history.isPending && !site.isPending && !visibleGroups.length && (
-        <EmptyState
-          icon={Fingerprint}
-          bordered
-          className='bg-card min-h-48 rounded-xl'
-          title={t('fingerprint.noConfiguredModels')}
-        />
-      )}
+      <Tabs defaultValue='current' className='min-w-0 gap-4'>
+        <TabsList
+          aria-label={t('Model test views')}
+          className='h-auto max-w-full flex-wrap'
+        >
+          <TabsTrigger value='current'>{t('Current targets')}</TabsTrigger>
+          <TabsTrigger value='history'>{t('Historical results')}</TabsTrigger>
+        </TabsList>
+        <TabsContent value='current' className='space-y-4'>
+          <ModelTestGroups
+            targets={currentTargets}
+            catalogue={catalogue.data}
+            eligibleModels={
+              test.enabled ? data?.eligible_models_by_group : undefined
+            }
+            runs={sharedPoints}
+            siteRuns={site.data?.items ?? []}
+            disabled={testDisabled}
+            estimateSelection={
+              test.estimate.isPending ? test.estimate.variables : undefined
+            }
+            onEstimate={setSelfTest}
+            onSelect={setSelected}
+          />
+          {!site.isPending && !site.isError && !currentTargets.length && (
+            <EmptyState
+              icon={Fingerprint}
+              bordered
+              className='bg-card min-h-48 rounded-xl'
+              title={t('No enabled test targets')}
+            />
+          )}
+        </TabsContent>
+        <TabsContent value='history' className='space-y-4'>
+          <p className='text-muted-foreground text-xs leading-relaxed'>
+            {t(
+              'View saved site and community results for current and previously enabled targets.'
+            )}
+          </p>
+          <ModelTestGroups
+            targets={historicalTargets}
+            catalogue={catalogue.data}
+            runs={sharedPoints}
+            siteRuns={site.data?.items ?? []}
+            disabled
+            onEstimate={setSelfTest}
+            onSelect={setSelected}
+          />
+          {!site.isPending && !site.isError && !historicalTargets.length && (
+            <EmptyState
+              icon={Fingerprint}
+              bordered
+              className='bg-card min-h-48 rounded-xl'
+              title={t('No saved results yet')}
+            />
+          )}
+        </TabsContent>
+      </Tabs>
       <p className='text-muted-foreground text-[11px] leading-relaxed'>
         {t('fingerprint.timelineHelp')}
       </p>
-      {selfTest && test.enabled && !test.quote && (
+      {selfTest && selectedModelAvailable && !test.quote && (
         <SelfTestDialog
           key={`${selfTest.group}:${selfTest.model}`}
           {...selfTest}

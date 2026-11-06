@@ -459,7 +459,11 @@ func TestSecurityAccountProfileReadsPasswordStatusInOneQuery(t *testing.T) {
 			require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", user.Id).Updates(updates).Error)
 			queries := 0
 			require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register("profile_query_count", func(tx *gorm.DB) {
-				queries++
+				// A07 also reads invitation summaries. Password existence and
+				// safe profile columns still come from exactly one user query.
+				if tx.Statement.Table == "users" {
+					queries++
+				}
 			}))
 			profile, err := model.GetSelfUserById(user.Id)
 			require.NoError(t, err)

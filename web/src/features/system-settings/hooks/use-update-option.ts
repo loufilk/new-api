@@ -20,7 +20,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import i18next from 'i18next'
 import { toast } from 'sonner'
 
-import type { TestHistory } from '@/extensions/chuanapi/intelligence/types'
+import type { ModelTestAvailability } from '@/extensions'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { STATUS_QUERY_KEY, type StatusRecord } from '@/lib/status-query'
@@ -94,7 +94,7 @@ export function useUpdateOption() {
           await queryClient.cancelQueries({
             queryKey: ['model-tests', 'history'],
           })
-          queryClient.setQueryData<TestHistory>(
+          queryClient.setQueryData<ModelTestAvailability>(
             ['model-tests', 'history'],
             (previous) => previous && { ...previous, enabled }
           )

@@ -70,12 +70,31 @@ func setupModelTestsPostgres(t *testing.T) (*gorm.DB, int) {
 	if dsn == "" {
 		t.Skip("requires owned PostgreSQL 18.6 TEST_POSTGRES_DSN")
 	}
+	return setupModelTestsDatabase(t, "postgres", dsn)
+}
+
+func setupModelTestsDatabase(t *testing.T, dialect, dsn string) (*gorm.DB, int) {
+	t.Helper()
 	setupFingerprintScoringFixture(t)
-	db, isolatedDSN := newAuditTestDatabase(t, "postgres", dsn)
+	db, isolatedDSN := newAuditTestDatabase(t, dialect, dsn)
+	versionQuery := "SELECT VERSION()"
+	if dialect == "sqlite" {
+		versionQuery = "SELECT sqlite_version()"
+	}
+	var databaseVersion string
+	require.NoError(t, db.Raw(versionQuery).Scan(&databaseVersion).Error)
+	t.Logf("model-test database: %s %s", dialect, databaseVersion)
 	require.NoError(t, db.AutoMigrate(&model.Option{}))
 	oldDB, oldLog := model.DB, model.LOG_DB
 	oldMaster, oldRedis := common.IsMasterNode, common.RedisEnabled
-	t.Setenv("SQL_DSN", isolatedDSN)
+	oldSQLitePath := common.SQLitePath
+	oldMainType, oldLogType := common.MainDatabaseType(), common.LogDatabaseType()
+	if dialect == "sqlite" {
+		common.SQLitePath = isolatedDSN
+		t.Setenv("SQL_DSN", "local")
+	} else {
+		t.Setenv("SQL_DSN", isolatedDSN)
+	}
 	common.IsMasterNode = false
 	common.RedisEnabled = false
 	require.NoError(t, model.InitDB())
@@ -86,9 +105,11 @@ func setupModelTestsPostgres(t *testing.T) (*gorm.DB, int) {
 		}
 		model.DB, model.LOG_DB = oldDB, oldLog
 		common.IsMasterNode, common.RedisEnabled = oldMaster, oldRedis
+		common.SQLitePath = oldSQLitePath
+		common.SetDatabaseTypes(oldMainType, oldLogType)
 		model.InvalidatePricingCache()
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}, &model.ModelTestRun{}, &model.ModelTestGate{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.UserCallInterception{}, &model.UserCallInterceptionHit{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}, &model.ModelTestRun{}, &model.ModelTestGate{}, &model.ModelFingerprintSiteConfig{}, &model.ModelFingerprintSiteAudit{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.UserCallInterception{}, &model.UserCallInterceptionHit{}))
 	// Existing execution scenarios explicitly opt in; switch tests remove/disable it.
 	require.NoError(t, db.Create(&model.Option{Key: model.ModelTestEnabledKey, Value: "true"}).Error)
 	user := model.User{Username: "synthetic-model-test-user", AffCode: "synthetic-test-aff", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", Quota: 1_000_000, QuotaPaid: 1_000_000}
@@ -97,6 +118,8 @@ func setupModelTestsPostgres(t *testing.T) (*gorm.DB, int) {
 	ch := model.Channel{Name: "Synthetic channel", Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Models: "gpt-4o-mini", Group: "default", Key: "synthetic-not-a-real-key"}
 	require.NoError(t, db.Create(&ch).Error)
 	require.NoError(t, db.Create(&model.Ability{ChannelId: ch.Id, Group: "default", Model: "gpt-4o-mini", Enabled: true}).Error)
+	_, err := model.UpdateModelFingerprintSiteConfig(t.Context(), 0, user.Id, model.ModelFingerprintSiteConfig{Enabled: true, DefaultPeriodSecs: 3600, Targets: []model.ModelFingerprintSiteTarget{{Group: "default", Model: "gpt-4o-mini", Enabled: true}}})
+	require.NoError(t, err)
 	oldPrice := ratio_setting.ModelRatio2JSONString()
 	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-4o-mini":0.15}`))
 	t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldPrice)) })
@@ -465,7 +488,7 @@ func TestModelTestTokenRejectsOwnerStatusExpiryBudgetAndAutomaticRouting(t *test
 func TestModelTestPostgresConfirmationCannotStartAnotherRequest(t *testing.T) {
 	db, userID := setupModelTestsPostgres(t)
 	confirmation := "synthetic-confirmation-digest"
-	first := &model.ModelTestRun{ID: uuid.NewString(), UserID: userID, TokenID: 1, Source: "user", ConfirmationID: &confirmation, Model: "synthetic", Group: "default", BenchmarkID: modelTestVersion, Status: "running", CreatedAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Minute).Unix()}
+	first := &model.ModelTestRun{ID: uuid.NewString(), UserID: userID, TokenID: 1, Source: "user", ConfirmationID: &confirmation, Model: "gpt-4o-mini", Group: "default", BenchmarkID: modelTestVersion, Status: "running", CreatedAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Minute).Unix()}
 	_, err := model.CreateModelTestRun(first)
 	require.NoError(t, err)
 	require.NoError(t, db.Model(first).Update("status", "unknown").Error)

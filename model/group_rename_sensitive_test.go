@@ -65,7 +65,7 @@ func TestSensitiveExemptionGroupRenameDatabaseMatrix(t *testing.T) {
 				initCol()
 				require.NoError(t, sqlDB.Close())
 			})
-			models := []any{&Option{}, &GroupRenameOperation{}, &Channel{}, &Ability{}, &User{}, &Token{}, &SubscriptionPlan{}, &UserSubscription{}}
+			models := []any{&Option{}, &GroupRenameOperation{}, &ModelTestGate{}, &ModelFingerprintSiteConfig{}, &ModelFingerprintSiteAudit{}, &Channel{}, &Ability{}, &User{}, &Token{}, &SubscriptionPlan{}, &UserSubscription{}}
 			for _, item := range models {
 				require.False(t, db.Migrator().HasTable(item), "fixture must not reuse existing tables")
 			}

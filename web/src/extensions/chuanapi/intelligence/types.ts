@@ -157,6 +157,7 @@ export type PublicTestRun = Pick<
   | 'completed_at'
 >
 export type SiteTests = {
+  enabled: boolean
   items: TestRun[]
   user_items?: TestRun[]
   targets: {

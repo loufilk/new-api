@@ -260,7 +260,7 @@ func TransferAffQuota(c *gin.Context) {
 	result, err := model.TransferAffQuotaForSession(identity, int(amount), idempotencyKey)
 	if err != nil {
 		switch {
-		case errors.Is(err, model.ErrAgentTransactionProof):
+		case errors.Is(err, model.ErrAgentTransactionProof), errors.Is(err, model.ErrUserSessionInactive), errors.Is(err, gorm.ErrRecordNotFound):
 			common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Financial operations require a current browser session"))
 		case errors.Is(err, model.ErrLedgerInsufficientBalance):
 			common.ApiErrorMsg(c, "待使用邀请奖励不足")

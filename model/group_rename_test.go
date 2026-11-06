@@ -641,7 +641,7 @@ func TestGroupRenameConcurrentDuplicateSubmissionsPostgres(t *testing.T) {
 		DB, LOG_DB = previousDB, previousLogDB
 		common.SetDatabaseTypes(previousMainType, previousLogType)
 	})
-	require.NoError(t, db.AutoMigrate(&Option{}, &GroupRenameOperation{}, &User{}, &Token{}, &Channel{}, &Ability{}, &SubscriptionPlan{}, &UserSubscription{}))
+	require.NoError(t, db.AutoMigrate(&Option{}, &GroupRenameOperation{}, &ModelTestGate{}, &ModelFingerprintSiteConfig{}, &ModelFingerprintSiteAudit{}, &User{}, &Token{}, &Channel{}, &Ability{}, &SubscriptionPlan{}, &UserSubscription{}))
 
 	oldGroup := "group_rename_concurrent_old"
 	newGroup := "group_rename_concurrent_new"

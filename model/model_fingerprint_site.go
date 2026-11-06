@@ -46,6 +46,22 @@ type ModelFingerprintSiteConfig struct {
 	UpdatedAt         int64                        `json:"updated_at" gorm:"autoUpdateTime:false"`
 	UpdatedBy         int                          `json:"updated_by"`
 }
+
+// EnabledTargets is the shared allowlist for catalogue display and admission.
+// Historical observations remain independent of current target selection.
+func (c ModelFingerprintSiteConfig) EnabledTargets() []ModelFingerprintSiteTarget {
+	targets := make([]ModelFingerprintSiteTarget, 0, len(c.Targets))
+	if !c.Enabled {
+		return targets
+	}
+	for _, target := range c.Targets {
+		if target.Enabled {
+			targets = append(targets, target)
+		}
+	}
+	return targets
+}
+
 type ModelFingerprintSiteAudit struct {
 	ID        int64 `gorm:"primaryKey"`
 	Version   int64 `gorm:"uniqueIndex"`
@@ -207,6 +223,11 @@ func UpdateModelFingerprintSiteConfig(ctx context.Context, expectedVersion int64
 		return nil, err
 	}
 	err = DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Share the namespace fence with renames so a stale settings form cannot
+		// reintroduce a retired group after the controller's catalogue read.
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
 		// A durable gate also serializes simultaneous first-time configuration saves.
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&ModelTestGate{ID: 1}).Error; err != nil {
 			return err
@@ -230,6 +251,11 @@ func UpdateModelFingerprintSiteConfig(ctx context.Context, expectedVersion int64
 		}
 		if old.Version != expectedVersion {
 			return ErrFingerprintSiteConflict
+		}
+		for _, target := range c.EnabledTargets() {
+			if err := validateGroupNamesForWriteTx(tx, target.Group); err != nil {
+				return err
+			}
 		}
 		c.ID = 1
 		c.Version = old.Version + 1

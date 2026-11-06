@@ -52,7 +52,9 @@ func TestGoCoreDoesNotImportConcreteChuanAPI(t *testing.T) {
 		}
 
 		rel := slashRel(t, root, path)
-		if rel == "main.go" || strings.HasPrefix(rel, "chuanapi/") || strings.HasPrefix(rel, "modules/chuanapi/") {
+		// The disposable migration command composes the same registered schema
+		// as main; it is not a host runtime package or an HTTP entry point.
+		if rel == "main.go" || rel == "bin/no-agent-fixture/main.go" || strings.HasPrefix(rel, "chuanapi/") || strings.HasPrefix(rel, "modules/chuanapi/") {
 			return nil
 		}
 
@@ -73,7 +75,7 @@ func TestGoCoreDoesNotImportConcreteChuanAPI(t *testing.T) {
 		return nil
 	}))
 
-	assert.Empty(t, offenders, "core production Go code must not import concrete ChuanAPI modules; main.go is the composition-root exception")
+	assert.Empty(t, offenders, "core production Go code must not import concrete ChuanAPI modules outside the explicit application and disposable migration composition roots")
 }
 
 func TestServiceProductionDoesNotOwnWalletFunding(t *testing.T) {

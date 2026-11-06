@@ -4,16 +4,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 func withHeaderNavModules(t *testing.T, raw string) {
@@ -40,6 +37,7 @@ func withHeaderNavModules(t *testing.T, raw string) {
 
 func performHeaderNavRequest(t *testing.T, handler gin.HandlerFunc, authenticated bool) *httptest.ResponseRecorder {
 	t.Helper()
+	setupDashboardAuthMiddlewareTest(t)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -49,17 +47,6 @@ func performHeaderNavRequest(t *testing.T, handler gin.HandlerFunc, authenticate
 
 	var accessToken string
 	if authenticated {
-		previousDB, previousRedis := model.DB, common.RedisEnabled
-		db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-		require.NoError(t, err)
-		require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}))
-		model.DB = db
-		common.RedisEnabled = false
-		require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(time.Now().Unix()))
-		t.Cleanup(func() {
-			model.DB = previousDB
-			common.RedisEnabled = previousRedis
-		})
 		accessToken = "header-nav-pat"
 		user := model.User{
 			Username:    "tester",
@@ -70,7 +57,7 @@ func performHeaderNavRequest(t *testing.T, handler gin.HandlerFunc, authenticate
 			AuthVersion: 1,
 		}
 		user.SetAccessToken(accessToken)
-		require.NoError(t, db.Create(&user).Error)
+		require.NoError(t, model.DB.Create(&user).Error)
 	}
 
 	recorder := httptest.NewRecorder()

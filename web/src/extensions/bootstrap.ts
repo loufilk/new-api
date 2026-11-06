@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { setBrandExtension } from './brand'
 import {
   chuanapiBrandExtension,
+  chuanapiConsoleToolsExtension,
   chuanapiHelpExtension,
   chuanapiI18nExtension,
   chuanapiNavigationExtension,
@@ -27,6 +28,7 @@ import {
   chuanapiToolsNavigationExtension,
   SHOW_LEGACY_AFFILIATE_QUOTA,
 } from './chuanapi'
+import { setConsoleToolsExtension } from './console-tools'
 import { setExtensionFlags } from './flags'
 import { setHelpExtension } from './help'
 import { setI18nExtensions } from './i18n'
@@ -47,3 +49,4 @@ setI18nExtensions([chuanapiI18nExtension])
 setExtensionFlags({ showLegacyAffiliateQuota: SHOW_LEGACY_AFFILIATE_QUOTA })
 setPaymentSettingsExtension(chuanapiPaymentSettingsExtension)
 setWalletExtension(chuanapiWalletExtension)
+setConsoleToolsExtension(chuanapiConsoleToolsExtension)

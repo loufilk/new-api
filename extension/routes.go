@@ -34,6 +34,12 @@ type RouteScopes struct {
 
 	// AgentPlatformRoutes mounts the browser-session-only A07 platform API.
 	AgentPlatformRoutes func(RouteScopes) error
+
+	// Group projections are supplied by the host so extensions use the same
+	// permission and pricing policy without importing host service packages.
+	// Callers must hold the request's group configuration read guard.
+	UserUsableGroups func(userGroup string) map[string]string
+	UserGroupRatio   func(userGroup, group string) float64
 }
 
 // RoutePriority is a closed enum naming the points in host router wiring where

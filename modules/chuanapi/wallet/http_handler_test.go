@@ -413,11 +413,17 @@ func TestTransferAffQuotaRequiresCurrentBrowserSession(t *testing.T) {
 	t.Cleanup(func() { common.QuotaPerUnit = oldUnit })
 	user := model.User{Username: "legacy-financial-browser", AffCode: "legacy-financial-browser", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AffQuota: 1000000, AuthVersion: 1}
 	require.NoError(t, db.Create(&user).Error)
-	for _, kind := range []string{"missing_session", "pat", "wrong_context_type", "revoked_session"} {
+	for _, kind := range []string{"missing_session", "unknown_session", "pat", "wrong_context_type", "revoked_session", "expired_session", "stale_auth_version", "stale_session_version"} {
 		c, response := performWalletRequest(t, http.MethodPost, "/api/user/aff_transfer", `{"quota":500000}`, user.Id, user.Role)
+		require.NoError(t, db.Model(&model.UserSession{}).Where("user_id = ?", user.Id).Updates(map[string]any{
+			"status": model.UserSessionStatusActive, "expires_at": common.GetTimestamp() + 3600,
+		}).Error)
 		c.Request.Header.Set("Idempotency-Key", "legacy-proof-"+kind)
 		if kind == "missing_session" {
 			c.Set("session_id", "")
+		}
+		if kind == "unknown_session" {
+			c.Set("session_id", "wallet-http-session-missing")
 		}
 		if kind == "revoked_session" {
 			require.NoError(t, db.Model(&model.UserSession{}).Where("sid = ?", c.GetString("session_id")).Update("status", model.UserSessionStatusRevoked).Error)
@@ -429,12 +435,25 @@ func TestTransferAffQuotaRequiresCurrentBrowserSession(t *testing.T) {
 		if kind == "wrong_context_type" {
 			c.Set("session_version", "1")
 		}
+		if kind == "expired_session" {
+			require.NoError(t, db.Model(&model.UserSession{}).Where("sid = ?", c.GetString("session_id")).Update("expires_at", common.GetTimestamp()-1).Error)
+		}
+		if kind == "stale_auth_version" {
+			c.Set("auth_version", int64(2))
+		}
+		if kind == "stale_session_version" {
+			c.Set("session_version", int64(2))
+		}
 		TransferAffQuota(c)
 		assert.Equal(t, http.StatusForbidden, response.Code, kind+": "+response.Body.String())
+		assert.Contains(t, response.Body.String(), `"success":false`, kind)
 	}
 	require.NoError(t, db.First(&user, user.Id).Error)
 	assert.Equal(t, 1000000, user.AffQuota)
 	assert.Zero(t, user.QuotaPaid)
+	var ledgerRows int64
+	require.NoError(t, db.Model(&model.BalanceLedger{}).Count(&ledgerRows).Error)
+	assert.Zero(t, ledgerRows, "invalid sessions must not write a transfer ledger")
 	require.NoError(t, db.Model(&model.UserSession{}).Where("user_id = ?", user.Id).Update("status", model.UserSessionStatusActive).Error)
 	c, response := performWalletRequest(t, http.MethodPost, "/api/user/aff_transfer", `{"quota":500000}`, user.Id, user.Role)
 	c.Request.Header.Set("Idempotency-Key", "x.1")

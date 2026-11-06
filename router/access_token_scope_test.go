@@ -184,10 +184,12 @@ func TestAccessTokenCatalogCoversEveryPermission(t *testing.T) {
 	}
 }
 
-func TestNonAgentBuildDoesNotRegisterRetiredBusinessRoutes(t *testing.T) {
+func TestA07BuildDoesNotRegisterRetiredBusinessRoutes(t *testing.T) {
 	engine := newAccessTokenScopeTestEngine(t)
 	for _, route := range engine.Routes() {
-		assert.False(t, strings.HasPrefix(route.Path, "/api/agent-platform"), route.Path)
+		if strings.HasPrefix(route.Path, "/api/agent-platform") {
+			assert.True(t, route.Path == "/api/agent-platform/self" || strings.HasPrefix(route.Path, "/api/agent-platform/simple/"), route.Path)
+		}
 		assert.False(t, strings.HasPrefix(route.Path, "/api/agent-redemption"), route.Path)
 	}
 	for _, path := range []string{"/api/agent-platform", "/api/agent-platform/me", "/api/agent-platform/purchases", "/api/agent-redemption/", "/api/agent-redemption/batches"} {

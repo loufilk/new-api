@@ -76,6 +76,9 @@ func TestMain(m *testing.M) {
 		&Task{},
 		&Option{},
 		&GroupRenameOperation{},
+		&ModelTestGate{},
+		&ModelFingerprintSiteConfig{},
+		&ModelFingerprintSiteAudit{},
 		&User{},
 		&UserSession{},
 		&AuthFlow{},
@@ -148,6 +151,8 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM vendors")
 		DB.Exec("DELETE FROM model_bonus_eligible_audits")
 		DB.Exec("DELETE FROM referral_commissions")
+		DB.Exec("DELETE FROM model_fingerprint_site_configs")
+		DB.Exec("DELETE FROM model_fingerprint_site_audits")
 		InvalidateModelBonusEligibleCache()
 	})
 }

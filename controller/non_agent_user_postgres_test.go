@@ -39,12 +39,14 @@ func TestSelfDTONormalizesLegacyRoleWithoutChangingWalletsOrCredentials(t *testi
 		data := buildSelfUserDataWithRole(user, min(role, user.Role))
 		assert.Equal(t, common.RoleCommonUser, data["role"])
 		assert.Equal(t, user.Quota, data["quota"])
-		assert.NotContains(t, data, "agent_profile")
+		assert.Contains(t, data, "agent_profile")
+		assert.Nil(t, data["agent_profile"], "a legacy numeric role must not create an A07 business profile")
 		assert.NotContains(t, data, "password")
-		permissions, ok := data["permissions"].(map[string]interface{})
+		permissions, ok := data["permissions"].(map[string]any)
 		require.True(t, ok)
 		for _, name := range []string{"agent_history", "agent_sales", "agent_settlement", "agent_admin", "agent_redemption"} {
-			assert.NotContains(t, permissions, name)
+			assert.Contains(t, permissions, name)
+			assert.Equal(t, false, permissions[name], "legacy qualification must not restore %s", name)
 		}
 	}
 	var after model.User

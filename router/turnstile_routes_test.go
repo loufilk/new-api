@@ -15,6 +15,7 @@ import (
 // route wiring: the anonymous reset-password endpoint rejects a missing
 // challenge when Turnstile is enabled, while check-in stays behind UserAuth.
 func TestTurnstileProtectedRoutesKeepLoginAndChallengeRequirements(t *testing.T) {
+	setupRelayRouterTestDB(t)
 	previousEnabled := common.TurnstileCheckEnabled
 	common.TurnstileCheckEnabled = true
 	t.Cleanup(func() { common.TurnstileCheckEnabled = previousEnabled })

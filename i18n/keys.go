@@ -38,25 +38,33 @@ const (
 	MsgDistributorNoAvailableChannelTaskPlugin = "distributor.no_available_channel_task_plugin"
 	MsgDistributorInvalidParseModel            = "distributor.invalid_request_parse_model"
 
-	MsgQuotaUserInsufficient             = "quota.user_insufficient"
-	MsgQuotaPreConsumeInsufficient       = "quota.pre_consume_insufficient"
-	MsgQuotaSubscriptionInsufficient     = "quota.subscription_insufficient"
-	MsgRelayModelPriceNotConfigured      = "relay.model_price_not_configured"
-	MsgRelayModelPriceNotConfiguredAdmin = "relay.model_price_not_configured_admin"
-	MsgRelayTaskUsagePriceUnsupported    = "relay.task_usage_price_unsupported"
-	MsgRelaySharedTaskPriceNeedsOverride = "relay.shared_task_price_needs_override"
-	MsgRelayTaskChannelDisabled          = "relay.task_channel_disabled"
-	MsgRelayGroupSaturated               = "relay.group_saturated"
-	MsgRelayGroupUpstreamSaturated       = "relay.group_upstream_saturated"
-	MsgRelayRetryGetChannelFailed        = "relay.retry_get_channel_failed"
-	MsgRelayRetryNoAvailableChannel      = "relay.retry_no_available_channel"
-	MsgRelayAccessTokenUnsupported       = "relay.access_token_unsupported"
+	MsgQuotaUserInsufficient                = "quota.user_insufficient"
+	MsgQuotaPreConsumeInsufficient          = "quota.pre_consume_insufficient"
+	MsgQuotaSubscriptionInsufficient        = "quota.subscription_insufficient"
+	MsgRelayModelPriceNotConfigured         = "relay.model_price_not_configured"
+	MsgRelayModelPriceNotConfiguredAdmin    = "relay.model_price_not_configured_admin"
+	MsgRelayTaskUsagePriceUnsupported       = "relay.task_usage_price_unsupported"
+	MsgRelaySharedTaskPriceNeedsOverride    = "relay.shared_task_price_needs_override"
+	MsgRelayTaskChannelDisabled             = "relay.task_channel_disabled"
+	MsgRelayGroupSaturated                  = "relay.group_saturated"
+	MsgRelayGroupUpstreamSaturated          = "relay.group_upstream_saturated"
+	MsgRelayRetryGetChannelFailed           = "relay.retry_get_channel_failed"
+	MsgRelayRetryNoAvailableChannel         = "relay.retry_no_available_channel"
+	MsgRelayAccessTokenUnsupported          = "relay.access_token_unsupported"
+	MsgRelayUserCallIntercepted             = "relay.user_call_intercepted"
+	MsgRelayUserCallInterceptionUnavailable = "relay.user_call_interception_unavailable"
 )
 
 // Emails and the name of the token created at registration, in the
 // recipient's language
 const (
 	MsgUserDefaultTokenName = "user.default_token_name"
+
+	MsgSupportEmailSubject       = "support_email_subject"
+	MsgSupportEmailCreated       = "support_email_created"
+	MsgSupportEmailAdminReply    = "support_email_admin_reply"
+	MsgSupportEmailCustomerReply = "support_email_customer_reply"
+	MsgSupportEmailGuidance      = "support_email_guidance"
 
 	MsgEmailVerificationSubject  = "email.verification.subject"
 	MsgEmailVerificationGreeting = "email.verification.greeting"

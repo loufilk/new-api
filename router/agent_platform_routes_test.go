@@ -54,6 +54,7 @@ func TestAgentPlatformModuleMountsCompleteBrowserSurface(t *testing.T) {
 }
 
 func TestAgentPlatformEveryRouteRejectsAnonymousAndNeverCachesFinancialData(t *testing.T) {
+	setupRelayRouterTestDB(t)
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
 	scopes := extension.RouteScopes{Engine: engine, API: engine.Group("/api")}

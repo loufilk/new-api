@@ -45,3 +45,8 @@ export { extensionPaymentSettingsSection } from './payment-settings'
 export type { PaymentSettingsExtension } from './payment-settings'
 export { extensionWalletPage } from './wallet'
 export type { WalletExtension, WalletPageProps } from './wallet'
+export { extensionConsoleTools } from './console-tools'
+export type {
+  ConsoleToolsExtension,
+  ModelTestAvailability,
+} from './console-tools'

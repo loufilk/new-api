@@ -30,7 +30,7 @@ func TestGetOpenAIVideoRouteRendersJimengTask(t *testing.T) {
 	t.Setenv("SQL_DSN", "")
 	require.NoError(t, model.InitDB())
 	database := model.DB
-	require.NoError(t, database.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.Task{}, &model.UserCallInterception{}, &model.UserCallInterceptionHit{}, &model.UserCallInterceptionAudit{}))
+	require.NoError(t, database.AutoMigrate(&model.Option{}, &model.User{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{}, &model.Task{}, &model.UserCallInterception{}, &model.UserCallInterceptionHit{}, &model.UserCallInterceptionAudit{}))
 	t.Cleanup(func() {
 		sqlDB, closeErr := database.DB()
 		require.NoError(t, closeErr)

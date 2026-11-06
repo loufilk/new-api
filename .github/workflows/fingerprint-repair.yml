@@ -1,0 +1,156 @@
+name: Fingerprint repair verification
+
+on:
+  push:
+    branches: [fix/fingerprint-enabled-targets-20261106]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fingerprint-repair-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  GOWORK: 'off'
+  GOTOOLCHAIN: local
+  GOFLAGS: '-mod=readonly'
+  SQL_DSN: ''
+  LOG_SQL_DSN: ''
+  REDIS_CONN_STRING: ''
+
+jobs:
+  backend:
+    name: Backend, PostgreSQL 18.6 and fingerprint IPC
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+        env:
+          POSTGRES_PASSWORD: fingerprint
+          POSTGRES_DB: no_agent_test
+        ports: ['127.0.0.1:5432:5432']
+        options: --health-cmd="pg_isready -U postgres -d no_agent_test" --health-interval=5s --health-timeout=5s --health-retries=24
+      redis:
+        image: redis:8.8.0-alpine@sha256:9d317178eceac8454a2284a9e6df2466b93c745529947f0cd42a0fa9609d7005
+        ports: ['127.0.0.1:6379:6379']
+        options: --health-cmd="redis-cli ping" --health-interval=5s --health-timeout=3s --health-retries=24
+    env:
+      NO_AGENT_FIXTURE_OWNED: '1'
+      PG_PORT: '5432'
+      PG_TEST_PASSWORD: fingerprint
+      TEST_FINGERPRINT_DIALECT: postgres
+      TEST_SECURITY_DIALECT: postgres
+      TEST_TASK_DB_DIALECT: postgres
+      TEST_AUTH_REDIS_DSN: redis://127.0.0.1:6379/1
+      TEST_REDIS_DSN: redis://127.0.0.1:6379/2
+      TEST_REDIS_ADDR: 127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+            tokenkit/go.sum
+            tools/fingerprint-service/go.sum
+      - name: Initialize disposable fixtures and record versions
+        env:
+          PG_ID: ${{ job.services.postgres.id }}
+          REDIS_ID: ${{ job.services.redis.id }}
+        run: |
+          set -euo pipefail
+          mkdir -p verification web/dist
+          touch web/dist/index.html
+          git rev-parse HEAD > verification/commit.txt
+          go version > verification/go-version.txt
+          printf 'PG_ID=%s\n' "$PG_ID" >> "$GITHUB_ENV"
+          docker exec "$PG_ID" psql -U postgres -d no_agent_test -Atc 'SHOW server_version;' | tee verification/postgresql-version.txt
+          docker exec "$REDIS_ID" redis-server --version | tee verification/redis-version.txt
+      - name: Validate PostgreSQL verification plan
+        run: |
+          python3 -m unittest discover -s ops/ci/tests -p test_fingerprint_postgres.py
+          python3 ops/ci/verify_fingerprint_postgres.py plan
+      - name: Build and vet root module
+        run: |
+          go build ./...
+          go vet ./...
+      - name: Root Go regression with isolated PostgreSQL fixtures
+        run: python3 ops/ci/verify_fingerprint_postgres.py unit
+      - name: PostgreSQL contract and migration matrices
+        if: success() || failure()
+        run: python3 ops/ci/verify_fingerprint_postgres.py postgres
+      - name: Required fingerprint target authorization and rename regressions
+        if: success() || failure()
+        run: python3 ops/ci/verify_fingerprint_postgres.py fingerprint
+      - name: Legacy token migration on an empty PostgreSQL database
+        if: success() || failure()
+        run: python3 ops/ci/verify_fingerprint_postgres.py token-migration
+      - name: Task financial contracts on dedicated PostgreSQL databases
+        if: success() || failure()
+        run: python3 ops/ci/verify_fingerprint_postgres.py task-financial
+      - name: Task read and rate limits on an empty PostgreSQL database
+        if: success() || failure()
+        run: python3 ops/ci/verify_fingerprint_postgres.py router-task
+      - name: Independent Go modules and real Unix socket service
+        if: success() || failure()
+        run: |
+          set -euo pipefail
+          for module in relaykit tokenkit tools/fingerprint-service; do
+            label="${module//\//-}"
+            (cd "$module" && go build ./... && go vet ./... && go test -race -p 2 -count=1 -timeout=10m -json ./...) > "verification/$label.jsonl" 2> "verification/$label.stderr.log"
+          done
+          (cd tools/fingerprint-service && sha256sum -c SDK_SHA256SUMS)
+      - name: Preserve exact commit evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fingerprint-backend-${{ github.sha }}
+          path: verification/
+          retention-days: 7
+          if-no-files-found: error
+
+  frontend:
+    name: Frontend regression and production build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.4'
+      - name: Install pinned dependencies
+        run: bun install --frozen-lockfile
+      - name: Typecheck and lint
+        run: |
+          bun run typecheck
+          bun run lint:ci
+          bun run format:check
+      - name: Full frontend regression
+        run: bun run test --maxWorkers=4 --reporter=json --outputFile=frontend-tests.json
+      - name: Production build
+        run: bun run build
+      - name: Preserve frontend test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fingerprint-frontend-${{ github.sha }}
+          path: web/frontend-tests.json
+          retention-days: 7
+          if-no-files-found: error

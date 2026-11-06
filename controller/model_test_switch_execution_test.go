@@ -32,6 +32,11 @@ import (
 func setupModelTestSwitchExecution(t *testing.T) (*gorm.DB, int) {
 	t.Helper()
 	db, userID := setupModelTestsPostgres(t)
+	return setupModelTestSwitchAccounting(t, db, userID)
+}
+
+func setupModelTestSwitchAccounting(t *testing.T, db *gorm.DB, userID int) (*gorm.DB, int) {
+	t.Helper()
 	require.NoError(t, db.AutoMigrate(append([]any{&model.TokenRoutingMetric{}, &model.Token{}, &model.Log{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.SubscriptionPlan{}, &model.UserSubscription{}, &model.SubscriptionPreConsumeRecord{}, &model.Task{}}, model.BonusSourceModels()...)...))
 	oldMemory, oldBatch, oldLogs, oldExport, oldRetry := common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled, common.RetryTimes
 	oldTrust := operation_setting.GetQuotaSetting().TrustQuotaUSD

@@ -43,16 +43,16 @@ func SupportEmailSMTPConfig(ctx context.Context) (common.SMTPDeliveryConfig, boo
 }
 
 func SupportEmailContent(row *model.SupportEmailOutbox, admission *model.SupportEmailAdmission) (subject, plain, markup, messageID string) {
-	eventKey := "support_email_customer_reply"
+	eventKey := i18n.MsgSupportEmailCustomerReply
 	if row.Event == "created" {
-		eventKey = "support_email_created"
+		eventKey = i18n.MsgSupportEmailCreated
 	} else if row.Event == "admin_reply" {
-		eventKey = "support_email_admin_reply"
+		eventKey = i18n.MsgSupportEmailAdminReply
 	}
-	subject = i18n.Translate(admission.Language, "support_email_subject", map[string]any{"ID": row.TicketID})
+	subject = i18n.Translate(admission.Language, i18n.MsgSupportEmailSubject, map[string]any{"ID": row.TicketID})
 	event := i18n.Translate(admission.Language, eventKey)
 	link := fmt.Sprintf("%s/support?ticket=%d", admission.Origin, row.TicketID)
-	guidance := i18n.Translate(admission.Language, "support_email_guidance")
+	guidance := i18n.Translate(admission.Language, i18n.MsgSupportEmailGuidance)
 	plain = fmt.Sprintf("%s\n%s\n\n%s\n%s", subject, event, link, guidance)
 	markup = fmt.Sprintf("<p>%s</p><p>%s</p><p><a href=\"%s\">%s</a></p><p>%s</p>", html.EscapeString(subject), html.EscapeString(event), html.EscapeString(link), html.EscapeString(link), html.EscapeString(guidance))
 	// Stable across retries/restarts/configuration, with no address or usable token.

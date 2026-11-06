@@ -13,17 +13,77 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 const poolFixture = `{"code":0,"data":{"page":1,"total":1,"items":[{"id":909,"name":"private@example.invalid","platform":"openai","type":"oauth","status":"active","schedulable":true,"concurrency":2,"current_concurrency":2,"group_ids":[7,99],"credentials":{"plan_type":"plus","access_token":"synthetic-do-not-expose"},"extra":{"codex_5h_used_percent":31.5,"codex_7d_used_percent":40},"error_message":"private upstream address"}]}}`
 
 // Pure collector fixtures explicitly opt in without touching any real DB.
 func enabledTestService() *Service {
-	s := New()
+	s := New(nil, nil)
 	s.enabled = func(context.Context) (bool, error) { return true, nil }
 	return s
+}
+
+func TestListUsesHostGroupPolicyForVisibilityAndRatios(t *testing.T) {
+	previousDB, previousRedis := model.DB, common.RedisEnabled
+	previousMain := common.MainDatabaseType()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.User{}))
+	model.DB, common.RedisEnabled = db, false
+	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	t.Cleanup(func() {
+		model.DB, common.RedisEnabled = previousDB, previousRedis
+		common.SetMainDatabaseType(previousMain)
+		sqlDB, err := db.DB()
+		require.NoError(t, err)
+		require.NoError(t, sqlDB.Close())
+	})
+	user := model.User{Username: "pool-reader", Group: "member", Status: common.UserStatusEnabled}
+	require.NoError(t, db.Create(&user).Error)
+	s := enabledTestService()
+	s.usableGroups = func(userGroup string) map[string]string {
+		assert.Equal(t, "member", userGroup)
+		return map[string]string{"visible": "Visible group"}
+	}
+	s.groupRatio = func(userGroup, group string) float64 {
+		assert.Equal(t, "member", userGroup)
+		assert.Equal(t, "visible", group, "unauthorized group ratios must not be projected")
+		return 2.5
+	}
+	s.cache = cached{configured: true, fetched: s.now(), items: []Item{
+		{AnonymousID: "AC-visible", Groups: []Group{{Name: "visible"}, {Name: "private"}}},
+		{AnonymousID: "AC-private", Groups: []Group{{Name: "private"}}},
+	}}
+	response := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(response)
+	c.Request = httptest.NewRequest(http.MethodGet, "/account-pool", nil)
+	c.Set("id", user.Id)
+	s.List(c)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var payload struct {
+		Success bool     `json:"success"`
+		Data    Snapshot `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Len(t, payload.Data.Items, 1)
+	assert.Equal(t, []Group{{Name: "visible", Ratio: 2.5}}, payload.Data.Items[0].Groups)
+	assert.Equal(t, 1, payload.Data.Total)
+	assert.NotContains(t, response.Body.String(), "private")
+
+	s.usableGroups = nil
+	response = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(response)
+	c.Request = httptest.NewRequest(http.MethodGet, "/account-pool", nil)
+	s.List(c)
+	assert.Equal(t, http.StatusServiceUnavailable, response.Code)
+	assert.NotContains(t, response.Body.String(), "items", "missing host policy must not expose the warm cache")
 }
 
 func TestCollectorUsesExplicitAdminCredentialAndOnlyAnonymousProjection(t *testing.T) {

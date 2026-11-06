@@ -3,6 +3,9 @@ package controller
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"regexp"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -22,11 +25,29 @@ type groupRenameAPIResponse struct {
 	Data    *model.GroupRenameResult `json:"data"`
 }
 
+// Successful renames advance process-wide monotonic state. A fresh database
+// in another test is a different deployment, so exercise each commit in its
+// own process rather than teaching production to accept version rollback.
+func groupRenameControllerIsolatedProcess(t *testing.T) bool {
+	t.Helper()
+	if os.Getenv("GROUP_RENAME_CONTROLLER_CHILD") == t.Name() {
+		return false
+	}
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.v", "-test.count=1", "-test.timeout=1m")
+	cmd.Env = append(os.Environ(), "GROUP_RENAME_CONTROLLER_CHILD="+t.Name())
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	require.Contains(t, string(output), "--- PASS: "+t.Name())
+	t.Logf("GROUP_RENAME_CONTROLLER_CHILD_RESULT %q", output)
+	return true
+}
+
 func setupGroupRenameControllerTest(t *testing.T) *gorm.DB {
 	t.Helper()
 	db := openTokenControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(
 		&model.Option{}, &model.GroupRenameOperation{}, &model.User{}, &model.UserSession{}, &model.Token{}, &model.Channel{},
+		&model.ModelTestGate{}, &model.ModelFingerprintSiteConfig{}, &model.ModelFingerprintSiteAudit{},
 		&model.Ability{}, &model.SubscriptionPlan{}, &model.UserSubscription{},
 		&model.Log{}, &model.AuditLog{},
 		&model.UserCallInterception{}, &model.UserCallInterceptionHit{}, &model.UserCallInterceptionAudit{},
@@ -100,6 +121,9 @@ func TestRenameGroupsEndpointRejectsUnknownSourceWithoutWrites(t *testing.T) {
 }
 
 func TestRenameGroupsEndpointMigratesAndReturnsCounts(t *testing.T) {
+	if groupRenameControllerIsolatedProcess(t) {
+		return
+	}
 	db := setupGroupRenameControllerTest(t)
 	require.NoError(t, db.Create(&model.Option{Key: "GroupRatio", Value: `{"old":1}`}).Error)
 	user := model.User{Username: "controller-rename-success", Password: "hash", Group: "old", Status: common.UserStatusEnabled}
@@ -127,6 +151,9 @@ func TestRenameGroupsEndpointMigratesAndReturnsCounts(t *testing.T) {
 }
 
 func TestRenameGroupsEndpointAppliesCombinedOptionsAtomically(t *testing.T) {
+	if groupRenameControllerIsolatedProcess(t) {
+		return
+	}
 	db := setupGroupRenameControllerTest(t)
 	require.NoError(t, db.Create(&model.Option{Key: "GroupRatio", Value: `{"old":1}`}).Error)
 	require.NoError(t, db.Create(&model.Option{Key: "AutoGroups", Value: `["old"]`}).Error)
@@ -221,6 +248,9 @@ func newGroupRenameContext(t *testing.T, method, target string, body any, _ int)
 }
 
 func TestRenameGroupsEndpointReceiptAuditReplayAndRevocation(t *testing.T) {
+	if groupRenameControllerIsolatedProcess(t) {
+		return
+	}
 	db := setupGroupRenameControllerTest(t)
 	require.NoError(t, db.Create(&model.Option{Key: "GroupRatio", Value: `{"old":1}`}).Error)
 	user := model.User{Username: "receipt-customer", AffCode: "receipt-customer", Group: "old", Status: common.UserStatusEnabled}

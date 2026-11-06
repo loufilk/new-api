@@ -294,17 +294,21 @@ func TestSmartTokenAuthUsesLiveConcreteScopeAndRetainsAccountRestrictions(t *tes
 }
 
 func TestTokenGroupMetadataIsAuthorizedWeightedAndUnknownSafe(t *testing.T) {
-	configureTokenAutoGroupsTest(t, "1", `["vip"]`)
+	configureTokenAutoGroupsTest(t, "1", `["metadata-vip"]`)
 	user := setupTokenAutoGroupsControllerTest(t)
-	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":2,"private":9}`))
-	seedTokenModelsAbility(t, model.DB, "default", "gpt-4o", constant.ChannelTypeOpenAI, true)
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"metadata-default":1,"metadata-vip":2,"metadata-private":9}`))
+	// Hot metric buckets outlive database fixtures; use an owned group namespace
+	// so unrelated relay outcomes cannot contaminate this weighted-rate test.
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"metadata-default":"Default","metadata-vip":"VIP","auto":"Auto"}`))
+	require.NoError(t, model.DB.Model(user).Update("group", "metadata-default").Error)
+	seedTokenModelsAbility(t, model.DB, "metadata-default", "gpt-4o", constant.ChannelTypeOpenAI, true)
 	now := time.Now().Unix()
 	hour := now - now%3600
 	require.NoError(t, model.DB.Create(&[]model.PerfMetric{
-		{ModelName: "gpt-4o", Group: "default", BucketTs: hour, RequestCount: 9, SuccessCount: 9},
-		{ModelName: "gpt-4.1", Group: "default", BucketTs: hour, RequestCount: 1, SuccessCount: 0},
-		{ModelName: "old", Group: "default", BucketTs: hour - 24*3600, RequestCount: 1000, SuccessCount: 0},
-		{ModelName: "private-model", Group: "private", BucketTs: hour, RequestCount: 1, SuccessCount: 1},
+		{ModelName: "gpt-4o", Group: "metadata-default", BucketTs: hour, RequestCount: 9, SuccessCount: 9},
+		{ModelName: "gpt-4.1", Group: "metadata-default", BucketTs: hour, RequestCount: 1, SuccessCount: 0},
+		{ModelName: "old", Group: "metadata-default", BucketTs: hour - 24*3600, RequestCount: 1000, SuccessCount: 0},
+		{ModelName: "private-model", Group: "metadata-private", BucketTs: hour, RequestCount: 1, SuccessCount: 1},
 	}).Error)
 	originalEnabled := perf_metrics_setting.GetSetting().Enabled
 	t.Cleanup(func() {
@@ -313,6 +317,7 @@ func TestTokenGroupMetadataIsAuthorizedWeightedAndUnknownSafe(t *testing.T) {
 	for _, enabled := range []bool{true, false} {
 		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{"perf_metrics_setting.enabled": strconv.FormatBool(enabled)}))
 		ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodGet, "/api/token/auto-groups", nil, user.Id)
+		common.SetContextKey(ctx, constant.ContextKeyUserGroup, "metadata-default")
 		GetTokenAutoGroups(ctx)
 		response := decodeAPIResponse(t, recorder)
 		require.True(t, response.Success, response.Message)
@@ -330,8 +335,8 @@ func TestTokenGroupMetadataIsAuthorizedWeightedAndUnknownSafe(t *testing.T) {
 			} `json:"group_details"`
 		}
 		require.NoError(t, common.Unmarshal(response.Data, &data))
-		assert.Equal(t, []string{"vip"}, data.Groups)
-		assert.Equal(t, []string{"default", "vip"}, data.SelectableGroups)
+		assert.Equal(t, []string{"metadata-vip"}, data.Groups)
+		assert.Equal(t, []string{"metadata-default", "metadata-vip"}, data.SelectableGroups)
 		assert.Equal(t, enabled, data.MetricsAvailable)
 		assert.Equal(t, int64(3600), data.HistoryBucketSeconds)
 		require.Len(t, data.GroupDetails, 2)

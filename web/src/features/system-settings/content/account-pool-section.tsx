@@ -22,7 +22,7 @@ import { useTranslation } from 'react-i18next'
 
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
-import { PoolDiagnostics } from '@/extensions/chuanapi/account-pool/diagnostics'
+import { extensionConsoleTools } from '@/extensions'
 import { ROLE } from '@/lib/roles'
 import { statusQueryOptions } from '@/lib/status-query'
 import { useAuthStore } from '@/stores/auth-store'
@@ -64,6 +64,7 @@ export function AccountPoolSection() {
     )
   }
   if (!query.isFetchedAfterMount) return <LoadingState />
+  const PoolDiagnostics = extensionConsoleTools().accountPoolDiagnostics
 
   return (
     <SettingsSection title={t('pool.title')}>

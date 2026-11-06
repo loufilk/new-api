@@ -10,6 +10,7 @@ import (
 )
 
 func TestPricingRoutesSeparatePublicCatalogFromDashboardAPI(t *testing.T) {
+	setupRelayRouterTestDB(t)
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
 	applyConsoleRoutes(t, SetApiRouter(engine))

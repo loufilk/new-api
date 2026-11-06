@@ -33,7 +33,8 @@ func setupDashboardAuthMiddlewareTest(t *testing.T) {
 	previousSecret := common.SessionSecret
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuditLog{}, &model.UserAccessToken{}, &model.Option{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuditLog{}, &model.UserAccessToken{}, &model.Option{},
+		&model.Token{}, &model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{}, &model.AgentInvitation{}))
 	model.DB = db
 	model.LOG_DB = db
 	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
@@ -479,6 +480,49 @@ func TestUserAuthAppliesAccessTokenRouteRules(t *testing.T) {
 	assert.Equal(t, http.StatusOK, middlewareBearerRequest(router, "/api/user/self", profile).Code, "the deadline only retires legacy tokens")
 }
 
+func TestFinancialAndFingerprintRoutesRequireBrowserSessions(t *testing.T) {
+	setupDashboardAuthMiddlewareTest(t)
+	gin.SetMode(gin.TestMode)
+	legacy := "session-only-legacy-token"
+	user := createMiddlewarePATUser(t, "session-only-admin", legacy)
+	require.NoError(t, model.DB.Model(user).Update("role", common.RoleRootUser).Error)
+	scoped, _ := createMiddlewareScopedToken(t, user.Id, 0, "wallet:write", "profile:read", "option:read", "option:write")
+	bundle, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "session-route-test")
+	require.NoError(t, err)
+
+	for _, route := range []struct{ method, path string }{
+		{http.MethodPost, "/api/agent-platform/simple/wallet-transfer"},
+		{http.MethodGet, "/api/model-tests/settings"},
+		{http.MethodPut, "/api/model-tests/settings"},
+		{http.MethodGet, "/api/user/model-tests/site"},
+	} {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			handled := 0
+			router := gin.New()
+			router.Handle(route.method, route.path, UserAuth(), func(c *gin.Context) {
+				handled++
+				c.Status(http.StatusNoContent)
+			})
+			for _, token := range []string{legacy, scoped} {
+				request := httptest.NewRequest(route.method, route.path, strings.NewReader(`{}`))
+				request.Header.Set("Authorization", "Bearer "+token)
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, request)
+				assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+				assert.Contains(t, response.Body.String(), `"code":"AUTH_SESSION_REQUIRED"`)
+			}
+			assert.Zero(t, handled, "neither legacy nor scoped PATs may reach the handler")
+
+			request := httptest.NewRequest(route.method, route.path, strings.NewReader(`{}`))
+			request.Header.Set("Authorization", "Bearer "+bundle.AccessToken)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			assert.Equal(t, http.StatusNoContent, response.Code, response.Body.String())
+			assert.Equal(t, 1, handled, "a current browser session must retain route access")
+		})
+	}
+}
+
 func TestAccessTokenIdentityAndSingleLookup(t *testing.T) {
 	setupDashboardAuthMiddlewareTest(t)
 	gin.SetMode(gin.TestMode)
@@ -493,6 +537,9 @@ func TestAccessTokenIdentityAndSingleLookup(t *testing.T) {
 		identity, stepUp := GetStepUpIdentity(c)
 		c.JSON(http.StatusOK, gin.H{"session": session, "step_up": stepUp, "identity": identity})
 	})
+	guard, err := model.BeginGroupConfigRead(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, guard.Finish())
 
 	var queries []string
 	const callbackName = "test:access-token-lookup-count"
@@ -534,9 +581,9 @@ func TestAccessTokenIdentityAndSingleLookup(t *testing.T) {
 			if test.stepUp {
 				assert.Equal(t, service.AuthIdentity{UserID: user.Id, SessionID: model.AccessTokenSessionID(token.Id), UserAuthVersion: user.AuthVersion, SessionVersion: model.AccessTokenSessionVersion}, body.Identity)
 			}
-			// The access audit and authentication share one lookup: the
-			// credential query plus the owner's user row.
-			assert.Len(t, queries, 2)
+			// The access audit and authentication share one credential query
+			// and one owner lookup. Group-version fences read options separately.
+			assert.Equal(t, 2, countQueries("users", "")+countQueries("user_access_tokens", ""))
 			assert.Equal(t, test.tokenTable, countQueries("user_access_tokens", "token_hash"))
 			assert.Equal(t, test.legacyQuery, countQueries("users", "access_token = "))
 		})

@@ -23,7 +23,7 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { render, screen, within, waitFor } from '@testing-library/react'
+import { act, render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -117,7 +117,12 @@ test('another user’s result appears by group and model and opens without a per
       return {
         data: {
           success: true,
-          data: { items: [], targets: [], user_items: [shared] },
+          data: {
+            enabled: false,
+            items: [],
+            targets: [],
+            user_items: [shared],
+          },
         },
       }
     }
@@ -143,6 +148,12 @@ test('another user’s result appears by group and model and opens without a per
       <IntelligenceDashboard />
     </QueryClientProvider>
   )
+  await screen.findByText(en.translation['fingerprint.testsDisabled'])
+  expect(await screen.findByText('No enabled test targets')).toBeVisible()
+  expect(
+    screen.queryByRole('heading', { name: 'shared-model' })
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('tab', { name: 'Historical results' }))
   expect(
     await screen.findByRole('heading', { name: 'Public group' })
   ).toBeVisible()
@@ -174,7 +185,12 @@ test('admins see shared results without a configuration shortcut or extra histor
       return {
         data: {
           success: true,
-          data: { items: [], targets: [], user_items: [shared] },
+          data: {
+            enabled: false,
+            items: [],
+            targets: [],
+            user_items: [shared],
+          },
         },
       }
     }
@@ -214,11 +230,17 @@ test('admins see shared results without a configuration shortcut or extra histor
     routeTree: root,
     history: createMemoryHistory({ initialEntries: ['/'] }),
   })
+  const user = userEvent.setup()
   render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
     </QueryClientProvider>
   )
+  await screen.findByText(en.translation['fingerprint.testsDisabled'])
+  expect(
+    screen.queryByRole('heading', { name: 'shared-model' })
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('tab', { name: 'Historical results' }))
   expect(
     await screen.findByRole('heading', { name: 'shared-model' })
   ).toBeVisible()
@@ -239,4 +261,170 @@ test('admins see shared results without a configuration shortcut or extra histor
     screen.queryByText(en.translation['fingerprint.sharedResultsHelp'])
   ).not.toBeInTheDocument()
   expect(screen.queryByRole('note')).not.toBeInTheDocument()
+})
+
+test('current targets exclude disabled, unconfigured and historical models while keyboard navigation keeps history accessible', async () => {
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (String(url).endsWith('/site')) {
+      return {
+        data: {
+          success: true,
+          data: {
+            enabled: true,
+            targets: [
+              {
+                id: 'active',
+                group: 'Current group',
+                model: 'enabled-model',
+                enabled: true,
+                period_secs: 3600,
+              },
+              {
+                id: 'disabled',
+                group: 'Current group',
+                model: 'disabled-model',
+                enabled: false,
+                period_secs: 3600,
+              },
+            ],
+            items: [],
+            user_items: [shared],
+          },
+        },
+      }
+    }
+    if (String(url).endsWith('/bootstrap')) {
+      return {
+        data: { success: true, data: { groups: [], models_by_group: {} } },
+      }
+    }
+    return {
+      data: {
+        success: true,
+        data: {
+          enabled: true,
+          items: [],
+          site_results: [],
+          benchmark: {},
+          limits: {},
+          eligible_models_by_group: {
+            'Current group': [
+              'enabled-model',
+              'callable-only',
+              'disabled-model',
+            ],
+          },
+        },
+      },
+    }
+  })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  })
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={client}>
+      <IntelligenceDashboard />
+    </QueryClientProvider>
+  )
+  expect(
+    await screen.findByRole('heading', { name: 'enabled-model' })
+  ).toBeVisible()
+  for (const name of ['disabled-model', 'callable-only', 'shared-model']) {
+    expect(screen.queryByRole('heading', { name })).not.toBeInTheDocument()
+  }
+  expect(screen.getAllByRole('button', { name: 'Self-test' })).toHaveLength(1)
+  const current = screen.getByRole('tab', { name: 'Current targets' })
+  expect(screen.getByRole('tablist', { name: 'Model test views' })).toHaveClass(
+    'max-w-full',
+    'flex-wrap'
+  )
+  expect(current).toHaveAttribute('aria-selected', 'true')
+  current.focus()
+  await user.keyboard('{ArrowRight}')
+  expect(screen.getByRole('tab', { name: 'Historical results' })).toHaveFocus()
+  await user.keyboard('{Enter}')
+  expect(
+    screen.getByRole('tab', { name: 'Historical results' })
+  ).toHaveAttribute('aria-selected', 'true')
+  expect(
+    await screen.findByRole('heading', { name: 'shared-model' })
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('button', { name: 'Self-test' })
+  ).not.toBeInTheDocument()
+})
+
+test('a cached target list stays hidden until a fresh site response confirms the current targets', async () => {
+  let finishSite: () => void = () => undefined
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (String(url).endsWith('/site')) {
+      return new Promise((resolve) => {
+        finishSite = () =>
+          resolve({
+            data: {
+              success: true,
+              data: {
+                enabled: true,
+                targets: [
+                  {
+                    id: 'fresh',
+                    group: 'Public',
+                    model: 'fresh-model',
+                    enabled: true,
+                    period_secs: 3600,
+                  },
+                ],
+                items: [],
+              },
+            },
+          })
+      })
+    }
+    return {
+      data: {
+        success: true,
+        data: {
+          enabled: false,
+          items: [],
+          site_results: [],
+          benchmark: {},
+          limits: {},
+        },
+      },
+    }
+  })
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: 0, staleTime: Infinity },
+    },
+  })
+  client.setQueryData(['model-tests', 'site'], {
+    enabled: true,
+    targets: [
+      {
+        id: 'old',
+        group: 'Public',
+        model: 'stale-model',
+        enabled: true,
+        period_secs: 3600,
+      },
+    ],
+    items: [],
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <IntelligenceDashboard />
+    </QueryClientProvider>
+  )
+  expect(
+    screen.queryByRole('heading', { name: 'stale-model' })
+  ).not.toBeInTheDocument()
+  await act(async () => finishSite())
+  expect(
+    await screen.findByRole('heading', { name: 'fresh-model' })
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('heading', { name: 'stale-model' })
+  ).not.toBeInTheDocument()
 })

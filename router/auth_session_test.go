@@ -27,7 +27,7 @@ func TestAuthSessionReadOnlyBrowserIdentity(t *testing.T) {
 	previousDatabaseType := common.MainDatabaseType()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AgentInvitation{}, &model.Option{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{}))
 	model.DB, common.RedisEnabled, common.SessionSecret = db, false, "session-probe-test-secret"
 	common.SessionCookieSecure = true
 	common.SessionCookieTrustedURLs = []string{"https://marketing.example"}
@@ -166,6 +166,7 @@ func TestAuthSessionReadOnlyBrowserIdentity(t *testing.T) {
 }
 
 func TestAuthSessionRateLimitIsNotCached(t *testing.T) {
+	setupRelayRouterTestDB(t)
 	previousEnable, previousNum, previousDuration := common.GlobalApiRateLimitEnable, common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration
 	previousRedis, previousSecure, previousRDB := common.RedisEnabled, common.SessionCookieSecure, common.RDB
 	redisServer := miniredis.RunT(t)

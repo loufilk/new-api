@@ -36,6 +36,14 @@ describe('pool, tests and referral translations', () => {
       for (const [key, value] of Object.entries(en.translation).filter(
         ([key]) =>
           /^(pool|intelligence|fingerprint|affiliate)\./.test(key) ||
+          [
+            'Current targets',
+            'Historical results',
+            'Model test views',
+            'No enabled test targets',
+            'No saved results yet',
+            'View saved site and community results for current and previously enabled targets.',
+          ].includes(key) ||
           key === 'Enable model performance tests' ||
           key.startsWith(
             'Disabled by default. Turning this off hides the test entry'

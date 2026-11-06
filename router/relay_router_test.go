@@ -139,9 +139,10 @@ func TestGeminiRelayHandsLongRunningPredictionToPluginRoute(t *testing.T) {
 				assert.Equal(t, fmt.Sprintf("plugin google for user %d", user.Id), recorder.Body.String())
 				return
 			}
-			// The relay looks for a Gemini channel serving the model; there is none.
-			assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
-			assert.Contains(t, recorder.Body.String(), `"code":"model_not_found"`)
+			// The host relay rejects a model absent from the authenticated
+			// token's routable groups before looking for an upstream channel.
+			assert.Equal(t, http.StatusNotFound, recorder.Code)
+			assert.Contains(t, recorder.Body.String(), `"code":"model_not_available_in_group"`)
 		})
 	}
 }
@@ -150,6 +151,7 @@ func setupRelayRouterTestDB(t *testing.T) {
 	t.Helper()
 
 	gin.SetMode(gin.TestMode)
+	previousDB, previousLogDB := model.DB, model.LOG_DB
 	originalIsMasterNode := common.IsMasterNode
 	originalRedisEnabled := common.RedisEnabled
 	originalSQLitePath := common.SQLitePath
@@ -164,12 +166,14 @@ func setupRelayRouterTestDB(t *testing.T) {
 	require.NoError(t, os.Setenv("SQL_DSN", "local"))
 	require.NoError(t, model.InitDB())
 	model.LOG_DB = model.DB
-	require.NoError(t, model.DB.AutoMigrate(&model.User{}, &model.Token{}, &model.Ability{}, &model.UserCallInterception{}, &model.UserCallInterceptionHit{}, &model.UserCallInterceptionAudit{}))
+	db := model.DB
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.User{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{}, &model.UserCallInterception{}, &model.UserCallInterceptionHit{}, &model.UserCallInterceptionAudit{}))
 
 	t.Cleanup(func() {
-		if sqlDB, err := model.DB.DB(); err == nil {
+		if sqlDB, err := db.DB(); err == nil {
 			_ = sqlDB.Close()
 		}
+		model.DB, model.LOG_DB = previousDB, previousLogDB
 		common.IsMasterNode = originalIsMasterNode
 		common.RedisEnabled = originalRedisEnabled
 		common.SQLitePath = originalSQLitePath

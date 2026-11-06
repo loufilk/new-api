@@ -98,16 +98,11 @@ func modelTestCatalogue(userID int) (map[string][]string, error) {
 		return nil, err
 	}
 	allowedTargets := make(map[string]map[string]struct{})
-	if config.Enabled {
-		for _, target := range config.Targets {
-			if !target.Enabled {
-				continue
-			}
-			if allowedTargets[target.Group] == nil {
-				allowedTargets[target.Group] = make(map[string]struct{})
-			}
-			allowedTargets[target.Group][target.Model] = struct{}{}
+	for _, target := range config.EnabledTargets() {
+		if allowedTargets[target.Group] == nil {
+			allowedTargets[target.Group] = make(map[string]struct{})
 		}
+		allowedTargets[target.Group][target.Model] = struct{}{}
 	}
 	user, err := model.GetUserCache(userID)
 	if err != nil {
@@ -457,6 +452,10 @@ func PrepareModelTest(c *gin.Context) {
 		return
 	}
 	replayed, err := model.CreateModelTestRun(run)
+	if errors.Is(err, model.ErrModelTestTargetUnavailable) {
+		modelTestError(c, http.StatusForbidden, "model_or_group_unavailable")
+		return
+	}
 	if errors.Is(err, model.ErrModelTestsDisabled) {
 		modelTestError(c, http.StatusForbidden, "model_tests_disabled")
 		return

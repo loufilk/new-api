@@ -114,6 +114,41 @@ test('model outside the selected group blocks saving', () => {
   expect(validateModelTestTargets(input, catalogue)).toBe(false)
 })
 
+test.each(['target', 'all tests'])(
+  'unavailable targets can be disabled through %s but cannot be enabled again',
+  (scope) => {
+    const input = settings()
+    input.targets[0].group = 'retired-group'
+    input.targets[0].model = 'retired-model'
+    input.automatic_enabled = false
+    if (scope === 'target') input.targets[0].enabled = false
+    else input.enabled = false
+    expect(validateModelTestTargets(input, catalogue)).toBe(true)
+    input.enabled = true
+    input.targets[0].enabled = true
+    expect(validateModelTestTargets(input, catalogue)).toBe(false)
+  }
+)
+
+test('disabled unavailable targets still require valid fields, periods and unique selections', () => {
+  const input = settings()
+  input.enabled = false
+  input.automatic_enabled = false
+  input.targets[0].model = 'retired-model'
+  expect(validateModelTestTargets(input, catalogue)).toBe(true)
+  input.targets[0].period_secs = 59
+  expect(validateModelTestTargets(input, catalogue)).toBe(false)
+  input.targets[0].period_secs = 0
+  input.targets[0].model = ''
+  expect(validateModelTestTargets(input, catalogue)).toBe(false)
+  input.targets[0].model = 'retired-model'
+  input.targets.push({
+    ...input.targets[0],
+    id: 'cbe8493b-af4e-4a6b-804c-fb979471fc21',
+  })
+  expect(validateModelTestTargets(input, catalogue)).toBe(false)
+})
+
 afterEach(() => vi.restoreAllMocks())
 
 test('settings load accepts a group and model catalogue without route details', async () => {

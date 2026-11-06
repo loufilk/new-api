@@ -13,6 +13,9 @@ import (
 
 func TestFingerprintRetentionPrunesReportsPreservesReplayAndAccounting(t *testing.T) {
 	ctx, config, now := fingerprintSiteFixture(t)
+	config.Targets = append(config.Targets, ModelFingerprintSiteTarget{Group: "default", Model: "synthetic", Enabled: true})
+	config, err := UpdateModelFingerprintSiteConfig(ctx, config.Version, 7, *config)
+	require.NoError(t, err)
 	require.NoError(t, DB.AutoMigrate(&ModelTestRun{}, &User{}, &Token{}, &BillingFinalization{}))
 	user := User{Id: 101, Username: "retention-owner", Status: common.UserStatusEnabled, Quota: 1000, QuotaPaid: 1000}
 	require.NoError(t, DB.Create(&user).Error)
