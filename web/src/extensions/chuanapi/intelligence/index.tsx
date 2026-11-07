@@ -213,6 +213,14 @@ export function IntelligenceDashboard() {
             <Badge variant='outline'>
               {t(`intelligence.status.${currentOutcome.status}`)}
             </Badge>
+            <Button
+              variant='outline'
+              size='sm'
+              className='min-h-9 sm:min-h-7'
+              onClick={() => setSelected(currentOutcome)}
+            >
+              {t('View details')}
+            </Button>
           </p>
         )}
       {activeRuns.map((run) => (
