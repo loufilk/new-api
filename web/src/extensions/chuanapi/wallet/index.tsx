@@ -29,6 +29,7 @@ import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
 import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
 import { LedgerTable } from './components/ledger-table'
 import { RechargeFormCard } from './components/recharge-form-card'
+import { RechargeHistoryButton } from './components/recharge-history-dialog'
 import { ReferralPanel } from './components/referral-panel'
 import { WalletStatsCard } from './components/wallet-stats-card'
 import { DEFAULT_DISCOUNT_RATE, PAYMENT_TYPES } from './constants'
@@ -292,6 +293,9 @@ export function Wallet(_props: WalletProps) {
     <>
       <SectionPageLayout>
         <SectionPageLayout.Title>{t('Wallet')}</SectionPageLayout.Title>
+        <SectionPageLayout.Actions>
+          <RechargeHistoryButton />
+        </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
           <div className='mx-auto flex w-full max-w-[1600px] flex-col gap-3'>
             {walletError ? (

@@ -422,7 +422,10 @@ func EpayNotify(c *gin.Context) {
 		LockOrder(verifyInfo.ServiceTradeNo)
 		defer UnlockOrder(verifyInfo.ServiceTradeNo)
 		var paymentFacts []model.VerifiedPaymentFacts
-		if fact, ok := model.NewVerifiedPaymentFacts(model.PaymentProviderEpay, params["trade_no"], operation_setting.EpayId, "live", "CNY", verifyInfo.Money, false); ok {
+		// Preserve the signed callback's actual merchant instead of replacing it
+		// with current configuration. Promotional orders verify this against the
+		// merchant pinned when the payable form was created.
+		if fact, ok := model.NewVerifiedPaymentFacts(model.PaymentProviderEpay, params["trade_no"], params["pid"], "live", "CNY", verifyInfo.Money, false); ok {
 			paymentFacts = append(paymentFacts, fact)
 		}
 		var simpleDone bool

@@ -130,6 +130,14 @@ const BILLING_SECTIONS = [
       extensionPaymentSettingsSection().render(settings),
   },
   {
+    id: 'new-user-benefit',
+    titleKey: 'New user recharge benefit',
+    build: (_settings: BillingSettings) => {
+      const Section = extensionPaymentSettingsSection().newUserBenefitSection
+      return Section ? <Section /> : null
+    },
+  },
+  {
     id: 'checkin',
     titleKey: 'Check-in Rewards',
     build: (settings: BillingSettings) => (

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -87,7 +88,11 @@ func TestAgentSimpleWalletTransferHTTPRequiresMatchingSessionAccount(t *testing.
 }
 
 func TestAgentSimpleHTTPRechargeReplayAndSignedPaymentDelivery(t *testing.T) {
-	db, _ := newAuditTestDatabase(t, "sqlite", "")
+	dialect, dsn := "sqlite", ""
+	if configured := strings.TrimSpace(os.Getenv("TEST_POSTGRES_DSN")); configured != "" {
+		dialect, dsn = "postgres", configured
+	}
+	db, _ := newAuditTestDatabase(t, dialect, dsn)
 	oldDB, oldLog := model.DB, model.LOG_DB
 	oldMain, oldLogType := common.MainDatabaseType(), common.LogDatabaseType()
 	oldAddress, oldID, oldKey, oldMethods := operation_setting.PayAddress, operation_setting.EpayId, operation_setting.EpayKey, operation_setting.PayMethods
@@ -100,7 +105,7 @@ func TestAgentSimpleHTTPRechargeReplayAndSignedPaymentDelivery(t *testing.T) {
 		system_setting.ServerAddress, common.RedisEnabled = oldServer, oldRedis
 	})
 	model.DB, model.LOG_DB, common.RedisEnabled = db, db, false
-	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	common.SetDatabaseTypes(common.DatabaseType(dialect), common.DatabaseType(dialect))
 	operation_setting.PayAddress, operation_setting.EpayId, operation_setting.EpayKey = "https://payment.example.test", "synthetic-merchant", "synthetic-test-key"
 	operation_setting.PayMethods = []map[string]string{{"type": "alipay"}}
 	system_setting.ServerAddress = "https://preview.example.test"

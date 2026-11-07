@@ -24,10 +24,16 @@ export type WalletPageProps = {
 
 export type WalletPage = (props: WalletPageProps) => ReactNode
 
+export type WalletBenefitBannerProps = {
+  /** Keep the offer accessible on the wallet page after dismissing the banner. */
+  persistent?: boolean
+}
+
 export type WalletExtension = {
   id: string
   page: WalletPage
   referralPanel?: () => ReactNode
+  benefitBanner?: (props: WalletBenefitBannerProps) => ReactNode
   loadSummary: () => Promise<{ paid: number } | undefined>
 }
 

@@ -36,8 +36,10 @@ import {
   LazyHelpGuide,
   LazyHelpIndex,
   LazyIntelligence,
+  LazyNewUserBenefitSettings,
   LazyPaymentSettingsRenderer,
   LazyWallet,
+  LazyWalletBenefitBanner,
   LazyWalletReferralPanel,
 } from './lazy-pages'
 
@@ -73,6 +75,7 @@ export const chuanapiWalletExtension: WalletExtension = {
   id: 'chuanapi/wallet',
   page: LazyWallet,
   referralPanel: LazyWalletReferralPanel,
+  benefitBanner: LazyWalletBenefitBanner,
   loadSummary: async () => {
     const { getWalletSummary } = await import('./wallet/api')
     return requireServerSuccess(await getWalletSummary()).data
@@ -95,4 +98,5 @@ export const chuanapiPaymentSettingsExtension: PaymentSettingsExtension = {
   id: 'chuanapi/payment-settings',
   render: (settings) =>
     createElement(LazyPaymentSettingsRenderer, { settings }),
+  newUserBenefitSection: LazyNewUserBenefitSettings,
 }

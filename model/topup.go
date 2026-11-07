@@ -13,27 +13,30 @@ import (
 )
 
 type TopUp struct {
-	AgentSimpleTopUp         bool    `json:"agent_simple_topup,omitempty" gorm:"not null;default:false;index"`
-	AgentSimpleKind          string  `json:"agent_simple_kind,omitempty" gorm:"type:varchar(16);not null;default:''"`
-	AgentSimpleQuota         int64   `json:"agent_simple_quota,omitempty" gorm:"type:bigint;not null;default:0"`
-	AgentSimpleDeferredQuota int64   `json:"agent_simple_deferred_quota,omitempty" gorm:"type:bigint;not null;default:0"`
-	PaymentReceiptID         int64   `json:"payment_receipt_id"`
-	PaidProviderReference    string  `json:"-" gorm:"type:varchar(255)"`
-	PaidMerchantScope        string  `json:"-" gorm:"type:varchar(128)"`
-	PaidEnvironment          string  `json:"-" gorm:"type:varchar(16)"`
-	PaidCurrency             string  `json:"paid_currency" gorm:"type:varchar(3)"`
-	PaidCurrencyExponent     int     `json:"paid_currency_exponent"`
-	PaidAmountMinor          int64   `json:"paid_amount_minor,string"`
-	Id                       int     `json:"id"`
-	UserId                   int     `json:"user_id" gorm:"index"`
-	Amount                   int64   `json:"amount"`
-	Money                    float64 `json:"money"`
-	TradeNo                  string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod            string  `json:"payment_method" gorm:"type:varchar(50)"`
-	PaymentProvider          string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	CreateTime               int64   `json:"create_time"`
-	CompleteTime             int64   `json:"complete_time"`
-	Status                   string  `json:"status"`
+	NewUserBenefit                bool    `json:"new_user_benefit,omitempty" gorm:"not null;default:false"`
+	NewUserBenefitCreditQuota     int     `json:"new_user_benefit_credit_quota,omitempty" gorm:"-"`
+	NewUserBenefitCreditAmountCNY string  `json:"new_user_benefit_credit_amount_cny,omitempty" gorm:"-"`
+	AgentSimpleTopUp              bool    `json:"agent_simple_topup,omitempty" gorm:"not null;default:false;index"`
+	AgentSimpleKind               string  `json:"agent_simple_kind,omitempty" gorm:"type:varchar(16);not null;default:''"`
+	AgentSimpleQuota              int64   `json:"agent_simple_quota,omitempty" gorm:"type:bigint;not null;default:0"`
+	AgentSimpleDeferredQuota      int64   `json:"agent_simple_deferred_quota,omitempty" gorm:"type:bigint;not null;default:0"`
+	PaymentReceiptID              int64   `json:"payment_receipt_id"`
+	PaidProviderReference         string  `json:"-" gorm:"type:varchar(255)"`
+	PaidMerchantScope             string  `json:"-" gorm:"type:varchar(128)"`
+	PaidEnvironment               string  `json:"-" gorm:"type:varchar(16)"`
+	PaidCurrency                  string  `json:"paid_currency" gorm:"type:varchar(3)"`
+	PaidCurrencyExponent          int     `json:"paid_currency_exponent"`
+	PaidAmountMinor               int64   `json:"paid_amount_minor,string"`
+	Id                            int     `json:"id"`
+	UserId                        int     `json:"user_id" gorm:"index"`
+	Amount                        int64   `json:"amount"`
+	Money                         float64 `json:"money"`
+	TradeNo                       string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod                 string  `json:"payment_method" gorm:"type:varchar(50)"`
+	PaymentProvider               string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	CreateTime                    int64   `json:"create_time"`
+	CompleteTime                  int64   `json:"complete_time"`
+	Status                        string  `json:"status"`
 }
 
 const (
@@ -104,6 +107,9 @@ func creditTopUpQuota(tx *gorm.DB, entry LedgerEntry) (*LedgerResult, error) {
 		var topUp TopUp
 		if err := tx.Where("trade_no = ? AND user_id = ?", entry.ReferenceId, entry.UserId).First(&topUp).Error; err != nil {
 			return nil, err
+		}
+		if topUp.NewUserBenefit {
+			return nil, ErrNewUserBenefitPaymentRequired
 		}
 		if topUp.AgentSimpleTopUp {
 			paidQuota, err := common.WalletQuotaFromDecimalStrict(
@@ -197,6 +203,11 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 		if expectedPaymentProvider != "" && topUp.PaymentProvider != expectedPaymentProvider {
 			return ErrPaymentMethodMismatch
 		}
+		if topUp.NewUserBenefit {
+			// Epay has no confirmed cancellation contract. A local timeout must
+			// not release or invalidate an externally payable benefit promise.
+			return ErrNewUserBenefitPaymentRequired
+		}
 		if topUp.Status != common.TopUpStatusPending {
 			return ErrTopUpStatusInvalid
 		}
@@ -241,6 +252,11 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, actualMoney string
 		}
 		if topUp.PaymentProvider != PaymentProviderEpay {
 			return ErrPaymentMethodMismatch
+		}
+		if topUp.NewUserBenefit {
+			var benefitErr error
+			alreadyDone, quotaToAdd, ledgerTotalAfter, benefitErr = settleNewUserBenefitTx(tx, topUp, actualPaymentMethod, callbackMoney, facts)
+			return benefitErr
 		}
 		expectedMoney := decimal.NewFromFloat(topUp.Money).Round(2)
 		if !callbackMoney.Equal(expectedMoney) {
@@ -438,6 +454,10 @@ func GetUserTopUps(userId int, pageInfo *common.PageInfo) (topups []*TopUp, tota
 	}
 
 	// Commit transaction
+	if err = hydrateNewUserBenefitTopUpsTx(tx, topups); err != nil {
+		tx.Rollback()
+		return nil, 0, err
+	}
 	if err = tx.Commit().Error; err != nil {
 		return nil, 0, err
 	}
@@ -463,6 +483,10 @@ func GetAllTopUps(pageInfo *common.PageInfo) (topups []*TopUp, total int64, err 
 	}
 
 	if err = tx.Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&topups).Error; err != nil {
+		tx.Rollback()
+		return nil, 0, err
+	}
+	if err = hydrateNewUserBenefitTopUpsTx(tx, topups); err != nil {
 		tx.Rollback()
 		return nil, 0, err
 	}
@@ -511,6 +535,10 @@ func SearchUserTopUps(userId int, keyword string, pageInfo *common.PageInfo) (to
 		common.SysError(common.LogText("failed to search topups: %s", err.Error()))
 		return nil, 0, common.NewMessage("Failed to search top-up records")
 	}
+	if err = hydrateNewUserBenefitTopUpsTx(tx, topups); err != nil {
+		tx.Rollback()
+		return nil, 0, err
+	}
 
 	if err = tx.Commit().Error; err != nil {
 		return nil, 0, err
@@ -551,6 +579,10 @@ func SearchAllTopUps(keyword string, pageInfo *common.PageInfo) (topups []*TopUp
 		common.SysError(common.LogText("failed to search topups: %s", err.Error()))
 		return nil, 0, common.NewMessage("Failed to search top-up records")
 	}
+	if err = hydrateNewUserBenefitTopUpsTx(tx, topups); err != nil {
+		tx.Rollback()
+		return nil, 0, err
+	}
 
 	if err = tx.Commit().Error; err != nil {
 		return nil, 0, err
@@ -581,6 +613,9 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		// 行级锁，避免并发补单
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
 			return common.NewMessage("Top-up order does not exist")
+		}
+		if topUp.NewUserBenefit {
+			return ErrNewUserBenefitPaymentRequired
 		}
 
 		// 幂等处理：已成功直接返回

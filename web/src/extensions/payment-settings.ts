@@ -21,6 +21,7 @@ import type { ReactNode } from 'react'
 export type PaymentSettingsExtension = {
   id: string
   render: (settings: unknown) => ReactNode
+  newUserBenefitSection?: () => ReactNode
 }
 
 let paymentSettingsExtension: PaymentSettingsExtension | null = null

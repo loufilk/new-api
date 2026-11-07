@@ -237,6 +237,14 @@ export type TopupStatus = 'success' | 'pending' | 'expired'
  * Topup billing record
  */
 export interface TopupRecord {
+  new_user_benefit?: boolean
+  new_user_benefit_credit_quota?: number
+  new_user_benefit_credit_amount_cny?: string
+  agent_simple_topup?: boolean
+  payment_provider?: string
+  paid_currency?: string
+  paid_currency_exponent?: number
+  paid_amount_minor?: string
   /** Record ID */
   id: number
   /** User ID */

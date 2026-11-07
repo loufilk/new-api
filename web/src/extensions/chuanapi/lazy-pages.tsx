@@ -23,7 +23,7 @@ import type {
   HelpGuidePage,
   HelpIndexPage,
 } from '../help'
-import type { WalletPage } from '../wallet'
+import type { WalletBenefitBannerProps, WalletPage } from '../wallet'
 
 const LazyDocsIndexPage = lazy(() =>
   import('./help/pages/docs-index').then(({ DocsIndexPage }) => ({
@@ -42,6 +42,20 @@ const LazyApiReferencePage = lazy(() =>
 )
 const LazyWalletPage = lazy(() =>
   import('./wallet').then(({ Wallet }) => ({ default: Wallet }))
+)
+const LazyBenefitBanner = lazy(() =>
+  import('./new-user-benefit/benefit-banner').then(
+    ({ NewUserBenefitBanner }) => ({
+      default: NewUserBenefitBanner,
+    })
+  )
+)
+const LazyBenefitSettings = lazy(() =>
+  import('./new-user-benefit/benefit-settings').then(
+    ({ NewUserBenefitSettings }) => ({
+      default: NewUserBenefitSettings,
+    })
+  )
 )
 const LazyReferralPanel = lazy(() =>
   import('./wallet/components/referral-panel').then(({ ReferralPanel }) => ({
@@ -97,6 +111,17 @@ export const LazyWallet: WalletPage = (props) =>
   withLoading(<LazyWalletPage {...props} />)
 
 export const LazyWalletReferralPanel = () => withLoading(<LazyReferralPanel />)
+
+export function LazyWalletBenefitBanner(props: WalletBenefitBannerProps) {
+  return (
+    <Suspense fallback={null}>
+      <LazyBenefitBanner {...props} />
+    </Suspense>
+  )
+}
+
+export const LazyNewUserBenefitSettings = () =>
+  withLoading(<LazyBenefitSettings />)
 
 export const LazyAccountPool = () => withLoading(<LazyAccountPoolPage />)
 
