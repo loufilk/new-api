@@ -48,7 +48,7 @@ func fingerprintSiteFixture(t *testing.T) (context.Context, *ModelFingerprintSit
 		require.NoError(t, db.Exec("DROP SCHEMA "+fixtureSchema+" CASCADE").Error)
 		require.NoError(t, sql.Close())
 	})
-	models := []any{&ModelFingerprintSiteConfig{}, &ModelFingerprintSiteAudit{}, &ModelFingerprintSiteRun{}, &ModelFingerprintSiteProbe{}, &SystemTask{}, &SystemTaskLock{}, &Option{}, &ModelTestGate{}}
+	models := []any{&ModelFingerprintSiteConfig{}, &ModelFingerprintSiteAudit{}, &ModelFingerprintSiteRun{}, &ModelFingerprintSiteProbe{}, &ModelTestRun{}, &SystemTask{}, &SystemTaskLock{}, &Option{}, &ModelTestGate{}}
 	require.NoError(t, db.AutoMigrate(models...))
 	require.NoError(t, db.AutoMigrate(models...))
 	var version string
@@ -306,7 +306,7 @@ func TestFingerprintSiteProbeRechecksLeaseGenerationAndGlobalSwitch(t *testing.T
 		})
 	}
 }
-func TestFingerprintSitePublicHistoryIsPerTargetAndRedacted(t *testing.T) {
+func TestFingerprintSiteCurrentResultsArePerTargetAndRedacted(t *testing.T) {
 	ctx, c, now := fingerprintSiteFixture(t)
 	second := c.Targets[0]
 	second.ID = uuid.NewString()
@@ -326,7 +326,7 @@ func TestFingerprintSitePublicHistoryIsPerTargetAndRedacted(t *testing.T) {
 	}
 	rows, err := ListModelFingerprintSitePublicRuns(ctx)
 	require.NoError(t, err)
-	require.Len(t, rows, 130)
+	require.Len(t, rows, 120)
 	data, err := common.Marshal(rows)
 	require.NoError(t, err)
 	require.NotContains(t, string(data), "channel_id")
@@ -337,10 +337,11 @@ func TestFingerprintSitePublicHistoryIsPerTargetAndRedacted(t *testing.T) {
 	require.NotContains(t, string(data), "provider_headers")
 	counts := map[string]int{}
 	for _, row := range rows {
+		assert.NotEqual(t, "running", row.Status)
 		counts[row.TargetID]++
 	}
 	for _, n := range counts {
-		require.Equal(t, 65, n)
+		require.Equal(t, 60, n)
 	}
 }
 func TestFingerprintSiteConfigRemovesLegacyLimits(t *testing.T) {

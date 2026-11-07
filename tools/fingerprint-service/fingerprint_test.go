@@ -53,23 +53,29 @@ func TestOfficialSDKScoredResult(t *testing.T) {
 
 func TestPartialAndStrictThree(t *testing.T) {
 	engine := referenceEngine(t)
-	samples := referenceSamples(t)
-	samples[2].Response = ""
-	samples[2].Error = "request_failed"
-	partial, err := engine.Analyze(samples, false)
-	require.NoError(t, err)
-	assert.Equal(t, "partial", partial.Status)
-	assert.Equal(t, 2, partial.UsedOutputs)
-	require.Len(t, partial.TopCandidates, 3)
-	for _, candidate := range partial.TopCandidates {
-		assert.Nil(t, candidate.Probability)
+	for _, accepted := range []int{1, 2} {
+		t.Run(strconv.Itoa(accepted)+"_valid_responses", func(t *testing.T) {
+			samples := referenceSamples(t)
+			for i := accepted; i < len(samples); i++ {
+				samples[i].Response = ""
+				samples[i].Error = "request_timeout"
+			}
+			partial, err := engine.Analyze(samples, false)
+			require.NoError(t, err)
+			assert.Equal(t, "partial", partial.Status)
+			assert.Equal(t, accepted, partial.UsedOutputs)
+			require.Len(t, partial.TopCandidates, 3)
+			for _, candidate := range partial.TopCandidates {
+				assert.Nil(t, candidate.Probability)
+			}
+			assert.Equal(t, "unavailable", partial.ProbabilityStatus)
+			strict, err := engine.Analyze(samples, true)
+			require.NoError(t, err)
+			assert.Equal(t, "unscorable", strict.Status)
+			assert.Equal(t, "strict3_requires_three_complete_samples", strict.Reason)
+			assert.Empty(t, strict.TopCandidates)
+		})
 	}
-	assert.Equal(t, "unavailable", partial.ProbabilityStatus)
-	strict, err := engine.Analyze(samples, true)
-	require.NoError(t, err)
-	assert.Equal(t, "unscorable", strict.Status)
-	assert.Equal(t, "strict3_requires_three_complete_samples", strict.Reason)
-	assert.Empty(t, strict.TopCandidates)
 }
 
 func TestThresholdAndTruncation(t *testing.T) {

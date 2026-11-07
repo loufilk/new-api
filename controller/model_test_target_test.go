@@ -129,8 +129,8 @@ func TestModelTestTargetCatalogueDatabaseMatrix(t *testing.T) {
 		catalogue, err = modelTestCatalogue(userID)
 		require.NoError(t, err)
 		assert.Empty(t, catalogue)
-		// Current admission and shared historical observations have separate
-		// contracts. Turning the feature off does not erase a safe public report.
+		// The public window follows the same enabled targets as admission. Saved
+		// reports do not become an alternate history view after disabling it.
 		require.NoError(t, db.AutoMigrate(&model.ModelFingerprintSiteRun{}))
 		require.NoError(t, db.Create(&model.ModelTestRun{ID: uuid.NewString(), Source: "user", UserID: userID, TokenID: token.Id, Model: "gpt-disabled", Group: "default", BenchmarkID: modelTestVersion, Status: "completed", Assessment: "scored", FingerprintResult: model.JSONValue(`{"status":"scored"}`), CreatedAt: time.Now().Unix()}).Error)
 		response := httptest.NewRecorder()
@@ -148,8 +148,7 @@ func TestModelTestTargetCatalogueDatabaseMatrix(t *testing.T) {
 		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
 		assert.False(t, payload.Data.Enabled)
 		assert.Empty(t, payload.Data.Targets)
-		require.Len(t, payload.Data.UserItems, 1)
-		assert.Equal(t, "gpt-disabled", payload.Data.UserItems[0].Model)
+		assert.Empty(t, payload.Data.UserItems)
 		assert.NotContains(t, response.Body.String(), "token_id")
 	})
 }

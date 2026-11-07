@@ -36,15 +36,20 @@ export function TestResultDialog(props: { run: TestRun; onClose: () => void }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const legacy = props.run.benchmark_id === 'pelican-static-v1'
-  const privateLegacy =
-    legacy && props.run.source !== 'site' && props.run.visibility !== 'public'
+  const privateRun =
+    props.run.source !== 'site' && props.run.visibility !== 'public'
+  const needsDetail = privateRun && (legacy || !props.run.fingerprint_result)
   const query = useQuery({
     queryKey: ['model-tests', 'detail', props.run.id, props.run.status],
     queryFn: ({ signal }) => getTestDetail(props.run.id, signal),
-    enabled: privateLegacy,
+    enabled: needsDetail,
     retry: false,
     meta: { errorToast: false },
   })
+  // Disabled queries can still expose cached data. Only an owned result that
+  // needs a detail read may use that cache; public results use their public DTO.
+  const detail = needsDetail ? query.data : undefined
+  const run = detail ?? props.run
   return (
     <Dialog
       open
@@ -57,39 +62,39 @@ export function TestResultDialog(props: { run: TestRun; onClose: () => void }) {
     >
       <div className='flex flex-col gap-4'>
         <Badge variant='secondary'>
-          {t(`intelligence.status.${props.run.status}`)}
+          {t(`intelligence.status.${run.status}`)}
         </Badge>
-        {modelTestFailureKeys[props.run.error_code] && (
+        {modelTestFailureKeys[run.error_code] && (
           <Alert>
             <AlertDescription>
-              {t(modelTestFailureKeys[props.run.error_code])}
+              {t(modelTestFailureKeys[run.error_code])}
             </AlertDescription>
           </Alert>
         )}
         <p className='text-muted-foreground text-xs'>
-          {new Date(props.run.created_at * 1000).toLocaleString(locale)}
+          {new Date(run.created_at * 1000).toLocaleString(locale)}
         </p>
-        {!legacy && <FingerprintReport run={props.run} />}
-        {privateLegacy && (
+        {!legacy && (!needsDetail || detail) && <FingerprintReport run={run} />}
+        {legacy && privateRun && (
           <Alert>
             <AlertDescription>{t('intelligence.staticOnly')}</AlertDescription>
           </Alert>
         )}
-        {query.isLoading && <LoadingState />}
-        {query.isError && <ErrorState onRetry={() => void query.refetch()} />}
-        {query.data && (
+        {needsDetail && query.isLoading && <LoadingState />}
+        {needsDetail && query.isError && (
+          <ErrorState onRetry={() => void query.refetch()} />
+        )}
+        {legacy && detail && (
           <>
-            {query.data.fingerprint_result && (
-              <FingerprintReport run={query.data} />
-            )}
-            {query.data.artwork_html ? (
-              <StaticArtwork html={query.data.artwork_html} />
+            {detail.fingerprint_result && <FingerprintReport run={detail} />}
+            {detail.artwork_html ? (
+              <StaticArtwork html={detail.artwork_html} />
             ) : (
               <p>{t('intelligence.noArtwork')}</p>
             )}
             <h3 className='font-semibold'>{t('monitor.question')}</h3>
             <pre className='text-muted-foreground text-sm break-words whitespace-pre-wrap'>
-              {query.data.prompt}
+              {detail.prompt}
             </pre>
           </>
         )}

@@ -573,6 +573,11 @@ func PrepareModelTest(c *gin.Context) {
 	if result, exists := c.Get("model_test_fingerprint_result"); exists {
 		if data, err := common.Marshal(result); err == nil {
 			run.FingerprintResult = data
+			if fingerprint, ok := result.(modelfingerprint.Result); ok {
+				// A partial ranking does not settle unknown charges or override
+				// cancellation. Persist its assessment beside the delivery state.
+				run.Assessment = fingerprint.Status
+			}
 		}
 	}
 	if model.FinishModelTestRun(run) != nil {

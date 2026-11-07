@@ -15,7 +15,7 @@ import (
 func TestSiteFingerprintsExposeSafeManualResultsAcrossUsers(t *testing.T) {
 	db, userID := setupModelTestsPostgres(t)
 	require.NoError(t, db.AutoMigrate(&model.ModelFingerprintSiteConfig{}, &model.ModelFingerprintSiteRun{}))
-	run := model.ModelTestRun{ID: "shared-manual-result", Source: "user", UserID: userID, TokenID: 991, RequestID: "private-request", Model: "gpt-fixture", Group: "default", BenchmarkID: modelTestVersion, Status: "completed", Assessment: "scored", FingerprintResult: model.JSONValue(`{"status":"scored","used_outputs":3,"api_key":"private-key","samples":["private-body"]}`), SamplesJSON: "private-samples", ArtworkHTML: "private-artwork"}
+	run := model.ModelTestRun{ID: "shared-manual-result", Source: "user", UserID: userID, TokenID: 991, RequestID: "private-request", Model: "gpt-4o-mini", Group: "default", BenchmarkID: modelTestVersion, Status: "completed", Assessment: "scored", FingerprintResult: model.JSONValue(`{"status":"scored","used_outputs":3,"api_key":"private-key","samples":["private-body"]}`), SamplesJSON: "private-samples", ArtworkHTML: "private-artwork"}
 	require.NoError(t, db.Create(&run).Error)
 	response := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(response)

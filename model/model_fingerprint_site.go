@@ -47,8 +47,8 @@ type ModelFingerprintSiteConfig struct {
 	UpdatedBy         int                          `json:"updated_by"`
 }
 
-// EnabledTargets is the shared allowlist for catalogue display and admission.
-// Historical observations remain independent of current target selection.
+// EnabledTargets is the shared allowlist for catalogue display, current results
+// and admission.
 func (c ModelFingerprintSiteConfig) EnabledTargets() []ModelFingerprintSiteTarget {
 	targets := make([]ModelFingerprintSiteTarget, 0, len(c.Targets))
 	if !c.Enabled {
@@ -419,12 +419,15 @@ func AuthorizeModelFingerprintSiteProbe(ctx context.Context, runID, taskID, runn
 	})
 }
 
-// An uncertain upstream outcome stops automatic dispatch. No quota reservation or
-// user-wallet settlement happens here; aggregate token usage is journaled per probe.
+// Unknown usage remains explicit even when a partial result was evaluated. A
+// completed ranking allows the next scheduled interval, without replaying its
+// timed-out probes. Other uncertain outcomes still pause automatic dispatch.
+// This path never reserves quota or settles a user's wallet.
 func FinishModelFingerprintSiteRun(ctx context.Context, runID string, result ModelFingerprintSiteResult, usageKnown bool) error {
 	if result.Status != "succeeded" && result.Status != "failed" && result.Status != "unknown" {
 		return errors.New("Invalid fingerprint result status")
 	}
+	assessed := false
 	if result.FingerprintResult != "" {
 		var v modelfingerprint.Result
 		if err := common.UnmarshalJsonStr(result.FingerprintResult, &v); err != nil {
@@ -435,6 +438,7 @@ func FinishModelFingerprintSiteRun(ctx context.Context, runID string, result Mod
 			return err
 		}
 		result.FingerprintResult = string(safe)
+		assessed = result.Status == "succeeded" && (v.Status == "scored" || v.Status == "partial") && v.UsedOutputs > 0 && v.UsedOutputs <= 3 && len(v.TopCandidates) > 0
 	}
 	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := lockModelFingerprintRetention(tx); err != nil {
@@ -455,6 +459,8 @@ func FinishModelFingerprintSiteRun(ctx context.Context, runID string, result Mod
 		if !usageKnown {
 			usageState = "unknown"
 			result.Status = "unknown"
+		}
+		if !usageKnown && !assessed {
 			c.AutomaticEnabled = false
 			c.Version++
 			c.UpdatedAt = time.Now().Unix()
@@ -474,34 +480,17 @@ func FinishModelFingerprintSiteRun(ctx context.Context, runID string, result Mod
 		if err := tx.Model(&ModelFingerprintSiteRun{}).Where("id = ? AND status = ?", runID, "running").Updates(map[string]any{"status": result.Status, "usage_state": usageState, "benchmark_id": result.BenchmarkID, "fingerprint_version": result.FingerprintVersion, "assessment": result.Assessment, "fingerprint_result": result.FingerprintResult, "finished_at": time.Now().Unix()}).Error; err != nil {
 			return err
 		}
-		return pruneModelFingerprintReports(tx, time.Now().Unix(), true, run.Group, run.Model)
+		return pruneModelFingerprintReports(tx, time.Now().Unix(), run.Group, run.Model)
 	})
 }
 
-// Per-target limits intentionally avoid starving less active targets with a global LIMIT.
 func ListModelFingerprintSitePublicRuns(ctx context.Context) ([]ModelFingerprintSitePublicRun, error) {
 	c, err := GetModelFingerprintSiteConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
-	result := []ModelFingerprintSitePublicRun{}
-	for _, target := range c.Targets {
-		var effective []ModelFingerprintSiteRun
-		if err := DB.WithContext(ctx).Where("target_id = ? AND status = ? AND assessment = ? AND history_pruned_at = ?", target.ID, "succeeded", "scored", 0).Order("created_at DESC").Order("id DESC").Limit(60).Find(&effective).Error; err != nil {
-			return nil, err
-		}
-		for _, run := range effective {
-			result = append(result, run.Public())
-		}
-		var failures []ModelFingerprintSiteRun
-		if err := DB.WithContext(ctx).Where("target_id = ? AND NOT (status = ? AND assessment = ?) AND history_pruned_at = ?", target.ID, "succeeded", "scored", 0).Order("created_at DESC").Order("id DESC").Limit(5).Find(&failures).Error; err != nil {
-			return nil, err
-		}
-		for _, run := range failures {
-			result = append(result, run.Public())
-		}
-	}
-	return result, nil
+	result, _, err := ListModelFingerprintCurrentRuns(ctx, c.EnabledTargets())
+	return result, err
 }
 
 // MarkModelFingerprintSiteProbeUnsent closes an admitted intent only when the

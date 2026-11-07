@@ -29,14 +29,14 @@ export const modelTestErrorKeys: Record<string, string> = {
   token_unavailable:
     'This API key is unavailable for the selected group and model. Select another valid key or create one.',
   fingerprint_unavailable:
-    'Fingerprint reference data is unavailable. New tests are blocked.',
+    'Model reference data is unavailable. New tests are blocked.',
   invalid_selection:
     'Select a valid group, model and API key before requesting a test.',
 
   model_tests_disabled:
-    'New model tests are disabled. You can still view your history and cancel active tests.',
+    'New model tests are disabled. You can cancel tests that are still running.',
   model_test_settings_unavailable:
-    'Model test availability could not be verified. New tests are blocked; history and cancellation remain available.',
+    'Model test availability could not be verified. Try again later or cancel active tests.',
   unsupported_test_channel:
     'This channel does not support controlled model tests.',
   output_budget_changed:
@@ -55,12 +55,12 @@ export const modelTestErrorKeys: Record<string, string> = {
   rate_or_concurrency_limit:
     'The test limit has been reached. Finish an active test or try again later.',
   request_id_conflict:
-    'This request identifier belongs to a different test. Check your history.',
-  history_unavailable: 'Test history is temporarily unavailable.',
+    'This request identifier belongs to a different test. Refresh the results.',
+  history_unavailable: 'Test results are temporarily unavailable.',
   catalogue_unavailable: 'The test model catalogue is temporarily unavailable.',
   run_not_found: 'This test was not found in your account.',
   result_persistence_failed:
-    'The test result could not be saved. Check history before retrying.',
+    'The test result could not be saved. Refresh the results before retrying.',
 }
 export const modelTestFailureKeys: Record<string, string> = {
   fingerprint_unavailable: modelTestErrorKeys.fingerprint_unavailable,
@@ -72,8 +72,7 @@ export const modelTestFailureKeys: Record<string, string> = {
     'The site test exceeded or could not reserve its configured quota budget.',
   budget_exceeded:
     'The site test exceeded or could not reserve its configured quota budget.',
-  fingerprint_analysis_failed:
-    'Fingerprint analysis failed. This is not a model mismatch.',
+  fingerprint_analysis_failed: 'Model analysis failed. Try again later.',
   group_configuration_changed:
     'The route or configuration changed. The site test was stopped safely.',
   channel_changed:

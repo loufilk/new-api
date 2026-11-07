@@ -118,19 +118,32 @@ test('another user’s result appears by group and model and opens without a per
         data: {
           success: true,
           data: {
-            enabled: false,
+            enabled: true,
             items: [],
-            targets: [],
+            targets: [
+              {
+                id: 'current',
+                group: shared.group,
+                model: shared.model,
+                enabled: true,
+                period_secs: 3600,
+              },
+            ],
             user_items: [shared],
           },
         },
+      }
+    }
+    if (String(url).endsWith('/bootstrap')) {
+      return {
+        data: { success: true, data: { groups: [], models_by_group: {} } },
       }
     }
     return {
       data: {
         success: true,
         data: {
-          enabled: false,
+          enabled: true,
           items: [],
           site_results: [],
           benchmark: {},
@@ -148,12 +161,6 @@ test('another user’s result appears by group and model and opens without a per
       <IntelligenceDashboard />
     </QueryClientProvider>
   )
-  await screen.findByText(en.translation['fingerprint.testsDisabled'])
-  expect(await screen.findByText('No enabled test targets')).toBeVisible()
-  expect(
-    screen.queryByRole('heading', { name: 'shared-model' })
-  ).not.toBeInTheDocument()
-  await user.click(screen.getByRole('tab', { name: 'Historical results' }))
   expect(
     await screen.findByRole('heading', { name: 'Public group' })
   ).toBeVisible()
@@ -186,19 +193,32 @@ test('admins see shared results without a configuration shortcut or extra histor
         data: {
           success: true,
           data: {
-            enabled: false,
+            enabled: true,
             items: [],
-            targets: [],
+            targets: [
+              {
+                id: 'current',
+                group: shared.group,
+                model: shared.model,
+                enabled: true,
+                period_secs: 3600,
+              },
+            ],
             user_items: [shared],
           },
         },
+      }
+    }
+    if (String(url).endsWith('/bootstrap')) {
+      return {
+        data: { success: true, data: { groups: [], models_by_group: {} } },
       }
     }
     return {
       data: {
         success: true,
         data: {
-          enabled: false,
+          enabled: true,
           items: [
             {
               ...shared,
@@ -230,17 +250,11 @@ test('admins see shared results without a configuration shortcut or extra histor
     routeTree: root,
     history: createMemoryHistory({ initialEntries: ['/'] }),
   })
-  const user = userEvent.setup()
   render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
     </QueryClientProvider>
   )
-  await screen.findByText(en.translation['fingerprint.testsDisabled'])
-  expect(
-    screen.queryByRole('heading', { name: 'shared-model' })
-  ).not.toBeInTheDocument()
-  await user.click(screen.getByRole('tab', { name: 'Historical results' }))
   expect(
     await screen.findByRole('heading', { name: 'shared-model' })
   ).toBeVisible()
@@ -260,10 +274,13 @@ test('admins see shared results without a configuration shortcut or extra histor
   expect(
     screen.queryByText(en.translation['fingerprint.sharedResultsHelp'])
   ).not.toBeInTheDocument()
-  expect(screen.queryByRole('note')).not.toBeInTheDocument()
+  expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('tab', { name: 'Historical results' })
+  ).not.toBeInTheDocument()
 })
 
-test('current targets exclude disabled, unconfigured and historical models while keyboard navigation keeps history accessible', async () => {
+test('current targets exclude disabled, unconfigured and historical models and remove the history view', async () => {
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (String(url).endsWith('/site')) {
       return {
@@ -321,7 +338,6 @@ test('current targets exclude disabled, unconfigured and historical models while
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   })
-  const user = userEvent.setup()
   render(
     <QueryClientProvider client={client}>
       <IntelligenceDashboard />
@@ -334,24 +350,9 @@ test('current targets exclude disabled, unconfigured and historical models while
     expect(screen.queryByRole('heading', { name })).not.toBeInTheDocument()
   }
   expect(screen.getAllByRole('button', { name: 'Self-test' })).toHaveLength(1)
-  const current = screen.getByRole('tab', { name: 'Current targets' })
-  expect(screen.getByRole('tablist', { name: 'Model test views' })).toHaveClass(
-    'max-w-full',
-    'flex-wrap'
-  )
-  expect(current).toHaveAttribute('aria-selected', 'true')
-  current.focus()
-  await user.keyboard('{ArrowRight}')
-  expect(screen.getByRole('tab', { name: 'Historical results' })).toHaveFocus()
-  await user.keyboard('{Enter}')
+  expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
   expect(
-    screen.getByRole('tab', { name: 'Historical results' })
-  ).toHaveAttribute('aria-selected', 'true')
-  expect(
-    await screen.findByRole('heading', { name: 'shared-model' })
-  ).toBeVisible()
-  expect(
-    screen.queryByRole('button', { name: 'Self-test' })
+    screen.queryByRole('tab', { name: 'Historical results' })
   ).not.toBeInTheDocument()
 })
 

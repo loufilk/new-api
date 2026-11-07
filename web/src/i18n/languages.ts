@@ -29,25 +29,29 @@ export const INTERFACE_LANGUAGE_OPTIONS = [
 export type InterfaceLanguageCode =
   (typeof INTERFACE_LANGUAGE_OPTIONS)[number]['code']
 
-export function normalizeInterfaceLanguage(value?: string | null): string {
-  if (!value) return 'en'
+/** Resolve browser, saved-preference and interface codes consistently. */
+export function normalizeInterfaceLanguage(
+  value?: string | null
+): InterfaceLanguageCode {
+  const tag = toIntlLocale(value)
+  if (!tag) return 'en'
 
-  let normalized = value.trim().replaceAll('_', '-').toLowerCase()
-  if (
-    value === 'zh-TW' ||
-    value === 'zh-HK' ||
-    value === 'zh-MO' ||
-    value === 'zhTW'
-  ) {
-    normalized = 'zhTW'
+  const locale = new Intl.Locale(tag)
+  switch (locale.language) {
+    case 'zh':
+      // An explicit script takes precedence over the user's region.
+      if (locale.script === 'Hant') return 'zhTW'
+      if (locale.script === 'Hans') return 'zhCN'
+      return ['TW', 'HK', 'MO'].includes(locale.region ?? '') ? 'zhTW' : 'zhCN'
+    case 'en':
+    case 'fr':
+    case 'ru':
+    case 'ja':
+    case 'vi':
+      return locale.language
+    default:
+      return 'en'
   }
-  if (value === 'zh-CN' || value === 'zh-Hans' || value === 'zhCN') {
-    normalized = 'zhCN'
-  }
-
-  return INTERFACE_LANGUAGE_OPTIONS.some((lang) => lang.code === normalized)
-    ? normalized
-    : 'en'
 }
 
 /**
@@ -61,18 +65,8 @@ export function normalizeInterfaceLanguage(value?: string | null): string {
  * matching still applies (e.g. `fr-FR` -> `fr`, `ja` -> `ja`).
  */
 export function convertDetectedLanguage(value: string): string {
-  const lower = value.trim().replaceAll('_', '-').toLowerCase()
-  if (!lower.startsWith('zh')) return value
-  if (
-    lower === 'zhtw' ||
-    lower === 'zh-tw' ||
-    lower === 'zh-hk' ||
-    lower === 'zh-mo' ||
-    lower.startsWith('zh-hant')
-  ) {
-    return 'zhTW'
-  }
-  return 'zhCN'
+  const language = normalizeInterfaceLanguage(value)
+  return language === 'zhCN' || language === 'zhTW' ? language : value
 }
 
 /**
@@ -86,16 +80,17 @@ export function convertDetectedLanguage(value: string): string {
  */
 export function toIntlLocale(value?: string | null): string | undefined {
   if (!value) return undefined
-  switch (value) {
-    case 'zhCN':
+  const normalized = value.trim().replaceAll('_', '-')
+  switch (normalized.toLowerCase()) {
+    case 'zhcn':
       return 'zh-CN'
-    case 'zhTW':
+    case 'zhtw':
       return 'zh-TW'
     default:
       break
   }
   try {
-    return Intl.getCanonicalLocales(value)[0]
+    return Intl.getCanonicalLocales(normalized)[0]
   } catch {
     return undefined
   }
@@ -107,20 +102,13 @@ export function toIntlLocale(value?: string | null): string | undefined {
  * ensures every API request follows the language currently shown in the UI.
  */
 export function toBackendLanguage(value?: string | null): string {
-  if (!value) return 'en'
-
-  const raw = value.trim().replaceAll('_', '-').toLowerCase()
-  if (
-    raw === 'zhtw' ||
-    raw === 'zh-tw' ||
-    raw === 'zh-hk' ||
-    raw === 'zh-mo' ||
-    raw.startsWith('zh-hant')
-  ) {
-    return 'zh-TW'
+  const language = normalizeInterfaceLanguage(value)
+  switch (language) {
+    case 'zhCN':
+      return 'zh-CN'
+    case 'zhTW':
+      return 'zh-TW'
+    default:
+      return language
   }
-  if (raw.startsWith('zh')) return 'zh-CN'
-  if (raw.startsWith('en')) return 'en'
-
-  return normalizeInterfaceLanguage(value)
 }

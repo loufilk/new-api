@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button'
 import { getLobeIcon } from '@/lib/lobe-icon'
 
 import { ResultRow } from './result-row'
+import { latestModelTestRuns } from './timeline'
 import type { TestRun } from './types'
 
 export function ModelTestCard(props: {
@@ -37,6 +38,13 @@ export function ModelTestCard(props: {
   onSelect: (run: TestRun) => void
 }) {
   const { t } = useTranslation()
+  const recent = latestModelTestRuns([
+    ...(props.siteRuns ?? []).map((run) => ({
+      ...run,
+      source: 'site' as const,
+    })),
+    ...props.runs.map((run) => ({ ...run, source: 'user' as const })),
+  ])
   // This is the configured model name's brand, never an identity verdict.
   const isOpenAIName = /^(gpt-|o[134](?:-|$))/i.test(props.model)
   return (
@@ -56,12 +64,12 @@ export function ModelTestCard(props: {
       </div>
       <div className='divide-border/60 min-w-0 divide-y'>
         <ResultRow
-          runs={props.siteRuns ?? []}
+          runs={recent.filter((run) => run.source === 'site')}
           source='site'
           onSelect={props.onSelect}
         />
         <ResultRow
-          runs={props.runs}
+          runs={recent.filter((run) => run.source === 'user')}
           source='user'
           onSelect={props.onSelect}
           action={

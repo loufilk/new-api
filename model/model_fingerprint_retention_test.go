@@ -50,14 +50,10 @@ func TestFingerprintRetentionPrunesReportsPreservesReplayAndAccounting(t *testin
 	assert.Positive(t, old.HistoryPrunedAt)
 	assert.Equal(t, `[{"request_id":"preserved-audit"}]`, old.SamplesJSON)
 	require.NotNil(t, old.ConfirmationID)
-	for _, tc := range []struct {
-		status, assessment string
-		want               int64
-	}{{"completed", "scored", 60}, {"failed", "", 5}} {
-		var count int64
-		require.NoError(t, DB.Model(&ModelTestRun{}).Where("model = ? AND benchmark_id = ? AND status = ? AND assessment = ? AND history_pruned_at = 0", "synthetic", "local-fingerprint-v1", tc.status, tc.assessment).Count(&count).Error)
-		assert.Equal(t, tc.want, count)
-	}
+	var manualCount, failureCount int64
+	require.NoError(t, DB.Model(&ModelTestRun{}).Where("model = ? AND benchmark_id = ? AND status = ? AND history_pruned_at = 0", "synthetic", "local-fingerprint-v1", "completed").Count(&manualCount).Error)
+	require.NoError(t, DB.Model(&ModelTestRun{}).Where("model = ? AND status = ? AND history_pruned_at = 0", "synthetic", "failed").Count(&failureCount).Error)
+	assert.Zero(t, failureCount, "old failures are not retained in a second history window")
 	var siteOld ModelFingerprintSiteRun
 	require.NoError(t, DB.First(&siteOld, "id = ?", "site-00").Error)
 	assert.Empty(t, siteOld.FingerprintResult)
@@ -69,7 +65,7 @@ func TestFingerprintRetentionPrunesReportsPreservesReplayAndAccounting(t *testin
 	assert.Equal(t, probe, savedProbe)
 	var siteCount int64
 	require.NoError(t, DB.Model(&ModelFingerprintSiteRun{}).Where("history_pruned_at = 0").Count(&siteCount).Error)
-	assert.EqualValues(t, 60, siteCount)
+	assert.EqualValues(t, 60, siteCount+manualCount, "manual and automatic reports share the same window")
 	for _, original := range []ModelTestRun{running, legacy} {
 		var saved ModelTestRun
 		require.NoError(t, DB.First(&saved, "id = ?", original.ID).Error)

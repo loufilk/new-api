@@ -45,7 +45,7 @@ export function ModelTestTargetEditor(props: {
       disabled={props.disabled}
       className='min-w-0 space-y-3 rounded-lg border p-4'
     >
-      <legend className='px-1 text-sm'>{t('Fingerprint target')}</legend>
+      <legend className='px-1 text-sm'>{t('Monitoring target')}</legend>
       <div className='grid min-w-0 gap-4 sm:grid-cols-2'>
         <div className='min-w-0 space-y-2'>
           <Label htmlFor={`${target.id}-group`}>{t('Group')}</Label>

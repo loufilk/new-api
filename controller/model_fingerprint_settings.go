@@ -138,19 +138,14 @@ func UpdateModelFingerprintSettings(c *gin.Context) {
 }
 
 func GetSiteModelFingerprints(c *gin.Context) {
-	runs, err := model.ListModelFingerprintSitePublicRuns(c.Request.Context())
-	if err != nil {
-		modelTestError(c, 503, "history_unavailable")
-		return
-	}
-	userRuns, err := model.ListPublicModelTestRuns(c.Request.Context())
-	if err != nil {
-		modelTestError(c, 503, "history_unavailable")
-		return
-	}
 	config, err := model.GetModelFingerprintSiteConfig(c.Request.Context())
 	if err != nil {
 		modelTestError(c, 503, "model_test_settings_unavailable")
+		return
+	}
+	runs, userRuns, err := model.ListModelFingerprintCurrentRuns(c.Request.Context(), config.EnabledTargets())
+	if err != nil {
+		modelTestError(c, 503, "history_unavailable")
 		return
 	}
 	targets := make([]gin.H, 0, len(config.Targets))

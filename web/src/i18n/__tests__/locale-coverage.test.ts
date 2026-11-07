@@ -30,6 +30,30 @@ import zhCN from '../locales/zh.json'
 const resources = { en, fr, ja, ru, vi, zhCN, zhTW }
 
 describe('locale coverage after upstream integration', () => {
+  test.each(['fr', 'ja', 'ru', 'vi'] as const)(
+    '%s translates the documentation navigation and integration introduction',
+    async (language) => {
+      const i18n = createInstance()
+      await i18n.init({ lng: language, fallbackLng: false, resources })
+
+      for (const key of [
+        'An OpenAI-compatible endpoint for chat, embeddings, images and audio models.',
+        'No endpoints match your search.',
+        'Back to docs center',
+      ] as const) {
+        expect(i18n.t(key), key).not.toBe(en.translation[key])
+      }
+    }
+  )
+
+  test('Chinese group and channel selectors display localized labels', async () => {
+    const i18n = createInstance()
+    await i18n.init({ lng: 'zhCN', fallbackLng: false, resources })
+
+    expect(i18n.t('Select group')).toBe('选择分组')
+    expect(i18n.t('Select channel')).toBe('选择渠道')
+  })
+
   test.each(Object.keys(resources))(
     '%s resolves retained upstream interface and redemption messages without fallback',
     async (language) => {
@@ -44,6 +68,10 @@ describe('locale coverage after upstream integration', () => {
         'Use a Passkey from another website',
         'Used redemption codes cannot be modified',
         'Provider agent ID',
+        'Load more',
+        'Referral Rewards',
+        'Referral Reward Rate',
+        'Checkout environment',
       ]) {
         expect(i18n.exists(key), `${language}: ${key}`).toBe(true)
         expect(i18n.t(key)).not.toBe('')

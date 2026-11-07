@@ -91,7 +91,13 @@ test('a no-limit quote states there is no output cap and still requires explicit
       onConfirm={confirm}
     />
   )
-  expect(screen.getByText(/No output token limit is set/)).toBeVisible()
+  expect(
+    screen.getByText(
+      i18next.t('fingerprint.unlimitedOutput', {
+        seconds: quote.timeout_seconds,
+      })
+    )
+  ).toBeVisible()
   expect(screen.queryByText(/Output limit: 0 tokens/)).not.toBeInTheDocument()
   expect(
     screen.getByRole('button', { name: 'Accept charges and run once' })

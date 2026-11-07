@@ -100,7 +100,7 @@ test.each([10, 100])(
   async (role) => {
     const { user, put, get, client } = renderSettings(role)
     const toggle = await screen.findByRole('switch', {
-      name: 'Enable model performance tests',
+      name: 'Enable model intelligence monitoring',
     })
     expect(toggle).not.toBeChecked()
     expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
@@ -145,7 +145,7 @@ test('group and model selection enables automatic tests without token or budget 
     },
   })
   const automatic = await screen.findByRole('switch', {
-    name: 'Enable automatic fingerprint tests',
+    name: 'Enable automatic model tests',
   })
   expect(automatic).toHaveAttribute('aria-disabled', 'true')
   await user.click(screen.getByRole('button', { name: 'Add target' }))
@@ -225,7 +225,7 @@ test('failed versioned save preserves the draft and reports the error', async ()
   })
   await user.click(
     await screen.findByRole('switch', {
-      name: 'Enable model performance tests',
+      name: 'Enable model intelligence monitoring',
     })
   )
   await user.click(screen.getByRole('button', { name: 'Save Changes' }))
@@ -233,13 +233,15 @@ test('failed versioned save preserves the draft and reports the error', async ()
     await screen.findByText('Settings changed; reload and try again')
   ).toBeVisible()
   expect(
-    screen.getByRole('switch', { name: 'Enable model performance tests' })
+    screen.getByRole('switch', { name: 'Enable model intelligence monitoring' })
   ).toBeChecked()
 })
 
 test('unavailable settings fail closed rather than presenting cached writable controls', async () => {
   const { client, get } = renderSettings()
-  await screen.findByRole('switch', { name: 'Enable model performance tests' })
+  await screen.findByRole('switch', {
+    name: 'Enable model intelligence monitoring',
+  })
   get.mockRejectedValue(new Error('offline'))
   await client.invalidateQueries({ queryKey: ['model-test-settings'] })
   expect(await screen.findByText('Failed to load settings')).toBeVisible()
@@ -266,12 +268,12 @@ test('missing fingerprint reference data disables automatic enable even with val
   })
   expect(
     await screen.findByRole('switch', {
-      name: 'Enable automatic fingerprint tests',
+      name: 'Enable automatic model tests',
     })
   ).toHaveAttribute('aria-disabled', 'true')
   expect(
     screen.getByText(
-      'Fingerprint reference data is not ready. Automatic tests cannot be enabled.'
+      'Model reference data is not ready. Automatic tests cannot be enabled.'
     )
   ).toBeVisible()
 })
@@ -308,7 +310,7 @@ test('saving legacy pinned targets uses normal group routing without selecting a
   })
   await user.click(
     await screen.findByRole('switch', {
-      name: 'Enable model performance tests',
+      name: 'Enable model intelligence monitoring',
     })
   )
   expect(screen.queryByLabelText('Channel')).not.toBeInTheDocument()
@@ -329,12 +331,12 @@ test('saving legacy pinned targets uses normal group routing without selecting a
   )
 })
 
-test.each(['Enable target', 'Enable model performance tests'])(
+test.each(['Enable target', 'Enable model intelligence monitoring'])(
   'the %s switch can save revocation after routing disappears and blocks re-enabling',
   async (switchName) => {
     const { user, put } = renderSettings(10, {
       enabled: true,
-      automatic_enabled: switchName === 'Enable model performance tests',
+      automatic_enabled: switchName === 'Enable model intelligence monitoring',
       targets: [
         {
           id: '9ab0a56f-f0bf-46de-afae-e4874c62ed03',

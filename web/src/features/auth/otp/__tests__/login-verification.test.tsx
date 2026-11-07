@@ -27,8 +27,12 @@ import {
 } from '@tanstack/react-router'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import i18n from 'i18next'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+import fr from '@/i18n/locales/fr.json'
+import zhTW from '@/i18n/locales/zh-TW.json'
+import zhCN from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 import { useAuthStore, type AuthBundle } from '@/stores/auth-store'
 
@@ -137,7 +141,8 @@ function pendingLoginResponse() {
   return { promise, resolve }
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await i18n.changeLanguage('en')
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url !== '/api/status') {
@@ -198,6 +203,41 @@ it('accepts a completed Passkey login without opening another verification dialo
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   expect(post).not.toHaveBeenCalled()
 })
+
+it.each([
+  ['zh-HK', 'zhTW', '模型智力監測'],
+  ['fr-CA', 'fr', 'Suivi des capacités des modèles'],
+])(
+  'restores saved %s language after login and retains the original destination',
+  async (saved, expected, title) => {
+    await i18n.init({
+      lng: 'en',
+      fallbackLng: 'en',
+      supportedLngs: ['en', 'zhCN', 'zhTW', 'fr'],
+      load: 'currentOnly',
+      resources: { en: { translation: {} }, zhCN, zhTW, fr },
+    })
+    const { router } = renderLoginVerification(false, {
+      ...bundle,
+      user: { ...bundle.user, setting: JSON.stringify({ language: saved }) },
+    })
+    const user = userEvent.setup()
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Primary authentication succeeded',
+      })
+    )
+
+    await waitFor(() =>
+      expect(router.state.location.href).toBe('/pricing?view=grid')
+    )
+    expect(i18n.resolvedLanguage).toBe(expected)
+    expect(i18n.t('fingerprint.title')).toBe(title)
+    expect(useAuthStore.getState().auth.user?.id).toBe(bundle.user.id)
+    expect(useAuthStore.getState().auth.session?.sid).toBe(bundle.session.sid)
+  }
+)
 
 it('writes authentication only after verification and preserves the original destination', async () => {
   const pending = pendingLoginResponse()

@@ -163,7 +163,7 @@ func executeSiteModelFingerprint(parent context.Context, task *model.SystemTask,
 			failure = outcome.errorCode
 		}
 	}
-	analysis, err := modelFingerprintScorer.analyze(samples, true)
+	analysis, err := modelFingerprintScorer.analyze(samples, false)
 	if err != nil {
 		return fail("fingerprint_analysis_failed")
 	}
@@ -172,7 +172,11 @@ func executeSiteModelFingerprint(parent context.Context, task *model.SystemTask,
 		return fail("fingerprint_analysis_failed")
 	}
 	result.FingerprintResult = string(safeResult)
-	if failure != "" {
+	// Ranking and measured usage are independent. Complete model responses
+	// still produce a result when another probe times out; unknown usage stays
+	// journaled and the next interval uses a new run, never a replay.
+	assessed := (analysis.Status == "scored" || analysis.Status == "partial") && analysis.UsedOutputs > 0 && len(analysis.TopCandidates) > 0
+	if failure != "" && (!assessed || ctx.Err() != nil) {
 		return fail(failure)
 	}
 	result.Assessment = analysis.Status
@@ -286,7 +290,7 @@ func executeSiteModelFingerprintProbe(probe *gin.Context, challenge modelfingerp
 		if common.GetContextKeyBool(probe, constant.ContextKeyUpstreamRequestUnsent) {
 			return finishUnsent()
 		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
 			return fail("request_timeout")
 		}
 		return fail("upstream_outcome_unknown")
@@ -307,7 +311,7 @@ func executeSiteModelFingerprintProbe(probe *gin.Context, challenge modelfingerp
 		raw, readErr = io.ReadAll(io.LimitReader(httpResponse.Body, modelTestResponseLimit+1))
 		_ = httpResponse.Body.Close()
 		if readErr != nil || len(raw) > modelTestResponseLimit || httpResponse.StatusCode != http.StatusOK {
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(readErr, context.DeadlineExceeded) {
 				return fail("request_timeout")
 			}
 			return fail("upstream_outcome_unknown")

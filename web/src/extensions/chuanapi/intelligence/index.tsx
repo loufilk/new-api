@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { Fingerprint, Info, RefreshCw } from 'lucide-react'
+import { Brain, Info, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -28,7 +28,6 @@ import { LoadingState } from '@/components/loading-state'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 import { getSiteTests, getTestCatalogue } from './api'
 import { BudgetDialog } from './budget-dialog'
@@ -102,7 +101,6 @@ export function IntelligenceDashboard() {
     site.isFetchedAfterMount && !site.isError && site.data?.enabled === true
       ? site.data.targets.filter((target) => target.enabled === true)
       : []
-  const historicalTargets = [...(site.data?.items ?? []), ...sharedPoints]
   const testDisabled =
     running || test.estimate.isPending || unresolvedPending || history.isError
 
@@ -139,14 +137,11 @@ export function IntelligenceDashboard() {
         <div className='text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-2 text-xs'>
           <span className='inline-flex items-center gap-1.5'>
             <span aria-hidden className='size-2 rounded-full bg-emerald-500' />
-            {t('fingerprint.effectiveResults')}
+            {t('Full capability')}
           </span>
           <span className='inline-flex items-center gap-1.5'>
-            <span
-              aria-hidden
-              className='bg-muted-foreground/30 size-2 rounded-full'
-            />
-            {t('fingerprint.emptySlot')}
+            <span aria-hidden className='size-2 rounded-full bg-red-500' />
+            {t('Reduced capability')}
           </span>
         </div>
         <p className='text-muted-foreground text-[11px]'>
@@ -246,66 +241,35 @@ export function IntelligenceDashboard() {
           </AlertDescription>
         </Alert>
       ))}
-      <Tabs defaultValue='current' className='min-w-0 gap-4'>
-        <TabsList
-          aria-label={t('Model test views')}
-          className='h-auto max-w-full flex-wrap'
-        >
-          <TabsTrigger value='current'>{t('Current targets')}</TabsTrigger>
-          <TabsTrigger value='history'>{t('Historical results')}</TabsTrigger>
-        </TabsList>
-        <TabsContent value='current' className='space-y-4'>
-          <ModelTestGroups
-            targets={currentTargets}
-            catalogue={catalogue.data}
-            eligibleModels={
-              test.enabled ? data?.eligible_models_by_group : undefined
-            }
-            runs={sharedPoints}
-            siteRuns={site.data?.items ?? []}
-            disabled={testDisabled}
-            estimateSelection={
-              test.estimate.isPending ? test.estimate.variables : undefined
-            }
-            onEstimate={setSelfTest}
-            onSelect={setSelected}
+      <div className='min-w-0 space-y-4'>
+        <ModelTestGroups
+          targets={currentTargets}
+          catalogue={catalogue.data}
+          eligibleModels={
+            test.enabled ? data?.eligible_models_by_group : undefined
+          }
+          runs={sharedPoints}
+          siteRuns={site.data?.items ?? []}
+          disabled={testDisabled}
+          estimateSelection={
+            test.estimate.isPending ? test.estimate.variables : undefined
+          }
+          onEstimate={setSelfTest}
+          onSelect={setSelected}
+        />
+        {!site.isPending && !site.isError && !currentTargets.length && (
+          <EmptyState
+            icon={Brain}
+            bordered
+            className='bg-card min-h-48 rounded-xl'
+            title={t('No enabled test targets')}
           />
-          {!site.isPending && !site.isError && !currentTargets.length && (
-            <EmptyState
-              icon={Fingerprint}
-              bordered
-              className='bg-card min-h-48 rounded-xl'
-              title={t('No enabled test targets')}
-            />
-          )}
-        </TabsContent>
-        <TabsContent value='history' className='space-y-4'>
-          <p className='text-muted-foreground text-xs leading-relaxed'>
-            {t(
-              'View saved site and community results for current and previously enabled targets.'
-            )}
-          </p>
-          <ModelTestGroups
-            targets={historicalTargets}
-            catalogue={catalogue.data}
-            runs={sharedPoints}
-            siteRuns={site.data?.items ?? []}
-            disabled
-            onEstimate={setSelfTest}
-            onSelect={setSelected}
-          />
-          {!site.isPending && !site.isError && !historicalTargets.length && (
-            <EmptyState
-              icon={Fingerprint}
-              bordered
-              className='bg-card min-h-48 rounded-xl'
-              title={t('No saved results yet')}
-            />
-          )}
-        </TabsContent>
-      </Tabs>
+        )}
+      </div>
       <p className='text-muted-foreground text-[11px] leading-relaxed'>
-        {t('fingerprint.timelineHelp')}
+        {t(
+          'Only the latest 60 results for each group and model are kept. Unfilled positions use the latest full-capability result.'
+        )}
       </p>
       {selfTest && selectedModelAvailable && !test.quote && (
         <SelfTestDialog

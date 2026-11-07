@@ -16,11 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Check, Fingerprint, ShieldCheck, Users } from 'lucide-react'
+import { Brain, ShieldCheck, Users } from 'lucide-react'
 import { useEffect, useId, useRef, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -31,8 +30,13 @@ import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber, formatTimestampRelative } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
+import { ModelCapabilityBadge } from './capability-badge'
 import { FingerprintReport } from './fingerprint-report'
-import { effectiveFingerprintRuns } from './timeline'
+import {
+  effectiveFingerprintRuns,
+  latestModelTestRuns,
+  modelCapability,
+} from './timeline'
 import type { TestRun } from './types'
 
 export function ResultRow(props: {
@@ -46,6 +50,9 @@ export function ResultRow(props: {
   const id = useId()
   const recent = effectiveFingerprintRuns(props.runs)
   const latest = recent.at(-1)
+  const fullResults = recent.filter((run) => modelCapability(run) === 'full')
+  const latestFull = fullResults.at(-1)
+  const fullCount = fullResults.length
   const timelineRef = useRef<HTMLOListElement>(null)
   useEffect(() => {
     const timeline = timelineRef.current
@@ -56,9 +63,19 @@ export function ResultRow(props: {
       )
     }
   }, [latest?.id])
-  const latestAttempt = [...props.runs].sort(
-    (a, b) => b.created_at - a.created_at
-  )[0]
+  const latestAttempt = latestModelTestRuns(props.runs).at(-1)
+  const current = latestAttempt ?? latest
+  const capability = current ? modelCapability(current) : null
+  const fillClass = latestFull ? 'bg-emerald-500' : 'bg-emerald-500/30'
+  let iconClass =
+    'border-emerald-100 bg-emerald-50 text-emerald-600 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-400'
+  if (capability === 'reduced') {
+    iconClass =
+      'border-red-100 bg-red-50 text-red-600 dark:border-red-900 dark:bg-red-950 dark:text-red-400'
+  } else if (current && !capability && current.status !== 'running') {
+    iconClass =
+      'border-amber-100 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-400'
+  }
   const label =
     props.source === 'site'
       ? t('intelligence.siteResults')
@@ -71,12 +88,10 @@ export function ResultRow(props: {
           aria-hidden
           className={cn(
             'flex size-11 shrink-0 items-center justify-center rounded-lg border',
-            latest
-              ? 'border-emerald-100 bg-emerald-50 text-emerald-600 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-400'
-              : 'border-border/70 bg-muted/40 text-muted-foreground'
+            iconClass
           )}
         >
-          <Fingerprint className='size-6' />
+          <Brain className='size-6' />
         </div>
         <span className='text-muted-foreground flex min-w-0 items-center gap-1.5 text-xs'>
           <SourceIcon aria-hidden className='size-3.5 shrink-0' />
@@ -88,34 +103,22 @@ export function ResultRow(props: {
           <span className='text-muted-foreground text-[11px]'>
             {t('fingerprint.latestResult')}
           </span>
-          <Badge
-            variant='secondary'
-            className={cn(
-              'max-w-full rounded-md border-0 px-1.5 py-0.5 text-[11px]',
-              latest &&
-                'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
-            )}
-          >
-            {latest && <Check aria-hidden className='size-3' />}
-            {latest
-              ? t('fingerprint.status.scored')
-              : t('fingerprint.noEffective')}
-          </Badge>
+          <ModelCapabilityBadge run={current} />
         </div>
-        {latest && (
+        {current && (
           <time
-            dateTime={new Date(latest.created_at * 1000).toISOString()}
-            title={new Date(latest.created_at * 1000).toLocaleString(locale)}
+            dateTime={new Date(current.created_at * 1000).toISOString()}
+            title={new Date(current.created_at * 1000).toLocaleString(locale)}
             className='hidden shrink-0 flex-col gap-1 text-xs tabular-nums sm:flex'
           >
             <span>
-              {new Date(latest.created_at * 1000).toLocaleTimeString(locale, {
+              {new Date(current.created_at * 1000).toLocaleTimeString(locale, {
                 hour: '2-digit',
                 minute: '2-digit',
               })}
             </span>
             <span className='text-muted-foreground text-[11px]'>
-              {formatTimestampRelative(latest.created_at, 'seconds', locale)}
+              {formatTimestampRelative(current.created_at, 'seconds', locale)}
             </span>
           </time>
         )}
@@ -124,9 +127,9 @@ export function ResultRow(props: {
         <div className='text-muted-foreground flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px]'>
           <span>{t('fingerprint.recent', { count: recent.length })}</span>
           <span>
-            {t('fingerprint.resultSummary', {
-              scored: formatNumber(recent.length, locale),
-              empty: formatNumber(60 - recent.length, locale),
+            {t('{{full}} full · {{reduced}} reduced', {
+              full: formatNumber(fullCount, locale),
+              reduced: formatNumber(recent.length - fullCount, locale),
             })}
           </span>
         </div>
@@ -137,11 +140,16 @@ export function ResultRow(props: {
         >
           {Array.from({ length: 60 - recent.length }, (_, index) => (
             <li
-              key={`empty-${index}`}
+              key={`filled-${index}`}
               aria-hidden
               className='flex h-11 items-center lg:pointer-fine:h-7'
             >
-              <span className='bg-muted block h-5 w-full rounded-[5px] lg:pointer-fine:h-4' />
+              <span
+                className={cn(
+                  'block h-5 w-full rounded-[5px] lg:pointer-fine:h-4',
+                  fillClass
+                )}
+              />
             </li>
           ))}
           {recent.map((run) => (
@@ -154,13 +162,18 @@ export function ResultRow(props: {
                       className='group/point h-11 w-full min-w-0 rounded-sm p-0 hover:bg-transparent focus-visible:ring-2 lg:pointer-fine:h-7'
                       aria-describedby={`${id}-${run.id}`}
                       onClick={() => props.onSelect(run)}
-                      aria-label={`${new Date(run.created_at * 1000).toLocaleString(locale)} · ${t('fingerprint.openReport')}`}
+                      aria-label={`${modelCapability(run) === 'reduced' ? t('Reduced capability') : t('Full capability')} · ${new Date(run.created_at * 1000).toLocaleString(locale)} · ${t('fingerprint.openReport')}`}
                     />
                   }
                 >
                   <span
                     aria-hidden
-                    className='block h-5 w-full rounded-[5px] bg-emerald-500 transition-colors group-hover/point:bg-emerald-600 lg:pointer-fine:h-4'
+                    className={cn(
+                      'block h-5 w-full rounded-[5px] transition-colors lg:pointer-fine:h-4',
+                      modelCapability(run) === 'reduced'
+                        ? 'bg-red-500 group-hover/point:bg-red-600'
+                        : 'bg-emerald-500 group-hover/point:bg-emerald-600'
+                    )}
                   />
                 </TooltipTrigger>
                 <TooltipContent
@@ -178,6 +191,11 @@ export function ResultRow(props: {
           <span>{t('fingerprint.older')}</span>
           <span>{t('fingerprint.latest')}</span>
         </div>
+        {latestFull && recent.length < 60 && (
+          <p className='text-muted-foreground mt-1 text-[10px]'>
+            {t('Filled from the latest full-capability result')}
+          </p>
+        )}
         {latestAttempt &&
           !recent.some((run) => run.id === latestAttempt.id) && (
             <Button
@@ -186,11 +204,7 @@ export function ResultRow(props: {
               onClick={() => props.onSelect(latestAttempt)}
             >
               {t('fingerprint.latestAttempt')} ·{' '}
-              {latestAttempt.fingerprint_result
-                ? t(
-                    `fingerprint.status.${latestAttempt.fingerprint_result.status}`
-                  )
-                : t(`intelligence.status.${latestAttempt.status}`)}
+              {t(`intelligence.status.${latestAttempt.status}`)}
             </Button>
           )}
       </div>

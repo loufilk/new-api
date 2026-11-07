@@ -148,7 +148,7 @@ func FinishModelTestRun(run *ModelTestRun) error {
 		if err := tx.Model(&ModelTestRun{}).Where("id = ? AND user_id = ? AND status = ?", run.ID, run.UserID, "running").Updates(map[string]any{"status": run.Status, "assessment": run.Assessment, "completed_at": run.CompletedAt, "request_id": run.RequestID, "error_code": run.ErrorCode, "artwork_html": run.ArtworkHTML, "fingerprint_result": run.FingerprintResult, "samples_json": run.SamplesJSON, "channel_id": run.ChannelID, "channel_key_index": run.ChannelKeyIndex}).Error; err != nil {
 			return err
 		}
-		return pruneModelFingerprintReports(tx, time.Now().Unix(), false, run.Group, run.Model)
+		return pruneModelFingerprintReports(tx, time.Now().Unix(), run.Group, run.Model)
 	})
 }
 
@@ -198,36 +198,13 @@ func (r ModelTestRun) PublicFingerprint() ModelTestPublicRun {
 	return ModelTestPublicRun{ID: r.ID, Source: "user", Model: r.Model, Group: r.Group, BenchmarkID: r.BenchmarkID, Status: r.Status, Assessment: r.Assessment, FingerprintResult: report, CreatedAt: r.CreatedAt, CompletedAt: r.CompletedAt}
 }
 
-// ListPublicModelTestRuns shares terminal fingerprint observations across users.
-// Per-model/group limits keep noisy failures from displacing scored observations.
-// This does not grant access to owner-only detail, samples or cancellation APIs.
+// ListPublicModelTestRuns shares the manual portion of the current monitoring
+// window without owner-only detail, samples or cancellation privileges.
 func ListPublicModelTestRuns(ctx context.Context) ([]ModelTestPublicRun, error) {
-	terminal := []string{"completed", "failed", "unknown", "cancelled", "intercepted", "timeout"}
-	base := DB.WithContext(ctx).Model(&ModelTestRun{}).Where("source = ? AND benchmark_id = ? AND status IN ? AND history_pruned_at = ?", "user", "local-fingerprint-v1", terminal, 0)
-	var pairs []struct {
-		Model string
-		Group string
-	}
-	if err := base.Session(&gorm.Session{}).Select("model", commonGroupCol).Distinct().Order("model").Order(commonGroupCol).Find(&pairs).Error; err != nil {
+	config, err := GetModelFingerprintSiteConfig(ctx)
+	if err != nil {
 		return nil, err
 	}
-	result := make([]ModelTestPublicRun, 0)
-	for _, pair := range pairs {
-		for _, scored := range []bool{true, false} {
-			query := base.Session(&gorm.Session{}).Where("model = ? AND "+commonGroupCol+" = ?", pair.Model, pair.Group)
-			if scored {
-				query = query.Where("status = ? AND assessment = ?", "completed", "scored").Limit(60)
-			} else {
-				query = query.Where("NOT (status = ? AND assessment = ?) OR assessment IS NULL", "completed", "scored").Limit(5)
-			}
-			var runs []ModelTestRun
-			if err := query.Select("id", "model", "group", "benchmark_id", "status", "assessment", "fingerprint_result", "created_at", "completed_at").Order("created_at DESC, id DESC").Find(&runs).Error; err != nil {
-				return nil, err
-			}
-			for _, run := range runs {
-				result = append(result, run.PublicFingerprint())
-			}
-		}
-	}
-	return result, nil
+	_, result, err := ListModelFingerprintCurrentRuns(ctx, config.EnabledTargets())
+	return result, err
 }

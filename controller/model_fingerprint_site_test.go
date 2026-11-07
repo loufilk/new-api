@@ -156,17 +156,18 @@ func TestFingerprintSitePostgresExecutionBoundaries(t *testing.T) {
 					} `json:"data"`
 				}
 				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
-				require.Len(t, payload.Data.Items, 1, "safe historical reports remain visible after the feature is disabled")
-				assert.IsType(t, map[string]any{}, payload.Data.Items[0]["fingerprint_result"])
-				for _, field := range []string{"channel_id", "channel_key_index", "mapped_model", "reserved_quota", "task_id"} {
-					assert.NotContains(t, payload.Data.Items[0], field)
-				}
 				if mode == "disabled-after-admission" {
+					assert.Empty(t, payload.Data.Items, "disabled targets have no public history view")
 					assert.Empty(t, payload.Data.Targets)
 					assert.True(t, config.AutomaticEnabled, "known completed usage must not trigger an automatic safety pause")
 					assert.Equal(t, run.ConfigVersion, config.Version)
 				} else {
 					require.Len(t, payload.Data.Targets, 1)
+					require.Len(t, payload.Data.Items, 1)
+					assert.IsType(t, map[string]any{}, payload.Data.Items[0]["fingerprint_result"])
+					for _, field := range []string{"channel_id", "channel_key_index", "mapped_model", "reserved_quota", "task_id"} {
+						assert.NotContains(t, payload.Data.Items[0], field)
+					}
 					assert.NotContains(t, payload.Data.Targets[0], "channel_id")
 				}
 				assert.NotContains(t, response.Body.String(), "synthetic-not-a-real-key")

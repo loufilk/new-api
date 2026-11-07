@@ -20,13 +20,18 @@ import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
 import { toIntlLocale } from '@/i18n/languages'
-import { formatNumber } from '@/lib/format'
 
+import { ModelCapabilityBadge } from './capability-badge'
+import { formatModelTestReason } from './report-reason'
 import type { TestRun } from './types'
 
 export function FingerprintReport(props: { run: TestRun; compact?: boolean }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const percent = new Intl.NumberFormat(locale, {
+    style: 'percent',
+    maximumFractionDigits: 2,
+  })
   const result = props.run.fingerprint_result
   return (
     <div className='flex min-w-0 flex-col gap-3 text-sm'>
@@ -34,11 +39,14 @@ export function FingerprintReport(props: { run: TestRun; compact?: boolean }) {
         <time dateTime={new Date(props.run.created_at * 1000).toISOString()}>
           {new Date(props.run.created_at * 1000).toLocaleString(locale)}
         </time>
-        <Badge variant='secondary'>
-          {result
-            ? t(`fingerprint.status.${result.status}`)
-            : t(`intelligence.status.${props.run.status}`)}
-        </Badge>
+        <div className='flex flex-wrap items-center gap-1.5'>
+          <ModelCapabilityBadge run={props.run} />
+          {result && result.status !== 'scored' && (
+            <Badge variant='outline'>
+              {t(`fingerprint.status.${result.status}`)}
+            </Badge>
+          )}
+        </div>
       </div>
       {!result ? (
         <p>{t('fingerprint.noReport')}</p>
@@ -60,7 +68,7 @@ export function FingerprintReport(props: { run: TestRun; compact?: boolean }) {
                     <span className='shrink-0 tabular-nums'>
                       {candidate.probability === null
                         ? t('fingerprint.unavailable')
-                        : `${formatNumber(candidate.probability * 100, locale)}%`}
+                        : percent.format(candidate.probability)}
                     </span>
                   </li>
                 ))}
@@ -104,14 +112,18 @@ export function FingerprintReport(props: { run: TestRun; compact?: boolean }) {
                   )}
                   {sample.reason && (
                     <p className='text-muted-foreground break-all'>
-                      {sample.reason}
+                      {formatModelTestReason(sample.reason, t)}
                     </p>
                   )}
                 </li>
               ))}
             </ul>
           )}
-          {result.reason && <p className='break-all'>{result.reason}</p>}
+          {result.reason && (
+            <p className='break-all'>
+              {formatModelTestReason(result.reason, t)}
+            </p>
+          )}
           <dl className='grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs'>
             <dt>{t('fingerprint.dataVersion')}</dt>
             <dd className='break-all'>{result.data_version}</dd>

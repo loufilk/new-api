@@ -35,6 +35,7 @@ import { api } from '@/lib/api'
 import { IntelligenceDashboard } from '../index'
 import type {
   FingerprintResult,
+  TestDetail,
   TestHistory,
   TestRequest,
   TestRun,
@@ -146,7 +147,13 @@ function terminalRun(overrides: Partial<TestRun> = {}): TestRun {
 let client: QueryClient | undefined
 
 function renderDashboard(outcome = terminalRun()) {
-  const server = { history: availableHistory(), outcome, loseResponse: false }
+  const server = {
+    history: availableHistory(),
+    outcome,
+    loseResponse: false,
+    detailUnavailable: false,
+    details: new Map<string, TestDetail>(),
+  }
   const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (String(url).endsWith('/site')) {
       return {
@@ -187,6 +194,13 @@ function renderDashboard(outcome = terminalRun()) {
     if (url === '/api/user/model-tests') {
       return { data: { success: true, data: server.history } }
     }
+    if (String(url).startsWith('/api/user/model-tests/runs/')) {
+      if (server.detailUnavailable) throw new Error('Detail is unavailable')
+      const id = decodeURIComponent(String(url).split('/').at(-1) ?? '')
+      const detail = server.details.get(id)
+      if (!detail) throw new Error('Saved test was not found')
+      return { data: { success: true, data: detail } }
+    }
     throw new Error(`Unexpected read: ${url}`)
   })
   const post = vi.spyOn(api, 'post').mockImplementation(async (url, body) => {
@@ -216,7 +230,10 @@ function renderDashboard(outcome = terminalRun()) {
         model: request.model,
         group: request.group,
       }
-      server.history = { ...server.history, items: [saved] }
+      const metadata = { ...saved }
+      delete metadata.fingerprint_result
+      server.history = { ...server.history, items: [metadata] }
+      server.details.set(saved.id, { ...saved, artwork_html: '', prompt: '' })
       if (server.loseResponse) throw new Error('Response lost after save')
       return { data: { success: true, data: saved } }
     }
@@ -316,13 +333,11 @@ test('a recovered analysis failure opens its reason without inventing a report o
   const dialog = await screen.findByRole('dialog', { name: 'first-model' })
   expect(
     within(dialog).getByText(
-      en.translation[
-        'Fingerprint analysis failed. This is not a model mismatch.'
-      ]
+      en.translation['Model analysis failed. Try again later.']
     )
   ).toBeVisible()
   expect(
-    within(dialog).getByText(en.translation['fingerprint.noReport'])
+    await within(dialog).findByText(en.translation['fingerprint.noReport'])
   ).toBeVisible()
   expect(
     within(dialog).queryByText(/Accepted samples:/)
@@ -331,6 +346,77 @@ test('a recovered analysis failure opens its reason without inventing a report o
     post.mock.calls.filter(([url]) => String(url).endsWith('/runs'))
   ).toHaveLength(1)
 })
+
+test.each([
+  { status: 'timeout' as const, error_code: 'request_timeout', accepted: 1 },
+  {
+    status: 'unknown' as const,
+    error_code: 'upstream_outcome_unknown',
+    accepted: 2,
+  },
+])(
+  'a lost $status response restores its partial report from the owner detail endpoint without rerunning the test',
+  async ({ status, error_code, accepted }) => {
+    const partial: FingerprintResult = {
+      ...incompleteReport,
+      status: 'partial',
+      reason: `Ranked ${accepted} valid sample${accepted === 1 ? '' : 's'}. Confidence requires three valid samples.`,
+      used_outputs: accepted,
+      strict: false,
+      probability_status: 'unavailable',
+      top_candidates: [
+        {
+          model: 'reference-model',
+          display_name: 'Recovered reference model',
+          family: 'reference',
+          family_name: 'Reference',
+          score: 2,
+          probability: null,
+        },
+      ],
+      sample_quality: incompleteReport.sample_quality.map((sample, index) => ({
+        ...sample,
+        accepted: index < accepted,
+        parsed_numbers: index < accepted ? 300 : 0,
+        reason: index < accepted ? 'accepted' : 'request_failed',
+        truncated: false,
+      })),
+    }
+    const { server, get, post } = renderDashboard(
+      terminalRun({
+        status,
+        assessment: 'partial',
+        error_code,
+        fingerprint_result: partial,
+      })
+    )
+    server.loseResponse = true
+    const user = userEvent.setup()
+    await runTest(user)
+    await user.click(
+      await screen.findByRole('button', { name: 'View details' })
+    )
+
+    const dialog = await screen.findByRole('dialog', { name: 'first-model' })
+    expect(
+      await within(dialog).findByText('Recovered reference model')
+    ).toBeVisible()
+    expect(within(dialog).getByText('Full capability')).toBeVisible()
+    expect(
+      within(dialog).getByText(`Accepted samples: ${accepted} / 3`)
+    ).toBeVisible()
+    expect(
+      within(dialog).queryByText(en.translation['fingerprint.noReport'])
+    ).not.toBeInTheDocument()
+    expect(server.history.items[0]).not.toHaveProperty('fingerprint_result')
+    expect(
+      get.mock.calls.filter(([url]) => String(url).includes('/runs/'))
+    ).toHaveLength(1)
+    expect(
+      post.mock.calls.filter(([url]) => String(url).endsWith('/runs'))
+    ).toHaveLength(1)
+  }
+)
 
 test('disabling tests keeps the completed outcome readable without offering another paid run', async () => {
   const { server, post } = renderDashboard()
@@ -351,6 +437,32 @@ test('disabling tests keeps the completed outcome readable without offering anot
 
   const dialog = await screen.findByRole('dialog', { name: 'first-model' })
   expect(within(dialog).getByText('Accepted samples: 2 / 3')).toBeVisible()
+  expect(
+    post.mock.calls.filter(([url]) => String(url).endsWith('/runs'))
+  ).toHaveLength(1)
+})
+
+test('retrying an unavailable saved report only repeats the detail read and does not start another paid test', async () => {
+  const { server, get, post } = renderDashboard()
+  server.loseResponse = true
+  server.detailUnavailable = true
+  const user = userEvent.setup()
+  await runTest(user)
+  await user.click(await screen.findByRole('button', { name: 'View details' }))
+  const dialog = await screen.findByRole('dialog', { name: 'first-model' })
+  const retry = await within(dialog).findByRole('button', { name: 'Retry' })
+  expect(
+    within(dialog).queryByText(en.translation['fingerprint.noReport'])
+  ).not.toBeInTheDocument()
+
+  server.detailUnavailable = false
+  await user.click(retry)
+  expect(
+    await within(dialog).findByText('Accepted samples: 2 / 3')
+  ).toBeVisible()
+  expect(
+    get.mock.calls.filter(([url]) => String(url).includes('/runs/'))
+  ).toHaveLength(2)
   expect(
     post.mock.calls.filter(([url]) => String(url).endsWith('/runs'))
   ).toHaveLength(1)
@@ -386,7 +498,7 @@ test('a subsequent target opens its own outcome instead of the previous target r
 
   const dialog = await screen.findByRole('dialog', { name: 'second-model' })
   expect(
-    within(dialog).getByText(en.translation['fingerprint.noReport'])
+    await within(dialog).findByText(en.translation['fingerprint.noReport'])
   ).toBeVisible()
   expect(within(dialog).queryByText('probe-1')).not.toBeInTheDocument()
   expect(within(dialog).queryByText('first-model')).not.toBeInTheDocument()

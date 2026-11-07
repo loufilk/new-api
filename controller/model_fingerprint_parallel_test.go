@@ -79,6 +79,9 @@ func (f *fingerprintParallelTransport) RoundTrip(req *http.Request) (*http.Respo
 	if f.mode == "one-unknown" && n == 1 {
 		return nil, errors.New("synthetic connection lost after submission")
 	}
+	if f.mode == "one-success-timeout" && n > 1 || f.mode == "two-success-timeout" && n > 2 {
+		return nil, context.DeadlineExceeded
+	}
 	finishReason := "stop"
 	if f.mode == "one-incomplete" && n == 1 {
 		finishReason = "length"
@@ -92,6 +95,96 @@ func (f *fingerprintParallelTransport) RoundTrip(req *http.Request) (*http.Respo
 		return nil, err
 	}
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(string(payload))), Request: req}, nil
+}
+
+func TestModelFingerprintPostgresPartialTimeoutAssessment(t *testing.T) {
+	for _, source := range []string{"user", "site"} {
+		for _, accepted := range []int{1, 2} {
+			t.Run(fmt.Sprintf("%s-%d-valid", source, accepted), func(t *testing.T) {
+				var db *gorm.DB
+				var userID int
+				var task *model.SystemTask
+				var target model.ModelFingerprintSiteTarget
+				var run *model.ModelFingerprintSiteRun
+				if source == "site" {
+					db, userID, task, target, run = setupFingerprintSiteExecution(t)
+				} else {
+					db, userID = setupModelTestSwitchExecution(t)
+				}
+				require.NoError(t, db.Model(&model.Channel{}).Where("models = ?", "gpt-4o-mini").Updates(map[string]any{"base_url": "https://fingerprint-parallel.invalid", "model_mapping": `{"gpt-4o-mini":"gpt-fixture-mapped"}`}).Error)
+				model.InvalidatePricingCache()
+				mode := "one-success-timeout"
+				if accepted == 2 {
+					mode = "two-success-timeout"
+				}
+				transport := installFingerprintParallelTransport(t, mode)
+				transport.unblock()
+				// The scorer is a separately deployed process. Its known partial
+				// response is exercised here through the same controller boundary.
+				originalScorer := modelFingerprintScorer.analyze
+				t.Cleanup(func() { modelFingerprintScorer.analyze = originalScorer })
+				modelFingerprintScorer.analyze = func(samples []modelfingerprint.Sample, strict bool) (modelfingerprint.Result, error) {
+					assert.False(t, strict, "one or two complete responses must be evaluated automatically")
+					result := modelfingerprint.Result{Status: "partial", UsedOutputs: accepted, Strict: strict,
+						TopCandidates: []modelfingerprint.Candidate{{Model: "fixture-model"}}, ProbabilityStatus: "unavailable"}
+					complete := 0
+					for _, sample := range samples {
+						quality := modelfingerprint.Quality{ChallengeID: sample.ChallengeID, ExpectedCount: sample.ExpectedCount, Reason: "request_failed"}
+						if sample.Error == "" {
+							complete++
+							quality.Accepted, quality.Reason = true, "accepted"
+						}
+						result.SampleQuality = append(result.SampleQuality, quality)
+					}
+					assert.Equal(t, accepted, complete)
+					return result, nil
+				}
+				var encoded []byte
+				if source == "site" {
+					require.NoError(t, executeSiteModelFingerprint(t.Context(), task, task.LockedBy, target, run))
+					var saved model.ModelFingerprintSiteRun
+					require.NoError(t, db.First(&saved, "id = ?", run.ID).Error)
+					assert.Equal(t, "partial", saved.Assessment)
+					assert.Equal(t, "unknown", saved.Status)
+					assert.Equal(t, "unknown", saved.UsageState)
+					config, err := model.GetModelFingerprintSiteConfig(t.Context())
+					require.NoError(t, err)
+					assert.True(t, config.AutomaticEnabled)
+					assert.Equal(t, run.ConfigVersion, config.Version)
+					encoded = []byte(saved.FingerprintResult)
+					var probes []model.ModelFingerprintSiteProbe
+					require.NoError(t, db.Where("run_id = ? AND status = ?", run.ID, "completed").Find(&probes).Error)
+					assert.Len(t, probes, accepted)
+				} else {
+					engine := modelTestSwitchEngine(userID, nil)
+					id := uuid.NewString()
+					body := modelTestRequestBody(t, userID, id)
+					response := httptest.NewRecorder()
+					engine.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(body)))
+					require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+					saved, err := model.GetModelTestRun(userID, id)
+					require.NoError(t, err)
+					assert.Equal(t, "partial", saved.Assessment)
+					assert.Contains(t, []string{"timeout", "unknown"}, saved.Status, "a ranking cannot settle an uncertain wallet charge")
+					encoded = saved.FingerprintResult
+					var owners []model.BillingFinalization
+					require.NoError(t, db.Where("user_id = ? AND state = ?", userID, model.BillingDeliveryUnknown).Find(&owners).Error)
+					assert.Len(t, owners, 3-accepted)
+					// Reloading the same result must not issue a replacement probe.
+					replay := httptest.NewRecorder()
+					engine.ServeHTTP(replay, httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(body)))
+					require.Equal(t, http.StatusOK, replay.Code, replay.Body.String())
+				}
+				var report modelfingerprint.Result
+				require.NoError(t, common.Unmarshal(encoded, &report))
+				assert.Equal(t, "partial", report.Status)
+				assert.Equal(t, accepted, report.UsedOutputs)
+				require.Len(t, report.TopCandidates, 1)
+				assert.Nil(t, report.TopCandidates[0].Probability)
+				assert.EqualValues(t, 3, transport.calls.Load())
+			})
+		}
+	}
 }
 
 func installFingerprintParallelTransport(t *testing.T, mode string) *fingerprintParallelTransport {
@@ -128,7 +221,7 @@ func captureFingerprintAnalysis(t *testing.T) *[]modelfingerprint.Sample {
 	var analyzed []modelfingerprint.Sample
 	original := modelFingerprintScorer.analyze
 	modelFingerprintScorer.analyze = func(samples []modelfingerprint.Sample, strict bool) (modelfingerprint.Result, error) {
-		assert.True(t, strict)
+		assert.False(t, strict)
 		analyzed = slices.Clone(samples)
 		return original(samples, strict)
 	}

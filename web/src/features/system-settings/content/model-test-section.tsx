@@ -123,9 +123,9 @@ function ModelTestSettingsForm(props: {
       >
         <SettingsSwitchField
           controlId='model-test-enabled'
-          label={t('Enable model performance tests')}
+          label={t('Enable model intelligence monitoring')}
           description={t(
-            'Turning tests off prevents new runs. Admitted calls can still finish and incur charges; saved history remains available.'
+            'Turning monitoring off stops new tests. Active calls can still finish and incur charges.'
           )}
           checked={values.enabled}
           onCheckedChange={(enabled) => {
@@ -138,7 +138,7 @@ function ModelTestSettingsForm(props: {
         />
         <p className='text-muted-foreground text-sm'>
           {t(
-            'Automatic fingerprint tests are off by default. Each run makes 3 paid calls using normal billing. Saving targets alone does not run tests.'
+            'Automatic model tests are off by default. Each run makes up to 3 paid calls using normal billing. Saving targets alone does not run tests.'
           )}
         </p>
         <div className='grid gap-4 sm:grid-cols-2'>
@@ -213,13 +213,13 @@ function ModelTestSettingsForm(props: {
         {!props.settings.engine_ready && (
           <p role='status' className='text-muted-foreground text-sm'>
             {t(
-              'Fingerprint reference data is not ready. Automatic tests cannot be enabled.'
+              'Model reference data is not ready. Automatic tests cannot be enabled.'
             )}
           </p>
         )}
         <SettingsSwitchField
           controlId='model-test-automatic'
-          label={t('Enable automatic fingerprint tests')}
+          label={t('Enable automatic model tests')}
           description={t(
             'Requires enabled tests and at least one enabled target.'
           )}

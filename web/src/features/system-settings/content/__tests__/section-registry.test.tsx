@@ -167,7 +167,7 @@ test('switching between registered support and model settings saves only the sel
   expect(status.model_test_enabled).toBe(false)
   view.rerender(ui('model-tests'))
   const modelSwitch = await screen.findByRole('switch', {
-    name: 'Enable model performance tests',
+    name: 'Enable model intelligence monitoring',
   })
   expect(modelSwitch).not.toBeChecked()
   expect(

@@ -109,7 +109,7 @@ func setupModelTestsDatabase(t *testing.T, dialect, dsn string) (*gorm.DB, int) 
 		common.SetDatabaseTypes(oldMainType, oldLogType)
 		model.InvalidatePricingCache()
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}, &model.ModelTestRun{}, &model.ModelTestGate{}, &model.ModelFingerprintSiteConfig{}, &model.ModelFingerprintSiteAudit{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.UserCallInterception{}, &model.UserCallInterceptionHit{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}, &model.ModelTestRun{}, &model.ModelTestGate{}, &model.ModelFingerprintSiteConfig{}, &model.ModelFingerprintSiteAudit{}, &model.ModelFingerprintSiteRun{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.UserCallInterception{}, &model.UserCallInterceptionHit{}))
 	// Existing execution scenarios explicitly opt in; switch tests remove/disable it.
 	require.NoError(t, db.Create(&model.Option{Key: model.ModelTestEnabledKey, Value: "true"}).Error)
 	user := model.User{Username: "synthetic-model-test-user", AffCode: "synthetic-test-aff", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", Quota: 1_000_000, QuotaPaid: 1_000_000}

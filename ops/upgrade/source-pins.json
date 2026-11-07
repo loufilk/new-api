@@ -22,17 +22,17 @@
     "pinned_at": "2026-10-31T09:09:00Z",
     "verified_at": "2026-10-31T09:47:00Z"
   },
-  "version": "v1.0.0-rc.48.chuanapi.fp.3",
+  "version": "v1.0.0-rc.48.chuanapi.im.1",
   "current_alignment": {
-    "stage": "fingerprint-repair",
+    "stage": "model-intelligence-monitoring",
     "repository": "loufilk/new-api",
-    "branch": "fix/fingerprint-enabled-targets-20261106",
+    "branch": "feat/new-user-recharge-benefit-20261107",
     "upstream_reference": {
       "repository": "QuantumNous/new-api",
       "commit": "8c8940c999c6c38031dacdd0139cf7b0e1c38308",
       "tree": "274b557e8704de62895b861bd10d21cf955f698e"
     },
-    "verified_at": "2026-11-07T03:57:04Z"
+    "verified_at": "2026-11-07T06:32:28Z"
   },
   "scope": "Records source history only. production_baseline and feature_reference remain historical pins, not evidence of the currently deployed version. This manifest does not authorize a release, main-branch merge or deployment, and does not assert feature parity.",
   "integrated_feature_baseline": {

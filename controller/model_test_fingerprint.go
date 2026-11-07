@@ -121,7 +121,9 @@ func executeModelFingerprint(c *gin.Context) {
 			c.Set("model_test_error_code", outcome.errorCode)
 		}
 	}
-	result, err := modelFingerprintScorer.analyze(samples, true)
+	// The three probes are independent. A timed-out sibling must not discard
+	// complete responses; the scorer marks one/two-sample rankings as partial.
+	result, err := modelFingerprintScorer.analyze(samples, false)
 	if err != nil {
 		c.Set("model_test_error_code", "fingerprint_analysis_failed")
 		return

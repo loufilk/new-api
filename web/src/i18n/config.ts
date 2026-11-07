@@ -25,14 +25,19 @@ import {
   type ExtensionLocaleKey,
 } from '@/extensions'
 
+import {
+  INTERFACE_LANGUAGE_OPTIONS,
+  normalizeInterfaceLanguage,
+  type InterfaceLanguageCode,
+} from './languages'
+
 type Bundle = { translation: Record<string, string> }
 type LocaleModule = { default: Bundle } | Bundle
 
-const SUPPORTED_LNGS = ['en', 'zhCN', 'fr', 'ru', 'ja', 'vi', 'zhTW'] as const
-
-type SupportedLng = (typeof SUPPORTED_LNGS)[number]
-
-const coreLocaleLoaders: Record<SupportedLng, () => Promise<LocaleModule>> = {
+const coreLocaleLoaders: Record<
+  InterfaceLanguageCode,
+  () => Promise<LocaleModule>
+> = {
   en: () => import('./locales/en.json'),
   zhCN: () => import('./locales/zh.json'),
   fr: () => import('./locales/fr.json'),
@@ -42,28 +47,6 @@ const coreLocaleLoaders: Record<SupportedLng, () => Promise<LocaleModule>> = {
   zhTW: () => import('./locales/zh-TW.json'),
 }
 
-function resolveSupportedLanguage(language: string): SupportedLng {
-  const normalized = language.trim().replaceAll('_', '-').toLowerCase()
-  if (normalized.startsWith('zh')) {
-    if (
-      normalized === 'zh-tw' ||
-      normalized === 'zh-hk' ||
-      normalized === 'zh-mo' ||
-      normalized.startsWith('zh-hant') ||
-      language === 'zhTW'
-    ) {
-      return 'zhTW'
-    }
-    return 'zhCN'
-  }
-
-  const base = normalized.split('-')[0]
-  if (base === 'fr' || base === 'ru' || base === 'ja' || base === 'vi') {
-    return base
-  }
-  return 'en'
-}
-
 function normalizeBundle(module: LocaleModule): Bundle {
   if (module && typeof module === 'object' && 'default' in module) {
     return module.default
@@ -71,7 +54,9 @@ function normalizeBundle(module: LocaleModule): Bundle {
   return module
 }
 
-async function loadLocalizedBundle(locale: SupportedLng): Promise<Bundle> {
+async function loadLocalizedBundle(
+  locale: InterfaceLanguageCode
+): Promise<Bundle> {
   const [coreModule, extension] = await Promise.all([
     coreLocaleLoaders[locale](),
     loadExtensionI18nOverride(locale as ExtensionLocaleKey),
@@ -93,7 +78,7 @@ const localeBackend: BackendModule = {
     void (async () => {
       try {
         const bundle = await loadLocalizedBundle(
-          resolveSupportedLanguage(language)
+          normalizeInterfaceLanguage(language)
         )
         callback(null, bundle.translation)
       } catch (error) {
@@ -117,7 +102,9 @@ export function initI18n(): Promise<typeof i18n> {
     .use(initReactI18next)
     .init({
       fallbackLng: 'en',
-      supportedLngs: [...SUPPORTED_LNGS],
+      supportedLngs: INTERFACE_LANGUAGE_OPTIONS.map(
+        (language) => language.code
+      ),
       load: 'currentOnly',
       nsSeparator: false,
       debug: import.meta.env.DEV,
@@ -127,7 +114,7 @@ export function initI18n(): Promise<typeof i18n> {
       detection: {
         order: ['localStorage', 'navigator'],
         caches: ['localStorage'],
-        convertDetectedLanguage: resolveSupportedLanguage,
+        convertDetectedLanguage: normalizeInterfaceLanguage,
       },
     })
     .then(() => i18n)

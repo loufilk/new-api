@@ -18,13 +18,49 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { TestRun } from './types'
 
-export function effectiveFingerprintRuns(runs: TestRun[]) {
-  return runs
-    .filter(
-      (run) =>
-        run.status === 'completed' &&
-        run.fingerprint_result?.status === 'scored'
+export type ModelCapability = 'full' | 'reduced'
+
+export function modelCapability(run: TestRun): ModelCapability | null {
+  if (['running', 'cancelled', 'intercepted'].includes(run.status)) return null
+  const result = run.fingerprint_result
+  if (!result) return null
+  if (
+    result.status === 'not_model' &&
+    result.used_outputs > 0 &&
+    result.sample_quality.some((sample) => sample.accepted)
+  ) {
+    return 'reduced'
+  }
+  if (
+    (result.status === 'scored' || result.status === 'partial') &&
+    result.used_outputs > 0 &&
+    result.top_candidates.length > 0
+  ) {
+    return 'full'
+  }
+  if (
+    result.status === 'unscorable' &&
+    result.used_outputs === 0 &&
+    result.sample_quality.some(
+      (sample) => sample.reason === 'insufficient_numbers'
+    ) &&
+    !result.sample_quality.some(
+      (sample) => sample.reason === 'non_model_response'
     )
+  ) {
+    return 'reduced'
+  }
+  return null
+}
+
+export function latestModelTestRuns(runs: TestRun[]): TestRun[] {
+  return [...runs]
     .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
     .slice(-60)
+}
+
+export function effectiveFingerprintRuns(runs: TestRun[]): TestRun[] {
+  return latestModelTestRuns(
+    runs.filter((run) => modelCapability(run) !== null)
+  )
 }

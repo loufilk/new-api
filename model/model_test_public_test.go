@@ -39,12 +39,13 @@ func TestModelTestPublicFingerprintWhitelist(t *testing.T) {
 	}
 }
 
-// Uses TestMain's real SQLite/MySQL/PostgreSQL fixture without dialect-specific SQL.
 func TestListPublicModelTestRunsCrossUserAndLimits(t *testing.T) {
-	require.NoError(t, DB.AutoMigrate(&ModelTestRun{}))
+	ctx, config, _ := fingerprintSiteFixture(t)
 	prefix := uuid.NewString()[:8]
 	modelName := "public-" + prefix
-	t.Cleanup(func() { require.NoError(t, DB.Where("model = ?", modelName).Delete(&ModelTestRun{}).Error) })
+	config.Targets = []ModelFingerprintSiteTarget{{Group: "default", Model: modelName, Enabled: true}, {Group: "premium", Model: modelName, Enabled: true}}
+	_, err := UpdateModelFingerprintSiteConfig(ctx, config.Version, 7, *config)
+	require.NoError(t, err)
 	runs := make([]ModelTestRun, 0)
 	for i := range 61 {
 		runs = append(runs, ModelTestRun{ID: fmt.Sprintf("%s-score-%02d", prefix, i), Source: "user", UserID: i%2 + 1, Model: modelName, Group: "default", BenchmarkID: "local-fingerprint-v1", Status: "completed", Assessment: "scored", CreatedAt: int64(i + 1), CompletedAt: int64(i + 2), FingerprintResult: JSONValue(`{"status":"scored"}`)})
@@ -71,13 +72,16 @@ func TestListPublicModelTestRunsCrossUserAndLimits(t *testing.T) {
 			assert.Equal(t, "user", run.Source)
 		}
 	}
-	require.Len(t, ids, 66)
-	assert.Contains(t, ids, prefix+"-score-01") // owned by the other user
+	require.Len(t, ids, 61)
+	assert.Contains(t, ids, prefix+"-score-09") // owned by the other user
 	assert.NotContains(t, ids, prefix+"-score-00")
 	assert.Contains(t, ids, prefix+"-other-group")
 	assert.Contains(t, ids, prefix+"-unscored")
-	for _, suffix := range []string{"running", "legacy", "site", "fail-0", "fail-1", "fail-2"} {
+	for _, suffix := range []string{"running", "legacy", "site", "score-08"} {
 		assert.NotContains(t, ids, prefix+"-"+suffix)
+	}
+	for _, suffix := range []string{"fail-0", "fail-1", "fail-2"} {
+		assert.Contains(t, ids, prefix+"-"+suffix, "recent failures occupy the same bounded result window")
 	}
 	_, err = GetModelTestRun(1, prefix+"-score-01")
 	require.Error(t, err)
