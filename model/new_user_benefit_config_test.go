@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -16,6 +17,12 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+func newUserBenefitTestConfig(enabled bool, payCents, creditCents int64) NewUserBenefitConfig {
+	config := defaultNewUserBenefitConfig()
+	config.Enabled, config.PayAmountCents, config.CreditAmountCents = enabled, payCents, creditCents
+	return config
+}
 
 func newUserBenefitConfigFixture(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -75,6 +82,34 @@ func TestNewUserBenefitCNYValidation(t *testing.T) {
 	require.ErrorIs(t, ValidateNewUserBenefitConfig(NewUserBenefitConfig{PayAmountCents: 100, CreditAmountCents: 99}), ErrNewUserBenefitInvalidConfig)
 }
 
+func TestNewUserBenefitRiskConfigValidation(t *testing.T) {
+	for _, field := range []string{"total_orders", "rolling_orders", "network_orders", "bonus_budget"} {
+		for _, value := range []int64{0, -1, 1_000_001} {
+			t.Run(field+"_"+fmt.Sprint(value), func(t *testing.T) {
+				config := newUserBenefitTestConfig(true, 10, 100)
+				switch field {
+				case "total_orders":
+					config.MaxTotalOrders = value
+				case "rolling_orders":
+					config.MaxOrdersPer24h = value
+				case "network_orders":
+					config.MaxOrdersPerNetwork24h = value
+				case "bonus_budget":
+					if value > 0 {
+						value = MaxNewUserBenefitCents + 1
+					}
+					config.TotalBonusBudgetCents = value
+				}
+				require.ErrorIs(t, ValidateNewUserBenefitConfig(config), ErrNewUserBenefitInvalidConfig)
+			})
+		}
+	}
+	config := newUserBenefitTestConfig(true, 10, 100)
+	config.MaxTotalOrders, config.MaxOrdersPer24h = MaxNewUserBenefitOrders, MaxNewUserBenefitOrders
+	config.MaxOrdersPerNetwork24h, config.TotalBonusBudgetCents = MaxNewUserBenefitNetworkOrders, MaxNewUserBenefitCents
+	require.NoError(t, ValidateNewUserBenefitConfig(config))
+}
+
 func TestNewUserBenefitConfigPostgresAtomicVersionedSettings(t *testing.T) {
 	db := newUserBenefitConfigFixture(t)
 	initial, err := GetNewUserBenefitConfig(t.Context())
@@ -82,13 +117,17 @@ func TestNewUserBenefitConfigPostgresAtomicVersionedSettings(t *testing.T) {
 	assert.False(t, initial.Enabled)
 	assert.EqualValues(t, 10, initial.PayAmountCents)
 	assert.EqualValues(t, 100, initial.CreditAmountCents)
+	assert.EqualValues(t, 1000, initial.MaxTotalOrders)
+	assert.EqualValues(t, 100, initial.MaxOrdersPer24h)
+	assert.EqualValues(t, 3, initial.MaxOrdersPerNetwork24h)
+	assert.EqualValues(t, 90000, initial.TotalBonusBudgetCents)
 	assert.Zero(t, initial.Version)
 
-	next, err := UpdateNewUserBenefitConfig(t.Context(), 0, 7, NewUserBenefitConfig{Enabled: true, PayAmountCents: 10, CreditAmountCents: 100})
+	next, err := UpdateNewUserBenefitConfig(t.Context(), 0, 7, newUserBenefitTestConfig(true, 10, 100))
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, next.Version)
 	assert.Equal(t, 7, next.UpdatedBy)
-	_, err = UpdateNewUserBenefitConfig(t.Context(), 0, 8, NewUserBenefitConfig{Enabled: false, PayAmountCents: 20, CreditAmountCents: 200})
+	_, err = UpdateNewUserBenefitConfig(t.Context(), 0, 8, newUserBenefitTestConfig(false, 20, 200))
 	require.ErrorIs(t, err, ErrNewUserBenefitConfigChanged)
 	_, err = UpdateNewUserBenefitConfig(t.Context(), 1, 8, NewUserBenefitConfig{PayAmountCents: 100, CreditAmountCents: 10})
 	require.ErrorIs(t, err, ErrNewUserBenefitInvalidConfig)
@@ -105,11 +144,15 @@ func TestNewUserBenefitConfigPostgresAtomicVersionedSettings(t *testing.T) {
 	require.Len(t, audit, 1)
 	assert.EqualValues(t, 10, audit[0].PayAmountCents)
 	assert.EqualValues(t, 100, audit[0].CreditAmountCents)
+	assert.Equal(t, next.MaxTotalOrders, audit[0].MaxTotalOrders)
+	assert.Equal(t, next.MaxOrdersPer24h, audit[0].MaxOrdersPer24h)
+	assert.Equal(t, next.MaxOrdersPerNetwork24h, audit[0].MaxOrdersPerNetwork24h)
+	assert.Equal(t, next.TotalBonusBudgetCents, audit[0].TotalBonusBudgetCents)
 	assert.Equal(t, 7, audit[0].ActorID)
 
 	// A failed audit insert must roll back all price and switch changes.
 	require.NoError(t, db.Create(&NewUserBenefitConfigAudit{Version: 2, ActorID: 9}).Error)
-	_, err = UpdateNewUserBenefitConfig(t.Context(), 1, 8, NewUserBenefitConfig{Enabled: false, PayAmountCents: 20, CreditAmountCents: 200})
+	_, err = UpdateNewUserBenefitConfig(t.Context(), 1, 8, newUserBenefitTestConfig(false, 20, 200))
 	require.Error(t, err)
 	persisted, err = GetNewUserBenefitConfig(t.Context())
 	require.NoError(t, err)
@@ -119,8 +162,8 @@ func TestNewUserBenefitConfigPostgresAtomicVersionedSettings(t *testing.T) {
 func TestNewUserBenefitConfigPostgresConcurrentFirstSave(t *testing.T) {
 	db := newUserBenefitConfigFixture(t)
 	offers := []NewUserBenefitConfig{
-		{Enabled: true, PayAmountCents: 10, CreditAmountCents: 100},
-		{Enabled: false, PayAmountCents: 20, CreditAmountCents: 200},
+		newUserBenefitTestConfig(true, 10, 100),
+		newUserBenefitTestConfig(false, 20, 200),
 	}
 	start := make(chan struct{})
 	errorsBySave := make([]error, len(offers))

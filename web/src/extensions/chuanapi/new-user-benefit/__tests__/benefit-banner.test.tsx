@@ -75,6 +75,8 @@ beforeEach(() => {
     bonus_quota: 64286,
     config_version: 1,
     pay_methods: [{ type: 'alipay', name: 'Alipay' }],
+    turnstile_required: false,
+    turnstile_site_key: '',
   }
   submitted = []
   useAuthStore.getState().auth.setUser({ id: 7, username: 'newcomer', role: 1 })

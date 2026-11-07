@@ -17,10 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Gift, Loader2 } from 'lucide-react'
-import { useId } from 'react'
+import { useCallback, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { Turnstile } from '@/components/turnstile'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 
@@ -33,20 +34,47 @@ interface BenefitDialogProps {
   selectedMethod: string
   processing: boolean
   notice?: string
+  turnstileRequired: boolean
+  turnstileSiteKey: string
   onMethodChange: (method: string) => void
   onOpenChange: (open: boolean) => void
-  onConfirm: () => void
+  onConfirm: (turnstile: string) => void
 }
 
 export function BenefitDialog(props: BenefitDialogProps) {
   const { t, i18n } = useTranslation()
   const methodLabelId = useId()
+  const [turnstileToken, setTurnstileToken] = useState('')
+  const [widgetKey, setWidgetKey] = useState(0)
+  const proof = useRef('')
+  const onVerify = useCallback((token: string) => {
+    proof.current = token
+    setTurnstileToken(token)
+  }, [])
+  const onExpire = useCallback(() => {
+    proof.current = ''
+    setTurnstileToken('')
+  }, [])
   const locale = i18n.resolvedLanguage || i18n.language
   const pay = formatBenefitCny(props.offer.payAmount, locale)
   const credit = formatBenefitCny(props.offer.creditAmount, locale)
   const methodAvailable = props.offer.methods.some(
     (method) => method.type === props.selectedMethod
   )
+  const verificationReady =
+    !props.turnstileRequired ||
+    Boolean(props.turnstileSiteKey && turnstileToken)
+
+  const confirm = () => {
+    if (props.processing || !methodAvailable || !verificationReady) return
+    const submittedProof = props.turnstileRequired ? proof.current : ''
+    if (props.turnstileRequired && !submittedProof) return
+    // Consume synchronously before starting the request. A second click or a
+    // failed request cannot reuse a proof that Siteverify may have consumed.
+    onExpire()
+    setWidgetKey((current) => current + 1)
+    props.onConfirm(submittedProof)
+  }
 
   return (
     <ConfirmDialog
@@ -76,8 +104,8 @@ export function BenefitDialog(props: BenefitDialogProps) {
         </span>
       }
       isLoading={props.processing}
-      disabled={!methodAvailable}
-      handleConfirm={props.onConfirm}
+      disabled={!methodAvailable || !verificationReady}
+      handleConfirm={confirm}
       className='max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-md'
     >
       <div className='space-y-4'>
@@ -142,11 +170,51 @@ export function BenefitDialog(props: BenefitDialogProps) {
             </AlertDescription>
           </Alert>
         )}
+        {props.turnstileRequired && (
+          <div
+            className='space-y-2'
+            role='group'
+            aria-label={t('Security verification')}
+          >
+            {props.turnstileSiteKey ? (
+              <>
+                <p className='text-muted-foreground text-sm'>
+                  {t(
+                    'Complete the security verification before claiming the new user benefit'
+                  )}
+                </p>
+                <Turnstile
+                  key={widgetKey}
+                  siteKey={props.turnstileSiteKey}
+                  action='new_user_benefit'
+                  onVerify={onVerify}
+                  onExpire={onExpire}
+                  className='min-w-0 overflow-x-auto'
+                />
+              </>
+            ) : (
+              <Alert>
+                <AlertDescription>
+                  {t(
+                    'Security verification is temporarily unavailable. Please try again later.'
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
+        )}
         <p className='text-muted-foreground text-xs'>
           {t(
             'One benefit per account before its first successful recharge. Amounts are in CNY.'
           )}
         </p>
+        {!props.offer.orderId && (
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'A verified email is required. Each account and verified email can reserve this benefit once, subject to availability.'
+            )}
+          </p>
+        )}
       </div>
     </ConfirmDialog>
   )

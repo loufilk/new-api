@@ -18,6 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { type QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterContextProvider,
+} from '@tanstack/react-router'
+import {
   cleanup,
   fireEvent,
   render,
@@ -42,7 +48,7 @@ import {
 
 import { RechargeHistoryButton } from '../../wallet/components/recharge-history-dialog'
 import { NewUserBenefitSettings } from '../benefit-settings'
-import type { NewUserBenefitConfig } from '../types'
+import type { BenefitConfigUpdate, NewUserBenefitConfig } from '../types'
 
 let config: NewUserBenefitConfig
 let clients: QueryClient[] = []
@@ -63,6 +69,14 @@ beforeEach(() => {
     enabled: false,
     pay_amount_cny: '0.10',
     credit_amount_cny: '1.00',
+    max_total_orders: 1000,
+    max_orders_per_24h: 100,
+    max_orders_per_network_24h: 3,
+    total_bonus_budget_cny: '900.00',
+    reserved_orders: 0,
+    reserved_bonus_cny: '0.00',
+    reserved_orders_24h: 0,
+    turnstile_ready: true,
     version: 1,
   }
   useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
@@ -88,11 +102,17 @@ function renderSettings(content = <Settings />) {
     mutations: { retry: false },
   })
   clients.push(client)
+  const router = createRouter({
+    routeTree: createRootRoute(),
+    history: createMemoryHistory({ initialEntries: ['/'] }),
+  })
   return {
     user: userEvent.setup(),
     client,
     ...render(
-      <QueryClientProvider client={client}>{content}</QueryClientProvider>
+      <QueryClientProvider client={client}>
+        <RouterContextProvider router={router}>{content}</RouterContextProvider>
+      </QueryClientProvider>
     ),
   }
 }
@@ -132,6 +152,10 @@ test('the defaults are disabled and a single save atomically submits amounts and
     enabled: true,
     pay_amount_cny: '0.20',
     credit_amount_cny: '2.00',
+    max_total_orders: 1000,
+    max_orders_per_24h: 100,
+    max_orders_per_network_24h: 3,
+    total_bonus_budget_cny: '900.00',
     version: 1,
   })
   await waitFor(() =>
@@ -139,6 +163,145 @@ test('the defaults are disabled and a single save atomically submits amounts and
       screen.getByRole('button', { name: 'Save recharge benefit' })
     ).toBeDisabled()
   )
+})
+
+test('limits and prices save together while reservation statistics remain read-only', async () => {
+  config.reserved_orders = 17
+  config.reserved_orders_24h = 4
+  config.reserved_bonus_cny = '15.30'
+  const put = vi
+    .spyOn(api, 'put')
+    .mockImplementation(async (_url, request) => ({
+      data: {
+        success: true,
+        data: { ...config, ...(request as BenefitConfigUpdate), version: 2 },
+      },
+    }))
+  const { user } = renderSettings()
+  const summary = await screen.findByRole('region', {
+    name: 'Benefit reservations',
+  })
+  expect(summary).toHaveTextContent('17')
+  expect(summary).toHaveTextContent('CN¥15.30')
+  expect(summary).toHaveTextContent('Reservations include pending payments.')
+  expect(screen.getByLabelText('Total benefit order limit')).toHaveValue('1000')
+  expect(screen.getByLabelText('Benefit order limit per 24 hours')).toHaveValue(
+    '100'
+  )
+  expect(
+    screen.getByLabelText('Benefit order limit per network per 24 hours')
+  ).toHaveValue('3')
+  expect(screen.getByLabelText('Total bonus credit limit (CNY)')).toHaveValue(
+    '900.00'
+  )
+  fireEvent.change(screen.getByLabelText('Total benefit order limit'), {
+    target: { value: '200' },
+  })
+  fireEvent.change(screen.getByLabelText('Benefit order limit per 24 hours'), {
+    target: { value: '50' },
+  })
+  fireEvent.change(
+    screen.getByLabelText('Benefit order limit per network per 24 hours'),
+    { target: { value: '2' } }
+  )
+  fireEvent.change(screen.getByLabelText('Total bonus credit limit (CNY)'), {
+    target: { value: '180' },
+  })
+  await user.click(
+    screen.getByRole('button', { name: 'Save recharge benefit' })
+  )
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+  expect(put.mock.calls[0][1]).toEqual({
+    enabled: false,
+    pay_amount_cny: '0.10',
+    credit_amount_cny: '1.00',
+    max_total_orders: 200,
+    max_orders_per_24h: 50,
+    max_orders_per_network_24h: 2,
+    total_bonus_budget_cny: '180.00',
+    version: 1,
+  })
+})
+
+test.each([
+  ['Total benefit order limit', '0', '1,000,000'],
+  ['Total benefit order limit', '1000001', '1,000,000'],
+  ['Benefit order limit per 24 hours', '1.5', '1,000,000'],
+  ['Benefit order limit per 24 hours', '1e3', '1,000,000'],
+  ['Benefit order limit per network per 24 hours', '-1', '10,000'],
+  ['Benefit order limit per network per 24 hours', '10001', '10,000'],
+  ['Benefit order limit per network per 24 hours', '', '10,000'],
+])('invalid %s value %s cannot be saved', async (label, value, maximum) => {
+  const put = vi.spyOn(api, 'put')
+  const { user } = renderSettings()
+  const input = await screen.findByLabelText(label)
+  fireEvent.change(input, { target: { value } })
+  await user.click(
+    screen.getByRole('button', { name: 'Save recharge benefit' })
+  )
+  expect(
+    await screen.findByText(`Enter a whole number from 1 to ${maximum}.`)
+  ).toBeVisible()
+  expect(input).toHaveAttribute('aria-invalid', 'true')
+  expect(put).not.toHaveBeenCalled()
+})
+
+test.each(['0', '900.001', '1000000.01'])(
+  'invalid bonus budget %s cannot be saved',
+  async (value) => {
+    const put = vi.spyOn(api, 'put')
+    const { user } = renderSettings()
+    fireEvent.change(
+      await screen.findByLabelText('Total bonus credit limit (CNY)'),
+      { target: { value } }
+    )
+    await user.click(
+      screen.getByRole('button', { name: 'Save recharge benefit' })
+    )
+    expect(
+      await screen.findByText(
+        'Enter a CNY amount from 0.01 to 1,000,000.00 with at most two decimal places.'
+      )
+    ).toBeVisible()
+    expect(put).not.toHaveBeenCalled()
+  }
+)
+
+test('missing Turnstile configuration blocks activation and links to existing bot protection settings', async () => {
+  config.turnstile_ready = false
+  const put = vi.spyOn(api, 'put')
+  renderSettings()
+  const enabled = await screen.findByRole('switch', {
+    name: 'Enable new user recharge benefit',
+  })
+  expect(enabled).toHaveAttribute('aria-disabled', 'true')
+  expect(enabled).not.toBeChecked()
+  expect(
+    screen.getByRole('link', { name: 'Configure bot protection' })
+  ).toHaveAttribute('href', '/system-settings/auth/bot-protection')
+  expect(
+    screen.getByRole('region', { name: 'Benefit reservations' })
+  ).toHaveTextContent('CN¥0.00')
+  expect(put).not.toHaveBeenCalled()
+})
+
+test('an enabled offer can still be disabled after Turnstile becomes unavailable', async () => {
+  config.enabled = true
+  config.turnstile_ready = false
+  const put = vi.spyOn(api, 'put').mockResolvedValue({
+    data: { success: true, data: { ...config, enabled: false, version: 2 } },
+  })
+  const { user } = renderSettings()
+  const enabled = await screen.findByRole('switch', {
+    name: 'Enable new user recharge benefit',
+  })
+  expect(enabled).not.toHaveAttribute('aria-disabled', 'true')
+  await user.click(enabled)
+  await user.click(
+    screen.getByRole('button', { name: 'Save recharge benefit' })
+  )
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+  expect(put.mock.calls[0][1]).toMatchObject({ enabled: false })
 })
 
 test.each(['0', '-0.1', '0.001', 'NaN', 'Infinity', '1e3', '1000000.01', ''])(

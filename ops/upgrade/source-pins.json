@@ -22,7 +22,7 @@
     "pinned_at": "2026-10-31T09:09:00Z",
     "verified_at": "2026-10-31T09:47:00Z"
   },
-  "version": "v1.0.0-rc.48.chuanapi.im.2",
+  "version": "v1.0.0-rc.48.chuanapi.im.3",
   "current_alignment": {
     "stage": "api-key-group-selection",
     "repository": "loufilk/new-api",

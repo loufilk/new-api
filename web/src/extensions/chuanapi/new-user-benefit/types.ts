@@ -22,11 +22,22 @@ export interface BenefitPaymentMethod {
   icon?: string
 }
 
-export interface NewUserBenefitConfig {
+export interface BenefitConfigUpdate {
   enabled: boolean
   pay_amount_cny: string
   credit_amount_cny: string
+  max_total_orders: number
+  max_orders_per_24h: number
+  max_orders_per_network_24h: number
+  total_bonus_budget_cny: string
   version: number
+}
+
+export interface NewUserBenefitConfig extends BenefitConfigUpdate {
+  reserved_orders: number
+  reserved_bonus_cny: string
+  reserved_orders_24h: number
+  turnstile_ready: boolean
 }
 
 export interface BenefitOrder {
@@ -48,6 +59,15 @@ export interface NewUserBenefitInfo {
   config_version: number
   pay_methods: BenefitPaymentMethod[]
   pending_order?: BenefitOrder
+  blocked_reason?:
+    | ''
+    | 'email_verification_required'
+    | 'identity_already_used'
+    | 'limit_reached'
+    | 'verification_unavailable'
+    | 'unavailable'
+  turnstile_required: boolean
+  turnstile_site_key: string
 }
 
 export interface BenefitOffer {

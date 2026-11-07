@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -33,16 +34,34 @@ type newUserBenefitPendingOrder struct {
 }
 
 type newUserBenefitResponse struct {
-	Enabled         bool                        `json:"enabled"`
-	Eligible        bool                        `json:"eligible"`
-	Status          string                      `json:"status"`
-	PayAmountCNY    string                      `json:"pay_amount_cny"`
-	CreditAmountCNY string                      `json:"credit_amount_cny"`
-	PaidQuota       int                         `json:"paid_quota"`
-	BonusQuota      int                         `json:"bonus_quota"`
-	ConfigVersion   int64                       `json:"config_version"`
-	PayMethods      []newUserBenefitPayMethod   `json:"pay_methods"`
-	PendingOrder    *newUserBenefitPendingOrder `json:"pending_order,omitempty"`
+	Enabled           bool                        `json:"enabled"`
+	Eligible          bool                        `json:"eligible"`
+	Status            string                      `json:"status"`
+	PayAmountCNY      string                      `json:"pay_amount_cny"`
+	CreditAmountCNY   string                      `json:"credit_amount_cny"`
+	PaidQuota         int                         `json:"paid_quota"`
+	BonusQuota        int                         `json:"bonus_quota"`
+	ConfigVersion     int64                       `json:"config_version"`
+	PayMethods        []newUserBenefitPayMethod   `json:"pay_methods"`
+	PendingOrder      *newUserBenefitPendingOrder `json:"pending_order,omitempty"`
+	BlockedReason     string                      `json:"blocked_reason,omitempty"`
+	TurnstileRequired bool                        `json:"turnstile_required"`
+	TurnstileSiteKey  string                      `json:"turnstile_site_key,omitempty"`
+}
+
+type newUserBenefitVerificationConfig struct {
+	Enabled bool
+	Ready   bool
+	SiteKey string
+}
+
+func snapshotNewUserBenefitVerification() newUserBenefitVerificationConfig {
+	common.OptionMapRWMutex.RLock()
+	defer common.OptionMapRWMutex.RUnlock()
+	_, hostnameErr := system_setting.PublicSiteHostname()
+	config := newUserBenefitVerificationConfig{Enabled: common.TurnstileCheckEnabled, SiteKey: strings.TrimSpace(common.TurnstileSiteKey)}
+	config.Ready = config.Enabled && config.SiteKey != "" && strings.TrimSpace(common.TurnstileSecretKey) != "" && hostnameErr == nil
+	return config
 }
 
 // A configured payment list can also contain the dedicated Stripe, Creem or
@@ -127,6 +146,16 @@ func writeNewUserBenefitError(c *gin.Context, err error) {
 		status, code, message = http.StatusConflict, "new_user_benefit_config_changed", "New user benefit settings have changed. Refresh and try again"
 	case errors.Is(err, model.ErrNewUserBenefitIneligible), errors.Is(err, model.ErrNewUserBenefitClaimed):
 		status, code, message = http.StatusForbidden, "new_user_benefit_ineligible", "This account is not eligible for the new user benefit"
+	case errors.Is(err, model.ErrNewUserBenefitEmailRequired):
+		status, code, message = http.StatusForbidden, "new_user_benefit_email_required", "Verify your email address before claiming the new user benefit"
+	case errors.Is(err, model.ErrNewUserBenefitIdentityUsed):
+		status, code, message = http.StatusForbidden, "new_user_benefit_identity_used", "This account is not eligible for the new user benefit"
+	case errors.Is(err, model.ErrNewUserBenefitLimitReached):
+		status, code, message = http.StatusTooManyRequests, "new_user_benefit_limit_reached", "The new user benefit limit has been reached. Please try again later"
+	case errors.Is(err, model.ErrNewUserBenefitVerificationRequired):
+		status, code, message = http.StatusForbidden, "new_user_benefit_verification_required", "Complete the security verification before claiming the new user benefit"
+	case errors.Is(err, model.ErrNewUserBenefitInvalidNetwork):
+		status, code, message = http.StatusForbidden, "new_user_benefit_invalid_network", "The new user benefit is unavailable from this network"
 	case errors.Is(err, model.ErrNewUserBenefitOrderConflict):
 		status = http.StatusConflict
 	case errors.Is(err, model.ErrNewUserBenefitUnavailable), errors.Is(err, model.ErrNewUserBenefitInvalidConfig):
@@ -163,7 +192,10 @@ func GetNewUserBenefit(c *gin.Context) {
 		CreditAmountCNY: model.FormatNewUserBenefitCNY(state.Config.CreditAmountCents),
 		PaidQuota:       state.PaidQuota, BonusQuota: state.BonusQuota,
 		ConfigVersion: state.Config.Version, PayMethods: []newUserBenefitPayMethod{},
+		BlockedReason: state.BlockedReason,
 	}
+	verification := snapshotNewUserBenefitVerification()
+	response.TurnstileRequired, response.TurnstileSiteKey = verification.Enabled, verification.SiteKey
 	payment := snapshotNewUserBenefitPayment()
 	if payment != nil {
 		response.Enabled = state.Config.Enabled
@@ -191,6 +223,16 @@ func GetNewUserBenefit(c *gin.Context) {
 				}
 			}
 		}
+	}
+	if response.Eligible && len(response.PayMethods) == 0 {
+		response.Eligible, response.BlockedReason = false, "unavailable"
+	}
+	if !verification.Ready && (state.Status == model.NewUserBenefitStatusAvailable ||
+		state.Status == model.NewUserBenefitStatusPending && verification.Enabled) {
+		response.Eligible, response.BlockedReason = false, "verification_unavailable"
+	}
+	if !response.Eligible {
+		response.PayMethods = []newUserBenefitPayMethod{}
 	}
 	common.ApiSuccess(c, response)
 }
@@ -229,8 +271,15 @@ func RequestNewUserBenefitPay(c *gin.Context) {
 	}
 	// Account uniqueness provides durable idempotency across tabs, different
 	// request IDs and instances. A pending order always keeps its original terms.
-	order, err := model.ReserveNewUserBenefit(c.Request.Context(), userID, *request.ConfigVersion, request.PaymentMethod, strings.TrimSpace(payment.Client.Config.PartnerID), tradeNo)
+	verification := snapshotNewUserBenefitVerification()
+	order, err := model.ReserveNewUserBenefit(c.Request.Context(), userID, *request.ConfigVersion, request.PaymentMethod, strings.TrimSpace(payment.Client.Config.PartnerID), tradeNo, model.NewUserBenefitRiskContext{
+		ClientIP: c.ClientIP(), HumanVerified: verification.Ready && c.GetString("turnstile_verified_action") == "new_user_benefit",
+	})
 	if err != nil {
+		if errors.Is(err, model.ErrNewUserBenefitVerificationRequired) && !verification.Ready {
+			common.ApiErrorStatus(c, http.StatusServiceUnavailable, common.NewMessage("New user benefit security verification is currently unavailable"), gin.H{"code": "new_user_benefit_verification_unavailable"})
+			return
+		}
 		writeNewUserBenefitError(c, err)
 		return
 	}

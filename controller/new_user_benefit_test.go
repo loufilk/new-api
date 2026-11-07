@@ -18,6 +18,10 @@ import (
 )
 
 func newUserBenefitTestRequest(handler gin.HandlerFunc, userID int, body, requestID string) *httptest.ResponseRecorder {
+	return newUserBenefitTestRequestWithRisk(handler, userID, body, requestID, "new_user_benefit", "203.0.113.10:12345")
+}
+
+func newUserBenefitTestRequestWithRisk(handler gin.HandlerFunc, userID int, body, requestID, verifiedAction, remoteAddress string) *httptest.ResponseRecorder {
 	response := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(response)
 	method, path := http.MethodGet, "/api/user/new-user-benefit"
@@ -25,11 +29,13 @@ func newUserBenefitTestRequest(handler gin.HandlerFunc, userID int, body, reques
 		method, path = http.MethodPost, path+"/pay"
 	}
 	c.Request = httptest.NewRequest(method, path, strings.NewReader(body))
+	c.Request.RemoteAddr = remoteAddress
 	c.Request.Header.Set("Content-Type", "application/json")
 	if requestID != "" {
 		c.Request.Header.Set("Idempotency-Key", requestID)
 	}
 	c.Set("id", userID)
+	c.Set("turnstile_verified_action", verifiedAction)
 	handler(c)
 	return response
 }
@@ -39,13 +45,16 @@ func configureNewUserBenefitEpayTest(t *testing.T) {
 	confirmPaymentComplianceForTest(t)
 	oldAddress, oldID, oldKey, oldMethods := operation_setting.PayAddress, operation_setting.EpayId, operation_setting.EpayKey, operation_setting.PayMethods
 	oldServer, oldCallback := system_setting.ServerAddress, operation_setting.CustomCallbackAddress
+	oldTurnstile, oldSiteKey, oldSecret := common.TurnstileCheckEnabled, common.TurnstileSiteKey, common.TurnstileSecretKey
 	t.Cleanup(func() {
 		operation_setting.PayAddress, operation_setting.EpayId, operation_setting.EpayKey, operation_setting.PayMethods = oldAddress, oldID, oldKey, oldMethods
 		system_setting.ServerAddress, operation_setting.CustomCallbackAddress = oldServer, oldCallback
+		common.TurnstileCheckEnabled, common.TurnstileSiteKey, common.TurnstileSecretKey = oldTurnstile, oldSiteKey, oldSecret
 	})
 	operation_setting.PayAddress, operation_setting.EpayId, operation_setting.EpayKey = "https://pay.example.test", "new-user-test-merchant", "new-user-synthetic-key"
 	operation_setting.PayMethods = []map[string]string{{"type": "alipay", "name": "支付宝"}, {"type": "wxpay", "name": "微信"}, {"type": "stripe", "name": "Stripe"}}
 	system_setting.ServerAddress, operation_setting.CustomCallbackAddress = "https://console.example.test", ""
+	common.TurnstileCheckEnabled, common.TurnstileSiteKey, common.TurnstileSecretKey = true, "new-user-public-site-key", "new-user-synthetic-turnstile-secret"
 }
 
 func TestNewUserBenefitRejectsInvalidIntentBeforeDatabaseAccess(t *testing.T) {
@@ -69,6 +78,9 @@ func TestNewUserBenefitRejectsInvalidIntentBeforeDatabaseAccess(t *testing.T) {
 		{"client credit", `{"payment_method":"alipay","config_version":1,"credit_amount_cny":"9.00"}`, validID},
 		{"client quota", `{"payment_method":"alipay","config_version":1,"paid_quota":500000}`, validID},
 		{"client identity", `{"payment_method":"alipay","config_version":1,"user_id":7}`, validID},
+		{"client verification marker", `{"payment_method":"alipay","config_version":1,"human_verified":true}`, validID},
+		{"client network", `{"payment_method":"alipay","config_version":1,"client_ip":"203.0.113.20"}`, validID},
+		{"client eligibility", `{"payment_method":"alipay","config_version":1,"email_verified":true}`, validID},
 		{"trailing object", `{"payment_method":"alipay","config_version":1}{}`, validID},
 		{"oversize", `{"payment_method":"` + strings.Repeat("a", 5000) + `","config_version":1}`, validID},
 	} {

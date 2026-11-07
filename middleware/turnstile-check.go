@@ -32,11 +32,12 @@ type turnstileCheckResponse struct {
 // and alias routes resolve to the same action. Routes outside this table fail
 // closed when TurnstileCheck is called without an explicit action.
 var turnstileActions = map[string]string{
-	"GET /api/verification":   "signup",
-	"POST /api/user/register": "signup",
-	"POST /api/user/login":    "login",
-	"GET /api/reset_password": "reset_password",
-	"POST /api/user/checkin":  "checkin",
+	"GET /api/verification":               "signup",
+	"POST /api/user/register":             "signup",
+	"POST /api/user/login":                "login",
+	"GET /api/reset_password":             "reset_password",
+	"POST /api/user/checkin":              "checkin",
+	"POST /api/user/new-user-benefit/pay": "new_user_benefit",
 }
 
 func turnstileActionForRoute(method, fullPath string) string {
@@ -49,6 +50,10 @@ func turnstileActionForRoute(method, fullPath string) string {
 // an unmapped route is rejected before any Siteverify request is sent.
 func TurnstileCheck(expectedAction ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// A disabled challenge is not proof of human verification. Sensitive
+		// business flows may require this server-issued fact even when the
+		// site-wide challenge is disabled; never derive it from client fields.
+		c.Set("turnstile_verified_action", "")
 		if !common.TurnstileCheckEnabled {
 			c.Next()
 			return
@@ -128,6 +133,7 @@ func TurnstileCheck(expectedAction ...string) gin.HandlerFunc {
 			return
 		}
 
+		c.Set("turnstile_verified_action", action)
 		c.Next()
 	}
 }

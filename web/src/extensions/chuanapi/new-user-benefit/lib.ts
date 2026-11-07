@@ -44,8 +44,12 @@ export function normalizeCnyAmount(value: string): string {
 }
 
 export function formatBenefitCny(value: string, language: string): string {
-  const cents = parseCnyCents(value)
-  if (cents === null) return '-'
+  // Counters can contain zero or historical commitments above today's limit.
+  // Input limits belong to the form, not to the display of already owed credit.
+  if (!/^\d{1,14}(?:\.\d{1,2})?$/.test(value)) return '-'
+  const [whole, fraction = ''] = value.split('.')
+  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, '0'))
+  if (!Number.isSafeInteger(cents) || cents < 0) return '-'
   return new Intl.NumberFormat(toIntlLocale(language), {
     style: 'currency',
     currency: 'CNY',
@@ -101,6 +105,23 @@ export function isBenefitConfigConflict(error: unknown): boolean {
   )
 }
 
+export function benefitBlockedMessage(
+  reason: NewUserBenefitInfo['blocked_reason']
+): string {
+  switch (reason) {
+    case 'email_verification_required':
+      return 'Verify your email address before claiming the new user benefit'
+    case 'identity_already_used':
+      return 'This account is not eligible for this recharge benefit.'
+    case 'limit_reached':
+      return 'The new user benefit limit has been reached. Please try again later'
+    case 'verification_unavailable':
+      return 'Security verification is temporarily unavailable. Please try again later.'
+    default:
+      return 'New user benefit is temporarily unavailable.'
+  }
+}
+
 export function benefitErrorMessage(error: unknown, fallback: string): string {
   const messages: Record<string, string> = {
     new_user_benefit_unavailable:
@@ -110,7 +131,19 @@ export function benefitErrorMessage(error: unknown, fallback: string): string {
     new_user_benefit_payment_method_unavailable:
       'This benefit payment method is currently unavailable. Please try again later.',
     new_user_benefit_invalid_config:
-      'Enter valid CNY amounts with at most two decimal places. Total credit must be at least the payment amount.',
+      'Enter valid CNY amounts with at most two decimal places and positive order limits. Total credit must be at least the payment amount.',
+    new_user_benefit_email_required:
+      'Verify your email address before claiming the new user benefit',
+    new_user_benefit_identity_used:
+      'This account is not eligible for this recharge benefit.',
+    new_user_benefit_limit_reached:
+      'The new user benefit limit has been reached. Please try again later',
+    new_user_benefit_verification_required:
+      'Complete the security verification before claiming the new user benefit',
+    new_user_benefit_invalid_network:
+      'The new user benefit is unavailable from this network',
+    TURNSTILE_VERIFICATION_FAILED:
+      'Complete the security verification before claiming the new user benefit',
   }
   for (const source of getServerErrorSources(error)) {
     if (typeof source.code === 'string' && messages[source.code]) {

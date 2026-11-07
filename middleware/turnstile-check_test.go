@@ -354,3 +354,58 @@ func TestTurnstileCheckRejectsReplayedToken(t *testing.T) {
 	router.ServeHTTP(replay, httptest.NewRequest(http.MethodGet, "/verify?turnstile=single-use-token", nil))
 	assert.Equal(t, http.StatusForbidden, replay.Code)
 }
+
+func TestTurnstileNewUserBenefitRequiresServerVerifiedProof(t *testing.T) {
+	configureTurnstilePublicSite(t, "https://chuanapi.com")
+	previousEnabled, previousSecret, previousClient := common.TurnstileCheckEnabled, common.TurnstileSecretKey, turnstileHTTPClient
+	common.TurnstileSecretKey = "test-secret"
+	t.Cleanup(func() {
+		common.TurnstileCheckEnabled, common.TurnstileSecretKey, turnstileHTTPClient = previousEnabled, previousSecret, previousClient
+	})
+	gin.SetMode(gin.TestMode)
+	for _, test := range []struct {
+		name, token, response string
+		enabled               bool
+		wantStatus            int
+		wantProof             bool
+	}{
+		{"valid benefit challenge", "valid", `{"success":true,"action":"new_user_benefit","hostname":"chuanapi.com"}`, true, http.StatusNoContent, true},
+		{"signup challenge cannot authorize benefit", "signup", `{"success":true,"action":"signup","hostname":"chuanapi.com"}`, true, http.StatusForbidden, false},
+		{"other site cannot authorize benefit", "other-site", `{"success":true,"action":"new_user_benefit","hostname":"other.example"}`, true, http.StatusForbidden, false},
+		{"replayed or expired token", "replayed", `{"success":false,"error-codes":["timeout-or-duplicate"]}`, true, http.StatusForbidden, false},
+		{"missing token", "", "", true, http.StatusForbidden, false},
+		{"disabled challenge is not proof", "forged", "", false, http.StatusForbidden, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			common.TurnstileCheckEnabled = test.enabled
+			verifiedByServer := false
+			turnstileHTTPClient = &http.Client{Transport: turnstileRoundTripper(func(request *http.Request) (*http.Response, error) {
+				require.NoError(t, request.ParseForm())
+				assert.Equal(t, test.token, request.Form.Get("response"))
+				assert.Equal(t, "203.0.113.10", request.Form.Get("remoteip"))
+				verifiedByServer = true
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(test.response)), Header: make(http.Header)}, nil
+			})}
+			router := gin.New()
+			require.NoError(t, router.SetTrustedProxies(nil))
+			proofObserved := false
+			router.POST("/api/user/new-user-benefit/pay", TurnstileCheck(), func(c *gin.Context) {
+				proofObserved = c.GetString("turnstile_verified_action") == "new_user_benefit"
+				if !proofObserved {
+					c.AbortWithStatus(http.StatusForbidden)
+					return
+				}
+				c.Status(http.StatusNoContent)
+			})
+			request := httptest.NewRequest(http.MethodPost, "/api/user/new-user-benefit/pay?turnstile="+test.token+"&turnstile_verified_action=new_user_benefit", strings.NewReader(`{"human_verified":true}`))
+			request.RemoteAddr = "203.0.113.10:4242"
+			request.Header.Set("X-Forwarded-For", "198.51.100.20")
+			request.Header.Set("turnstile_verified_action", "new_user_benefit")
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			assert.Equal(t, test.wantStatus, recorder.Code)
+			assert.Equal(t, test.wantProof, proofObserved)
+			assert.Equal(t, test.enabled && test.token != "", verifiedByServer)
+		})
+	}
+}

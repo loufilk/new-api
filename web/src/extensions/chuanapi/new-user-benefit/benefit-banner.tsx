@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import { Gift, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -35,6 +36,7 @@ import { getNewUserBenefit, requestBenefitPayment } from './api'
 import { BenefitDialog } from './benefit-dialog'
 import {
   BENEFIT_QUERY_KEY,
+  benefitBlockedMessage,
   benefitErrorMessage,
   createBenefitIdempotencyKey,
   formatBenefitCny,
@@ -71,8 +73,16 @@ function BenefitBannerForUser(props: BenefitBannerForUserProps) {
     meta: { errorToast: false, redirectOnInternalServerError: false },
   })
   const payment = useMutation({
-    mutationFn: (variables: { request: BenefitPaymentRequest; key: string }) =>
-      requestBenefitPayment(variables.request, variables.key),
+    mutationFn: (variables: {
+      request: BenefitPaymentRequest
+      key: string
+      turnstile: string
+    }) =>
+      requestBenefitPayment(
+        variables.request,
+        variables.key,
+        variables.turnstile
+      ),
     retry: false,
     meta: { errorToast: false },
   })
@@ -108,10 +118,11 @@ function BenefitBannerForUser(props: BenefitBannerForUserProps) {
     setNotice(undefined)
   }
 
-  const confirmPayment = async () => {
+  const confirmPayment = async (turnstile: string) => {
     if (
       inFlight.current ||
       !dialogOffer ||
+      (query.data?.turnstile_required && !turnstile) ||
       !dialogOffer.methods.some((method) => method.type === selectedMethod)
     ) {
       return
@@ -133,6 +144,7 @@ function BenefitBannerForUser(props: BenefitBannerForUserProps) {
           config_version: dialogOffer.version,
         },
         key: attempt.current.key,
+        turnstile,
       })
       if (!isCurrent()) return
       // Never forward the user to a payment amount they did not confirm.
@@ -198,7 +210,36 @@ function BenefitBannerForUser(props: BenefitBannerForUserProps) {
     }
   }
 
-  if (!offer || (dismissed && !props.persistent && !dialogOffer)) return null
+  if (!offer) {
+    if (
+      !props.persistent ||
+      !query.data?.enabled ||
+      !query.data.blocked_reason
+    ) {
+      return null
+    }
+    return (
+      <div className='shrink-0 px-3 pt-3 sm:px-4'>
+        <Alert role='region' aria-label={t('New user recharge benefit')}>
+          <AlertTitle>{t('New user recharge benefit')}</AlertTitle>
+          <AlertDescription>
+            <p>{t(benefitBlockedMessage(query.data.blocked_reason))}</p>
+            {query.data.blocked_reason === 'email_verification_required' && (
+              <Button
+                size='sm'
+                variant='outline'
+                role='link'
+                render={<Link to='/security' />}
+              >
+                {t('Verify email in account security')}
+              </Button>
+            )}
+          </AlertDescription>
+        </Alert>
+      </div>
+    )
+  }
+  if (dismissed && !props.persistent && !dialogOffer) return null
 
   const pay = formatBenefitCny(offer.payAmount, locale)
   const credit = formatBenefitCny(offer.creditAmount, locale)
@@ -254,15 +295,23 @@ function BenefitBannerForUser(props: BenefitBannerForUserProps) {
       </div>
       {dialogOffer && (
         <BenefitDialog
+          key={`${dialogOffer.version}:${dialogOffer.orderId ?? ''}:${Boolean(query.data?.turnstile_required)}:${query.data?.turnstile_site_key ?? ''}`}
           offer={dialogOffer}
           selectedMethod={selectedMethod}
           onMethodChange={setSelectedMethod}
           processing={payment.isPending}
-          notice={notice}
+          notice={
+            notice ??
+            (query.data?.blocked_reason
+              ? benefitBlockedMessage(query.data.blocked_reason)
+              : undefined)
+          }
+          turnstileRequired={query.data?.turnstile_required === true}
+          turnstileSiteKey={query.data?.turnstile_site_key ?? ''}
           onOpenChange={(open) => {
             if (!open) setDialogOffer(null)
           }}
-          onConfirm={() => void confirmPayment()}
+          onConfirm={(turnstile) => void confirmPayment(turnstile)}
         />
       )}
     </>

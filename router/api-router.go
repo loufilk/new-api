@@ -158,7 +158,7 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 				selfRoute.GET("/topup/info", controller.GetTopUpInfo)
 				selfRoute.GET("/topup/self", controller.GetUserTopUps)
 				selfRoute.GET("/new-user-benefit", controller.GetNewUserBenefit)
-				selfRoute.POST("/new-user-benefit/pay", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("new-user-benefit"), controller.RequestNewUserBenefitPay)
+				selfRoute.POST("/new-user-benefit/pay", middleware.CriticalRateLimitByScope("new-user-benefit"), middleware.UserCriticalRateLimit("new-user-benefit"), middleware.TurnstileCheck(), controller.RequestNewUserBenefitPay)
 				selfRoute.POST("/topup", middleware.CriticalRateLimit(), controller.TopUp)
 				selfRoute.POST("/pay", middleware.CriticalRateLimit(), controller.RequestEpay)
 				selfRoute.POST("/amount", controller.RequestAmount)

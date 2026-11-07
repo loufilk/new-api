@@ -2,8 +2,11 @@ package model
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"math"
+	"net/netip"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -21,11 +24,16 @@ const (
 )
 
 var (
-	ErrNewUserBenefitUnavailable     = errors.New("New user benefit is unavailable")
-	ErrNewUserBenefitIneligible      = errors.New("New user benefit is available before your first successful online top-up")
-	ErrNewUserBenefitClaimed         = errors.New("New user benefit has already been claimed")
-	ErrNewUserBenefitOrderConflict   = errors.New("New user benefit payment order does not match")
-	ErrNewUserBenefitPaymentRequired = errors.New("New user benefit requires verified payment")
+	ErrNewUserBenefitUnavailable          = errors.New("New user benefit is unavailable")
+	ErrNewUserBenefitIneligible           = errors.New("New user benefit is available before your first successful online top-up")
+	ErrNewUserBenefitClaimed              = errors.New("New user benefit has already been claimed")
+	ErrNewUserBenefitOrderConflict        = errors.New("New user benefit payment order does not match")
+	ErrNewUserBenefitPaymentRequired      = errors.New("New user benefit requires verified payment")
+	ErrNewUserBenefitEmailRequired        = errors.New("Verify your current email before requesting the new user benefit")
+	ErrNewUserBenefitIdentityUsed         = errors.New("This verified email has already been used for the new user benefit")
+	ErrNewUserBenefitLimitReached         = errors.New("New user benefit admission limit has been reached")
+	ErrNewUserBenefitVerificationRequired = errors.New("Complete human verification before requesting the new user benefit")
+	ErrNewUserBenefitInvalidNetwork       = errors.New("A valid client network is required for the new user benefit")
 )
 
 // NewUserBenefitOrder is the immutable promise made before releasing an Epay
@@ -45,25 +53,144 @@ type NewUserBenefitOrder struct {
 	QuotaPerUnit      string `gorm:"type:varchar(64);not null"`
 	PaidQuota         int    `gorm:"type:bigint;not null"`
 	BonusQuota        int    `gorm:"type:bigint;not null"`
-	CreatedAt         int64  `gorm:"not null"`
-	Status            string `gorm:"-"`
-	GrantedAt         int64  `gorm:"-"`
+	// Nullable hashes preserve old payment promises during upgrade. New orders
+	// always capture both; rebinding an email or deleting an account cannot
+	// release an identity already committed to a benefit order.
+	EmailIdentityHash *string `gorm:"type:varchar(64);uniqueIndex"`
+	NetworkHash       *string `gorm:"type:varchar(64);index:idx_new_user_benefit_network_time,priority:1"`
+	CreatedAt         int64   `gorm:"not null;index;index:idx_new_user_benefit_network_time,priority:2"`
+	Status            string  `gorm:"-"`
+	GrantedAt         int64   `gorm:"-"`
 }
 
 func (*NewUserBenefitOrder) BeforeUpdate(*gorm.DB) error { return ErrLedgerImmutable }
 func (*NewUserBenefitOrder) BeforeDelete(*gorm.DB) error { return ErrLedgerImmutable }
 
 type NewUserBenefitState struct {
-	Config     *NewUserBenefitConfig
-	Order      *NewUserBenefitOrder
-	Eligible   bool
-	Status     string
-	PaidQuota  int
-	BonusQuota int
+	Config        *NewUserBenefitConfig
+	Order         *NewUserBenefitOrder
+	Eligible      bool
+	Status        string
+	PaidQuota     int
+	BonusQuota    int
+	BlockedReason string
+}
+
+// NewUserBenefitRiskContext contains server-established admission evidence,
+// never JSON fields accepted from the customer.
+type NewUserBenefitRiskContext struct {
+	ClientIP      string
+	HumanVerified bool
+}
+
+// NewUserBenefitUsage includes every committed promise, paid or unpaid, across
+// all configuration versions. The Epay integration cannot safely revoke forms,
+// so neither elapsed time nor disabling the offer releases the total budget.
+type NewUserBenefitUsage struct {
+	TotalOrders     int64
+	TotalBonusCents int64
+	Orders24h       int64 `gorm:"column:orders_24h"`
+}
+
+func newUserBenefitUsageTx(tx *gorm.DB, now int64) (*NewUserBenefitUsage, error) {
+	var totals struct {
+		NewUserBenefitUsage `gorm:"embedded"`
+		InvalidOrders       int64
+	}
+	err := tx.Model(&NewUserBenefitOrder{}).
+		Select("COUNT(*) AS total_orders, COALESCE(SUM(credit_amount_cents - pay_amount_cents), 0) AS total_bonus_cents, COALESCE(SUM(CASE WHEN created_at > ? THEN 1 ELSE 0 END), 0) AS orders_24h, COALESCE(SUM(CASE WHEN pay_amount_cents <= 0 OR credit_amount_cents < pay_amount_cents OR credit_amount_cents > ? THEN 1 ELSE 0 END), 0) AS invalid_orders", now-24*60*60, MaxNewUserBenefitCents).
+		Scan(&totals).Error
+	if err != nil {
+		return nil, err
+	}
+	if totals.InvalidOrders != 0 || totals.TotalOrders < 0 || totals.TotalBonusCents < 0 || totals.Orders24h < 0 {
+		return nil, ErrNewUserBenefitOrderConflict
+	}
+	return &totals.NewUserBenefitUsage, nil
+}
+
+func GetNewUserBenefitUsage(ctx context.Context) (*NewUserBenefitUsage, error) {
+	return newUserBenefitUsageTx(DB.WithContext(ctx), common.GetTimestamp())
+}
+
+func newUserBenefitLimitReached(config *NewUserBenefitConfig, usage *NewUserBenefitUsage) bool {
+	bonusCents := config.CreditAmountCents - config.PayAmountCents
+	return usage.TotalOrders >= config.MaxTotalOrders || usage.Orders24h >= config.MaxOrdersPer24h ||
+		usage.TotalBonusCents > config.TotalBonusBudgetCents || bonusCents > config.TotalBonusBudgetCents-usage.TotalBonusCents
+}
+
+func newUserBenefitDigest(scope, identity string) string {
+	digest := sha256.Sum256([]byte("new-user-benefit:" + scope + ":" + identity))
+	return hex.EncodeToString(digest[:])
+}
+
+func newUserBenefitEmailIdentity(email string) string {
+	email = NormalizeEmail(email)
+	local, domain, ok := strings.Cut(email, "@")
+	if ok && (domain == "gmail.com" || domain == "googlemail.com") {
+		// Personal Gmail and googlemail.com share addresses and ignore dots
+		// and +tags. This benefit-specific rule does not change Workspace,
+		// custom-domain identities or login addresses.
+		local, _, _ = strings.Cut(local, "+")
+		return strings.ReplaceAll(local, ".", "") + "@gmail.com"
+	}
+	return email
+}
+
+func newUserBenefitEmailIdentityTx(tx *gorm.DB, user *User) (string, error) {
+	if !VerifiedSupportEmail(user) {
+		return "", ErrNewUserBenefitEmailRequired
+	}
+	email := newUserBenefitEmailIdentity(user.Email)
+	digest := newUserBenefitDigest("email", email)
+	var count int64
+	err := tx.Model(&NewUserBenefitOrder{}).Where("email_identity_hash = ?", digest).Count(&count).Error
+	if err != nil {
+		return "", err
+	}
+	if count > 0 {
+		return "", ErrNewUserBenefitIdentityUsed
+	}
+	// Legacy orders did not capture an email. Also check their current account
+	// association, including soft-deleted users, rather than treating a missing
+	// hash as proof that the verified email has never participated.
+	legacyOrders := tx.Model(&NewUserBenefitOrder{}).Select("user_id").Where("email_identity_hash IS NULL")
+	legacyOwners := tx.Unscoped().Model(&User{}).Where("id IN (?)", legacyOrders)
+	if strings.HasSuffix(email, "@gmail.com") {
+		legacyOwners = legacyOwners.Where("LOWER(TRIM(email)) LIKE ? OR LOWER(TRIM(email)) LIKE ?", "%@gmail.com", "%@googlemail.com")
+	} else {
+		legacyOwners = legacyOwners.Where("LOWER(TRIM(email)) = ?", email)
+	}
+	var legacyEmails []string
+	if err := legacyOwners.Pluck("email", &legacyEmails).Error; err != nil {
+		return "", err
+	}
+	for _, legacyEmail := range legacyEmails {
+		if newUserBenefitEmailIdentity(legacyEmail) == email {
+			return "", ErrNewUserBenefitIdentityUsed
+		}
+	}
+	return digest, nil
+}
+
+func newUserBenefitNetworkHash(clientIP string) (string, error) {
+	address, err := netip.ParseAddr(clientIP)
+	if err != nil || address.Zone() != "" {
+		return "", ErrNewUserBenefitInvalidNetwork
+	}
+	address = address.Unmap()
+	if address.IsUnspecified() || address.IsMulticast() {
+		return "", ErrNewUserBenefitInvalidNetwork
+	}
+	bits := 64
+	if address.Is4() {
+		bits = 32
+	}
+	return newUserBenefitDigest("network", netip.PrefixFrom(address, bits).Masked().String()), nil
 }
 
 func newUserBenefitQuota(config *NewUserBenefitConfig, exchangeRate, quotaPerUnit decimal.Decimal) (int, int, error) {
-	if config == nil || ValidateNewUserBenefitConfig(*config) != nil || !exchangeRate.IsPositive() || !quotaPerUnit.IsPositive() {
+	if config == nil || validateNewUserBenefitAmounts(config.PayAmountCents, config.CreditAmountCents) != nil || !exchangeRate.IsPositive() || !quotaPerUnit.IsPositive() {
 		return 0, 0, ErrNewUserBenefitInvalidConfig
 	}
 	paid, err := common.WalletQuotaFromDecimalStrict(decimal.NewFromInt(config.PayAmountCents).Div(decimal.NewFromInt(100)).Div(exchangeRate).Mul(quotaPerUnit))
@@ -199,7 +326,7 @@ func GetNewUserBenefitState(ctx context.Context, userID int) (*NewUserBenefitSta
 	state := &NewUserBenefitState{Config: config, Status: NewUserBenefitStatusIneligible}
 	db := DB.WithContext(ctx)
 	var user User
-	if err := db.Select("id", "status").First(&user, userID).Error; err != nil {
+	if err := db.First(&user, userID).Error; err != nil {
 		return nil, err
 	}
 	if user.Status != common.UserStatusEnabled {
@@ -225,6 +352,25 @@ func GetNewUserBenefitState(ctx context.Context, userID int) (*NewUserBenefitSta
 	if priorTopUp {
 		return state, nil
 	}
+	if _, err = newUserBenefitEmailIdentityTx(db, &user); err != nil {
+		switch {
+		case errors.Is(err, ErrNewUserBenefitEmailRequired):
+			state.BlockedReason = "email_verification_required"
+		case errors.Is(err, ErrNewUserBenefitIdentityUsed):
+			state.BlockedReason = "identity_already_used"
+		default:
+			return nil, err
+		}
+		return state, nil
+	}
+	usage, err := newUserBenefitUsageTx(db, common.GetTimestamp())
+	if err != nil {
+		return nil, err
+	}
+	if newUserBenefitLimitReached(config, usage) {
+		state.BlockedReason = "limit_reached"
+		return state, nil
+	}
 	state.PaidQuota, state.BonusQuota, _, _, err = newUserBenefitQuote(config)
 	if err != nil {
 		return nil, err
@@ -248,7 +394,7 @@ func validNewUserBenefitIdentity(value string, maxLength int) bool {
 // ReserveNewUserBenefit commits the immutable promise before a payment form
 // leaves the server. A pending promise is resumed even after an administrator
 // disables the offer, changes its terms, or another ordinary top-up completes.
-func ReserveNewUserBenefit(ctx context.Context, userID int, configVersion int64, paymentMethod, merchantScope, tradeNo string) (*NewUserBenefitOrder, error) {
+func ReserveNewUserBenefit(ctx context.Context, userID int, configVersion int64, paymentMethod, merchantScope, tradeNo string, risk NewUserBenefitRiskContext) (*NewUserBenefitOrder, error) {
 	if userID <= 0 || configVersion < 0 || !validNewUserBenefitIdentity(paymentMethod, 50) ||
 		!validNewUserBenefitIdentity(merchantScope, 128) || !validNewUserBenefitIdentity(tradeNo, 32) {
 		return nil, ErrNewUserBenefitOrderConflict
@@ -285,12 +431,41 @@ func ReserveNewUserBenefit(ctx context.Context, userID int, configVersion int64,
 		if !config.Enabled {
 			return ErrNewUserBenefitUnavailable
 		}
+		if err := ValidateNewUserBenefitConfig(*config); err != nil {
+			return err
+		}
+		if !risk.HumanVerified {
+			return ErrNewUserBenefitVerificationRequired
+		}
+		networkHash, err := newUserBenefitNetworkHash(risk.ClientIP)
+		if err != nil {
+			return err
+		}
+		emailHash, err := newUserBenefitEmailIdentityTx(tx, &user)
+		if err != nil {
+			return err
+		}
 		priorTopUp, err := hasSuccessfulNewUserBenefitTopUpTx(tx, userID)
 		if err != nil {
 			return err
 		}
 		if priorTopUp {
 			return ErrNewUserBenefitIneligible
+		}
+		now := common.GetTimestamp()
+		usage, err := newUserBenefitUsageTx(tx, now)
+		if err != nil {
+			return err
+		}
+		if newUserBenefitLimitReached(config, usage) {
+			return ErrNewUserBenefitLimitReached
+		}
+		var networkOrders int64
+		if err := tx.Model(&NewUserBenefitOrder{}).Where("network_hash = ? AND created_at > ?", networkHash, now-24*60*60).Count(&networkOrders).Error; err != nil {
+			return err
+		}
+		if networkOrders >= config.MaxOrdersPerNetwork24h {
+			return ErrNewUserBenefitLimitReached
 		}
 		paid, bonus, rate, unit, err := newUserBenefitQuote(config)
 		if err != nil {
@@ -299,11 +474,11 @@ func ReserveNewUserBenefit(ctx context.Context, userID int, configVersion int64,
 		if user.Quota < 0 || user.Quota > common.MaxWalletQuota-paid-bonus {
 			return ErrTopUpQuotaLimitExceeded
 		}
-		now := common.GetTimestamp()
 		order = &NewUserBenefitOrder{UserID: userID, TradeNo: tradeNo, PaymentProvider: PaymentProviderEpay,
 			PaymentMethod: paymentMethod, MerchantScope: merchantScope, PayAmountCents: config.PayAmountCents,
 			CreditAmountCents: config.CreditAmountCents, ConfigVersion: config.Version, USDExchangeRate: rate,
-			QuotaPerUnit: unit, PaidQuota: paid, BonusQuota: bonus, CreatedAt: now, Status: NewUserBenefitStatusPending}
+			QuotaPerUnit: unit, PaidQuota: paid, BonusQuota: bonus, CreatedAt: now, Status: NewUserBenefitStatusPending,
+			EmailIdentityHash: &emailHash, NetworkHash: &networkHash}
 		topUp := TopUp{NewUserBenefit: true, UserId: userID, Amount: 0,
 			Money:   decimal.NewFromInt(config.PayAmountCents).Div(decimal.NewFromInt(100)).InexactFloat64(),
 			TradeNo: tradeNo, PaymentMethod: paymentMethod, PaymentProvider: PaymentProviderEpay,
@@ -370,7 +545,7 @@ func settleNewUserBenefitTx(tx *gorm.DB, topUp *TopUp, paymentMethod string, cal
 	}
 	entry := LedgerEntry{UserId: order.UserID, Reason: LedgerReasonNewUserTopUp, ReferenceType: "new_user_topup",
 		ReferenceId: order.TradeNo, IdempotencyKey: "credit:new_user_topup:" + order.TradeNo}
-	entry.SetMetadata(map[string]interface{}{"pay_amount_cents": order.PayAmountCents, "credit_amount_cents": order.CreditAmountCents,
+	entry.SetMetadata(map[string]any{"pay_amount_cents": order.PayAmountCents, "credit_amount_cents": order.CreditAmountCents,
 		"currency": "CNY", "usd_exchange_rate": order.USDExchangeRate, "quota_per_unit": order.QuotaPerUnit, "config_version": order.ConfigVersion})
 	var result *LedgerResult
 	result, err = CreditQuotaSharesTx(tx, entry, shares)

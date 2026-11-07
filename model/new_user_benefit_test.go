@@ -36,20 +36,26 @@ func newUserBenefitFixture(t *testing.T) *NewUserBenefitConfig {
 		operation_setting.USDExchangeRate, common.QuotaPerUnit = previousRate, previousUnit
 		common.OptionMapRWMutex.Unlock()
 	})
-	config, err := UpdateNewUserBenefitConfig(t.Context(), 0, 7, NewUserBenefitConfig{Enabled: true, PayAmountCents: 10, CreditAmountCents: 100})
+	config, err := UpdateNewUserBenefitConfig(t.Context(), 0, 7, newUserBenefitTestConfig(true, 10, 100))
 	require.NoError(t, err)
 	return config
 }
 
 func createNewUserBenefitTestUser(t *testing.T, id int) {
 	t.Helper()
-	require.NoError(t, DB.Create(&User{Id: id, Username: fmt.Sprintf("benefit-user-%d", id), AffCode: fmt.Sprintf("benefit-aff-%d", id), Status: common.UserStatusEnabled}).Error)
+	email := fmt.Sprintf("benefit-user-%d@example.invalid", id)
+	require.NoError(t, DB.Create(&User{Id: id, Username: fmt.Sprintf("benefit-user-%d", id), AffCode: fmt.Sprintf("benefit-aff-%d", id), Status: common.UserStatusEnabled,
+		Email: email, EmailVerifiedAddress: email, EmailVerificationVersion: 1, EmailVerifiedAt: common.GetTimestamp()}).Error)
+}
+
+func newUserBenefitTestRisk(userID int) NewUserBenefitRiskContext {
+	return NewUserBenefitRiskContext{ClientIP: fmt.Sprintf("198.18.%d.%d", userID/256%256, userID%256), HumanVerified: true}
 }
 
 func reserveNewUserBenefitTestOrder(t *testing.T, config *NewUserBenefitConfig, userID int) *NewUserBenefitOrder {
 	t.Helper()
 	createNewUserBenefitTestUser(t, userID)
-	order, err := ReserveNewUserBenefit(t.Context(), userID, config.Version, "alipay", "benefit-merchant", fmt.Sprintf("BENEFIT%d", userID))
+	order, err := ReserveNewUserBenefit(t.Context(), userID, config.Version, "alipay", "benefit-merchant", fmt.Sprintf("BENEFIT%d", userID), newUserBenefitTestRisk(userID))
 	require.NoError(t, err)
 	return order
 }
@@ -75,22 +81,22 @@ func TestNewUserBenefitReserveResumeAndImmutableSnapshotPostgres(t *testing.T) {
 	assert.True(t, state.Eligible)
 	assert.Equal(t, 5000, state.PaidQuota)
 	assert.Equal(t, 45000, state.BonusQuota)
-	_, err = ReserveNewUserBenefit(t.Context(), 1, 0, "alipay", "benefit-merchant", "STALE")
+	_, err = ReserveNewUserBenefit(t.Context(), 1, 0, "alipay", "benefit-merchant", "STALE", newUserBenefitTestRisk(1))
 	require.ErrorIs(t, err, ErrNewUserBenefitConfigChanged)
 	assert.Zero(t, benefitTableCount(t, &TopUp{}))
-	order, err := ReserveNewUserBenefit(t.Context(), 1, config.Version, "alipay", "benefit-merchant", "BENEFIT1")
+	order, err := ReserveNewUserBenefit(t.Context(), 1, config.Version, "alipay", "benefit-merchant", "BENEFIT1", newUserBenefitTestRisk(1))
 	require.NoError(t, err)
 	assert.Equal(t, "10", order.USDExchangeRate)
 	assert.Equal(t, "500000", order.QuotaPerUnit)
 	require.ErrorIs(t, DB.Model(order).Update("bonus_quota", 90000).Error, ErrLedgerImmutable)
 	require.ErrorIs(t, DB.Delete(order).Error, ErrLedgerImmutable)
-	_, err = UpdateNewUserBenefitConfig(t.Context(), config.Version, 7, NewUserBenefitConfig{Enabled: false, PayAmountCents: 100, CreditAmountCents: 500})
+	_, err = UpdateNewUserBenefitConfig(t.Context(), config.Version, 7, newUserBenefitTestConfig(false, 100, 500))
 	require.NoError(t, err)
 	common.OptionMapRWMutex.Lock()
 	operation_setting.USDExchangeRate, common.QuotaPerUnit = 7.3, 1000000
 	common.OptionMapRWMutex.Unlock()
 	require.NoError(t, DB.Create(&TopUp{UserId: 1, Amount: 1, Money: 10, TradeNo: "ORDINARYAFTER", PaymentMethod: "alipay", PaymentProvider: PaymentProviderEpay, Status: common.TopUpStatusSuccess}).Error)
-	resumed, err := ReserveNewUserBenefit(t.Context(), 1, 0, "alipay", "benefit-merchant", "DONOTCREATE")
+	resumed, err := ReserveNewUserBenefit(t.Context(), 1, 0, "alipay", "benefit-merchant", "DONOTCREATE", newUserBenefitTestRisk(1))
 	require.NoError(t, err)
 	assert.Equal(t, order, resumed)
 	assert.EqualValues(t, 1, benefitTableCount(t, &NewUserBenefitOrder{}))
@@ -101,12 +107,12 @@ func TestNewUserBenefitReserveResumeAndImmutableSnapshotPostgres(t *testing.T) {
 	assert.False(t, state.Config.Enabled)
 	assert.Equal(t, 5000, state.PaidQuota)
 	assert.Equal(t, 45000, state.BonusQuota)
-	_, err = ReserveNewUserBenefit(t.Context(), 1, 0, "wxpay", "benefit-merchant", "OTHER")
+	_, err = ReserveNewUserBenefit(t.Context(), 1, 0, "wxpay", "benefit-merchant", "OTHER", newUserBenefitTestRisk(1))
 	require.ErrorIs(t, err, ErrNewUserBenefitOrderConflict)
-	_, err = ReserveNewUserBenefit(t.Context(), 1, 0, "alipay", "changed-merchant", "OTHER")
+	_, err = ReserveNewUserBenefit(t.Context(), 1, 0, "alipay", "changed-merchant", "OTHER", newUserBenefitTestRisk(1))
 	require.ErrorIs(t, err, ErrNewUserBenefitOrderConflict)
 	createNewUserBenefitTestUser(t, 2)
-	_, err = ReserveNewUserBenefit(t.Context(), 2, config.Version+1, "alipay", "benefit-merchant", "NEWWHILEOFF")
+	_, err = ReserveNewUserBenefit(t.Context(), 2, config.Version+1, "alipay", "benefit-merchant", "NEWWHILEOFF", newUserBenefitTestRisk(2))
 	require.ErrorIs(t, err, ErrNewUserBenefitUnavailable)
 }
 
@@ -121,7 +127,7 @@ func TestNewUserBenefitEligibilityAllHistoryAndPaymentKindsPostgres(t *testing.T
 			require.NoError(t, err)
 			assert.False(t, state.Eligible)
 			assert.Equal(t, NewUserBenefitStatusIneligible, state.Status)
-			_, err = ReserveNewUserBenefit(t.Context(), id, config.Version, "alipay", "benefit-merchant", fmt.Sprintf("NEW%d", id))
+			_, err = ReserveNewUserBenefit(t.Context(), id, config.Version, "alipay", "benefit-merchant", fmt.Sprintf("NEW%d", id), newUserBenefitTestRisk(id))
 			require.ErrorIs(t, err, ErrNewUserBenefitIneligible)
 		})
 	}
@@ -153,7 +159,7 @@ func TestNewUserBenefitEligibilityAllHistoryAndPaymentKindsPostgres(t *testing.T
 			state, err := GetNewUserBenefitState(t.Context(), id)
 			require.NoError(t, err)
 			assert.True(t, state.Eligible)
-			_, err = ReserveNewUserBenefit(t.Context(), id, config.Version, "alipay", "benefit-merchant", fmt.Sprintf("NEW%d", id))
+			_, err = ReserveNewUserBenefit(t.Context(), id, config.Version, "alipay", "benefit-merchant", fmt.Sprintf("NEW%d", id), newUserBenefitTestRisk(id))
 			require.NoError(t, err)
 		})
 	}
@@ -172,7 +178,7 @@ func TestNewUserBenefitConcurrentReservationPostgres(t *testing.T) {
 	for index := range 8 {
 		workers.Go(func() {
 			<-start
-			order, err := ReserveNewUserBenefit(t.Context(), 1, config.Version, "alipay", "benefit-merchant", fmt.Sprintf("CONCURRENT%d", index))
+			order, err := ReserveNewUserBenefit(t.Context(), 1, config.Version, "alipay", "benefit-merchant", fmt.Sprintf("CONCURRENT%d", index), newUserBenefitTestRisk(1))
 			results <- result{order, err}
 		})
 	}
@@ -196,7 +202,7 @@ func TestNewUserBenefitConcurrentVerifiedSettlementAndReplayPostgres(t *testing.
 	config := newUserBenefitFixture(t)
 	order := reserveNewUserBenefitTestOrder(t, config, 1)
 	facts := newUserBenefitTestFacts(order)
-	_, err := UpdateNewUserBenefitConfig(t.Context(), config.Version, 7, NewUserBenefitConfig{Enabled: false, PayAmountCents: 100, CreditAmountCents: 500})
+	_, err := UpdateNewUserBenefitConfig(t.Context(), config.Version, 7, newUserBenefitTestConfig(false, 100, 500))
 	require.NoError(t, err)
 	common.OptionMapRWMutex.Lock()
 	operation_setting.USDExchangeRate, common.QuotaPerUnit = 7.3, 1000000
@@ -246,7 +252,7 @@ func TestNewUserBenefitConcurrentVerifiedSettlementAndReplayPostgres(t *testing.
 	assert.Equal(t, NewUserBenefitStatusClaimed, state.Status)
 	assert.False(t, state.Eligible)
 	assert.Positive(t, state.Order.GrantedAt)
-	_, err = ReserveNewUserBenefit(t.Context(), 1, 0, "alipay", "benefit-merchant", "AGAIN")
+	_, err = ReserveNewUserBenefit(t.Context(), 1, 0, "alipay", "benefit-merchant", "AGAIN", newUserBenefitTestRisk(1))
 	require.ErrorIs(t, err, ErrNewUserBenefitClaimed)
 	changed := facts
 	changed.ExternalReference = "another-financial-payment"
@@ -337,12 +343,15 @@ func TestNewUserBenefitReservationRollbackAndCompletionBypassPostgres(t *testing
 			tx.AddError(injected)
 		}
 	}))
-	_, err := ReserveNewUserBenefit(t.Context(), 1, config.Version, "alipay", "benefit-merchant", "ROLLBACK")
+	_, err := ReserveNewUserBenefit(t.Context(), 1, config.Version, "alipay", "benefit-merchant", "ROLLBACK", newUserBenefitTestRisk(1))
 	require.ErrorIs(t, err, injected)
 	require.NoError(t, DB.Callback().Create().Remove("benefit_order_failure"))
 	assert.Zero(t, benefitTableCount(t, &TopUp{}))
 	assert.Zero(t, benefitTableCount(t, &NewUserBenefitOrder{}))
-	order, err := ReserveNewUserBenefit(t.Context(), 1, config.Version, "alipay", "benefit-merchant", "ROLLBACK")
+	usage, err := GetNewUserBenefitUsage(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, &NewUserBenefitUsage{}, usage, "failed admission must not consume any budget or rolling-window capacity")
+	order, err := ReserveNewUserBenefit(t.Context(), 1, config.Version, "alipay", "benefit-merchant", "ROLLBACK", newUserBenefitTestRisk(1))
 	require.NoError(t, err)
 	require.ErrorIs(t, ManualCompleteTopUp(order.TradeNo, "127.0.0.1"), ErrNewUserBenefitPaymentRequired)
 	require.ErrorIs(t, UpdatePendingTopUpStatus(order.TradeNo, PaymentProviderEpay, common.TopUpStatusExpired), ErrNewUserBenefitPaymentRequired)
@@ -363,7 +372,7 @@ func TestNewUserBenefitQuotaBoundsAndZeroBonusPostgres(t *testing.T) {
 		common.OptionMapRWMutex.Lock()
 		operation_setting.USDExchangeRate = rate
 		common.OptionMapRWMutex.Unlock()
-		_, err := ReserveNewUserBenefit(t.Context(), 1, config.Version, "alipay", "benefit-merchant", "BADRATE")
+		_, err := ReserveNewUserBenefit(t.Context(), 1, config.Version, "alipay", "benefit-merchant", "BADRATE", newUserBenefitTestRisk(1))
 		require.ErrorIs(t, err, ErrNewUserBenefitInvalidConfig)
 	}
 	assert.Zero(t, benefitTableCount(t, &TopUp{}))
@@ -374,9 +383,9 @@ func TestNewUserBenefitQuotaBoundsAndZeroBonusPostgres(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 6849, quote.PaidQuota)
 	assert.Equal(t, 68493, quote.PaidQuota+quote.BonusQuota)
-	config, err = UpdateNewUserBenefitConfig(t.Context(), config.Version, 7, NewUserBenefitConfig{Enabled: true, PayAmountCents: 10, CreditAmountCents: 10})
+	config, err = UpdateNewUserBenefitConfig(t.Context(), config.Version, 7, newUserBenefitTestConfig(true, 10, 10))
 	require.NoError(t, err)
-	order, err := ReserveNewUserBenefit(t.Context(), 1, config.Version, "alipay", "benefit-merchant", "ZEROBONUS")
+	order, err := ReserveNewUserBenefit(t.Context(), 1, config.Version, "alipay", "benefit-merchant", "ZEROBONUS", newUserBenefitTestRisk(1))
 	require.NoError(t, err)
 	assert.Zero(t, order.BonusQuota)
 	_, err = RechargeEpay(order.TradeNo, "alipay", "0.10", "127.0.0.1", newUserBenefitTestFacts(order))
@@ -442,7 +451,7 @@ func TestNewUserBenefitAdmissionSerializesWithOrdinaryWalletPaymentPostgres(t *t
 		close(started)
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 		defer cancel()
-		_, err := ReserveNewUserBenefit(ctx, 1, config.Version, "alipay", "benefit-merchant", "RACINGBENEFIT")
+		_, err := ReserveNewUserBenefit(ctx, 1, config.Version, "alipay", "benefit-merchant", "RACINGBENEFIT", newUserBenefitTestRisk(1))
 		reserved <- err
 	}()
 	<-started

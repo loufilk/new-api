@@ -22,6 +22,7 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 import type { ApiResponse } from '../wallet/types'
 import type {
   BenefitCheckout,
+  BenefitConfigUpdate,
   BenefitPaymentRequest,
   NewUserBenefitConfig,
   NewUserBenefitInfo,
@@ -45,12 +46,16 @@ export async function getNewUserBenefit(signal?: AbortSignal) {
 
 export async function requestBenefitPayment(
   request: BenefitPaymentRequest,
-  idempotencyKey: string
+  idempotencyKey: string,
+  turnstile: string
 ) {
   const response = await api.post<ApiResponse<BenefitCheckout>>(
     '/api/user/new-user-benefit/pay',
     request,
-    { headers: { 'Idempotency-Key': idempotencyKey } }
+    {
+      headers: { 'Idempotency-Key': idempotencyKey },
+      params: { turnstile },
+    }
   )
   return requireData(response.data)
 }
@@ -63,10 +68,19 @@ export async function getBenefitConfig(signal?: AbortSignal) {
   return requireData(response.data)
 }
 
-export async function saveBenefitConfig(config: NewUserBenefitConfig) {
+export async function saveBenefitConfig(config: BenefitConfigUpdate) {
   const response = await api.put<ApiResponse<NewUserBenefitConfig>>(
     '/api/option/new-user-benefit',
-    config
+    {
+      enabled: config.enabled,
+      pay_amount_cny: config.pay_amount_cny,
+      credit_amount_cny: config.credit_amount_cny,
+      max_total_orders: config.max_total_orders,
+      max_orders_per_24h: config.max_orders_per_24h,
+      max_orders_per_network_24h: config.max_orders_per_network_24h,
+      total_bonus_budget_cny: config.total_bonus_budget_cny,
+      version: config.version,
+    }
   )
   return requireData(response.data)
 }
