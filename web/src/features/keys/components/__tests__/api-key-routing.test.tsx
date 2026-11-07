@@ -61,7 +61,12 @@ function RoutingForm(props: {
   globalGroups?: string[]
 }) {
   const form = useForm<ApiKeyFormValues>({
-    defaultValues: { ...getApiKeyFormDefaultValues(true), ...props.defaults },
+    defaultValues: {
+      ...getApiKeyFormDefaultValues(),
+      group: 'auto',
+      cross_group_retry: true,
+      ...props.defaults,
+    },
   })
   return (
     <I18nextProvider i18n={i18n}>

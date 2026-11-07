@@ -466,10 +466,12 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                 render={({ field }) => (
                   <SettingsSwitchItem>
                     <SettingsSwitchContent>
-                      <FormLabel>{t('Default to auto groups')}</FormLabel>
+                      <FormLabel>
+                        {t('Use Auto for registration-generated keys')}
+                      </FormLabel>
                       <FormDescription>
                         {t(
-                          'If default auto group is enabled, newly created tokens start with auto instead of an empty group.'
+                          'Applies only to keys created automatically during registration. Users must select a group when creating a key manually.'
                         )}
                       </FormDescription>
                     </SettingsSwitchContent>
@@ -677,10 +679,12 @@ export const GroupRatioForm = memo(function GroupRatioForm({
               render={({ field }) => (
                 <SettingsSwitchItem>
                   <SettingsSwitchContent>
-                    <FormLabel>{t('Default to auto groups')}</FormLabel>
+                    <FormLabel>
+                      {t('Use Auto for registration-generated keys')}
+                    </FormLabel>
                     <FormDescription>
                       {t(
-                        'If default auto group is enabled, newly created tokens start with auto instead of an empty group.'
+                        'Applies only to keys created automatically during registration. Users must select a group when creating a key manually.'
                       )}
                     </FormDescription>
                   </SettingsSwitchContent>
@@ -984,7 +988,7 @@ vip          0.5     ${t('No')}                ${t('Assigned by administrator on
                 <GuideCodeBlock>{`["default", "vip"]`}</GuideCodeBlock>
                 <p className='text-muted-foreground text-sm leading-6'>
                   {t(
-                    'If default auto group is enabled, newly created tokens start with auto instead of an empty group.'
+                    'Applies only to keys created automatically during registration. Users must select a group when creating a key manually.'
                   )}
                 </p>
               </AccordionContent>

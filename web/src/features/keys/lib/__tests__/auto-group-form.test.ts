@@ -34,6 +34,14 @@ const t = ((key: string, options?: Record<string, unknown>) => {
   return key
 }) as TFunction
 
+function autoGroupDefaults() {
+  return {
+    ...getApiKeyFormDefaultValues(),
+    group: 'auto',
+    cross_group_retry: true,
+  }
+}
+
 const baseApiKey: ApiKey = {
   id: 1,
   name: 'test',
@@ -62,8 +70,8 @@ describe('API key Auto group form mapping', () => {
     expect(apiKeySchema.parse(legacyApiKey).auto_groups).toBe(null)
   })
 
-  test('creates an Auto token that inherits the global order', () => {
-    const defaults = getApiKeyFormDefaultValues(true)
+  test('keeps an explicitly selected Auto token on the global order', () => {
+    const defaults = autoGroupDefaults()
 
     expect(defaults.group).toBe('auto')
     expect(defaults.auto_groups_mode).toBe('inherit')
@@ -127,7 +135,7 @@ describe('API key Auto group form mapping', () => {
 
   test('submits a valid custom snapshot in its configured order', () => {
     const custom = {
-      ...getApiKeyFormDefaultValues(true),
+      ...autoGroupDefaults(),
       auto_groups_mode: 'custom' as const,
       auto_groups: ['vip', 'default'],
     }
@@ -139,7 +147,7 @@ describe('API key Auto group form mapping', () => {
   })
 
   test('submits an empty array for inheritance and for non-Auto groups', () => {
-    const inherited = getApiKeyFormDefaultValues(true)
+    const inherited = autoGroupDefaults()
     expect(transformFormDataToPayload(inherited).auto_groups).toEqual([])
 
     const nonAuto = {
@@ -154,7 +162,7 @@ describe('API key Auto group form mapping', () => {
 
   test('rejects snapshots over the configured limit', () => {
     const result = getApiKeyFormSchema(t, 1).safeParse({
-      ...getApiKeyFormDefaultValues(true),
+      ...autoGroupDefaults(),
       name: 'limited token',
       auto_groups_mode: 'custom',
       auto_groups: ['default', 'vip'],
@@ -168,7 +176,7 @@ describe('API key Auto group form mapping', () => {
 
   test('rejects duplicate custom groups', () => {
     const result = getApiKeyFormSchema(t).safeParse({
-      ...getApiKeyFormDefaultValues(true),
+      ...autoGroupDefaults(),
       name: 'duplicate token',
       auto_groups_mode: 'custom',
       auto_groups: ['vip', 'vip'],
@@ -184,14 +192,11 @@ describe('API key Auto group form mapping', () => {
 
 describe('API key user quota query form mapping', () => {
   test('lets a new key query the user quota by default', () => {
-    for (const defaultUseAutoGroup of [true, false]) {
-      const defaults = getApiKeyFormDefaultValues(defaultUseAutoGroup)
-
-      expect(defaults.allow_user_quota_query).toBe(true)
-      expect(transformFormDataToPayload(defaults).allow_user_quota_query).toBe(
-        true
-      )
-    }
+    const defaults = getApiKeyFormDefaultValues()
+    expect(defaults.allow_user_quota_query).toBe(true)
+    expect(transformFormDataToPayload(defaults).allow_user_quota_query).toBe(
+      true
+    )
   })
 
   test.each([true, false])(
@@ -258,7 +263,7 @@ describe('API key routing policy persistence', () => {
   })
   test('does not require an ignored manual draft while smart routing is enabled', () => {
     const values = {
-      ...getApiKeyFormDefaultValues(true),
+      ...autoGroupDefaults(),
       name: 'smart',
       smart_routing: true,
       auto_groups_mode: 'custom' as const,
@@ -271,7 +276,7 @@ describe('API key routing policy persistence', () => {
     ).toBe(false)
   })
   test('rejects unknown strategies and overlong project labels', () => {
-    const values = { ...getApiKeyFormDefaultValues(false), name: 'key' }
+    const values = { ...getApiKeyFormDefaultValues(), name: 'key' }
     expect(
       getApiKeyFormSchema(t).safeParse({
         ...values,
@@ -288,7 +293,11 @@ describe('API key routing policy persistence', () => {
 })
 
 test('counts Unicode project-label characters consistently with the backend limit', () => {
-  const values = { ...getApiKeyFormDefaultValues(false), name: 'unicode' }
+  const values = {
+    ...getApiKeyFormDefaultValues(),
+    name: 'unicode',
+    group: 'default',
+  }
   expect(
     getApiKeyFormSchema(t).safeParse({
       ...values,

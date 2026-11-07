@@ -60,6 +60,28 @@ const legacyKey = {
 
 afterEach(() => vi.restoreAllMocks())
 
+it('keeps API key search credentials in the request body instead of the URL', async () => {
+  const response = {
+    data: { success: true, data: { items: [legacyKey], total: 1 } },
+  }
+  const get = vi.spyOn(api, 'get').mockResolvedValue(response)
+  const post = vi.spyOn(api, 'post').mockResolvedValue(response)
+
+  const result = await searchApiKeys({
+    keyword: 'production',
+    token: 'sk-synthetic-search-secret',
+    p: 2,
+    size: 20,
+  })
+
+  expect(post).toHaveBeenCalledWith('/api/token/search?p=2&size=20', {
+    keyword: 'production',
+    token: 'sk-synthetic-search-secret',
+  })
+  expect(get).not.toHaveBeenCalled()
+  expect(result.data?.items[0]?.id).toBe(legacyKey.id)
+})
+
 describe('legacy key routing response compatibility', () => {
   it('accepts the backend empty strategy as auto without changing any access or quota setting', () => {
     const parsed = apiKeySchema.parse(legacyKey)
@@ -122,7 +144,7 @@ describe('legacy key routing response compatibility', () => {
   it.each(['list', 'search'] as const)(
     'validates and normalizes a mixed legacy/new %s response before rendering',
     async (endpoint) => {
-      vi.spyOn(api, 'get').mockResolvedValue({
+      vi.spyOn(api, endpoint === 'search' ? 'post' : 'get').mockResolvedValue({
         data: {
           success: true,
           data: {
@@ -164,7 +186,7 @@ describe('legacy key routing response compatibility', () => {
         ...legacyKey,
         routing_strategy: 'invalid-private-input',
       }
-      vi.spyOn(api, 'get').mockResolvedValue({
+      vi.spyOn(api, endpoint === 'search' ? 'post' : 'get').mockResolvedValue({
         data: {
           success: true,
           data:
@@ -190,7 +212,7 @@ describe('legacy key routing response compatibility', () => {
     vi.spyOn(api, 'post').mockResolvedValue({ data: ack })
     vi.spyOn(api, 'put').mockResolvedValue({ data: ack })
     const payload = transformFormDataToPayload({
-      ...getApiKeyFormDefaultValues(false),
+      ...getApiKeyFormDefaultValues(),
       name: 'new fixture',
     })
     expect(await createApiKey(payload)).toEqual(ack)

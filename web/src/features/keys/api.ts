@@ -55,17 +55,19 @@ export async function getApiKeys(
   return parseApiKeysResponse(res.data)
 }
 
-// Search API keys by keyword or token (with pagination)
+// Keep credential searches in the request body, out of request URLs and logs.
 export async function searchApiKeys(
   params: SearchApiKeysParams
 ): Promise<GetApiKeysResponse> {
   const { keyword = '', token = '', p, size } = params
   const queryParams = new URLSearchParams()
-  if (keyword) queryParams.set('keyword', keyword)
-  if (token) queryParams.set('token', token)
   if (p != null) queryParams.set('p', String(p))
   if (size != null) queryParams.set('size', String(size))
-  const res = await api.get(`/api/token/search?${queryParams.toString()}`)
+  const query = queryParams.toString()
+  const res = await api.post(`/api/token/search${query ? `?${query}` : ''}`, {
+    keyword,
+    token,
+  })
   return parseApiKeysResponse(res.data)
 }
 

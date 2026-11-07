@@ -28,7 +28,11 @@ import type { ApiKey, ApiKeyFormData } from '../types'
 // Form Schema
 // ============================================================================
 
-export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
+export function getApiKeyFormSchema(
+  t: TFunction,
+  maxAutoGroups = 5,
+  allowInheritedGroup = false
+) {
   const autoGroupLimit =
     Number.isInteger(maxAutoGroups) && maxAutoGroups > 0 ? maxAutoGroups : 5
 
@@ -57,6 +61,14 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
       tokenCount: z.number().min(1).optional(),
     })
     .superRefine((data, ctx) => {
+      if (!data.group?.trim() && !(allowInheritedGroup && data.group === '')) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['group'],
+          message: t('Please select a group'),
+        })
+      }
+
       if (!data.smart_routing && data.group === 'auto') {
         if (
           data.auto_groups_mode === 'custom' &&
@@ -128,19 +140,15 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   group: DEFAULT_GROUP,
   auto_groups_mode: 'inherit',
   auto_groups: [],
-  cross_group_retry: true,
+  cross_group_retry: false,
   tokenCount: 1,
 }
 
-export function getApiKeyFormDefaultValues(
-  defaultUseAutoGroup: boolean
-): ApiKeyFormValues {
+export function getApiKeyFormDefaultValues(): ApiKeyFormValues {
   return {
     ...API_KEY_FORM_DEFAULT_VALUES,
-    group: defaultUseAutoGroup ? 'auto' : DEFAULT_GROUP,
-    auto_groups_mode: 'inherit',
+    model_limits: [],
     auto_groups: [],
-    cross_group_retry: defaultUseAutoGroup,
   }
 }
 

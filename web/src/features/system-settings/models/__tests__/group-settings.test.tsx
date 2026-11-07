@@ -210,7 +210,9 @@ describe('group settings workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Move vip up' }))
     expect(within(list).getAllByRole('listitem')[0]).toHaveTextContent('vip')
     await user.click(
-      screen.getByRole('switch', { name: 'Default to auto groups' })
+      screen.getByRole('switch', {
+        name: 'Use Auto for registration-generated keys',
+      })
     )
     await user.click(screen.getByRole('button', { name: 'Remove vip' }))
     expect(

@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
 import { Info } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useForm, type SubmitErrorHandler } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -34,6 +34,7 @@ import {
   sideDrawerHeaderClassName,
   sideDrawerSwitchItemClassName,
 } from '@/components/drawer-layout'
+import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
 import { MultiSelect } from '@/components/multi-select'
 import { Button } from '@/components/ui/button'
@@ -58,11 +59,11 @@ import {
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import { useStatus } from '@/hooks/use-status'
 import { getUserGroups } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { handleServerError } from '@/lib/handle-server-error'
 import {
+  createServerError,
   requireServerSuccess,
   translateServerText,
 } from '@/lib/server-error-message'
@@ -106,12 +107,11 @@ export function ApiKeysMutateDrawer({
   const currentRowId = currentRow?.id
   const userId = useAuthStore((state) => state.auth.user?.id ?? null)
   const { triggerRefresh } = useApiKeys()
-  const { status, loading: statusLoading } = useStatus()
+  const submittingRef = useRef(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [initializedTarget, setInitializedTarget] = useState<string | null>(
     null
   )
-  const defaultUseAutoGroup = status?.default_use_auto_group === true
 
   // Fetch groups
   const {
@@ -206,37 +206,37 @@ export function ApiKeysMutateDrawer({
     Number(autoGroupsData?.data?.max_count) > 0
       ? Number(autoGroupsData?.data?.max_count)
       : 5
+  const allowInheritedGroup = isUpdate && apiKeyData?.data?.group === ''
   const schema = useMemo(
-    () => getApiKeyFormSchema(t, maxAutoGroups),
-    [t, maxAutoGroups]
+    () => getApiKeyFormSchema(t, maxAutoGroups, allowInheritedGroup),
+    [t, maxAutoGroups, allowInheritedGroup]
   )
 
   const form = useForm<ApiKeyFormValues>({
     resolver: zodResolver(schema),
-    defaultValues: getApiKeyFormDefaultValues(defaultUseAutoGroup),
+    defaultValues: getApiKeyFormDefaultValues(),
   })
 
   // Load existing data when updating
   useEffect(() => {
     if (!open) {
-      form.reset(
-        getApiKeyFormDefaultValues(defaultUseAutoGroup && backendHasAuto)
-      )
+      form.reset(getApiKeyFormDefaultValues())
       setInitializedTarget(null)
       return
     }
     if (
       !groupsFetched ||
       groupsFetching ||
+      groupsError ||
       !autoGroupsFetched ||
       autoGroupsFetching ||
+      autoGroupsError ||
       !groupsData?.success ||
       !autoGroupsData?.success
     ) {
       return
     }
-    if (isUpdate && (!apiKeyFetched || apiKeyFetching)) return
-    if (!isUpdate && statusLoading) return
+    if (isUpdate && (!apiKeyFetched || apiKeyFetching || apiKeyError)) return
 
     const target =
       isUpdate && currentRow
@@ -255,9 +255,7 @@ export function ApiKeysMutateDrawer({
         setInitializedTarget(target)
       }
     } else {
-      form.reset(
-        getApiKeyFormDefaultValues(defaultUseAutoGroup && backendHasAuto)
-      )
+      form.reset(getApiKeyFormDefaultValues())
       setInitializedTarget(target)
     }
   }, [
@@ -265,18 +263,18 @@ export function ApiKeysMutateDrawer({
     isUpdate,
     currentRow,
     form,
-    defaultUseAutoGroup,
-    statusLoading,
-    backendHasAuto,
     groupsData?.success,
     autoGroupsData?.success,
     groupsFetched,
     groupsFetching,
+    groupsError,
     autoGroupsFetched,
     autoGroupsFetching,
+    autoGroupsError,
     apiKeyData,
     apiKeyFetched,
     apiKeyFetching,
+    apiKeyError,
     availableAutoGroupNames,
     maxAutoGroups,
     initializedTarget,
@@ -293,6 +291,26 @@ export function ApiKeysMutateDrawer({
   const autoGroupsMode = form.watch('auto_groups_mode')
   const selectedAutoGroups = form.watch('auto_groups')
   const selectedModelLimits = form.watch('model_limits')
+  const routingError =
+    groupsError || autoGroupsError || (isUpdate && apiKeyError)
+  const routingFetching =
+    groupsFetching || autoGroupsFetching || (isUpdate && apiKeyFetching)
+  const noRoutingGroups =
+    !isUpdate &&
+    isFormInitialized &&
+    manualGroupOptions.length === 0 &&
+    !(backendHasAuto && globalAutoGroups.length > 0)
+  const canSave =
+    isFormInitialized && !routingError && !routingFetching && !noRoutingGroups
+  const canPreviewModels =
+    open &&
+    isFormInitialized &&
+    !routingError &&
+    (!!selectedGroup?.trim() || allowInheritedGroup) &&
+    (smartRouting ||
+      selectedGroup !== 'auto' ||
+      autoGroupsMode === 'inherit' ||
+      selectedAutoGroups.length > 0)
   const scopeAutoGroups = useMemo(
     () =>
       selectedGroup === 'auto' && autoGroupsMode === 'custom'
@@ -324,20 +342,28 @@ export function ApiKeysMutateDrawer({
           auto_groups: scopeAutoGroups,
         })
       ),
-    enabled: open && isFormInitialized,
+    enabled: canPreviewModels,
     staleTime: 0,
   })
 
-  const models = useMemo(() => modelsData?.data ?? [], [modelsData?.data])
+  const models = useMemo(
+    () => (canPreviewModels ? (modelsData?.data ?? []) : []),
+    [canPreviewModels, modelsData?.data]
+  )
   const availableModelSet = useMemo(() => new Set(models), [models])
   const unavailableSelectedModels = useMemo(
     () =>
-      modelsData?.success
+      canPreviewModels && modelsData?.success
         ? selectedModelLimits.filter(
             (modelName) => !availableModelSet.has(modelName)
           )
         : [],
-    [availableModelSet, modelsData?.success, selectedModelLimits]
+    [
+      availableModelSet,
+      canPreviewModels,
+      modelsData?.success,
+      selectedModelLimits,
+    ]
   )
   const modelOptions = useMemo(
     () => [
@@ -355,6 +381,8 @@ export function ApiKeysMutateDrawer({
   )
 
   const onSubmit = async (data: ApiKeyFormValues) => {
+    if (!canSave || submittingRef.current) return
+    submittingRef.current = true
     setIsSubmitting(true)
     try {
       const basePayload = transformFormDataToPayload(data)
@@ -375,37 +403,52 @@ export function ApiKeysMutateDrawer({
         // Create mode - handle batch creation
         const count = data.tokenCount || 1
         let successCount = 0
-
-        for (let i = 0; i < count; i++) {
-          const result = await createApiKey({
-            ...basePayload,
-            name:
-              i === 0 && data.name
-                ? data.name
-                : `${data.name || 'default'}-${Math.random().toString(36).slice(2, 8)}`,
-          })
-          if (result.success) {
+        let creationFailed = false
+        try {
+          for (let i = 0; i < count; i++) {
+            const result = await createApiKey({
+              ...basePayload,
+              name:
+                i === 0 && data.name
+                  ? data.name
+                  : `${data.name || 'default'}-${Math.random().toString(36).slice(2, 8)}`,
+            })
+            if (!result.success) {
+              throw createServerError(result, t(ERROR_MESSAGES.CREATE_FAILED))
+            }
             successCount++
-          } else {
-            handleServerError(result, t(ERROR_MESSAGES.CREATE_FAILED))
-            break
           }
+        } catch (error) {
+          creationFailed = true
+          handleServerError(error, t(ERROR_MESSAGES.CREATE_FAILED))
         }
 
-        if (successCount > 0) {
-          onCreated?.()
+        if (creationFailed) {
+          toast.warning(
+            t(
+              'Creation confirmed for {{created}} of {{total}} API keys. Check the key list before trying again.',
+              { created: successCount, total: count }
+            )
+          )
+        } else {
           toast.success(
             t('Successfully created {{count}} API Key(s)', {
               count: successCount,
             })
           )
+        }
+        // A lost response can follow a successful write. Refresh the list even
+        // when no creation was confirmed, and never replay the failed request.
+        triggerRefresh()
+        if (successCount > 0) {
+          onCreated?.()
           onOpenChange(false)
-          triggerRefresh()
         }
       }
     } catch (error) {
       handleServerError(error, t(ERROR_MESSAGES.UNEXPECTED))
     } finally {
+      submittingRef.current = false
       setIsSubmitting(false)
     }
   }
@@ -455,7 +498,7 @@ export function ApiKeysMutateDrawer({
               : t('Add a new API key by providing necessary info.')}
           </SheetDescription>
         </SheetHeader>
-        {(groupsError || autoGroupsError || apiKeyError) && (
+        {routingError && (
           <ErrorState
             title={t('Failed to load routing groups')}
             description={t(
@@ -468,12 +511,33 @@ export function ApiKeysMutateDrawer({
             }}
           />
         )}
+        {!routingError && noRoutingGroups && (
+          <EmptyState
+            title={t('No routing groups available')}
+            description={t(
+              'No groups are available for this account. Ask an administrator to grant access, then retry.'
+            )}
+            action={
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                onClick={() => {
+                  void refetchGroups()
+                  void refetchAutoGroups()
+                }}
+              >
+                {t('Retry')}
+              </Button>
+            }
+          />
+        )}
         <Form {...form}>
           <form
             id='api-key-form'
             onSubmit={form.handleSubmit(onSubmit, onInvalid)}
-            aria-busy={!isFormInitialized}
-            inert={!isFormInitialized || isSubmitting ? true : undefined}
+            aria-busy={!isFormInitialized || routingFetching || isSubmitting}
+            inert={!canSave || isSubmitting ? true : undefined}
             className={sideDrawerFormClassName(
               'min-w-0 gap-0 px-5 py-6 sm:px-8 sm:py-6'
             )}
@@ -505,6 +569,7 @@ export function ApiKeysMutateDrawer({
                 globalGroups={globalAutoGroups}
                 maxCount={maxAutoGroups}
                 allowAuto={backendHasAuto}
+                allowInheritedGroup={allowInheritedGroup}
                 disabled={isSubmitting}
               />
 
@@ -666,7 +731,9 @@ export function ApiKeysMutateDrawer({
                       <FormControl>
                         <MultiSelect
                           options={modelOptions}
-                          disabled={modelsFetching || modelsError}
+                          disabled={
+                            !canPreviewModels || modelsFetching || modelsError
+                          }
                           selected={field.value}
                           onChange={field.onChange}
                           placeholder={t('Select models (empty for allow all)')}
@@ -682,12 +749,12 @@ export function ApiKeysMutateDrawer({
                             )
                           : t('Limit which models can be used with this key')}
                       </FormDescription>
-                      {modelsFetching && (
+                      {canPreviewModels && modelsFetching && (
                         <FormDescription role='status'>
                           {t('Loading models...')}
                         </FormDescription>
                       )}
-                      {modelsError && (
+                      {canPreviewModels && modelsError && (
                         <div
                           role='alert'
                           className='text-destructive flex items-center justify-between gap-2 text-xs'
@@ -778,7 +845,7 @@ export function ApiKeysMutateDrawer({
           <Button
             type='button'
             onClick={form.handleSubmit(onSubmit, onInvalid)}
-            disabled={!isFormInitialized || isSubmitting}
+            disabled={!canSave || isSubmitting}
             className='order-1 w-full min-w-0 sm:order-none sm:w-auto'
           >
             {isSubmitting ? t('Saving...') : submitLabel}

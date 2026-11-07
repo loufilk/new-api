@@ -48,6 +48,7 @@ export function ApiKeyRoutingFields(props: {
   globalGroups: string[]
   maxCount: number
   allowAuto: boolean
+  allowInheritedGroup?: boolean
   disabled?: boolean
 }) {
   const { t } = useTranslation()
@@ -63,9 +64,13 @@ export function ApiKeyRoutingFields(props: {
     selectedGroups = mode === 'custom' ? customGroups : props.globalGroups
   } else if (group) {
     selectedGroups = [group]
-  } else if (userGroup) {
+  } else if (props.allowInheritedGroup && userGroup) {
     selectedGroups = [userGroup]
   }
+  const hasManualSelection =
+    (props.allowInheritedGroup && group === '') ||
+    (!!group?.trim() &&
+      (group !== 'auto' || mode === 'inherit' || customGroups.length > 0))
   // Explicit manual selections use concrete group permissions, not the
   // separate permission to inherit the global virtual Auto group.
   const maxCount = props.maxCount
@@ -74,11 +79,17 @@ export function ApiKeyRoutingFields(props: {
     if (smart || props.disabled) return
     const next = [...groups]
     if (next.length === 1) {
-      form.setValue('group', next[0], { shouldDirty: true })
+      form.setValue('group', next[0], {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
     } else {
       // An empty custom list stays invalid until explicitly filled or reset.
       // Never silently replace it with the account/global default.
-      form.setValue('group', 'auto', { shouldDirty: true })
+      form.setValue('group', 'auto', {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
     }
     form.setValue('auto_groups_mode', 'custom', { shouldDirty: true })
     form.setValue('auto_groups', next, {
@@ -147,10 +158,16 @@ export function ApiKeyRoutingFields(props: {
                 <Switch
                   checked={field.value}
                   onCheckedChange={field.onChange}
+                  disabled={props.disabled || (!smart && !hasManualSelection)}
                   className='data-checked:bg-orange-500'
                 />
               </FormControl>
             </div>
+            {!smart && !hasManualSelection && (
+              <FormDescription>
+                {t('Select a group before enabling smart routing.')}
+              </FormDescription>
+            )}
             <FormMessage />
           </FormItem>
         )}
@@ -253,14 +270,19 @@ export function ApiKeyRoutingFields(props: {
                   values={selectedGroups}
                   onValuesChange={setGroups}
                   maxCount={maxCount}
+                  aria-required={!props.allowInheritedGroup}
                   disabled={smart || props.disabled}
                   placeholder={t('Select groups in routing order')}
                 />
               </FormControl>
               <FormDescription className='text-xs'>
-                {t(
-                  'Select multiple authorized groups. Drag or use the arrow buttons to set the order from top to bottom.'
-                )}
+                {props.allowInheritedGroup && group === ''
+                  ? t('Using your account group ({{group}}).', {
+                      group: userGroup || t('Unknown'),
+                    })
+                  : t(
+                      'Select multiple authorized groups. Drag or use the arrow buttons to set the order from top to bottom.'
+                    )}
               </FormDescription>
               {selectedGroups.length > 0 && (
                 <AutoGroupOrderEditor
@@ -296,13 +318,24 @@ export function ApiKeyRoutingFields(props: {
             variant='ghost'
             size='sm'
             className='text-muted-foreground h-6 px-1 text-xs'
-            disabled={smart || props.disabled || !group}
-            onClick={() =>
-              form.setValue('group', '', {
-                shouldDirty: true,
-                shouldValidate: true,
-              })
+            disabled={
+              smart ||
+              props.disabled ||
+              !userGroup ||
+              (props.allowInheritedGroup
+                ? !group
+                : !props.options.some((option) => option.value === userGroup))
             }
+            onClick={() => {
+              if (props.allowInheritedGroup) {
+                form.setValue('group', '', {
+                  shouldDirty: true,
+                  shouldValidate: true,
+                })
+              } else if (userGroup) {
+                setGroups([userGroup])
+              }
+            }}
           >
             {t('Use my group')}
           </Button>
@@ -318,7 +351,10 @@ export function ApiKeyRoutingFields(props: {
                 (group === 'auto' && mode === 'inherit')
               }
               onClick={() => {
-                form.setValue('group', 'auto', { shouldDirty: true })
+                form.setValue('group', 'auto', {
+                  shouldDirty: true,
+                  shouldValidate: true,
+                })
                 form.setValue('auto_groups_mode', 'inherit', {
                   shouldDirty: true,
                 })

@@ -66,6 +66,7 @@ type ApiKeyGroupComboboxProps = {
   'aria-label'?: string
   'aria-describedby'?: string
   'aria-invalid'?: boolean | 'true' | 'false'
+  'aria-required'?: boolean
 }
 
 export function ApiKeyGroupCombobox({
@@ -81,6 +82,7 @@ export function ApiKeyGroupCombobox({
   'aria-label': ariaLabel,
   'aria-describedby': ariaDescribedBy,
   'aria-invalid': ariaInvalid,
+  'aria-required': ariaRequired,
 }: ApiKeyGroupComboboxProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -140,6 +142,7 @@ export function ApiKeyGroupCombobox({
             aria-label={ariaLabel}
             aria-describedby={ariaDescribedBy}
             aria-invalid={ariaInvalid}
+            aria-required={ariaRequired}
             aria-expanded={open}
             data-auto-group-effect={isAutoSelected ? 'trigger' : undefined}
             disabled={disabled}

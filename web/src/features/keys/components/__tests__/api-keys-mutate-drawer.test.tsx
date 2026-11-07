@@ -211,11 +211,12 @@ afterEach(async () => {
 })
 
 describe('API keys mutate drawer Auto group integration', () => {
-  test('inherits the root Auto order and sends an empty override for every batch-created key', async () => {
+  test('explicitly selects the root Auto order and sends an empty override for every batch-created key', async () => {
     const createdPayloads: Array<Record<string, unknown>> = []
     installApiFixtures(createdPayloads)
     await renderCreateDrawer()
 
+    fireEvent.click(findButton('Restore global Auto', true))
     const groupTrigger = getControlByLabel('Group')
     expect(groupTrigger).toHaveTextContent('vip → default')
     expect(
@@ -270,6 +271,7 @@ describe('API keys mutate drawer Auto group integration', () => {
     const createdPayloads: Array<Record<string, unknown>> = []
     installApiFixtures(createdPayloads)
     await renderCreateDrawer()
+    fireEvent.click(findButton('Restore global Auto', true))
     fireEvent.click(getControlByLabel('Group'))
     const selectedDefault = screen.getByRole('option', { name: /^default/ })
     fireEvent.click(selectedDefault)
@@ -420,6 +422,7 @@ describe('API key expiry across editing sessions', () => {
       const payloads: Array<Record<string, unknown>> = []
       installApiFixtures(payloads)
       await renderCreateDrawer()
+      fireEvent.click(findButton('Restore global Auto', true))
       changeInput(getControlByLabel('Token Name'), 'no-expiry')
       fireEvent.click(screen.getByRole('button', { name: '1 Month' }))
       expect(screen.getByLabelText('Time')).toBeEnabled()
@@ -441,6 +444,7 @@ describe('API keys mutate drawer user quota query switch', () => {
     installApiFixtures(createdPayloads)
     await renderCreateDrawer()
 
+    fireEvent.click(findButton('Restore global Auto', true))
     const quotaQuerySwitch = await screen.findByRole('switch', {
       name: 'Allow querying user quota',
     })
@@ -460,6 +464,7 @@ describe('API keys persisted routing policy', () => {
     const payloads: Array<Record<string, unknown>> = []
     installApiFixtures(payloads)
     await renderCreateDrawer()
+    fireEvent.click(findButton('Restore global Auto', true))
     changeInput(getControlByLabel('Token Name'), 'routing-fixture')
     fireEvent.change(screen.getByLabelText('Project label'), {
       target: { value: 'Synthetic project' },

@@ -164,7 +164,7 @@ func TestTokenGroupPermissionSaveAndRuntime(t *testing.T) {
 			children           []string
 			allowed            bool
 		}{
-			{name: "inherit", owner: "default", group: "", allowed: true},
+			{name: "explicit selection required", owner: "default", group: ""},
 			{name: "public", owner: "default", group: "a", allowed: true},
 			{name: "private", owner: "default", group: "b"},
 			{name: "unknown", owner: "default", group: "unknown"},

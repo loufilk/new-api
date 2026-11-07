@@ -29,6 +29,47 @@ import zhCN from '../locales/zh.json'
 
 const resources = { en, fr, ja, ru, vi, zhCN, zhTW }
 
+describe('API key group selection translations', () => {
+  test.each(Object.keys(resources))(
+    '%s renders group selection and creation feedback with intact placeholders',
+    async (language) => {
+      const i18n = createInstance()
+      await i18n.init({ lng: language, fallbackLng: false, resources })
+
+      for (const key of [
+        'Please select a group',
+        'Invalid token status',
+        'Select a group before enabling smart routing.',
+        'Using your account group ({{group}}).',
+        'No routing groups available',
+        'No groups are available for this account. Ask an administrator to grant access, then retry.',
+        'Creation confirmed for {{created}} of {{total}} API keys. Check the key list before trying again.',
+        'Use Auto for registration-generated keys',
+        'Applies only to keys created automatically during registration. Users must select a group when creating a key manually.',
+      ]) {
+        expect(i18n.exists(key), `${language}: ${key}`).toBe(true)
+        const value = i18n.getResource(language, 'translation', key) as string
+        expect(value).not.toBe('')
+        if (language !== 'en') expect(value).not.toBe(key)
+        expect(value.match(/\{\{\w+\}\}/g)?.sort() ?? []).toEqual(
+          key.match(/\{\{\w+\}\}/g)?.sort() ?? []
+        )
+      }
+
+      expect(
+        i18n.t('Using your account group ({{group}}).', { group: 'vip' })
+      ).toContain('vip')
+      const feedback = i18n.t(
+        'Creation confirmed for {{created}} of {{total}} API keys. Check the key list before trying again.',
+        { created: 2, total: 5 }
+      )
+      expect(feedback).toContain('2')
+      expect(feedback).toContain('5')
+      expect(feedback).not.toContain('{{')
+    }
+  )
+})
+
 describe('locale coverage after upstream integration', () => {
   test.each(['fr', 'ja', 'ru', 'vi'] as const)(
     '%s translates the documentation navigation and integration introduction',

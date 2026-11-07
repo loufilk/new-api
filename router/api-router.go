@@ -325,6 +325,7 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 		{
 			tokenRoute.GET("/", controller.GetAllTokens)
 			tokenRoute.GET("/search", middleware.SearchRateLimit(), controller.SearchTokens)
+			tokenRoute.POST("/search", middleware.SearchRateLimit(), middleware.DisableCache(), controller.SearchTokens)
 			tokenRoute.GET("/auto-groups", controller.GetTokenAutoGroups)
 			tokenRoute.POST("/models", controller.PreviewTokenModels)
 			tokenRoute.GET("/:id", controller.GetToken)

@@ -45,6 +45,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
+import { Route as KeysRoute } from '@/routes/_authenticated/keys'
 import {
   DEFAULT_CURRENCY_CONFIG,
   useSystemConfigStore,
@@ -308,7 +309,8 @@ async function renderKeysPage(
   overrides: Partial<Omit<ApiKey, 'routing_strategy'>> & {
     routing_strategy?: unknown
   } = {},
-  waitForRow = true
+  waitForRow = true,
+  initialEntry = '/keys/'
 ) {
   let currentKey = { ...key, status, ...overrides }
   vi.mocked(api.get).mockImplementation(async (url) => {
@@ -319,8 +321,15 @@ async function renderKeysPage(
     }
     return { data: { success: true, data: { default: { ratio: 1 } } } }
   })
-  const post = vi.spyOn(api, 'post').mockResolvedValue({
-    data: { success: true, data: { key: 'fake-key-for-test-only' } },
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url.startsWith('/api/token/search')) {
+      return {
+        data: { success: true, data: { items: [currentKey], total: 1 } },
+      }
+    }
+    return {
+      data: { success: true, data: { key: 'fake-key-for-test-only' } },
+    }
   })
   const put = vi.spyOn(api, 'put').mockImplementation(async (_url, data) => {
     const update = data as { id: number; status: number }
@@ -338,10 +347,15 @@ async function renderKeysPage(
     getParentRoute: () => auth,
     path: 'keys/',
     component: KeysPage,
+    validateSearch: KeysRoute.options.validateSearch,
+    beforeLoad: KeysRoute.options.beforeLoad as unknown as (args: {
+      location: { searchStr: string }
+      search: Record<string, unknown>
+    }) => void,
   })
   const router = createRouter({
     routeTree: root.addChildren([auth.addChildren([keysRoute])]),
-    history: createMemoryHistory({ initialEntries: ['/keys/'] }),
+    history: createMemoryHistory({ initialEntries: [initialEntry] }),
   })
   await router.load()
   render(
@@ -352,8 +366,68 @@ async function renderKeysPage(
     </I18nextProvider>
   )
   if (waitForRow) await screen.findByText(currentKey.name)
-  return { post, put }
+  return { post, put, router }
 }
+
+it('searches by a pasted API key without adding it to browser history', async () => {
+  const { post, router } = await renderKeysPage()
+  const secret = 'sk-synthetic-search-secret'
+  await userEvent.type(
+    screen.getByRole('textbox', { name: 'Filter by API key...' }),
+    secret
+  )
+
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith('/api/token/search?p=1&size=20', {
+      keyword: '',
+      token: secret,
+    })
+  )
+  expect(router.history.location.href).not.toContain(secret)
+  expect(router.history.location.href).not.toContain('token=')
+  expect(screen.getByText('production')).toBeInTheDocument()
+})
+
+it('resets the private key search through the shared table toolbar', async () => {
+  const { post, router } = await renderKeysPage()
+  const user = userEvent.setup()
+  const input = screen.getByRole('textbox', { name: 'Filter by API key...' })
+  await user.type(input, 'sk-synthetic-reset-secret')
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith('/api/token/search?p=1&size=20', {
+      keyword: '',
+      token: 'sk-synthetic-reset-secret',
+    })
+  )
+  vi.mocked(api.get).mockClear()
+  post.mockClear()
+
+  await user.click(screen.getByRole('button', { name: 'Reset' }))
+
+  expect(input).toHaveValue('')
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/token/?p=1&size=20')
+  )
+  expect(post).not.toHaveBeenCalled()
+  expect(router.history.location.href).not.toContain('token=')
+})
+
+it('replaces legacy token search URLs before displaying the key list', async () => {
+  const { router } = await renderKeysPage(
+    1,
+    {},
+    true,
+    '/keys/?token=sk-synthetic-legacy-secret&filter=production'
+  )
+
+  await waitFor(() =>
+    expect(router.history.location.href).not.toContain('token=')
+  )
+  expect(router.history.location.href).toContain('filter=production')
+  expect(
+    screen.getByRole('textbox', { name: 'Filter by API key...' })
+  ).toHaveValue('')
+})
 
 it('combines creation and last use while keeping expiry, models and IP restrictions separate', async () => {
   await renderKeysPage()

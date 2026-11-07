@@ -206,8 +206,20 @@ func GetAllTokens(c *gin.Context) {
 
 func SearchTokens(c *gin.Context) {
 	userId := c.GetInt("id")
-	keyword := c.Query("keyword")
-	token := c.Query("token")
+	var keyword, token string
+	if c.Request.Method == http.MethodPost {
+		var request struct {
+			Keyword string `json:"keyword"`
+			Token   string `json:"token"`
+		}
+		if err := c.ShouldBindJSON(&request); err != nil {
+			common.ApiErrorT(c, "Invalid parameters")
+			return
+		}
+		keyword, token = request.Keyword, request.Token
+	} else {
+		keyword, token = c.Query("keyword"), c.Query("token")
+	}
 
 	pageInfo := common.GetPageQuery(c)
 
@@ -618,6 +630,10 @@ func AddToken(c *gin.Context) {
 	}
 	params := tokenAuditParams(c)
 	params["name"] = token.Name
+	if request.Group == nil || strings.TrimSpace(*request.Group) == "" {
+		common.ApiErrorT(c, "Please select a group")
+		return
+	}
 	// 非无限额度时，检查额度值是否超出有效范围
 	if !token.UnlimitedQuota {
 		if token.RemainQuota < 0 {
@@ -649,7 +665,7 @@ func AddToken(c *gin.Context) {
 		token.CrossGroupRetry = false
 		_ = token.SetAutoGroups(nil)
 	}
-	if !(token.SmartRouting && token.Group == "auto") && !validateTokenRequestRoutingScope(c, &token) {
+	if !validateTokenRequestRoutingScope(c, &token) {
 		return
 	}
 	key, err := common.GenerateKey()
@@ -761,6 +777,10 @@ func UpdateToken(c *gin.Context) {
 		return
 	}
 	params["name"] = cleanToken.Name
+	if statusOnly != "" && token.Status != common.TokenStatusEnabled && token.Status != common.TokenStatusDisabled {
+		common.ApiErrorT(c, "Invalid token status")
+		return
+	}
 	previous := *cleanToken
 	if token.Status == common.TokenStatusEnabled {
 		if cleanToken.Status == common.TokenStatusExpired && cleanToken.ExpiredTime <= common.GetTimestamp() && cleanToken.ExpiredTime != -1 {
@@ -778,6 +798,13 @@ func UpdateToken(c *gin.Context) {
 		}
 		cleanToken.Status = token.Status
 	} else {
+		// Existing empty selections still inherit their owner's group. An
+		// explicit named selection cannot be cleared into that legacy mode.
+		if request.Group != nil && strings.TrimSpace(*request.Group) == "" &&
+			(*request.Group != "" || cleanToken.Group != "") {
+			common.ApiErrorT(c, "Please select a group")
+			return
+		}
 		if err := request.applyRoutingSettings(cleanToken); err != nil {
 			common.ApiError(c, err)
 			return

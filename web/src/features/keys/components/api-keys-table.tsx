@@ -18,7 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
-import { flexRender, type Table as TanstackTable } from '@tanstack/react-table'
+import {
+  flexRender,
+  type ColumnFiltersState,
+  type Table as TanstackTable,
+} from '@tanstack/react-table'
 import { Database } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -220,6 +224,7 @@ export function ApiKeysTable() {
   const { t } = useTranslation()
   const { refreshTrigger } = useApiKeys()
   const [now, setNow] = useState(() => Date.now())
+  const [tokenFilters, setTokenFilters] = useState<ColumnFiltersState>([])
   const columns = useApiKeysColumns(now)
 
   useEffect(() => {
@@ -243,20 +248,21 @@ export function ApiKeysTable() {
     navigate: route.useNavigate(),
     pagination: { defaultPage: 1, defaultPageSize: 20 },
     globalFilter: { enabled: true, key: 'filter' },
-    columnFilters: [
-      { columnId: 'status', searchKey: 'status', type: 'array' },
-      { columnId: '_tokenSearch', searchKey: 'token', type: 'string' },
-    ],
+    columnFilters: [{ columnId: 'status', searchKey: 'status', type: 'array' }],
   })
 
   const {
     value: tokenFilter,
     inputValue: tokenFilterInput,
     setInputValue: setTokenFilterInput,
+    resetInput: resetTokenFilterInput,
   } = useDebouncedColumnFilter({
-    columnFilters,
+    columnFilters: tokenFilters,
     columnId: '_tokenSearch',
-    onColumnFiltersChange,
+    onColumnFiltersChange: (updater) => {
+      setTokenFilters(updater)
+      onPaginationChange((previous) => ({ ...previous, pageIndex: 0 }))
+    },
   })
   const shouldSearch = Boolean(globalFilter?.trim() || tokenFilter.trim())
 
@@ -367,10 +373,14 @@ export function ApiKeysTable() {
       toolbarProps={{
         searchPlaceholder: t('Filter by name...'),
         searchDebounceMs: 500,
+        hasAdditionalFilters: !!tokenFilterInput,
+        onReset: resetTokenFilterInput,
         additionalSearch: (
           <Input
             placeholder={t('Filter by API key...')}
             aria-label={t('Filter by API key...')}
+            autoComplete='off'
+            spellCheck={false}
             value={tokenFilterInput}
             onChange={(e) => setTokenFilterInput(e.target.value)}
             className='w-full sm:w-50 lg:w-60'

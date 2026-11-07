@@ -250,9 +250,14 @@ it('refreshes model candidates when the group changes', async () => {
   renderDrawer()
 
   await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Add' })).toBeEnabled()
+  )
+  expect(mocks.getApiKeyScopeModels).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('button', { name: 'group:a' }))
+  await waitFor(() =>
     expect(mocks.getApiKeyScopeModels).toHaveBeenCalledWith({
-      group: '',
-      auto_groups_mode: 'inherit',
+      group: 'a',
+      auto_groups_mode: 'custom',
       auto_groups: [],
     })
   )

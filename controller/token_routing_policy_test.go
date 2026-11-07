@@ -24,11 +24,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSmartTokenCreatePersistsPolicyWithoutVirtualAutoGrant(t *testing.T) {
+func TestSmartTokenCreateRequiresAuthorizedRoutingScope(t *testing.T) {
 	configureTokenAutoGroupsTest(t, "1", `[]`)
 	user := setupTokenAutoGroupsControllerTest(t)
 	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","vip":"VIP"}`))
 	request := baseAutoTokenRequest("smart-create")
+	request["group"] = "default"
 	request["smart_routing"], request["no_retry_within_group"] = true, true
 	request["routing_strategy"], request["project_label"] = "price", "  项目 A  "
 	ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", request, user.Id)
@@ -41,8 +42,18 @@ func TestSmartTokenCreatePersistsPolicyWithoutVirtualAutoGrant(t *testing.T) {
 	assert.True(t, token.NoRetryWithinGroup)
 	assert.Equal(t, "price", token.RoutingStrategy)
 	assert.Equal(t, "项目 A", token.ProjectLabel)
-	assert.Equal(t, "auto", token.Group)
+	assert.Equal(t, "default", token.Group)
 	assert.True(t, token.CrossGroupRetry)
+	// A new smart key still needs an authorized explicit routing selection.
+	request["name"], request["group"] = "unavailable-auto", "auto"
+	ctx, recorder = newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", request, user.Id)
+	AddToken(ctx)
+	assert.False(t, decodeAPIResponse(t, recorder).Success)
+	request["name"], request["auto_groups"] = "authorized-manual-auto", []string{"vip"}
+	ctx, recorder = newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", request, user.Id)
+	AddToken(ctx)
+	response = decodeAPIResponse(t, recorder)
+	require.True(t, response.Success, response.Message)
 	// Smart routing does not turn an arbitrary named manual group into a grant.
 	request["name"], request["group"] = "forbidden-create", "private"
 	ctx, recorder = newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", request, user.Id)
