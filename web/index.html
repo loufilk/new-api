@@ -64,6 +64,10 @@
           14px/1.5 system-ui,
           sans-serif;
       }
+      /* Keep a rendered page usable even if the inline cleanup script fails. */
+      #root:not(:empty) + #app-bootstrap {
+        display: none;
+      }
       html.dark #app-bootstrap {
         background: var(--background, #0a0a0a);
         color: var(--foreground, #fafafa);
@@ -96,28 +100,20 @@
         }
       }
     </style>
+    <div id="root" translate="no" class="notranslate"></div>
     <div id="app-bootstrap" role="status" aria-live="polite">
       <span id="app-bootstrap-spinner" aria-hidden="true"></span>
       <span id="app-bootstrap-message">Loading...</span>
       <button id="app-bootstrap-retry" type="button" hidden>Retry</button>
     </div>
-    <div id="root" translate="no" class="notranslate"></div>
     <script>
       ;(function () {
         var shell = document.getElementById('app-bootstrap')
         var root = document.getElementById('root')
         var message = document.getElementById('app-bootstrap-message')
         var retry = document.getElementById('app-bootstrap-retry')
-        var language = navigator.language || 'en'
-        try {
-          language = localStorage.getItem('i18nextLng') || language
-        } catch (e) {}
-        var normalize = <%= bootstrapLanguage %>
         var messages = <%= bootstrapMessages %>
-        var key = normalize(language).split('-')[0].toLowerCase()
-        var text = messages[key] || messages.en
-        message.textContent = text.loading
-        retry.textContent = text.retry
+        var text = messages.en
 
         function showRecovery() {
           message.textContent = text.failed
@@ -147,6 +143,19 @@
           shell.remove()
         })
         observer.observe(root, { childList: true })
+
+        // Localization must never prevent cleanup or the recovery controls.
+        try {
+          var language = navigator.language || 'en'
+          try {
+            language = localStorage.getItem('i18nextLng') || language
+          } catch (e) {}
+          var normalize = <%= bootstrapLanguage %>
+          var key = normalize(language).split('-')[0].toLowerCase()
+          text = messages[key] || messages.en
+        } catch (e) {}
+        message.textContent = text.loading
+        retry.textContent = text.retry
       })()
     </script>
   </body>

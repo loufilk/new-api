@@ -19,7 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { convertDetectedLanguage } from '../src/i18n/languages'
+import {
+  convertDetectedLanguage,
+  normalizeInterfaceLanguage,
+  toIntlLocale,
+} from '../src/i18n/languages'
 
 /** The HTML shell must work before React or the async locale backend loads. */
 export function getBootstrapTemplateParameters(
@@ -48,6 +52,12 @@ export function getBootstrapTemplateParameters(
   )
   return {
     bootstrapMessages: JSON.stringify(messages).replaceAll('<', '\\u003c'),
-    bootstrapLanguage: convertDetectedLanguage.toString(),
+    // The inline browser script has no access to the module scope. Include the
+    // complete shared normalization chain without maintaining a second mapping.
+    bootstrapLanguage: `(function () {
+      var toIntlLocale = ${toIntlLocale.toString()};
+      var normalizeInterfaceLanguage = ${normalizeInterfaceLanguage.toString()};
+      return ${convertDetectedLanguage.toString()};
+    })()`,
   }
 }

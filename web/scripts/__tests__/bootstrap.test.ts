@@ -26,7 +26,10 @@ import { getBootstrapTemplateParameters } from '../bootstrap-template'
 
 const windows: JSDOM[] = []
 
-function openShell(language = 'en') {
+function openShell(
+  language = 'en',
+  options: { scriptsBlocked?: boolean; localeUnavailable?: boolean } = {}
+) {
   const parameters = getBootstrapTemplateParameters(process.cwd())
   const template = readFileSync(resolve('index.html'), 'utf8')
   const html = template.replaceAll(
@@ -36,9 +39,12 @@ function openShell(language = 'en') {
   let expire = () => {}
   const dom = new JSDOM(html, {
     url: 'https://console.test/dashboard',
-    runScripts: 'dangerously',
+    runScripts: options.scriptsBlocked ? 'outside-only' : 'dangerously',
     beforeParse(window) {
       window.localStorage.setItem('i18nextLng', language)
+      if (options.localeUnavailable) {
+        Object.defineProperty(window.Intl, 'Locale', { value: undefined })
+      }
       window.matchMedia = () => ({ matches: false }) as MediaQueryList
       window.setTimeout = ((callback: () => void) => {
         expire = callback
@@ -100,6 +106,47 @@ describe('HTML startup while application resources are unavailable', () => {
     await new Promise<void>((resolve) => dom.window.queueMicrotask(resolve))
     expect(dom.window.document.querySelector('#app-bootstrap')).toBeNull()
     expect(dom.window.clearTimeout).toHaveBeenCalled()
+  })
+
+  it('keeps English recovery available when browser locale normalization fails', () => {
+    const { dom, expire } = openShell('zh-CN', { localeUnavailable: true })
+    expect(
+      dom.window.document.querySelector('#app-bootstrap-message')?.textContent
+    ).toBe('Loading...')
+    expire()
+    expect(
+      dom.window.document.querySelector('#app-bootstrap')?.getAttribute('role')
+    ).toBe('alert')
+    expect(
+      dom.window.document.querySelector<HTMLButtonElement>(
+        '#app-bootstrap-retry'
+      )?.hidden
+    ).toBe(false)
+  })
+
+  it('removes the shell after rendering even when browser locale normalization fails', async () => {
+    const { dom } = openShell('zh-CN', { localeUnavailable: true })
+    dom.window.document
+      .querySelector('#root')
+      ?.append(dom.window.document.createElement('main'))
+    await new Promise<void>((resolve) => dom.window.queueMicrotask(resolve))
+    expect(dom.window.document.querySelector('#app-bootstrap')).toBeNull()
+  })
+
+  it('hides the shell as soon as content appears even when inline scripts are blocked', () => {
+    const { dom } = openShell('en', { scriptsBlocked: true })
+    const shell =
+      dom.window.document.querySelector<HTMLElement>('#app-bootstrap')
+    if (!shell) throw new Error('Expected the startup loading shell')
+    expect(dom.window.getComputedStyle(shell).display).toBe('flex')
+    dom.window.document
+      .querySelector('#root')
+      ?.append(dom.window.document.createComment('Waiting for React content'))
+    expect(dom.window.getComputedStyle(shell).display).toBe('flex')
+    dom.window.document
+      .querySelector('#root')
+      ?.append(dom.window.document.createElement('main'))
+    expect(dom.window.getComputedStyle(shell).display).toBe('none')
   })
 
   it.each([
