@@ -89,7 +89,9 @@ export function BenefitDialog(props: BenefitDialogProps) {
         </span>
       }
       desc={t(
-        'Pay {{pay}} to receive {{credit}} in total credit after payment.',
+        props.offer.paymentIdentityCheckEnabled
+          ? 'Pay {{pay}} for {{credit}} in total credit, including a bonus subject to payment identity verification.'
+          : 'Pay {{pay}} to receive {{credit}} in total credit after payment.',
         {
           pay,
           credit,
@@ -208,11 +210,25 @@ export function BenefitDialog(props: BenefitDialogProps) {
             'One benefit per account before its first successful recharge. Amounts are in CNY.'
           )}
         </p>
-        {!props.offer.orderId && (
+        {props.offer.paymentIdentityCheckEnabled && (
+          <Alert>
+            <AlertDescription>
+              {t(
+                'The bonus is credited after ZPAY confirms an Alipay user ID that has not received this benefit before. Missing identity details leave the bonus pending; a previously used identity receives no bonus.'
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
+        {!props.offer.orderId && props.offer.requireVerifiedEmail && (
           <p className='text-muted-foreground text-xs'>
             {t(
               'A verified email is required. Each account and verified email can reserve this benefit once, subject to availability.'
             )}
+          </p>
+        )}
+        {!props.offer.orderId && props.offer.networkLimitEnabled && (
+          <p className='text-muted-foreground text-xs'>
+            {t('Orders from the same network are subject to a 24-hour limit.')}
           </p>
         )}
       </div>

@@ -1,6 +1,7 @@
 package router
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -87,10 +88,12 @@ func TestNewUserBenefitRoutes(t *testing.T) {
 	}{
 		{http.MethodGet, "/api/user/new-user-benefit", "", "", http.StatusUnauthorized},
 		{http.MethodPost, "/api/user/new-user-benefit/pay", "", "{}", http.StatusUnauthorized},
+		{http.MethodPost, "/api/user/new-user-benefit/recheck", "", "{}", http.StatusUnauthorized},
 		{http.MethodGet, "/api/option/new-user-benefit", "", "", http.StatusUnauthorized},
 		{http.MethodPut, "/api/option/new-user-benefit", "", body, http.StatusUnauthorized},
 		{http.MethodGet, "/api/user/new-user-benefit", wrongScope, "", http.StatusForbidden},
 		{http.MethodPost, "/api/user/new-user-benefit/pay", reader, "{}", http.StatusForbidden},
+		{http.MethodPost, "/api/user/new-user-benefit/recheck", reader, "{}", http.StatusForbidden},
 		{http.MethodPut, "/api/option/new-user-benefit", userOptions, body, http.StatusForbidden},
 		{http.MethodPut, "/api/option/new-user-benefit", rootReader, body, http.StatusForbidden},
 		{http.MethodGet, "/api/user/new-user-benefit", reader, "", http.StatusOK},
@@ -194,5 +197,19 @@ func TestNewUserBenefitRoutes(t *testing.T) {
 		assert.EqualValues(t, 1, admitted)
 		require.NoError(t, db.Model(&model.TopUp{}).Count(&admitted).Error)
 		assert.EqualValues(t, 1, admitted, "blocked attempts must not leak a payable order")
+		// An offer-specific switch is independent of the globally enabled
+		// challenge; the disabled email and network policies are also honored.
+		current, err := model.GetNewUserBenefitConfig(t.Context())
+		require.NoError(t, err)
+		next := *current
+		next.RequireTurnstile, next.RequireVerifiedEmail, next.NetworkLimitEnabled = false, false, false
+		current, err = model.UpdateNewUserBenefitConfig(t.Context(), current.Version, root.Id, next)
+		require.NoError(t, err)
+		require.NoError(t, db.Model(&model.User{}).Where("id = ?", userC.Id).Updates(map[string]any{"email": "", "email_verified_at": 0}).Error)
+		common.TurnstileCheckEnabled = true
+		intent = `{"payment_method":"alipay","config_version":` + fmt.Sprint(current.Version) + `}`
+		withoutChallenge := pay(userCToken, "", "198.51.100.5")
+		assert.Equal(t, http.StatusOK, withoutChallenge.StatusCode)
+		require.NoError(t, withoutChallenge.Body.Close())
 	})
 }

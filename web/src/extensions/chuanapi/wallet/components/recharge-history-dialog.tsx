@@ -119,6 +119,22 @@ function RechargeHistory(props: RechargeHistoryProps) {
             header: t('Total credit'),
             cell: (row) => {
               if (row.new_user_benefit) {
+                if (row.new_user_benefit_credited_amount_cny !== undefined) {
+                  return formatBenefitCny(
+                    row.new_user_benefit_credited_amount_cny,
+                    locale
+                  )
+                }
+                if (row.new_user_benefit_credited_quota !== undefined) {
+                  return formatQuota(row.new_user_benefit_credited_quota)
+                }
+                if (
+                  row.status === 'success' &&
+                  (row.new_user_benefit_reward_status === 'pending' ||
+                    row.new_user_benefit_reward_status === 'denied')
+                ) {
+                  return formatBenefitCny(String(row.money), locale)
+                }
                 if (row.new_user_benefit_credit_amount_cny) {
                   return formatBenefitCny(
                     row.new_user_benefit_credit_amount_cny,
@@ -169,6 +185,28 @@ function RechargeHistory(props: RechargeHistoryProps) {
             id: 'status',
             header: t('Status'),
             cell: (row) => {
+              if (
+                row.new_user_benefit &&
+                row.status === 'success' &&
+                row.new_user_benefit_reward_status === 'pending'
+              ) {
+                return (
+                  <Badge variant='outline'>
+                    {t('Benefit bonus pending verification')}
+                  </Badge>
+                )
+              }
+              if (
+                row.new_user_benefit &&
+                row.status === 'success' &&
+                row.new_user_benefit_reward_status === 'denied'
+              ) {
+                return (
+                  <Badge variant='outline'>
+                    {t('Benefit bonus not issued')}
+                  </Badge>
+                )
+              }
               const labels = {
                 success: 'Paid',
                 pending: 'Pending',

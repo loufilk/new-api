@@ -73,6 +73,10 @@ export async function saveBenefitConfig(config: BenefitConfigUpdate) {
     '/api/option/new-user-benefit',
     {
       enabled: config.enabled,
+      require_verified_email: config.require_verified_email,
+      require_turnstile: config.require_turnstile,
+      network_limit_enabled: config.network_limit_enabled,
+      payment_identity_check_enabled: config.payment_identity_check_enabled,
       pay_amount_cny: config.pay_amount_cny,
       credit_amount_cny: config.credit_amount_cny,
       max_total_orders: config.max_total_orders,
@@ -81,6 +85,13 @@ export async function saveBenefitConfig(config: BenefitConfigUpdate) {
       total_bonus_budget_cny: config.total_bonus_budget_cny,
       version: config.version,
     }
+  )
+  return requireData(response.data)
+}
+
+export async function recheckBenefitPaymentIdentity(): Promise<NewUserBenefitInfo> {
+  const response = await api.post<ApiResponse<NewUserBenefitInfo>>(
+    '/api/user/new-user-benefit/recheck'
   )
   return requireData(response.data)
 }

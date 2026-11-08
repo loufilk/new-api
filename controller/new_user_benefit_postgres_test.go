@@ -33,7 +33,7 @@ func setupNewUserBenefitControllerPostgres(t *testing.T) *gorm.DB {
 	t.Logf("new user benefit PostgreSQL server_version=%s", version)
 	models := []any{
 		&model.User{}, &model.TopUp{}, &model.SubscriptionOrder{},
-		&model.NewUserBenefitConfig{}, &model.NewUserBenefitConfigAudit{}, &model.NewUserBenefitOrder{},
+		&model.NewUserBenefitConfig{}, &model.NewUserBenefitConfigAudit{}, &model.NewUserBenefitOrder{}, &model.NewUserBenefitReward{}, &model.NewUserBenefitPaymentIdentity{},
 		&model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.PaymentReceipt{},
 		&model.AgentSimplePaymentOrder{}, &model.Log{},
 	}
@@ -62,7 +62,7 @@ func setupNewUserBenefitControllerPostgres(t *testing.T) *gorm.DB {
 }
 
 func newUserBenefitControllerConfig() model.NewUserBenefitConfig {
-	return model.NewUserBenefitConfig{Enabled: true, PayAmountCents: 10, CreditAmountCents: 100,
+	return model.NewUserBenefitConfig{RequireVerifiedEmail: true, RequireTurnstile: true, NetworkLimitEnabled: true, Enabled: true, PayAmountCents: 10, CreditAmountCents: 100,
 		MaxTotalOrders: 1000, MaxOrdersPer24h: 100, MaxOrdersPerNetwork24h: 3, TotalBonusBudgetCents: 90000}
 }
 

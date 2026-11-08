@@ -33,6 +33,7 @@ import {
   within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
@@ -316,4 +317,143 @@ test('changing the verification site key while confirmation is open invalidates 
       screen.getByRole('button', { name: 'Pay CN¥0.10 and continue' })
     ).toBeDisabled()
   )
+})
+
+test('disabled email, human and network checks remove those requirements from new checkout', async () => {
+  info.require_verified_email = false
+  info.network_limit_enabled = false
+  info.turnstile_required = false
+  info.turnstile_site_key = ''
+  show()
+  expect(await openPayment()).toBeEnabled()
+  expect(widgets).toHaveLength(0)
+  expect(screen.getByRole('alertdialog')).not.toHaveTextContent(
+    'A verified email is required.'
+  )
+  expect(
+    screen.queryByRole('group', { name: 'Security verification' })
+  ).not.toBeInTheDocument()
+})
+
+test('payment identity verification explains that the bonus requires an unused Alipay identity before checkout', async () => {
+  info.payment_identity_check_enabled = true
+  show()
+  await openPayment()
+  expect(screen.getByRole('alertdialog')).toHaveTextContent(
+    'The bonus is credited after ZPAY confirms an Alipay user ID that has not received this benefit before. Missing identity details leave the bonus pending; a previously used identity receives no bonus.'
+  )
+})
+
+test('a paid benefit awaiting identity verification remains visible when the offer is disabled and rechecks without another payment', async () => {
+  info.status = 'verification_pending'
+  info.enabled = false
+  info.eligible = false
+  info.reward_status = 'pending'
+  info.blocked_reason = 'payment_identity_pending'
+  const post = vi.spyOn(api, 'post').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        ...info,
+        status: 'claimed',
+        reward_status: 'granted',
+        blocked_reason: '',
+      },
+    },
+  })
+  const user = show()
+  expect(
+    await screen.findByText(
+      'Your payment is credited. The bonus is waiting for payment identity verification.'
+    )
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('button', { name: 'Continue benefit payment' })
+  ).not.toBeInTheDocument()
+  await user.click(
+    screen.getByRole('button', { name: 'Recheck payment identity' })
+  )
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+  expect(post).toHaveBeenCalledWith('/api/user/new-user-benefit/recheck')
+  expect(HTMLFormElement.prototype.submit).not.toHaveBeenCalled()
+})
+
+test('a reused payment identity explains the denied bonus while confirming the paid balance', async () => {
+  info.status = 'reward_denied'
+  info.eligible = false
+  info.reward_status = 'denied'
+  info.blocked_reason = 'payment_identity_used'
+  show()
+  expect(
+    await screen.findByText(
+      'This payment identity has already received the benefit. Your payment is credited; no bonus was issued.'
+    )
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('button', { name: 'Recheck payment identity' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: 'View recharge benefit' })
+  ).not.toBeInTheDocument()
+})
+
+test('a failed identity recheck preserves the paid pending state and permits an explicit retry', async () => {
+  info.status = 'verification_pending'
+  info.eligible = false
+  const post = vi
+    .spyOn(api, 'post')
+    .mockRejectedValueOnce(new Error('Identity query unavailable'))
+    .mockResolvedValueOnce({ data: { success: true, data: info } })
+  const errorToast = vi.spyOn(toast, 'error')
+  const user = show()
+  await user.click(
+    await screen.findByRole('button', { name: 'Recheck payment identity' })
+  )
+  await waitFor(() => expect(errorToast).toHaveBeenCalledTimes(1))
+  expect(
+    screen.getByText(
+      'Your payment is credited. The bonus is waiting for payment identity verification.'
+    )
+  ).toBeVisible()
+  const retry = screen.getByRole('button', { name: 'Recheck payment identity' })
+  expect(retry).toBeEnabled()
+  await user.click(retry)
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(2))
+  expect(HTMLFormElement.prototype.submit).not.toHaveBeenCalled()
+})
+
+test('a late identity recheck cannot update another account or show its reward toast', async () => {
+  info.status = 'verification_pending'
+  info.eligible = false
+  let resolveRecheck: ((value: unknown) => void) | undefined
+  vi.spyOn(api, 'post').mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        resolveRecheck = resolve
+      })
+  )
+  const successToast = vi.spyOn(toast, 'success')
+  const user = show()
+  await user.click(
+    await screen.findByRole('button', { name: 'Recheck payment identity' })
+  )
+  await act(async () => {
+    info.status = 'available'
+    info.eligible = true
+    useAuthStore
+      .getState()
+      .auth.setUser({ id: 8, username: 'another-user', role: 1 })
+  })
+  expect(
+    await screen.findByRole('button', { name: 'View recharge benefit' })
+  ).toBeVisible()
+  await act(async () => {
+    resolveRecheck?.({
+      data: { success: true, data: { ...info, status: 'claimed' } },
+    })
+  })
+  expect(
+    screen.getByRole('button', { name: 'View recharge benefit' })
+  ).toBeVisible()
+  expect(successToast).not.toHaveBeenCalled()
 })

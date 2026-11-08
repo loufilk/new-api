@@ -10,6 +10,11 @@ import (
 )
 
 type newUserBenefitSettingsResponse struct {
+	RequireVerifiedEmail        bool `json:"require_verified_email"`
+	RequireTurnstile            bool `json:"require_turnstile"`
+	NetworkLimitEnabled         bool `json:"network_limit_enabled"`
+	PaymentIdentityCheckEnabled bool `json:"payment_identity_check_enabled"`
+
 	Enabled                bool   `json:"enabled"`
 	PayAmountCNY           string `json:"pay_amount_cny"`
 	CreditAmountCNY        string `json:"credit_amount_cny"`
@@ -26,6 +31,8 @@ type newUserBenefitSettingsResponse struct {
 
 func newUserBenefitSettingsView(config *model.NewUserBenefitConfig, usage *model.NewUserBenefitUsage) newUserBenefitSettingsResponse {
 	return newUserBenefitSettingsResponse{
+		RequireVerifiedEmail: config.RequireVerifiedEmail, RequireTurnstile: config.RequireTurnstile,
+		NetworkLimitEnabled: config.NetworkLimitEnabled, PaymentIdentityCheckEnabled: config.PaymentIdentityCheckEnabled,
 		Enabled: config.Enabled, Version: config.Version,
 		PayAmountCNY:    model.FormatNewUserBenefitCNY(config.PayAmountCents),
 		CreditAmountCNY: model.FormatNewUserBenefitCNY(config.CreditAmountCents),
@@ -57,6 +64,11 @@ func GetNewUserBenefitSettings(c *gin.Context) {
 
 func UpdateNewUserBenefitSettings(c *gin.Context) {
 	var request struct {
+		RequireVerifiedEmail        *bool `json:"require_verified_email"`
+		RequireTurnstile            *bool `json:"require_turnstile"`
+		NetworkLimitEnabled         *bool `json:"network_limit_enabled"`
+		PaymentIdentityCheckEnabled *bool `json:"payment_identity_check_enabled"`
+
 		Enabled                *bool   `json:"enabled"`
 		PayAmountCNY           *string `json:"pay_amount_cny"`
 		CreditAmountCNY        *string `json:"credit_amount_cny"`
@@ -80,7 +92,24 @@ func UpdateNewUserBenefitSettings(c *gin.Context) {
 		newUserBenefitSettingsError(c, http.StatusBadRequest, "new_user_benefit_invalid_config", model.ErrNewUserBenefitInvalidConfig.Error())
 		return
 	}
+	// Omitted new controls from a previously shipped administrator UI preserve
+	// the existing behavior instead of silently switching risk checks off.
+	requireEmail, requireTurnstile, networkLimit, paymentIdentity := true, true, true, false
+	if request.RequireVerifiedEmail != nil {
+		requireEmail = *request.RequireVerifiedEmail
+	}
+	if request.RequireTurnstile != nil {
+		requireTurnstile = *request.RequireTurnstile
+	}
+	if request.NetworkLimitEnabled != nil {
+		networkLimit = *request.NetworkLimitEnabled
+	}
+	if request.PaymentIdentityCheckEnabled != nil {
+		paymentIdentity = *request.PaymentIdentityCheckEnabled
+	}
 	next := model.NewUserBenefitConfig{
+		RequireVerifiedEmail: requireEmail, RequireTurnstile: requireTurnstile,
+		NetworkLimitEnabled: networkLimit, PaymentIdentityCheckEnabled: paymentIdentity,
 		Enabled: *request.Enabled, PayAmountCents: payCents, CreditAmountCents: creditCents,
 		MaxTotalOrders: *request.MaxTotalOrders, MaxOrdersPer24h: *request.MaxOrdersPer24h,
 		MaxOrdersPerNetwork24h: *request.MaxOrdersPerNetwork24h, TotalBonusBudgetCents: budgetCents,
@@ -89,8 +118,31 @@ func UpdateNewUserBenefitSettings(c *gin.Context) {
 		newUserBenefitSettingsError(c, http.StatusBadRequest, "new_user_benefit_invalid_config", err.Error())
 		return
 	}
-	if next.Enabled && !snapshotNewUserBenefitVerification().Ready {
+	if request.RequireVerifiedEmail == nil || request.RequireTurnstile == nil || request.NetworkLimitEnabled == nil || request.PaymentIdentityCheckEnabled == nil {
+		current, err := model.GetNewUserBenefitConfig(c.Request.Context())
+		if err != nil {
+			newUserBenefitSettingsError(c, http.StatusServiceUnavailable, "new_user_benefit_unavailable", "New user benefit is temporarily unavailable.")
+			return
+		}
+		if request.RequireVerifiedEmail == nil {
+			next.RequireVerifiedEmail = current.RequireVerifiedEmail
+		}
+		if request.RequireTurnstile == nil {
+			next.RequireTurnstile = current.RequireTurnstile
+		}
+		if request.NetworkLimitEnabled == nil {
+			next.NetworkLimitEnabled = current.NetworkLimitEnabled
+		}
+		if request.PaymentIdentityCheckEnabled == nil {
+			next.PaymentIdentityCheckEnabled = current.PaymentIdentityCheckEnabled
+		}
+	}
+	if next.Enabled && next.RequireTurnstile && !snapshotNewUserBenefitVerification().Ready {
 		newUserBenefitSettingsError(c, http.StatusConflict, "new_user_benefit_verification_unavailable", "Configure and enable Turnstile before enabling the new user benefit")
+		return
+	}
+	if next.Enabled && next.PaymentIdentityCheckEnabled && !newUserBenefitIdentityGatewayReady(snapshotNewUserBenefitPayment()) {
+		newUserBenefitSettingsError(c, http.StatusConflict, "new_user_benefit_payment_identity_unavailable", "New user benefit payment identity checks require an HTTPS Alipay gateway")
 		return
 	}
 	// Collect the read-only usage snapshot before the mutation so a statistics

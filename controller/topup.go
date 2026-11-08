@@ -471,6 +471,11 @@ func EpayNotify(c *gin.Context) {
 			}
 			return
 		}
+		// Principal has committed before this bounded provider lookup. A failed
+		// lookup leaves a durable pending reward and can be retried by its owner.
+		if reviewErr := reviewNewUserBenefitPayment(c.Request.Context(), verifyInfo.ServiceTradeNo, 0); reviewErr != nil {
+			logger.LogWarn(c.Request.Context(), "New user benefit reward review remains pending")
+		}
 		if alreadyDone {
 			logger.LogInfo(c.Request.Context(), common.LogText("Epay duplicate callback ignored trade_no=%s callback_type=%s client_ip=%s", verifyInfo.ServiceTradeNo, verifyInfo.Type, c.ClientIP()))
 		} else {

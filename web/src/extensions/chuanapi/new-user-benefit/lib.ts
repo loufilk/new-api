@@ -66,6 +66,9 @@ export function getBenefitOffer(
   if (info.status === 'pending' && info.pending_order) {
     const order = info.pending_order
     offer = {
+      requireVerifiedEmail: info.require_verified_email ?? true,
+      networkLimitEnabled: info.network_limit_enabled ?? true,
+      paymentIdentityCheckEnabled: info.payment_identity_check_enabled ?? false,
       payAmount: order.pay_amount_cny,
       creditAmount: order.credit_amount_cny,
       version: order.config_version,
@@ -76,6 +79,9 @@ export function getBenefitOffer(
     }
   } else if (info.status === 'available' && info.enabled && info.eligible) {
     offer = {
+      requireVerifiedEmail: info.require_verified_email ?? true,
+      networkLimitEnabled: info.network_limit_enabled ?? true,
+      paymentIdentityCheckEnabled: info.payment_identity_check_enabled ?? false,
       payAmount: info.pay_amount_cny,
       creditAmount: info.credit_amount_cny,
       version: info.config_version,
@@ -115,6 +121,10 @@ export function benefitBlockedMessage(
       return 'This account is not eligible for this recharge benefit.'
     case 'limit_reached':
       return 'The new user benefit limit has been reached. Please try again later'
+    case 'payment_identity_pending':
+      return 'Your payment is credited. The bonus is waiting for payment identity verification.'
+    case 'payment_identity_used':
+      return 'This payment identity has already received the benefit. Your payment is credited; no bonus was issued.'
     case 'verification_unavailable':
       return 'Security verification is temporarily unavailable. Please try again later.'
     default:
@@ -132,6 +142,8 @@ export function benefitErrorMessage(error: unknown, fallback: string): string {
       'This benefit payment method is currently unavailable. Please try again later.',
     new_user_benefit_invalid_config:
       'Enter valid CNY amounts with at most two decimal places and positive order limits. Total credit must be at least the payment amount.',
+    new_user_benefit_payment_identity_unavailable:
+      'New user benefit payment identity checks require an HTTPS Alipay gateway',
     new_user_benefit_email_required:
       'Verify your email address before claiming the new user benefit',
     new_user_benefit_identity_used:

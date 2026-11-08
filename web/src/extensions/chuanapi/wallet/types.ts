@@ -240,6 +240,10 @@ export interface TopupRecord {
   new_user_benefit?: boolean
   new_user_benefit_credit_quota?: number
   new_user_benefit_credit_amount_cny?: string
+  new_user_benefit_credited_quota?: number
+  new_user_benefit_credited_amount_cny?: string
+  new_user_benefit_reward_status?: 'pending' | 'denied' | 'granted' | ''
+  new_user_benefit_reward_reason?: string
   agent_simple_topup?: boolean
   payment_provider?: string
   paid_currency?: string

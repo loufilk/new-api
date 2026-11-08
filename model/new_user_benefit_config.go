@@ -28,6 +28,12 @@ var (
 // NewUserBenefitConfig is read directly from the primary database. A single row
 // and version serialize settings and order admission across application instances.
 type NewUserBenefitConfig struct {
+	RequireVerifiedEmail        bool `gorm:"not null;default:false"`
+	RequireTurnstile            bool `gorm:"not null;default:false"`
+	NetworkLimitEnabled         bool `gorm:"not null;default:false"`
+	PaymentIdentityCheckEnabled bool `gorm:"not null;default:false"`
+	RiskPolicyVersion           int  `gorm:"not null;default:0"`
+
 	ID                     int   `gorm:"primaryKey;autoIncrement:false"`
 	Enabled                bool  `gorm:"not null"`
 	PayAmountCents         int64 `gorm:"not null"`
@@ -44,6 +50,12 @@ type NewUserBenefitConfig struct {
 // The audit snapshot commits with the configuration, so a failed audit write
 // cannot publish a price that has no corresponding change record.
 type NewUserBenefitConfigAudit struct {
+	RequireVerifiedEmail        bool `gorm:"not null;default:false"`
+	RequireTurnstile            bool `gorm:"not null;default:false"`
+	NetworkLimitEnabled         bool `gorm:"not null;default:false"`
+	PaymentIdentityCheckEnabled bool `gorm:"not null;default:false"`
+	RiskPolicyVersion           int  `gorm:"not null;default:0"`
+
 	ID                     int64 `gorm:"primaryKey"`
 	Version                int64 `gorm:"not null;uniqueIndex"`
 	Enabled                bool  `gorm:"not null"`
@@ -58,8 +70,20 @@ type NewUserBenefitConfigAudit struct {
 }
 
 func defaultNewUserBenefitConfig() NewUserBenefitConfig {
-	return NewUserBenefitConfig{ID: 1, PayAmountCents: 10, CreditAmountCents: 100,
+	return NewUserBenefitConfig{ID: 1, RequireVerifiedEmail: true, RequireTurnstile: true, NetworkLimitEnabled: true, RiskPolicyVersion: 1, PayAmountCents: 10, CreditAmountCents: 100,
 		MaxTotalOrders: 1000, MaxOrdersPer24h: 100, MaxOrdersPerNetwork24h: 3, TotalBonusBudgetCents: 90000}
+}
+
+// The marker makes an old schema's added false columns distinguishable from an
+// administrator explicitly disabling the controls. No mutable migration default
+// or restart-time UPDATE can accidentally re-enable a saved policy.
+func normalizeNewUserBenefitPolicy(config *NewUserBenefitConfig) {
+	if config.RiskPolicyVersion == 0 {
+		config.RequireVerifiedEmail = true
+		config.RequireTurnstile = true
+		config.NetworkLimitEnabled = true
+		config.PaymentIdentityCheckEnabled = false
+	}
 }
 
 // ParseNewUserBenefitCNY accepts decimal currency strings, never float input or
@@ -113,6 +137,7 @@ func GetNewUserBenefitConfig(ctx context.Context) (*NewUserBenefitConfig, error)
 	if err != nil {
 		return nil, err
 	}
+	normalizeNewUserBenefitPolicy(&config)
 	if err = ValidateNewUserBenefitConfig(config); err != nil {
 		return nil, err
 	}
@@ -129,6 +154,7 @@ func LockNewUserBenefitConfigTx(tx *gorm.DB) (*NewUserBenefitConfig, error) {
 	if err := lockForUpdate(tx).First(&config, 1).Error; err != nil {
 		return nil, err
 	}
+	normalizeNewUserBenefitPolicy(&config)
 	return &config, nil
 }
 
@@ -147,12 +173,13 @@ func UpdateNewUserBenefitConfig(ctx context.Context, expectedVersion int64, acto
 		if current.Version != expectedVersion {
 			return ErrNewUserBenefitConfigChanged
 		}
+		next.RiskPolicyVersion = 1
 		next.ID = 1
 		next.Version = current.Version + 1
 		next.UpdatedBy = actorID
 		next.UpdatedAt = time.Now().Unix()
 		result := tx.Model(&NewUserBenefitConfig{}).Where("id = ? AND version = ?", 1, expectedVersion).
-			Select("enabled", "pay_amount_cents", "credit_amount_cents", "max_total_orders", "max_orders_per_24h", "max_orders_per_network_24h", "total_bonus_budget_cents", "version", "updated_at", "updated_by").Updates(&next)
+			Select("require_verified_email", "require_turnstile", "network_limit_enabled", "payment_identity_check_enabled", "risk_policy_version", "enabled", "pay_amount_cents", "credit_amount_cents", "max_total_orders", "max_orders_per_24h", "max_orders_per_network_24h", "total_bonus_budget_cents", "version", "updated_at", "updated_by").Updates(&next)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -160,7 +187,9 @@ func UpdateNewUserBenefitConfig(ctx context.Context, expectedVersion int64, acto
 			return ErrNewUserBenefitConfigChanged
 		}
 		return tx.Create(&NewUserBenefitConfigAudit{
-			Version: next.Version, Enabled: next.Enabled, PayAmountCents: next.PayAmountCents,
+			RequireVerifiedEmail: next.RequireVerifiedEmail, RequireTurnstile: next.RequireTurnstile,
+			NetworkLimitEnabled: next.NetworkLimitEnabled, PaymentIdentityCheckEnabled: next.PaymentIdentityCheckEnabled,
+			RiskPolicyVersion: 1, Version: next.Version, Enabled: next.Enabled, PayAmountCents: next.PayAmountCents,
 			CreditAmountCents: next.CreditAmountCents, ActorID: actorID, CreatedAt: next.UpdatedAt,
 			MaxTotalOrders: next.MaxTotalOrders, MaxOrdersPer24h: next.MaxOrdersPer24h,
 			MaxOrdersPerNetwork24h: next.MaxOrdersPerNetwork24h, TotalBonusBudgetCents: next.TotalBonusBudgetCents,

@@ -19,7 +19,7 @@ import (
 func newUserBenefitFixture(t *testing.T) *NewUserBenefitConfig {
 	t.Helper()
 	db := newUserBenefitConfigFixture(t)
-	models := append([]any{&User{}, &TopUp{}, &NewUserBenefitOrder{}, &SubscriptionOrder{}, &PaymentReceipt{},
+	models := append([]any{&User{}, &TopUp{}, &NewUserBenefitOrder{}, &NewUserBenefitReward{}, &NewUserBenefitPaymentIdentity{}, &SubscriptionOrder{}, &PaymentReceipt{},
 		&BalanceLedgerOperation{}, &BalanceLedger{}, &Log{}, &AgentCommissionOutbox{}, &ReferralRewardOutbox{}}, BonusSourceModels()...)
 	for range 2 {
 		require.NoError(t, db.AutoMigrate(models...))

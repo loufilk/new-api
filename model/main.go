@@ -429,6 +429,8 @@ func mainAutoMigrateModels(registry *extension.Registry) []any {
 		&NewUserBenefitConfig{},
 		&NewUserBenefitConfigAudit{},
 		&NewUserBenefitOrder{},
+		&NewUserBenefitReward{},
+		&NewUserBenefitPaymentIdentity{},
 		&QuotaData{},
 		&Task{},
 		&TaskPlugin{},

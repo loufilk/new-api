@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math"
 	"net/netip"
+	"net/url"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -16,11 +17,13 @@ import (
 )
 
 const (
-	NewUserBenefitStatusAvailable  = "available"
-	NewUserBenefitStatusIneligible = "ineligible"
-	NewUserBenefitStatusPending    = "pending"
-	NewUserBenefitStatusClaimed    = "claimed"
-	LedgerReasonNewUserTopUp       = "new_user_topup"
+	NewUserBenefitStatusAvailable           = "available"
+	NewUserBenefitStatusIneligible          = "ineligible"
+	NewUserBenefitStatusPending             = "pending"
+	NewUserBenefitStatusClaimed             = "claimed"
+	NewUserBenefitStatusVerificationPending = "verification_pending"
+	NewUserBenefitStatusRewardDenied        = "reward_denied"
+	LedgerReasonNewUserTopUp                = "new_user_topup"
 )
 
 var (
@@ -38,24 +41,32 @@ var (
 
 // NewUserBenefitOrder is the immutable promise made before releasing an Epay
 // payment form. One account has one order for its lifetime, including across
-// configuration changes. TopUp owns the payment status; keeping one state
-// transition avoids a separately mutable claim becoming inconsistent with it.
+// configuration changes. TopUp owns payment completion; an optional reward
+// review records the captured payer condition after principal is credited.
 type NewUserBenefitOrder struct {
-	UserID            int    `gorm:"primaryKey;autoIncrement:false"`
-	TradeNo           string `gorm:"type:varchar(32);not null;uniqueIndex"`
-	PaymentProvider   string `gorm:"type:varchar(32);not null"`
-	PaymentMethod     string `gorm:"type:varchar(50);not null"`
-	MerchantScope     string `gorm:"type:varchar(128);not null"`
-	PayAmountCents    int64  `gorm:"not null"`
-	CreditAmountCents int64  `gorm:"not null"`
-	ConfigVersion     int64  `gorm:"not null"`
-	USDExchangeRate   string `gorm:"type:varchar(64);not null"`
-	QuotaPerUnit      string `gorm:"type:varchar(64);not null"`
-	PaidQuota         int    `gorm:"type:bigint;not null"`
-	BonusQuota        int    `gorm:"type:bigint;not null"`
-	// Nullable hashes preserve old payment promises during upgrade. New orders
-	// always capture both; rebinding an email or deleting an account cannot
-	// release an identity already committed to a benefit order.
+	PaymentGateway              string `gorm:"type:varchar(1024);not null;default:''"`
+	RequireVerifiedEmail        bool   `gorm:"not null;default:false"`
+	RequireTurnstile            bool   `gorm:"not null;default:false"`
+	NetworkLimitEnabled         bool   `gorm:"not null;default:false"`
+	PaymentIdentityCheckEnabled bool   `gorm:"not null;default:false"`
+	RiskPolicyVersion           int    `gorm:"not null;default:0"`
+	RewardStatus                string `gorm:"-"`
+	RewardReason                string `gorm:"-"`
+	UserID                      int    `gorm:"primaryKey;autoIncrement:false"`
+	TradeNo                     string `gorm:"type:varchar(32);not null;uniqueIndex"`
+	PaymentProvider             string `gorm:"type:varchar(32);not null"`
+	PaymentMethod               string `gorm:"type:varchar(50);not null"`
+	MerchantScope               string `gorm:"type:varchar(128);not null"`
+	PayAmountCents              int64  `gorm:"not null"`
+	CreditAmountCents           int64  `gorm:"not null"`
+	ConfigVersion               int64  `gorm:"not null"`
+	USDExchangeRate             string `gorm:"type:varchar(64);not null"`
+	QuotaPerUnit                string `gorm:"type:varchar(64);not null"`
+	PaidQuota                   int    `gorm:"type:bigint;not null"`
+	BonusQuota                  int    `gorm:"type:bigint;not null"`
+	// Nullable hashes preserve old promises and represent disabled controls.
+	// Enabled checks capture their identity permanently; rebinding an email or
+	// deleting an account cannot release a captured benefit identity.
 	EmailIdentityHash *string `gorm:"type:varchar(64);uniqueIndex"`
 	NetworkHash       *string `gorm:"type:varchar(64);index:idx_new_user_benefit_network_time,priority:1"`
 	CreatedAt         int64   `gorm:"not null;index;index:idx_new_user_benefit_network_time,priority:2"`
@@ -79,8 +90,9 @@ type NewUserBenefitState struct {
 // NewUserBenefitRiskContext contains server-established admission evidence,
 // never JSON fields accepted from the customer.
 type NewUserBenefitRiskContext struct {
-	ClientIP      string
-	HumanVerified bool
+	PaymentGateway string
+	ClientIP       string
+	HumanVerified  bool
 }
 
 // NewUserBenefitUsage includes every committed promise, paid or unpaid, across
@@ -154,7 +166,7 @@ func newUserBenefitEmailIdentityTx(tx *gorm.DB, user *User) (string, error) {
 	// Legacy orders did not capture an email. Also check their current account
 	// association, including soft-deleted users, rather than treating a missing
 	// hash as proof that the verified email has never participated.
-	legacyOrders := tx.Model(&NewUserBenefitOrder{}).Select("user_id").Where("email_identity_hash IS NULL")
+	legacyOrders := tx.Model(&NewUserBenefitOrder{}).Select("user_id").Where("email_identity_hash IS NULL AND risk_policy_version = 0")
 	legacyOwners := tx.Unscoped().Model(&User{}).Where("id IN (?)", legacyOrders)
 	if strings.HasSuffix(email, "@gmail.com") {
 		legacyOwners = legacyOwners.Where("LOWER(TRIM(email)) LIKE ? OR LOWER(TRIM(email)) LIKE ?", "%@gmail.com", "%@googlemail.com")
@@ -245,6 +257,9 @@ func validateNewUserBenefitOrder(order *NewUserBenefitOrder, topUp *TopUp) error
 		order.GrantedAt = 0
 	case common.TopUpStatusSuccess:
 		order.Status = NewUserBenefitStatusClaimed
+		if order.PaymentIdentityCheckEnabled {
+			order.Status = NewUserBenefitStatusVerificationPending
+		}
 		order.GrantedAt = topUp.CompleteTime
 	default:
 		return ErrNewUserBenefitOrderConflict
@@ -264,6 +279,9 @@ func getNewUserBenefitOrderTx(tx *gorm.DB, userID int) (*NewUserBenefitOrder, er
 		return nil, ErrNewUserBenefitOrderConflict
 	}
 	if err := validateNewUserBenefitOrder(&order, &topUp); err != nil {
+		return nil, err
+	}
+	if err := hydrateNewUserBenefitRewardTx(tx, &order, &topUp); err != nil {
 		return nil, err
 	}
 	return &order, nil
@@ -297,6 +315,19 @@ func hydrateNewUserBenefitTopUpsTx(tx *gorm.DB, topUps []*TopUp) error {
 		order := byTrade[topUp.TradeNo]
 		if err := validateNewUserBenefitOrder(order, topUp); err != nil {
 			return err
+		}
+		if err := hydrateNewUserBenefitRewardTx(tx, order, topUp); err != nil {
+			return err
+		}
+		topUp.NewUserBenefitRewardStatus, topUp.NewUserBenefitRewardReason = order.RewardStatus, order.RewardReason
+		if topUp.Status == common.TopUpStatusSuccess {
+			topUp.NewUserBenefitCreditedQuota = order.PaidQuota
+			creditedCents := order.PayAmountCents
+			if order.Status == NewUserBenefitStatusClaimed {
+				topUp.NewUserBenefitCreditedQuota += order.BonusQuota
+				creditedCents = order.CreditAmountCents
+			}
+			topUp.NewUserBenefitCreditedAmountCNY = FormatNewUserBenefitCNY(creditedCents)
 		}
 		topUp.NewUserBenefitCreditQuota = order.PaidQuota + order.BonusQuota
 		topUp.NewUserBenefitCreditAmountCNY = FormatNewUserBenefitCNY(order.CreditAmountCents)
@@ -337,6 +368,12 @@ func GetNewUserBenefitState(ctx context.Context, userID int) (*NewUserBenefitSta
 		state.Order, state.Status = order, order.Status
 		state.Eligible = order.Status == NewUserBenefitStatusPending
 		state.PaidQuota, state.BonusQuota = order.PaidQuota, order.BonusQuota
+		if order.Status == NewUserBenefitStatusVerificationPending {
+			state.BlockedReason = "payment_identity_pending"
+		}
+		if order.Status == NewUserBenefitStatusRewardDenied {
+			state.BlockedReason = "payment_identity_used"
+		}
 		return state, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -352,16 +389,18 @@ func GetNewUserBenefitState(ctx context.Context, userID int) (*NewUserBenefitSta
 	if priorTopUp {
 		return state, nil
 	}
-	if _, err = newUserBenefitEmailIdentityTx(db, &user); err != nil {
-		switch {
-		case errors.Is(err, ErrNewUserBenefitEmailRequired):
-			state.BlockedReason = "email_verification_required"
-		case errors.Is(err, ErrNewUserBenefitIdentityUsed):
-			state.BlockedReason = "identity_already_used"
-		default:
-			return nil, err
+	if config.RequireVerifiedEmail {
+		if _, err = newUserBenefitEmailIdentityTx(db, &user); err != nil {
+			switch {
+			case errors.Is(err, ErrNewUserBenefitEmailRequired):
+				state.BlockedReason = "email_verification_required"
+			case errors.Is(err, ErrNewUserBenefitIdentityUsed):
+				state.BlockedReason = "identity_already_used"
+			default:
+				return nil, err
+			}
+			return state, nil
 		}
-		return state, nil
 	}
 	usage, err := newUserBenefitUsageTx(db, common.GetTimestamp())
 	if err != nil {
@@ -414,10 +453,10 @@ func ReserveNewUserBenefit(ctx context.Context, userID int, configVersion int64,
 		}
 		order, err = getNewUserBenefitOrderTx(tx, userID)
 		if err == nil {
-			if order.Status == NewUserBenefitStatusClaimed {
+			if order.Status != NewUserBenefitStatusPending {
 				return ErrNewUserBenefitClaimed
 			}
-			if order.PaymentMethod != paymentMethod || order.MerchantScope != merchantScope {
+			if order.PaymentMethod != paymentMethod || order.MerchantScope != merchantScope || order.PaymentIdentityCheckEnabled && order.PaymentGateway != risk.PaymentGateway {
 				return ErrNewUserBenefitOrderConflict
 			}
 			return nil
@@ -434,16 +473,29 @@ func ReserveNewUserBenefit(ctx context.Context, userID int, configVersion int64,
 		if err := ValidateNewUserBenefitConfig(*config); err != nil {
 			return err
 		}
-		if !risk.HumanVerified {
+		if config.RequireTurnstile && !risk.HumanVerified {
 			return ErrNewUserBenefitVerificationRequired
 		}
-		networkHash, err := newUserBenefitNetworkHash(risk.ClientIP)
-		if err != nil {
-			return err
+		if config.PaymentIdentityCheckEnabled {
+			gateway, gatewayErr := url.Parse(risk.PaymentGateway)
+			if paymentMethod != "alipay" || gatewayErr != nil || gateway.Scheme != "https" || gateway.Hostname() == "" || gateway.User != nil || gateway.RawQuery != "" || gateway.ForceQuery || strings.Contains(risk.PaymentGateway, "#") {
+				return ErrNewUserBenefitUnavailable
+			}
 		}
-		emailHash, err := newUserBenefitEmailIdentityTx(tx, &user)
-		if err != nil {
-			return err
+		var networkHash, emailHash *string
+		if config.NetworkLimitEnabled {
+			hash, err := newUserBenefitNetworkHash(risk.ClientIP)
+			if err != nil {
+				return err
+			}
+			networkHash = &hash
+		}
+		if config.RequireVerifiedEmail {
+			hash, err := newUserBenefitEmailIdentityTx(tx, &user)
+			if err != nil {
+				return err
+			}
+			emailHash = &hash
 		}
 		priorTopUp, err := hasSuccessfulNewUserBenefitTopUpTx(tx, userID)
 		if err != nil {
@@ -460,12 +512,14 @@ func ReserveNewUserBenefit(ctx context.Context, userID int, configVersion int64,
 		if newUserBenefitLimitReached(config, usage) {
 			return ErrNewUserBenefitLimitReached
 		}
-		var networkOrders int64
-		if err := tx.Model(&NewUserBenefitOrder{}).Where("network_hash = ? AND created_at > ?", networkHash, now-24*60*60).Count(&networkOrders).Error; err != nil {
-			return err
-		}
-		if networkOrders >= config.MaxOrdersPerNetwork24h {
-			return ErrNewUserBenefitLimitReached
+		if config.NetworkLimitEnabled {
+			var networkOrders int64
+			if err := tx.Model(&NewUserBenefitOrder{}).Where("network_hash = ? AND created_at > ?", networkHash, now-24*60*60).Count(&networkOrders).Error; err != nil {
+				return err
+			}
+			if networkOrders >= config.MaxOrdersPerNetwork24h {
+				return ErrNewUserBenefitLimitReached
+			}
 		}
 		paid, bonus, rate, unit, err := newUserBenefitQuote(config)
 		if err != nil {
@@ -474,11 +528,13 @@ func ReserveNewUserBenefit(ctx context.Context, userID int, configVersion int64,
 		if user.Quota < 0 || user.Quota > common.MaxWalletQuota-paid-bonus {
 			return ErrTopUpQuotaLimitExceeded
 		}
-		order = &NewUserBenefitOrder{UserID: userID, TradeNo: tradeNo, PaymentProvider: PaymentProviderEpay,
+		order = &NewUserBenefitOrder{PaymentGateway: risk.PaymentGateway, UserID: userID, TradeNo: tradeNo, PaymentProvider: PaymentProviderEpay,
 			PaymentMethod: paymentMethod, MerchantScope: merchantScope, PayAmountCents: config.PayAmountCents,
 			CreditAmountCents: config.CreditAmountCents, ConfigVersion: config.Version, USDExchangeRate: rate,
 			QuotaPerUnit: unit, PaidQuota: paid, BonusQuota: bonus, CreatedAt: now, Status: NewUserBenefitStatusPending,
-			EmailIdentityHash: &emailHash, NetworkHash: &networkHash}
+			EmailIdentityHash: emailHash, NetworkHash: networkHash,
+			RequireVerifiedEmail: config.RequireVerifiedEmail, RequireTurnstile: config.RequireTurnstile,
+			NetworkLimitEnabled: config.NetworkLimitEnabled, PaymentIdentityCheckEnabled: config.PaymentIdentityCheckEnabled, RiskPolicyVersion: 1}
 		topUp := TopUp{NewUserBenefit: true, UserId: userID, Amount: 0,
 			Money:   decimal.NewFromInt(config.PayAmountCents).Div(decimal.NewFromInt(100)).InexactFloat64(),
 			TradeNo: tradeNo, PaymentMethod: paymentMethod, PaymentProvider: PaymentProviderEpay,
@@ -494,9 +550,10 @@ func ReserveNewUserBenefit(ctx context.Context, userID int, configVersion int64,
 	return order, nil
 }
 
-// settleNewUserBenefitTx runs under RechargeEpay's top-up lock. Receipt, both
-// wallet shares, bonus provenance and the single success transition commit or
-// roll back together. The user lock also serializes first-top-up reservations.
+// settleNewUserBenefitTx runs under RechargeEpay's top-up lock. The receipt,
+// principal and payment completion commit together. Orders without a payer
+// check also receive their promised bonus; checked orders create a durable
+// pending review. The user lock serializes first-top-up reservations.
 func settleNewUserBenefitTx(tx *gorm.DB, topUp *TopUp, paymentMethod string, callbackMoney decimal.Decimal, facts []VerifiedPaymentFacts) (alreadyDone bool, totalQuota, totalAfter int, err error) {
 	var user User
 	if err = lockForUpdate(tx).First(&user, topUp.UserId).Error; err != nil {
@@ -524,14 +581,14 @@ func settleNewUserBenefitTx(tx *gorm.DB, topUp *TopUp, paymentMethod string, cal
 		return
 	}
 	previousReceiptID := topUp.PaymentReceiptID
-	if order.Status == NewUserBenefitStatusClaimed && previousReceiptID <= 0 {
+	if topUp.Status == common.TopUpStatusSuccess && previousReceiptID <= 0 {
 		err = ErrNewUserBenefitOrderConflict
 		return
 	}
 	if err = applyVerifiedPaymentTx(tx, topUp, facts); err != nil {
 		return
 	}
-	if order.Status == NewUserBenefitStatusClaimed {
+	if topUp.Status == common.TopUpStatusSuccess {
 		if previousReceiptID != topUp.PaymentReceiptID {
 			err = ErrNewUserBenefitOrderConflict
 			return
@@ -540,7 +597,7 @@ func settleNewUserBenefitTx(tx *gorm.DB, topUp *TopUp, paymentMethod string, cal
 		return
 	}
 	shares := []LedgerShare{{Account: AccountPaid, Amount: order.PaidQuota}}
-	if order.BonusQuota > 0 {
+	if order.BonusQuota > 0 && !order.PaymentIdentityCheckEnabled {
 		shares = append(shares, LedgerShare{Account: AccountBonus, Amount: order.BonusQuota})
 	}
 	entry := LedgerEntry{UserId: order.UserID, Reason: LedgerReasonNewUserTopUp, ReferenceType: "new_user_topup",
@@ -558,10 +615,18 @@ func settleNewUserBenefitTx(tx *gorm.DB, topUp *TopUp, paymentMethod string, cal
 		err = ErrNewUserBenefitOrderConflict
 		return
 	}
+	if order.PaymentIdentityCheckEnabled {
+		if err = tx.Create(&NewUserBenefitReward{UserID: order.UserID, TradeNo: order.TradeNo, Status: NewUserBenefitRewardPending, Reason: "payment_identity_pending"}).Error; err != nil {
+			return
+		}
+	}
 	topUp.Status, topUp.CompleteTime = common.TopUpStatusSuccess, common.GetTimestamp()
 	if err = tx.Save(topUp).Error; err != nil {
 		return
 	}
-	totalQuota, totalAfter = order.PaidQuota+order.BonusQuota, result.TotalAfter
+	totalQuota, totalAfter = order.PaidQuota, result.TotalAfter
+	if !order.PaymentIdentityCheckEnabled {
+		totalQuota += order.BonusQuota
+	}
 	return
 }

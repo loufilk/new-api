@@ -32,7 +32,11 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { submitPaymentForm } from '@/lib/payment-form'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { getNewUserBenefit, requestBenefitPayment } from './api'
+import {
+  getNewUserBenefit,
+  requestBenefitPayment,
+  recheckBenefitPaymentIdentity,
+} from './api'
 import { BenefitDialog } from './benefit-dialog'
 import {
   BENEFIT_QUERY_KEY,
@@ -86,6 +90,12 @@ function BenefitBannerForUser(props: BenefitBannerForUserProps) {
     retry: false,
     meta: { errorToast: false },
   })
+  const recheck = useMutation({
+    mutationFn: recheckBenefitPaymentIdentity,
+    retry: false,
+    meta: { errorToast: false },
+  })
+  const rechecking = useRef(false)
   const previousStatus = useRef<NewUserBenefitInfo['status'] | undefined>(
     undefined
   )
@@ -95,8 +105,11 @@ function BenefitBannerForUser(props: BenefitBannerForUserProps) {
     const previous = previousStatus.current
     if (status !== undefined) previousStatus.current = status
     if (
-      status === 'claimed' &&
-      (previous === 'pending' || previous === 'available')
+      status !== previous &&
+      (status === 'claimed' ||
+        status === 'verification_pending' ||
+        status === 'reward_denied') &&
+      previous !== undefined
     ) {
       void client.invalidateQueries({ queryKey: ['wallet'] })
     }
@@ -210,6 +223,78 @@ function BenefitBannerForUser(props: BenefitBannerForUserProps) {
     }
   }
 
+  const recheckIdentity = async () => {
+    if (rechecking.current) return
+    rechecking.current = true
+    const requestEpoch = getAuthSessionEpoch()
+    try {
+      const updated = await recheck.mutateAsync()
+      if (
+        !mounted.current ||
+        requestEpoch !== getAuthSessionEpoch() ||
+        useAuthStore.getState().auth.user?.id !== props.userId
+      ) {
+        return
+      }
+      client.setQueryData(
+        [...BENEFIT_QUERY_KEY, props.userId, requestEpoch],
+        updated
+      )
+      void client.invalidateQueries({ queryKey: ['wallet'] })
+      if (updated.status === 'claimed') {
+        toast.success(t('Benefit bonus credited.'))
+      }
+    } catch (error) {
+      if (!mounted.current || requestEpoch !== getAuthSessionEpoch()) return
+      handleServerError(error, t('Failed to verify payment identity'))
+    } finally {
+      rechecking.current = false
+    }
+  }
+
+  if (
+    props.persistent &&
+    (query.data?.status === 'verification_pending' ||
+      query.data?.status === 'reward_denied')
+  ) {
+    const verificationPending = query.data.status === 'verification_pending'
+    return (
+      <div className='shrink-0 px-3 pt-3 sm:px-4'>
+        <Alert role='region' aria-label={t('New user recharge benefit')}>
+          <AlertTitle>
+            {verificationPending
+              ? t('Benefit bonus pending verification')
+              : t('Benefit bonus not issued')}
+          </AlertTitle>
+          <AlertDescription>
+            <p>
+              {verificationPending
+                ? t(
+                    'Your payment is credited. The bonus is waiting for payment identity verification.'
+                  )
+                : t(
+                    'This payment identity has already received the benefit. Your payment is credited; no bonus was issued.'
+                  )}
+            </p>
+            {verificationPending && (
+              <Button
+                type='button'
+                size='sm'
+                variant='outline'
+                disabled={recheck.isPending}
+                onClick={() => void recheckIdentity()}
+              >
+                {recheck.isPending
+                  ? t('Verifying payment identity...')
+                  : t('Recheck payment identity')}
+              </Button>
+            )}
+          </AlertDescription>
+        </Alert>
+      </div>
+    )
+  }
+
   if (!offer) {
     if (
       !props.persistent ||
@@ -261,10 +346,15 @@ function BenefitBannerForUser(props: BenefitBannerForUserProps) {
                 <Badge variant='secondary'>{t('New user exclusive')}</Badge>
               </AlertTitle>
               <AlertDescription className='text-foreground text-sm'>
-                {t('Pay {{pay}} and get {{credit}} in total credit', {
-                  pay,
-                  credit,
-                })}
+                {t(
+                  offer.paymentIdentityCheckEnabled
+                    ? 'Pay {{pay}} for {{credit}} in total credit, including a bonus subject to payment identity verification.'
+                    : 'Pay {{pay}} and get {{credit}} in total credit',
+                  {
+                    pay,
+                    credit,
+                  }
+                )}
               </AlertDescription>
             </div>
           </div>

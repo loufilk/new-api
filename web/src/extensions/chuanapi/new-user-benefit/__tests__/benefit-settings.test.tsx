@@ -67,6 +67,10 @@ function Settings() {
 beforeEach(() => {
   config = {
     enabled: false,
+    require_verified_email: true,
+    require_turnstile: true,
+    network_limit_enabled: true,
+    payment_identity_check_enabled: false,
     pay_amount_cny: '0.10',
     credit_amount_cny: '1.00',
     max_total_orders: 1000,
@@ -150,6 +154,10 @@ test('the defaults are disabled and a single save atomically submits amounts and
   await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
   expect(put).toHaveBeenCalledWith('/api/option/new-user-benefit', {
     enabled: true,
+    require_verified_email: true,
+    require_turnstile: true,
+    network_limit_enabled: true,
+    payment_identity_check_enabled: false,
     pay_amount_cny: '0.20',
     credit_amount_cny: '2.00',
     max_total_orders: 1000,
@@ -213,6 +221,10 @@ test('limits and prices save together while reservation statistics remain read-o
   await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
   expect(put.mock.calls[0][1]).toEqual({
     enabled: false,
+    require_verified_email: true,
+    require_turnstile: true,
+    network_limit_enabled: true,
+    payment_identity_check_enabled: false,
     pay_amount_cny: '0.10',
     credit_amount_cny: '1.00',
     max_total_orders: 200,
@@ -544,3 +556,210 @@ test('agent-specific orders identify their separate ledger instead of presenting
     'See the agent balance ledger'
   )
 })
+
+test('turning off the human check permits activation without Turnstile and saves all risk switches atomically', async () => {
+  config.turnstile_ready = false
+  const put = vi
+    .spyOn(api, 'put')
+    .mockImplementation(async (_url, request) => ({
+      data: {
+        success: true,
+        data: { ...config, ...(request as BenefitConfigUpdate), version: 2 },
+      },
+    }))
+  const { user } = renderSettings()
+  await user.click(
+    await screen.findByRole('switch', { name: 'Require human verification' })
+  )
+  const enabled = screen.getByRole('switch', {
+    name: 'Enable new user recharge benefit',
+  })
+  expect(enabled).not.toHaveAttribute('aria-disabled', 'true')
+  expect(
+    screen.queryByRole('link', { name: 'Configure bot protection' })
+  ).not.toBeInTheDocument()
+  await user.click(enabled)
+  await user.click(
+    screen.getByRole('switch', { name: 'Require a verified email' })
+  )
+  await user.click(
+    screen.getByRole('switch', { name: 'Limit orders per network' })
+  )
+  await user.click(
+    screen.getByRole('switch', { name: 'Check payment identity' })
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Save recharge benefit' })
+  )
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+  expect(put.mock.calls[0][1]).toMatchObject({
+    enabled: true,
+    require_verified_email: false,
+    require_turnstile: false,
+    network_limit_enabled: false,
+    payment_identity_check_enabled: true,
+  })
+})
+
+test('disabling the network limit clears invalid input as a save blocker and preserves its saved limit', async () => {
+  const put = vi
+    .spyOn(api, 'put')
+    .mockImplementation(async (_url, request) => ({
+      data: {
+        success: true,
+        data: { ...config, ...(request as BenefitConfigUpdate), version: 2 },
+      },
+    }))
+  const { user } = renderSettings()
+  const limit = await screen.findByLabelText(
+    'Benefit order limit per network per 24 hours'
+  )
+  fireEvent.change(limit, { target: { value: '' } })
+  await user.click(
+    screen.getByRole('switch', { name: 'Limit orders per network' })
+  )
+  expect(limit).toBeDisabled()
+  await user.click(
+    screen.getByRole('button', { name: 'Save recharge benefit' })
+  )
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+  expect(put.mock.calls[0][1]).toMatchObject({
+    network_limit_enabled: false,
+    max_orders_per_network_24h: 3,
+  })
+})
+
+test('legacy configuration without policy fields preserves the original enabled protections', async () => {
+  const legacy = { ...config } as Partial<NewUserBenefitConfig>
+  delete legacy.require_verified_email
+  delete legacy.require_turnstile
+  delete legacy.network_limit_enabled
+  delete legacy.payment_identity_check_enabled
+  vi.mocked(api.get).mockResolvedValue({
+    data: { success: true, data: legacy },
+  })
+  renderSettings()
+  expect(
+    await screen.findByRole('switch', { name: 'Require a verified email' })
+  ).toBeChecked()
+  expect(
+    screen.getByRole('switch', { name: 'Require human verification' })
+  ).toBeChecked()
+  expect(
+    screen.getByRole('switch', { name: 'Limit orders per network' })
+  ).toBeChecked()
+  expect(
+    screen.getByRole('switch', { name: 'Check payment identity' })
+  ).not.toBeChecked()
+})
+
+test.each([
+  ['pending', 'Benefit bonus pending verification'],
+  ['denied', 'Benefit bonus not issued'],
+] as const)(
+  'recharge history shows only credited principal for a %s bonus',
+  async (rewardStatus, label) => {
+    vi.mocked(api.get).mockResolvedValue({
+      data: {
+        success: true,
+        data: {
+          total: 1,
+          items: [
+            {
+              id: 20,
+              user_id: 7,
+              amount: 0,
+              money: 0.1,
+              trade_no: 'identity-review-order',
+              payment_method: 'alipay',
+              create_time: 1735689600,
+              status: 'success',
+              new_user_benefit: true,
+              new_user_benefit_credit_amount_cny: '1.00',
+              new_user_benefit_credited_amount_cny: '0.10',
+              new_user_benefit_reward_status: rewardStatus,
+            },
+          ],
+        },
+      },
+    })
+    const { user } = renderSettings(<RechargeHistoryButton />)
+    await user.click(screen.getByRole('button', { name: 'Recharge history' }))
+    const row = await screen.findByRole('row', {
+      name: /identity-review-order/,
+    })
+    expect(within(row).getAllByRole('cell')[1]).toHaveTextContent('CN¥0.10')
+    expect(row).toHaveTextContent(label)
+    expect(row).not.toHaveTextContent('CN¥1.00')
+  }
+)
+
+test('an unavailable HTTPS Alipay gateway preserves policy edits and shows the server reason', async () => {
+  const put = vi.spyOn(api, 'put').mockResolvedValue({
+    data: {
+      success: false,
+      code: 'new_user_benefit_payment_identity_unavailable',
+      message:
+        'New user benefit payment identity checks require an HTTPS Alipay gateway',
+    },
+  })
+  const { user } = renderSettings()
+  await user.click(
+    await screen.findByRole('switch', { name: 'Check payment identity' })
+  )
+  await user.click(
+    screen.getByRole('switch', { name: 'Enable new user recharge benefit' })
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Save recharge benefit' })
+  )
+  expect(
+    await screen.findByText(
+      'New user benefit payment identity checks require an HTTPS Alipay gateway'
+    )
+  ).toBeVisible()
+  expect(
+    screen.getByRole('switch', { name: 'Check payment identity' })
+  ).toBeChecked()
+  expect(
+    screen.queryByText('Recharge benefit settings changed')
+  ).not.toBeInTheDocument()
+  expect(put).toHaveBeenCalledTimes(1)
+})
+
+test.each(['pending', 'denied'] as const)(
+  'a paid benefit with a %s bonus and missing credited fields falls back to principal',
+  async (rewardStatus) => {
+    vi.mocked(api.get).mockResolvedValue({
+      data: {
+        success: true,
+        data: {
+          total: 1,
+          items: [
+            {
+              id: 21,
+              user_id: 7,
+              amount: 0,
+              money: 0.1,
+              trade_no: 'missing-credited-order',
+              payment_method: 'alipay',
+              create_time: 1735689600,
+              status: 'success',
+              new_user_benefit: true,
+              new_user_benefit_credit_amount_cny: '1.00',
+              new_user_benefit_credit_quota: 71429,
+              new_user_benefit_reward_status: rewardStatus,
+            },
+          ],
+        },
+      },
+    })
+    const { user } = renderSettings(<RechargeHistoryButton />)
+    await user.click(screen.getByRole('button', { name: 'Recharge history' }))
+    const row = await screen.findByRole('row', {
+      name: /missing-credited-order/,
+    })
+    expect(within(row).getAllByRole('cell')[1]).toHaveTextContent('CN¥0.10')
+    expect(row).not.toHaveTextContent('CN¥1.00')
+  }
+)

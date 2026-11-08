@@ -20,6 +20,7 @@ func newUserBenefitSettingsJSON(t *testing.T, fields map[string]any) string {
 		"enabled": true, "pay_amount_cny": "0.10", "credit_amount_cny": "1.00", "version": 0,
 		"max_total_orders": 1000, "max_orders_per_24h": 100, "max_orders_per_network_24h": 3,
 		"total_bonus_budget_cny": "900.00",
+		"require_verified_email": true, "require_turnstile": true, "network_limit_enabled": true, "payment_identity_check_enabled": false,
 	}
 	for key, value := range fields {
 		payload[key] = value
@@ -74,7 +75,7 @@ func TestNewUserBenefitSettingsPostgresSaveReadAndStaleForm(t *testing.T) {
 		Data    newUserBenefitSettingsResponse `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(get.Body.Bytes(), &response))
-	assert.Equal(t, newUserBenefitSettingsResponse{PayAmountCNY: "0.10", CreditAmountCNY: "1.00", MaxTotalOrders: 1000, MaxOrdersPer24h: 100,
+	assert.Equal(t, newUserBenefitSettingsResponse{RequireVerifiedEmail: true, RequireTurnstile: true, NetworkLimitEnabled: true, PayAmountCNY: "0.10", CreditAmountCNY: "1.00", MaxTotalOrders: 1000, MaxOrdersPer24h: 100,
 		MaxOrdersPerNetwork24h: 3, TotalBonusBudgetCNY: "900.00", ReservedBonusCNY: "0.00", TurnstileReady: true}, response.Data)
 
 	put := requestNewUserBenefitSettings(t, http.MethodPut, newUserBenefitSettingsJSON(t, map[string]any{
@@ -84,7 +85,7 @@ func TestNewUserBenefitSettingsPostgresSaveReadAndStaleForm(t *testing.T) {
 	require.Equal(t, http.StatusOK, put.Code)
 	require.NoError(t, common.Unmarshal(put.Body.Bytes(), &response))
 	require.True(t, response.Success)
-	expected := newUserBenefitSettingsResponse{Enabled: true, PayAmountCNY: "0.20", CreditAmountCNY: "2.00", Version: 1,
+	expected := newUserBenefitSettingsResponse{RequireVerifiedEmail: true, RequireTurnstile: true, NetworkLimitEnabled: true, Enabled: true, PayAmountCNY: "0.20", CreditAmountCNY: "2.00", Version: 1,
 		MaxTotalOrders: 25, MaxOrdersPer24h: 10, MaxOrdersPerNetwork24h: 2, TotalBonusBudgetCNY: "45.00", ReservedBonusCNY: "0.00", TurnstileReady: true}
 	assert.Equal(t, expected, response.Data)
 	stale := requestNewUserBenefitSettings(t, http.MethodPut, newUserBenefitSettingsJSON(t, map[string]any{"enabled": false}))

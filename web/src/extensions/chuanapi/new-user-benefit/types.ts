@@ -24,6 +24,10 @@ export interface BenefitPaymentMethod {
 
 export interface BenefitConfigUpdate {
   enabled: boolean
+  require_verified_email: boolean
+  require_turnstile: boolean
+  network_limit_enabled: boolean
+  payment_identity_check_enabled: boolean
   pay_amount_cny: string
   credit_amount_cny: string
   max_total_orders: number
@@ -51,7 +55,18 @@ export interface BenefitOrder {
 export interface NewUserBenefitInfo {
   enabled: boolean
   eligible: boolean
-  status: 'available' | 'pending' | 'claimed' | 'ineligible'
+  status:
+    | 'available'
+    | 'pending'
+    | 'claimed'
+    | 'ineligible'
+    | 'verification_pending'
+    | 'reward_denied'
+  require_verified_email?: boolean
+  network_limit_enabled?: boolean
+  payment_identity_check_enabled?: boolean
+  reward_status?: '' | 'pending' | 'denied' | 'granted'
+  reward_reason?: string
   pay_amount_cny: string
   credit_amount_cny: string
   paid_quota: number
@@ -66,6 +81,8 @@ export interface NewUserBenefitInfo {
     | 'limit_reached'
     | 'verification_unavailable'
     | 'unavailable'
+    | 'payment_identity_pending'
+    | 'payment_identity_used'
   turnstile_required: boolean
   turnstile_site_key: string
 }
@@ -76,6 +93,9 @@ export interface BenefitOffer {
   version: number
   methods: BenefitPaymentMethod[]
   orderId?: string
+  requireVerifiedEmail: boolean
+  networkLimitEnabled: boolean
+  paymentIdentityCheckEnabled: boolean
 }
 
 export interface BenefitPaymentRequest {

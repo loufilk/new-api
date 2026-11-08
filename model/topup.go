@@ -13,30 +13,34 @@ import (
 )
 
 type TopUp struct {
-	NewUserBenefit                bool    `json:"new_user_benefit,omitempty" gorm:"not null;default:false"`
-	NewUserBenefitCreditQuota     int     `json:"new_user_benefit_credit_quota,omitempty" gorm:"-"`
-	NewUserBenefitCreditAmountCNY string  `json:"new_user_benefit_credit_amount_cny,omitempty" gorm:"-"`
-	AgentSimpleTopUp              bool    `json:"agent_simple_topup,omitempty" gorm:"not null;default:false;index"`
-	AgentSimpleKind               string  `json:"agent_simple_kind,omitempty" gorm:"type:varchar(16);not null;default:''"`
-	AgentSimpleQuota              int64   `json:"agent_simple_quota,omitempty" gorm:"type:bigint;not null;default:0"`
-	AgentSimpleDeferredQuota      int64   `json:"agent_simple_deferred_quota,omitempty" gorm:"type:bigint;not null;default:0"`
-	PaymentReceiptID              int64   `json:"payment_receipt_id"`
-	PaidProviderReference         string  `json:"-" gorm:"type:varchar(255)"`
-	PaidMerchantScope             string  `json:"-" gorm:"type:varchar(128)"`
-	PaidEnvironment               string  `json:"-" gorm:"type:varchar(16)"`
-	PaidCurrency                  string  `json:"paid_currency" gorm:"type:varchar(3)"`
-	PaidCurrencyExponent          int     `json:"paid_currency_exponent"`
-	PaidAmountMinor               int64   `json:"paid_amount_minor,string"`
-	Id                            int     `json:"id"`
-	UserId                        int     `json:"user_id" gorm:"index"`
-	Amount                        int64   `json:"amount"`
-	Money                         float64 `json:"money"`
-	TradeNo                       string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod                 string  `json:"payment_method" gorm:"type:varchar(50)"`
-	PaymentProvider               string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	CreateTime                    int64   `json:"create_time"`
-	CompleteTime                  int64   `json:"complete_time"`
-	Status                        string  `json:"status"`
+	NewUserBenefitRewardStatus      string  `json:"new_user_benefit_reward_status,omitempty" gorm:"-"`
+	NewUserBenefitRewardReason      string  `json:"new_user_benefit_reward_reason,omitempty" gorm:"-"`
+	NewUserBenefitCreditedQuota     int     `json:"new_user_benefit_credited_quota,omitempty" gorm:"-"`
+	NewUserBenefitCreditedAmountCNY string  `json:"new_user_benefit_credited_amount_cny,omitempty" gorm:"-"`
+	NewUserBenefit                  bool    `json:"new_user_benefit,omitempty" gorm:"not null;default:false"`
+	NewUserBenefitCreditQuota       int     `json:"new_user_benefit_credit_quota,omitempty" gorm:"-"`
+	NewUserBenefitCreditAmountCNY   string  `json:"new_user_benefit_credit_amount_cny,omitempty" gorm:"-"`
+	AgentSimpleTopUp                bool    `json:"agent_simple_topup,omitempty" gorm:"not null;default:false;index"`
+	AgentSimpleKind                 string  `json:"agent_simple_kind,omitempty" gorm:"type:varchar(16);not null;default:''"`
+	AgentSimpleQuota                int64   `json:"agent_simple_quota,omitempty" gorm:"type:bigint;not null;default:0"`
+	AgentSimpleDeferredQuota        int64   `json:"agent_simple_deferred_quota,omitempty" gorm:"type:bigint;not null;default:0"`
+	PaymentReceiptID                int64   `json:"payment_receipt_id"`
+	PaidProviderReference           string  `json:"-" gorm:"type:varchar(255)"`
+	PaidMerchantScope               string  `json:"-" gorm:"type:varchar(128)"`
+	PaidEnvironment                 string  `json:"-" gorm:"type:varchar(16)"`
+	PaidCurrency                    string  `json:"paid_currency" gorm:"type:varchar(3)"`
+	PaidCurrencyExponent            int     `json:"paid_currency_exponent"`
+	PaidAmountMinor                 int64   `json:"paid_amount_minor,string"`
+	Id                              int     `json:"id"`
+	UserId                          int     `json:"user_id" gorm:"index"`
+	Amount                          int64   `json:"amount"`
+	Money                           float64 `json:"money"`
+	TradeNo                         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod                   string  `json:"payment_method" gorm:"type:varchar(50)"`
+	PaymentProvider                 string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	CreateTime                      int64   `json:"create_time"`
+	CompleteTime                    int64   `json:"complete_time"`
+	Status                          string  `json:"status"`
 }
 
 const (

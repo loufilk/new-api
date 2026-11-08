@@ -23,7 +23,6 @@ import { useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { z } from 'zod'
 
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
@@ -62,25 +61,23 @@ import {
   formatBenefitCny,
   isBenefitConfigConflict,
   normalizeCnyAmount,
-  parseCnyCents,
 } from './lib'
+import {
+  createBenefitConfigSchema,
+  type BenefitConfigValues,
+} from './lib/config-schema'
 import type { NewUserBenefitConfig } from './types'
-
-interface BenefitConfigValues {
-  enabled: boolean
-  pay_amount_cny: string
-  credit_amount_cny: string
-  max_total_orders: string
-  max_orders_per_24h: string
-  max_orders_per_network_24h: string
-  total_bonus_budget_cny: string
-}
 
 function benefitConfigFormValues(
   config: NewUserBenefitConfig
 ): BenefitConfigValues {
   return {
     enabled: config.enabled,
+    require_verified_email: config.require_verified_email ?? true,
+    require_turnstile: config.require_turnstile ?? true,
+    network_limit_enabled: config.network_limit_enabled ?? true,
+    payment_identity_check_enabled:
+      config.payment_identity_check_enabled ?? false,
     pay_amount_cny: config.pay_amount_cny,
     credit_amount_cny: config.credit_amount_cny,
     max_total_orders: String(config.max_total_orders),
@@ -102,56 +99,11 @@ function BenefitSettingsForm(props: {
   const saving = useRef(false)
   const locale = i18n.resolvedLanguage || i18n.language
   const numberLocale = toIntlLocale(locale)
-  const amount = z
-    .string()
-    .refine(
-      (value) => parseCnyCents(value) !== null,
-      t(
-        'Enter a CNY amount from 0.01 to 1,000,000.00 with at most two decimal places.'
-      )
-    )
-  const orderLimit = z.string().refine(
-    (value) => /^[1-9]\d*$/.test(value) && Number(value) <= 1_000_000,
-    t('Enter a whole number from 1 to {{max}}.', {
-      max: formatNumber(1_000_000, numberLocale),
-    })
+  const schema = createBenefitConfigSchema(
+    t,
+    numberLocale,
+    props.config.turnstile_ready
   )
-  const networkLimit = z.string().refine(
-    (value) => /^[1-9]\d*$/.test(value) && Number(value) <= 10_000,
-    t('Enter a whole number from 1 to {{max}}.', {
-      max: formatNumber(10_000, numberLocale),
-    })
-  )
-  const schema = z
-    .object({
-      enabled: z.boolean(),
-      pay_amount_cny: amount,
-      credit_amount_cny: amount,
-      max_total_orders: orderLimit,
-      max_orders_per_24h: orderLimit,
-      max_orders_per_network_24h: networkLimit,
-      total_bonus_budget_cny: amount,
-    })
-    .superRefine((values, context) => {
-      const pay = parseCnyCents(values.pay_amount_cny)
-      const credit = parseCnyCents(values.credit_amount_cny)
-      if (pay !== null && credit !== null && credit < pay) {
-        context.addIssue({
-          code: 'custom',
-          path: ['credit_amount_cny'],
-          message: t('Total credit must be at least the payment amount.'),
-        })
-      }
-      if (values.enabled && !props.config.turnstile_ready) {
-        context.addIssue({
-          code: 'custom',
-          path: ['enabled'],
-          message: t(
-            'Configure and enable Turnstile before enabling the new user benefit'
-          ),
-        })
-      }
-    })
   const form = useForm<BenefitConfigValues>({
     resolver: zodResolver(schema),
     mode: 'onChange',
@@ -164,7 +116,8 @@ function BenefitSettingsForm(props: {
   })
   const values = form.watch()
   const busy = save.isPending || form.formState.isSubmitting || reloading
-  const enableUnavailable = values.enabled && !props.config.turnstile_ready
+  const enableUnavailable =
+    values.enabled && values.require_turnstile && !props.config.turnstile_ready
 
   const submit = async (data: BenefitConfigValues) => {
     if (saving.current || conflict || reloading) return
@@ -173,11 +126,17 @@ function BenefitSettingsForm(props: {
     try {
       const result = await save.mutateAsync({
         enabled: data.enabled,
+        require_verified_email: data.require_verified_email,
+        require_turnstile: data.require_turnstile,
+        network_limit_enabled: data.network_limit_enabled,
+        payment_identity_check_enabled: data.payment_identity_check_enabled,
         pay_amount_cny: normalizeCnyAmount(data.pay_amount_cny),
         credit_amount_cny: normalizeCnyAmount(data.credit_amount_cny),
         max_total_orders: Number(data.max_total_orders),
         max_orders_per_24h: Number(data.max_orders_per_24h),
-        max_orders_per_network_24h: Number(data.max_orders_per_network_24h),
+        max_orders_per_network_24h: data.network_limit_enabled
+          ? Number(data.max_orders_per_network_24h)
+          : snapshot.max_orders_per_network_24h || 3,
         total_bonus_budget_cny: normalizeCnyAmount(data.total_bonus_budget_cny),
         version: snapshot.version,
       })
@@ -259,7 +218,7 @@ function BenefitSettingsForm(props: {
           </p>
         </AlertDescription>
       </Alert>
-      {!props.config.turnstile_ready && (
+      {values.require_turnstile && !props.config.turnstile_ready && (
         <Alert>
           <AlertTitle>{t('Security verification setup required')}</AlertTitle>
           <AlertDescription>
@@ -340,13 +299,85 @@ function BenefitSettingsForm(props: {
                     disabled={
                       busy ||
                       conflict ||
-                      (!props.config.turnstile_ready && !field.value)
+                      (values.require_turnstile &&
+                        !props.config.turnstile_ready &&
+                        !field.value)
                     }
                   />
                 </FormControl>
               </SettingsSwitchItem>
             )}
           />
+          <Alert>
+            <AlertTitle>{t('Benefit risk controls')}</AlertTitle>
+            <AlertDescription>
+              {t(
+                'Choose the checks required for new benefit orders. Each account can reserve the benefit once. Existing orders retain their saved policies and amounts.'
+              )}
+            </AlertDescription>
+          </Alert>
+          {(
+            [
+              {
+                name: 'require_verified_email',
+                label: t('Require a verified email'),
+                description: t(
+                  'Require a verified email before ordering and allow each verified email to reserve the benefit once. When off, email verification and email deduplication are skipped.'
+                ),
+              },
+              {
+                name: 'require_turnstile',
+                label: t('Require human verification'),
+                description: t(
+                  'Require a Turnstile challenge for new orders. When off, this benefit does not require a human verification challenge.'
+                ),
+              },
+              {
+                name: 'network_limit_enabled',
+                label: t('Limit orders per network'),
+                description: t(
+                  'Apply the 24-hour network limit to new orders. When off, the network limit is skipped; total orders, daily orders and the bonus budget still apply.'
+                ),
+              },
+              {
+                name: 'payment_identity_check_enabled',
+                label: t('Check payment identity'),
+                description: t(
+                  'Only Alipay is available when enabled. ZPAY must return a complete Alipay user ID when the server queries the paid order. Each payment identity can receive the bonus once across accounts. Missing identity details leave the bonus pending; a previously used identity receives no bonus. The payment amount is still credited.'
+                ),
+              },
+            ] as const
+          ).map((policy) => (
+            <FormField
+              key={policy.name}
+              control={form.control}
+              name={policy.name}
+              render={({ field }) => (
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>{policy.label}</FormLabel>
+                    <FormDescription>{policy.description}</FormDescription>
+                    <FormMessage />
+                  </SettingsSwitchContent>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={(checked) => {
+                        field.onChange(checked)
+                        if (
+                          policy.name === 'network_limit_enabled' &&
+                          !checked
+                        ) {
+                          form.clearErrors('max_orders_per_network_24h')
+                        }
+                      }}
+                      disabled={busy || conflict}
+                    />
+                  </FormControl>
+                </SettingsSwitchItem>
+              )}
+            />
+          ))}
           <FormField
             control={form.control}
             name='pay_amount_cny'
@@ -425,7 +456,12 @@ function BenefitSettingsForm(props: {
                       type='text'
                       inputMode='numeric'
                       placeholder={limit.placeholder}
-                      disabled={busy || conflict}
+                      disabled={
+                        busy ||
+                        conflict ||
+                        (limit.name === 'max_orders_per_network_24h' &&
+                          !values.network_limit_enabled)
+                      }
                       {...field}
                     />
                   </FormControl>
@@ -474,7 +510,7 @@ function BenefitSettingsForm(props: {
               })}
               <p className='mt-2'>
                 {t(
-                  'New orders require a verified email and human verification. Each account and verified email may reserve the benefit once; network and activity limits also apply.'
+                  'Each account can reserve the benefit once. The selected risk controls, total order limit, daily order limit and bonus budget apply to new orders.'
                 )}
               </p>
               <p className='mt-2'>

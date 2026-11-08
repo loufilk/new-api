@@ -34,19 +34,24 @@ type newUserBenefitPendingOrder struct {
 }
 
 type newUserBenefitResponse struct {
-	Enabled           bool                        `json:"enabled"`
-	Eligible          bool                        `json:"eligible"`
-	Status            string                      `json:"status"`
-	PayAmountCNY      string                      `json:"pay_amount_cny"`
-	CreditAmountCNY   string                      `json:"credit_amount_cny"`
-	PaidQuota         int                         `json:"paid_quota"`
-	BonusQuota        int                         `json:"bonus_quota"`
-	ConfigVersion     int64                       `json:"config_version"`
-	PayMethods        []newUserBenefitPayMethod   `json:"pay_methods"`
-	PendingOrder      *newUserBenefitPendingOrder `json:"pending_order,omitempty"`
-	BlockedReason     string                      `json:"blocked_reason,omitempty"`
-	TurnstileRequired bool                        `json:"turnstile_required"`
-	TurnstileSiteKey  string                      `json:"turnstile_site_key,omitempty"`
+	RequireVerifiedEmail        bool                        `json:"require_verified_email"`
+	NetworkLimitEnabled         bool                        `json:"network_limit_enabled"`
+	PaymentIdentityCheckEnabled bool                        `json:"payment_identity_check_enabled"`
+	RewardStatus                string                      `json:"reward_status,omitempty"`
+	RewardReason                string                      `json:"reward_reason,omitempty"`
+	Enabled                     bool                        `json:"enabled"`
+	Eligible                    bool                        `json:"eligible"`
+	Status                      string                      `json:"status"`
+	PayAmountCNY                string                      `json:"pay_amount_cny"`
+	CreditAmountCNY             string                      `json:"credit_amount_cny"`
+	PaidQuota                   int                         `json:"paid_quota"`
+	BonusQuota                  int                         `json:"bonus_quota"`
+	ConfigVersion               int64                       `json:"config_version"`
+	PayMethods                  []newUserBenefitPayMethod   `json:"pay_methods"`
+	PendingOrder                *newUserBenefitPendingOrder `json:"pending_order,omitempty"`
+	BlockedReason               string                      `json:"blocked_reason,omitempty"`
+	TurnstileRequired           bool                        `json:"turnstile_required"`
+	TurnstileSiteKey            string                      `json:"turnstile_site_key,omitempty"`
 }
 
 type newUserBenefitVerificationConfig struct {
@@ -86,6 +91,12 @@ func newUserBenefitPayMethods(configuredMethods []map[string]string) []newUserBe
 		seen[method] = true
 	}
 	return methods
+}
+
+func newUserBenefitIdentityGatewayReady(payment *newUserBenefitPaymentSnapshot) bool {
+	return payment != nil && payment.Client.BaseUrl.Scheme == "https" && payment.Client.BaseUrl.Hostname() != "" &&
+		payment.Client.BaseUrl.RawQuery == "" && !payment.Client.BaseUrl.ForceQuery && !strings.Contains(payment.Client.BaseUrl.String(), "#") &&
+		newUserBenefitMethodAvailable("alipay", payment.Methods)
 }
 
 func newUserBenefitMethodAvailable(method string, methods []newUserBenefitPayMethod) bool {
@@ -187,7 +198,9 @@ func GetNewUserBenefit(c *gin.Context) {
 		return
 	}
 	response := newUserBenefitResponse{
-		Eligible: state.Eligible, Status: state.Status,
+		RequireVerifiedEmail: state.Config.RequireVerifiedEmail, NetworkLimitEnabled: state.Config.NetworkLimitEnabled,
+		PaymentIdentityCheckEnabled: state.Config.PaymentIdentityCheckEnabled,
+		Eligible:                    state.Eligible, Status: state.Status,
 		PayAmountCNY:    model.FormatNewUserBenefitCNY(state.Config.PayAmountCents),
 		CreditAmountCNY: model.FormatNewUserBenefitCNY(state.Config.CreditAmountCents),
 		PaidQuota:       state.PaidQuota, BonusQuota: state.BonusQuota,
@@ -195,16 +208,30 @@ func GetNewUserBenefit(c *gin.Context) {
 		BlockedReason: state.BlockedReason,
 	}
 	verification := snapshotNewUserBenefitVerification()
-	response.TurnstileRequired, response.TurnstileSiteKey = verification.Enabled, verification.SiteKey
+	response.TurnstileRequired = state.Config.RequireTurnstile && state.Status == model.NewUserBenefitStatusAvailable
+	if response.TurnstileRequired {
+		response.TurnstileSiteKey = verification.SiteKey
+	}
 	payment := snapshotNewUserBenefitPayment()
 	if payment != nil {
 		response.Enabled = state.Config.Enabled
-		if state.Status == "available" {
-			response.PayMethods = payment.Methods
+		if state.Status == "available" && (!state.Config.PaymentIdentityCheckEnabled || newUserBenefitIdentityGatewayReady(payment)) {
+			for _, method := range payment.Methods {
+				if !state.Config.PaymentIdentityCheckEnabled || method.Type == "alipay" {
+					response.PayMethods = append(response.PayMethods, method)
+				}
+			}
 		}
 	}
 	if state.Order != nil {
 		order := state.Order
+		response.RequireVerifiedEmail, response.NetworkLimitEnabled = order.RequireVerifiedEmail, order.NetworkLimitEnabled
+		response.PaymentIdentityCheckEnabled = order.PaymentIdentityCheckEnabled
+		response.RewardStatus, response.RewardReason = order.RewardStatus, order.RewardReason
+		response.TurnstileRequired = order.Status == model.NewUserBenefitStatusPending && order.RequireTurnstile && verification.Enabled
+		if response.TurnstileRequired {
+			response.TurnstileSiteKey = verification.SiteKey
+		}
 		response.PayAmountCNY = model.FormatNewUserBenefitCNY(order.PayAmountCents)
 		response.CreditAmountCNY = model.FormatNewUserBenefitCNY(order.CreditAmountCents)
 		response.PaidQuota, response.BonusQuota = order.PaidQuota, order.BonusQuota
@@ -215,7 +242,7 @@ func GetNewUserBenefit(c *gin.Context) {
 				CreditAmountCNY: response.CreditAmountCNY, PaymentMethod: order.PaymentMethod,
 				ConfigVersion: order.ConfigVersion,
 			}
-			if payment != nil && strings.TrimSpace(payment.Client.Config.PartnerID) == order.MerchantScope {
+			if payment != nil && strings.TrimSpace(payment.Client.Config.PartnerID) == order.MerchantScope && (!order.PaymentIdentityCheckEnabled || order.PaymentGateway == payment.Client.BaseUrl.String()) {
 				for _, method := range payment.Methods {
 					if method.Type == order.PaymentMethod {
 						response.PayMethods = append(response.PayMethods, method)
@@ -227,8 +254,7 @@ func GetNewUserBenefit(c *gin.Context) {
 	if response.Eligible && len(response.PayMethods) == 0 {
 		response.Eligible, response.BlockedReason = false, "unavailable"
 	}
-	if !verification.Ready && (state.Status == model.NewUserBenefitStatusAvailable ||
-		state.Status == model.NewUserBenefitStatusPending && verification.Enabled) {
+	if !verification.Ready && response.TurnstileRequired {
 		response.Eligible, response.BlockedReason = false, "verification_unavailable"
 	}
 	if !response.Eligible {
@@ -273,7 +299,7 @@ func RequestNewUserBenefitPay(c *gin.Context) {
 	// request IDs and instances. A pending order always keeps its original terms.
 	verification := snapshotNewUserBenefitVerification()
 	order, err := model.ReserveNewUserBenefit(c.Request.Context(), userID, *request.ConfigVersion, request.PaymentMethod, strings.TrimSpace(payment.Client.Config.PartnerID), tradeNo, model.NewUserBenefitRiskContext{
-		ClientIP: c.ClientIP(), HumanVerified: verification.Ready && c.GetString("turnstile_verified_action") == "new_user_benefit",
+		PaymentGateway: payment.Client.BaseUrl.String(), ClientIP: c.ClientIP(), HumanVerified: verification.Ready && c.GetString("turnstile_verified_action") == "new_user_benefit",
 	})
 	if err != nil {
 		if errors.Is(err, model.ErrNewUserBenefitVerificationRequired) && !verification.Ready {
@@ -300,4 +326,26 @@ func RequestNewUserBenefitPay(c *gin.Context) {
 		"credit_amount_cny": model.FormatNewUserBenefitCNY(order.CreditAmountCents),
 		"status":            "pending", "checkout": gin.H{"kind": "form", "url": uri, "params": params},
 	})
+}
+
+// NewUserBenefitVerification applies the benefit's policy independently of the
+// site's general challenge. Existing orders use their captured policy.
+func NewUserBenefitVerification(verify gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		state, err := model.GetNewUserBenefitState(c.Request.Context(), c.GetInt("id"))
+		if err != nil {
+			writeNewUserBenefitError(c, err)
+			c.Abort()
+			return
+		}
+		required := state.Config.RequireTurnstile
+		if state.Order != nil {
+			required = state.Order.Status == model.NewUserBenefitStatusPending && state.Order.RequireTurnstile
+		}
+		if required {
+			verify(c)
+			return
+		}
+		c.Next()
+	}
 }
