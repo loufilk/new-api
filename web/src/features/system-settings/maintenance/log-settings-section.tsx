@@ -51,6 +51,7 @@ import { ServerLogFiles } from './server-log-files'
 const logSettingsSchema = z.object({
   LogConsumeEnabled: z.boolean(),
   log_setting: z.object({
+    client_error_codes_enabled: z.boolean(),
     user_export_enabled: z.boolean(),
     max_range_days: z.number().int().min(1),
   }),
@@ -61,6 +62,7 @@ type LogSettingsFormValues = z.infer<typeof logSettingsSchema>
 type LogSettingsSectionProps = {
   defaultValues: {
     LogConsumeEnabled: boolean
+    'log_setting.client_error_codes_enabled': boolean
     'log_setting.user_export_enabled': boolean
     'log_setting.max_range_days': number
   }
@@ -75,6 +77,8 @@ export function LogSettingsSection(props: LogSettingsSectionProps) {
     () => ({
       LogConsumeEnabled: props.defaultValues.LogConsumeEnabled,
       log_setting: {
+        client_error_codes_enabled:
+          props.defaultValues['log_setting.client_error_codes_enabled'],
         user_export_enabled:
           props.defaultValues['log_setting.user_export_enabled'],
         max_range_days: props.defaultValues['log_setting.max_range_days'],
@@ -94,6 +98,10 @@ export function LogSettingsSection(props: LogSettingsSectionProps) {
   const onSubmit = async (values: LogSettingsFormValues) => {
     const changes = [
       ['LogConsumeEnabled', values.LogConsumeEnabled],
+      [
+        'log_setting.client_error_codes_enabled',
+        values.log_setting.client_error_codes_enabled,
+      ],
       [
         'log_setting.user_export_enabled',
         values.log_setting.user_export_enabled,
@@ -159,6 +167,29 @@ export function LogSettingsSection(props: LogSettingsSectionProps) {
               {t('Log search and export')}
             </h4>
             <SettingsFormGrid>
+              <FormField
+                control={form.control}
+                name='log_setting.client_error_codes_enabled'
+                render={({ field }) => (
+                  <SettingsSwitchItem>
+                    <SettingsSwitchContent>
+                      <FormLabel>{t('Show error codes to clients')}</FormLabel>
+                      <FormDescription>
+                        {t(
+                          'Show safe error codes in client responses and usage logs. Safe 400 and 429 troubleshooting messages remain available; 413 details stay hidden. HTTP status and administrator logs are unchanged.'
+                        )}
+                      </FormDescription>
+                    </SettingsSwitchContent>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </SettingsSwitchItem>
+                )}
+              />
               <FormField
                 control={form.control}
                 name='log_setting.user_export_enabled'

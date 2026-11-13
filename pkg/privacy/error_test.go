@@ -58,7 +58,7 @@ func TestSanitizeClientOpenAIError(t *testing.T) {
 		Metadata: common.RawMessage(`{"provider":"private"}`),
 	}
 	safe := SanitizeClientOpenAIError(c, http.StatusBadRequest, source)
-	assert.Equal(t, "invalid request (request id: req-local-1)", safe.Message)
+	assert.Equal(t, "context length exceeded; shorten the conversation or reduce the output limit (request id: req-local-1)", safe.Message)
 	assert.Equal(t, "invalid_request_error", safe.Type)
 	assert.Equal(t, "context_length_exceeded", safe.Code)
 	assert.Empty(t, safe.Param)
@@ -98,7 +98,7 @@ func TestSanitizeClientClaudeError(t *testing.T) {
 func TestSanitizeClientOpenAIErrorNilContext(t *testing.T) {
 	source := types.OpenAIError{Message: "raw upstream detail", Type: "server_error", Code: "context_length_exceeded"}
 	safe := SanitizeClientOpenAIError(nil, http.StatusBadRequest, source)
-	assert.Equal(t, "invalid request", safe.Message)
+	assert.Equal(t, "context length exceeded; shorten the conversation or reduce the output limit", safe.Message)
 	assert.Equal(t, "server_error", safe.Type)
 	assert.Equal(t, "context_length_exceeded", safe.Code)
 

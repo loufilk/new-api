@@ -3631,7 +3631,7 @@
     "footer.columns.related.links.oneApi": "1つのAPI",
     "footer.columns.related.title": "関連プロジェクト",
     "footer.defaultCopyright": "すべての権利を留保します。",
-    "footer.new\u0061pi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
+    "footer.newapi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "高度なカスタムチャネルでは、プロトコル変換を行わない /v1/responses ルートにのみ適用されます。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "2025 年 5 月 10 日以降に追加されたチャネルの場合、デプロイ時にモデル名から「.」を削除する必要はありません",
     "For each invited friend's first {{limit}} top-ups, you earn {{rate}} of the top-up amount as a reward.": "招待した友達の最初の {{limit}} 回のチャージで、チャージ額の {{rate}} を報酬として受け取れます。",
@@ -5877,7 +5877,7 @@
     "Payment type key is required": "支払いタイプキーは必須です",
     "Payment verification and final review require different independent finance users": "支払い確認と最終審査は、独立した別々の経理ユーザーが行う必要があります",
     "Payment-code profit ($)": "決済コード収益（$）",
-    "Payment, redemption codes, subscription plans, and invitation rewards are locked until the root administrator confirms the compliance terms.": "ルート管理者がコンプライアンス条件を確認するまで、支払い、引換コード、サブスクリプションプラン、招待報酬はロックされます。",
+    "Payment, redemption codes, subscription plans, and invitation rewards are locked until the root administrator confirms the compliance terms.": "スーパー管理者がコンプライアンス条件を確認するまで、支払い、引換コード、サブスクリプションプラン、招待報酬はロックされます。",
     "Payment, redemption, subscription, and invitation reward features are disabled. The administrator must confirm compliance terms before enabling them.": "支払い、引き換えコード、サブスクリプション、招待報酬の機能は無効です。有効にするには、管理者がコンプライアンス条項を確認する必要があります。",
     "Payments in progress": "処理中の支払い",
     "Payout environment (successful result only)": "送金環境（成功時のみ）",
@@ -9438,6 +9438,19 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
-  }
+    "Zoom": "ズーム",
+    "By clicking sign in, you agree to our": "サインインをクリックすると、以下に同意したことになります：",
+    "By creating an account, you agree to our": "アカウントを作成すると、以下に同意したことになります："
+  },
+  "Show error codes to clients": "クライアントにエラーコードを表示",
+  "Show safe error codes in client responses and usage logs. Safe 400 and 429 troubleshooting messages remain available; 413 details stay hidden. HTTP status and administrator logs are unchanged.": "応答と利用ログに安全なエラーコードを表示します。400・429 の安全な対処案内は維持し、413 の詳細は非表示にします。HTTP ステータスと管理者ログは変更しません。",
+  "too many concurrent requests; reduce parallel requests and retry later": "同時リクエストが多すぎます。並列数を減らして後で再試行してください",
+  "token rate limit exceeded; reduce request size or frequency and retry later": "トークンのレート上限を超えました。リクエストのサイズまたは頻度を減らしてください",
+  "context length exceeded; shorten the conversation or reduce the output limit": "コンテキスト長を超えました。会話を短くするか出力上限を下げてください",
+  "invalid tool conversation; match each tool result to its tool call and preserve message order": "ツール会話の形式が無効です。各結果を呼び出しに対応させ、メッセージ順序を維持してください",
+  "invalid thinking configuration; check the thinking mode, budget and compatible message format": "思考設定が無効です。モード、予算、対応するメッセージ形式を確認してください",
+  "invalid image input; check the image encoding, format and size": "画像入力が無効です。エンコード、形式、サイズを確認してください",
+  "missing required parameter; check the request schema": "必須パラメーターがありません。リクエスト構造を確認してください",
+  "unsupported request parameter; check the model's supported parameters": "未対応のパラメーターです。モデルが対応するパラメーターを確認してください",
+  "invalid tool definition; check tool names and JSON schemas": "ツール定義が無効です。ツール名と JSON スキーマを確認してください"
 }

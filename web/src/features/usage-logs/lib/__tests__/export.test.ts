@@ -163,3 +163,16 @@ describe('usage log CSV export', () => {
     ).toBe(`"'=HYPERLINK(""x"")","-12.5","'+cmd","a""b","two\nlines"\r\n`)
   })
 })
+
+test('safe error diagnostics use the selected language while billing text stays unchanged', async () => {
+  const i18n = createInstance()
+  const { default: zh } = await import('@/i18n/locales/zh.json')
+  await i18n.init({ lng: 'zh', resources: { zh: { translation: zh } } })
+  const content =
+    'invalid thinking configuration; check the thinking mode, budget and compatible message format'
+  const error = { ...consumeLog, type: 5, content, other: '{}' }
+  expect(getLogCsvRow(error, false, i18n.t).at(-1)).toBe(zh[content])
+  expect(getLogCsvRow({ ...error, type: 2 }, false, i18n.t).at(-1)).toBe(
+    content
+  )
+})

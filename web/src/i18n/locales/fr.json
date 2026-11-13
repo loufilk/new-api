@@ -3631,7 +3631,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Projets liés",
     "footer.defaultCopyright": "Tous droits réservés.",
-    "footer.new\u0061pi.projectAttributionSuffix": "Tous droits réservés. Conçu et développé par les contributeurs du projet.",
+    "footer.newapi.projectAttributionSuffix": "Tous droits réservés. Conçu et développé par les contributeurs du projet.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "Pour les canaux personnalisés avancés, ceci ne s’applique qu’aux routes /v1/responses sans conversion de protocole.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Pour les canaux ajoutés après le 10 mai 2025, pas besoin de supprimer \".\" des noms de modèles lors du déploiement",
     "For each invited friend's first {{limit}} top-ups, you earn {{rate}} of the top-up amount as a reward.": "Pour les {{limit}} premiers rechargements de chaque filleul invité, vous gagnez {{rate}} du montant rechargé en récompense.",
@@ -5877,7 +5877,7 @@
     "Payment type key is required": "La clé de type de paiement est requise",
     "Payment verification and final review require different independent finance users": "La vérification du paiement et le contrôle final exigent deux utilisateurs financiers indépendants et distincts",
     "Payment-code profit ($)": "Bénéfice des paiements ($)",
-    "Payment, redemption codes, subscription plans, and invitation rewards are locked until the root administrator confirms the compliance terms.": "Les paiements, codes de兑换, forfaits d’abonnement et récompenses d’invitation sont verrouillés jusqu’à ce que l’administrateur racine confirme les conditions de conformité.",
+    "Payment, redemption codes, subscription plans, and invitation rewards are locked until the root administrator confirms the compliance terms.": "Les paiements, codes d’échange, forfaits d’abonnement et récompenses d’invitation sont verrouillés jusqu’à ce que le super administrateur confirme les conditions de conformité.",
     "Payment, redemption, subscription, and invitation reward features are disabled. The administrator must confirm compliance terms before enabling them.": "Les fonctions de paiement, d’échange de codes, d’abonnement et de récompense de parrainage sont désactivées. L’administrateur doit confirmer les conditions de conformité avant de les activer.",
     "Payments in progress": "Paiements en cours",
     "Payout environment (successful result only)": "Environnement du versement (succès uniquement)",
@@ -9438,6 +9438,19 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
-  }
+    "Zoom": "Zoom",
+    "By clicking sign in, you agree to our": "En cliquant sur se connecter, vous acceptez nos",
+    "By creating an account, you agree to our": "En créant un compte, vous acceptez nos"
+  },
+  "Show error codes to clients": "Afficher les codes d’erreur aux clients",
+  "Show safe error codes in client responses and usage logs. Safe 400 and 429 troubleshooting messages remain available; 413 details stay hidden. HTTP status and administrator logs are unchanged.": "Afficher les codes sûrs dans les réponses et journaux clients. Les conseils sûrs pour 400 et 429 restent visibles ; les détails 413 restent masqués. Le statut HTTP et les journaux administrateur ne changent pas.",
+  "too many concurrent requests; reduce parallel requests and retry later": "Trop de requêtes simultanées ; réduisez le parallélisme et réessayez plus tard",
+  "token rate limit exceeded; reduce request size or frequency and retry later": "Limite de débit de jetons dépassée ; réduisez la taille ou la fréquence des requêtes",
+  "context length exceeded; shorten the conversation or reduce the output limit": "Contexte trop long ; raccourcissez la conversation ou réduisez la limite de sortie",
+  "invalid tool conversation; match each tool result to its tool call and preserve message order": "Conversation d’outils invalide ; associez chaque résultat à son appel et conservez l’ordre des messages",
+  "invalid thinking configuration; check the thinking mode, budget and compatible message format": "Configuration de réflexion invalide ; vérifiez le mode, le budget et le format des messages",
+  "invalid image input; check the image encoding, format and size": "Image invalide ; vérifiez l’encodage, le format et la taille",
+  "missing required parameter; check the request schema": "Paramètre obligatoire manquant ; vérifiez le schéma de la requête",
+  "unsupported request parameter; check the model's supported parameters": "Paramètre non pris en charge ; vérifiez les paramètres acceptés par le modèle",
+  "invalid tool definition; check tool names and JSON schemas": "Définition d’outil invalide ; vérifiez les noms et les schémas JSON"
 }

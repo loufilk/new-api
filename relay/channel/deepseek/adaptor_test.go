@@ -417,3 +417,28 @@ func BenchmarkResponsesReasoningReplay(b *testing.B) {
 		}
 	}
 }
+
+func TestChatDeveloperRoleBecomesSystemWithoutChangingOtherMessages(t *testing.T) {
+	request := &dto.GeneralOpenAIRequest{
+		Model: "deepseek-chat",
+		Messages: []dto.Message{
+			{Role: "developer", Content: "Follow the project instructions"},
+			{Role: "system", Content: "Existing system instruction"},
+			{Role: "user", Content: "Run the task"},
+			{Role: "assistant", Content: "Working"},
+			{Role: "tool", Content: "Tool result"},
+		},
+	}
+	converted, err := (&Adaptor{}).ConvertOpenAIRequest(nil, nil, request)
+	require.NoError(t, err)
+	result, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.Len(t, result.Messages, 5)
+	assert.Equal(t, []dto.Message{
+		{Role: "system", Content: "Follow the project instructions"},
+		{Role: "system", Content: "Existing system instruction"},
+		{Role: "user", Content: "Run the task"},
+		{Role: "assistant", Content: "Working"},
+		{Role: "tool", Content: "Tool result"},
+	}, result.Messages)
+}

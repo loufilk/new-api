@@ -421,6 +421,7 @@ export type OperationsSettings = {
   WorkerValidKey: string
   WorkerAllowHttpImageRequestEnabled: boolean
   LogConsumeEnabled: boolean
+  'log_setting.client_error_codes_enabled': boolean
   'log_setting.user_export_enabled': boolean
   'log_setting.max_range_days': number
   'performance_setting.disk_cache_enabled': boolean

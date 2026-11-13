@@ -869,7 +869,8 @@ export function useCommonLogsColumns(
           } else if (log.content) {
             detailPreview = (
               <span className='text-muted-foreground truncate group-hover:underline'>
-                {renderLogContent(other, t) ?? log.content}
+                {renderLogContent(other, t) ??
+                  (log.type === 5 ? t(log.content) : log.content)}
               </span>
             )
           }

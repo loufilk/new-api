@@ -681,7 +681,7 @@
     "An unexpected error occurred": "Đã xảy ra lỗi không mong muốn",
     "An unknown error occurred": "Đã xảy ra lỗi không xác định",
     "Analyze data": "Phân tích dữ liệu",
-    "and": "and",
+    "and": "và",
     "And {{count}} more models": "Và {{count}} mô hình khác",
     "Announcement #{{index}} content cannot exceed {{max}} characters": "Nội dung thông báo số {{index}} không được vượt quá {{max}} ký tự",
     "Announcement #{{index}} content cannot exceed 500 characters": "Nội dung của thông báo #{{index}} không được vượt quá 500 ký tự",
@@ -3631,7 +3631,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Các Dự Án Liên Quan",
     "footer.defaultCopyright": "Bản quyền được bảo lưu.",
-    "footer.new\u0061pi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
+    "footer.newapi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "Với kênh tùy chỉnh nâng cao, thiết lập này chỉ áp dụng cho các route /v1/responses không chuyển đổi giao thức.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Đối với các kênh được thêm sau ngày 10 tháng 5 năm 2025, không cần loại bỏ \".\" khỏi tên mô hình trong quá trình triển khai",
     "For each invited friend's first {{limit}} top-ups, you earn {{rate}} of the top-up amount as a reward.": "Với {{limit}} lần nạp đầu tiên của mỗi người bạn được mời, bạn nhận được {{rate}} giá trị nạp làm phần thưởng.",
@@ -5877,7 +5877,7 @@
     "Payment type key is required": "Khóa loại thanh toán là bắt buộc",
     "Payment verification and final review require different independent finance users": "Xác minh thanh toán và duyệt cuối phải do hai người dùng tài chính độc lập khác nhau thực hiện",
     "Payment-code profit ($)": "Lợi nhuận mã thanh toán ($)",
-    "Payment, redemption codes, subscription plans, and invitation rewards are locked until the root administrator confirms the compliance terms.": "Thanh toán, mã đổi thưởng, gói đăng ký và phần thưởng mời sẽ bị khóa cho đến khi quản trị viên root xác nhận điều khoản tuân thủ.",
+    "Payment, redemption codes, subscription plans, and invitation rewards are locked until the root administrator confirms the compliance terms.": "Thanh toán, mã đổi thưởng, gói đăng ký và phần thưởng mời sẽ bị khóa cho đến khi siêu quản trị viên xác nhận điều khoản tuân thủ.",
     "Payment, redemption, subscription, and invitation reward features are disabled. The administrator must confirm compliance terms before enabling them.": "Các tính năng thanh toán, đổi mã, gói đăng ký và thưởng giới thiệu đã bị tắt. Quản trị viên phải xác nhận điều khoản tuân thủ trước khi bật chúng.",
     "Payments in progress": "Các khoản đang thanh toán",
     "Payout environment (successful result only)": "Môi trường chi trả (chỉ khi thành công)",
@@ -9438,6 +9438,19 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
-  }
+    "Zoom": "Zoom",
+    "By clicking sign in, you agree to our": "Bằng cách nhấp đăng nhập, bạn đồng ý với",
+    "By creating an account, you agree to our": "Bằng cách tạo tài khoản, bạn đồng ý với"
+  },
+  "Show error codes to clients": "Hiển thị mã lỗi cho khách hàng",
+  "Show safe error codes in client responses and usage logs. Safe 400 and 429 troubleshooting messages remain available; 413 details stay hidden. HTTP status and administrator logs are unchanged.": "Hiển thị mã lỗi an toàn trong phản hồi và nhật ký khách hàng. Giữ hướng dẫn an toàn cho lỗi 400 và 429; ẩn chi tiết 413. Không đổi trạng thái HTTP và nhật ký quản trị.",
+  "too many concurrent requests; reduce parallel requests and retry later": "Quá nhiều yêu cầu đồng thời; giảm số yêu cầu song song và thử lại sau",
+  "token rate limit exceeded; reduce request size or frequency and retry later": "Vượt giới hạn tốc độ token; giảm kích thước hoặc tần suất yêu cầu",
+  "context length exceeded; shorten the conversation or reduce the output limit": "Vượt độ dài ngữ cảnh; rút ngắn hội thoại hoặc giảm giới hạn đầu ra",
+  "invalid tool conversation; match each tool result to its tool call and preserve message order": "Hội thoại công cụ không hợp lệ; ghép mỗi kết quả với lệnh gọi và giữ đúng thứ tự tin nhắn",
+  "invalid thinking configuration; check the thinking mode, budget and compatible message format": "Cấu hình suy luận không hợp lệ; kiểm tra chế độ, ngân sách và định dạng tin nhắn",
+  "invalid image input; check the image encoding, format and size": "Ảnh đầu vào không hợp lệ; kiểm tra mã hóa, định dạng và kích thước",
+  "missing required parameter; check the request schema": "Thiếu tham số bắt buộc; kiểm tra cấu trúc yêu cầu",
+  "unsupported request parameter; check the model's supported parameters": "Tham số không được hỗ trợ; kiểm tra các tham số mà mô hình hỗ trợ",
+  "invalid tool definition; check tool names and JSON schemas": "Định nghĩa công cụ không hợp lệ; kiểm tra tên và lược đồ JSON"
 }

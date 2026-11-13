@@ -42,6 +42,7 @@ function Fixture() {
         <LogSettingsSection
           defaultValues={{
             LogConsumeEnabled: true,
+            'log_setting.client_error_codes_enabled': true,
             'log_setting.user_export_enabled': true,
             'log_setting.max_range_days': 30,
           }}
@@ -210,5 +211,23 @@ test('server log cleanup requires confirmation and cancellation leaves files unt
   )
   await waitFor(() =>
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  )
+})
+
+test('the error-code switch saves a disabled policy without changing other settings', async () => {
+  const user = userEvent.setup()
+  await renderSettings()
+  const toggle = screen.getByRole('switch', {
+    name: 'Show error codes to clients',
+  })
+  expect(toggle).toBeChecked()
+  await user.click(toggle)
+  expect(toggle).not.toBeChecked()
+  await user.click(screen.getByRole('button', { name: 'Save log settings' }))
+  await waitFor(() =>
+    expect(api.put).toHaveBeenCalledExactlyOnceWith('/api/option/', {
+      key: 'log_setting.client_error_codes_enabled',
+      value: false,
+    })
   )
 })

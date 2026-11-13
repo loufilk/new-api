@@ -3631,7 +3631,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "相關項目",
     "footer.defaultCopyright": "版權所有。",
-    "footer.new\u0061pi.projectAttributionSuffix": "版權所有，由項目貢獻者設計與開發。",
+    "footer.newapi.projectAttributionSuffix": "版權所有，由項目貢獻者設計與開發。",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "進階自訂渠道僅對 /v1/responses 且不做協定轉換的路由生效。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "對於 2025 年 5 月 10 日之後新增的渠道，在部署時無需從模型名稱中移除 \".\"",
     "For each invited friend's first {{limit}} top-ups, you earn {{rate}} of the top-up amount as a reward.": "好友前 {{limit}} 次儲值，您可獲得儲值額度的 {{rate}} 作為獎勵",
@@ -5877,7 +5877,7 @@
     "Payment type key is required": "支付處理標識不能為空",
     "Payment verification and final review require different independent finance users": "付款核驗與最終覆核必須由不同的獨立財務使用者完成",
     "Payment-code profit ($)": "收款碼收益（$）",
-    "Payment, redemption codes, subscription plans, and invitation rewards are locked until the root administrator confirms the compliance terms.": "在根管理員確認合規條款之前，支付、兌換碼、訂閱套餐和邀請獎勵功能將保持鎖定。",
+    "Payment, redemption codes, subscription plans, and invitation rewards are locked until the root administrator confirms the compliance terms.": "在超級管理員確認合規條款之前，支付、兌換碼、訂閱套餐和邀請獎勵功能將保持鎖定。",
     "Payment, redemption, subscription, and invitation reward features are disabled. The administrator must confirm compliance terms before enabling them.": "支付、兌換碼、訂閱方案和邀請返利功能已停用。管理員需先確認合規聲明後方可啟用。",
     "Payments in progress": "處理中的付款",
     "Payout environment (successful result only)": "出款環境（僅成功結果）",
@@ -9438,6 +9438,19 @@
     "Zhipu": "智譜",
     "Zhipu GLM": "智譜GLM",
     "Zhipu V4": "智譜 V4",
-    "Zoom": "縮放"
-  }
+    "Zoom": "縮放",
+    "By clicking sign in, you agree to our": "點擊登入即表示您同意我們的",
+    "By creating an account, you agree to our": "建立帳戶即表示您同意我們的"
+  },
+  "Show error codes to clients": "向客戶顯示錯誤代碼",
+  "Show safe error codes in client responses and usage logs. Safe 400 and 429 troubleshooting messages remain available; 413 details stay hidden. HTTP status and administrator logs are unchanged.": "在客戶回應和使用日誌中顯示安全錯誤代碼。保留 400 和 429 的安全排查提示，隱藏 413 詳情，不變更 HTTP 狀態和管理員日誌。",
+  "too many concurrent requests; reduce parallel requests and retry later": "並行請求過多；請減少並行請求並稍後重試",
+  "token rate limit exceeded; reduce request size or frequency and retry later": "每分鐘權杖速率超限；請減少請求大小或頻率並稍後重試",
+  "context length exceeded; shorten the conversation or reduce the output limit": "上下文長度超限；請縮短對話或降低輸出上限",
+  "invalid tool conversation; match each tool result to its tool call and preserve message order": "工具對話格式無效；請將每個工具結果對應至工具呼叫並保留訊息順序",
+  "invalid thinking configuration; check the thinking mode, budget and compatible message format": "思考參數設定無效；請檢查思考模式、預算及相容的訊息格式",
+  "invalid image input; check the image encoding, format and size": "圖片輸入無效；請檢查圖片編碼、格式和大小",
+  "missing required parameter; check the request schema": "缺少必填參數；請檢查請求結構",
+  "unsupported request parameter; check the model's supported parameters": "請求參數不受支援；請檢查模型支援的參數",
+  "invalid tool definition; check tool names and JSON schemas": "工具定義無效；請檢查工具名稱和 JSON 結構"
 }

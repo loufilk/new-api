@@ -19,6 +19,17 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  'invalid tool definition; check tool names and JSON schemas',
+  // Safe client diagnostic messages returned by the gateway.
+  'too many concurrent requests; reduce parallel requests and retry later',
+  'token rate limit exceeded; reduce request size or frequency and retry later',
+  'context length exceeded; shorten the conversation or reduce the output limit',
+  'invalid tool conversation; match each tool result to its tool call and preserve message order',
+  'invalid thinking configuration; check the thinking mode, budget and compatible message format',
+  'invalid image input; check the image encoding, format and size',
+  'missing required parameter; check the request schema',
+  "unsupported request parameter; check the model's supported parameters",
+
   // API key validation errors returned by the server.
   'Please select a group',
   'Invalid token status',

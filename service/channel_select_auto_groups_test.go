@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"net/http/httptest"
 	"strings"
@@ -126,4 +127,31 @@ func TestCacheGetRandomSatisfiedChannelUsesTokenAutoGroupsWhenGlobalAutoIsEmpty(
 	assert.Equal(t, 2102, second.Id)
 	assert.Equal(t, "default", selectedGroup)
 	assert.Equal(t, "default", common.GetContextKeyString(ctx, constant.ContextKeyAutoGroup))
+}
+
+func TestAutoGroupLookupFailurePreservesCauseAndSelectionState(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	common.MemoryCacheEnabled = false
+	lookupErr := errors.New("synthetic channel lookup failure")
+	lookups := 0
+	require.NoError(t, db.Callback().Query().Before("gorm:query").Register("test:auto_group_lookup_failure", func(tx *gorm.DB) {
+		lookups++
+		tx.AddError(lookupErr)
+	}))
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyTokenAutoGroups, []string{"vip", "default"})
+	common.SetContextKey(ctx, constant.ContextKeyTokenCrossGroupRetry, true)
+	retry := 1
+	param := &RetryParam{Ctx: ctx, TokenGroup: "auto", ModelName: "lookup-error-model", Retry: &retry}
+	channel, group, err := CacheGetRandomSatisfiedChannel(param)
+
+	require.ErrorIs(t, err, lookupErr)
+	assert.Nil(t, channel)
+	assert.Equal(t, "vip", group)
+	assert.Equal(t, 1, lookups, "must not mistake a lookup failure for an empty group and query the next group")
+	assert.Equal(t, 1, retry, "must not reset retry budget after a failed lookup")
+	_, advanced := common.GetContextKey(ctx, constant.ContextKeyAutoGroupIndex)
+	assert.False(t, advanced)
 }

@@ -3631,7 +3631,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Related Projects",
     "footer.defaultCopyright": "All rights reserved.",
-    "footer.new\u0061pi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
+    "footer.newapi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment",
     "For each invited friend's first {{limit}} top-ups, you earn {{rate}} of the top-up amount as a reward.": "For each invited friend's first {{limit}} top-ups, you earn {{rate}} of the top-up amount as a reward.",
@@ -9438,6 +9438,19 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
-  }
+    "Zoom": "Zoom",
+    "By clicking sign in, you agree to our": "By clicking sign in, you agree to our",
+    "By creating an account, you agree to our": "By creating an account, you agree to our"
+  },
+  "Show error codes to clients": "Show error codes to clients",
+  "Show safe error codes in client responses and usage logs. Safe 400 and 429 troubleshooting messages remain available; 413 details stay hidden. HTTP status and administrator logs are unchanged.": "Show safe error codes in client responses and usage logs. Safe 400 and 429 troubleshooting messages remain available; 413 details stay hidden. HTTP status and administrator logs are unchanged.",
+  "too many concurrent requests; reduce parallel requests and retry later": "too many concurrent requests; reduce parallel requests and retry later",
+  "token rate limit exceeded; reduce request size or frequency and retry later": "token rate limit exceeded; reduce request size or frequency and retry later",
+  "context length exceeded; shorten the conversation or reduce the output limit": "context length exceeded; shorten the conversation or reduce the output limit",
+  "invalid tool conversation; match each tool result to its tool call and preserve message order": "invalid tool conversation; match each tool result to its tool call and preserve message order",
+  "invalid thinking configuration; check the thinking mode, budget and compatible message format": "invalid thinking configuration; check the thinking mode, budget and compatible message format",
+  "invalid image input; check the image encoding, format and size": "invalid image input; check the image encoding, format and size",
+  "missing required parameter; check the request schema": "missing required parameter; check the request schema",
+  "unsupported request parameter; check the model's supported parameters": "unsupported request parameter; check the model's supported parameters",
+  "invalid tool definition; check tool names and JSON schemas": "invalid tool definition; check tool names and JSON schemas"
 }

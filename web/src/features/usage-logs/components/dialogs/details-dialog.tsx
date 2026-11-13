@@ -626,7 +626,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const details =
     (isTopup ? operationText : null) ??
     renderLogContent(other, t) ??
-    props.log.content ??
+    (props.log.type === 5 ? t(props.log.content ?? '') : props.log.content) ??
     ''
   const auditRoute = isManage && props.isAdmin ? other?.audit_info : undefined
   // Channel update records which fields changed (stable field tokens); render

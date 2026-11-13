@@ -78,9 +78,9 @@ func SanitizeClientOpenAIError(c *gin.Context, status int, source types.OpenAIEr
 		return source
 	}
 	safe := types.OpenAIError{
-		Message: SafeErrorText(status, source.Type),
+		Message: ClientErrorText(status, source.Type, source.Code, source.Message),
 		Type:    safeErrorType(source.Type, status),
-		Code:    safeErrorCode(source.Code),
+		Code:    ClientErrorCode(status, source.Code),
 	}
 	if requestID := localRequestID(c); requestID != "" {
 		safe.Message = common.MessageWithRequestId(safe.Message, requestID)
@@ -95,7 +95,7 @@ func SanitizeClientClaudeError(c *gin.Context, status int, source types.ClaudeEr
 		return source
 	}
 	safe := types.ClaudeError{
-		Message: SafeErrorText(status, source.Type),
+		Message: ClientErrorText(status, source.Type, nil, source.Message),
 		Type:    safeErrorType(source.Type, status),
 	}
 	if requestID := localRequestID(c); requestID != "" {
@@ -339,7 +339,12 @@ func sanitizedErrorObject(value gjson.Result, requestID string) []byte {
 		codeNumber = int(codeResult.Int())
 	}
 
-	message := scopedErrorText(genericErrorText(typeValue, codeText, codeNumber, statusValue), requestID)
+	message := genericErrorText(typeValue, codeText, codeNumber, statusValue)
+	status := errorStatus(typeValue, codeText, codeNumber)
+	if status == 400 || status == 429 || status == 413 {
+		message = ClientErrorText(status, typeValue, codeText, value.Get("message").Str)
+	}
+	message = scopedErrorText(message, requestID)
 	messageField := "message"
 	if !gjson.Get(value.Raw, "message").Exists() && typeValue == "" && codeText == "" && statusValue == "" {
 		// A native Gemini error identifies itself with a numeric code and status.
@@ -356,11 +361,11 @@ func sanitizedErrorObject(value gjson.Result, requestID string) []byte {
 	if codeResult.Exists() {
 		switch codeResult.Type {
 		case gjson.String:
-			if IsSafeErrorCode(codeResult.Str) {
+			if ClientErrorCode(errorStatus(typeValue, codeText, codeNumber), codeResult.Str) != nil {
 				sanitized, _ = sjson.SetBytes(sanitized, "code", codeResult.Str)
 			}
 		case gjson.Number:
-			if number := codeResult.Int(); number >= 100 && number <= 599 {
+			if number := codeResult.Int(); ClientErrorCode(int(number), int(number)) != nil {
 				sanitized, _ = sjson.SetRawBytes(sanitized, "code", []byte(codeResult.Raw))
 			}
 		}
@@ -395,18 +400,21 @@ func scrubFlatErrorFields(payload []byte, requestID string) []byte {
 	if codeResult.Exists() {
 		switch codeResult.Type {
 		case gjson.String:
-			if IsSafeErrorCode(codeResult.Str) {
+			if ClientErrorCode(errorStatus("", codeText, 0), codeResult.Str) != nil {
 				sanitized, _ = sjson.SetBytes(sanitized, "code", codeResult.Str)
 			}
 		case gjson.Number:
-			if number := codeResult.Int(); number >= 100 && number <= 599 {
+			if number := codeResult.Int(); ClientErrorCode(int(number), int(number)) != nil {
 				sanitized, _ = sjson.SetRawBytes(sanitized, "code", []byte(codeResult.Raw))
 			}
 		}
 	}
 	if message := value.Get("message"); message.Exists() {
-		sanitized, _ = sjson.SetBytes(sanitized, "message",
-			scopedErrorText(genericErrorText(value.Get("type").Str, codeText, 0, ""), requestID))
+		text := genericErrorText(value.Get("type").Str, codeText, 0, "")
+		if status := errorStatus("", codeText, int(codeResult.Int())); status != 0 {
+			text = ClientErrorText(status, "", codeText, message.Str)
+		}
+		sanitized, _ = sjson.SetBytes(sanitized, "message", scopedErrorText(text, requestID))
 	}
 	for _, key := range []string{"sequence_number", "response_id", "event_id", "stream_id"} {
 		if correlation := value.Get(key); correlation.Exists() {

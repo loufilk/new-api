@@ -83,7 +83,7 @@ func TestSanitizePayloadKeepsAllowlistedErrorCodes(t *testing.T) {
 	payload := `{"error":{"message":"context too long","type":"invalid_request_error","code":"context_length_exceeded"}}`
 	result := SanitizePayload([]byte(payload), "", true)
 
-	assert.Equal(t, "invalid request", stringValue(t, result, "error.message"))
+	assert.Equal(t, "context length exceeded; shorten the conversation or reduce the output limit", stringValue(t, result, "error.message"))
 	assert.Equal(t, "context_length_exceeded", stringValue(t, result, "error.code"))
 }
 

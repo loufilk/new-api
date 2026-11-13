@@ -71,6 +71,13 @@ var clientSafeErrorCodes = map[string]struct{}{
 	string(types.ErrorCodeInsufficientUserQuota):        {},
 	string(types.ErrorCodePreConsumeTokenQuotaFailed):   {},
 
+	// Stable adapter diagnostics (no provider identity or free-form details).
+	"reasoning_controls_rejected": {},
+	"tool_history_mismatch":       {},
+	"tool_schema_rejected":        {},
+	"missing_thinking_signature":  {},
+	"thinking_signature_rejected": {},
+
 	// Protocol-standard codes.
 	"invalid_api_key":            {},
 	"invalid_organization":       {},

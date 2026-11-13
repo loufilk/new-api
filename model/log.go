@@ -119,6 +119,19 @@ func formatUserLogs(logs []*Log, startIdx int) {
 		logs[i].UpstreamRequestId = ""
 		logs[i].Content = formatUserLogContent(logs[i])
 		logs[i].Other = formatLogOtherJSON(logs[i].Other, logOtherVisibilityUser)
+		// Error content is projected above. Historical structured parts must not
+		// override it in clients that prioritize content_parts over Content.
+		if logs[i].Type == LogTypeError && logs[i].Other != "" {
+			var other map[string]common.RawMessage
+			if common.UnmarshalJsonStr(logs[i].Other, &other) == nil {
+				delete(other, logOtherContentPartsKey)
+				if encoded, err := common.Marshal(other); err == nil {
+					logs[i].Other = string(encoded)
+				} else {
+					logs[i].Other = "{}"
+				}
+			}
+		}
 	}
 	assignDisplayLogIds(logs, startIdx)
 }
@@ -136,9 +149,10 @@ func formatUserLogContent(log *Log) string {
 	var stored struct {
 		StatusCode int    `json:"status_code"`
 		ErrorType  string `json:"error_type"`
+		ErrorCode  string `json:"error_code"`
 	}
 	_ = common.UnmarshalJsonStr(log.Other, &stored)
-	return privacy.SafeErrorText(stored.StatusCode, stored.ErrorType)
+	return privacy.ClientErrorText(stored.StatusCode, stored.ErrorType, stored.ErrorCode, log.Content)
 }
 
 // FormatAdminLogs removes root-only diagnostics while retaining operational

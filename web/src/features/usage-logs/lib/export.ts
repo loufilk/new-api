@@ -90,7 +90,9 @@ export function getLogCsvRow(
     isTimingLogType(log.type) ? `${log.use_time ?? 0}s` : '',
     log.ip ?? '',
     log.request_id ?? '',
-    renderLogContent(other, t) ?? log.content ?? '',
+    renderLogContent(other, t) ??
+      (log.type === 5 ? t(log.content ?? '') : log.content) ??
+      '',
   ]
 }
 

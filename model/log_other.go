@@ -286,6 +286,13 @@ func formatLogOtherJSON(value string, visibility logOtherVisibility) string {
 				changed = true
 			}
 		}
+		var status int
+		_ = common.Unmarshal(values["status_code"], &status)
+		if privacy.ClientErrorCode(status, "invalid_request_error") == nil {
+			delete(values, "status_code")
+			delete(values, "error_code")
+			changed = true
+		}
 		if rawCode, exists := values["error_code"]; exists {
 			var code string
 			if common.Unmarshal(rawCode, &code) != nil || !privacy.IsSafeErrorCode(code) {
