@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/privacy"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relay/requestplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -44,6 +45,31 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	var usageMu sync.Mutex
 	var readers sync.WaitGroup
 	localUsage, sumUsage := &dto.RealtimeUsage{}, &dto.RealtimeUsage{}
+	// Plugins may write either socket from either reader. Keep one writer
+	// per connection and preserve client privacy for plugin-generated frames.
+	var clientWriteMu, targetWriteMu sync.Mutex
+	writeClient := func(message []byte) error {
+		clientWriteMu.Lock()
+		defer clientWriteMu.Unlock()
+		return helper.WssString(c, clientConn, string(privacy.SanitizeClientPayload(c, message)))
+	}
+	writeTarget := func(message []byte) error {
+		targetWriteMu.Lock()
+		defer targetWriteMu.Unlock()
+		return helper.WssString(c, targetConn, string(message))
+	}
+	plugins := requestplugin.NewRealtime(c, info, func(message []byte) {
+		if err := writeClient(message); err != nil {
+			reportError(err)
+		}
+	}, func(message []byte) {
+		if err := writeTarget(message); err != nil {
+			reportError(err)
+		}
+	})
+	if plugins != nil {
+		defer plugins.Close(info)
+	}
 	readers.Add(2)
 	gopool.Go(func() {
 		defer readers.Done()
@@ -67,6 +93,20 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					reportError(fmt.Errorf("error reading from client: %v", err))
 				}
 				return
+			}
+			if plugins != nil {
+				var event dto.RealtimeEvent
+				if err := common.Unmarshal(message, &event); err != nil {
+					reportError(err)
+					return
+				}
+				patched, dropped := plugins.ClientEvent(event.Type, message)
+				if dropped {
+					continue
+				}
+				if patched != nil {
+					message = patched
+				}
 			}
 			err = func() error {
 				usageMu.Lock()
@@ -92,7 +132,7 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 				reportError(err)
 				return
 			}
-			if err = helper.WssString(c, targetConn, string(message)); err != nil {
+			if err = writeTarget(message); err != nil {
 				reportError(err)
 				return
 			}
@@ -121,11 +161,12 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 				}
 				return
 			}
+			quota := 0
+			event := &dto.RealtimeEvent{}
 			err = func() error {
 				usageMu.Lock()
 				defer usageMu.Unlock()
 				info.SetFirstResponseTime()
-				event := &dto.RealtimeEvent{}
 				if err := common.Unmarshal(message, event); err != nil {
 					return err
 				}
@@ -135,7 +176,8 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 						// Move ownership before reserving: a failed reservation must not
 						// make the final flush observe this response a second time.
 						localUsage = &dto.RealtimeUsage{}
-						return preConsumeUsage(c, info, &segment, sumUsage)
+						quota, err = preConsumeUsageWithAmount(c, info, &segment, sumUsage)
+						return err
 					}
 					text, audio, err := service.CountTokenRealtime(info, *event, info.UpstreamModelName)
 					if err != nil {
@@ -148,7 +190,8 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					}
 					segment := localUsage.Clone()
 					localUsage = &dto.RealtimeUsage{}
-					return preConsumeUsage(c, info, &segment, sumUsage)
+					quota, err = preConsumeUsageWithAmount(c, info, &segment, sumUsage)
+					return err
 				}
 				if event.Type == dto.RealtimeEventTypeSessionUpdated || event.Type == dto.RealtimeEventTypeSessionCreated {
 					if event.Session != nil {
@@ -171,7 +214,13 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 				reportError(err)
 				return
 			}
-			if err := helper.WssString(c, clientConn, string(privacy.SanitizeClientPayload(c, message))); err != nil {
+			if plugins != nil {
+				var usage *dto.RealtimeUsage
+				if event.Response != nil {
+					usage = event.Response.Usage
+				}
+				plugins.ServerEvent(event.Type, message, usage, quota)
+			} else if err := writeClient(message); err != nil {
 				reportError(err)
 				return
 			}
@@ -195,9 +244,14 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 }
 
 func preConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage, totalUsage *dto.RealtimeUsage) error {
+	_, err := preConsumeUsageWithAmount(ctx, info, usage, totalUsage)
+	return err
+}
+
+func preConsumeUsageWithAmount(ctx *gin.Context, info *relaycommon.RelayInfo, usage, totalUsage *dto.RealtimeUsage) (int, error) {
 	if err := dto.AddRealtimeUsage(totalUsage, usage); err != nil {
 		service.PreserveUnknownBillingDelivery(info)
-		return err
+		return 0, err
 	}
-	return service.PreWssConsumeQuota(ctx, info, usage)
+	return service.PreWssConsumeQuotaWithAmount(ctx, info, usage)
 }

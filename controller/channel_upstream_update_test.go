@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync/atomic"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -610,4 +611,39 @@ func TestDetectAllChannelUpstreamModelUpdatesRejectsExistingActiveTask(t *testin
 	require.Equal(t, http.StatusConflict, recorder.Code)
 	require.Contains(t, recorder.Body.String(), existing.TaskID)
 	require.Contains(t, recorder.Body.String(), "A model update task is already running or queued")
+}
+
+// Management calls carry channel credentials, including custom header names
+// that net/http does not strip when following redirects.
+func TestChannelManagementRequestsDoNotForwardCredentialsOnRedirect(t *testing.T) {
+	var redirected atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirected.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "test-channel-secret", r.Header.Get("X-Channel-Key"))
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer origin.Close()
+	channel := &model.Channel{}
+	for _, method := range []string{"model_list", "plugin_management"} {
+		t.Run(method, func(t *testing.T) {
+			var response *http.Response
+			var err error
+			if method == "model_list" {
+				response, err = sendFetchModelsRequest(http.MethodGet, origin.URL, channel, http.Header{"X-Channel-Key": {"test-channel-secret"}})
+			} else {
+				request, requestErr := http.NewRequest(http.MethodGet, origin.URL, nil)
+				require.NoError(t, requestErr)
+				request.Header.Set("X-Channel-Key", "test-channel-secret")
+				response, err = sendChannelRequest(channel, request)
+			}
+			require.NoError(t, err)
+			defer response.Body.Close()
+			require.Equal(t, http.StatusTemporaryRedirect, response.StatusCode)
+			require.Zero(t, redirected.Load())
+		})
+	}
 }

@@ -73,6 +73,23 @@ export const STATIC_I18N_KEYS = [
   'Redemption code not found',
   'Redemption operation failed, please try again later',
 
+  'Generic / Gemini',
+  'GPT',
+  'Cache reads',
+  '30 minutes / 12 hours',
+  '5 minutes / 1 hour',
+  'Choose usage categories',
+  'Charge for cache hits reported by the upstream, including Gemini.',
+  'For GPT models that report cache writes, set separate prices for 30-minute and 12-hour writes.',
+  'Charge separately for 5-minute and 1-hour cache writes reported by the upstream.',
+  'Choose prices for the cache usage reported by the upstream. Standard writes, Claude 1-hour writes, and GPT 12-hour writes are separate categories.',
+  'Cache create (30m) price',
+  'Cache create (5m) price',
+  'Standard cache write price',
+  'Claude cache write (1h) price',
+  'GPT cache write (12h) price',
+  'Cache Write (Claude 1h)',
+  'Cache Write (GPT 12h)',
   'The adjusted price is outside the supported range.',
   'This expression cannot be adjusted automatically. Keep the source price or edit it manually.',
   'Channel model owner label must be at most 64 characters without control or formatting characters',
@@ -340,7 +357,6 @@ export const STATIC_I18N_KEYS = [
   'Deleted',
   'User created successfully',
   'User updated successfully',
-  'User updated successfully',
   'Failed to load users',
   'Failed to search users',
   'Failed to create user',
@@ -350,9 +366,7 @@ export const STATIC_I18N_KEYS = [
 
   // Redemption codes
   'Unused',
-  'Disabled',
   'Used',
-  'Expired',
   'Redemption code(s) created successfully',
   'Redemption code updated successfully',
   'Redemption code deleted successfully',
@@ -539,7 +553,6 @@ export const STATIC_I18N_KEYS = [
   'Subscription First',
   'Subscription Only',
   'No Active',
-  'No Reset',
   'Remaining',
   'Received',
   'Payment initiated',
@@ -677,7 +690,6 @@ export const STATIC_I18N_KEYS = [
   'Please select a subscription plan',
   'Added successfully',
   'Has been invalidated',
-  'Deleted',
   'Validity',
   'Actions',
 
@@ -790,7 +802,6 @@ export const STATIC_I18N_KEYS = [
   'OpenAI Models route is required to enable upstream model checks',
 
   // Dashboard flow stages (labels/descriptions passed to t at runtime)
-  'User',
   'Node',
   'Token',
   'Group',
@@ -827,6 +838,18 @@ export const STATIC_I18N_KEYS = [
   'View audit records from user and admin roles. Root records are always excluded.',
   'Updated channel status (ID: {{id}})',
   'Batch updated channel status ({{count}}/{{total}} changed)',
+
+  // Password strength labels and hints (passed to t at runtime)
+  'Password strength empty',
+  'Password strength weak',
+  'Password strength fair',
+  'Password strength good',
+  'Password strength strong',
+  '8–128 characters',
+  '15 or more characters',
+  'Uppercase and lowercase letters',
+  'A number',
+  'A symbol',
 
   // Misc
   'Cancel',
@@ -888,7 +911,6 @@ export const STATIC_I18N_KEYS = [
   "This email address is not allowed by the administrator's email policy.",
   'Too many incorrect codes. Start email verification again.',
   'Unsupported account password hashing configuration.',
-  'Use 8–128 characters.',
   'Verification email could not be sent. Start email verification again.',
   'Your identity has been verified. Continue to the provider to finish linking your account.',
   'Set Password',

@@ -67,6 +67,18 @@ type BatchTaskResult struct {
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
 
+// ReportTaskFunc is injected by main: it hands a task that reached its final
+// state to the request plugins' report hooks (requestplugin.ReportTask).
+var ReportTaskFunc func(task *model.Task)
+
+// reportFinalTask reports a task once, after its final state is stored and
+// settled. A task no instance may report costs nothing.
+func reportFinalTask(task *model.Task) {
+	if ReportTaskFunc != nil && task != nil && (task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure) && task.PrivateData.RequestPlugins != nil && !task.SettlementPending && !task.HasLegacyBillingIntent() && task.PrivateData.FinancialOperationID != "" && task.PrivateData.FinancialReviewReason == "" {
+		ReportTaskFunc(task)
+	}
+}
+
 // sweepTimedOutTasks 在主轮询之前独立清理超时任务。
 // 每次最多处理 100 条，剩余的下个周期继续处理。
 // 使用锁定的 review 转移，防止覆盖被正常轮询已推进的终态。
@@ -280,7 +292,34 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 	}
 	info.ApiKey = ch.Key
 	adaptor.Init(info)
-	resp, err := adaptor.FetchBatchTasks(baseURL, ch.Key, tasks, proxy)
+	// A batch query carries one credential, so it holds only the tasks one
+	// credential account submitted: another account's answer could report a
+	// finished task missing and refund it.
+	var accounts []string
+	batches := make(map[string][]*model.Task)
+	for _, task := range tasks {
+		account := task.PrivateData.CredentialAccount
+		if _, ok := batches[account]; !ok {
+			accounts = append(accounts, account)
+		}
+		batches[account] = append(batches[account], task)
+	}
+	var errs []error
+	for _, account := range accounts {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err := pollTaskBatch(ctx, adaptor, channelId, baseURL, ch.Key, proxy, batches[account]); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// pollTaskBatch sends one batch query for tasks and applies the results it
+// returns for them.
+func pollTaskBatch(ctx context.Context, adaptor BatchTaskPollingAdaptor, channelId int, baseURL, key, proxy string, tasks []*model.Task) error {
+	resp, err := adaptor.FetchBatchTasks(baseURL, key, tasks, proxy)
 	if err != nil {
 		common.SysLog(common.LogText("Get Task Do req error: %v", err))
 		return recordPollFailureForTasks(ctx, adaptor, tasks, pollClassTransport, 0, err.Error())
@@ -312,11 +351,15 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 	if err != nil {
 		return recordPollFailureForTasks(ctx, adaptor, tasks, pollClassHookError, resp.StatusCode, err.Error())
 	}
+	batch := make(map[string]*model.Task, len(tasks))
+	for _, task := range tasks {
+		batch[task.GetUpstreamTaskID()] = task
+	}
 	for upstreamID, responseItem := range responseItems {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		task := taskM[upstreamID]
+		task := batch[upstreamID]
 		if task == nil || task.ChannelId != channelId {
 			logger.LogWarn(ctx, common.LogText("Batch task response ignored: unknown task_id=%s", upstreamID))
 			continue
@@ -651,10 +694,17 @@ func CommitTaskTerminalResult(ctx context.Context, adaptor TaskPollingAdaptor, t
 	if task.PrivateData.FinancialReviewReason != "" {
 		return nil
 	}
-	if kind == "refund" {
-		RefundTaskQuota(ctx, task, task.FailReason)
-	} else {
-		RecalculateTaskQuota(ctx, task, actual, reason, clamp)
+	applied, err := applyTaskQuota(ctx, task, actual, kind == "refund", reason, []*common.QuotaClamp{clamp})
+	if err != nil {
+		// The winning terminal transition and financial intent are already
+		// durable. Leave that intent for reconciliation, as the production
+		// polling path does; a ledger failure is not a failed upstream poll.
+		// In particular, do not emit a settled plugin report or replay delivery.
+		logger.LogError(ctx, "failed to commit task financial adjustment: "+err.Error())
+		return nil
+	}
+	if applied {
+		reportFinalTask(task)
 	}
 	return nil
 }
@@ -668,6 +718,7 @@ func finalizeTerminalTask(ctx context.Context, adaptor TaskPollingAdaptor, task 
 	if task.Status == model.TaskStatusFailure && !billingSettled && task.Quota != 0 {
 		RefundTaskQuota(ctx, task, task.FailReason)
 	}
+	reportFinalTask(task)
 }
 
 func redactVideoResponseBody(body []byte) []byte {

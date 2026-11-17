@@ -58,6 +58,10 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 		&NewUserBenefitConfig{},
 		&NewUserBenefitConfigAudit{},
 		&NewUserBenefitOrder{},
+		// These production schemas separate paid principal from verified rewards
+		// and enforce one reward per payment identity. Keep their deployed order.
+		&NewUserBenefitReward{},
+		&NewUserBenefitPaymentIdentity{},
 		&QuotaData{},
 		&Task{},
 		&TaskPlugin{},
@@ -106,7 +110,7 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 
 func TestMainAutoMigrateModelsWithoutRegistryKeepsCoreModels(t *testing.T) {
 	models := mainAutoMigrateModels(nil)
-	require.Len(t, models, 63)
+	require.Len(t, models, 65)
 	assert.IsType(t, &Channel{}, models[0])
 	assert.IsType(t, &ReferralRewardInbox{}, models[len(models)-1])
 }

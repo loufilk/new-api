@@ -12,6 +12,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relay/requestplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -125,6 +126,9 @@ func prepareResponsesPassThroughBody(c *gin.Context, info *relaycommon.RelayInfo
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
 		return nil, nil, types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	if apiErr := requestplugin.PassThrough(c, info, storage); apiErr != nil {
+		return nil, nil, apiErr
 	}
 	if len(info.ParamOverride) == 0 {
 		return common.NewReplayableBodyReader(storage), nil, nil

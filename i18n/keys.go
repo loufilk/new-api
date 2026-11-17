@@ -53,6 +53,10 @@ const (
 	MsgRelayAccessTokenUnsupported          = "relay.access_token_unsupported"
 	MsgRelayUserCallIntercepted             = "relay.user_call_intercepted"
 	MsgRelayUserCallInterceptionUnavailable = "relay.user_call_interception_unavailable"
+	MsgRelayTaskPriceNotConfigured          = "relay.task_price_not_configured"
+	MsgRelayRequestRejected                 = "relay.request_rejected"
+	MsgRelayRequestPluginFailed             = "relay.request_plugin_failed"
+	MsgRelayResponseRejected                = "relay.response_rejected"
 )
 
 // Emails and the name of the token created at registration, in the
@@ -109,13 +113,14 @@ const (
 // Channel notices sent to administrators who receive them and to model update
 // watchers
 const (
-	MsgChannelNotifyDisabledSubject = "channel.notify_disabled_subject"
-	MsgChannelNotifyDisabledContent = "channel.notify_disabled_content"
-	MsgChannelNotifyEnabledSubject  = "channel.notify_enabled_subject"
-	MsgChannelNotifyEnabledContent  = "channel.notify_enabled_content"
-	MsgChannelTestCompletedSubject  = "channel.test_completed_subject"
-	MsgChannelTestCompletedContent  = "channel.test_completed_content"
-	MsgChannelResponseTimeExceeded  = "channel.response_time_exceeded"
+	MsgChannelNotifyDisabledSubject  = "channel.notify_disabled_subject"
+	MsgChannelNotifyDisabledContent  = "channel.notify_disabled_content"
+	MsgChannelNotifyEnabledSubject   = "channel.notify_enabled_subject"
+	MsgChannelNotifyEnabledContent   = "channel.notify_enabled_content"
+	MsgChannelNotifyScheduledSubject = "channel.notify_scheduled_subject"
+	MsgChannelTestCompletedSubject   = "channel.test_completed_subject"
+	MsgChannelTestCompletedContent   = "channel.test_completed_content"
+	MsgChannelResponseTimeExceeded   = "channel.response_time_exceeded"
 
 	MsgChannelUpstreamUpdateNotifySubject   = "channel.upstream_update_notify_subject"
 	MsgChannelUpstreamUpdateSummary         = "channel.upstream_update_summary"

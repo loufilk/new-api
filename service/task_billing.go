@@ -89,7 +89,10 @@ func taskConsumptionLogParams(c *gin.Context, info *relaycommon.RelayInfo, task 
 	}
 	appendTaskLogInfo(task, other)
 	attachQuotaSaturation(c, info, other)
-
+	if len(info.RequestPluginSteps) > 0 {
+		other.SetAdmin("request_plugins", info.RequestPluginSteps)
+	}
+	appendRequestPluginRecord(info, other)
 	return model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
 		ModelName: info.GetBillingModelName(),

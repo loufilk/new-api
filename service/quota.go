@@ -85,14 +85,22 @@ func calculateAudioQuota(info QuotaInfo) (int, *common.QuotaClamp) {
 	return common.QuotaFromDecimalChecked(quota)
 }
 
+// PreWssConsumeQuota reserves observed Realtime usage for atomic finalization.
 func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage) error {
+	_, err := PreWssConsumeQuotaWithAmount(ctx, relayInfo, usage)
+	return err
+}
+
+// PreWssConsumeQuotaWithAmount also returns the reserved usage quota, not a
+// claim that the request's final ledger settlement has completed.
+func PreWssConsumeQuotaWithAmount(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage) (int, error) {
 	if relayInfo == nil || usage == nil {
-		return errors.New("missing realtime billing usage")
+		return 0, errors.New("missing realtime billing usage")
 	}
 	var normalized dto.RealtimeUsage
 	if err := dto.AddRealtimeUsage(&normalized, usage); err != nil {
 		PreserveUnknownBillingDelivery(relayInfo)
-		return err
+		return 0, err
 	}
 	usage = &normalized
 
@@ -129,14 +137,14 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	}
 	session, ok := relayInfo.Billing.(*BillingSession)
 	if !ok {
-		return errors.New("realtime billing session missing")
+		return 0, errors.New("realtime billing session missing")
 	}
 	if err := session.reserveObservedRealtime(usage, quota); err != nil {
-		return err
+		return 0, err
 	}
 
-	logger.LogInfo(ctx, "realtime streaming consume quota success, quota: "+fmt.Sprintf("%d", quota))
-	return nil
+	logger.LogInfo(ctx, common.LogText("realtime streaming consume quota success, quota: %d", quota))
+	return quota, nil
 }
 
 func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelName string,

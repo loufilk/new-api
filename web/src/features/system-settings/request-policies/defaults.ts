@@ -16,8 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { ChannelAffinitySettings } from '../general/channel-affinity/types'
 import type { SecuritySettings } from '../types'
+import type { ChannelAffinitySettings } from '../general/channel-affinity/types'
 
 export type RetrySettings = {
   RetryTimes: number

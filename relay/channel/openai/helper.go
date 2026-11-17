@@ -228,6 +228,20 @@ func handleLastResponse(lastStreamData string, responseId *string, createAt *int
 		*containStreamUsage = true
 		*usage = dto.MergeUsageNonZero(*usage, lastStreamResponse.Usage)
 		if !info.ShouldIncludeUsage {
+			if info.RelayMode == relayconstant.RelayModeCompletions {
+				var completion dto.CompletionsStreamResponse
+				if err := common.UnmarshalJsonStr(lastStreamData, &completion); err != nil {
+					return err
+				}
+				*shouldSendLastResp = false
+				for _, choice := range completion.Choices {
+					if choice.Text != "" {
+						*shouldSendLastResp = true
+						break
+					}
+				}
+				return nil
+			}
 			*shouldSendLastResp = lo.SomeBy(lastStreamResponse.Choices, func(choice dto.ChatCompletionsStreamResponseChoice) bool {
 				return choice.Delta.GetContentString() != "" || choice.Delta.GetReasoningContent() != ""
 			})

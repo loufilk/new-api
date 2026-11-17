@@ -37,6 +37,8 @@ var clientSafeErrorCodes = map[string]struct{}{
 	"user_call_intercepted":              {},
 	"user_call_interception_unavailable": {},
 	// new-api internal classifications.
+	string(types.ErrorCodeRequestRejected):              {},
+	string(types.ErrorCodeResponseRejected):             {},
 	string(types.ErrorCodeInvalidRequest):               {},
 	string(types.ErrorCodeSensitiveWordsDetected):       {},
 	string(types.ErrorCodeViolationFeeGrokCSAM):         {},

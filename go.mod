@@ -5,12 +5,7 @@ go 1.27.3
 
 require (
 	github.com/Azure/go-ntlmssp v0.1.1
-	github.com/Calcium-Ion/go-epay v0.0.5
-	github.com/Calcium-Ion/moejs v0.1.0-alpha.7
-	github.com/MoeForge/moego v0.1.0-alpha.1
-	github.com/ClickHouse/clickhouse-go/v2 v2.46.0
-	github.com/QuantumNous/new-api/relaykit v0.0.0
-	github.com/QuantumNous/new-api/tokenkit v0.0.0
+	github.com/Calcium-Ion/go-epay v0.0.6
 	github.com/abema/go-mp4 v1.4.1
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/andybalholm/brotli v1.2.0
@@ -46,6 +41,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/json-iterator/go v1.1.12
 	github.com/klauspost/compress v1.18.7
+	github.com/ledongthuc/pdf v0.0.0-20261020125853-5e46805f718e
 	github.com/mewkiz/flac v1.0.13
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
 	github.com/openai/openai-go v1.12.0
@@ -63,6 +59,7 @@ require (
 	github.com/thanhpk/randstr v1.0.6
 	github.com/tidwall/gjson v1.19.0
 	github.com/tidwall/sjson v1.2.5
+	github.com/tiktoken-go/tokenizer v0.8.1 // indirect
 	github.com/waffo-com/waffo-go v1.3.2
 	github.com/waffo-com/waffo-pancake-sdk-go v0.3.1
 	github.com/yapingcat/gomedia v0.0.0-20240906162731-17feea57090c
@@ -164,6 +161,15 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.40.1 // indirect
+)
+
+require (
+	github.com/ClickHouse/clickhouse-go/v2 v2.46.0
+	github.com/HugoSmits86/nativewebp v1.3.0
+	github.com/MoeForge/moego v0.1.0-alpha.3
+	github.com/MoeForge/moejs v0.1.0
+	github.com/QuantumNous/new-api/relaykit v0.0.0
+	github.com/QuantumNous/new-api/tokenkit v0.0.0
 )
 
 replace github.com/QuantumNous/new-api/relaykit => ./relaykit

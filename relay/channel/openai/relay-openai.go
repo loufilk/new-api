@@ -9,8 +9,10 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/privacy"
 	"github.com/QuantumNous/new-api/relay/channel/openrouter"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -33,6 +35,14 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 	if info != nil && info.OriginModelName != "" {
 		info.ObserveResponseModel(lastStreamResponse.Model)
 		lastStreamResponse.Model = info.OriginModelName
+	}
+
+	if info != nil && info.RelayMode == relayconstant.RelayModeCompletions {
+		// Legacy completions carry text/logprobs, not chat deltas. Preserve
+		// their wire shape (also under chat-only formatting options) while
+		// retaining model rewriting and StringData's client privacy boundary.
+		data = string(privacy.SanitizePayload([]byte(data), info.OriginModelName, false))
+		return helper.StringData(c, data)
 	}
 
 	if !forceFormat && !thinkToContent {

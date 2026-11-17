@@ -73,6 +73,10 @@ func TestTaskFinancialReviewFailureUsageCommitAndRecovery(t *testing.T) {
 			user, token, channel := seedReceiptActors(t, 0, 0)
 			task := seedReceiptTask(t, user, token, channel, 300)
 			task.Status = model.TaskStatusInProgress
+			task.PrivateData.RequestPlugins = &model.TaskRequestPlugins{Instances: []string{"audit"}}
+			previousReport, reports := ReportTaskFunc, 0
+			ReportTaskFunc = func(*model.Task) { reports++ }
+			t.Cleanup(func() { ReportTaskFunc = previousReport })
 			require.NoError(t, model.DB.Save(task).Error)
 			before := reviewAccounting(t, user, token, channel)
 			remove := func() {}
@@ -92,6 +96,7 @@ func TestTaskFinancialReviewFailureUsageCommitAndRecovery(t *testing.T) {
 			require.EqualValues(t, model.TaskStatusFailure, persisted.Status)
 			if fault {
 				assertFault()
+				require.Zero(t, reports, "pending financial intent must not claim a settled plugin report")
 				require.True(t, persisted.SettlementPending)
 				require.NotNil(t, persisted.PrivateData.FinancialIntent)
 				require.Equal(t, "settle", persisted.PrivateData.FinancialIntent.Kind)
@@ -100,6 +105,9 @@ func TestTaskFinancialReviewFailureUsageCommitAndRecovery(t *testing.T) {
 				remove()
 				reviewRecoveryPass(t)
 				require.NoError(t, model.DB.First(&persisted, task.ID).Error)
+			}
+			if !fault {
+				require.Equal(t, 1, reports, "new acknowledged settlement reports once")
 			}
 			require.Equal(t, 100, persisted.Quota)
 			require.False(t, persisted.SettlementPending)

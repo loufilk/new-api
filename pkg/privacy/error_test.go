@@ -165,3 +165,33 @@ func TestIsSafeErrorCode(t *testing.T) {
 	require.False(t, IsSafeErrorCode("org-secret-42"))
 	require.False(t, IsSafeErrorCode(""))
 }
+
+// Host plugin rejection categories are public, but plugin-controlled codes and
+// diagnostics must never become a bypass of the client privacy boundary.
+func TestPluginRejectionCodesPreservePrivacyBoundary(t *testing.T) {
+	for _, code := range []string{string(types.ErrorCodeRequestRejected), string(types.ErrorCodeResponseRejected), "blocked.ws", "reply.blocked", "private-plugin-secret"} {
+		t.Run(code, func(t *testing.T) {
+			source := types.OpenAIError{Type: "private-plugin-type", Code: code, Message: "private plugin diagnostic"}
+			safe := SanitizeClientOpenAIError(nil, http.StatusBadRequest, source)
+			known := code == string(types.ErrorCodeRequestRejected) || code == string(types.ErrorCodeResponseRejected)
+			if known {
+				assert.Equal(t, code, safe.Code)
+			} else {
+				assert.Nil(t, safe.Code)
+			}
+			assert.NotContains(t, safe.Message, "private plugin diagnostic")
+			assert.NotEqual(t, source.Type, safe.Type)
+
+			payload, err := common.Marshal(map[string]any{"type": "error", "status": http.StatusBadRequest, "error": source})
+			require.NoError(t, err)
+			result := SanitizePayload(payload, "", true)
+			if known {
+				assert.Equal(t, code, gjson.GetBytes(result, "error.code").String())
+			} else {
+				assert.False(t, gjson.GetBytes(result, "error.code").Exists())
+			}
+			assert.NotContains(t, string(result), "private plugin diagnostic")
+			assert.NotContains(t, string(result), "private-plugin-type")
+		})
+	}
+}
