@@ -59,6 +59,53 @@ afterEach(() => {
 })
 
 describe('cancelling generation aborts both the key read and the image request', () => {
+  test('an aborted request settling late cannot reset a newer generation', async () => {
+    loadFullTokenKeyMock.mockResolvedValue('sk-test')
+    const first = deferred<[]>()
+    const second = deferred<[]>()
+    requestImageGenerationMock
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+    const input = {
+      apiKeyId: 7,
+      model: 'gpt-image-1',
+      prompt: 'a city',
+      count: 1,
+      size: '1024x1024',
+      quality: 'medium',
+      style: '',
+      images: [],
+    }
+    const { result } = renderHook(() => useImageGeneration())
+    let firstRequest: Promise<unknown>
+    let secondRequest: Promise<unknown>
+    act(() => {
+      firstRequest = result.current.generate(input)
+    })
+    await waitFor(() =>
+      expect(requestImageGenerationMock).toHaveBeenCalledTimes(1)
+    )
+    act(() => {
+      result.current.cancel()
+      secondRequest = result.current.generate(input)
+    })
+    await waitFor(() =>
+      expect(requestImageGenerationMock).toHaveBeenCalledTimes(2)
+    )
+    await act(async () => {
+      first.reject(new DOMException('aborted', 'AbortError'))
+      await firstRequest
+    })
+    expect(result.current.isGenerating).toBe(true)
+    expect(result.current.error).toBeNull()
+    await act(async () => {
+      second.resolve([])
+      await secondRequest
+    })
+    expect(result.current.isGenerating).toBe(false)
+    expect(result.current.error).toBeNull()
+  })
+
   test('cancel during the API key read passes the abort signal and reports cancellation', async () => {
     const keyGate = deferred<string>()
     let keySignal: AbortSignal | null = null
@@ -100,7 +147,7 @@ describe('cancelling generation aborts both the key read and the image request',
     })
 
     expect(requestImageGenerationMock).not.toHaveBeenCalled()
-    expect(result.current.error).toBe('Generation was cancelled')
+    expect(result.current.error).toBe('Stopped waiting for the image response')
     expect(result.current.isGenerating).toBe(false)
   })
 
@@ -146,7 +193,7 @@ describe('cancelling generation aborts both the key read and the image request',
       await generatePromise
     })
 
-    expect(result.current.error).toBe('Generation was cancelled')
+    expect(result.current.error).toBe('Stopped waiting for the image response')
     expect(result.current.isGenerating).toBe(false)
   })
 

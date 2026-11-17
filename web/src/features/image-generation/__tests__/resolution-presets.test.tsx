@@ -154,6 +154,19 @@ test('actual size stays unverified until image decode and reports downgraded out
   expect(screen.queryByRole('status')).not.toBeInTheDocument()
   fireEvent.error(screen.getByAltText('image'))
   expect(screen.getByText(/Not yet verified/)).toBeInTheDocument()
+  expect(screen.getByText('Image not available')).toBeVisible()
+  rerender(
+    <ImageResolutionPreview
+      url='https://images.example/c.png'
+      prompt='image'
+      requestedSize='auto'
+    />
+  )
+  expect(screen.queryByText('Image not available')).not.toBeInTheDocument()
+  expect(screen.getByAltText('image')).toHaveAttribute(
+    'src',
+    'https://images.example/c.png'
+  )
 })
 
 test('a custom high-resolution alias shows a mapping warning without claiming official model support', () => {

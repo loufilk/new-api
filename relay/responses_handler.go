@@ -127,10 +127,10 @@ func prepareResponsesPassThroughBody(c *gin.Context, info *relaycommon.RelayInfo
 	if err != nil {
 		return nil, nil, types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
-	if apiErr := requestplugin.PassThrough(c, info, storage); apiErr != nil {
-		return nil, nil, apiErr
-	}
 	if len(info.ParamOverride) == 0 {
+		if apiErr := requestplugin.PassThrough(c, info, storage); apiErr != nil {
+			return nil, nil, apiErr
+		}
 		return common.NewReplayableBodyReader(storage), nil, nil
 	}
 
@@ -141,6 +141,9 @@ func prepareResponsesPassThroughBody(c *gin.Context, info *relaycommon.RelayInfo
 	jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
 	if err != nil {
 		return nil, nil, newAPIErrorFromParamOverride(err)
+	}
+	if apiErr := requestplugin.PassThroughBody(c, info, jsonData); apiErr != nil {
+		return nil, nil, apiErr
 	}
 	logger.LogDebug(c, "responses pass-through request body after param override: %s", jsonData)
 	body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)

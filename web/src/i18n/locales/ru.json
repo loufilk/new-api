@@ -9885,6 +9885,8 @@
     "Configure ordinary OpenAI pricing": "Настроить цены обычного OpenAI",
     "Dynamic declarations cannot be previewed. Retry or review the source below.": "Динамические объявления нельзя просмотреть заранее. Повторите попытку или изучите исходный код ниже.",
     "Plugin indexes are fetched by your browser. Installing runs the same review and admission pipeline as a manual upload.": "Индексы плагинов загружает ваш браузер. Установка проходит тот же путь проверки и допуска, что и загрузка вручную.",
-    "Disable task plugins?": "Отключить плагины задач?"
+    "Disable task plugins?": "Отключить плагины задач?",
+    "Stopped waiting for the image response": "Ожидание ответа с изображением остановлено",
+    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "Проверка платёжной личности для бонуса новым пользователям требует HTTPS-шлюз Alipay с ключом для запроса заказов"
   }
 }

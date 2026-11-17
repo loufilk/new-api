@@ -9885,6 +9885,8 @@
     "Configure ordinary OpenAI pricing": "Configure ordinary OpenAI pricing",
     "Dynamic declarations cannot be previewed. Retry or review the source below.": "Dynamic declarations cannot be previewed. Retry or review the source below.",
     "Plugin indexes are fetched by your browser. Installing runs the same review and admission pipeline as a manual upload.": "Plugin indexes are fetched by your browser. Installing runs the same review and admission pipeline as a manual upload.",
-    "Disable task plugins?": "Disable task plugins?"
+    "Disable task plugins?": "Disable task plugins?",
+    "Stopped waiting for the image response": "Stopped waiting for the image response",
+    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key"
   }
 }

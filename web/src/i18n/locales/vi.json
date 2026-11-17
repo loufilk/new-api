@@ -9885,6 +9885,8 @@
     "Configure ordinary OpenAI pricing": "Đặt giá OpenAI thông thường",
     "Dynamic declarations cannot be previewed. Retry or review the source below.": "Không thể xem trước khai báo được tạo động. Hãy thử lại hoặc xem mã nguồn bên dưới.",
     "Plugin indexes are fetched by your browser. Installing runs the same review and admission pipeline as a manual upload.": "Chỉ mục plugin do trình duyệt của bạn tải. Việc cài đặt đi qua đúng quy trình xem xét và kiểm duyệt như khi tải lên thủ công.",
-    "Disable task plugins?": "Tắt plugin tác vụ?"
+    "Disable task plugins?": "Tắt plugin tác vụ?",
+    "Stopped waiting for the image response": "Đã dừng chờ phản hồi hình ảnh",
+    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "Xác minh danh tính thanh toán cho ưu đãi người dùng mới yêu cầu cổng Alipay HTTPS có khóa truy vấn đơn hàng"
   }
 }

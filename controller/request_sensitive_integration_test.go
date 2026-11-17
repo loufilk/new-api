@@ -35,6 +35,15 @@ import (
 // candidate. Check that provider's normalized prompt before its driver hook,
 // including a vendor field that the raw-body text extractor does not know.
 func TestTaskSensitivePolicyChecksSelectedPluginNormalizationBeforeDriver(t *testing.T) {
+	setupTaskPluginBindChannelTest(t)
+	previousCache := common.MemoryCacheEnabled
+	previousMainType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
+	common.MemoryCacheEnabled = false
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = previousCache
+		common.SetDatabaseTypes(previousMainType, previousLogType)
+	})
 	require.NoError(t, i18n.Init())
 	enabled, promptEnabled := setting.CheckSensitiveEnabled, setting.CheckSensitiveOnPromptEnabled
 	words, exemptions := setting.SensitiveWordsToString(), setting.SensitiveCheckExemptGroupsToString()
@@ -75,6 +84,9 @@ export function buildContentRequest(){throw new Error("artifact_not_found");}
 	baseURL := "https://provider.example"
 	selected := &model.Channel{Id: 902, Type: constant.ChannelTypeTaskPlugin, Name: "second provider", Key: "test-key", BaseURL: &baseURL, Status: common.ChannelStatusEnabled, Group: "default", Models: "policy-shared-model"}
 	selected.SetSetting(dto.ChannelSettings{TaskPluginKey: "policy-beta"})
+	// The adaptor reloads channel credentials before invoking the driver.
+	// Give that read its own stored channel instead of relying on prior tests.
+	require.NoError(t, selected.Insert())
 	for _, format := range []string{"json", "multipart"} {
 		for _, tc := range []struct {
 			name, initialPrompt, selectedPrompt string

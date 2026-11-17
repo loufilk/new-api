@@ -90,9 +90,10 @@ type NewUserBenefitState struct {
 // NewUserBenefitRiskContext contains server-established admission evidence,
 // never JSON fields accepted from the customer.
 type NewUserBenefitRiskContext struct {
-	PaymentGateway string
-	ClientIP       string
-	HumanVerified  bool
+	PaymentGateway            string
+	PaymentIdentityQueryReady bool
+	ClientIP                  string
+	HumanVerified             bool
 }
 
 // NewUserBenefitUsage includes every committed promise, paid or unpaid, across
@@ -459,6 +460,9 @@ func ReserveNewUserBenefit(ctx context.Context, userID int, configVersion int64,
 			if order.PaymentMethod != paymentMethod || order.MerchantScope != merchantScope || order.PaymentIdentityCheckEnabled && order.PaymentGateway != risk.PaymentGateway {
 				return ErrNewUserBenefitOrderConflict
 			}
+			if order.PaymentIdentityCheckEnabled && !risk.PaymentIdentityQueryReady {
+				return ErrNewUserBenefitUnavailable
+			}
 			return nil
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -478,7 +482,7 @@ func ReserveNewUserBenefit(ctx context.Context, userID int, configVersion int64,
 		}
 		if config.PaymentIdentityCheckEnabled {
 			gateway, gatewayErr := url.Parse(risk.PaymentGateway)
-			if paymentMethod != "alipay" || gatewayErr != nil || gateway.Scheme != "https" || gateway.Hostname() == "" || gateway.User != nil || gateway.RawQuery != "" || gateway.ForceQuery || strings.Contains(risk.PaymentGateway, "#") {
+			if !risk.PaymentIdentityQueryReady || paymentMethod != "alipay" || gatewayErr != nil || gateway.Scheme != "https" || gateway.Hostname() == "" || gateway.User != nil || gateway.RawQuery != "" || gateway.ForceQuery || strings.Contains(risk.PaymentGateway, "#") {
 				return ErrNewUserBenefitUnavailable
 			}
 		}

@@ -221,6 +221,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		// delivery hold. Their address is diagnostic, not a current send fact.
 		common.SetContextKey(c, constant.ContextKeyUpstreamRequestAttempted, false)
 		common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, false)
+		common.SetContextKey(c, constant.ContextKeyUpstreamSubmissionPending, false)
 		common.SetContextKey(c, constant.ContextKeyUpstreamResponseDecodeFailed, false)
 		common.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, false)
 		common.SetContextKey(c, constant.ContextKeyUpstreamResponseUsageIncomplete, false)

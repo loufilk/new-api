@@ -22,10 +22,10 @@ import userEvent from '@testing-library/user-event'
 import { useState, type ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { PaymentSettingsSection } from '@/extensions/chuanapi/payment/payment-settings-section'
 import { api } from '@/lib/api'
 
 import { SettingsPageProvider } from '../../components/settings-page-context'
-import { PaymentSettingsSection } from '@/extensions/chuanapi/payment/payment-settings-section'
 
 type PaymentProps = ComponentProps<typeof PaymentSettingsSection>
 type PaymentValues = PaymentProps['defaultValues']

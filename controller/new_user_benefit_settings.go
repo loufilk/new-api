@@ -142,7 +142,7 @@ func UpdateNewUserBenefitSettings(c *gin.Context) {
 		return
 	}
 	if next.Enabled && next.PaymentIdentityCheckEnabled && !newUserBenefitIdentityGatewayReady(snapshotNewUserBenefitPayment()) {
-		newUserBenefitSettingsError(c, http.StatusConflict, "new_user_benefit_payment_identity_unavailable", "New user benefit payment identity checks require an HTTPS Alipay gateway")
+		newUserBenefitSettingsError(c, http.StatusConflict, "new_user_benefit_payment_identity_unavailable", "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key")
 		return
 	}
 	// Collect the read-only usage snapshot before the mutation so a statistics

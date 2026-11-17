@@ -17,6 +17,7 @@ func paymentIdentityBenefitOrder(t *testing.T, config *NewUserBenefitConfig, id 
 	createNewUserBenefitTestUser(t, id)
 	risk := newUserBenefitTestRisk(id)
 	risk.PaymentGateway = "https://pay.example.test"
+	risk.PaymentIdentityQueryReady = true
 	order, err := ReserveNewUserBenefit(t.Context(), id, config.Version, "alipay", "benefit-merchant", fmt.Sprintf("IDENTITY%d", id), risk)
 	require.NoError(t, err)
 	return order

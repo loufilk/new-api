@@ -663,7 +663,10 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
       <span className='min-w-0 truncate text-xs'>
         {currentModel?.label || t('Model')}
       </span>
-      <span className='bg-muted text-muted-foreground hidden max-w-20 shrink-0 rounded px-1.5 py-0.5 text-[10px] sm:inline-flex'>
+      <span
+        className='bg-muted text-muted-foreground hidden max-w-24 shrink-0 truncate rounded px-1.5 py-0.5 text-[10px] sm:block'
+        title={currentGroup?.label}
+      >
         {currentGroup?.label || t('Group')}
       </span>
       <ChevronsUpDown className='text-muted-foreground ml-auto size-3.5 shrink-0 opacity-60' />
@@ -673,16 +676,16 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
   const renderGroupList = () => (
     <div
       className={cn(
-        'min-w-0 space-y-2',
+        'min-w-0',
         !isMobile && modelGroupSelectorLayoutClasses.groupColumn
       )}
     >
-      <div className='text-muted-foreground px-1 text-[11px] leading-4 font-medium'>
+      <div className='text-muted-foreground shrink-0 px-1 text-[11px] leading-4 font-medium'>
         {t('Model Group')}
       </div>
       <div
         className={cn(
-          'grid gap-1',
+          'mt-2 grid gap-1',
           !isMobile && modelGroupSelectorLayoutClasses.groupScroll
         )}
         ref={groupScrollContainerRef}
@@ -691,9 +694,10 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
           const isSelected = selectedGroup === group.value
 
           return (
-            <button
+            <Button
+              aria-pressed={isSelected}
               className={cn(
-                'flex min-w-0 items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-[12px] leading-4 transition-colors',
+                'h-auto min-h-8 min-w-0 items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-[12px] leading-4 whitespace-normal',
                 isSelected
                   ? 'bg-primary/10 text-foreground'
                   : 'text-muted-foreground hover:bg-accent hover:text-foreground'
@@ -703,8 +707,9 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
               onClick={() => handleGroupChange(group.value)}
               ref={isSelected ? selectedGroupOptionRef : undefined}
               type='button'
+              variant='ghost'
             >
-              <span className='min-w-0 truncate font-medium'>
+              <span className='min-w-0 font-medium [overflow-wrap:anywhere] break-words'>
                 {group.label}
               </span>
               <Check
@@ -713,7 +718,7 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
                   isSelected ? 'opacity-100' : 'opacity-0'
                 )}
               />
-            </button>
+            </Button>
           )
         })}
       </div>

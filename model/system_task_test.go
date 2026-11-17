@@ -43,10 +43,14 @@ func useSystemTaskMatrixDB(t *testing.T, dialect string) *gorm.DB {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	previousDB := DB
+	previousDB, previousType := DB, common.MainDatabaseType()
 	DB = db
+	common.SetMainDatabaseType(common.DatabaseType(dialect))
+	initCol()
 	t.Cleanup(func() {
 		DB = previousDB
+		common.SetMainDatabaseType(previousType)
+		initCol()
 		require.NoError(t, db.Migrator().DropTable(&SystemTask{}))
 		require.NoError(t, sqlDB.Close())
 	})

@@ -93,9 +93,6 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
-		if newAPIError = requestplugin.PassThrough(c, info, storage); newAPIError != nil {
-			return newAPIError
-		}
 		if len(info.ParamOverride) > 0 {
 			jsonData, err := storage.Bytes()
 			if err != nil {
@@ -105,6 +102,9 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			if err != nil {
 				return newAPIErrorFromParamOverride(err)
 			}
+			if newAPIError = requestplugin.PassThroughBody(c, info, jsonData); newAPIError != nil {
+				return newAPIError
+			}
 			logger.LogDebug(c, "pass-through request body after param override: %s", jsonData)
 			body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
 			if err != nil {
@@ -113,6 +113,9 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			defer closer.Close()
 			requestBody = body
 		} else {
+			if newAPIError = requestplugin.PassThrough(c, info, storage); newAPIError != nil {
+				return newAPIError
+			}
 			requestBody = common.NewReplayableBodyReader(storage)
 		}
 	} else {

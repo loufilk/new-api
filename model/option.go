@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/request_plugin_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"gorm.io/gorm"
 )
@@ -366,6 +367,9 @@ func validateOptionValue(key string, value string) error {
 }
 
 func UpdateOption(key string, value string) error {
+	if key == request_plugin_setting.InstancesOption {
+		return updateRequestPluginInstancesOption(value)
+	}
 	if key == "GoogleOAuthEnabled" || key == "google.client_id" || key == "google.client_secret" {
 		return updateGoogleOAuthOption(key, value)
 	}

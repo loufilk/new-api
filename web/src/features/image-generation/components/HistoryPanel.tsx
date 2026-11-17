@@ -70,6 +70,9 @@ type HistoryPanelProps = {
 export function HistoryPanel(props: HistoryPanelProps) {
   const { t } = useTranslation()
   const [confirmation, setConfirmation] = useState<string | null>(null)
+  const [failedImageUrls, setFailedImageUrls] = useState<
+    Record<string, string>
+  >({})
   const [preview, setPreview] = useState<{
     entryId: string
     resultId: string
@@ -217,24 +220,39 @@ export function HistoryPanel(props: HistoryPanelProps) {
                       prompt: entry.prompt,
                     })}
                   >
-                    <img
-                      src={url}
-                      alt={entry.prompt}
-                      loading='lazy'
-                      onLoad={(event) => {
-                        const image = event.currentTarget
-                        if (image.naturalWidth > 0 && image.naturalHeight > 0) {
-                          props.onDimensions?.(
-                            entry.id,
-                            result.id,
-                            url,
-                            image.naturalWidth,
-                            image.naturalHeight
-                          )
+                    {failedImageUrls[result.id] === url ? (
+                      <span className='text-muted-foreground flex aspect-square w-full items-center justify-center p-4 text-sm whitespace-normal'>
+                        {t('Image not available')}
+                      </span>
+                    ) : (
+                      <img
+                        src={url}
+                        alt={entry.prompt}
+                        loading='lazy'
+                        onError={() =>
+                          setFailedImageUrls((current) => ({
+                            ...current,
+                            [result.id]: url,
+                          }))
                         }
-                      }}
-                      className='bg-muted/30 aspect-square w-full object-contain'
-                    />
+                        onLoad={(event) => {
+                          const image = event.currentTarget
+                          if (
+                            image.naturalWidth > 0 &&
+                            image.naturalHeight > 0
+                          ) {
+                            props.onDimensions?.(
+                              entry.id,
+                              result.id,
+                              url,
+                              image.naturalWidth,
+                              image.naturalHeight
+                            )
+                          }
+                        }}
+                        className='bg-muted/30 aspect-square w-full object-contain'
+                      />
+                    )}
                   </Button>
                   <div className='grid gap-2 p-3'>
                     <p

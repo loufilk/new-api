@@ -106,9 +106,7 @@ func TestTaskFinancialReviewFailureUsageCommitAndRecovery(t *testing.T) {
 				reviewRecoveryPass(t)
 				require.NoError(t, model.DB.First(&persisted, task.ID).Error)
 			}
-			if !fault {
-				require.Equal(t, 1, reports, "new acknowledged settlement reports once")
-			}
+			require.Equal(t, 1, reports, "new acknowledged settlement reports once, including recovery")
 			require.Equal(t, 100, persisted.Quota)
 			require.False(t, persisted.SettlementPending)
 			require.Nil(t, persisted.PrivateData.FinancialIntent)
@@ -124,6 +122,7 @@ func TestTaskFinancialReviewFailureUsageCommitAndRecovery(t *testing.T) {
 			require.NoError(t, ApplyTaskPollResult(t.Context(), adaptor, &persisted, result, []byte(`{"provider_result":"partial"}`)))
 			reviewRecoveryPass(t)
 			require.Equal(t, after, reviewAccounting(t, user, token, channel))
+			require.Equal(t, 1, reports, "terminal replay and another recovery pass do not report again")
 		})
 	}
 }

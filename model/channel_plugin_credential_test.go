@@ -303,7 +303,7 @@ func useScheduledChannelDatabase(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, anchor.Close()) })
 	}
-	tables := []any{&Channel{}, &Ability{}, &SystemTask{}}
+	tables := []any{&Channel{}, &Ability{}, &SystemTask{}, &SystemSyncTopic{}, &Option{}}
 	require.NoError(t, db.AutoMigrate(tables...))
 	previousDB, previousType, previousMemory := DB, common.MainDatabaseType(), common.MemoryCacheEnabled
 	DB = db

@@ -23,9 +23,27 @@ jobs:
   backend:
     name: Exact head backend vet, build, and test
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
     env:
       GOWORK: 'off'
+      GOFLAGS: '-mod=readonly -p=1'
+      NO_AGENT_FIXTURE_OWNED: '1'
+      TEST_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_fixture?sslmode=disable
+      TEST_MODEL_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_model?sslmode=disable
+      TEST_SERVICE_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_service?sslmode=disable
+      TEST_SECURITY_DIALECT: postgres
 
     steps:
       - name: Checkout
@@ -91,18 +109,27 @@ jobs:
         run: go build ./...
 
       - name: Test root, relaykit, and tokenkit modules
-        run: make test
+        run: |
+          for database in newapi_test_fixture newapi_test_model newapi_test_service; do
+            docker exec "${{ job.services.postgres.id }}" createdb -U postgres "$database"
+          done
+          make test
 
       - name: Race tests
         env:
           CGO_ENABLED: '1'
           GOMAXPROCS: '2'
         run: |
+          # Each pass owns fresh fixtures; packages sharing a fixture run serially.
+          for database in newapi_test_fixture newapi_test_model newapi_test_service; do
+            docker exec "${{ job.services.postgres.id }}" dropdb -U postgres "$database"
+            docker exec "${{ job.services.postgres.id }}" createdb -U postgres "$database"
+          done
           # SQLite-heavy controller tests can exceed Go's default 10m under -race.
           # Bound resource contention and runtime without reducing test coverage.
-          go test -race -p 2 -count=1 -timeout=20m ./...
+          go test -race -p 1 -count=1 -timeout=20m ./...
           cd relaykit
-          go test -race -p 2 -count=1 -timeout=20m ./...
+          go test -race -p 1 -count=1 -timeout=20m ./...
 
       - name: Release evidence gate tests
         run: python3 -m unittest discover -s ops/server/tests -p test_release_gate.py -v
@@ -151,7 +178,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: '1.4.0'
+          bun-version: '1.4.4'
 
       - name: Install dependencies
         run: bun install --frozen-lockfile

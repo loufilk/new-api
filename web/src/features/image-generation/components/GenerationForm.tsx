@@ -113,16 +113,17 @@ export function GenerationForm(props: GenerationFormProps) {
     IMAGE_COUNT_MIN,
     Math.min(IMAGE_COUNT_MAX, props.maxCount)
   )
-  const selectedApiKeyName = props.keys.find(
+  const selectedApiKey = props.keys.find(
     (key) => key.id === props.value.apiKeyId
-  )?.name
+  )
+  const selectedApiKeyName = selectedApiKey?.name
   const canGenerate =
     !props.isGenerating &&
     !props.isInitializing &&
     !promptInvalid &&
     (!props.requiresReferenceImage || props.references.length > 0) &&
-    props.value.apiKeyId !== null &&
-    props.value.model !== ''
+    selectedApiKey?.status === 1 &&
+    props.models.includes(props.value.model)
 
   return (
     <form
@@ -495,6 +496,18 @@ export function GenerationForm(props: GenerationFormProps) {
             {props.isGenerating ? t('Stop waiting') : t('Generate')}
           </Button>
         </div>
+        {selectedApiKey ? (
+          <p className='text-muted-foreground min-w-0 text-xs break-words'>
+            <span className='font-medium'>{t('Model Group')}</span>:{' '}
+            {selectedApiKey.group || t('Follow user group')}
+            {selectedApiKey.group === 'auto' &&
+            selectedApiKey.auto_groups?.length ? (
+              <span className='ml-2'>
+                {selectedApiKey.auto_groups.join(' → ')}
+              </span>
+            ) : null}
+          </p>
+        ) : null}
         <div className='flex flex-wrap items-center justify-between gap-2'>
           <div className='flex items-center gap-2'>
             <Switch

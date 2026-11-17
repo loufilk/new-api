@@ -69,6 +69,14 @@ function makeEntry(id: string): ImageHistoryEntry {
 }
 
 describe('history panel separates empty history from empty filters', () => {
+  test('an expired result shows an unavailable message while retaining its history controls', () => {
+    renderPanel({ entries: [makeEntry('expired')], totalCount: 1 })
+    fireEvent.error(screen.getByAltText('prompt expired'))
+    expect(screen.getByText('Image not available')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled()
+    expect(screen.getByText('prompt expired')).toBeInTheDocument()
+  })
+
   test('results toolbar wraps on small screens and keeps filters compact on desktop', () => {
     renderPanel()
     const heading = screen.getByRole('heading', { name: 'Generation results' })

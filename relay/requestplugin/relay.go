@@ -403,12 +403,29 @@ func PassThrough(c *gin.Context, info *relaycommon.RelayInfo, storage common.Bod
 		return nil
 	}
 	call := attemptCall(c, info)
+	var body []byte
+	if storage != nil && jsonRequest(c) && len(plan.scope(StageEgress, call.Group, call.Model, call.channelType(), call.Bound)) > 0 {
+		body, _ = storage.Bytes()
+	}
+	return PassThroughBody(c, info, body)
+}
+
+// PassThroughBody checks the final bytes of a JSON pass-through request after
+// channel parameter overrides. Late ingress and outbound stay unchecked, as
+// in PassThrough; egress sees exactly the body that will be sent upstream.
+func PassThroughBody(c *gin.Context, info *relaycommon.RelayInfo, body []byte) *types.NewAPIError {
+	plan := planOf(c)
+	if plan == nil {
+		return nil
+	}
+	if !jsonRequest(c) || !gjson.ValidBytes(body) {
+		body = nil
+	}
+	call := attemptCall(c, info)
 	for _, attempt := range attemptStages {
 		call.Stage, call.Late = attempt.stage, attempt.late
-		if attempt.stage == StageEgress && storage != nil && jsonRequest(c) && len(plan.scope(StageEgress, call.Group, call.Model, call.channelType(), call.Bound)) > 0 {
-			if body, err := storage.Bytes(); err == nil && gjson.ValidBytes(body) {
-				call.Body = body
-			}
+		if attempt.stage == StageEgress {
+			call.Body = body
 		}
 		outcome := plan.Run(c.Request.Context(), call)
 		info.RequestPluginSteps = append(info.RequestPluginSteps, auditSteps(outcome)...)

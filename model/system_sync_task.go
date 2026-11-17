@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Topics of the data each node keeps a copy of in memory. A write to that
@@ -40,24 +41,33 @@ type SyncTaskPayload struct {
 	Node string `json:"node"`
 }
 
+// SystemSyncTopic provides a permanent lock row for a topic. Task history may
+// be deleted, so it cannot provide the lock that orders committed revisions.
+type SystemSyncTopic struct {
+	Topic string `gorm:"type:varchar(64);primaryKey"`
+}
+
 // BumpSyncTopic adds a sync task for topic. Call it after the write to the
 // topic's data has committed. A failed bump is only logged: the periodic full
 // reloads still carry the change to the other nodes. Data that no periodic
 // reload covers bumps with bumpSyncTopic inside its write transaction.
 func BumpSyncTopic(topic string) {
-	if err := addSyncTask(DB, topic); err != nil {
+	if err := DB.Transaction(func(tx *gorm.DB) error { return bumpSyncTopic(tx, topic) }); err != nil {
 		common.SysError(common.LogText("failed to bump sync topic %s: %v", topic, err))
 	}
 }
 
 // bumpSyncTopic adds the sync task on tx, inside the transaction of a write:
-// the write and its task commit or fail together. It first locks the newest
-// task of the topic, so concurrent writers add their tasks in commit order. A
+// the write and its task commit or fail together. It locks a stable topic row
+// before allocating a task ID, so concurrent writers commit in ID order. A
 // node that loaded the topic after seeing a task then also has every write
 // whose task is older.
 func bumpSyncTopic(tx *gorm.DB, topic string) error {
-	var newest SystemTask
-	if err := lockForUpdate(tx).Select("id").Where("type = ?", SyncTaskType(topic)).Order("id desc").Limit(1).Find(&newest).Error; err != nil {
+	row := SystemSyncTopic{Topic: topic}
+	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
+		return err
+	}
+	if err := lockForUpdate(tx).Where("topic = ?", topic).First(&row).Error; err != nil {
 		return err
 	}
 	return addSyncTask(tx, topic)

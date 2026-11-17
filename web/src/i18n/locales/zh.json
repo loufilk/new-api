@@ -9885,6 +9885,8 @@
     "Configure ordinary OpenAI pricing": "配置普通 OpenAI 价格",
     "Dynamic declarations cannot be previewed. Retry or review the source below.": "动态生成的声明无法预览。可重试，或查看下方源码。",
     "Plugin indexes are fetched by your browser. Installing runs the same review and admission pipeline as a manual upload.": "插件索引由你的浏览器拉取。安装时走的审查与准入流程与手动上传完全一致。",
-    "Disable task plugins?": "禁用任务插件？"
+    "Disable task plugins?": "禁用任务插件？",
+    "Stopped waiting for the image response": "已停止等待图片响应",
+    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "新用户福利支付身份核验需要使用 HTTPS 支付宝网关并配置订单查询密钥"
   }
 }

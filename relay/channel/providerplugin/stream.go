@@ -14,10 +14,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
@@ -36,6 +38,7 @@ type eventSource interface {
 // non-streaming one it serves the chunks the plugin returns as they come, or
 // the body it ends with.
 type streamConverter struct {
+	c        *gin.Context
 	ctx      context.Context
 	adaptor  *Adaptor
 	hookCtx  jsplugin.HookContext
@@ -70,6 +73,7 @@ func (a *Adaptor) newStreamConverter(c *gin.Context, info *relaycommon.RelayInfo
 	hookCtx := a.hookContext(c, info)
 	hookCtx.State = state
 	return &streamConverter{
+		c:            c,
 		ctx:          c.Request.Context(),
 		adaptor:      a,
 		hookCtx:      hookCtx,
@@ -108,6 +112,7 @@ func (s *streamConverter) respond(c *gin.Context, header http.Header) (*http.Res
 		if err != nil {
 			return nil, err
 		}
+		common.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, true)
 		return upstreamErrorResponse(upstreamErr, http.StatusInternalServerError), nil
 	}
 	header = header.Clone()
@@ -260,7 +265,7 @@ func (s *streamConverter) convertNext() (*jsplugin.UpstreamError, error) {
 		return nil, nil
 	}
 	for _, message := range result.Send {
-		if err = writeWebSocketMessage(s.session, message); err != nil {
+		if err = writeWebSocketMessage(s.c, s.session, message); err != nil {
 			return nil, err
 		}
 	}
@@ -447,7 +452,16 @@ func (s *webSocketSource) next() (jsplugin.StreamEvent, bool, error) {
 	return jsplugin.StreamEvent{Data: string(data)}, true, nil
 }
 
-func writeWebSocketMessage(session *websocket.Conn, message jsplugin.WebSocketMessage) error {
+func writeWebSocketMessage(c *gin.Context, session *websocket.Conn, message jsplugin.WebSocketMessage) error {
+	if stopped := service.RelayRequestCancellation(c); stopped != nil {
+		return stopped
+	}
+	// A write can partially succeed before returning an error. Once it starts,
+	// only upstream usage or an explicit rejection can resolve the reservation.
+	common.SetContextKey(c, constant.ContextKeyUpstreamRequestAttempted, true)
+	common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, false)
+	stopOnLeave := context.AfterFunc(c.Request.Context(), func() { _ = session.Close() })
+	defer stopOnLeave()
 	if message.IsBinary {
 		return session.WriteMessage(websocket.BinaryMessage, message.Binary)
 	}
