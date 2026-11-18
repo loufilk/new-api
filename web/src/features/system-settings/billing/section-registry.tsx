@@ -60,8 +60,6 @@ const BILLING_SECTIONS = [
     build: (settings: BillingSettings) => (
       <QuotaSettingsSection
         defaultValues={{
-          AffiliateRewardEnabled: settings.AffiliateRewardEnabled ?? false,
-          AffiliateRewardRate: settings.AffiliateRewardRate ?? 0.05,
           TopUpLink: settings.TopUpLink,
           quota_setting: {
             trust_quota_usd: settings['quota_setting.trust_quota_usd'],

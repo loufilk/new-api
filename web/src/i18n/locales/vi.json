@@ -10396,6 +10396,9 @@
     "Session verification is temporarily unavailable": "Tạm thời không thể xác minh phiên đăng nhập",
     "Please wait, then retry to continue to this page.": "Vui lòng chờ rồi thử lại để tiếp tục truy cập trang này.",
     "Retry in {{seconds}}s": "Thử lại sau {{seconds}} giây",
-    "Withdrawal eligibility and fees are shown in the application form.": "Điều kiện và phí rút tiền được hiển thị trong biểu mẫu yêu cầu."
+    "Withdrawal eligibility and fees are shown in the application form.": "Điều kiện và phí rút tiền được hiển thị trong biểu mẫu yêu cầu.",
+    "Refund receipt reference": "Mã chứng từ hoàn tiền",
+    "Enter the refund receipt reference": "Nhập mã chứng từ hoàn tiền",
+    "Ordinary inviters earn 3% and active agents earn 5% from every qualifying website top-up, with no cap.": "Người giới thiệu thông thường nhận 3% và đại lý đang hoạt động nhận 5% từ mỗi lần nạp đủ điều kiện trên trang web, không giới hạn số lần."
   }
 }

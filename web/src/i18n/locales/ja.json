@@ -10396,6 +10396,9 @@
     "Session verification is temporarily unavailable": "現在、ログイン状態を確認できません",
     "Please wait, then retry to continue to this page.": "しばらく待ってから再試行すると、このページに進めます。",
     "Retry in {{seconds}}s": "{{seconds}}秒後に再試行",
-    "Withdrawal eligibility and fees are shown in the application form.": "出金条件と手数料は申請フォームに表示されます。"
+    "Withdrawal eligibility and fees are shown in the application form.": "出金条件と手数料は申請フォームに表示されます。",
+    "Refund receipt reference": "返金証憑の参照番号",
+    "Enter the refund receipt reference": "返金証憑の参照番号を入力してください",
+    "Ordinary inviters earn 3% and active agents earn 5% from every qualifying website top-up, with no cap.": "通常の紹介者は対象となるサイトでのチャージごとに3%、有効な代理店は5%の報酬を受け取ります。回数に上限はありません。"
   }
 }

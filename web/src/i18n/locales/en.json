@@ -10396,6 +10396,9 @@
     "Session verification is temporarily unavailable": "Session verification is temporarily unavailable",
     "Please wait, then retry to continue to this page.": "Please wait, then retry to continue to this page.",
     "Retry in {{seconds}}s": "Retry in {{seconds}}s",
-    "Withdrawal eligibility and fees are shown in the application form.": "Withdrawal eligibility and fees are shown in the application form."
+    "Withdrawal eligibility and fees are shown in the application form.": "Withdrawal eligibility and fees are shown in the application form.",
+    "Refund receipt reference": "Refund receipt reference",
+    "Enter the refund receipt reference": "Enter the refund receipt reference",
+    "Ordinary inviters earn 3% and active agents earn 5% from every qualifying website top-up, with no cap.": "Ordinary inviters earn 3% and active agents earn 5% from every qualifying website top-up, with no cap."
   }
 }

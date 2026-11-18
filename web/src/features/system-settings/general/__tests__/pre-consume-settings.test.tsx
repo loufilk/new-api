@@ -29,6 +29,7 @@ import { useState } from 'react'
 import { beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { SettingsPageProvider } from '../../components/settings-page-context'
 import { QuotaSettingsSection } from '../quota-settings-section'
@@ -41,8 +42,6 @@ function Fixture() {
       <SettingsPageProvider actionsContainer={container}>
         <QuotaSettingsSection
           defaultValues={{
-            AffiliateRewardEnabled: false,
-            AffiliateRewardRate: 0,
             TopUpLink: '',
             quota_setting: {
               enable_free_model_pre_consume: true,
@@ -75,6 +74,7 @@ async function renderSettings() {
 }
 
 beforeEach(() => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
   vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
 })
 
@@ -160,5 +160,62 @@ test('shows the LinuxDO-only three-dollar policy without obsolete global signup 
   ).not.toBeInTheDocument()
   expect(
     screen.queryByRole('spinbutton', { name: 'Signup Bonus Quota' })
+  ).not.toBeInTheDocument()
+})
+
+test('shows current referral rules and management links without saving obsolete reward options', async () => {
+  await renderSettings()
+  expect(
+    screen.getByText(
+      'Ordinary inviters earn 3% and active agents earn 5% from every qualifying website top-up, with no cap.'
+    )
+  ).toBeVisible()
+  expect(
+    screen.getByText(
+      'Rewards unlock after five days. Refunds cancel or reverse the matching reward amount.'
+    )
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('switch', { name: 'Referral Rewards' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('spinbutton', { name: 'Referral Reward Rate' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: 'Referral withdrawals' })
+  ).toHaveAttribute('href', '/referral-withdrawals')
+  expect(screen.getByRole('button', { name: 'Agent finance' })).toHaveAttribute(
+    'href',
+    '/agent-platform/finance?section=agents'
+  )
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'Top-Up Link' }), {
+    target: { value: 'https://example.com/topup' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() =>
+    expect(api.put).toHaveBeenCalledWith('/api/option/', {
+      key: 'TopUpLink',
+      value: 'https://example.com/topup',
+    })
+  )
+  expect(api.put).toHaveBeenCalledTimes(1)
+})
+
+test('only offers referral management links the administrator can access', async () => {
+  useAuthStore.getState().auth.setUser({
+    id: 10,
+    username: 'limited-admin',
+    role: 10,
+    permissions: {
+      admin_permissions: { referral_withdrawal_settings: { read: true } },
+    },
+  })
+  await renderSettings()
+  expect(
+    screen.getByRole('button', { name: 'Referral withdrawals' })
+  ).toHaveAttribute('href', '/referral-withdrawals')
+  expect(
+    screen.queryByRole('button', { name: 'Agent finance' })
   ).not.toBeInTheDocument()
 })

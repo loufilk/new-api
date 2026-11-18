@@ -1548,4 +1548,7 @@ export const STATIC_I18N_KEYS = [
   'Resolve pending referral withdrawals before deleting this account',
   'All Accounts',
   'Withdrawal eligibility and fees are shown in the application form.',
+  'Refund receipt reference',
+  'Enter the refund receipt reference',
+  'Ordinary inviters earn 3% and active agents earn 5% from every qualifying website top-up, with no cap.',
 ] as const

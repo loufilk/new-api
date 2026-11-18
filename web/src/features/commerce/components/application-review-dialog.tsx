@@ -87,7 +87,11 @@ export function ApplicationReviewDialog(props: {
         props.action === 'record_fee_refund') &&
       receipt.trim().length < 3
     ) {
-      setError(t('Enter the payment receipt reference'))
+      setError(
+        props.action === 'record_fee_refund'
+          ? t('Enter the refund receipt reference')
+          : t('Enter the payment receipt reference')
+      )
       setInvalidFields(['receipt'])
       return
     }
@@ -156,7 +160,9 @@ export function ApplicationReviewDialog(props: {
           props.action === 'record_fee_refund') && (
           <div className='grid gap-2'>
             <Label htmlFor='commerce-receipt'>
-              {t('Payment receipt reference')}
+              {props.action === 'record_fee_refund'
+                ? t('Refund receipt reference')
+                : t('Payment receipt reference')}
             </Label>
             <Input
               id='commerce-receipt'

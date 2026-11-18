@@ -28,8 +28,6 @@ const defaultBillingSettings: BillingSettings = {
   QuotaForNewUser: 0,
   SignupBonusEnabled: false,
   QuotaForSignupBonus: 0,
-  AffiliateRewardEnabled: false,
-  AffiliateRewardRate: 0.05,
   TopUpLink: '',
   'quota_setting.enable_free_model_pre_consume': true,
   'quota_setting.trust_quota_usd': 10,

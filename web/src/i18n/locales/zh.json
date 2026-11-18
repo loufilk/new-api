@@ -10396,6 +10396,9 @@
     "Session verification is temporarily unavailable": "暂时无法验证登录状态",
     "Please wait, then retry to continue to this page.": "请稍候重试，继续访问此页面。",
     "Retry in {{seconds}}s": "{{seconds}} 秒后重试",
-    "Withdrawal eligibility and fees are shown in the application form.": "提现条件和手续费以申请表显示的规则为准。"
+    "Withdrawal eligibility and fees are shown in the application form.": "提现条件和手续费以申请表显示的规则为准。",
+    "Refund receipt reference": "退款凭证编号",
+    "Enter the refund receipt reference": "请输入退款凭证编号",
+    "Ordinary inviters earn 3% and active agents earn 5% from every qualifying website top-up, with no cap.": "普通邀请人每笔符合条件的网站在线充值返利 3%，有效代理返利 5%，无次数上限。"
   }
 }

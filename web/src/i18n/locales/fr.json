@@ -10396,6 +10396,9 @@
     "Session verification is temporarily unavailable": "La vérification de votre session est temporairement indisponible",
     "Please wait, then retry to continue to this page.": "Patientez, puis réessayez pour accéder à cette page.",
     "Retry in {{seconds}}s": "Réessayer dans {{seconds}} s",
-    "Withdrawal eligibility and fees are shown in the application form.": "Les conditions et frais de retrait sont indiqués dans le formulaire de demande."
+    "Withdrawal eligibility and fees are shown in the application form.": "Les conditions et frais de retrait sont indiqués dans le formulaire de demande.",
+    "Refund receipt reference": "Référence du justificatif de remboursement",
+    "Enter the refund receipt reference": "Saisissez la référence du justificatif de remboursement",
+    "Ordinary inviters earn 3% and active agents earn 5% from every qualifying website top-up, with no cap.": "Les parrains ordinaires reçoivent 3 % et les agents actifs 5 % de chaque recharge admissible sur le site, sans plafond."
   }
 }

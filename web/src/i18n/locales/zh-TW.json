@@ -10396,6 +10396,9 @@
     "Session verification is temporarily unavailable": "暫時無法驗證登入狀態",
     "Please wait, then retry to continue to this page.": "請稍候重試，繼續存取此頁面。",
     "Retry in {{seconds}}s": "{{seconds}} 秒後重試",
-    "Withdrawal eligibility and fees are shown in the application form.": "提領條件與手續費以申請表顯示的規則為準。"
+    "Withdrawal eligibility and fees are shown in the application form.": "提領條件與手續費以申請表顯示的規則為準。",
+    "Refund receipt reference": "退款憑證編號",
+    "Enter the refund receipt reference": "請輸入退款憑證編號",
+    "Ordinary inviters earn 3% and active agents earn 5% from every qualifying website top-up, with no cap.": "一般邀請人每筆符合條件的網站線上儲值獲得 3% 回饋，有效代理獲得 5%，無次數上限。"
   }
 }

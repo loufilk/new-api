@@ -17,13 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
+import { Link } from '@tanstack/react-router'
 import i18next from 'i18next'
-import type { ChangeEvent } from 'react'
 import type { Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import * as z from 'zod'
 
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -35,6 +36,9 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { hasPermission } from '@/lib/admin-permissions'
+import { hasAgentAdministration } from '@/lib/agent-permissions'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { FormDirtyIndicator } from '../components/form-dirty-indicator'
 import { FormNavigationGuard } from '../components/form-navigation-guard'
@@ -51,8 +55,6 @@ import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 
 const quotaSchema = z.object({
-  AffiliateRewardEnabled: z.boolean(),
-  AffiliateRewardRate: z.coerce.number().min(0).max(1),
   TopUpLink: z.string(),
   quota_setting: z.object({
     enable_free_model_pre_consume: z.boolean(),
@@ -71,7 +73,6 @@ const quotaSchema = z.object({
 })
 
 type QuotaFormValues = z.infer<typeof quotaSchema>
-type QuotaInputValue = number | ''
 
 type QuotaSettingsSectionProps = {
   defaultValues: QuotaFormValues
@@ -82,12 +83,11 @@ export function QuotaSettingsSection({
 }: QuotaSettingsSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
-  const handleNumberChange =
-    (onChange: (value: QuotaInputValue) => void) =>
-    (event: ChangeEvent<HTMLInputElement>) => {
-      const value = event.currentTarget.valueAsNumber
-      onChange(Number.isNaN(value) ? '' : value)
-    }
+  const user = useAuthStore((state) => state.auth.user)
+  const canManageWithdrawals =
+    hasPermission(user, 'referral_withdrawals', 'read') ||
+    hasPermission(user, 'referral_withdrawal_settings', 'read')
+  const canManageAgents = hasAgentAdministration(user)
 
   const { form, handleSubmit, isDirty, isSubmitting } =
     useSettingsForm<QuotaFormValues>({
@@ -187,57 +187,52 @@ export function QuotaSettingsSection({
               )}
             />
 
-            <FormField
-              control={form.control}
-              name='AffiliateRewardEnabled'
-              render={({ field }) => (
-                <SettingsSwitchItem>
-                  <SettingsSwitchContent>
-                    <FormLabel>{t('Referral Rewards')}</FormLabel>
-                    <FormDescription>
-                      {t(
-                        'Reward inviters when referred users complete their first three online balance top-ups'
-                      )}
-                    </FormDescription>
-                  </SettingsSwitchContent>
-                  <FormControl>
-                    <Switch
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
-                    />
-                  </FormControl>
-                </SettingsSwitchItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name='AffiliateRewardRate'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Referral Reward Rate')}</FormLabel>
-                  <FormControl>
-                    <Input
-                      type='number'
-                      min={0}
-                      max={1}
-                      step={0.001}
-                      value={field.value ?? ''}
-                      onChange={handleNumberChange(field.onChange)}
-                      name={field.name}
-                      onBlur={field.onBlur}
-                      ref={field.ref}
-                    />
-                  </FormControl>
-                  <FormDescription>
+            <SettingsFormGridItem span='full'>
+              <Alert>
+                <AlertTitle>{t('Referral Rewards')}</AlertTitle>
+                <AlertDescription>
+                  <p>
                     {t(
-                      'Share of each qualifying online balance top-up credited as a pending referral reward'
+                      'Ordinary inviters earn 3% and active agents earn 5% from every qualifying website top-up, with no cap.'
                     )}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                  </p>
+                  <p>
+                    {t(
+                      'Rewards unlock after five days. Refunds cancel or reverse the matching reward amount.'
+                    )}
+                  </p>
+                  {(canManageWithdrawals || canManageAgents) && (
+                    <div className='flex flex-wrap gap-2'>
+                      {canManageWithdrawals && (
+                        <Button
+                          type='button'
+                          size='sm'
+                          variant='outline'
+                          render={<Link to='/referral-withdrawals' />}
+                        >
+                          {t('Referral withdrawals')}
+                        </Button>
+                      )}
+                      {canManageAgents && (
+                        <Button
+                          type='button'
+                          size='sm'
+                          variant='outline'
+                          render={
+                            <Link
+                              to='/agent-platform/finance'
+                              search={{ section: 'agents' }}
+                            />
+                          }
+                        >
+                          {t('Agent finance')}
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </AlertDescription>
+              </Alert>
+            </SettingsFormGridItem>
 
             <SettingsFormGridItem span='full'>
               <FormField

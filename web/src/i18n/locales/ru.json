@@ -10396,6 +10396,9 @@
     "Session verification is temporarily unavailable": "Проверка сеанса временно недоступна",
     "Please wait, then retry to continue to this page.": "Подождите и повторите попытку, чтобы открыть эту страницу.",
     "Retry in {{seconds}}s": "Повторить через {{seconds}} с",
-    "Withdrawal eligibility and fees are shown in the application form.": "Условия вывода и комиссии указаны в форме заявки."
+    "Withdrawal eligibility and fees are shown in the application form.": "Условия вывода и комиссии указаны в форме заявки.",
+    "Refund receipt reference": "Номер документа о возврате средств",
+    "Enter the refund receipt reference": "Введите номер документа о возврате средств",
+    "Ordinary inviters earn 3% and active agents earn 5% from every qualifying website top-up, with no cap.": "Обычные пригласившие пользователи получают 3%, а активные агенты — 5% от каждого подходящего пополнения на сайте без ограничения количества."
   }
 }
