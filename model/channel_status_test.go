@@ -54,10 +54,10 @@ func TestBatchSetChannelTagDatabaseMatrix(t *testing.T) {
 				DB = previousDB
 				common.SetMainDatabaseType(previousType)
 				initCol()
-				assert.NoError(t, db.Migrator().DropTable(&Ability{}, &Channel{}, &SystemTask{}))
+				assert.NoError(t, db.Migrator().DropTable(&Ability{}, &Channel{}, &SystemTask{}, &SystemSyncTopic{}, &Option{}))
 				assert.NoError(t, sqlDB.Close())
 			})
-			require.NoError(t, db.AutoMigrate(&Channel{}, &Ability{}, &SystemTask{}))
+			require.NoError(t, db.AutoMigrate(&Channel{}, &Ability{}, &SystemTask{}, &SystemSyncTopic{}, &Option{}))
 			var version string
 			versionQuery := "SELECT version()"
 			if dialect == "sqlite" {

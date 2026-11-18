@@ -5000,6 +5000,8 @@
     "Model ID is required": "模型 ID 不能为空",
     "Model Limits": "模型限制",
     "Model limits enabled": "已启用模型限制",
+    "Model restrictions are enabled with an empty allowlist. This key cannot use any model.": "模型限制已开启，但允许列表为空。此密钥无法使用任何模型。",
+    "Model restrictions are disabled. This key can use all models allowed by its routing scope.": "模型限制已关闭，此密钥可使用路由范围内允许的所有模型。",
     "Model List": "模型列表",
     "Model management": "模型管理",
     "Model Mapping": "模型映射",
@@ -8834,6 +8836,7 @@
     "Token name": "令牌名称",
     "Token Name": "令牌名称",
     "Token name is too long": "令牌名称过长",
+    "Token settings changed; reload and try again": "密钥设置已变更，请刷新后重试",
     "Token obtained from your Gotify application": "从您的 Gotify 应用程序获取的 Token",
     "Token operation details": "令牌操作详情",
     "Token or per-call pricing": "按 token 或按次计费",
@@ -9885,6 +9888,8 @@
     "Configure ordinary OpenAI pricing": "配置普通 OpenAI 价格",
     "Dynamic declarations cannot be previewed. Retry or review the source below.": "动态生成的声明无法预览。可重试，或查看下方源码。",
     "Plugin indexes are fetched by your browser. Installing runs the same review and admission pipeline as a manual upload.": "插件索引由你的浏览器拉取。安装时走的审查与准入流程与手动上传完全一致。",
-    "Disable task plugins?": "禁用任务插件？"
+    "Disable task plugins?": "禁用任务插件？",
+    "Stopped waiting for the image response": "已停止等待图片响应",
+    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "新用户福利支付身份核验需要使用 HTTPS 支付宝网关并配置订单查询密钥"
   }
 }

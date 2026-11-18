@@ -5000,6 +5000,8 @@
     "Model ID is required": "モデル ID が必要です",
     "Model Limits": "モデル制限",
     "Model limits enabled": "モデル制限が有効",
+    "Model restrictions are enabled with an empty allowlist. This key cannot use any model.": "モデル制限は有効ですが、許可リストが空です。このキーではモデルを使用できません。",
+    "Model restrictions are disabled. This key can use all models allowed by its routing scope.": "モデル制限は無効です。このキーはルーティング範囲で許可されたすべてのモデルを使用できます。",
     "Model List": "モデル一覧",
     "Model management": "モデル管理",
     "Model Mapping": "モデルマッピング",
@@ -8834,6 +8836,7 @@
     "Token name": "トークン名",
     "Token Name": "トークン名",
     "Token name is too long": "トークン名が長すぎます",
+    "Token settings changed; reload and try again": "キーの設定が変更されました。再読み込みしてから再試行してください",
     "Token obtained from your Gotify application": "Gotifyアプリケーションから取得したトークン",
     "Token operation details": "トークン操作の詳細",
     "Token or per-call pricing": "トークン単位またはリクエスト単位の課金",
@@ -9885,6 +9888,8 @@
     "Configure ordinary OpenAI pricing": "通常の OpenAI 料金を設定",
     "Dynamic declarations cannot be previewed. Retry or review the source below.": "動的に生成される宣言はプレビューできません。再試行するか、下のソースを確認してください。",
     "Plugin indexes are fetched by your browser. Installing runs the same review and admission pipeline as a manual upload.": "プラグインのインデックスはブラウザが取得します。インストール時の確認と受け入れの流れは手動アップロードと全く同じです。",
-    "Disable task plugins?": "タスクプラグインを無効化しますか？"
+    "Disable task plugins?": "タスクプラグインを無効化しますか？",
+    "Stopped waiting for the image response": "画像の応答の待機を停止しました",
+    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "新規ユーザー特典の決済本人確認には、注文照会キーを設定した HTTPS Alipay ゲートウェイが必要です"
   }
 }

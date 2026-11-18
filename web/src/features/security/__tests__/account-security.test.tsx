@@ -504,7 +504,11 @@ it('allows a common new password after verifying the current password once', asy
 it('shows a password confirmation mismatch once after a failed submit', async () => {
   const put = vi.spyOn(api, 'put')
   const user = userEvent.setup()
-  render(<ChangePasswordDialog open username='user' onOpenChange={vi.fn()} />)
+  render(
+    <QueryClientProvider client={client}>
+      <ChangePasswordDialog open username='user' onOpenChange={vi.fn()} />
+    </QueryClientProvider>
+  )
   await user.type(screen.getByLabelText('Current Password'), 'current-password')
   await user.type(screen.getByLabelText('New Password'), 'account-password!42')
   await user.type(

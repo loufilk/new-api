@@ -374,7 +374,16 @@ it('reuses key creation and reloads the list when a new key is created', async (
     await screen.findByRole('textbox', { name: 'Token Name' }),
     'New client key'
   )
+  await user.click(screen.getByRole('combobox', { name: 'Group' }))
+  await user.click(screen.getByRole('option', { name: /^default/ }))
+  await user.keyboard('{Escape}')
   await user.click(screen.getByRole('button', { name: 'Add' }))
+  await waitFor(() =>
+    expect(api.post).toHaveBeenCalledWith(
+      '/api/token/',
+      expect.objectContaining({ name: 'New client key', group: 'default' })
+    )
+  )
   const combo = await screen.findByRole('combobox', { name: 'API Key' })
   await user.click(combo)
   expect(

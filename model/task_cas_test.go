@@ -100,6 +100,7 @@ func TestMain(m *testing.M) {
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},
+		&SystemSyncTopic{},
 		&BalanceLedgerOperation{},
 		&BalanceLedger{},
 		&Model{},

@@ -151,7 +151,11 @@ export function ModelLimitsCell(props: ApiKeyRestrictionProps) {
       items={models}
       label={t('{{count}} models', { count: models.length })}
       title={t('Models')}
-      emptyLabel={t('Unlimited')}
+      emptyLabel={
+        props.apiKey.model_limits_enabled
+          ? t('{{count}} models', { count: 0 })
+          : t('Unlimited')
+      }
       detailsTrigger={props.detailsTrigger}
     />
   )

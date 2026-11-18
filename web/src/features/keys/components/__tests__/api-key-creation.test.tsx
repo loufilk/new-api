@@ -240,6 +240,75 @@ test('an explicitly selected default group is used for every key in a batch', as
   ])
 })
 
+test('batch copies of a fifty-character name keep their suffix within the name limit', async () => {
+  vi.spyOn(Math, 'random').mockReturnValue(0.123456789)
+  const { created } = renderDrawer()
+  const user = userEvent.setup()
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Add' })).toBeEnabled()
+  )
+  await selectGroup(user, 'vip')
+  const name = '密'.repeat(50)
+  await user.type(screen.getByRole('textbox', { name: 'Token Name' }), name)
+  fireEvent.change(screen.getByRole('spinbutton', { name: 'Quantity' }), {
+    target: { value: '2' },
+  })
+  await user.click(screen.getByRole('button', { name: 'Add' }))
+  await waitFor(() => expect(created).toHaveLength(2))
+  expect(created[0].name).toBe(name)
+  const copyName = String(created[1].name)
+  expect([...copyName].length).toBeLessThanOrEqual(50)
+  expect(copyName).toMatch(/^密+-[a-z0-9]+$/)
+})
+
+test.each(['account change', 'page unmount'])(
+  'batch creation stops after %s while its first request is pending',
+  async (transition) => {
+    const { server, created, close, onCreated } = renderDrawer()
+    let resolveCreate: (() => void) | undefined
+    const pending = new Promise<{
+      data: { success: boolean; data: object }
+    }>((resolve) => {
+      resolveCreate = () => resolve({ data: { success: true, data: {} } })
+    })
+    server.createToken = () => pending
+    const user = userEvent.setup()
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Add' })).toBeEnabled()
+    )
+    await selectGroup(user, 'default')
+    await user.type(
+      screen.getByRole('textbox', { name: 'Token Name' }),
+      'session batch'
+    )
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Quantity' }), {
+      target: { value: '2' },
+    })
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    await waitFor(() => expect(created).toHaveLength(1))
+
+    if (transition === 'page unmount') cleanup()
+    else {
+      act(() => {
+        useAuthStore.getState().auth.setUser({
+          id: 8,
+          username: 'next-owner',
+          role: 1,
+          group: 'default',
+        })
+      })
+    }
+    await act(async () => {
+      resolveCreate?.()
+      await pending
+    })
+
+    expect(created).toHaveLength(1)
+    expect(close).not.toHaveBeenCalled()
+    expect(onCreated).not.toHaveBeenCalled()
+  }
+)
+
 test('smart routing requires a group first and keeps that explicit manual draft', async () => {
   const { created, post } = renderDrawer()
   const user = userEvent.setup()

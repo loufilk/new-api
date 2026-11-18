@@ -94,6 +94,41 @@ function makePricing(): PricingData {
 }
 
 describe('loadImagePageBootstrap aggregates every key page', () => {
+  test('surfaces a rejected first key page instead of reporting no keys', async () => {
+    mockedGetApiKeys.mockResolvedValue({
+      success: false,
+      message: 'Key listing denied',
+    })
+    mockedGetPricing.mockResolvedValue(makePricing())
+
+    await expect(loadImagePageBootstrap()).rejects.toThrow('Key listing denied')
+  })
+
+  test('rejects incomplete key lists when a later page fails', async () => {
+    mockedGetApiKeys.mockImplementation(async (params) => {
+      if (params?.p === 1) return makeKeysPage([makeKey(1)], 2, 1)
+      return { success: false, message: 'Second key page failed' }
+    })
+    mockedGetPricing.mockResolvedValue(makePricing())
+
+    await expect(loadImagePageBootstrap()).rejects.toThrow(
+      'Second key page failed'
+    )
+  })
+
+  test('surfaces a rejected pricing response instead of reporting no models', async () => {
+    mockedGetApiKeys.mockResolvedValue(makeKeysPage([makeKey(1)], 1, 100))
+    mockedGetPricing.mockResolvedValue({
+      ...makePricing(),
+      success: false,
+      message: 'Pricing unavailable',
+    })
+
+    await expect(loadImagePageBootstrap()).rejects.toThrow(
+      'Pricing unavailable'
+    )
+  })
+
   test('keeps only enabled keys when everything fits on the first page', async () => {
     mockedGetApiKeys.mockResolvedValue(
       makeKeysPage([makeKey(1), makeKey(2, 2), makeKey(3, 4)], 3, 100)

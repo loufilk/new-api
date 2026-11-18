@@ -221,6 +221,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		// delivery hold. Their address is diagnostic, not a current send fact.
 		common.SetContextKey(c, constant.ContextKeyUpstreamRequestAttempted, false)
 		common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, false)
+		common.SetContextKey(c, constant.ContextKeyUpstreamSubmissionPending, false)
 		common.SetContextKey(c, constant.ContextKeyUpstreamResponseDecodeFailed, false)
 		common.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, false)
 		common.SetContextKey(c, constant.ContextKeyUpstreamResponseUsageIncomplete, false)
@@ -716,10 +717,22 @@ func executeTaskSubmissionWith(
 	}
 
 	retryBudget := service.RelayRetryBudget(c)
-	if locked, ok := relayInfo.LockedChannel.(*model.Channel); ok && locked != nil && common.GetContextKeyBool(c, constant.ContextKeyTokenNoRetryWithinGroup) {
-		// Native origin-task paths can lock a channel without a ChannelPin.
-		// Never rotate its keys or replay it when this key allows one attempt.
-		retryBudget = 0
+	if locked, ok := relayInfo.LockedChannel.(*model.Channel); ok && locked != nil {
+		// A native origin task cannot use the extra cross-group transition slot.
+		// Preserve its same-channel budget even when it has no ChannelPin.
+		retryBudget = common.RetryTimes
+		constraints := service.GetChannelConstraints(c)
+		if _, pinned, _ := constraints.ResolvedPin(); !pinned && locked.Id > 0 {
+			constraints.AddPin(taskdto.ChannelPin{
+				ChannelId: locked.Id,
+				Source:    taskdto.PinSourceOriginTask,
+				Rank:      taskdto.PinRankOriginTask,
+				RetryMode: taskdto.PinRetrySameChannel,
+			})
+		}
+		if common.GetContextKeyBool(c, constant.ContextKeyTokenNoRetryWithinGroup) {
+			retryBudget = 0
+		}
 	}
 	for ; retryParam.GetRetry() <= retryBudget; retryParam.IncreaseRetry() {
 		stage = "select_channel"

@@ -5000,6 +5000,8 @@
     "Model ID is required": "Model ID is required",
     "Model Limits": "Model Limits",
     "Model limits enabled": "Model limits enabled",
+    "Model restrictions are enabled with an empty allowlist. This key cannot use any model.": "Model restrictions are enabled with an empty allowlist. This key cannot use any model.",
+    "Model restrictions are disabled. This key can use all models allowed by its routing scope.": "Model restrictions are disabled. This key can use all models allowed by its routing scope.",
     "Model List": "Model List",
     "Model management": "Model management",
     "Model Mapping": "Model Mapping",
@@ -8834,6 +8836,7 @@
     "Token name": "Token name",
     "Token Name": "Token Name",
     "Token name is too long": "Token name is too long",
+    "Token settings changed; reload and try again": "Token settings changed; reload and try again",
     "Token obtained from your Gotify application": "Token obtained from your Gotify application",
     "Token operation details": "Token operation details",
     "Token or per-call pricing": "Token or per-call pricing",
@@ -9885,6 +9888,8 @@
     "Configure ordinary OpenAI pricing": "Configure ordinary OpenAI pricing",
     "Dynamic declarations cannot be previewed. Retry or review the source below.": "Dynamic declarations cannot be previewed. Retry or review the source below.",
     "Plugin indexes are fetched by your browser. Installing runs the same review and admission pipeline as a manual upload.": "Plugin indexes are fetched by your browser. Installing runs the same review and admission pipeline as a manual upload.",
-    "Disable task plugins?": "Disable task plugins?"
+    "Disable task plugins?": "Disable task plugins?",
+    "Stopped waiting for the image response": "Stopped waiting for the image response",
+    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key"
   }
 }

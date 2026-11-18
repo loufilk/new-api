@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-
 /** A run of text that both sides share, or that only one side has. */
 export type TextDiffPart = {
   kind: 'same' | 'removed' | 'added'

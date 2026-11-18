@@ -23,10 +23,6 @@ type PricingLike = {
   supported_endpoint_types?: string[]
 }
 
-function normalizeModelName(value: string): string {
-  return value.trim().toLowerCase()
-}
-
 export function getAvailableImageModels(params: {
   pricingModels: PricingLike[]
   tokenModels: string[]
@@ -39,32 +35,14 @@ export function getAvailableImageModels(params: {
     const types = item.supported_endpoint_types ?? []
     if (!types.includes('image-generation')) continue
     if (!item.model_name || item.model_name.trim() === '') continue
-    imageModels.add(normalizeModelName(item.model_name))
+    imageModels.add(item.model_name)
   }
   if (imageModels.size === 0) return []
 
-  const tokenSet = new Set(
-    params.tokenModels.map((model) => normalizeModelName(model))
-  )
-
-  // The owned-token endpoint applies routing and model restrictions server-side.
-  const allowed = [...imageModels].filter((model) => tokenSet.has(model))
-  if (allowed.length === 0) return []
-
-  const displayName = new Map<string, string>()
-  for (const item of params.pricingModels) {
-    const key = normalizeModelName(item.model_name)
-    if (imageModels.has(key) && !displayName.has(key)) {
-      displayName.set(key, item.model_name)
-    }
-  }
-  for (const model of params.tokenModels) {
-    const key = normalizeModelName(model)
-    if (!displayName.has(key)) displayName.set(key, model)
-  }
-
-  return allowed
-    .map((key) => displayName.get(key) ?? key)
+  // Routing and token permissions use exact, case-sensitive model IDs.
+  const tokenSet = new Set(params.tokenModels)
+  return [...imageModels]
+    .filter((model) => tokenSet.has(model))
     .sort((a, b) => a.localeCompare(b))
 }
 

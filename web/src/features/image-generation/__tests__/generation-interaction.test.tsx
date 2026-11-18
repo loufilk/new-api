@@ -71,6 +71,37 @@ function renderForm(
 }
 
 describe('generation form protects key interactions', () => {
+  test.each([{ keys: [] }, { models: ['gpt-image-1'] }])(
+    'stale key or model selection cannot submit while options change: %j',
+    async (options) => {
+      const onGenerate = vi.fn()
+      renderForm({ ...options, onGenerate })
+      const user = userEvent.setup()
+      expect(screen.getByRole('button', { name: 'Generate' })).toBeDisabled()
+      await user.click(screen.getByLabelText('Prompt'))
+      await user.keyboard('{Control>}{Enter}{/Control}')
+      expect(onGenerate).not.toHaveBeenCalled()
+    }
+  )
+
+  test('shows the selected token group and preserves the automatic routing order', () => {
+    renderForm({
+      keys: [
+        {
+          id: 1,
+          name: 'key-1',
+          group: 'auto',
+          auto_groups: ['绘图优先组', '绘图备用组'],
+          model_limits_enabled: false,
+          model_limits: '',
+          status: 1,
+        },
+      ],
+    })
+    expect(screen.getByText('Model Group')).toBeInTheDocument()
+    expect(screen.getByText('绘图优先组 → 绘图备用组')).toBeInTheDocument()
+  })
+
   test('edit-only mode blocks click and keyboard submission until a reference is added', async () => {
     const onGenerate = vi.fn()
     const view = renderForm({

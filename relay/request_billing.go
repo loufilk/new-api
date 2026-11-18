@@ -106,6 +106,12 @@ func PreserveFailedRequestBilling(c *gin.Context, info *relaycommon.RelayInfo, a
 		return nil
 	}
 	if !c.GetBool(requestBillingUsageObservedKey) && !c.GetBool(requestBillingDeliveryUnknownKey) {
+		if common.GetContextKeyBool(c, constant.ContextKeyUpstreamSubmissionPending) {
+			// A later poll's dial failure or error response cannot make an
+			// earlier accepted submission unused. Only final measured usage
+			// resolves the whole chain without reconciliation.
+			preserveUnknownRequestBilling(c, info)
+		}
 		preserveUnmeasuredStreamBilling(c, info, nil)
 		var dialErr *net.OpError
 		var dnsErr *net.DNSError
@@ -164,6 +170,10 @@ func preserveUnmeasuredStreamBilling(c *gin.Context, info *relaycommon.RelayInfo
 	if info == nil || info.StreamStatus == nil {
 		return false
 	}
+	if common.GetContextKeyBool(c, constant.ContextKeyUpstreamRequestUnsent) &&
+		!common.GetContextKeyBool(c, constant.ContextKeyUpstreamSubmissionPending) {
+		return false // A WebSocket handshake alone submitted no business message.
+	}
 	if common.GetContextKeyBool(c, constant.ContextKeyUpstreamResponseUsageIncomplete) {
 		preserveUnknownRequestBilling(c, info)
 		return true
@@ -179,9 +189,6 @@ func preserveUnmeasuredStreamBilling(c *gin.Context, info *relaycommon.RelayInfo
 		preserveUnknownRequestBilling(c, info)
 		return true
 	}
-	if common.GetContextKeyBool(c, constant.ContextKeyUpstreamExplicitRejection) {
-		return false
-	}
 	if info.ResponsesUsageInfo != nil {
 		for _, tool := range info.ResponsesUsageInfo.BuiltInTools {
 			if tool != nil && tool.CallCount > 0 {
@@ -190,6 +197,14 @@ func preserveUnmeasuredStreamBilling(c *gin.Context, info *relaycommon.RelayInfo
 		}
 	}
 	status := info.StreamStatus.OutcomeSnapshot()
+	if common.GetContextKeyBool(c, constant.ContextKeyUpstreamSubmissionPending) &&
+		status.Response != relaycommon.ResponseOutcomeCompleted && status.Response != relaycommon.ResponseOutcomeIncomplete {
+		preserveUnknownRequestBilling(c, info)
+		return true
+	}
+	if common.GetContextKeyBool(c, constant.ContextKeyUpstreamExplicitRejection) {
+		return false
+	}
 	switch status.Response {
 	case relaycommon.ResponseOutcomeCompleted, relaycommon.ResponseOutcomeIncomplete:
 		return false

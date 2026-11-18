@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -1357,6 +1358,35 @@ func TestScheduledSyncRetriesFailedQuery(t *testing.T) {
 	assert.False(t, syncNodeTopics(context.Background()))
 }
 
+type scheduledSyncCommitPool struct {
+	gorm.ConnPool
+	afterCommit func()
+}
+
+func (pool *scheduledSyncCommitPool) BeginTx(ctx context.Context, options *sql.TxOptions) (gorm.ConnPool, error) {
+	tx, err := pool.ConnPool.(gorm.TxBeginner).BeginTx(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+	return &scheduledSyncCommitTx{Tx: tx, afterCommit: pool.afterCommit}, nil
+}
+
+type scheduledSyncCommitTx struct {
+	*sql.Tx
+	channelSync bool
+	afterCommit func()
+}
+
+func (tx *scheduledSyncCommitTx) Commit() error {
+	if err := tx.Tx.Commit(); err != nil {
+		return err
+	}
+	if tx.channelSync {
+		tx.afterCommit()
+	}
+	return nil
+}
+
 func TestScheduledOwnDisableSyncDuringCommitDoesNotRecurse(t *testing.T) {
 	database := useNodeSync(t)
 	var calls atomic.Int32
@@ -1380,15 +1410,39 @@ func TestScheduledOwnDisableSyncDuringCommitDoesNotRecurse(t *testing.T) {
 	releaseCommit := sync.OnceFunc(func() { close(release) })
 	defer releaseCommit()
 	var held atomic.Bool
-	// Hold the hook after its topic bump commits, before run's bookkeeping.
-	require.NoError(t, database.Callback().Create().After("gorm:commit_or_rollback_transaction").Register("scheduled_hold_commit", func(tx *gorm.DB) {
-		row, ok := tx.Statement.Dest.(*model.SystemTask)
-		if ok && row.Type == model.SyncTaskType(model.SyncTopicChannels) && tx.Error == nil && held.CompareAndSwap(false, true) {
+	// GORM's create callbacks can still be inside BumpSyncTopic's outer
+	// transaction. Pause only after SQL COMMIT releases its connection, before
+	// the scheduled hook updates its bookkeeping.
+	pool := &scheduledSyncCommitPool{ConnPool: database.ConnPool, afterCommit: func() {
+		if held.CompareAndSwap(false, true) {
 			close(committed)
 			<-release
 		}
+	}}
+	wrapped := database.Session(&gorm.Session{NewDB: true, Context: context.Background()})
+	config := *wrapped.Config
+	wrapped.Config = &config
+	wrapped.Config.ConnPool = pool
+	wrapped.Statement.ConnPool = pool
+	model.DB = wrapped
+	t.Cleanup(func() {
+		releaseCommit()
+		scheduledPlugins.workers.Wait()
+		model.DB = database
+		require.NoError(t, database.Callback().Create().Remove("scheduled_mark_sync_commit"))
+	})
+	require.NoError(t, database.Callback().Create().After("gorm:create").Before("gorm:commit_or_rollback_transaction").Register("scheduled_mark_sync_commit", func(tx *gorm.DB) {
+		row, ok := tx.Statement.Dest.(*model.SystemTask)
+		if !ok || row.Type != model.SyncTaskType(model.SyncTopicChannels) || tx.Error != nil {
+			return
+		}
+		commit, ok := tx.Statement.ConnPool.(*scheduledSyncCommitTx)
+		if !ok {
+			tx.AddError(errors.New("scheduled sync commit interceptor missing"))
+			return
+		}
+		commit.channelSync = true
 	}))
-	t.Cleanup(func() { require.NoError(t, database.Callback().Create().Remove("scheduled_hold_commit")) })
 	key := pluginScheduledKey{channel.Id, 0}
 	scheduledPlugins.scan([]*model.Channel{channel}, scheduledPlugins.entries[key].next)
 	select {

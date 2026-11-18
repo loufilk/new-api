@@ -23,6 +23,7 @@ import (
 	"github.com/samber/lo"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 type Channel struct {
@@ -634,49 +635,76 @@ func (channel *Channel) Insert() error {
 	return err
 }
 
-// Update writes an edited channel, all but its key: a key changes only through
-// UpdateChannelLocked, so an edit never writes back a key a refresh replaced
-// after the edit read it.
+// Update keeps the stored credential, including a credential refreshed since
+// the caller read the channel.
 func (channel *Channel) Update() error {
-	// If this is a multi-key channel, recalculate MultiKeySize based on the stored key list to avoid inconsistency after editing keys
-	if channel.ChannelInfo.IsMultiKey {
-		var keyStr string
-		if existing, err := GetChannelById(channel.Id, true); err == nil {
-			keyStr = existing.Key
-		}
-		// Parse the key list (supports newline separation or JSON array)
-		keys := []string{}
-		if keyStr != "" {
-			trimmed := strings.TrimSpace(keyStr)
-			if strings.HasPrefix(trimmed, "[") {
-				var arr []json.RawMessage
-				if err := common.Unmarshal([]byte(trimmed), &arr); err == nil {
-					keys = make([]string, len(arr))
-					for i, v := range arr {
-						keys[i] = string(v)
-					}
-				}
-			}
-			if len(keys) == 0 { // fallback to newline split
-				keys = strings.Split(strings.Trim(keyStr, "\n"), "\n")
-			}
-		}
-		channel.ChannelInfo.MultiKeySize = len(keys)
-		// Clean up status data that exceeds the new key count to prevent index out of range
-		if channel.ChannelInfo.MultiKeyStatusList != nil {
-			for idx := range channel.ChannelInfo.MultiKeyStatusList {
-				if idx >= channel.ChannelInfo.MultiKeySize {
-					delete(channel.ChannelInfo.MultiKeyStatusList, idx)
-				}
-			}
-		}
+	return channel.UpdateWithKey(nil)
+}
+
+// UpdateWithKey atomically saves an edit and any key changed by updateKey.
+// The callback reads the current credential under the refresh lock and must
+// not perform network I/O. A rejected group or failed ability write rolls back
+// both the credential and the edited configuration.
+func (channel *Channel) UpdateWithKey(updateKey func(stored *Channel) error) error {
+	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
+		lock := sqliteChannelKeyLock(channel.Id)
+		lock.Lock()
+		defer lock.Unlock()
 	}
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	var keyChanged bool
+	// An SQL failure must not log the submitted credential.
+	db := DB.Session(&gorm.Session{Logger: gormlogger.Discard})
+	err := db.Transaction(func(tx *gorm.DB) error {
 		if err := lockGroupNamespace(tx); err != nil {
 			return err
 		}
 		if err := validateJoinedGroupsForWriteTx(tx, channel.Group); err != nil {
 			return err
+		}
+		var stored Channel
+		if err := lockForUpdate(tx).Where("id = ?", channel.Id).First(&stored).Error; err != nil {
+			return err
+		}
+		previousKey := stored.Key
+		if updateKey != nil {
+			if err := updateKey(&stored); err != nil {
+				return err
+			}
+		}
+		keyChanged = stored.Key != previousKey
+		if keyChanged {
+			if err := tx.Model(&Channel{}).Where("id = ?", channel.Id).Update("key", stored.Key).Error; err != nil {
+				return err
+			}
+		}
+		if channel.ChannelInfo.IsMultiKey {
+			keyStr := stored.Key
+			// Parse the key list (supports newline separation or JSON array)
+			keys := []string{}
+			if keyStr != "" {
+				trimmed := strings.TrimSpace(keyStr)
+				if strings.HasPrefix(trimmed, "[") {
+					var arr []json.RawMessage
+					if err := common.Unmarshal([]byte(trimmed), &arr); err == nil {
+						keys = make([]string, len(arr))
+						for i, v := range arr {
+							keys[i] = string(v)
+						}
+					}
+				}
+				if len(keys) == 0 { // fallback to newline split
+					keys = strings.Split(strings.Trim(keyStr, "\n"), "\n")
+				}
+			}
+			channel.ChannelInfo.MultiKeySize = len(keys)
+			// Clean up status data that exceeds the new key count to prevent index out of range
+			if channel.ChannelInfo.MultiKeyStatusList != nil {
+				for idx := range channel.ChannelInfo.MultiKeyStatusList {
+					if idx >= channel.ChannelInfo.MultiKeySize {
+						delete(channel.ChannelInfo.MultiKeyStatusList, idx)
+					}
+				}
+			}
 		}
 		if err := tx.Model(channel).Omit("key").Updates(channel).Error; err != nil {
 			return err
@@ -687,6 +715,9 @@ func (channel *Channel) Update() error {
 		return channel.UpdateAbilities(tx)
 	})
 	if err == nil {
+		if keyChanged {
+			CacheUpdateChannelKey(channel.Id, channel.Key)
+		}
 		BumpSyncTopic(SyncTopicChannels)
 	}
 	return err

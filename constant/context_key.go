@@ -65,11 +65,17 @@ const (
 	// and for adaptors that build official endpoints themselves.
 	ContextKeyUpstreamRequestOrigin ContextKey = "upstream_request_origin"
 
-	// Attempted records entry into the current HTTP transport call, not provider
-	// acceptance. Delivery may still be unknown; DNS/dial errors can prove unsent.
+	// Attempted records entry into the current HTTP call or WebSocket business
+	// message write, not provider acceptance. Delivery may still be unknown.
 	ContextKeyUpstreamRequestAttempted ContextKey = "upstream_request_attempted"
-	// Unsent retains typed DNS/dial evidence before public errors are sanitized.
+	// Unsent retains typed DNS/dial evidence before errors are sanitized, and
+	// distinguishes a WebSocket handshake from a submitted business message.
 	ContextKeyUpstreamRequestUnsent ContextKey = "upstream_request_unsent"
+	// SubmissionPending retains an accepted, potentially billable step of a
+	// provider request chain until its final usage is known. A later poll's
+	// no-send evidence or rejection cannot prove that earlier submission unused.
+	// Reset it only when starting a new relay attempt, never per HTTP step.
+	ContextKeyUpstreamSubmissionPending ContextKey = "upstream_submission_pending"
 	// Decode failure is a local fact, distinct from a provider error with the
 	// same code. A malformed HTTP 200 body does not prove generation was unused.
 	ContextKeyUpstreamResponseDecodeFailed ContextKey = "upstream_response_decode_failed"

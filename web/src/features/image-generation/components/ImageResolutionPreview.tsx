@@ -30,6 +30,7 @@ type Props = {
 
 export function ImageResolutionPreview(props: Props) {
   const { t } = useTranslation()
+  const [failedUrl, setFailedUrl] = useState<string | null>(null)
   const [decoded, setDecoded] = useState<{
     url: string
     width: number
@@ -44,24 +45,36 @@ export function ImageResolutionPreview(props: Props) {
     (actual.width !== requested.width || actual.height !== requested.height)
   return (
     <div className='grid min-w-0 gap-2'>
-      <img
-        key={props.url}
-        src={props.url}
-        alt={props.prompt}
-        className='max-h-[60vh] w-full object-contain'
-        onLoad={(event) => {
-          const image = event.currentTarget
-          if (image.naturalWidth > 0 && image.naturalHeight > 0) {
-            props.onDimensions?.(image.naturalWidth, image.naturalHeight)
-            setDecoded({
-              url: props.url,
-              width: image.naturalWidth,
-              height: image.naturalHeight,
-            })
-          }
-        }}
-        onError={() => setDecoded(null)}
-      />
+      {failedUrl === props.url ? (
+        <p
+          className='text-muted-foreground bg-muted/30 flex min-h-40 items-center justify-center rounded-lg p-4 text-sm'
+          role='status'
+        >
+          {t('Image not available')}
+        </p>
+      ) : (
+        <img
+          key={props.url}
+          src={props.url}
+          alt={props.prompt}
+          className='max-h-[60vh] w-full object-contain'
+          onLoad={(event) => {
+            const image = event.currentTarget
+            if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+              props.onDimensions?.(image.naturalWidth, image.naturalHeight)
+              setDecoded({
+                url: props.url,
+                width: image.naturalWidth,
+                height: image.naturalHeight,
+              })
+            }
+          }}
+          onError={() => {
+            setDecoded(null)
+            setFailedUrl(props.url)
+          }}
+        />
+      )}
       <p className='text-muted-foreground text-sm'>
         {t('Actual image size')}:{' '}
         {actual ? `${actual.width}×${actual.height}` : t('Not yet verified')}

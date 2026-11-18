@@ -102,15 +102,21 @@ export function useImageGeneration() {
           asyncMode: input.asyncMode,
           signal: controller.signal,
         })
-        if (!mountedRef.current || controller.signal.aborted) return null
+        if (
+          !mountedRef.current ||
+          abortRef.current !== controller ||
+          controller.signal.aborted
+        ) {
+          return null
+        }
         setResults(images)
         return images
       } catch (err) {
+        if (!mountedRef.current || abortRef.current !== controller) return null
         if (isAbortError(err) || controller.signal.aborted) {
-          if (mountedRef.current) setError(t('Generation was cancelled'))
+          setError(t('Stopped waiting for the image response'))
           return null
         }
-        if (!mountedRef.current) return null
         handleServerError(err)
         const message =
           err instanceof Error && err.message
@@ -119,8 +125,10 @@ export function useImageGeneration() {
         if (mountedRef.current) setError(message)
         return null
       } finally {
-        if (abortRef.current === controller) abortRef.current = null
-        if (mountedRef.current) setIsGenerating(false)
+        if (abortRef.current === controller) {
+          abortRef.current = null
+          if (mountedRef.current) setIsGenerating(false)
+        }
       }
     },
     [t]

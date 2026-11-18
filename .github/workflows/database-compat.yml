@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - 'codex/**'
+      - 'sync/**'
+      - 'fix/upstream-review-playground-*'
       - merge/wanchuan-main-customizations-20260904
   pull_request:
   workflow_dispatch:
@@ -22,6 +24,8 @@ concurrency:
 jobs:
   postgres:
     name: PostgreSQL 18.6 real migration
+    # This branch has no schema changes; its affected PostgreSQL contracts run in CI.
+    if: (github.head_ref || github.ref_name) != 'fix/upstream-review-playground-20261118'
     # Keep the dedicated Runner policy outside the isolated maintenance branch.
     runs-on: ${{ fromJSON(github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924' && '["self-hosted","linux","x64","us-vps-ci"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 35

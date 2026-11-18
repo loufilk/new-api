@@ -5000,6 +5000,8 @@
     "Model ID is required": "L’identifiant du modèle est requis",
     "Model Limits": "Limites du modèle",
     "Model limits enabled": "Restrictions de modèles activées",
+    "Model restrictions are enabled with an empty allowlist. This key cannot use any model.": "Les restrictions de modèles sont activées avec une liste autorisée vide. Cette clé ne peut utiliser aucun modèle.",
+    "Model restrictions are disabled. This key can use all models allowed by its routing scope.": "Les restrictions de modèles sont désactivées. Cette clé peut utiliser tous les modèles autorisés dans son périmètre de routage.",
     "Model List": "Liste des modèles",
     "Model management": "Gestion des modèles",
     "Model Mapping": "Mappage de modèle",
@@ -8834,6 +8836,7 @@
     "Token name": "Nom du jeton",
     "Token Name": "Nom du jeton",
     "Token name is too long": "Le nom du jeton est trop long",
+    "Token settings changed; reload and try again": "Les paramètres de la clé ont changé ; rechargez la page et réessayez",
     "Token obtained from your Gotify application": "Jeton obtenu depuis votre application Gotify",
     "Token operation details": "Détails de l’opération sur les jetons",
     "Token or per-call pricing": "Par jeton ou par requête",
@@ -9885,6 +9888,8 @@
     "Configure ordinary OpenAI pricing": "Définir les tarifs OpenAI standard",
     "Dynamic declarations cannot be previewed. Retry or review the source below.": "Les déclarations dynamiques ne peuvent pas être prévisualisées. Réessayez ou consultez le code ci-dessous.",
     "Plugin indexes are fetched by your browser. Installing runs the same review and admission pipeline as a manual upload.": "Les index de plugins sont récupérés par votre navigateur. L’installation suit exactement le même circuit d’examen et d’admission qu’un import manuel.",
-    "Disable task plugins?": "Désactiver les plugins de tâche ?"
+    "Disable task plugins?": "Désactiver les plugins de tâche ?",
+    "Stopped waiting for the image response": "Attente de la réponse d’image arrêtée",
+    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "La vérification de l’identité de paiement des nouveaux utilisateurs nécessite une passerelle Alipay HTTPS avec une clé de consultation des commandes"
   }
 }

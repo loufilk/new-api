@@ -15,6 +15,84 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func configureNewUserBenefitRSATest(t *testing.T) {
+	t.Helper()
+	settings := operation_setting.GetPaymentSetting()
+	previousType, previousPrivate, previousPublic := settings.EpaySignType, settings.EpayMerchantPrivateKey, settings.EpayPlatformPublicKey
+	previousKey := operation_setting.EpayKey
+	t.Cleanup(func() {
+		settings.EpaySignType, settings.EpayMerchantPrivateKey, settings.EpayPlatformPublicKey = previousType, previousPrivate, previousPublic
+		operation_setting.EpayKey = previousKey
+	})
+	settings.EpayMerchantPrivateKey, settings.EpayPlatformPublicKey = newEpayRSAKeyPairForTest(t)
+	settings.EpaySignType = operation_setting.EpaySignTypeRSA
+	operation_setting.EpayKey = ""
+}
+
+func TestNewUserBenefitSettingsRejectRSAWithoutIdentityQueryKey(t *testing.T) {
+	configureNewUserBenefitEpayTest(t)
+	configureNewUserBenefitRSATest(t)
+	for _, key := range []string{"", " \t"} {
+		operation_setting.EpayKey = key
+		require.NotNil(t, snapshotNewUserBenefitPayment(), "RSA checkout remains available without a legacy key")
+		response := requestNewUserBenefitSettings(t, http.MethodPut, newUserBenefitSettingsJSON(t, map[string]any{"payment_identity_check_enabled": true}))
+		assert.Equal(t, http.StatusConflict, response.Code)
+		assert.Contains(t, response.Body.String(), "new_user_benefit_payment_identity_unavailable")
+		assert.Contains(t, response.Body.String(), "order query key")
+	}
+}
+
+func TestNewUserBenefitRSAIdentityCapabilityPostgres(t *testing.T) {
+	db := setupNewUserBenefitControllerPostgres(t)
+	next := newUserBenefitControllerConfig()
+	next.PaymentIdentityCheckEnabled = true
+	config, err := model.UpdateNewUserBenefitConfig(t.Context(), 0, 7, next)
+	require.NoError(t, err)
+	pendingUser := createNewUserBenefitControllerUser(t, db, "rsa-pending", true)
+	freshUser := createNewUserBenefitControllerUser(t, db, "rsa-fresh", true)
+	body := fmt.Sprintf(`{"payment_method":"alipay","config_version":%d}`, config.Version)
+	pending := newUserBenefitCheckoutResponseForTest(t, newUserBenefitTestRequest(RequestNewUserBenefitPay, pendingUser.Id, body, uuid.NewString()))
+	configureNewUserBenefitRSATest(t)
+	require.NotNil(t, snapshotNewUserBenefitPayment())
+	for _, user := range []model.User{freshUser, pendingUser} {
+		state := newUserBenefitStateForTest(t, user.Id)
+		assert.False(t, state.Eligible)
+		assert.Empty(t, state.PayMethods)
+		assert.Equal(t, "unavailable", state.BlockedReason)
+		response := newUserBenefitTestRequest(RequestNewUserBenefitPay, user.Id, body, uuid.NewString())
+		assert.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+		assert.NotContains(t, response.Body.String(), "checkout")
+	}
+	var orders, topups int64
+	require.NoError(t, db.Model(&model.NewUserBenefitOrder{}).Count(&orders).Error)
+	require.NoError(t, db.Model(&model.TopUp{}).Count(&topups).Error)
+	assert.EqualValues(t, 1, orders, "a blocked checkout cannot reserve a new reward promise")
+	assert.EqualValues(t, 1, topups)
+
+	// Disabling the check changes new offers, while the pending promise keeps
+	// the identity policy captured before the gateway changed.
+	next.PaymentIdentityCheckEnabled = false
+	config, err = model.UpdateNewUserBenefitConfig(t.Context(), config.Version, 7, next)
+	require.NoError(t, err)
+	body = fmt.Sprintf(`{"payment_method":"alipay","config_version":%d}`, config.Version)
+	response := newUserBenefitTestRequest(RequestNewUserBenefitPay, pendingUser.Id, body, uuid.NewString())
+	assert.Equal(t, http.StatusServiceUnavailable, response.Code)
+	checkout := newUserBenefitCheckoutResponseForTest(t, newUserBenefitTestRequest(RequestNewUserBenefitPay, freshUser.Id, body, uuid.NewString()))
+	assert.Equal(t, "RSA", checkout.Checkout.Params["sign_type"])
+	assert.NotEmpty(t, checkout.Checkout.Params["sign"])
+
+	// A gateway retaining a legacy order-query key can use RSA checkout and
+	// resume the original identity-checked order without replacing its terms.
+	operation_setting.EpayKey = "new-user-synthetic-key"
+	state := newUserBenefitStateForTest(t, pendingUser.Id)
+	assert.True(t, state.Eligible)
+	assert.True(t, state.PaymentIdentityCheckEnabled)
+	require.Len(t, state.PayMethods, 1)
+	resumed := newUserBenefitCheckoutResponseForTest(t, newUserBenefitTestRequest(RequestNewUserBenefitPay, pendingUser.Id, body, uuid.NewString()))
+	assert.Equal(t, pending.OrderID, resumed.OrderID)
+	assert.Equal(t, "RSA", resumed.Checkout.Params["sign_type"])
+}
+
 func TestNewUserBenefitHTTPPaymentIdentityRecoveryPostgres(t *testing.T) {
 	db := setupNewUserBenefitControllerPostgres(t)
 	buyer, queryCount := "", 0

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	common2 "github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -73,6 +74,17 @@ func (a *Adaptor) runChain(c *gin.Context, info *relaycommon.RelayInfo, first js
 		a.addTools(outcome.tools)
 		if outcome.next == nil {
 			return outcome.response, nil
+		}
+		// A successful submission followed by polls belongs to one billable
+		// attempt. Keep that fact separately from the last HTTP call: a failed
+		// poll must not refund the accepted job or start it again. Successful
+		// read-only steps alone do not establish a pending submission.
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 && resp.Request != nil {
+			switch resp.Request.Method {
+			case http.MethodGet, http.MethodHead, http.MethodOptions:
+			default:
+				common2.SetContextKey(c, constant.ContextKeyUpstreamSubmissionPending, true)
+			}
 		}
 		if followUps++; followUps > MaxFollowUps {
 			return nil, types.NewError(fmt.Errorf("plugin %s chained more than %d requests", a.plugin.Meta.Key, MaxFollowUps), types.ErrorCodeBadResponse)
@@ -145,7 +157,7 @@ func (a *Adaptor) sendStep(c *gin.Context, info *relaycommon.RelayInfo, step jsp
 	if body != nil {
 		reader = bytes.NewReader(body)
 	}
-	req, err := http.NewRequest(method, requestURL, reader)
+	req, err := http.NewRequestWithContext(c.Request.Context(), method, requestURL, reader)
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
@@ -235,6 +247,7 @@ func (a *Adaptor) readStep(c *gin.Context, info *relaycommon.RelayInfo, resp *ht
 	converted, upstreamErr, err := a.plugin.CallConvertResponse(c.Request.Context(), hookCtx, resp.StatusCode, firstValues(resp.Header), raw)
 	switch {
 	case err == nil && upstreamErr != nil:
+		common2.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, true)
 		return stepOutcome{response: upstreamErrorResponse(upstreamErr, resp.StatusCode)}, nil
 	case err == nil && converted.Next != nil:
 		// A chain goes on whatever the status: the plugin read the reply.
@@ -277,6 +290,13 @@ func streamedResponse(resp *http.Response, step jsplugin.ConvertedRequest, info 
 // auth, header overrides and signRequest apply, through the channel proxy and
 // TLS setting. A rejected handshake renews the credential or token once.
 func (a *Adaptor) openWebSocket(c *gin.Context, info *relaycommon.RelayInfo, converted jsplugin.ConvertedRequest) (any, error) {
+	// A handshake submits no generation. Only writing a business message
+	// below (or from convertStreamEvent) makes delivery potentially billable.
+	common2.SetContextKey(c, constant.ContextKeyUpstreamRequestAttempted, false)
+	common2.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, true)
+	common2.SetContextKey(c, constant.ContextKeyUpstreamResponseDecodeFailed, false)
+	common2.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, false)
+	common2.SetContextKey(c, constant.ContextKeyUpstreamResponseUsageIncomplete, false)
 	request := converted.WebSocket
 	session, err := a.dialWebSocket(c, info, request)
 	var dialErr *types.NewAPIError
@@ -291,7 +311,7 @@ func (a *Adaptor) openWebSocket(c *gin.Context, info *relaycommon.RelayInfo, con
 	converter := a.newStreamConverter(c, info, converted.State, session, session)
 	converter.source = &webSocketSource{session: session, touch: converter.touch, limit: streamLineLimit()}
 	for _, message := range request.Messages {
-		if err = writeWebSocketMessage(session, message); err != nil {
+		if err = writeWebSocketMessage(c, session, message); err != nil {
 			_ = session.Close()
 			return nil, types.NewError(fmt.Errorf("upstream WebSocket write failed: %w", err), types.ErrorCodeDoRequestFailed)
 		}
@@ -358,6 +378,7 @@ func (a *Adaptor) dialWebSocket(c *gin.Context, info *relaycommon.RelayInfo, req
 	if info.ChannelSetting.TLSInsecureSkipVerify {
 		dialer.TLSClientConfig = common2.InsecureTLSConfig
 	}
+	common2.SetContextKey(c, constant.ContextKeyUpstreamRequestOrigin, target.Scheme+"://"+target.Host)
 	session, resp, err := dialer.DialContext(c.Request.Context(), target.String(), header)
 	if err != nil {
 		statusCode := http.StatusBadGateway

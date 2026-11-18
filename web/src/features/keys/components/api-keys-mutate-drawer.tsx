@@ -60,6 +60,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { getUserGroups } from '@/lib/api'
+import { getAuthSessionEpoch } from '@/lib/auth-session'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { handleServerError } from '@/lib/handle-server-error'
 import {
@@ -84,7 +85,7 @@ import {
   transformFormDataToPayload,
   transformApiKeyToFormDefaults,
 } from '../lib'
-import type { ApiKey } from '../types'
+import type { ApiKey, ApiKeyUpdateData } from '../types'
 import type { ApiKeyGroupOption } from './api-key-group-combobox'
 import { ApiKeyRoutingFields } from './api-key-routing-fields'
 import { useApiKeys } from './api-keys-provider'
@@ -108,6 +109,13 @@ export function ApiKeysMutateDrawer({
   const userId = useAuthStore((state) => state.auth.user?.id ?? null)
   const { triggerRefresh } = useApiKeys()
   const submittingRef = useRef(false)
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [initializedTarget, setInitializedTarget] = useState<string | null>(
     null
@@ -245,13 +253,7 @@ export function ApiKeysMutateDrawer({
     if (initializedTarget === target) return
     if (isUpdate && currentRow) {
       if (apiKeyData?.success && apiKeyData.data) {
-        form.reset(
-          transformApiKeyToFormDefaults(
-            apiKeyData.data,
-            availableAutoGroupNames,
-            maxAutoGroups
-          )
-        )
+        form.reset(transformApiKeyToFormDefaults(apiKeyData.data))
         setInitializedTarget(target)
       }
     } else {
@@ -275,8 +277,6 @@ export function ApiKeysMutateDrawer({
     apiKeyFetched,
     apiKeyFetching,
     apiKeyError,
-    availableAutoGroupNames,
-    maxAutoGroups,
     initializedTarget,
     userId,
   ])
@@ -291,6 +291,7 @@ export function ApiKeysMutateDrawer({
   const autoGroupsMode = form.watch('auto_groups_mode')
   const selectedAutoGroups = form.watch('auto_groups')
   const selectedModelLimits = form.watch('model_limits')
+  const modelLimitsEnabled = form.watch('model_limits_enabled')
   const routingError =
     groupsError || autoGroupsError || (isUpdate && apiKeyError)
   const routingFetching =
@@ -382,16 +383,28 @@ export function ApiKeysMutateDrawer({
 
   const onSubmit = async (data: ApiKeyFormValues) => {
     if (!canSave || submittingRef.current) return
+    const submissionEpoch = getAuthSessionEpoch()
+    const isCurrentSubmission = () =>
+      mountedRef.current && getAuthSessionEpoch() === submissionEpoch
     submittingRef.current = true
     setIsSubmitting(true)
     try {
       const basePayload = transformFormDataToPayload(data)
 
       if (isUpdate && currentRow) {
-        const result = await updateApiKey({
+        const updatePayload: ApiKeyUpdateData = {
           ...basePayload,
           id: currentRow.id,
-        })
+        }
+        if (
+          data.unlimited_quota ||
+          (!form.getFieldState('remain_quota_dollars').isDirty &&
+            !apiKeyData?.data?.unlimited_quota)
+        ) {
+          delete updatePayload.remain_quota
+        }
+        const result = await updateApiKey(updatePayload)
+        if (!isCurrentSubmission()) return
         if (result.success) {
           toast.success(t(SUCCESS_MESSAGES.API_KEY_UPDATED))
           onOpenChange(false)
@@ -406,19 +419,22 @@ export function ApiKeysMutateDrawer({
         let creationFailed = false
         try {
           for (let i = 0; i < count; i++) {
+            if (!isCurrentSubmission()) return
             const result = await createApiKey({
               ...basePayload,
               name:
                 i === 0 && data.name
                   ? data.name
-                  : `${data.name || 'default'}-${Math.random().toString(36).slice(2, 8)}`,
+                  : `${[...(data.name || 'default')].slice(0, 43).join('')}-${Math.random().toString(36).slice(2, 8)}`,
             })
+            if (!isCurrentSubmission()) return
             if (!result.success) {
               throw createServerError(result, t(ERROR_MESSAGES.CREATE_FAILED))
             }
             successCount++
           }
         } catch (error) {
+          if (!isCurrentSubmission()) return
           creationFailed = true
           handleServerError(error, t(ERROR_MESSAGES.CREATE_FAILED))
         }
@@ -446,10 +462,14 @@ export function ApiKeysMutateDrawer({
         }
       }
     } catch (error) {
-      handleServerError(error, t(ERROR_MESSAGES.UNEXPECTED))
+      if (isCurrentSubmission()) {
+        handleServerError(error, t(ERROR_MESSAGES.UNEXPECTED))
+      }
     } finally {
-      submittingRef.current = false
-      setIsSubmitting(false)
+      if (isCurrentSubmission()) {
+        submittingRef.current = false
+        setIsSubmitting(false)
+      }
     }
   }
 
@@ -724,6 +744,30 @@ export function ApiKeysMutateDrawer({
               <div className='flex flex-col gap-5'>
                 <FormField
                   control={form.control}
+                  name='model_limits_enabled'
+                  render={({ field }) => (
+                    <FormItem>
+                      <div className='flex items-center justify-between gap-3'>
+                        <FormLabel>{t('Model limits enabled')}</FormLabel>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </div>
+                      {!field.value && (
+                        <FormDescription>
+                          {t(
+                            'Model restrictions are disabled. This key can use all models allowed by its routing scope.'
+                          )}
+                        </FormDescription>
+                      )}
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
                   name='model_limits'
                   render={({ field }) => (
                     <FormItem>
@@ -732,13 +776,23 @@ export function ApiKeysMutateDrawer({
                         <MultiSelect
                           options={modelOptions}
                           disabled={
-                            !canPreviewModels || modelsFetching || modelsError
+                            !modelLimitsEnabled ||
+                            !canPreviewModels ||
+                            modelsFetching ||
+                            modelsError
                           }
                           selected={field.value}
                           onChange={field.onChange}
-                          placeholder={t('Select models (empty for allow all)')}
+                          placeholder={t('Select models')}
                         />
                       </FormControl>
+                      {modelLimitsEnabled && field.value.length === 0 && (
+                        <FormDescription role='status'>
+                          {t(
+                            'Model restrictions are enabled with an empty allowlist. This key cannot use any model.'
+                          )}
+                        </FormDescription>
+                      )}
                       <FormDescription>
                         {unavailableSelectedModels.length > 0
                           ? t(

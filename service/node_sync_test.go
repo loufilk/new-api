@@ -22,7 +22,7 @@ import (
 func useNodeSync(t *testing.T) *gorm.DB {
 	t.Helper()
 	database := useProviderPluginDatabase(t)
-	tables := []any{&model.SystemTask{}, &model.SystemInstance{}, &model.Option{}}
+	tables := []any{&model.SystemTask{}, &model.SystemSyncTopic{}, &model.SystemInstance{}, &model.Option{}}
 	require.NoError(t, database.AutoMigrate(tables...))
 	t.Cleanup(func() { require.NoError(t, database.Migrator().DropTable(tables...)) })
 	previousRegistry, previousNodeName := nodeSync, common.NodeName

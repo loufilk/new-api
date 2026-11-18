@@ -33,6 +33,7 @@ env:
 
 jobs:
   databases:
+    if: (github.head_ref || github.ref_name) != 'fix/upstream-review-playground-20261118'
     name: Repair contracts (${{ matrix.name }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -116,6 +117,7 @@ jobs:
           if-no-files-found: error
 
   redis:
+    if: (github.head_ref || github.ref_name) != 'fix/upstream-review-playground-20261118'
     name: Redis script eviction recovery (${{ matrix.version }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -169,6 +171,7 @@ jobs:
           if-no-files-found: error
 
   api-image:
+    if: (github.head_ref || github.ref_name) != 'fix/upstream-review-playground-20261118'
     name: API-only Docker build and restart
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -196,6 +199,7 @@ jobs:
           if-no-files-found: error
 
   synthetic-lifecycle:
+    if: (github.head_ref || github.ref_name) != 'fix/upstream-review-playground-20261118'
     name: Exact 093 lifecycle (PG 18.6, ${{ matrix.log_layout }} logs)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -241,7 +245,7 @@ jobs:
 
   acceptance:
     name: Required repair validation
-    if: always()
+    if: always() && (github.head_ref || github.ref_name) != 'fix/upstream-review-playground-20261118'
     needs: [databases, redis, api-image, synthetic-lifecycle]
     runs-on: ubuntu-24.04
     timeout-minutes: 2

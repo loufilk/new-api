@@ -94,7 +94,9 @@ func newUserBenefitPayMethods(configuredMethods []map[string]string) []newUserBe
 }
 
 func newUserBenefitIdentityGatewayReady(payment *newUserBenefitPaymentSnapshot) bool {
-	return payment != nil && payment.Client.BaseUrl.Scheme == "https" && payment.Client.BaseUrl.Hostname() != "" &&
+	// The order identity query uses the gateway's legacy merchant key even
+	// when checkout and callbacks use RSA signatures.
+	return payment != nil && strings.TrimSpace(payment.Client.Config.Key) != "" && payment.Client.BaseUrl.Scheme == "https" && payment.Client.BaseUrl.Hostname() != "" &&
 		payment.Client.BaseUrl.RawQuery == "" && !payment.Client.BaseUrl.ForceQuery && !strings.Contains(payment.Client.BaseUrl.String(), "#") &&
 		newUserBenefitMethodAvailable("alipay", payment.Methods)
 }
@@ -242,7 +244,7 @@ func GetNewUserBenefit(c *gin.Context) {
 				CreditAmountCNY: response.CreditAmountCNY, PaymentMethod: order.PaymentMethod,
 				ConfigVersion: order.ConfigVersion,
 			}
-			if payment != nil && strings.TrimSpace(payment.Client.Config.PartnerID) == order.MerchantScope && (!order.PaymentIdentityCheckEnabled || order.PaymentGateway == payment.Client.BaseUrl.String()) {
+			if payment != nil && strings.TrimSpace(payment.Client.Config.PartnerID) == order.MerchantScope && (!order.PaymentIdentityCheckEnabled || newUserBenefitIdentityGatewayReady(payment) && order.PaymentGateway == payment.Client.BaseUrl.String()) {
 				for _, method := range payment.Methods {
 					if method.Type == order.PaymentMethod {
 						response.PayMethods = append(response.PayMethods, method)
@@ -299,7 +301,8 @@ func RequestNewUserBenefitPay(c *gin.Context) {
 	// request IDs and instances. A pending order always keeps its original terms.
 	verification := snapshotNewUserBenefitVerification()
 	order, err := model.ReserveNewUserBenefit(c.Request.Context(), userID, *request.ConfigVersion, request.PaymentMethod, strings.TrimSpace(payment.Client.Config.PartnerID), tradeNo, model.NewUserBenefitRiskContext{
-		PaymentGateway: payment.Client.BaseUrl.String(), ClientIP: c.ClientIP(), HumanVerified: verification.Ready && c.GetString("turnstile_verified_action") == "new_user_benefit",
+		PaymentGateway: payment.Client.BaseUrl.String(), PaymentIdentityQueryReady: newUserBenefitIdentityGatewayReady(payment),
+		ClientIP: c.ClientIP(), HumanVerified: verification.Ready && c.GetString("turnstile_verified_action") == "new_user_benefit",
 	})
 	if err != nil {
 		if errors.Is(err, model.ErrNewUserBenefitVerificationRequired) && !verification.Ready {

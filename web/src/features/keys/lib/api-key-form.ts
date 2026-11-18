@@ -38,7 +38,13 @@ export function getApiKeyFormSchema(
 
   return z
     .object({
-      name: z.string().min(1, t('Please enter a name')),
+      name: z
+        .string()
+        .min(1, t('Please enter a name'))
+        .refine(
+          (value) => [...value].length <= 50,
+          t('Token name is too long')
+        ),
       smart_routing: z.boolean(),
       routing_strategy: z.enum(['auto', 'success_rate', 'price', 'speed']),
       no_retry_within_group: z.boolean(),
@@ -51,6 +57,7 @@ export function getApiKeyFormSchema(
       remain_quota_dollars: z.number().optional(),
       expired_time: z.date().nullable(),
       unlimited_quota: z.boolean(),
+      model_limits_enabled: z.boolean(),
       model_limits: z.array(z.string()),
       allow_ips: z.string().optional(),
       allow_user_quota_query: z.boolean(),
@@ -134,6 +141,7 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   remain_quota_dollars: 10,
   expired_time: null,
   unlimited_quota: true,
+  model_limits_enabled: false,
   model_limits: [],
   allow_ips: '',
   allow_user_quota_query: true,
@@ -175,7 +183,7 @@ export function transformFormDataToPayload(
       ? Math.floor(data.expired_time.getTime() / 1000)
       : -1,
     unlimited_quota: data.unlimited_quota,
-    model_limits_enabled: data.model_limits.length > 0,
+    model_limits_enabled: data.model_limits_enabled,
     model_limits: data.model_limits.join(','),
     allow_ips: data.allow_ips || '',
     allow_user_quota_query: data.allow_user_quota_query,
@@ -192,20 +200,12 @@ export function transformFormDataToPayload(
  * Transform API key data to form defaults
  */
 export function transformApiKeyToFormDefaults(
-  apiKey: ApiKey,
-  availableAutoGroups: string[] = [],
-  maxAutoGroups = 5
+  apiKey: ApiKey
 ): ApiKeyFormValues {
-  const availableSet = new Set(availableAutoGroups)
   const storedAutoGroups = apiKey.auto_groups ?? []
-  // Smart routing ignores the manual draft. Keep it byte-for-byte in order,
-  // even if access or limits changed, so editing an unrelated field cannot
-  // silently erase it. Turning smart routing off revalidates it server-side.
-  const autoGroups = apiKey.smart_routing
-    ? [...storedAutoGroups]
-    : storedAutoGroups
-        .filter((group) => availableSet.has(group))
-        .slice(0, Math.max(0, maxAutoGroups))
+  // Preserve the complete stored order even after access or limits change.
+  // Manual routing is validated on save; edits must never silently drop groups.
+  const autoGroups = [...storedAutoGroups]
   const autoGroupsMode = storedAutoGroups.length > 0 ? 'custom' : 'inherit'
 
   return {
@@ -220,6 +220,7 @@ export function transformApiKeyToFormDefaults(
     expired_time:
       apiKey.expired_time > 0 ? new Date(apiKey.expired_time * 1000) : null,
     unlimited_quota: apiKey.unlimited_quota,
+    model_limits_enabled: apiKey.model_limits_enabled,
     model_limits: apiKey.model_limits
       ? apiKey.model_limits.split(',').filter(Boolean)
       : [],

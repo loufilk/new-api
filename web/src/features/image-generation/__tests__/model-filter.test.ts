@@ -76,6 +76,41 @@ describe('getAvailableImageModels intersects image capabilities with the server 
     expect(models).toEqual(['gpt-image-2'])
   })
 
+  test('preserves exact model IDs when names differ only in case', () => {
+    expect(
+      getAvailableImageModels({
+        pricingModels: [
+          {
+            model_name: 'Image-Pro',
+            supported_endpoint_types: ['image-generation'],
+          },
+          {
+            model_name: 'image-pro',
+            supported_endpoint_types: ['image-generation'],
+          },
+        ],
+        tokenModels: ['image-pro'],
+        token: makeToken(),
+      })
+    ).toEqual(['image-pro'])
+  })
+
+  test('does not infer image support from another model with different casing', () => {
+    expect(
+      getAvailableImageModels({
+        pricingModels: [
+          {
+            model_name: 'Image-Pro',
+            supported_endpoint_types: ['image-generation'],
+          },
+          { model_name: 'image-pro', supported_endpoint_types: ['chat'] },
+        ],
+        tokenModels: ['image-pro'],
+        token: makeToken(),
+      })
+    ).toEqual([])
+  })
+
   test('returns empty when the token is missing or the token has no image capability overlap', () => {
     expect(
       getAvailableImageModels({

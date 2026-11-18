@@ -11,7 +11,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/request_plugin_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
@@ -52,6 +54,8 @@ func captureGroupRenameRuntimeState(t *testing.T) {
 	originalDefaultUseAutoGroup := setting.DefaultUseAutoGroup
 	originalExemptGroups := setting.SensitiveCheckExemptGroupsToString()
 	originalPolicySnapshot := requestPolicySnapshot.Load()
+	originalInstances, err := common.Marshal(request_plugin_setting.GetInstances())
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		common.OptionMapRWMutex.Lock()
 		if hadOptionMap {
@@ -71,6 +75,7 @@ func captureGroupRenameRuntimeState(t *testing.T) {
 		setting.DefaultUseAutoGroup = originalDefaultUseAutoGroup
 		setting.LoadSensitiveCheckExemptGroups(originalExemptGroups)
 		requestPolicySnapshot.Store(originalPolicySnapshot)
+		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: string(originalInstances)}))
 	})
 }
 

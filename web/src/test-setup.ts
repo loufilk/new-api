@@ -20,6 +20,7 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup, configure } from '@testing-library/react'
 import i18next from 'i18next'
 import { initReactI18next } from 'react-i18next'
+import { toast } from 'sonner'
 import { afterEach, beforeAll } from 'vitest'
 
 function createMemoryStorage(): Storage {
@@ -75,6 +76,9 @@ beforeAll(async () => {
 
 afterEach(() => {
   cleanup()
+  // Sonner replays active toasts to each new Toaster. Unmounting the previous
+  // test's React tree alone leaves its notifications in the shared store.
+  toast.dismiss?.()
 })
 
 // Prefer reduced motion in tests: entrance animations write inline

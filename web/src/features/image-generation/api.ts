@@ -63,8 +63,8 @@ export async function loadImagePageBootstrap(): Promise<{
   pricingModels: { model_name: string; supported_endpoint_types?: string[] }[]
 }> {
   const [firstPage, pricingRes] = await Promise.all([
-    getApiKeys({ p: 1, size: IMAGE_KEYS_PAGE_SIZE }),
-    getPricing(),
+    getApiKeys({ p: 1, size: IMAGE_KEYS_PAGE_SIZE }).then(requireServerSuccess),
+    getPricing().then(requireServerSuccess),
   ])
 
   const firstItems = firstPage.data?.items ?? []
@@ -79,7 +79,7 @@ export async function loadImagePageBootstrap(): Promise<{
   if (totalPages > 1) {
     const rest = await Promise.all(
       Array.from({ length: totalPages - 1 }, (_, index) =>
-        getApiKeys({ p: index + 2, size: pageSize })
+        getApiKeys({ p: index + 2, size: pageSize }).then(requireServerSuccess)
       )
     )
     for (const page of rest) {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/request_plugin_setting"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -126,6 +127,7 @@ func loadConfiguredGroupNamesTx(tx *gorm.DB) (map[string]struct{}, error) {
 	// Policy membership is a reference, not a definition or authorization to
 	// reintroduce a renamed group into subscriptions or other group writers.
 	delete(values, setting.SensitiveCheckExemptGroupsOptionKey)
+	delete(values, request_plugin_setting.InstancesOption)
 	configured := make(map[string]struct{})
 	if err := collectGroupNamesFromOptions(values, configured); err != nil {
 		return nil, err
@@ -345,7 +347,7 @@ func reloadGroupRuntimeOptions() error {
 	// The caller owns requestPolicyOptionMutex before groupConfigApplyMutex.
 	groupRenameRuntimeApplyMutex.Lock()
 	defer groupRenameRuntimeApplyMutex.Unlock()
-	keys := []string{groupRateLimitBucketsOptionKey}
+	keys := []string{groupRateLimitBucketsOptionKey, request_plugin_setting.InstancesOption}
 	for key := range groupRenameWritableOptionKeys {
 		keys = append(keys, key)
 	}

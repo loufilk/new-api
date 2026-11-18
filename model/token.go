@@ -142,10 +142,18 @@ func (token *Token) GetIpLimits() []string {
 	return ipLimits
 }
 
-func GetAllUserTokens(userId int, startIdx int, num int) ([]*Token, error) {
+func userTokensQuery(userID int, statuses []int) *gorm.DB {
+	query := DB.Model(&Token{}).Where("user_id = ?", userID)
+	if len(statuses) > 0 {
+		query = query.Where("status IN ?", statuses)
+	}
+	return query
+}
+
+func GetAllUserTokens(userId int, startIdx int, num int, statuses ...int) ([]*Token, error) {
 	var tokens []*Token
 	var err error
-	err = DB.Where("user_id = ?", userId).Order("id desc").Limit(num).Offset(startIdx).Find(&tokens).Error
+	err = userTokensQuery(userId, statuses).Order("id desc").Limit(num).Offset(startIdx).Find(&tokens).Error
 	return tokens, err
 }
 
@@ -195,7 +203,7 @@ func validateLikePattern(input string) error {
 
 const searchHardLimit = 100
 
-func SearchUserTokens(userId int, keyword string, token string, offset int, limit int) (tokens []*Token, total int64, err error) {
+func SearchUserTokens(userId int, keyword string, token string, offset int, limit int, statuses ...int) (tokens []*Token, total int64, err error) {
 	// model 层强制截断
 	if limit <= 0 || limit > searchHardLimit {
 		limit = searchHardLimit
@@ -222,7 +230,7 @@ func SearchUserTokens(userId int, keyword string, token string, offset int, limi
 		}
 	}
 
-	baseQuery := DB.Model(&Token{}).Where("user_id = ?", userId)
+	baseQuery := userTokensQuery(userId, statuses)
 
 	// 非空才加 LIKE 条件，空则跳过（不过滤该字段）
 	if keyword != "" {
@@ -430,6 +438,15 @@ func (token *Token) insertWithGroupConfig(groupVersion *int64, expectedAuthVersi
 		if err := lockCredentialOwnerForWriteTx(tx, token.UserId, expectedAuthVersion...); err != nil {
 			return err
 		}
+		if groupVersion != nil {
+			var count int64
+			if err := tx.Model(&Token{}).Where("user_id = ?", token.UserId).Count(&count).Error; err != nil {
+				return err
+			}
+			if maxTokens := operation_setting.GetMaxUserTokens(); count >= int64(maxTokens) {
+				return common.NewMessage("Maximum number of tokens reached ({{max}})", map[string]any{"max": maxTokens})
+			}
+		}
 		if err := validateTokenGroupsForWriteTx(tx, token); err != nil {
 			return err
 		}
@@ -439,14 +456,21 @@ func (token *Token) insertWithGroupConfig(groupVersion *int64, expectedAuthVersi
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
 func (token *Token) Update(expectedAuthVersion ...int64) (err error) {
-	return token.updateWithGroupConfig(nil, expectedAuthVersion...)
+	return token.updateWithGroupConfig(nil, nil, expectedAuthVersion...)
 }
 
 func (token *Token) UpdateAtGroupConfigVersion(authVersion, groupVersion int64) error {
-	return token.updateWithGroupConfig(&groupVersion, authVersion)
+	return token.updateWithGroupConfig(&groupVersion, nil, authVersion)
 }
 
-func (token *Token) updateWithGroupConfig(groupVersion *int64, expectedAuthVersion ...int64) (err error) {
+// UpdateFromSnapshotAtGroupConfigVersion preserves consumption committed after
+// the controller read and rejects concurrent permission edits instead of
+// restoring an earlier status or routing scope.
+func (token *Token) UpdateFromSnapshotAtGroupConfigVersion(previous Token, authVersion, groupVersion int64) error {
+	return token.updateWithGroupConfig(&groupVersion, &previous, authVersion)
+}
+
+func (token *Token) updateWithGroupConfig(groupVersion *int64, previous *Token, expectedAuthVersion ...int64) (err error) {
 	if err := token.ValidateRoutingSettings(); err != nil {
 		return err
 	}
@@ -461,8 +485,26 @@ func (token *Token) updateWithGroupConfig(groupVersion *int64, expectedAuthVersi
 			return err
 		}
 		var current Token
-		if err := lockForUpdate(tx).Select("id", "user_id").Where("id = ? AND user_id = ?", token.Id, token.UserId).First(&current).Error; err != nil {
+		if err := lockForUpdate(tx).Where("id = ? AND user_id = ?", token.Id, token.UserId).First(&current).Error; err != nil {
 			return err
+		}
+		if previous != nil {
+			if current.Id != previous.Id || current.UserId != previous.UserId ||
+				current.CacheRevision != previous.CacheRevision {
+				return common.NewMessage("Token settings changed; reload and try again")
+			}
+			if previous.RemainQuota > 0 && token.RemainQuota < math.MinInt+previous.RemainQuota ||
+				previous.RemainQuota < 0 && token.RemainQuota > math.MaxInt+previous.RemainQuota {
+				return common.NewMessage("Token settings changed; reload and try again")
+			}
+			delta := token.RemainQuota - previous.RemainQuota
+			if delta > 0 && current.RemainQuota > math.MaxInt-delta ||
+				delta < 0 && current.RemainQuota < math.MinInt-delta {
+				return common.NewMessage("Token settings changed; reload and try again")
+			}
+			token.RemainQuota = current.RemainQuota + delta
+			token.UsedQuota = current.UsedQuota
+			token.AccessedTime = current.AccessedTime
 		}
 		if err := validateTokenGroupsForWriteTx(tx, token); err != nil {
 			return err
@@ -474,6 +516,60 @@ func (token *Token) updateWithGroupConfig(groupVersion *int64, expectedAuthVersi
 			"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups",
 			"allow_user_quota_query", "smart_routing", "routing_strategy", "no_retry_within_group", "project_label").Updates(token).Error
 	})
+}
+
+// UpdateStatusAtGroupConfigVersion changes only the key's status. Validation
+// uses the locked current row so a toggle cannot restore consumed quota or
+// overwrite a concurrent routing edit. The routing validator must be local and
+// side-effect free; the group namespace remains locked throughout the call.
+func (token *Token) UpdateStatusAtGroupConfigVersion(authVersion, groupVersion int64, validateRouting func(*Token) error) (int, error) {
+	status := token.Status
+	if status != common.TokenStatusEnabled && status != common.TokenStatusDisabled {
+		return 0, common.NewMessage("Invalid token status")
+	}
+	var current Token
+	var previousStatus int
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockGroupNamespace(tx); err != nil {
+			return err
+		}
+		if err := validateGroupConfigVersionTx(tx, &groupVersion); err != nil {
+			return err
+		}
+		if err := lockCredentialOwnerForWriteTx(tx, token.UserId, authVersion); err != nil {
+			return err
+		}
+		if err := lockForUpdate(tx).Where("id = ? AND user_id = ?", token.Id, token.UserId).First(&current).Error; err != nil {
+			return err
+		}
+		previousStatus = current.Status
+		if status == common.TokenStatusEnabled {
+			if current.ExpiredTime != -1 && current.ExpiredTime <= common.GetTimestamp() {
+				return common.NewMessage("Token has expired and cannot be enabled. Please modify the expiration time or set it to never expire")
+			}
+			if !current.UnlimitedQuota && current.RemainQuota <= 0 {
+				return common.NewMessage("Token quota is exhausted and cannot be enabled. Please modify the remaining quota or set it to unlimited")
+			}
+			if err := validateTokenGroupsForWriteTx(tx, &current); err != nil {
+				return err
+			}
+			if validateRouting != nil {
+				if err := validateRouting(&current); err != nil {
+					return err
+				}
+			}
+		}
+		if err := advanceTokenPermissionRevisionTx(tx, current.Id); err != nil {
+			return err
+		}
+		return tx.Model(&current).Update("status", status).Error
+	})
+	if err == nil {
+		current.Status = status
+		current.CacheRevision++
+		*token = current
+	}
+	return previousStatus, err
 }
 
 func (token *Token) SelectUpdate() error {
@@ -692,9 +788,9 @@ func SettleTokenQuotaDeltaTx(tx *gorm.DB, id, userID int, key string, delta int)
 }
 
 // CountUserTokens returns total number of tokens for the given user, used for pagination
-func CountUserTokens(userId int) (int64, error) {
+func CountUserTokens(userId int, statuses ...int) (int64, error) {
 	var total int64
-	err := DB.Model(&Token{}).Where("user_id = ?", userId).Count(&total).Error
+	err := userTokensQuery(userId, statuses).Count(&total).Error
 	return total, err
 }
 

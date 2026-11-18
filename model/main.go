@@ -451,6 +451,7 @@ func mainAutoMigrateModels(registry *extension.Registry) []any {
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},
+		&SystemSyncTopic{},
 		&CasbinRule{},
 		&AuthzRole{},
 		&UserAccessToken{},

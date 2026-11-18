@@ -51,11 +51,20 @@ func tokenRoutingGroups(c *gin.Context, tokenGroup string) []string {
 	return []string{tokenGroup}
 }
 
-// RelayRetryBudget keeps the legacy global budget unless the key explicitly
-// requests one attempt per group. In that mode the finite authorized group list
-// is the entire attempt budget, independent of the old per-group retry count.
+// RelayRetryBudget preserves the per-group legacy budget. Auto selection resets
+// that counter between groups, so even a zero per-group budget needs one outer
+// retry slot to advance. Explicit one-attempt-per-group routing instead uses
+// the finite authorized group list as its entire budget.
 func RelayRetryBudget(c *gin.Context) int {
 	if !common.GetContextKeyBool(c, constant.ContextKeyTokenNoRetryWithinGroup) {
+		if !tokenRoutingEnabled(c) && common.RetryTimes == 0 &&
+			common.GetContextKeyString(c, constant.ContextKeyTokenGroup) == "auto" &&
+			common.GetContextKeyBool(c, constant.ContextKeyTokenCrossGroupRetry) &&
+			len(tokenRoutingGroups(c, "auto")) > 1 {
+			if _, pinned, _ := GetChannelConstraints(c).ResolvedPin(); !pinned {
+				return 1
+			}
+		}
 		return common.RetryTimes
 	}
 	return max(0, len(tokenRoutingGroups(c, common.GetContextKeyString(c, constant.ContextKeyTokenGroup)))-1)
@@ -64,7 +73,10 @@ func RelayRetryBudget(c *gin.Context) int {
 // TokenRoutingRetryAvailable is only an additional restriction. It never makes
 // an unsafe, canceled, already-streaming, pinned or unknown-delivery error safe.
 func TokenRoutingRetryAvailable(c *gin.Context) bool {
-	if !tokenRoutingEnabled(c) {
+	legacyCrossGroupRetry := !tokenRoutingEnabled(c) &&
+		common.GetContextKeyString(c, constant.ContextKeyTokenGroup) == "auto" &&
+		common.GetContextKeyBool(c, constant.ContextKeyTokenCrossGroupRetry)
+	if !tokenRoutingEnabled(c) && !legacyCrossGroupRetry {
 		return true
 	}
 	// A selected alternative is not permission to replay after downstream output
@@ -73,6 +85,17 @@ func TokenRoutingRetryAvailable(c *gin.Context) bool {
 		return false
 	}
 	groups := tokenRoutingGroups(c, common.GetContextKeyString(c, constant.ContextKeyTokenGroup))
+	if legacyCrossGroupRetry {
+		// Origin-task pins retain their separate same-channel retry contract.
+		if _, pinned, _ := GetChannelConstraints(c).ResolvedPin(); pinned {
+			return true
+		}
+		index, _ := common.GetContextKeyType[int](c, constant.ContextKeyAutoGroupIndex)
+		if index < 0 || index >= len(groups) {
+			return false
+		}
+		groups = groups[index:]
+	}
 	state := tokenRoutingState(c)
 	if common.GetContextKeyBool(c, constant.ContextKeyTokenNoRetryWithinGroup) {
 		// An origin-task pin cannot move to another group/channel; do not let

@@ -50,7 +50,7 @@ func TestMigrateSensitiveWords(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			db := useFrontendOptionMigrationDB(t)
-			require.NoError(t, db.AutoMigrate(&SystemTask{}))
+			require.NoError(t, db.AutoMigrate(&SystemTask{}, &SystemSyncTopic{}))
 			previousLanguage := common.DefaultLanguage
 			common.DefaultLanguage = tc.language
 			t.Cleanup(func() { common.DefaultLanguage = previousLanguage })
@@ -87,7 +87,7 @@ func TestMigrateSensitiveWords(t *testing.T) {
 
 func TestMigrateSensitiveWordsWithoutWords(t *testing.T) {
 	db := useFrontendOptionMigrationDB(t)
-	require.NoError(t, db.AutoMigrate(&SystemTask{}))
+	require.NoError(t, db.AutoMigrate(&SystemTask{}, &SystemSyncTopic{}))
 
 	// Nothing to move: no write, no reload.
 	require.NoError(t, MigrateSensitiveWords())

@@ -26,58 +26,7 @@ import (
 func TestSensitiveExemptionGroupRenameDatabaseMatrix(t *testing.T) {
 	for _, dialect := range []common.DatabaseType{common.DatabaseTypeSQLite, common.DatabaseTypeMySQL, common.DatabaseTypePostgreSQL} {
 		t.Run(string(dialect), func(t *testing.T) {
-			var driver gorm.Dialector
-			switch dialect {
-			case common.DatabaseTypeSQLite:
-				driver = sqlite.Open(filepath.Join(t.TempDir(), "groups.db"))
-			case common.DatabaseTypeMySQL:
-				dsn := os.Getenv("TEST_MYSQL_DSN")
-				if dsn == "" {
-					t.Skip("TEST_MYSQL_DSN is not configured")
-				}
-				driver = mysql.Open(dsn)
-			case common.DatabaseTypePostgreSQL:
-				dsn := os.Getenv("TEST_POSTGRES_DSN")
-				if dsn == "" {
-					t.Skip("TEST_POSTGRES_DSN is not configured")
-				}
-				driver = postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
-			}
-			db, err := gorm.Open(driver, &gorm.Config{NamingStrategy: schema.NamingStrategy{TablePrefix: fmt.Sprintf("gex_%x_", time.Now().UnixNano())}})
-			require.NoError(t, err)
-			sqlDB, err := db.DB()
-			require.NoError(t, err)
-			sqlDB.SetMaxOpenConns(4)
-			if dialect == common.DatabaseTypeSQLite {
-				sqlDB.SetMaxOpenConns(1)
-			}
-			previousDB, previousLogDB := DB, LOG_DB
-			previousMainType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
-			previousMemory, previousRedis := common.MemoryCacheEnabled, common.RedisEnabled
-			DB, LOG_DB = db, db
-			common.SetDatabaseTypes(dialect, dialect)
-			common.MemoryCacheEnabled, common.RedisEnabled = false, false
-			initCol()
-			t.Cleanup(func() {
-				DB, LOG_DB = previousDB, previousLogDB
-				common.SetDatabaseTypes(previousMainType, previousLogType)
-				common.MemoryCacheEnabled, common.RedisEnabled = previousMemory, previousRedis
-				initCol()
-				require.NoError(t, sqlDB.Close())
-			})
-			models := []any{&Option{}, &GroupRenameOperation{}, &ModelTestGate{}, &ModelFingerprintSiteConfig{}, &ModelFingerprintSiteAudit{}, &Channel{}, &Ability{}, &User{}, &Token{}, &SubscriptionPlan{}, &UserSubscription{}}
-			for _, item := range models {
-				require.False(t, db.Migrator().HasTable(item), "fixture must not reuse existing tables")
-			}
-			require.NoError(t, db.AutoMigrate(models...))
-			t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(models...)) })
-			query := "SELECT version()"
-			if dialect == common.DatabaseTypeSQLite {
-				query = "SELECT sqlite_version()"
-			}
-			var version string
-			require.NoError(t, db.Raw(query).Scan(&version).Error)
-			t.Logf("%s version: %s", dialect, version)
+			useGroupRenameDatabase(t, dialect)
 
 			t.Run("rename_preserves_policy_not_old_name", func(t *testing.T) {
 				setupSensitiveGroupRenameCase(t, " old \n\nkeep \nold ")
@@ -307,4 +256,60 @@ func assertSensitiveGroupPolicy(t *testing.T, want string) {
 		groups = strings.Split(want, "\n")
 	}
 	assert.Equal(t, groups, CurrentRequestPolicy().TextExemptGroups)
+}
+
+func useGroupRenameDatabase(t *testing.T, dialect common.DatabaseType) {
+	t.Helper()
+	var driver gorm.Dialector
+	switch dialect {
+	case common.DatabaseTypeSQLite:
+		driver = sqlite.Open(filepath.Join(t.TempDir(), "groups.db"))
+	case common.DatabaseTypeMySQL:
+		dsn := os.Getenv("TEST_MYSQL_DSN")
+		if dsn == "" {
+			t.Skip("TEST_MYSQL_DSN is not configured")
+		}
+		driver = mysql.Open(dsn)
+	case common.DatabaseTypePostgreSQL:
+		dsn := os.Getenv("TEST_POSTGRES_DSN")
+		if dsn == "" {
+			t.Skip("TEST_POSTGRES_DSN is not configured")
+		}
+		driver = postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
+	}
+	db, err := gorm.Open(driver, &gorm.Config{NamingStrategy: schema.NamingStrategy{TablePrefix: fmt.Sprintf("gex_%x_", time.Now().UnixNano())}})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(4)
+	if dialect == common.DatabaseTypeSQLite {
+		sqlDB.SetMaxOpenConns(1)
+	}
+	previousDB, previousLogDB := DB, LOG_DB
+	previousMainType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
+	previousMemory, previousRedis := common.MemoryCacheEnabled, common.RedisEnabled
+	DB, LOG_DB = db, db
+	common.SetDatabaseTypes(dialect, dialect)
+	common.MemoryCacheEnabled, common.RedisEnabled = false, false
+	initCol()
+	t.Cleanup(func() {
+		DB, LOG_DB = previousDB, previousLogDB
+		common.SetDatabaseTypes(previousMainType, previousLogType)
+		common.MemoryCacheEnabled, common.RedisEnabled = previousMemory, previousRedis
+		initCol()
+		require.NoError(t, sqlDB.Close())
+	})
+	models := []any{&Option{}, &GroupRenameOperation{}, &ModelTestGate{}, &ModelFingerprintSiteConfig{}, &ModelFingerprintSiteAudit{}, &Channel{}, &Ability{}, &User{}, &Token{}, &SubscriptionPlan{}, &UserSubscription{}, &SystemTask{}, &SystemSyncTopic{}}
+	for _, item := range models {
+		require.False(t, db.Migrator().HasTable(item), "fixture must not reuse existing tables")
+	}
+	require.NoError(t, db.AutoMigrate(models...))
+	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(models...)) })
+	query := "SELECT version()"
+	if dialect == common.DatabaseTypeSQLite {
+		query = "SELECT sqlite_version()"
+	}
+	var version string
+	require.NoError(t, db.Raw(query).Scan(&version).Error)
+	t.Logf("%s version: %s", dialect, version)
 }

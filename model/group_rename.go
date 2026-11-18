@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/request_plugin_setting"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -47,6 +48,7 @@ var (
 )
 
 var groupRenameOptionKeys = []string{
+	request_plugin_setting.InstancesOption,
 	"GroupRatio",
 	"group_ratio_setting.group_ratio",
 	"group_ratio_setting.group_group_ratio",
@@ -78,6 +80,7 @@ var groupRenameWritableOptionKeys = map[string]struct{}{
 }
 
 var groupRenameReferenceOptionKeys = map[string]struct{}{
+	request_plugin_setting.InstancesOption:           {},
 	"GroupRatio":                                     {},
 	"group_ratio_setting.group_ratio":                {},
 	"group_ratio_setting.group_group_ratio":          {},
@@ -353,7 +356,11 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 				}
 				state.result.Options++
 			}
-			state.appliedOptions[key] = value
+			// Plugin configs may contain service credentials. The rename response
+			// reports the option count without returning those configs to callers.
+			if key != request_plugin_setting.InstancesOption {
+				state.appliedOptions[key] = value
+			}
 		}
 		state.affectedOptionKeys = optionKeys
 		state.groupConfigVersion, err = bumpGroupConfigVersionTx(tx)
@@ -470,6 +477,9 @@ func lockAndLoadGroupRenameOptions(tx *gorm.DB, keys []string) (map[string]strin
 
 func groupRenameMemoryOptionValue(key string) string {
 	switch canonicalGroupOptionKey(key) {
+	case request_plugin_setting.InstancesOption:
+		value, _ := common.Marshal(request_plugin_setting.GetInstances())
+		return string(value)
 	case "GroupRatio":
 		return ratio_setting.GroupRatio2JSONString()
 	case "TopupGroupRatio":
@@ -925,6 +935,19 @@ func groupRenameOptionGroupKeys(key, raw string) ([]string, error) {
 		return nil, nil
 	}
 	switch key {
+	case request_plugin_setting.InstancesOption:
+		var instances []struct {
+			Groups []string `json:"groups"`
+		}
+		if err := common.UnmarshalJsonStr(raw, &instances); err != nil {
+			return nil, err
+		}
+		var groups []string
+		for _, instance := range instances {
+			groups = append(groups, instance.Groups...)
+		}
+		slices.Sort(groups)
+		return slices.Compact(groups), nil
 	case setting.SensitiveCheckExemptGroupsOptionKey:
 		normalized, err := setting.NormalizeSensitiveCheckExemptGroups(raw)
 		if err != nil || normalized == "" {
@@ -1026,6 +1049,42 @@ func rewriteGroupRenameOptionValues(optionValues, provided map[string]string, pl
 
 func rewriteGroupRenameOptionValue(key, raw string, plan *groupRenamePlan) (string, bool, error) {
 	switch canonicalGroupOptionKey(key) {
+	case request_plugin_setting.InstancesOption:
+		// Rewrite only Groups; preserve plugin configuration, unknown fields
+		// and numeric values without decoding them through floating point.
+		var instances []map[string]json.RawMessage
+		if err := common.UnmarshalJsonStr(raw, &instances); err != nil {
+			return "", false, err
+		}
+		changed := false
+		for _, instance := range instances {
+			var groups []string
+			if value := instance["groups"]; len(value) > 0 {
+				if err := common.Unmarshal(value, &groups); err != nil {
+					return "", false, err
+				}
+			}
+			instanceChanged := false
+			for i, group := range groups {
+				if target, mapped := plan.sources[group]; mapped {
+					groups[i] = target
+					instanceChanged = true
+				}
+			}
+			if instanceChanged {
+				value, err := common.Marshal(groups)
+				if err != nil {
+					return "", false, err
+				}
+				instance["groups"] = value
+				changed = true
+			}
+		}
+		if !changed {
+			return raw, false, nil
+		}
+		value, err := common.Marshal(instances)
+		return string(value), true, err
 	case setting.SensitiveCheckExemptGroupsOptionKey:
 		groups, err := groupRenameOptionGroupKeys(key, raw)
 		if err != nil {

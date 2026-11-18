@@ -146,6 +146,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 		// startGroupIndex: 开始搜索的分组索引
 		startGroupIndex := 0
 		crossGroupRetry := common.GetContextKeyBool(param.Ctx, constant.ContextKeyTokenCrossGroupRetry)
+		lastSelectedGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyAutoGroup)
 
 		if lastGroupIndex, exists := common.GetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex); exists {
 			if idx, ok := lastGroupIndex.(int); ok {
@@ -155,23 +156,35 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 
 		for i := startGroupIndex; i < len(autoGroups); i++ {
 			autoGroup := autoGroups[i]
+			if !crossGroupRetry && lastSelectedGroup != "" && autoGroup != lastSelectedGroup {
+				continue
+			}
 			// Calculate priorityRetry for current group
 			// 计算当前分组的 priorityRetry
 			groupRetry := param.GetRetry()
 			// A new group starts from its highest priority without the affinity offset.
-			if i > startGroupIndex {
+			if i > startGroupIndex || lastSelectedGroup != "" && autoGroup != lastSelectedGroup {
 				groupRetry = 0
+				param.SetRetry(0)
+				affinityRetryOffset = 0
+				param.Ctx.Set(ginKeyChannelAffinityRetryOffset, 0)
 			}
 			priorityRetry := max(groupRetry-affinityRetryOffset, 0)
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
-			channel, _ = model.GetRandomSatisfiedChannel(
+			channel, err = model.GetRandomSatisfiedChannel(
 				autoGroup,
 				param.ModelName,
 				priorityRetry,
 				filters,
 			)
+			if err != nil {
+				return nil, autoGroup, err
+			}
 			if channel == nil {
+				if !crossGroupRetry && lastSelectedGroup != "" {
+					return nil, autoGroup, nil
+				}
 				// Current group has no available channel for this model, try next group
 				// 当前分组没有该模型的可用渠道，尝试下一个分组
 				logger.LogDebug(param.Ctx, "No available channel in group %s for model %s at priorityRetry %d, trying next group", autoGroup, param.ModelName, priorityRetry)

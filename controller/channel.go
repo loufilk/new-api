@@ -825,7 +825,7 @@ func AddChannel(c *gin.Context) {
 	// Binding a plugin needs the same permission on a New API channel as the
 	// type-61 channel dedicated to it.
 	if addChannelRequest.Channel != nil &&
-		(addChannelRequest.Channel.Type == constant.ChannelTypeTaskPlugin || len(addChannelRequest.Channel.GetSetting().TaskPluginBindings()) > 0) &&
+		(addChannelRequest.Channel.Type == constant.ChannelTypeTaskPlugin || len(addChannelRequest.Channel.GetSetting().TaskPluginBindings()) > 0 || len(addChannelRequest.Channel.GetSetting().RequestPlugins) > 0) &&
 		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.TaskPluginBind) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -1233,8 +1233,10 @@ func UpdateChannel(c *gin.Context) {
 	}
 	clearChannelReadOnlyFields(&channel, requestData)
 
+	canBindPlugins := authz.Can(c.GetInt("id"), c.GetInt("role"), authz.TaskPluginBind)
+	canWriteSensitive := authz.Can(c.GetInt("id"), c.GetInt("role"), authz.ChannelSensitiveWrite)
 	if channel.Type == constant.ChannelTypeTaskPlugin &&
-		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.TaskPluginBind) {
+		!canBindPlugins {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "task plugin channels require the task_plugin.bind permission",
@@ -1267,8 +1269,9 @@ func UpdateChannel(c *gin.Context) {
 	// channel type; resubmitting an unchanged New API binding list does not, so
 	// administrators without it can still edit the rest of a gateway channel.
 	if settingProvided &&
-		!slices.Equal(channel.GetSetting().TaskPluginBindings(), originChannel.GetSetting().TaskPluginBindings()) &&
-		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.TaskPluginBind) {
+		(!slices.Equal(channel.GetSetting().TaskPluginBindings(), originChannel.GetSetting().TaskPluginBindings()) ||
+			!slices.Equal(channel.GetSetting().RequestPlugins, originChannel.GetSetting().RequestPlugins)) &&
+		!canBindPlugins {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "task plugin channels require the task_plugin.bind permission",
@@ -1280,7 +1283,7 @@ func UpdateChannel(c *gin.Context) {
 	channel.ChannelInfo = originChannel.ChannelInfo
 
 	if channelHasSensitiveChanges(&channel, originChannel, requestData) &&
-		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.ChannelSensitiveWrite) {
+		!canWriteSensitive {
 		common.ApiErrorT(c, "Unauthorized, insufficient privileges")
 		return
 	}
@@ -1307,7 +1310,7 @@ func UpdateChannel(c *gin.Context) {
 			if strings.HasPrefix(strings.TrimSpace(stored), "[") {
 				// JSON数组格式
 				var arr []json.RawMessage
-				if err := json.Unmarshal([]byte(strings.TrimSpace(stored)), &arr); err == nil {
+				if err := common.Unmarshal([]byte(strings.TrimSpace(stored)), &arr); err == nil {
 					existingKeys = make([]string, len(arr))
 					for i, v := range arr {
 						existingKeys[i] = string(v)
@@ -1415,28 +1418,64 @@ func UpdateChannel(c *gin.Context) {
 			return
 		}
 	}
-	// A new key is made from the key stored when the channel's key lock is
-	// held, the lock a credential refresh also takes to write its result.
+	// The key and edited configuration commit together under the same key
+	// lock a credential refresh takes. A failed edit keeps the live credential.
 	var keyBefore, keyAfter string
-	if keyChanged {
-		stored, err := model.UpdateChannelLocked(channel.Id, func(stored *model.Channel) error {
+	var credentialOrigin model.Channel
+	err = channel.UpdateWithKey(func(stored *model.Channel) error {
+		// Another editor or login may have committed after originChannel was
+		// read. Authorize the actual changes against the locked row.
+		effectiveType, effectivePluginKey := channel.Type, channel.GetSetting().TaskPluginKey
+		if effectiveType == 0 {
+			effectiveType = stored.Type
+		}
+		if !settingProvided {
+			effectivePluginKey = stored.GetSetting().TaskPluginKey
+		}
+		bindingsChanged := settingProvided &&
+			(!slices.Equal(channel.GetSetting().TaskPluginBindings(), stored.GetSetting().TaskPluginBindings()) ||
+				!slices.Equal(channel.GetSetting().RequestPlugins, stored.GetSetting().RequestPlugins))
+		if !canBindPlugins && (effectiveType == constant.ChannelTypeTaskPlugin ||
+			stored.Type == constant.ChannelTypeTaskPlugin || bindingsChanged) {
+			return errors.New("task plugin channels require the task_plugin.bind permission")
+		}
+		permissionPatch := channel
+		if !keyChanged {
+			permissionPatch.Key = ""
+		}
+		if !canWriteSensitive && channelHasSensitiveChanges(&permissionPatch, stored, requestData) {
+			return common.NewMessage("Unauthorized, insufficient privileges")
+		}
+
+		channel.ChannelInfo = stored.ChannelInfo
+		if channel.MultiKeyMode != nil && *channel.MultiKeyMode != "" {
+			channel.ChannelInfo.MultiKeyMode = constant.MultiKeyMode(*channel.MultiKeyMode)
+		}
+		finalKey := stored.Key
+		if keyChanged {
+			// External checkKey hooks run before taking the row lock. If an
+			// inherited validation input changed, ask the editor to retry
+			// rather than write a key checked for a different upstream.
+			if effectiveType != keptType || effectivePluginKey != keptPluginKey ||
+				(effectiveType == constant.ChannelTypeTaskPlugin &&
+					((channel.OtherSettings == "" && stored.OtherSettings != originChannel.OtherSettings) ||
+						(channel.BaseURL == nil && !equalStringPtr(stored.BaseURL, originChannel.BaseURL)))) {
+				return model.ErrChannelKeyChanged
+			}
 			next, err := nextKey(stored.Key)
 			if err != nil {
 				return err
 			}
-			if err := service.CheckSubmittedPluginCredentials(keptType, keptPluginKey, next, stored.Key); err != nil {
-				return err
-			}
-			keyBefore, stored.Key = stored.Key, next
-			return nil
-		})
-		if err != nil {
-			common.ApiError(c, err)
-			return
+			finalKey = next
 		}
-		keyAfter = stored.Key
-	}
-	err = channel.Update()
+		if err := service.CheckSubmittedPluginCredentials(effectiveType, effectivePluginKey, finalKey, stored.Key); err != nil {
+			return err
+		}
+		credentialOrigin = *stored
+		keyBefore, stored.Key = stored.Key, finalKey
+		keyAfter = finalKey
+		return nil
+	})
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -1446,7 +1485,7 @@ func UpdateChannel(c *gin.Context) {
 		service.InvalidateProxyClient(originProxy)
 	}
 	if keyChanged {
-		service.RevokeRemovedChannelCredentials(originChannel, keyBefore, keyAfter)
+		service.RevokeRemovedChannelCredentials(&credentialOrigin, keyBefore, keyAfter)
 	}
 	// 记录变更的字段名（语言无关的字段标识），密钥仅记录"已更换"绝不记录内容。
 	changedFields := make([]string, 0)
@@ -1834,7 +1873,7 @@ func CopyChannel(c *gin.Context) {
 		common.ApiErrorT(c, "Failed to fetch channel. Please try again later")
 		return
 	}
-	if (origin.Type == constant.ChannelTypeTaskPlugin || len(origin.GetSetting().TaskPluginBindings()) > 0) &&
+	if (origin.Type == constant.ChannelTypeTaskPlugin || len(origin.GetSetting().TaskPluginBindings()) > 0 || len(origin.GetSetting().RequestPlugins) > 0) &&
 		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.TaskPluginBind) {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "task plugin channels require the task_plugin.bind permission"})
 		return

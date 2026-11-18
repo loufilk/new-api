@@ -123,8 +123,10 @@ func (billingRefundRecoveryHandler) Run(ctx context.Context, task *model.SystemT
 			}
 			operationCtx, stop := context.WithTimeout(taskCtx, 5*time.Second)
 			intent := entry.PrivateData.FinancialIntent
-			if _, err := ApplyTaskQuota(operationCtx, entry, intent.ActualQuota, intent.Kind == "refund"); err != nil {
+			if applied, err := ApplyTaskQuota(operationCtx, entry, intent.ActualQuota, intent.Kind == "refund"); err != nil {
 				common.SysError("task financial intent remains pending for retry or review")
+			} else if applied {
+				reportFinalTask(entry)
 			}
 			stop()
 			processed++

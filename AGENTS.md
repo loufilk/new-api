@@ -2,6 +2,21 @@
 
 DO NOT send optional commentary
 
+## ChuanAPI production validation scope
+
+The owner's instruction on 2026-11-18 sets PostgreSQL 18.6 as the production
+database baseline for this branch. Verify database changes against that version
+in an isolated local instance. Do not access the production database for tests.
+This scope supersedes the multi-database verification requirements below: do not
+run SQLite, MySQL, or older PostgreSQL compatibility matrices for this deployment.
+
+Keep validation focused on the changed behavior and directly affected contracts.
+Run the relevant regression cases and necessary compilation/type checks; do not
+repeat whole-repository suites, broad race runs, or unrelated migration matrices
+without a concrete remaining risk. Schema changes still require PostgreSQL fresh
+and upgrade/idempotency checks for the affected schema. Preserve existing driver
+support and useful regression cases; this instruction narrows validation scope.
+
 ## A07 integration boundary
 
 This branch integrates the explicitly requested simplified A07 reseller system into
