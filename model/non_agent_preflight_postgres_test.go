@@ -131,16 +131,20 @@ func TestNonAgentPreflightProtectsLiveCodesButAllowsRetiredCodeHistory(t *testin
 }
 
 func TestNonAgentPreflightKeepsOrdinaryPaymentEvidenceButBlocksUnverifiedBusinessPurpose(t *testing.T) {
-	db := nonAgentPreflightFixture(t)
-	require.NoError(t, db.Exec("CREATE TABLE agent_payment_receipts (purpose text); INSERT INTO agent_payment_receipts VALUES ('topup')").Error)
-	for range 2 {
-		_, err := NonAgentCutoverPreflight(db)
-		require.NoError(t, err)
+	for _, a07 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("a07=%t", a07), func(t *testing.T) {
+			db := nonAgentPreflightFixture(t)
+			require.NoError(t, db.Exec("CREATE TABLE agent_payment_receipts (purpose text); INSERT INTO agent_payment_receipts VALUES ('topup'), ('invoice_fee')").Error)
+			for range 2 {
+				_, err := nonAgentCutoverPreflight(db, a07)
+				require.NoError(t, err)
+			}
+			require.NoError(t, db.Exec("INSERT INTO agent_payment_receipts VALUES ('purchase'), ('credit'), (NULL)").Error)
+			blocks, err := nonAgentCutoverPreflight(db, a07)
+			require.ErrorIs(t, err, ErrNonAgentCutoverBlocked)
+			assert.Equal(t, []NonAgentCutoverBlock{{Table: "agent_payment_receipts", Rows: 3}}, blocks)
+		})
 	}
-	require.NoError(t, db.Exec("INSERT INTO agent_payment_receipts VALUES ('purchase')").Error)
-	blocks, err := NonAgentCutoverPreflight(db)
-	require.ErrorIs(t, err, ErrNonAgentCutoverBlocked)
-	assert.Equal(t, []NonAgentCutoverBlock{{Table: "agent_payment_receipts", Rows: 1}}, blocks)
 }
 
 func TestNonAgentPreflightRejectsNullLegacyMarkersEvenOnDisabledCode(t *testing.T) {

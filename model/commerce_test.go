@@ -2,6 +2,8 @@ package model
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -21,6 +23,10 @@ func setupCommerceTest(t *testing.T) {
 	require.True(t, common.UsingMainDatabase(common.DatabaseTypePostgreSQL))
 	require.NoError(t, DB.Migrator().DropTable(CommerceModels()...))
 	require.NoError(t, DB.AutoMigrate(CommerceModels()...))
+	require.NoError(t, DB.AutoMigrate(&Redemption{}))
+	require.NoError(t, DB.Unscoped().Where("used_user_id IN ?", []int{commerceAlice, commerceBob}).Delete(&Redemption{}).Error)
+	require.NoError(t, DB.Session(&gorm.Session{SkipHooks: true}).Where("agent_user_id = ?", commerceAdmin).Delete(&AgentSimplePaymentOrder{}).Error)
+	require.NoError(t, DB.Session(&gorm.Session{SkipHooks: true}).Where("owner_user_id = ?", commerceAdmin).Delete(&PaymentReceipt{}).Error)
 	require.NoError(t, DB.Unscoped().Where("id IN ?", []int{commerceAdmin, commerceAlice, commerceBob}).Delete(&User{}).Error)
 	require.NoError(t, DB.Where("user_id IN ?", []int{commerceAdmin, commerceAlice, commerceBob}).Delete(&TopUp{}).Error)
 	require.NoError(t, DB.Create(&[]User{
@@ -329,4 +335,202 @@ func TestCommercePostgresPendingInvoiceOrderDoesNotBlockPaymentLock(t *testing.T
 	row, err := CreateInvoiceApplication(context.Background(), commerceAlice, "invoice-after-payment", invoiceRequest(paid.Id))
 	require.NoError(t, err)
 	assert.Equal(t, "submitted", row.Status)
+}
+
+func TestCommercePostgresEligibleOrdersDoesNotUsePerApplicationLimit(t *testing.T) {
+	setupCommerceTest(t)
+	ctx := context.Background()
+	first := seedCommerceOrder(t, commerceAlice, "eligible-first", 12500)
+	second := seedCommerceOrder(t, commerceAlice, "eligible-second", 25000)
+	config, err := GetCommerceConfig(ctx)
+	require.NoError(t, err)
+	config.InvoiceMaxOrders = 1
+	_, err = SaveCommerceConfig(ctx, commerceAdmin, *config)
+	require.NoError(t, err)
+	eligible, _, err := EligibleInvoiceOrders(ctx, commerceAlice)
+	require.NoError(t, err)
+	assert.Len(t, eligible, 2, "the application selection limit must not hide eligible orders")
+	_, err = CreateInvoiceApplication(ctx, commerceAlice, "over-application-limit", invoiceRequest(first.Id, second.Id))
+	require.ErrorIs(t, err, ErrCommerceInvalid)
+}
+
+func seedCommercePaidRedemption(t *testing.T, userID int, reference string, minor int64) (Redemption, AgentSimplePaymentOrder, PaymentReceipt) {
+	t.Helper()
+	now := common.GetTimestamp()
+	receipt, err := ClaimAgentPaymentReceiptTx(DB, &AgentPaymentReceipt{Provider: PaymentProviderEpay, ProviderReference: reference, MerchantScope: "invoice-test-merchant", Environment: "live", Purpose: "payment_code", LocalOrderKey: reference, OwnerUserID: commerceAdmin, Currency: "CNY", CurrencyExponent: 2, PaidMinor: minor, PaidAt: now, VerifiedAt: now})
+	require.NoError(t, err)
+	code := Redemption{UserId: commerceAdmin, Key: common.GetUUID(), Name: reference, Status: common.RedemptionCodeStatusUsed, Quota: 1234567, UsedUserId: userID, RedeemedTime: now, CreatedTime: now - 1, BudgetAgentID: commerceAdmin, AgentSimpleMode: AgentSimpleCodePayment}
+	require.NoError(t, DB.Create(&code).Error)
+	payment := AgentSimplePaymentOrder{RequestKey: "request-" + reference, PublicID: common.GetUUID(), TokenHash: common.GetUUID() + common.GetUUID(), TokenCipher: "unused-test-ciphertext", AgentUserID: commerceAdmin, Name: reference, Quota: int64(code.Quota), SalePriceFen: minor, CostPriceFen: minor, PaymentMethod: "wxpay", PaymentProvider: PaymentProviderEpay, TradeNo: reference, PaymentReceiptID: receipt.ID, Status: AgentSimplePaymentRedeemed, ExpiresAt: now + 3600, PaidAt: now, DeliveredAt: now, RedemptionID: code.Id}
+	require.NoError(t, DB.Create(&payment).Error)
+	code.AgentSimplePaymentID = payment.ID
+	require.NoError(t, DB.Model(&code).Update("agent_simple_payment_id", payment.ID).Error)
+	return code, payment, *receipt
+}
+
+func TestCommercePostgresRedemptionEligibilityRequiresOwnedVerifiedCashReceipt(t *testing.T) {
+	setupCommerceTest(t)
+	ctx := context.Background()
+	paid, _, _ := seedCommercePaidRedemption(t, commerceAlice, "redeemed-paid", 550)
+	other, _, _ := seedCommercePaidRedemption(t, commerceBob, "redeemed-other", 600)
+	old, oldPayment, _ := seedCommercePaidRedemption(t, commerceAlice, "redeemed-old", 700)
+	require.NoError(t, DB.Model(&oldPayment).Update("paid_at", common.GetTimestamp()-31*86400).Error)
+	unverified, unverifiedPayment, _ := seedCommercePaidRedemption(t, commerceAlice, "redeemed-unverified", 800)
+	require.NoError(t, DB.Model(&unverifiedPayment).Update("payment_receipt_id", 0).Error)
+	mismatch, mismatchPayment, _ := seedCommercePaidRedemption(t, commerceAlice, "redeemed-mismatch", 900)
+	require.NoError(t, DB.Model(&mismatchPayment).Update("sale_price_fen", 1000).Error)
+	unused, _, _ := seedCommercePaidRedemption(t, commerceAlice, "redeemed-unused", 1000)
+	require.NoError(t, DB.Model(&unused).Update("status", common.RedemptionCodeStatusEnabled).Error)
+	ordinary := Redemption{UserId: commerceAdmin, Key: common.GetUUID(), Name: "gift-code", Status: common.RedemptionCodeStatusUsed, Quota: 9000000, UsedUserId: commerceAlice, RedeemedTime: common.GetTimestamp()}
+	require.NoError(t, DB.Create(&ordinary).Error)
+	eligible, _, err := EligibleInvoiceOrders(ctx, commerceAlice)
+	require.NoError(t, err)
+	require.Len(t, eligible, 1)
+	assert.Equal(t, "redemption", eligible[0].SourceType)
+	assert.Equal(t, paid.Id, eligible[0].RedemptionID)
+	assert.Zero(t, eligible[0].TopUpID)
+	assert.Equal(t, "RDM"+fmt.Sprint(paid.Id), eligible[0].TradeNo)
+	assert.EqualValues(t, 550, eligible[0].AmountMinor, "cash receipt is authoritative, never the code quota")
+	encoded, err := common.Marshal(eligible)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), paid.Key)
+	for _, code := range []Redemption{other, old, unverified, mismatch, unused, ordinary} {
+		input := invoiceRequest()
+		input.RedemptionIDs = []int{code.Id}
+		_, err := CreateInvoiceApplication(ctx, commerceAlice, fmt.Sprintf("ineligible-code-%d", code.Id), input)
+		require.ErrorIs(t, err, ErrInvoiceIneligible)
+	}
+}
+
+func TestCommercePostgresMixedSourcesReserveReplayAndReleaseTogether(t *testing.T) {
+	setupCommerceTest(t)
+	ctx := context.Background()
+	topup := seedCommerceOrder(t, commerceAlice, "mixed-source-topup", 10000)
+	code, _, _ := seedCommercePaidRedemption(t, commerceAlice, "mixed-source-code", 500)
+	input := invoiceRequest(topup.Id)
+	input.RedemptionIDs = []int{code.Id}
+	input.Category = InvoiceCategorySoftwareDevelopment
+	config, err := GetCommerceConfig(ctx)
+	require.NoError(t, err)
+	config.InvoiceMaxOrders = 1
+	config, err = SaveCommerceConfig(ctx, commerceAdmin, *config)
+	require.NoError(t, err)
+	_, err = CreateInvoiceApplication(ctx, commerceAlice, "mixed-sources-limit", input)
+	require.ErrorIs(t, err, ErrCommerceInvalid, "both source types share the same application limit")
+	config.InvoiceMaxOrders = 2
+	_, err = SaveCommerceConfig(ctx, commerceAdmin, *config)
+	require.NoError(t, err)
+	invoice, err := CreateInvoiceApplication(ctx, commerceAlice, "mixed-sources", input)
+	require.NoError(t, err)
+	assert.Equal(t, InvoiceCategorySoftwareDevelopment, invoice.Category)
+	assert.EqualValues(t, 10500, invoice.AmountMinor)
+	require.Len(t, invoice.Orders, 2)
+	assert.Equal(t, "topup", invoice.Orders[0].SourceType)
+	assert.Equal(t, "redemption", invoice.Orders[1].SourceType)
+	assert.Equal(t, code.Id, invoice.Orders[1].RedemptionID)
+	replay, err := CreateInvoiceApplication(ctx, commerceAlice, "mixed-sources", input)
+	require.NoError(t, err)
+	assert.Equal(t, invoice.ID, replay.ID)
+	changed := input
+	changed.Category = InvoiceCategoryTechnicalService
+	_, err = CreateInvoiceApplication(ctx, commerceAlice, "mixed-sources", changed)
+	require.ErrorIs(t, err, ErrCommerceConflict)
+	_, err = CreateInvoiceApplication(ctx, commerceAlice, "duplicate-sources", input)
+	require.ErrorIs(t, err, ErrInvoiceIneligible)
+	eligible, _, err := EligibleInvoiceOrders(ctx, commerceAlice)
+	require.NoError(t, err)
+	assert.Empty(t, eligible)
+	_, err = ReviewInvoiceApplication(ctx, commerceAlice, invoice.ID, false, CommerceReview{ExpectedRevision: invoice.Revision, Action: "cancel"})
+	require.NoError(t, err)
+	eligible, _, err = EligibleInvoiceOrders(ctx, commerceAlice)
+	require.NoError(t, err)
+	assert.Len(t, eligible, 2)
+	replacement, err := CreateInvoiceApplication(ctx, commerceAlice, "mixed-replacement", input)
+	require.NoError(t, err)
+	assert.NotEqual(t, invoice.ID, replacement.ID)
+}
+
+func TestCommercePostgresCategoryAndSpecialInvoiceValidation(t *testing.T) {
+	setupCommerceTest(t)
+	ctx := context.Background()
+	paid := seedCommerceOrder(t, commerceAlice, "invoice-categories", 10000)
+	for _, change := range []struct {
+		name   string
+		update func(*InvoiceCreate)
+	}{
+		{"unknown category", func(input *InvoiceCreate) { input.Category = "unrecognized" }},
+		{"company without tax ID", func(input *InvoiceCreate) { input.TaxID = "" }},
+		{"individual special invoice", func(input *InvoiceCreate) { input.Kind, input.TitleType = "special", "individual" }},
+		{"special missing bank", func(input *InvoiceCreate) {
+			input.Kind, input.Address, input.Phone = "special", "Business address", "123456"
+		}},
+		{"duplicate redemption IDs", func(input *InvoiceCreate) { input.RedemptionIDs = []int{1, 1} }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			input := invoiceRequest(paid.Id)
+			change.update(&input)
+			_, err := CreateInvoiceApplication(ctx, commerceAlice, "invalid-application", input)
+			require.ErrorIs(t, err, ErrCommerceInvalid)
+		})
+	}
+	input := invoiceRequest(paid.Id)
+	input.TitleType, input.TaxID = "individual", ""
+	invoice, err := CreateInvoiceApplication(ctx, commerceAlice, "personal-general", input)
+	require.NoError(t, err)
+	assert.Equal(t, InvoiceCategoryTechnicalService, invoice.Category)
+	assert.Empty(t, invoice.TaxID)
+}
+
+func TestCommercePostgresSummaryIgnoresPageAndCountsOnlyActiveApplications(t *testing.T) {
+	setupCommerceTest(t)
+	ctx := context.Background()
+	seedCommerceOrder(t, commerceAlice, "summary-available", 3000)
+	seedCommercePaidRedemption(t, commerceAlice, "summary-redemption", 450)
+	for i, status := range []string{"awaiting_fee", "submitted", "approved", "issued", "rejected", "cancelled"} {
+		require.NoError(t, DB.Create(&InvoiceApplication{UserID: commerceAlice, RequestKey: fmt.Sprintf("summary-%d", i), Currency: "CNY", CurrencyExponent: 2, AmountMinor: int64(i+1) * 1000, Status: status}).Error)
+	}
+	require.NoError(t, DB.Create(&InvoiceApplication{UserID: commerceBob, RequestKey: "other-user-summary", Currency: "CNY", CurrencyExponent: 2, AmountMinor: 99999, Status: "issued"}).Error)
+	require.NoError(t, DB.Create(&InvoiceApplication{UserID: commerceAlice, RequestKey: "other-currency-summary", Currency: "USD", CurrencyExponent: 2, AmountMinor: 99999, Status: "issued"}).Error)
+	eligible, config, err := EligibleInvoiceOrders(ctx, commerceAlice)
+	require.NoError(t, err)
+	summary, err := GetInvoiceSummary(ctx, commerceAlice, config.InvoiceCurrency, eligible)
+	require.NoError(t, err)
+	assert.Equal(t, "CNY", summary.Currency)
+	assert.Equal(t, 2, summary.CurrencyExponent)
+	assert.Equal(t, InvoiceSummaryAmount{AmountMinor: "3450", Count: 2}, summary.Available)
+	assert.Equal(t, InvoiceSummaryAmount{AmountMinor: "6000", Count: 3}, summary.Processing)
+	assert.Equal(t, InvoiceSummaryAmount{AmountMinor: "4000", Count: 1}, summary.Issued)
+	reviewing, total, err := ListInvoiceApplications(ctx, commerceAlice, false, "reviewing", 0, 1)
+	require.NoError(t, err)
+	assert.Len(t, reviewing, 1)
+	assert.EqualValues(t, 2, total)
+}
+
+func TestCommercePostgresInvoiceUpgradePreservesHistoryReservationsAndReplay(t *testing.T) {
+	setupCommerceTest(t)
+	ctx := context.Background()
+	topup := seedCommerceOrder(t, commerceAlice, "legacy-invoice-upgrade", 12345)
+	input := invoiceRequest(topup.Id)
+	created, err := CreateInvoiceApplication(ctx, commerceAlice, "legacy-replay-key", input)
+	require.NoError(t, err)
+	legacyPayload := fmt.Sprintf(`{"order_ids":[%d],"kind":"general","title_type":"company","title":"Example Company","tax_id":"TAX-EXAMPLE","email":"invoice@example.com","address":"","phone":"","bank_name":"","bank_account":""}`, topup.Id)
+	legacyHash := fmt.Sprintf("%x", sha256.Sum256([]byte(legacyPayload)))
+	require.Equal(t, legacyHash, created.RequestHash, "legacy request hashing must remain stable")
+	// Recreate the immediately preceding release's invoice columns while
+	// preserving its application, reservation, line and idempotency hash.
+	require.NoError(t, DB.Migrator().DropColumn(&InvoiceApplication{}, "Category"))
+	require.NoError(t, DB.Migrator().DropColumn(&InvoiceOrder{}, "SourceType"))
+	require.NoError(t, DB.Migrator().DropColumn(&InvoiceOrder{}, "RedemptionID"))
+	require.NoError(t, DB.Migrator().DropTable(&InvoiceRedemptionReservation{}))
+	for range 2 {
+		require.NoError(t, DB.AutoMigrate(CommerceModels()...))
+	}
+	retained, err := GetInvoiceApplication(ctx, commerceAlice, created.ID, false)
+	require.NoError(t, err)
+	assert.Equal(t, created, retained)
+	replay, err := CreateInvoiceApplication(ctx, commerceAlice, "legacy-replay-key", input)
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, replay.ID)
+	_, err = CreateInvoiceApplication(ctx, commerceAlice, "legacy-double-application", input)
+	require.ErrorIs(t, err, ErrInvoiceIneligible)
 }

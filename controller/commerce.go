@@ -18,7 +18,7 @@ func commerceError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, model.ErrCommerceInvalid):
 		status, message = http.StatusBadRequest, err.Error()
-	case errors.Is(err, model.ErrCommerceConflict), errors.Is(err, model.ErrInvoiceIneligible):
+	case errors.Is(err, model.ErrCommerceConflict), errors.Is(err, model.ErrInvoiceIneligible), errors.Is(err, model.ErrInvoicePaymentActive), errors.Is(err, model.ErrInvoicePaymentChanged):
 		status, message = http.StatusConflict, err.Error()
 	case errors.Is(err, model.ErrCommerceForbidden):
 		status, message = http.StatusForbidden, err.Error()
@@ -109,7 +109,12 @@ func GetEligibleInvoiceOrders(c *gin.Context) {
 		commerceError(c, err)
 		return
 	}
-	common.ApiSuccess(c, gin.H{"items": items, "config": config})
+	summary, err := model.GetInvoiceSummary(c.Request.Context(), c.GetInt("id"), config.InvoiceCurrency, items)
+	if err != nil {
+		commerceError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"items": items, "config": config, "summary": summary})
 }
 
 func CreateInvoiceApplication(c *gin.Context) {

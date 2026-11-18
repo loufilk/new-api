@@ -45,6 +45,21 @@ const partner = {
 }
 
 describe('invoice application validation', () => {
+  test('accepts a verified redemption order without requiring a recharge order', () => {
+    expect(
+      invoiceSchema.safeParse({
+        ...invoice,
+        order_ids: [],
+        redemption_ids: [71],
+        category: 'technical_service',
+      }).success
+    ).toBe(true)
+  })
+  test('rejects an unsupported invoice category', () => {
+    expect(
+      invoiceSchema.safeParse({ ...invoice, category: 'unknown' }).success
+    ).toBe(false)
+  })
   test('accepts an eligible company application and trims its title', () => {
     expect(
       invoiceSchema.parse({ ...invoice, title: ' Example Company ' }).title

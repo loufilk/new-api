@@ -24,6 +24,7 @@ import { StaticDataTable } from '@/components/data-table'
 import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 
+import { invoiceOrderKey } from '../lib/invoice-orders'
 import type { ApplicationReview, InvoiceApplication } from '../types'
 import { ApplicationReviewDialog } from './application-review-dialog'
 import {
@@ -31,6 +32,8 @@ import {
   ApplicationTimeline,
   InvoiceMoney,
 } from './application-status'
+import type { InvoicePaymentChoice } from './invoice-application-form'
+import { InvoicePaymentPanel } from './invoice-payment-panel'
 
 export function InvoiceDetailDialog(props: {
   invoice: InvoiceApplication
@@ -39,6 +42,11 @@ export function InvoiceDetailDialog(props: {
   pending: boolean
   onClose: () => void
   onReview: (input: ApplicationReview) => Promise<void>
+  onPay?: (
+    invoice: InvoiceApplication,
+    choice: InvoicePaymentChoice
+  ) => Promise<void>
+  onRefresh?: () => Promise<void>
 }) {
   const { t } = useTranslation()
   const [action, setAction] = useState<ApplicationReview['action'] | null>(null)
@@ -46,6 +54,7 @@ export function InvoiceDetailDialog(props: {
   const canRecordFee =
     BigInt(row.fee_minor) > 0n &&
     !row.fee_receipt_reference &&
+    !row.fee_payment &&
     ['awaiting_fee', 'cancelled', 'rejected'].includes(row.status)
   return (
     <>
@@ -69,11 +78,13 @@ export function InvoiceDetailDialog(props: {
                 {t('Record service fee receipt')}
               </Button>
             )}
-            {props.canReview && row.fee_refund_status === 'pending' && (
-              <Button onClick={() => setAction('record_fee_refund')}>
-                {t('Record service fee refund')}
-              </Button>
-            )}
+            {props.canReview &&
+              row.fee_refund_status === 'pending' &&
+              row.fee_payment?.provider !== 'wallet' && (
+                <Button onClick={() => setAction('record_fee_refund')}>
+                  {t('Record service fee refund')}
+                </Button>
+              )}
             {props.canReview && row.status === 'submitted' && (
               <Button onClick={() => setAction('approve')}>
                 {t('Approve')}
@@ -137,7 +148,7 @@ export function InvoiceDetailDialog(props: {
                 />
               </p>
               <p className='text-muted-foreground mt-2 text-xs'>
-                {t('Service fee')}:{' '}
+                {t('Tax fee')}:{' '}
                 <InvoiceMoney
                   minor={row.fee_minor}
                   currency={row.currency}
@@ -146,8 +157,25 @@ export function InvoiceDetailDialog(props: {
               </p>
             </div>
           </div>
+          {!props.admin &&
+            row.status === 'awaiting_fee' &&
+            props.onPay &&
+            props.onRefresh && (
+              <InvoicePaymentPanel
+                invoice={row}
+                pending={props.pending}
+                onPay={props.onPay}
+                onRefresh={props.onRefresh}
+              />
+            )}
           <dl className='grid gap-x-6 gap-y-4 text-sm sm:grid-cols-2'>
             {[
+              [
+                t('Invoice category'),
+                row.category === 'software_development'
+                  ? t('Software development services')
+                  : t('Technical service fee'),
+              ],
               [t('Delivery email'), row.email],
               [t('Tax identification number'), row.tax_id],
               [t('Registered address'), row.address],
@@ -156,6 +184,12 @@ export function InvoiceDetailDialog(props: {
               [t('Bank account'), row.bank_account],
               [t('Invoice number'), row.invoice_number],
               [t('Payment receipt reference'), row.fee_receipt_reference],
+              [
+                t('Payment method'),
+                row.fee_payment?.method === 'wallet'
+                  ? t('Balance')
+                  : row.fee_payment?.method,
+              ],
             ]
               .filter(([, value]) => value)
               .map(([label, value]) => (
@@ -194,8 +228,16 @@ export function InvoiceDetailDialog(props: {
             </h4>
             <StaticDataTable
               data={row.orders ?? []}
-              getRowKey={(order) => order.topup_id}
+              getRowKey={invoiceOrderKey}
               columns={[
+                {
+                  id: 'source',
+                  header: t('Order source'),
+                  cell: (order) =>
+                    order.source_type === 'redemption'
+                      ? t('Redemption code')
+                      : t('Recharge'),
+                },
                 {
                   id: 'order',
                   header: t('Order number'),

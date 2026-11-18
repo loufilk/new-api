@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -74,6 +75,8 @@ var accessTokenExemptRoutes = []string{
 	"POST /api/waffo-pancake/webhook/:env",
 	"GET /api/user/epay/notify",
 	"POST /api/user/epay/notify",
+	"GET /api/invoices/payments/epay/notify",
+	"POST /api/invoices/payments/epay/notify",
 	"GET /api/subscription/epay/notify",
 	"POST /api/subscription/epay/notify",
 	"GET /api/subscription/epay/return",
@@ -259,5 +262,34 @@ func TestAccessTokenSupportEmailRoutesRequireSession(t *testing.T) {
 			require.True(t, ok)
 			assert.Equal(t, "session", rule.Kind(), "reject scoped and legacy PATs before any support mail handler")
 		})
+	}
+}
+
+func TestAccessTokenInvoicePaymentRoutesRequireSession(t *testing.T) {
+	engine := newAccessTokenScopeTestEngine(t)
+	registered := make(map[string]bool)
+	for _, route := range engine.Routes() {
+		registered[route.Method+" "+route.Path] = true
+	}
+	for _, key := range []string{
+		"GET /api/invoices/payment-options", "GET /api/invoices/:id/payment-options",
+		"POST /api/invoices/:id/pay",
+	} {
+		require.True(t, registered[key], key)
+		rule, ok := middleware.AccessTokenRouteRule(key)
+		require.True(t, ok, key)
+		assert.Equal(t, "session", rule.Kind(), key)
+		assert.Empty(t, rule.Scope(), key)
+	}
+	oldPayAddress := operation_setting.PayAddress
+	operation_setting.PayAddress = ""
+	t.Cleanup(func() { operation_setting.PayAddress = oldPayAddress })
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		path := "/api/invoices/payments/epay/notify"
+		require.True(t, registered[method+" "+path])
+		response := httptest.NewRecorder()
+		engine.ServeHTTP(response, httptest.NewRequest(method, path, nil))
+		assert.Equal(t, http.StatusOK, response.Code)
+		assert.Equal(t, "fail", response.Body.String(), "public notifications require provider verification, not a dashboard session")
 	}
 }

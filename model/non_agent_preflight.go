@@ -42,7 +42,7 @@ func nonAgentCutoverPreflight(db *gorm.DB, a07 bool) ([]NonAgentCutoverBlock, er
 		return nil, errors.New("non-agent cutover preflight: database unavailable")
 	}
 	rules := map[string]nonAgentRetirementRule{
-		"agent_payment_receipts":    {predicate: "purpose IS NULL OR purpose <> ?", args: []any{"topup"}},
+		"agent_payment_receipts":    {predicate: "purpose IS NULL OR purpose NOT IN ?", args: []any{[]string{"topup", "invoice_fee"}}},
 		"agent_redemption_accounts": {predicate: "available_quota IS NULL OR reserved_quota IS NULL OR allocated_quota IS NULL OR spent_quota IS NULL OR available_quota <> 0 OR reserved_quota <> 0 OR allocated_quota < 0 OR spent_quota < 0 OR allocated_quota <> spent_quota"},
 		"agent_commission_accounts": {predicate: "pending_minor IS NULL OR available_minor IS NULL OR reserved_minor IS NULL OR held_minor IS NULL OR debt_minor IS NULL OR pending_minor <> 0 OR available_minor <> 0 OR reserved_minor <> 0 OR held_minor <> 0 OR debt_minor <> 0"},
 		// A paid/converted award remains subject to later refund clawback. Merely
@@ -104,7 +104,7 @@ agent_governances agent_governance_submissions agent_governance_audits agent_gov
 			}
 			archives = append(archives, statement.Schema.Table)
 		}
-		rules["agent_payment_receipts"] = nonAgentRetirementRule{predicate: "purpose IS NULL OR purpose NOT IN ?", args: []any{[]string{"topup", "payment_code", "agent_recharge"}}}
+		rules["agent_payment_receipts"] = nonAgentRetirementRule{predicate: "purpose IS NULL OR purpose NOT IN ?", args: []any{[]string{"topup", "invoice_fee", "payment_code", "agent_recharge"}}}
 		rules["agent_commission_outboxes"] = nonAgentRetirementRule{predicate: "(status IS NULL OR status <> ?) AND (route IS NULL OR route <> ?)", args: []any{"done", "referral"}}
 	}
 	var blocks []NonAgentCutoverBlock

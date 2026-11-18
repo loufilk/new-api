@@ -23,9 +23,11 @@ import type {
   ApplicationList,
   ApplicationReview,
   CommerceConfig,
+  EligibleInvoiceOrders,
   InvoiceApplication,
   InvoiceInput,
-  InvoiceOrder,
+  InvoicePaymentOptions,
+  InvoicePaymentResult,
   PartnerApplication,
   PartnerInput,
 } from './types'
@@ -51,13 +53,10 @@ export async function saveCommerceConfig(
   return requireServerSuccess(response.data).data
 }
 
-export async function getEligibleInvoiceOrders(): Promise<{
-  items: InvoiceOrder[]
-  config: CommerceConfig
-}> {
-  const response = await api.get<
-    Response<{ items: InvoiceOrder[]; config: CommerceConfig }>
-  >('/api/invoices/eligible-orders')
+export async function getEligibleInvoiceOrders(): Promise<EligibleInvoiceOrders> {
+  const response = await api.get<Response<EligibleInvoiceOrders>>(
+    '/api/invoices/eligible-orders'
+  )
   return requireServerSuccess(response.data).data
 }
 
@@ -90,6 +89,46 @@ export async function createInvoice(
   const response = await api.post<Response<InvoiceApplication>>(
     '/api/invoices',
     input,
+    { headers: { 'Idempotency-Key': requestKey } }
+  )
+  return requireServerSuccess(response.data).data
+}
+
+export async function getInvoicePaymentOptions(input: {
+  invoiceId?: number
+  currency: string
+  exponent: number
+  feeMinor: string
+}): Promise<InvoicePaymentOptions> {
+  const response = await api.get<Response<InvoicePaymentOptions>>(
+    input.invoiceId
+      ? `/api/invoices/${input.invoiceId}/payment-options`
+      : '/api/invoices/payment-options',
+    {
+      params: {
+        currency: input.currency,
+        currency_exponent: input.exponent,
+        fee_minor: input.feeMinor,
+      },
+    }
+  )
+  return requireServerSuccess(response.data).data
+}
+
+export async function payInvoiceFee(
+  id: number,
+  method: string,
+  revision: number,
+  requestKey: string,
+  expectedWalletQuota?: string
+): Promise<InvoicePaymentResult> {
+  const response = await api.post<Response<InvoicePaymentResult>>(
+    `/api/invoices/${id}/pay`,
+    {
+      method,
+      expected_revision: revision,
+      expected_wallet_quota: expectedWalletQuota,
+    },
     { headers: { 'Idempotency-Key': requestKey } }
   )
   return requireServerSuccess(response.data).data

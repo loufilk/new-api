@@ -71,7 +71,8 @@ export function formatMinorMoney(
   minor: string,
   currency: string,
   exponent: number,
-  locale: string | undefined
+  locale: string | undefined,
+  currencyDisplay: 'code' | 'symbol' = 'code'
 ): string {
   if (
     !/^-?(0|[1-9]\d*)$/.test(minor) ||
@@ -89,7 +90,7 @@ export function formatMinorMoney(
   const number = new Intl.NumberFormat(locale, {
     style: 'currency',
     currency,
-    currencyDisplay: 'code',
+    currencyDisplay,
     minimumFractionDigits: exponent,
     maximumFractionDigits: exponent,
   })

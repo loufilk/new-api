@@ -25,7 +25,7 @@ import { toIntlLocale } from '@/i18n/languages'
 import type { ApplicationEvent } from '../types'
 
 const statusLabels: Record<string, string> = {
-  awaiting_fee: 'Awaiting service fee',
+  awaiting_fee: 'Awaiting tax fee',
   submitted: 'Pending review',
   reviewing: 'Under review',
   approved: 'Approved',
@@ -61,7 +61,8 @@ export function InvoiceMoney(props: {
         props.minor,
         props.currency,
         props.exponent,
-        toIntlLocale(i18n.resolvedLanguage || i18n.language)
+        toIntlLocale(i18n.resolvedLanguage || i18n.language),
+        'symbol'
       )}
     </span>
   )

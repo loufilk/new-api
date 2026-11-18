@@ -131,3 +131,46 @@ func TestCommercePostgresRevokedPermissionCannotCommitManagementWrites(t *testin
 	require.NoError(t, err)
 	assert.Equal(t, partner, afterPartner)
 }
+
+func TestCommercePostgresInvoiceOverviewUsesAuthenticatedOwnerAndFullTotals(t *testing.T) {
+	if groupRenameControllerIsolatedProcess(t) {
+		return
+	}
+	f := setupInterceptionControllerTest(t)
+	require.NoError(t, i18n.Init())
+	require.NoError(t, f.db.AutoMigrate(append(model.CommerceModels(), &model.TopUp{}, &model.Redemption{})...))
+	config := model.DefaultCommerceConfig()
+	config.InvoiceEnabled, config.InvoiceMaxOrders = true, 1
+	_, err := model.SaveCommerceConfig(context.Background(), f.root.Id, config)
+	require.NoError(t, err)
+	orders := []model.TopUp{
+		{UserId: f.user.Id, TradeNo: "overview-first", Status: common.TopUpStatusSuccess, PaidCurrency: "CNY", PaidCurrencyExponent: 2, PaidAmountMinor: 12500, CompleteTime: common.GetTimestamp()},
+		{UserId: f.user.Id, TradeNo: "overview-second", Status: common.TopUpStatusSuccess, PaidCurrency: "CNY", PaidCurrencyExponent: 2, PaidAmountMinor: 25000, CompleteTime: common.GetTimestamp()},
+		{UserId: f.admin.Id, TradeNo: "overview-other-user", Status: common.TopUpStatusSuccess, PaidCurrency: "CNY", PaidCurrencyExponent: 2, PaidAmountMinor: 99999, CompleteTime: common.GetTimestamp()},
+	}
+	require.NoError(t, f.db.Create(&orders).Error)
+	response := commerceControllerRequest(f.user.Id, 0, "", "", GetEligibleInvoiceOrders)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var overview struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Items   []model.InvoiceOrder `json:"items"`
+			Summary model.InvoiceSummary `json:"summary"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &overview))
+	assert.True(t, overview.Success)
+	assert.Len(t, overview.Data.Items, 2)
+	assert.Equal(t, model.InvoiceSummaryAmount{AmountMinor: "37500", Count: 2}, overview.Data.Summary.Available)
+	assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+	assert.NotContains(t, response.Body.String(), "overview-other-user")
+	body := fmt.Sprintf(`{"order_ids":[%d],"category":"software_development","kind":"general","title_type":"individual","title":"Example buyer","email":"invoice@example.com"}`, orders[0].Id)
+	created := commerceControllerRequest(f.user.Id, 0, body, "overview-create", CreateInvoiceApplication)
+	require.Equal(t, http.StatusOK, created.Code, created.Body.String())
+	assert.Contains(t, created.Body.String(), `"category":"software_development"`)
+	response = commerceControllerRequest(f.user.Id, 0, "", "", GetEligibleInvoiceOrders)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &overview))
+	assert.Equal(t, model.InvoiceSummaryAmount{AmountMinor: "25000", Count: 1}, overview.Data.Summary.Available)
+	assert.Equal(t, model.InvoiceSummaryAmount{AmountMinor: "12500", Count: 1}, overview.Data.Summary.Processing)
+}

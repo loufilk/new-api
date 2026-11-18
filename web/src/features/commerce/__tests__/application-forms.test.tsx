@@ -16,14 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactElement } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import { useAuthStore } from '@/stores/auth-store'
 
 import { ApplicationReviewDialog } from '../components/application-review-dialog'
-import { InvoiceCreateDialog } from '../components/invoice-create-dialog'
+import { InvoiceApplicationForm } from '../components/invoice-application-form'
 import { InvoiceDetailDialog } from '../components/invoice-detail-dialog'
 import { PartnerCreateDialog } from '../components/partner-create-dialog'
 import type { CommerceConfig, InvoiceApplication } from '../types'
@@ -34,7 +36,7 @@ const config: CommerceConfig = {
   invoice_window_days: 30,
   invoice_max_orders: 100,
   invoice_currency: 'CNY',
-  general_fee_bps: 400,
+  general_fee_bps: 0,
   special_invoice_enabled: true,
   special_fee_bps: 600,
   invoice_instructions: '',
@@ -46,14 +48,30 @@ const config: CommerceConfig = {
 
 afterEach(() => useAuthStore.getState().auth.reset())
 
+function renderInvoiceForm(element: ReactElement) {
+  return render(
+    <QueryClientProvider
+      client={
+        new QueryClient({
+          defaultOptions: {
+            queries: { retry: false },
+            mutations: { retry: false },
+          },
+        })
+      }
+    >
+      {element}
+    </QueryClientProvider>
+  )
+}
+
 describe('invoice application form', () => {
   test('shows the eligible-order empty state and disables submission', () => {
-    render(
-      <InvoiceCreateDialog
+    renderInvoiceForm(
+      <InvoiceApplicationForm
         config={config}
         orders={[]}
         pending={false}
-        onClose={vi.fn()}
         onSubmit={vi.fn()}
       />
     )
@@ -72,8 +90,8 @@ describe('invoice application form', () => {
     })
     const submit = vi.fn().mockRejectedValue(new Error('Uncertain response'))
     const user = userEvent.setup()
-    render(
-      <InvoiceCreateDialog
+    renderInvoiceForm(
+      <InvoiceApplicationForm
         config={config}
         orders={[
           {
@@ -86,7 +104,6 @@ describe('invoice application form', () => {
           },
         ]}
         pending={false}
-        onClose={vi.fn()}
         onSubmit={submit}
       />
     )
@@ -132,7 +149,80 @@ describe('partner quotes form', () => {
   })
 })
 
+const reviewInvoiceFixture: InvoiceApplication = {
+  id: 15,
+  user_id: 21,
+  kind: 'general',
+  title_type: 'company',
+  title: 'Example Company',
+  tax_id: 'DEMO-TAX',
+  email: 'buyer@example.com',
+  address: '',
+  phone: '',
+  bank_name: '',
+  bank_account: '',
+  currency: 'CNY',
+  currency_exponent: 2,
+  amount_minor: '10000',
+  fee_minor: '100',
+  fee_bps: 100,
+  fee_receipt_reference: '',
+  fee_refund_status: '',
+  fee_refund_reference: '',
+  status: 'rejected',
+  revision: 2,
+  review_note: 'Please correct your tax identifier',
+  invoice_number: '',
+  delivery_url: '',
+  created_at: 1,
+  updated_at: 2,
+  orders: [],
+  events: [
+    {
+      id: 2,
+      action: 'reject',
+      from_status: 'awaiting_fee',
+      to_status: 'rejected',
+      note: 'Please correct your tax identifier',
+      created_at: 2,
+    },
+  ],
+}
+
 describe('application review confirmation', () => {
+  test('hides manual fee confirmation after an online payment order has been created', () => {
+    render(
+      <InvoiceDetailDialog
+        invoice={{
+          ...reviewInvoiceFixture,
+          status: 'awaiting_fee',
+          fee_payment: {
+            method: 'wxpay',
+            provider: 'epay',
+            status: 'pending',
+            amount_minor: '100',
+            currency: 'CNY',
+            currency_exponent: 2,
+            wallet_quota: '0',
+            trade_no: 'INV-PAY-15',
+            paid_at: 0,
+            refund_status: '',
+            refunded_at: 0,
+          },
+        }}
+        admin
+        canReview
+        pending={false}
+        onClose={vi.fn()}
+        onReview={vi.fn()}
+      />
+    )
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeVisible()
+    expect(
+      screen.queryByRole('button', { name: 'Record service fee receipt' })
+    ).not.toBeInTheDocument()
+  })
+
   test('requires a review note before rejecting an application', async () => {
     const submit = vi.fn().mockResolvedValue(undefined)
     const user = userEvent.setup()
@@ -192,45 +282,7 @@ describe('application review confirmation', () => {
   })
 
   test('an administrator can record a late service fee on a closed invoice while its rejection reason stays visible', async () => {
-    const invoice: InvoiceApplication = {
-      id: 15,
-      user_id: 21,
-      kind: 'general',
-      title_type: 'company',
-      title: 'Example Company',
-      tax_id: 'DEMO-TAX',
-      email: 'buyer@example.com',
-      address: '',
-      phone: '',
-      bank_name: '',
-      bank_account: '',
-      currency: 'CNY',
-      currency_exponent: 2,
-      amount_minor: '10000',
-      fee_minor: '100',
-      fee_bps: 100,
-      fee_receipt_reference: '',
-      fee_refund_status: '',
-      fee_refund_reference: '',
-      status: 'rejected',
-      revision: 2,
-      review_note: 'Please correct your tax identifier',
-      invoice_number: '',
-      delivery_url: '',
-      created_at: 1,
-      updated_at: 2,
-      orders: [],
-      events: [
-        {
-          id: 2,
-          action: 'reject',
-          from_status: 'awaiting_fee',
-          to_status: 'rejected',
-          note: 'Please correct your tax identifier',
-          created_at: 2,
-        },
-      ],
-    }
+    const invoice = reviewInvoiceFixture
     const onReview = vi.fn().mockResolvedValue(undefined)
     const user = userEvent.setup()
     render(

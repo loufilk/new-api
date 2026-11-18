@@ -34,10 +34,9 @@ const httpsURL = z
 
 export const invoiceSchema = z
   .object({
-    order_ids: z
-      .array(z.number().int().positive())
-      .min(1, 'Select at least one eligible order')
-      .max(100),
+    order_ids: z.array(z.number().int().positive()).max(100),
+    redemption_ids: z.array(z.number().int().positive()).max(100).optional(),
+    category: z.enum(['technical_service', 'software_development']).optional(),
     kind: z.enum(['general', 'special']),
     title_type: z.enum(['individual', 'company']),
     title: z
@@ -57,7 +56,21 @@ export const invoiceSchema = z
     bank_account: z.string().trim().max(80, 'Input is too long'),
   })
   .superRefine((input, context) => {
-    if (new Set(input.order_ids).size !== input.order_ids.length) {
+    const redemptions = input.redemption_ids ?? []
+    const count = input.order_ids.length + redemptions.length
+    if (!count || count > 100) {
+      context.addIssue({
+        code: 'custom',
+        path: ['order_ids'],
+        message: count
+          ? 'Select no more than 100 orders'
+          : 'Select at least one eligible order',
+      })
+    }
+    if (
+      new Set(input.order_ids).size !== input.order_ids.length ||
+      new Set(redemptions).size !== redemptions.length
+    ) {
       context.addIssue({
         code: 'custom',
         path: ['order_ids'],

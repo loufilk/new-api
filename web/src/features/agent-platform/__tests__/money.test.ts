@@ -103,6 +103,15 @@ describe('original-currency money', () => {
     )
     expect(formatMinorMoney('-1', 'USD', 2, 'en')).toBe('-USD 0.01')
   })
+  it('uses invoice currency symbols while preserving the default code display and exact minor units', () => {
+    expect(
+      formatMinorMoney('5500', 'CNY', 2, toIntlLocale('zhCN'), 'symbol')
+    ).toBe('¥55.00')
+    expect(
+      formatMinorMoney('9223372036854775807', 'USD', 2, 'en', 'symbol')
+    ).toBe('$92,233,720,368,547,758.07')
+    expect(formatMinorMoney('5500', 'CNY', 2, 'en')).toBe('CNY 55.00')
+  })
   it.each(['zhCN', 'zhTW', 'en', 'fr', 'ru', 'ja', 'vi', 'invalid_locale'])(
     'formats a fixed source amount for interface locale %s',
     (language) => {

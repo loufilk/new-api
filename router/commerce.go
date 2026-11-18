@@ -8,12 +8,17 @@ import (
 )
 
 func RegisterCommerceRoutes(api *gin.RouterGroup) {
+	api.GET("/invoices/payments/epay/notify", controller.InvoiceEpayNotify)
+	api.POST("/invoices/payments/epay/notify", controller.InvoiceEpayNotify)
 	user := api.Group("", middleware.DisableCache(), middleware.UserAuth())
 	user.GET("/commerce/config", controller.GetCommerceConfig)
+	user.GET("/invoices/payment-options", controller.GetInvoiceFeePaymentOptions)
+	user.GET("/invoices/:id/payment-options", controller.GetInvoiceFeePaymentOptions)
 	user.GET("/invoices/eligible-orders", controller.GetEligibleInvoiceOrders)
 	user.GET("/invoices", controller.ListInvoiceApplications)
 	user.GET("/invoices/:id", controller.GetInvoiceApplication)
 	user.POST("/invoices", middleware.CriticalRateLimit(), controller.CreateInvoiceApplication)
+	user.POST("/invoices/:id/pay", middleware.CriticalRateLimit(), controller.PayInvoiceFee)
 	user.POST("/invoices/:id/cancel", middleware.CriticalRateLimit(), controller.CancelInvoiceApplication)
 	user.GET("/partner-applications", controller.ListPartnerApplications)
 	user.GET("/partner-applications/:id", controller.GetPartnerApplication)

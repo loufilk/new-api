@@ -41,12 +41,18 @@ func accessTokenScopeRule(scope string) accessTokenRouteRule {
 // Casbin-guarded routes declare themselves through
 // DeclareAccessTokenPermissionRoute when they are registered.
 var accessTokenRouteRules = map[string]accessTokenRouteRule{
-	"GET /api/referral-withdrawals/summary":     accessTokenSessionRule,
-	"GET /api/referral-withdrawals":             accessTokenSessionRule,
-	"GET /api/referral-withdrawals/:id":         accessTokenSessionRule,
-	"POST /api/referral-withdrawals/quote":      accessTokenSessionRule,
-	"POST /api/referral-withdrawals":            accessTokenSessionRule,
-	"POST /api/referral-withdrawals/:id/cancel": accessTokenSessionRule,
+	"GET /api/referral-withdrawals/summary":           accessTokenSessionRule,
+	"GET /api/referral-withdrawals":                   accessTokenSessionRule,
+	"GET /api/referral-withdrawals/:id":               accessTokenSessionRule,
+	"POST /api/referral-withdrawals/quote":            accessTokenSessionRule,
+	"POST /api/referral-withdrawals":                  accessTokenSessionRule,
+	"POST /api/referral-withdrawals/:id/cancel":       accessTokenSessionRule,
+	"GET /api/admin/referral-withdrawals/config":      accessTokenSessionRule,
+	"PUT /api/admin/referral-withdrawals/config":      accessTokenSessionRule,
+	"GET /api/admin/referral-withdrawals":             accessTokenSessionRule,
+	"GET /api/admin/referral-withdrawals/:id":         accessTokenSessionRule,
+	"POST /api/admin/referral-withdrawals/:id/review": accessTokenSessionRule,
+	"POST /api/admin/referral-withdrawals/:id/pay":    accessTokenSessionRule,
 	// Agent financial/business endpoints are browser-session-only. Declare their
 	// existing deny-PAT boundary explicitly; these rules never grant token scopes.
 	"GET /api/agent-platform/self":                              accessTokenSessionRule,
@@ -173,9 +179,12 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	// review workflows deliberately use live browser sessions, like support.
 	"GET /api/commerce/config":                        accessTokenSessionRule,
 	"GET /api/invoices/eligible-orders":               accessTokenSessionRule,
+	"GET /api/invoices/payment-options":               accessTokenSessionRule,
+	"GET /api/invoices/:id/payment-options":           accessTokenSessionRule,
 	"GET /api/invoices":                               accessTokenSessionRule,
 	"GET /api/invoices/:id":                           accessTokenSessionRule,
 	"POST /api/invoices":                              accessTokenSessionRule,
+	"POST /api/invoices/:id/pay":                      accessTokenSessionRule,
 	"POST /api/invoices/:id/cancel":                   accessTokenSessionRule,
 	"GET /api/partner-applications":                   accessTokenSessionRule,
 	"GET /api/partner-applications/:id":               accessTokenSessionRule,

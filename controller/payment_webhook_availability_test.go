@@ -254,8 +254,8 @@ func setupEpayCallbackTest(t *testing.T) {
 	model.DB = nil
 }
 
-// assertEpayCallbacksVerifyBeforeSettlement sends each callback to the top-up
-// and subscription endpoints by GET and POST. Only a valid pending callback is
+// assertEpayCallbacksVerifyBeforeSettlement sends each callback to the top-up,
+// invoice and subscription endpoints by GET and POST. Only a valid pending callback is
 // accepted; every other callback is rejected.
 func assertEpayCallbacksVerifyBeforeSettlement(t *testing.T, cases []epayCallbackCase) {
 	t.Helper()
@@ -271,6 +271,10 @@ func assertEpayCallbacksVerifyBeforeSettlement(t *testing.T, cases []epayCallbac
 	}{
 		{
 			name: "topup notify", path: "/api/user/epay/notify", handler: EpayNotify,
+			status: http.StatusOK, rejectedBody: "fail", pendingBody: "success",
+		},
+		{
+			name: "invoice notify", path: "/api/invoices/payments/epay/notify", handler: InvoiceEpayNotify,
 			status: http.StatusOK, rejectedBody: "fail", pendingBody: "success",
 		},
 		{

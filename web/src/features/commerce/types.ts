@@ -42,6 +42,8 @@ export type ApplicationEvent = {
 }
 
 export type InvoiceOrder = {
+  source_type?: 'topup' | 'redemption'
+  redemption_id?: number
   topup_id: number
   trade_no: string
   currency: string
@@ -52,6 +54,8 @@ export type InvoiceOrder = {
 
 export type InvoiceInput = {
   order_ids: number[]
+  redemption_ids?: number[]
+  category?: 'technical_service' | 'software_development'
   kind: 'general' | 'special'
   title_type: 'individual' | 'company'
   title: string
@@ -63,7 +67,10 @@ export type InvoiceInput = {
   bank_account: string
 }
 
-export type InvoiceApplication = Omit<InvoiceInput, 'order_ids'> & {
+export type InvoiceApplication = Omit<
+  InvoiceInput,
+  'order_ids' | 'redemption_ids'
+> & {
   id: number
   user_id: number
   currency: string
@@ -74,6 +81,7 @@ export type InvoiceApplication = Omit<InvoiceInput, 'order_ids'> & {
   fee_receipt_reference: string
   fee_refund_status: '' | 'pending' | 'refunded'
   fee_refund_reference: string
+  fee_payment?: InvoiceFeePayment
   status:
     | 'awaiting_fee'
     | 'submitted'
@@ -89,6 +97,57 @@ export type InvoiceApplication = Omit<InvoiceInput, 'order_ids'> & {
   updated_at: number
   orders: InvoiceOrder[]
   events?: ApplicationEvent[]
+}
+
+export type InvoiceSummary = {
+  currency: string
+  currency_exponent: number
+  available: { amount_minor: string; count: number }
+  processing: { amount_minor: string; count: number }
+  issued: { amount_minor: string; count: number }
+}
+
+export type EligibleInvoiceOrders = {
+  items: InvoiceOrder[]
+  config: CommerceConfig
+  summary: InvoiceSummary
+}
+
+export type InvoicePaymentMethod = {
+  type: string
+  name: string
+  provider: 'wallet' | 'epay'
+}
+
+export type InvoiceFeePayment = {
+  method: string
+  provider: 'wallet' | 'epay'
+  status: string
+  amount_minor: string
+  currency: string
+  currency_exponent: number
+  wallet_quota: string
+  trade_no: string
+  paid_at: number
+  refund_status: string
+  refunded_at: number
+}
+
+export type InvoicePaymentOptions = {
+  methods: InvoicePaymentMethod[]
+  wallet_quota: string
+  wallet_balance_quota: string
+  currency: string
+  currency_exponent: number
+  fee_minor: string
+  payment?: InvoiceFeePayment
+}
+
+export type InvoicePaymentResult = {
+  invoice: InvoiceApplication
+  payment: InvoiceFeePayment
+  url?: string
+  params?: Record<string, string>
 }
 
 export type PartnerQuote = {

@@ -23,8 +23,9 @@ var (
 	ErrInvoiceIneligible = errors.New("One or more orders are no longer eligible for invoicing")
 )
 
-// CommerceConfig is independent from wallet accounting. Fees are quotations for
-// a manually fulfilled service; this module never debits a wallet or pays out.
+// CommerceConfig controls invoice eligibility and the quoted service fee.
+// Fee payments and refunds use the invoice payment state machine and ledger;
+// invoice approval and delivery remain manual operations.
 type CommerceConfig struct {
 	ID                    int    `json:"-" gorm:"primaryKey;autoIncrement:false"`
 	Revision              int64  `json:"revision" gorm:"not null"`
@@ -56,7 +57,7 @@ type CommerceAudit struct {
 }
 
 func CommerceModels() []any {
-	return []any{&CommerceConfig{}, &CommerceAudit{}, &InvoiceApplication{}, &InvoiceOrder{}, &InvoiceReservation{}, &PartnerApplication{}}
+	return []any{&CommerceConfig{}, &CommerceAudit{}, &InvoiceApplication{}, &InvoiceOrder{}, &InvoiceReservation{}, &InvoiceRedemptionReservation{}, &InvoiceFeePayment{}, &PartnerApplication{}}
 }
 
 func DefaultCommerceConfig() CommerceConfig {

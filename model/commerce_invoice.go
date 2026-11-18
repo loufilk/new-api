@@ -1,6 +1,7 @@
 package model
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"slices"
@@ -13,44 +14,53 @@ import (
 
 const commerceMaxMinor int64 = 9_007_199_254_740_991
 
+const (
+	InvoiceCategoryTechnicalService    = "technical_service"
+	InvoiceCategorySoftwareDevelopment = "software_development"
+)
+
 type InvoiceApplication struct {
-	ID                  int64           `json:"id" gorm:"primaryKey"`
-	UserID              int             `json:"user_id" gorm:"index;uniqueIndex:idx_invoice_user_request,priority:1"`
-	RequestKey          string          `json:"-" gorm:"type:varchar(96);uniqueIndex:idx_invoice_user_request,priority:2"`
-	RequestHash         string          `json:"-" gorm:"type:varchar(64)"`
-	Kind                string          `json:"kind" gorm:"type:varchar(16)"`
-	TitleType           string          `json:"title_type" gorm:"type:varchar(16)"`
-	Title               string          `json:"title" gorm:"type:varchar(200)"`
-	TaxID               string          `json:"tax_id" gorm:"type:varchar(64)"`
-	Email               string          `json:"email" gorm:"type:varchar(254)"`
-	Address             string          `json:"address" gorm:"type:varchar(300)"`
-	Phone               string          `json:"phone" gorm:"type:varchar(64)"`
-	BankName            string          `json:"bank_name" gorm:"type:varchar(200)"`
-	BankAccount         string          `json:"bank_account" gorm:"type:varchar(80)"`
-	Currency            string          `json:"currency" gorm:"type:varchar(3)"`
-	CurrencyExponent    int             `json:"currency_exponent"`
-	AmountMinor         int64           `json:"amount_minor,string"`
-	FeeMinor            int64           `json:"fee_minor,string"`
-	FeeBPS              int             `json:"fee_bps"`
-	FeeReceiptReference string          `json:"fee_receipt_reference" gorm:"type:varchar(200)"`
-	FeeRefundStatus     string          `json:"fee_refund_status" gorm:"type:varchar(16)"`
-	FeeRefundReference  string          `json:"fee_refund_reference" gorm:"type:varchar(200)"`
-	Status              string          `json:"status" gorm:"type:varchar(24);index"`
-	Revision            int64           `json:"revision"`
-	ReviewNote          string          `json:"review_note" gorm:"type:varchar(1000)"`
-	InvoiceNumber       string          `json:"invoice_number" gorm:"type:varchar(100)"`
-	DeliveryURL         string          `json:"delivery_url" gorm:"type:text"`
-	CreatedAt           int64           `json:"created_at" gorm:"autoCreateTime:false;index"`
-	UpdatedAt           int64           `json:"updated_at" gorm:"autoUpdateTime:false"`
-	ReviewedBy          int             `json:"reviewed_by"`
-	Orders              []InvoiceOrder  `json:"orders" gorm:"-"`
-	Events              []CommerceAudit `json:"events,omitempty" gorm:"-"`
+	ID                  int64              `json:"id" gorm:"primaryKey"`
+	UserID              int                `json:"user_id" gorm:"index;uniqueIndex:idx_invoice_user_request,priority:1"`
+	RequestKey          string             `json:"-" gorm:"type:varchar(96);uniqueIndex:idx_invoice_user_request,priority:2"`
+	RequestHash         string             `json:"-" gorm:"type:varchar(64)"`
+	Kind                string             `json:"kind" gorm:"type:varchar(16)"`
+	TitleType           string             `json:"title_type" gorm:"type:varchar(16)"`
+	Category            string             `json:"category" gorm:"type:varchar(32);not null;default:technical_service"`
+	Title               string             `json:"title" gorm:"type:varchar(200)"`
+	TaxID               string             `json:"tax_id" gorm:"type:varchar(64)"`
+	Email               string             `json:"email" gorm:"type:varchar(254)"`
+	Address             string             `json:"address" gorm:"type:varchar(300)"`
+	Phone               string             `json:"phone" gorm:"type:varchar(64)"`
+	BankName            string             `json:"bank_name" gorm:"type:varchar(200)"`
+	BankAccount         string             `json:"bank_account" gorm:"type:varchar(80)"`
+	Currency            string             `json:"currency" gorm:"type:varchar(3)"`
+	CurrencyExponent    int                `json:"currency_exponent"`
+	AmountMinor         int64              `json:"amount_minor,string"`
+	FeeMinor            int64              `json:"fee_minor,string"`
+	FeeBPS              int                `json:"fee_bps"`
+	FeeReceiptReference string             `json:"fee_receipt_reference" gorm:"type:varchar(200)"`
+	FeeRefundStatus     string             `json:"fee_refund_status" gorm:"type:varchar(16)"`
+	FeeRefundReference  string             `json:"fee_refund_reference" gorm:"type:varchar(200)"`
+	Status              string             `json:"status" gorm:"type:varchar(24);index"`
+	Revision            int64              `json:"revision"`
+	ReviewNote          string             `json:"review_note" gorm:"type:varchar(1000)"`
+	InvoiceNumber       string             `json:"invoice_number" gorm:"type:varchar(100)"`
+	DeliveryURL         string             `json:"delivery_url" gorm:"type:text"`
+	CreatedAt           int64              `json:"created_at" gorm:"autoCreateTime:false;index"`
+	UpdatedAt           int64              `json:"updated_at" gorm:"autoUpdateTime:false"`
+	ReviewedBy          int                `json:"reviewed_by"`
+	Orders              []InvoiceOrder     `json:"orders" gorm:"-"`
+	Events              []CommerceAudit    `json:"events,omitempty" gorm:"-"`
+	FeePayment          *InvoiceFeePayment `json:"fee_payment,omitempty" gorm:"-"`
 }
 
 type InvoiceOrder struct {
 	ID               int64  `json:"-" gorm:"primaryKey"`
 	InvoiceID        int64  `json:"invoice_id" gorm:"index"`
 	TopUpID          int    `json:"topup_id" gorm:"index"`
+	SourceType       string `json:"source_type" gorm:"type:varchar(16);not null;default:topup"`
+	RedemptionID     int    `json:"redemption_id" gorm:"index"`
 	TradeNo          string `json:"trade_no" gorm:"type:varchar(255)"`
 	Currency         string `json:"currency" gorm:"type:varchar(3)"`
 	CurrencyExponent int    `json:"currency_exponent"`
@@ -65,17 +75,24 @@ type InvoiceReservation struct {
 	InvoiceID int64 `json:"invoice_id" gorm:"index"`
 }
 
+type InvoiceRedemptionReservation struct {
+	RedemptionID int   `json:"redemption_id" gorm:"primaryKey;autoIncrement:false"`
+	InvoiceID    int64 `json:"invoice_id" gorm:"index"`
+}
+
 type InvoiceCreate struct {
-	OrderIDs    []int  `json:"order_ids"`
-	Kind        string `json:"kind"`
-	TitleType   string `json:"title_type"`
-	Title       string `json:"title"`
-	TaxID       string `json:"tax_id"`
-	Email       string `json:"email"`
-	Address     string `json:"address"`
-	Phone       string `json:"phone"`
-	BankName    string `json:"bank_name"`
-	BankAccount string `json:"bank_account"`
+	OrderIDs      []int  `json:"order_ids"`
+	Kind          string `json:"kind"`
+	TitleType     string `json:"title_type"`
+	Title         string `json:"title"`
+	TaxID         string `json:"tax_id"`
+	Email         string `json:"email"`
+	Address       string `json:"address"`
+	Phone         string `json:"phone"`
+	BankName      string `json:"bank_name"`
+	BankAccount   string `json:"bank_account"`
+	RedemptionIDs []int  `json:"redemption_ids,omitempty"`
+	Category      string `json:"category,omitempty"`
 }
 
 type CommerceReview struct {
@@ -98,28 +115,42 @@ func EligibleInvoiceOrders(ctx context.Context, userID int) ([]InvoiceOrder, *Co
 		return orders, config, nil
 	}
 	var topups []TopUp
-	err = DB.WithContext(ctx).Where("user_id = ? AND status = ? AND agent_simple_top_up = ? AND complete_time >= ? AND paid_currency = ? AND paid_amount_minor > ? AND paid_currency_exponent >= ? AND paid_currency_exponent <= ?", userID, common.TopUpStatusSuccess, false, common.GetTimestamp()-int64(config.InvoiceWindowDays)*86400, config.InvoiceCurrency, 0, 0, 4).
-		Where("id NOT IN (?)", DB.Model(&InvoiceReservation{}).Select("top_up_id")).Order("id DESC").Limit(config.InvoiceMaxOrders).Find(&topups).Error
-	for _, order := range topups {
-		orders = append(orders, InvoiceOrder{TopUpID: order.Id, TradeNo: order.TradeNo, Currency: order.PaidCurrency, CurrencyExponent: order.PaidCurrencyExponent, AmountMinor: order.PaidAmountMinor, CompletedAt: order.CompleteTime})
+	cutoff := common.GetTimestamp() - int64(config.InvoiceWindowDays)*86400
+	err = DB.WithContext(ctx).Where("user_id = ? AND status = ? AND agent_simple_top_up = ? AND complete_time >= ? AND paid_currency = ? AND paid_amount_minor > ? AND paid_amount_minor <= ? AND paid_currency_exponent >= ? AND paid_currency_exponent <= ?", userID, common.TopUpStatusSuccess, false, cutoff, config.InvoiceCurrency, 0, commerceMaxMinor, 0, 4).
+		Where("id NOT IN (?)", DB.Model(&InvoiceReservation{}).Select("top_up_id")).Order("id DESC").Find(&topups).Error
+	if err != nil {
+		return nil, nil, err
 	}
-	return orders, config, err
+	for _, order := range topups {
+		orders = append(orders, InvoiceOrder{SourceType: "topup", TopUpID: order.Id, TradeNo: order.TradeNo, Currency: order.PaidCurrency, CurrencyExponent: order.PaidCurrencyExponent, AmountMinor: order.PaidAmountMinor, CompletedAt: order.CompleteTime})
+	}
+	redemptions, err := invoiceRedemptionOrders(DB.WithContext(ctx), userID, config.InvoiceCurrency, cutoff, nil, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	orders = append(orders, redemptions...)
+	slices.SortStableFunc(orders, func(a, b InvoiceOrder) int { return cmp.Compare(b.CompletedAt, a.CompletedAt) })
+	return orders, config, nil
 }
 
 func CreateInvoiceApplication(ctx context.Context, userID int, requestKey string, input InvoiceCreate) (*InvoiceApplication, error) {
 	input.Title, input.TaxID, input.Email = strings.TrimSpace(input.Title), strings.TrimSpace(input.TaxID), strings.TrimSpace(input.Email)
 	input.Address, input.Phone = strings.TrimSpace(input.Address), strings.TrimSpace(input.Phone)
 	input.BankName, input.BankAccount = strings.TrimSpace(input.BankName), strings.TrimSpace(input.BankAccount)
-	if !commerceRequestKey(requestKey) || len(input.OrderIDs) == 0 || len(input.OrderIDs) > 100 || !slices.Contains([]string{"general", "special"}, input.Kind) || !slices.Contains([]string{"individual", "company"}, input.TitleType) || !commerceText(input.Title, 2, 200) || !commerceEmail(input.Email) || !commerceText(input.TaxID, 0, 64) || !commerceText(input.Address, 0, 300) || !commerceText(input.Phone, 0, 64) || !commerceText(input.BankName, 0, 200) || !commerceText(input.BankAccount, 0, 80) {
+	input.Category = strings.TrimSpace(input.Category)
+	orderCount := len(input.OrderIDs) + len(input.RedemptionIDs)
+	if !commerceRequestKey(requestKey) || orderCount == 0 || orderCount > 100 || !slices.Contains([]string{"", InvoiceCategoryTechnicalService, InvoiceCategorySoftwareDevelopment}, input.Category) || !slices.Contains([]string{"general", "special"}, input.Kind) || !slices.Contains([]string{"individual", "company"}, input.TitleType) || !commerceText(input.Title, 2, 200) || !commerceEmail(input.Email) || !commerceText(input.TaxID, 0, 64) || !commerceText(input.Address, 0, 300) || !commerceText(input.Phone, 0, 64) || !commerceText(input.BankName, 0, 200) || !commerceText(input.BankAccount, 0, 80) {
 		return nil, ErrCommerceInvalid
 	}
 	if input.TitleType == "company" && input.TaxID == "" || input.Kind == "special" && (input.TitleType != "company" || input.Address == "" || input.Phone == "" || input.BankName == "" || input.BankAccount == "") {
 		return nil, ErrCommerceInvalid
 	}
-	slices.Sort(input.OrderIDs)
-	for i, id := range input.OrderIDs {
-		if id <= 0 || i > 0 && input.OrderIDs[i-1] == id {
-			return nil, ErrCommerceInvalid
+	for _, ids := range [][]int{input.OrderIDs, input.RedemptionIDs} {
+		slices.Sort(ids)
+		for i, id := range ids {
+			if id <= 0 || i > 0 && ids[i-1] == id {
+				return nil, ErrCommerceInvalid
+			}
 		}
 	}
 	hash, err := commerceRequestHash(input)
@@ -148,7 +179,7 @@ func CreateInvoiceApplication(ctx context.Context, userID int, requestKey string
 		if !config.InvoiceEnabled {
 			return ErrCommerceDisabled
 		}
-		if len(input.OrderIDs) > config.InvoiceMaxOrders || input.Kind == "special" && !config.SpecialInvoiceEnabled {
+		if orderCount > config.InvoiceMaxOrders || input.Kind == "special" && !config.SpecialInvoiceEnabled {
 			return ErrCommerceInvalid
 		}
 		var orders []TopUp
@@ -169,13 +200,27 @@ func CreateInvoiceApplication(ctx context.Context, userID int, requestKey string
 		if reserved > 0 {
 			return ErrInvoiceIneligible
 		}
-		var amount int64
-		exponent := orders[0].PaidCurrencyExponent
+		lines := make([]InvoiceOrder, 0, orderCount)
 		for _, order := range orders {
-			if order.Status != common.TopUpStatusSuccess || order.AgentSimpleTopUp || order.CompleteTime < cutoff || order.PaidCurrency != config.InvoiceCurrency || order.PaidCurrencyExponent != exponent || exponent < 0 || exponent > 4 || order.PaidAmountMinor <= 0 || order.PaidAmountMinor > commerceMaxMinor-amount {
+			lines = append(lines, InvoiceOrder{SourceType: "topup", TopUpID: order.Id, TradeNo: order.TradeNo, Currency: order.PaidCurrency, CurrencyExponent: order.PaidCurrencyExponent, AmountMinor: order.PaidAmountMinor, CompletedAt: order.CompleteTime})
+		}
+		if len(input.RedemptionIDs) > 0 {
+			redemptions, err := invoiceRedemptionOrders(tx, userID, config.InvoiceCurrency, cutoff, input.RedemptionIDs, true)
+			if err != nil {
+				return err
+			}
+			if len(redemptions) != len(input.RedemptionIDs) {
 				return ErrInvoiceIneligible
 			}
-			amount += order.PaidAmountMinor
+			lines = append(lines, redemptions...)
+		}
+		var amount int64
+		exponent := lines[0].CurrencyExponent
+		for _, line := range lines {
+			if line.Currency != config.InvoiceCurrency || line.CurrencyExponent != exponent || exponent < 0 || exponent > 4 || line.AmountMinor <= 0 || line.AmountMinor > commerceMaxMinor-amount {
+				return ErrInvoiceIneligible
+			}
+			amount += line.AmountMinor
 		}
 		feeBPS := config.GeneralFeeBPS
 		if input.Kind == "special" {
@@ -187,16 +232,24 @@ func CreateInvoiceApplication(ctx context.Context, userID int, requestKey string
 			status = "awaiting_fee"
 		}
 		now := common.GetTimestamp()
-		result = InvoiceApplication{UserID: userID, RequestKey: requestKey, RequestHash: hash, Kind: input.Kind, TitleType: input.TitleType, Title: input.Title, TaxID: input.TaxID, Email: input.Email, Address: input.Address, Phone: input.Phone, BankName: input.BankName, BankAccount: input.BankAccount, Currency: config.InvoiceCurrency, CurrencyExponent: exponent, AmountMinor: amount, FeeMinor: fee, FeeBPS: feeBPS, Status: status, Revision: 1, CreatedAt: now, UpdatedAt: now}
+		category := input.Category
+		if category == "" {
+			category = InvoiceCategoryTechnicalService
+		}
+		result = InvoiceApplication{UserID: userID, RequestKey: requestKey, RequestHash: hash, Kind: input.Kind, TitleType: input.TitleType, Category: category, Title: input.Title, TaxID: input.TaxID, Email: input.Email, Address: input.Address, Phone: input.Phone, BankName: input.BankName, BankAccount: input.BankAccount, Currency: config.InvoiceCurrency, CurrencyExponent: exponent, AmountMinor: amount, FeeMinor: fee, FeeBPS: feeBPS, Status: status, Revision: 1, CreatedAt: now, UpdatedAt: now}
 		if err := tx.Create(&result).Error; err != nil {
 			return err
 		}
-		for _, order := range orders {
-			line := InvoiceOrder{InvoiceID: result.ID, TopUpID: order.Id, TradeNo: order.TradeNo, Currency: order.PaidCurrency, CurrencyExponent: exponent, AmountMinor: order.PaidAmountMinor, CompletedAt: order.CompleteTime}
+		for _, line := range lines {
+			line.InvoiceID = result.ID
 			if err := tx.Create(&line).Error; err != nil {
 				return err
 			}
-			if err := tx.Create(&InvoiceReservation{TopUpID: order.Id, InvoiceID: result.ID}).Error; err != nil {
+			var reservation any = &InvoiceReservation{TopUpID: line.TopUpID, InvoiceID: result.ID}
+			if line.SourceType == "redemption" {
+				reservation = &InvoiceRedemptionReservation{RedemptionID: line.RedemptionID, InvoiceID: result.ID}
+			}
+			if err := tx.Create(reservation).Error; err != nil {
 				return err
 			}
 		}
@@ -224,6 +277,9 @@ func GetInvoiceApplication(ctx context.Context, userID int, id int64, admin bool
 	if err := DB.WithContext(ctx).Where("kind = ? AND resource_id = ?", "invoice", id).Order("id").Find(&result.Events).Error; err != nil {
 		return nil, err
 	}
+	if err := loadInvoiceFeePaymentTx(DB.WithContext(ctx), &result); err != nil {
+		return nil, err
+	}
 	return &result, nil
 }
 
@@ -233,7 +289,9 @@ func ListInvoiceApplications(ctx context.Context, userID int, admin bool, status
 	if !admin {
 		query = query.Where("user_id = ?", userID)
 	}
-	if status != "" {
+	if status == "reviewing" {
+		query = query.Where("status IN ?", []string{"submitted", "approved"})
+	} else if status != "" {
 		query = query.Where("status = ?", status)
 	}
 	var count int64
@@ -253,6 +311,19 @@ func ReviewInvoiceApplication(ctx context.Context, actorID int, id int64, admin 
 	}
 	var row InvoiceApplication
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if admin {
+			var owner InvoiceApplication
+			if err := tx.Select("user_id").First(&owner, id).Error; err != nil {
+				return err
+			}
+			// Review can refund a fee to the applicant. Lock both users in a
+			// stable order before the invoice so administrators reviewing each
+			// other's applications cannot acquire the wallet locks in reverse.
+			var users []User
+			if err := lockForUpdate(tx).Select("id").Where("id IN ?", []int{actorID, owner.UserID}).Order("id").Find(&users).Error; err != nil {
+				return err
+			}
+		}
 		if err := commerceActor(tx, actorID, admin, permissions...); err != nil {
 			return err
 		}
@@ -267,6 +338,9 @@ func ReviewInvoiceApplication(ctx context.Context, actorID int, id int64, admin 
 			return ErrCommerceConflict
 		}
 		before := row.Status
+		if err := guardInvoiceFeeReviewTx(tx, &row, input); err != nil {
+			return err
+		}
 		switch input.Action {
 		case "record_fee_refund":
 			if !admin || !slices.Contains([]string{"rejected", "cancelled"}, row.Status) || row.FeeRefundStatus != "pending" || !commerceText(input.FeeRefundReference, 3, 200) {
@@ -313,6 +387,9 @@ func ReviewInvoiceApplication(ctx context.Context, actorID int, id int64, admin 
 		if (row.Status == "rejected" || row.Status == "cancelled") && row.FeeMinor > 0 && row.FeeReceiptReference != "" && row.FeeRefundStatus == "" {
 			row.FeeRefundStatus = "pending"
 		}
+		if err := refundInvoiceWalletFeeTx(tx, &row, actorID); err != nil {
+			return err
+		}
 		row.Revision++
 		row.UpdatedAt = common.GetTimestamp()
 		if err := tx.Save(&row).Error; err != nil {
@@ -322,11 +399,15 @@ func ReviewInvoiceApplication(ctx context.Context, actorID int, id int64, admin 
 			if err := tx.Where("invoice_id = ?", row.ID).Delete(&InvoiceReservation{}).Error; err != nil {
 				return err
 			}
+			if err := tx.Where("invoice_id = ?", row.ID).Delete(&InvoiceRedemptionReservation{}).Error; err != nil {
+				return err
+			}
 		}
 		return tx.Create(&CommerceAudit{Kind: "invoice", ResourceID: row.ID, UserID: row.UserID, ActorID: actorID, Action: input.Action, FromStatus: before, ToStatus: row.Status, Note: input.Note, CreatedAt: row.UpdatedAt}).Error
 	})
 	if err != nil {
 		return nil, err
 	}
+	RefreshUserQuotaCache(row.UserID, 0)
 	return GetInvoiceApplication(ctx, actorID, row.ID, admin)
 }

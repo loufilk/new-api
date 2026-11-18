@@ -107,7 +107,7 @@ function CommerceSettingsForm(props: {
       <Alert>
         <AlertDescription>
           {t(
-            'Service fees are quoted separately. Receipts and refunds are recorded manually; these settings never authorize automatic wallet deductions.'
+            'Customers can pay invoice fees from their paid balance or through enabled online payment methods. Cancelled balance payments are returned automatically; online refunds are recorded after payment.'
           )}
         </AlertDescription>
       </Alert>
@@ -116,7 +116,7 @@ function CommerceSettingsForm(props: {
           <CardTitle>{t('Invoice rules')}</CardTitle>
           <CardDescription>
             {t(
-              'Only successful recharge orders with verified settlement currency and amount can be selected.'
+              'Paid recharge orders and redeemed payment codes with verified settlement currency and amount can be selected.'
             )}
           </CardDescription>
         </CardHeader>
