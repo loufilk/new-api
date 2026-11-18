@@ -97,6 +97,12 @@ func PlaygroundBootstrap(c *gin.Context) {
 	}
 
 	groups := service.GetUserUsableGroups(userCache.Group)
+	policy, err := model.GetRequestUserGroupPricing(c, userID)
+	if err != nil {
+		userGroupPricingAPIError(c, err)
+		return
+	}
+	c.Header("Cache-Control", "private, no-store")
 	// 复用定价目录投影：仅返回已通过状态、计费可用性与能力投影的模型，
 	// 再与各分组的可路由模型求交集，避免引入定价目录外的模型。
 	pricing := model.GetPricing()
@@ -109,7 +115,7 @@ func PlaygroundBootstrap(c *gin.Context) {
 	modelsByGroup := make(map[string][]string, len(groups))
 	modelSet := make(map[string]struct{})
 	for name, desc := range groups {
-		groupInfos = append(groupInfos, playgroundGroupInfo{Name: name, Desc: desc, Ratio: service.GetUserGroupRatio(userCache.Group, name)})
+		groupInfos = append(groupInfos, playgroundGroupInfo{Name: name, Desc: desc, Ratio: policy.ResolveGroupRatio(userCache.Group, name).GroupRatio})
 		groupModels := playgroundModelsForGroup(name, pricingSet)
 		modelsByGroup[name] = groupModels
 		for _, modelName := range groupModels {

@@ -206,6 +206,10 @@ func refreshTieredBillingGroup(relayInfo *relaycommon.RelayInfo) (*billingexpr.B
 // estimate before sending. If the initial group was free and skipped
 // pre-consume, switching to a paid group creates the session at that point.
 func PrepareTieredBillingForSelectedGroup(c *gin.Context, relayInfo *relaycommon.RelayInfo) *types.NewAPIError {
+	previousEstimate := 0
+	if relayInfo != nil && relayInfo.TieredBillingSnapshot != nil {
+		previousEstimate = relayInfo.TieredBillingSnapshot.EstimatedQuotaAfterGroup
+	}
 	snap, err := refreshTieredBillingGroup(relayInfo)
 	if err != nil {
 		return types.NewErrorWithStatusCode(
@@ -229,10 +233,49 @@ func PrepareTieredBillingForSelectedGroup(c *gin.Context, relayInfo *relaycommon
 	// initial group was free so downstream state stays consistent.
 	relayInfo.PriceData.FreeModel = false
 
-	if relayInfo.Billing == nil {
-		return PreConsumeBilling(c, snap.EstimatedQuotaAfterGroup, relayInfo)
+	if relayInfo.Billing == nil || snap.EstimatedQuotaAfterGroup > previousEstimate {
+		// The initial trusted quote already passed affordability checks. A more
+		// expensive fallback must cover its new quote before another send.
+		// PreConsumeBilling uses ReserveBeforeSubmit for an existing session.
+		if apiErr := PreConsumeBilling(c, snap.EstimatedQuotaAfterGroup, relayInfo); apiErr != nil {
+			return apiErr
+		}
+	} else if err := relayInfo.Billing.Reserve(snap.EstimatedQuotaAfterGroup); err != nil {
+		return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
 	}
-	if err := relayInfo.Billing.Reserve(snap.EstimatedQuotaAfterGroup); err != nil {
+	relayInfo.FinalPreConsumedQuota = relayInfo.Billing.GetPreConsumedQuota()
+	return nil
+}
+
+// PrepareBillingForSelectedGroup uses the admitted model/quantity estimate and
+// the rate of the actual retry group. This includes legacy token/fixed billing:
+// a personal zero rate must not allow a paid fallback to skip its reservation.
+func PrepareBillingForSelectedGroup(c *gin.Context, relayInfo *relaycommon.RelayInfo) *types.NewAPIError {
+	if relayInfo == nil {
+		return nil
+	}
+	if relayInfo.TieredBillingSnapshot != nil {
+		return PrepareTieredBillingForSelectedGroup(c, relayInfo)
+	}
+	price := &relayInfo.PriceData
+	if !price.HasQuotaBeforeGroup {
+		return nil
+	}
+	quota, err := common.QuotaFromFloatStrict(price.QuotaBeforeGroup * price.GroupRatioInfo.GroupRatio)
+	if err != nil {
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeModelPriceError, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	previousEstimate := price.QuotaToPreConsume
+	price.QuotaToPreConsume = quota
+	if price.GroupRatioInfo.GroupRatio == 0 || price.QuotaBeforeGroup == 0 {
+		return nil
+	}
+	price.FreeModel = false
+	if relayInfo.Billing == nil || quota > previousEstimate {
+		if apiErr := PreConsumeBilling(c, quota, relayInfo); apiErr != nil {
+			return apiErr
+		}
+	} else if err := relayInfo.Billing.Reserve(quota); err != nil {
 		return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
 	}
 	relayInfo.FinalPreConsumedQuota = relayInfo.Billing.GetPreConsumedQuota()

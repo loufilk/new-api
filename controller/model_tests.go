@@ -66,8 +66,12 @@ type modelTestConfirmation struct {
 
 // Bind confirmation to current configuration, not merely a displayed amount.
 // No sensitive pricing headers or credentials are placed in this hash input.
-func modelTestPricingHash(userID int, selected modelTestSelection) (string, error) {
+func modelTestPricingHash(c *gin.Context, userID int, selected modelTestSelection) (string, error) {
 	user, err := model.GetUserCache(userID)
+	if err != nil {
+		return "", err
+	}
+	policy, err := model.GetRequestUserGroupPricing(c, userID)
 	if err != nil {
 		return "", err
 	}
@@ -78,7 +82,7 @@ func modelTestPricingHash(userID int, selected modelTestSelection) (string, erro
 	expression, expressionExists := billing_setting.GetBillingExpr(selected.Model)
 	cache, _ := ratio_setting.GetCacheRatio(selected.Model)
 	creation, _ := ratio_setting.GetCreateCacheRatio(selected.Model)
-	body, err := common.Marshal(gin.H{"model": originalSelection.Model, "billing_model": selected.Model, "group": selected.Group, "group_ratio": service.GetUserGroupRatio(user.Group, selected.Group), "mode": billing_setting.GetBillingMode(selected.Model), "expression": expression, "expression_exists": expressionExists, "price": price, "priced": priced, "ratio": ratio, "ratio_exists": ratioExists, "completion": ratio_setting.GetCompletionRatio(selected.Model), "cache": cache, "creation": creation, "quota_per_unit": common.QuotaPerUnit})
+	body, err := common.Marshal(gin.H{"model": originalSelection.Model, "billing_model": selected.Model, "group": selected.Group, "group_ratio": policy.ResolveGroupRatio(user.Group, selected.Group).GroupRatio, "user_pricing_revision": policy.Revision, "mode": billing_setting.GetBillingMode(selected.Model), "expression": expression, "expression_exists": expressionExists, "price": price, "priced": priced, "ratio": ratio, "ratio_exists": ratioExists, "completion": ratio_setting.GetCompletionRatio(selected.Model), "cache": cache, "creation": creation, "quota_per_unit": common.QuotaPerUnit})
 	if err != nil {
 		return "", err
 	}
@@ -164,7 +168,7 @@ func modelTestBody(selected modelTestSelection, prompt string) []byte {
 // With no output limit token-priced and dynamic-expression totals are unknown.
 // Only fixed per-call prices remain estimable; nil never means zero or free.
 // This is not a monetary ceiling or a reserve. Ordinary relay owns settlement.
-func estimateModelTestQuota(userID int, selected modelTestSelection, challenges []modelfingerprint.Challenge) *int {
+func estimateModelTestQuota(c *gin.Context, userID int, selected modelTestSelection, challenges []modelfingerprint.Challenge) *int {
 	if len(challenges) != 3 {
 		return nil
 	}
@@ -180,7 +184,11 @@ func estimateModelTestQuota(userID int, selected modelTestSelection, challenges 
 	if !known {
 		return nil
 	}
-	value := price * common.QuotaPerUnit * service.GetUserGroupRatio(user.Group, selected.Group)
+	policy, err := model.GetRequestUserGroupPricing(c, userID)
+	if err != nil {
+		return nil
+	}
+	value := price * common.QuotaPerUnit * policy.ResolveGroupRatio(user.Group, selected.Group).GroupRatio
 	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 		return nil
 	}
@@ -322,7 +330,7 @@ func EstimateModelTest(c *gin.Context) {
 		modelTestError(c, 400, "token_unavailable")
 		return
 	}
-	pricingHash, err := modelTestPricingHash(c.GetInt("id"), selected)
+	pricingHash, err := modelTestPricingHash(c, c.GetInt("id"), selected)
 	if err != nil {
 		modelTestError(c, 503, "catalogue_unavailable")
 		return
@@ -335,7 +343,7 @@ func EstimateModelTest(c *gin.Context) {
 		modelTestError(c, 503, "fingerprint_unavailable")
 		return
 	}
-	ticket := modelTestConfirmation{OutputUnbounded: true, Challenges: challenges, TokenIdentity: identity, Nonce: uuid.NewString(), modelTestSelection: selected, UserID: c.GetInt("id"), Version: modelTestVersion, ExpiresAt: time.Now().Add(5 * time.Minute).Unix(), EstimatedQuota: estimateModelTestQuota(c.GetInt("id"), selected, challenges), PricingHash: pricingHash}
+	ticket := modelTestConfirmation{OutputUnbounded: true, Challenges: challenges, TokenIdentity: identity, Nonce: uuid.NewString(), modelTestSelection: selected, UserID: c.GetInt("id"), Version: modelTestVersion, ExpiresAt: time.Now().Add(5 * time.Minute).Unix(), EstimatedQuota: estimateModelTestQuota(c, c.GetInt("id"), selected, challenges), PricingHash: pricingHash}
 	if !finishControllerGroupConfigRead(c, guard) {
 		return
 	}
@@ -436,12 +444,12 @@ func PrepareModelTest(c *gin.Context) {
 		return
 	}
 	common.SetContextKey(c, constant.ContextKeyUsingGroup, request.Group)
-	currentEstimate := estimateModelTestQuota(userID, request.modelTestSelection, ticket.Challenges)
+	currentEstimate := estimateModelTestQuota(c, userID, request.modelTestSelection, ticket.Challenges)
 	if !modelTestQuotaEstimateMatches(currentEstimate, ticket.EstimatedQuota) {
 		modelTestError(c, 409, "confirmation_price_changed")
 		return
 	}
-	pricingHash, err := modelTestPricingHash(userID, request.modelTestSelection)
+	pricingHash, err := modelTestPricingHash(c, userID, request.modelTestSelection)
 	if err != nil || pricingHash != ticket.PricingHash {
 		modelTestError(c, 409, "confirmation_price_changed")
 		return
@@ -602,7 +610,7 @@ func ModelTestPlayground(c *gin.Context) {
 		c.AbortWithStatus(400)
 		return
 	}
-	hash, err := modelTestPricingHash(c.GetInt("id"), selected)
+	hash, err := modelTestPricingHash(c, c.GetInt("id"), selected)
 	if err != nil || hash != c.GetString("model_test_confirmed_pricing_hash") {
 		c.Set("model_test_error_code", "confirmation_price_changed")
 		c.AbortWithStatusJSON(409, gin.H{"error": gin.H{"code": "confirmation_price_changed"}})

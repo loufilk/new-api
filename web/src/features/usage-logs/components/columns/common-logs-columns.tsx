@@ -66,6 +66,7 @@ import {
   renderAuditContent,
   renderLogContent,
 } from '../../lib/format'
+import { resolveLogGroupPricing } from '../../lib/group-pricing'
 import {
   isDisplayableLogType,
   isTimingLogType,
@@ -88,27 +89,9 @@ interface DetailSegment {
 
 function formatRatioCompact(ratio: number | undefined): string {
   if (ratio == null || !Number.isFinite(ratio)) return '-'
-  return ratio % 1 === 0
-    ? String(ratio)
-    : ratio.toFixed(4).replace(/\.?0+$/, '')
-}
-
-function getGroupRatio(other: LogOtherData | null): number | null {
-  const userGroupRatio = other?.user_group_ratio
-  if (
-    userGroupRatio != null &&
-    userGroupRatio !== -1 &&
-    Number.isFinite(userGroupRatio)
-  ) {
-    return userGroupRatio
-  }
-
-  const groupRatio = other?.group_ratio
-  if (groupRatio != null && groupRatio !== 1 && Number.isFinite(groupRatio)) {
-    return groupRatio
-  }
-
-  return null
+  const rounded = ratio.toFixed(4)
+  if (ratio > 0 && Number(rounded) === 0) return String(ratio)
+  return ratio % 1 === 0 ? String(ratio) : rounded.replace(/\.?0+$/, '')
 }
 
 function buildDetailSegments(
@@ -320,20 +303,18 @@ function buildTypeDetailSegments(
         }
       }
     } else {
-      const userGroupRatio = other.user_group_ratio
-      const groupRatio = other.group_ratio
-      const isUserGroup =
-        userGroupRatio != null &&
-        Number.isFinite(userGroupRatio) &&
-        userGroupRatio !== -1
-      const effectiveRatio = isUserGroup ? userGroupRatio : groupRatio
-      const ratioLabel = isUserGroup
-        ? t('User Exclusive Ratio')
-        : t('Group Ratio')
+      const pricing = resolveLogGroupPricing(other)
+      let ratioLabel = t('Group Ratio')
+      if (pricing.source === 'account_group') {
+        ratioLabel = t('User Exclusive Ratio')
+      }
+      if (pricing.source === 'user') {
+        ratioLabel = t('Personal Group Ratio')
+      }
 
-      if (effectiveRatio != null && Number.isFinite(effectiveRatio)) {
+      if (pricing.ratio != null) {
         segments.push({
-          text: `${ratioLabel} ${formatRatioCompact(effectiveRatio)}x`,
+          text: `${ratioLabel} ${formatRatioCompact(pricing.ratio)}x`,
         })
       }
     }
@@ -630,7 +611,11 @@ export function useCommonLogsColumns(
         const displayName = sensitiveVisible ? tokenName : '••••'
         let group = log.group
         if (!group) group = other?.group || ''
-        const groupRatio = getGroupRatio(other)
+        const pricing = resolveLogGroupPricing(other)
+        const groupRatio =
+          pricing.source === 'global' && pricing.ratio === 1
+            ? null
+            : pricing.ratio
 
         return (
           <div className='flex max-w-[200px] flex-col gap-0.5'>

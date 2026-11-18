@@ -133,7 +133,9 @@ func TestTokenRoutingPostgresSmartStrategiesAndLiveScope(t *testing.T) {
 	for strategy, id := range map[string]int{"auto": 94001, "success_rate": 94001, "price": 94002, "speed": 94003} {
 		c := tokenRoutingContext(true, true)
 		common.SetContextKey(c, constant.ContextKeyTokenRoutingStrategy, strategy)
-		require.Equal(t, id, rankTokenRoutes(c, candidates, metrics).Channel.Id, strategy)
+		selected, err := rankTokenRoutes(c, candidates, metrics)
+		require.NoError(t, err)
+		require.Equal(t, id, selected.Channel.Id, strategy)
 	}
 	c := tokenRoutingContext(true, true)
 	common.SetContextKey(c, constant.ContextKeyTokenAutoGroups, []string{"private"}) // dormant draft must be ignored

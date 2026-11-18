@@ -34,7 +34,7 @@ func TestListUsesHostGroupPolicyForVisibilityAndRatios(t *testing.T) {
 	previousMain := common.MainDatabaseType()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}))
+	require.NoError(t, db.AutoMigrate(&model.UserGroupPricing{}, &model.UserGroupPricingAudit{}, &model.User{}))
 	model.DB, common.RedisEnabled = db, false
 	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
 	t.Cleanup(func() {

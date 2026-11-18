@@ -363,3 +363,23 @@ it('shows loading placeholders without displaying stale log fields', () => {
     screen.queryByRole('button', { name: /^Model:/ })
   ).not.toBeInTheDocument()
 })
+
+it.each([0.4, 0])(
+  'shows recorded personal multiplier %s in the mobile group summary',
+  (ratio) => {
+    renderLogs({
+      logs: [
+        {
+          ...log,
+          other: JSON.stringify({
+            group_ratio: ratio,
+            user_group_ratio: 0.6,
+            user_group_price_override: ratio,
+          }),
+        },
+      ],
+    })
+    expect(screen.getByText(`Group Ratio: ${ratio}×`)).toBeVisible()
+    expect(screen.queryByText('Group Ratio: 0.6×')).not.toBeInTheDocument()
+  }
+)

@@ -109,7 +109,7 @@ func setupModelTestsDatabase(t *testing.T, dialect, dsn string) (*gorm.DB, int) 
 		common.SetDatabaseTypes(oldMainType, oldLogType)
 		model.InvalidatePricingCache()
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}, &model.ModelTestRun{}, &model.ModelTestGate{}, &model.ModelFingerprintSiteConfig{}, &model.ModelFingerprintSiteAudit{}, &model.ModelFingerprintSiteRun{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.UserCallInterception{}, &model.UserCallInterceptionHit{}))
+	require.NoError(t, db.AutoMigrate(&model.UserGroupPricing{}, &model.UserGroupPricingAudit{}, &model.User{}, &model.Option{}, &model.ModelTestRun{}, &model.ModelTestGate{}, &model.ModelFingerprintSiteConfig{}, &model.ModelFingerprintSiteAudit{}, &model.ModelFingerprintSiteRun{}, &model.Token{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.UserCallInterception{}, &model.UserCallInterceptionHit{}))
 	// Existing execution scenarios explicitly opt in; switch tests remove/disable it.
 	require.NoError(t, db.Create(&model.Option{Key: model.ModelTestEnabledKey, Value: "true"}).Error)
 	user := model.User{Username: "synthetic-model-test-user", AffCode: "synthetic-test-aff", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", Quota: 1_000_000, QuotaPaid: 1_000_000}
@@ -271,8 +271,8 @@ func modelTestRequestBody(t *testing.T, userID int, id string) string {
 	require.NoError(t, identityErr)
 	challenges, challengeErr := modelFingerprintScorer.challenges()
 	require.NoError(t, challengeErr)
-	ticket := modelTestConfirmation{OutputUnbounded: true, EstimatedQuota: estimateModelTestQuota(userID, selection, challenges), Challenges: challenges, TokenIdentity: identity, Nonce: uuid.NewString(), modelTestSelection: selection, UserID: userID, Version: modelTestVersion, ExpiresAt: time.Now().Add(time.Minute).Unix()}
-	pricingHash, err := modelTestPricingHash(userID, selection)
+	ticket := modelTestConfirmation{OutputUnbounded: true, EstimatedQuota: estimateModelTestQuota(nil, userID, selection, challenges), Challenges: challenges, TokenIdentity: identity, Nonce: uuid.NewString(), modelTestSelection: selection, UserID: userID, Version: modelTestVersion, ExpiresAt: time.Now().Add(time.Minute).Unix()}
+	pricingHash, err := modelTestPricingHash(nil, userID, selection)
 	require.NoError(t, err)
 	ticket.PricingHash = pricingHash
 	body, err := common.Marshal(modelTestRequest{modelTestSelection: selection, ConfirmationToken: signModelTestConfirmation(ticket), Confirmed: true, RequestID: id})
@@ -388,17 +388,17 @@ func TestModelTestPostgresPriceChangeRequiresNewConfirmationWithoutCreatingRun(t
 func TestModelTestPostgresCanonicalFixedPricingAndUnknownExpressionCost(t *testing.T) {
 	_, userID := setupModelTestsPostgres(t)
 	selection := modelTestSelection{Model: "gpt-4o-mini@effort:high", Group: "default", MaxOutputTokens: 0}
-	first, err := modelTestPricingHash(userID, selection)
+	first, err := modelTestPricingHash(nil, userID, selection)
 	require.NoError(t, err)
 	oldPrices := ratio_setting.ModelPrice2JSONString()
 	t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(oldPrices)) })
 	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"gpt-4o-mini":0.02}`))
-	second, err := modelTestPricingHash(userID, selection)
+	second, err := modelTestPricingHash(nil, userID, selection)
 	require.NoError(t, err)
 	assert.NotEqual(t, first, second)
 	fixedChallenges, err := modelFingerprintScorer.challenges()
 	require.NoError(t, err)
-	fixedEstimate := estimateModelTestQuota(userID, selection, fixedChallenges)
+	fixedEstimate := estimateModelTestQuota(nil, userID, selection, fixedChallenges)
 	require.NotNil(t, fixedEstimate)
 	assert.Equal(t, common.QuotaRound(3*0.02*common.QuotaPerUnit), *fixedEstimate)
 	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
@@ -408,7 +408,7 @@ func TestModelTestPostgresCanonicalFixedPricingAndUnknownExpressionCost(t *testi
 	settings.BillingExpr = map[string]string{"gpt-4o-mini": `param("model") == "gpt-4o-mini@effort:high" ? 1000000 : 2000000`}
 	challenges, challengeErr := modelFingerprintScorer.challenges()
 	require.NoError(t, challengeErr)
-	estimate := estimateModelTestQuota(userID, selection, challenges)
+	estimate := estimateModelTestQuota(nil, userID, selection, challenges)
 	assert.Nil(t, estimate, "token expression costs are unknown without an output bound")
 	selection.MaxOutputTokens = 1024
 	assert.Error(t, validateModelTestSelection(userID, selection))

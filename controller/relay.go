@@ -251,7 +251,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				}
 			}
 		}
-		if billingErr := service.PrepareTieredBillingForSelectedGroup(c, relayInfo); billingErr != nil {
+		if billingErr := service.PrepareBillingForSelectedGroup(c, relayInfo); billingErr != nil {
 			newAPIError = billingErr
 			break
 		}
@@ -866,9 +866,11 @@ func executeTaskSubmissionWith(
 	task.PrivateData.SubscriptionQuotaPeriod = relayInfo.SubscriptionQuotaPeriod
 	task.PrivateData.TokenId = relayInfo.TokenId
 	task.PrivateData.NodeName = common.NodeName
+	groupPriceSnapshot := relayInfo.PriceData.GroupRatioInfo
 	task.PrivateData.BillingContext = &model.TaskBillingContext{
 		ModelPrice:       relayInfo.PriceData.ModelPrice,
 		GroupRatio:       relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+		GroupRatioInfo:   &groupPriceSnapshot,
 		ModelRatio:       relayInfo.PriceData.ModelRatio,
 		OtherRatios:      relayInfo.PriceData.OtherRatios(),
 		OriginModelName:  relayInfo.OriginModelName,

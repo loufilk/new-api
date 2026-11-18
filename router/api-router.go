@@ -196,6 +196,8 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 				adminRoute.DELETE("/:id/bindings/:binding_type", controller.AdminClearUserBinding)
 				adminRoute.GET("/:id", controller.GetUser)
 				handlePermissionRoute(adminRoute, http.MethodGet, "/:id/call-interception", authz.UserCallInterceptionRead, middleware.DisableCache(), controller.GetUserCallInterception)
+				handlePermissionRoute(adminRoute, http.MethodGet, "/:id/group-pricing", authz.UserGroupPricingRead, middleware.DisableCache(), controller.GetUserGroupPricing)
+				handlePermissionRoute(adminRoute, http.MethodPut, "/:id/group-pricing", authz.UserGroupPricingUpdate, middleware.DisableCache(), controller.UpdateUserGroupPricing)
 				handlePermissionRoute(adminRoute, http.MethodPut, "/:id/call-interception", authz.UserCallInterceptionUpdate, middleware.DisableCache(), controller.UpdateUserCallInterception)
 				handlePermissionRoute(adminRoute, http.MethodGet, "/:id/call-interception/hits", authz.UserCallInterceptionRead, middleware.DisableCache(), controller.GetUserCallInterceptionHits)
 				handlePermissionRoute(adminRoute, http.MethodGet, "/:id/call-interception/audits", authz.UserCallInterceptionRead, middleware.DisableCache(), controller.GetUserCallInterceptionAudits)

@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	hosttypes "github.com/QuantumNous/new-api/types"
 	"gorm.io/gorm"
 )
 
@@ -239,6 +240,7 @@ type TaskPluginAuthorSnapshot struct {
 type TaskBillingContext struct {
 	ModelPrice       float64                      `json:"model_price,omitempty"`        // 模型单价
 	GroupRatio       float64                      `json:"group_ratio,omitempty"`        // 分组倍率
+	GroupRatioInfo   *hosttypes.GroupRatioInfo    `json:"group_ratio_info,omitempty"`   // 提交时倍率来源与个人规则版本
 	ModelRatio       float64                      `json:"model_ratio,omitempty"`        // 模型倍率
 	OtherRatios      map[string]float64           `json:"other_ratios,omitempty"`       // 附加倍率（时长、分辨率等）
 	OriginModelName  string                       `json:"origin_model_name,omitempty"`  // 用户请求/逻辑模型身份（旧任务唯一身份来源，必须保留）

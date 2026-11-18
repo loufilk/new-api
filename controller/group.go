@@ -55,11 +55,17 @@ func GetUserGroups(c *gin.Context) {
 		userGroup = user.Group
 	}
 	userUsableGroups := service.GetUserUsableGroups(userGroup)
+	policy, err := model.GetRequestUserGroupPricing(c, userId)
+	if err != nil {
+		userGroupPricingAPIError(c, err)
+		return
+	}
+	c.Header("Cache-Control", "private, no-store")
 	for groupName, _ := range ratio_setting.GetGroupRatioCopy() {
 		// UserUsableGroups contains the groups that the user can use
 		if desc, ok := userUsableGroups[groupName]; ok {
 			usableGroups[groupName] = map[string]any{
-				"ratio": service.GetUserGroupRatio(userGroup, groupName),
+				"ratio": policy.ResolveGroupRatio(userGroup, groupName).GroupRatio,
 				"desc":  desc,
 			}
 		}

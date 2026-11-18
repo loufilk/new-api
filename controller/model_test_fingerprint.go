@@ -255,14 +255,14 @@ func executeModelFingerprintProbe(probe *gin.Context, selected modelTestSelectio
 		outcome.errorCode = "confirmation_token_changed"
 		return
 	}
-	estimate := estimateModelTestQuota(probe.GetInt("id"), selected, challenges)
+	estimate := estimateModelTestQuota(probe, probe.GetInt("id"), selected, challenges)
 	confirmedEstimate, _ := probe.Get("model_test_estimated_quota")
 	confirmedQuota, validEstimate := confirmedEstimate.(*int)
 	if !validEstimate || !modelTestQuotaEstimateMatches(estimate, confirmedQuota) {
 		outcome.errorCode = "confirmation_price_changed"
 		return
 	}
-	pricingHash, priceErr := modelTestPricingHash(probe.GetInt("id"), selected)
+	pricingHash, priceErr := modelTestPricingHash(probe, probe.GetInt("id"), selected)
 	if priceErr != nil || pricingHash != probe.GetString("model_test_confirmed_pricing_hash") {
 		outcome.errorCode = "confirmation_price_changed"
 		return

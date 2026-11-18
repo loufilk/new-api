@@ -51,6 +51,7 @@ func setupGroupRenameControllerTest(t *testing.T) *gorm.DB {
 		&model.Ability{}, &model.SubscriptionPlan{}, &model.UserSubscription{},
 		&model.Log{}, &model.AuditLog{},
 		&model.UserCallInterception{}, &model.UserCallInterceptionHit{}, &model.UserCallInterceptionAudit{},
+		&model.UserGroupPricing{}, &model.UserGroupPricingAudit{},
 	))
 	root := model.User{Id: 990001, Username: "rename-root", Role: common.RoleRootUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AffCode: "rename-root"}
 	require.NoError(t, db.Create(&root).Error)

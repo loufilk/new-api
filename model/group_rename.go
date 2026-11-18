@@ -334,6 +334,9 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 		if err := renameGroupFingerprintTargets(tx, plan, request.ActorID); err != nil {
 			return err
 		}
+		if err := renameGroupUserPricing(tx, plan, request.ActorID); err != nil {
+			return err
+		}
 		if err := renameGroupChannelReferences(tx, plan, &state.result); err != nil {
 			return err
 		}
@@ -819,6 +822,9 @@ func validateGroupRenameOptionUpdates(tx *gorm.DB, request GroupRenameApplyReque
 // "exceptKey" is the option being edited; effective already contains the
 // caller's provided values, so a coordinated removal from two options is safe.
 func groupRenameNameStillReferenced(tx *gorm.DB, group string, effective map[string]string, exceptKey string, autoRefs map[string]struct{}) (bool, error) {
+	if referenced, err := userGroupPricingReferencesGroup(tx, group); err != nil || referenced {
+		return referenced, err
+	}
 	if _, ok := autoRefs[group]; ok {
 		return true, nil
 	}

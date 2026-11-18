@@ -301,6 +301,12 @@ func GetTokenAutoGroups(c *gin.Context) {
 	}
 	groups := service.GetUserAutoGroup(userGroup)
 	selectable := service.GetUserSelectableGroups(userGroup)
+	policy, err := model.GetRequestUserGroupPricing(c, c.GetInt("id"))
+	if err != nil {
+		userGroupPricingAPIError(c, err)
+		return
+	}
+	c.Header("Cache-Control", "private, no-store")
 	abilities, err := model.GetEnabledAbilitiesWithChannelsForGroups(selectable)
 	if err != nil {
 		common.ApiError(c, err)
@@ -336,7 +342,7 @@ func GetTokenAutoGroups(c *gin.Context) {
 			history.History = make([]*float64, perfmetrics.TokenGroupHistoryBuckets)
 		}
 		details = append(details, groupDetail{
-			Name: group, Ratio: service.GetUserGroupRatio(userGroup, group),
+			Name: group, Ratio: policy.ResolveGroupRatio(userGroup, group).GroupRatio,
 			SuccessRate: history.SuccessRate, Available: available[group], History: history.History,
 		})
 	}

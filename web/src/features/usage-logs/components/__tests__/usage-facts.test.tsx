@@ -320,6 +320,38 @@ describe('usage facts billing details', () => {
     queryClients.length = 0
   })
 
+  test.each([
+    { ratio: 0.4, expected: '0.4000x' },
+    { ratio: 0, expected: '0.0000x' },
+    { ratio: 0.00001, expected: '0.00001x' },
+  ])(
+    'shows personal multiplier $ratio with the recorded inherited price and rule version',
+    ({ ratio, expected }) => {
+      queryClients.push(
+        renderDetails({
+          group_ratio: ratio,
+          user_group_ratio: 0.6,
+          user_group_price_override: ratio,
+          inherited_group_ratio: 0.6,
+          group_ratio_source: 'user',
+          user_group_pricing_revision: 7,
+        })
+      )
+      expect(rowValue('Personal Group Ratio')).toBe(expected)
+      expect(rowValue('Inherited Group Ratio')).toBe('0.6000x')
+      expect(rowValue('Pricing Rule Version')).toBe('7')
+      expect(screen.queryByText('User Exclusive Ratio')).not.toBeInTheDocument()
+    }
+  )
+
+  test('keeps the historical account-class label without inventing personal pricing metadata', () => {
+    queryClients.push(renderDetails({ group_ratio: 1, user_group_ratio: 0.6 }))
+    expect(rowValue('User Exclusive Ratio')).toBe('0.6000x')
+    expect(screen.queryByText('Personal Group Ratio')).not.toBeInTheDocument()
+    expect(screen.queryByText('Inherited Group Ratio')).not.toBeInTheDocument()
+    expect(screen.queryByText('Pricing Rule Version')).not.toBeInTheDocument()
+  })
+
   test('renders one raw-key row per usage fact before total cost', () => {
     const expression = 'tier("720P", u("seconds") * 5)'
     queryClients.push(

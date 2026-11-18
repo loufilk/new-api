@@ -367,7 +367,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 					return types.NewError(errors.New(i18n.T(c, i18n.MsgGroupConfigChanged)), "group_config_changed", types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
 				}
 				info.PriceData.GroupRatioInfo = groupRatio
-				if apiErr = service.PrepareTieredBillingForSelectedGroup(c, info); apiErr != nil {
+				if apiErr = service.PrepareBillingForSelectedGroup(c, info); apiErr != nil {
 					return apiErr
 				}
 			}

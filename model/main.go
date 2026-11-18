@@ -406,6 +406,8 @@ func mainAutoMigrateModels(registry *extension.Registry) []any {
 		&UserCallInterception{},
 		&UserCallInterceptionHit{},
 		&UserCallInterceptionAudit{},
+		&UserGroupPricing{},
+		&UserGroupPricingAudit{},
 		&ModelTestRun{},
 		&ModelTestGate{},
 		&ModelFingerprintSiteConfig{},

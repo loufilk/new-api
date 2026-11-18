@@ -160,6 +160,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	other.SetPublic("cache_ratio", cacheRatio)
 	other.SetPublic("model_price", modelPrice)
 	other.SetPublic("user_group_ratio", userGroupRatio)
+	appendGroupPricingInfo(other, relayInfo.PriceData.GroupRatioInfo)
 	other.SetPublic("frt", float64(relayInfo.FirstResponseTime.UnixMilli()-relayInfo.StartTime.UnixMilli()))
 	if relayInfo.ReasoningEffort != "" {
 		other.SetPublic("reasoning_effort", relayInfo.ReasoningEffort)
@@ -387,12 +388,31 @@ func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData hosttypes.P
 	other := model.NewLogOther()
 	other.SetPublic("model_price", priceData.ModelPrice)
 	other.SetPublic("group_ratio", priceData.GroupRatioInfo.GroupRatio)
+	appendGroupPricingInfo(other, priceData.GroupRatioInfo)
 	if priceData.GroupRatioInfo.HasSpecialRatio {
 		other.SetPublic("user_group_ratio", priceData.GroupRatioInfo.GroupSpecialRatio)
 	}
 	appendRequestPath(nil, relayInfo, other)
 	appendRequestPluginRecord(relayInfo, other)
 	return other
+}
+
+// Keep the final charge and its source visible in the owner's usage log. The
+// legacy user_group_ratio field continues to describe an account-class rule.
+func appendGroupPricingInfo(other *model.LogOther, price hosttypes.GroupRatioInfo) {
+	if other == nil {
+		return
+	}
+	if price.Source != "" {
+		other.SetPublic("group_ratio_source", price.Source)
+	}
+	if price.UserPricingRevision > 0 {
+		other.SetPublic("user_group_pricing_revision", price.UserPricingRevision)
+	}
+	if price.UserGroupPriceOverride != nil {
+		other.SetPublic("user_group_price_override", *price.UserGroupPriceOverride)
+		other.SetPublic("inherited_group_ratio", price.InheritedGroupRatio)
+	}
 }
 
 // InjectTieredBillingInfo overlays tiered billing fields onto an existing

@@ -46,6 +46,7 @@ type AutoGroupOrderEditorProps = Omit<ComponentProps<'div'>, 'onChange'> & {
   maxCount: number
   // Compose the existing ordered list below a separate multi-select.
   selectionOnly?: boolean
+  showGroupRatios?: boolean
   onChange: (value: { groups: string[]; mode: 'inherit' | 'custom' }) => void
   'data-slot'?: string
   'data-form-root'?: string
@@ -231,6 +232,14 @@ export function AutoGroupOrderEditor(props: AutoGroupOrderEditorProps) {
               onMove={handleMove}
               onRemove={handleRemove}
             >
+              {props.showGroupRatios && (
+                <GroupRatioBadge
+                  ratio={
+                    props.options.find((option) => option.value === group)
+                      ?.ratio
+                  }
+                />
+              )}
               {!props.options.some((option) => option.value === group) && (
                 <span className='text-destructive text-xs'>
                   {t('Unavailable')}

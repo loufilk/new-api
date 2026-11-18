@@ -62,6 +62,9 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 
 	priceData, err := helper.ModelPriceHelper(c, info, tokens, meta)
 	if err != nil {
+		if errors.Is(err, model.ErrUserGroupPricingUnavailable) {
+			return types.NewError(errors.New(i18n.T(c, i18n.MsgUserGroupPricingUnavailable)), "user_group_pricing_unavailable", types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
+		}
 		if errors.Is(err, model.ErrGroupConfigChanged) {
 			return types.NewError(errors.New(i18n.T(c, i18n.MsgGroupConfigChanged)), "group_config_changed", types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
 		}

@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Check, ChevronsUpDown } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import {
   Command,
@@ -62,6 +63,7 @@ type ApiKeyGroupComboboxProps = {
   values?: string[]
   onValuesChange?: (values: string[]) => void
   maxCount?: number
+  selectionPanel?: (onSelect: (value: string) => void) => ReactNode
   id?: string
   'aria-label'?: string
   'aria-describedby'?: string
@@ -78,6 +80,7 @@ export function ApiKeyGroupCombobox({
   values,
   onValuesChange,
   maxCount = 5,
+  selectionPanel,
   id,
   'aria-label': ariaLabel,
   'aria-describedby': ariaDescribedBy,
@@ -130,66 +133,89 @@ export function ApiKeyGroupCombobox({
     setSearchValue('')
   }
 
-  return (
-    <Popover open={open && !disabled} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={
-          <Button
-            type='button'
-            variant='outline'
-            id={id}
-            role='combobox'
-            aria-label={ariaLabel}
-            aria-describedby={ariaDescribedBy}
-            aria-invalid={ariaInvalid}
-            aria-required={ariaRequired}
-            aria-expanded={open}
-            data-auto-group-effect={isAutoSelected ? 'trigger' : undefined}
-            disabled={disabled}
-            className={cn(
-              'border-input bg-muted/40 hover:bg-muted/55 hover:text-foreground active:bg-background data-popup-open:border-ring data-popup-open:bg-background data-popup-open:ring-ring/20 relative h-auto min-h-14 w-full justify-between gap-2 rounded-lg px-3 py-2 text-start shadow-none transition-[background-color,border-color,box-shadow] duration-150 data-popup-open:ring-[3px] sm:min-h-20 sm:gap-3 sm:px-4 sm:py-3',
-              multiple &&
-                'min-h-8! rounded-md px-3! py-1.5! text-xs sm:min-h-8!',
-              isAutoSelected &&
-                cn(
-                  AUTO_GROUP_FRAME_CLASS_NAME,
-                  'hover:border-primary/55 data-popup-open:border-primary/55 data-popup-open:ring-primary/20'
-                )
-            )}
+  const trigger = (
+    <Button
+      type='button'
+      variant='outline'
+      id={id}
+      role='combobox'
+      aria-label={ariaLabel}
+      aria-describedby={ariaDescribedBy}
+      aria-invalid={ariaInvalid}
+      aria-required={ariaRequired}
+      aria-expanded={open && !disabled}
+      aria-haspopup={selectionPanel ? 'dialog' : 'listbox'}
+      data-auto-group-effect={isAutoSelected ? 'trigger' : undefined}
+      disabled={disabled}
+      className={cn(
+        'border-input bg-muted/40 hover:bg-muted/55 hover:text-foreground active:bg-background data-popup-open:border-ring data-popup-open:bg-background data-popup-open:ring-ring/20 relative h-auto min-h-14 w-full justify-between gap-2 rounded-lg px-3 py-2 text-start shadow-none transition-[background-color,border-color,box-shadow] duration-150 data-popup-open:ring-[3px] sm:min-h-20 sm:gap-3 sm:px-4 sm:py-3',
+        multiple && 'min-h-8! rounded-md px-3! py-1.5! text-xs sm:min-h-8!',
+        isAutoSelected &&
+          cn(
+            AUTO_GROUP_FRAME_CLASS_NAME,
+            'hover:border-primary/55 data-popup-open:border-primary/55 data-popup-open:ring-primary/20'
+          )
+      )}
+    >
+      {isAutoSelected && (
+        <AutoGroupFlowBorder shouldReduceMotion={shouldReduceMotion} />
+      )}
+      <span className='flex min-w-0 flex-1 items-center justify-between gap-2 sm:gap-3'>
+        <span className='min-w-0'>
+          <span className='block truncate font-medium'>
+            {multiple
+              ? values.join(' → ') ||
+                placeholder ||
+                t('Select groups in routing order')
+              : selectedOption?.label || placeholder || t('Select a group')}
+          </span>
+          {!multiple && selectedOption?.desc && (
+            <span className='text-muted-foreground block truncate text-[11px] sm:text-xs'>
+              {selectedOption.desc}
+            </span>
+          )}
+        </span>
+        <span className={multiple ? 'hidden' : 'hidden sm:block'}>
+          <GroupRatioBadge
+            ratio={selectedOption?.ratio}
+            isAuto={isAutoSelected}
+            shouldReduceMotion={shouldReduceMotion}
           />
+        </span>
+      </span>
+      <ChevronsUpDown
+        aria-hidden='true'
+        className='size-4 shrink-0 opacity-50'
+      />
+    </Button>
+  )
+
+  if (selectionPanel) {
+    return (
+      <Dialog
+        open={open && !disabled}
+        onOpenChange={setOpen}
+        trigger={trigger}
+        title={t('Select groups in routing order')}
+        description={t(
+          'Compare the groups available to your account and arrange the manual routing order.'
+        )}
+        contentClassName='w-[calc(100dvw-2rem)] sm:max-w-[1080px]'
+        bodyClassName='p-0'
+        footer={
+          <Button type='button' onClick={() => setOpen(false)}>
+            {t('Done')}
+          </Button>
         }
       >
-        {isAutoSelected && (
-          <AutoGroupFlowBorder shouldReduceMotion={shouldReduceMotion} />
-        )}
-        <span className='flex min-w-0 flex-1 items-center justify-between gap-2 sm:gap-3'>
-          <span className='min-w-0'>
-            <span className='block truncate font-medium'>
-              {multiple
-                ? values.join(' → ') ||
-                  placeholder ||
-                  t('Select groups in routing order')
-                : selectedOption?.label || placeholder || t('Select a group')}
-            </span>
-            {!multiple && selectedOption?.desc && (
-              <span className='text-muted-foreground block truncate text-[11px] sm:text-xs'>
-                {selectedOption.desc}
-              </span>
-            )}
-          </span>
-          <span className={multiple ? 'hidden' : 'hidden sm:block'}>
-            <GroupRatioBadge
-              ratio={selectedOption?.ratio}
-              isAuto={isAutoSelected}
-              shouldReduceMotion={shouldReduceMotion}
-            />
-          </span>
-        </span>
-        <ChevronsUpDown
-          aria-hidden='true'
-          className='size-4 shrink-0 opacity-50'
-        />
-      </PopoverTrigger>
+        {selectionPanel(handleSelect)}
+      </Dialog>
+    )
+  }
+
+  return (
+    <Popover open={open && !disabled} onOpenChange={setOpen}>
+      <PopoverTrigger render={trigger} />
       <PopoverContent
         className='data-closed:zoom-out-100 data-open:zoom-in-100 data-[side=bottom]:slide-in-from-top-0 data-[side=left]:slide-in-from-right-0 data-[side=right]:slide-in-from-left-0 data-[side=top]:slide-in-from-bottom-0 w-[var(--anchor-width)] overflow-hidden rounded-xl p-0 shadow-lg data-closed:duration-75 data-open:duration-100'
         onWheel={(event) => event.stopPropagation()}

@@ -66,6 +66,21 @@ export const STATIC_I18N_KEYS = [
   'View interception configuration, hits, and configuration audits for manageable users.',
   'Enable, edit, or disable custom replies for manageable users.',
 
+  // Personal group-pricing validation and backend permission catalog.
+  'Select a billing group',
+  'Select an actual billing group instead of Auto',
+  'Enter a personal multiplier or remove the rule to inherit',
+  'The multiplier must be a finite, non-negative number',
+  'Each billing group can have only one personal multiplier',
+  'Invalid user group pricing',
+  'User group pricing changed; reload and try again',
+  'User group pricing is temporarily unavailable. Retry the request.',
+  'User group pricing',
+  'View user group pricing',
+  'Update user group pricing',
+  'View independent group rates for manageable users.',
+  'Set or clear independent group rates for manageable users.',
+
   'User permissions changed; reload and try again',
   'Used redemption codes cannot be changed or re-enabled',
   'Invalid redemption code status',

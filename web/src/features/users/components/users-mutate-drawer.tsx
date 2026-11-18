@@ -91,6 +91,7 @@ import {
 } from '../api'
 import { UserCallInterceptionSection } from '../call-interception/section'
 import { BINDING_FIELDS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
+import { UserGroupPricingSection } from '../group-pricing/section'
 import {
   userFormSchema,
   type UserFormValues,
@@ -526,6 +527,14 @@ export function UsersMutateDrawer({
                     )}
                   />
                 </SideDrawerSection>
+              )}
+
+              {open && currentRow && (
+                <UserGroupPricingSection
+                  key={currentRow.id}
+                  userId={currentRow.id}
+                  targetRole={currentRow.role}
+                />
               )}
 
               {canEditAdminPermissions &&

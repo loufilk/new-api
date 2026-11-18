@@ -35,6 +35,8 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 		&UserCallInterception{},
 		&UserCallInterceptionHit{},
 		&UserCallInterceptionAudit{},
+		&UserGroupPricing{},
+		&UserGroupPricingAudit{},
 		&ModelTestRun{},
 		&ModelTestGate{},
 		&ModelFingerprintSiteConfig{},

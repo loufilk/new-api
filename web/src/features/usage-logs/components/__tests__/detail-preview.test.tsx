@@ -45,6 +45,7 @@ import {
 import type { UsageLog } from '../../data/schema'
 import type { LogOtherData } from '../../types'
 import { useCommonLogsColumns } from '../columns/common-logs-columns'
+import { UsageLogsProvider } from '../usage-logs-provider'
 
 vi.mock('@lobehub/icons', () => ({}))
 vi.hoisted(() => {
@@ -86,6 +87,7 @@ function DetailPreview(props: {
   other: LogOtherData
   isAdmin: boolean
   type?: number
+  columnId?: string
 }) {
   const table = useReactTable({
     data: [makeLog(props.other, props.type)],
@@ -95,7 +97,7 @@ function DetailPreview(props: {
   const cell = table
     .getRowModel()
     .rows[0].getAllCells()
-    .find((item) => item.column.id === 'content')
+    .find((item) => item.column.id === (props.columnId ?? 'content'))
   if (!cell) throw new Error('The log must have a content column')
   return flexRender(cell.column.columnDef.cell, cell.getContext())
 }
@@ -212,6 +214,33 @@ test.each([
     name: 'zero price fallback',
     other: { model_price: 0, group_ratio: 1 },
     expected: 'Group Ratio 1x',
+  },
+  {
+    name: 'personal group price overrides account-class pricing',
+    other: {
+      user_group_ratio: 0.6,
+      group_ratio: 0.4,
+      user_group_price_override: 0.4,
+    },
+    expected: 'Personal Group Ratio 0.4x',
+  },
+  {
+    name: 'explicit zero personal group price',
+    other: {
+      user_group_ratio: 0.6,
+      group_ratio: 0,
+      user_group_price_override: 0,
+    },
+    expected: 'Personal Group Ratio 0x',
+  },
+  {
+    name: 'tiny personal group price remains visibly nonzero',
+    other: {
+      user_group_ratio: 0.6,
+      group_ratio: 0.00001,
+      user_group_price_override: 0.00001,
+    },
+    expected: 'Personal Group Ratio 0.00001x',
   },
   { name: 'missing price fallback', other: {}, expected: '—' },
 ])('$name stays visible without a plugin counter', ({ other, expected }) => {
@@ -515,5 +544,30 @@ test.each(['missing schema', 'unsupported expression', 'unknown tier'])(
     expect(preview.textContent).toBe(
       `Dynamic Pricing · ${scenario === 'unknown tier' ? 'old' : 'music'}`
     )
+  }
+)
+
+test.each([0.4, 0, 0.00001])(
+  'shows personal multiplier %s beside the token in the desktop list',
+  (ratio) => {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <QueryClientProvider client={client}>
+          <UsageLogsProvider>
+            <DetailPreview
+              columnId='token_name'
+              isAdmin={false}
+              other={{
+                group_ratio: ratio,
+                user_group_ratio: 0.6,
+                user_group_price_override: ratio,
+              }}
+            />
+          </UsageLogsProvider>
+        </QueryClientProvider>
+      </I18nextProvider>
+    )
+    expect(screen.getByText(`${ratio}x`)).toBeVisible()
+    expect(screen.queryByText('0.6x')).not.toBeInTheDocument()
   }
 )

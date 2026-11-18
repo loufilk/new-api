@@ -144,7 +144,7 @@ func setupTokenControllerTestDB(t *testing.T) *gorm.DB {
 
 	db := openTokenControllerTestDB(t)
 	migrateTokenControllerTestDB(t, db)
-	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.User{}, &model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{}))
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.User{}, &model.UserGroupPricing{}, &model.UserGroupPricingAudit{}, &model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{}))
 	return db
 }
 

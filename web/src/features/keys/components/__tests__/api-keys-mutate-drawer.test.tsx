@@ -236,7 +236,7 @@ describe('API keys mutate drawer Auto group integration', () => {
     for (const payload of createdPayloads) {
       expect(payload.group).toBe('auto')
       expect(payload.auto_groups).toEqual([])
-      expect(payload.cross_group_retry).toBe(true)
+      expect(payload.cross_group_retry).toBe(false)
     }
   })
 
@@ -263,7 +263,7 @@ describe('API keys mutate drawer Auto group integration', () => {
       group: 'auto',
       auto_groups: ['default', 'vip'],
       smart_routing: false,
-      cross_group_retry: true,
+      cross_group_retry: false,
     })
   })
 

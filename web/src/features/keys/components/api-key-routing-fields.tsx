@@ -33,13 +33,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Switch } from '@/components/ui/switch'
+import { ApiKeyGroupSelection } from '@/extensions/chuanapi/key-group-selection/group-selection'
 import { useAuthStore } from '@/stores/auth-store'
 
 import type { ApiKeyFormValues } from '../lib/api-key-form'
-import {
-  ApiKeyGroupCombobox,
-  type ApiKeyGroupOption,
-} from './api-key-group-combobox'
+import type { ApiKeyGroupOption } from './api-key-group-combobox'
 import { ApiKeyGroupPresets } from './api-key-group-presets'
 import { AutoGroupOrderEditor } from './auto-group-order-editor'
 
@@ -96,8 +94,8 @@ export function ApiKeyRoutingFields(props: {
       shouldDirty: true,
       shouldValidate: true,
     })
-    if (next.length < 2 || group !== 'auto') {
-      form.setValue('cross_group_retry', next.length > 1, { shouldDirty: true })
+    if (next.length < 2) {
+      form.setValue('cross_group_retry', false, { shouldDirty: true })
     }
   }
 
@@ -265,12 +263,10 @@ export function ApiKeyRoutingFields(props: {
                 onApply={setGroups}
               />
               <FormControl>
-                <ApiKeyGroupCombobox
+                <ApiKeyGroupSelection
                   options={props.options}
-                  value={group}
-                  onValueChange={(value) => setGroups([value])}
                   values={selectedGroups}
-                  onValuesChange={setGroups}
+                  onChange={setGroups}
                   maxCount={maxCount}
                   aria-required={!props.allowInheritedGroup}
                   disabled={smart || props.disabled}
@@ -364,11 +360,6 @@ export function ApiKeyRoutingFields(props: {
                   shouldDirty: true,
                   shouldValidate: true,
                 })
-                if (group !== 'auto') {
-                  form.setValue('cross_group_retry', true, {
-                    shouldDirty: true,
-                  })
-                }
               }}
             >
               {t('Restore global Auto')}

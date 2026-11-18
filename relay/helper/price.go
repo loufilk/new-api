@@ -45,11 +45,6 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) (ratio
 		}
 	}()
 
-	groupRatioInfo := hosttypes.GroupRatioInfo{
-		GroupRatio:        1.0, // default ratio
-		GroupSpecialRatio: -1,
-	}
-
 	// check auto group
 	autoGroup, exists := ctx.Get("auto_group")
 	if exists {
@@ -57,19 +52,11 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) (ratio
 		relayInfo.UsingGroup = autoGroup.(string)
 	}
 
-	// check user group special ratio
-	userGroupRatio, ok := ratio_setting.GetGroupGroupRatio(relayInfo.UserGroup, relayInfo.UsingGroup)
-	if ok {
-		// user group special ratio
-		groupRatioInfo.GroupSpecialRatio = userGroupRatio
-		groupRatioInfo.GroupRatio = userGroupRatio
-		groupRatioInfo.HasSpecialRatio = true
-	} else {
-		// normal group ratio
-		groupRatioInfo.GroupRatio = ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
+	policy, err := model.GetRequestUserGroupPricing(ctx, relayInfo.UserId)
+	if err != nil {
+		return ratio, err
 	}
-
-	return groupRatioInfo, nil
+	return policy.ResolveGroupRatio(relayInfo.UserGroup, relayInfo.UsingGroup), nil
 }
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (hosttypes.PriceData, error) {
@@ -92,6 +79,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	}
 
 	var preConsumedQuota int
+	var quotaBeforeGroup float64
 	var modelRatio float64
 	var completionRatio float64
 	var cacheRatio float64
@@ -132,6 +120,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		audioRatio = ratio_setting.GetAudioRatio(billingModelName)
 		audioCompletionRatio = ratio_setting.GetAudioCompletionRatio(billingModelName)
 		ratio := modelRatio * groupRatioInfo.GroupRatio
+		quotaBeforeGroup = preConsumedTokens * modelRatio
 		quota, err := common.QuotaFromFloatStrict(preConsumedTokens * ratio)
 		if err != nil {
 			return hosttypes.PriceData{}, err
@@ -184,6 +173,8 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		CacheCreation1hRatio:  cacheCreationRatio1h,
 		CacheCreation12hRatio: cacheCreationRatio12h,
 		QuotaToPreConsume:     preConsumedQuota,
+		QuotaBeforeGroup:      quotaBeforeGroup,
+		HasQuotaBeforeGroup:   true,
 	}
 	if usePrice {
 		for name, ratio := range meta.BillingRatios {
@@ -199,6 +190,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 			priceData.AddOtherRatio("n", float64(count))
 		}
 		if !usePrice {
+			priceData.QuotaBeforeGroup = priceData.ApplyOtherRatiosToFloat(info.ImageQuotaBeforeGroup)
 			quota, err := common.QuotaFromFloatStrict(priceData.ApplyOtherRatiosToFloat(info.ImageQuotaBeforeGroup * groupRatioInfo.GroupRatio))
 			if err != nil {
 				return hosttypes.PriceData{}, err
@@ -207,6 +199,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		}
 	}
 	if usePrice {
+		priceData.QuotaBeforeGroup = priceData.ApplyOtherRatiosToFloat(modelPrice * common.QuotaPerUnit)
 		quotaToPreConsume := priceData.ApplyOtherRatiosToFloat(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
 		quota, err := common.QuotaFromFloatStrict(quotaToPreConsume)
 		if err != nil {

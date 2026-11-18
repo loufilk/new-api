@@ -24,6 +24,7 @@ func GetPricing(c *gin.Context) {
 	groupRatio := map[string]float64{}
 	maps.Copy(groupRatio, ratio_setting.GetGroupRatioCopy())
 	var group string
+	var userPricingRevision int64
 	if exists {
 		user, err := model.GetUserCache(userId.(int))
 		if err != nil {
@@ -31,11 +32,15 @@ func GetPricing(c *gin.Context) {
 			return
 		}
 		group = user.Group
+		policy, err := model.GetRequestUserGroupPricing(c, user.Id)
+		if err != nil {
+			userGroupPricingAPIError(c, err)
+			return
+		}
+		userPricingRevision = policy.Revision
+		c.Header("Cache-Control", "private, no-store")
 		for g := range groupRatio {
-			ratio, ok := ratio_setting.GetGroupGroupRatio(group, g)
-			if ok {
-				groupRatio[g] = ratio
-			}
+			groupRatio[g] = policy.ResolveGroupRatio(group, g).GroupRatio
 		}
 	}
 
@@ -53,14 +58,15 @@ func GetPricing(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{
-		"success":            true,
-		"data":               pricing,
-		"vendors":            model.GetVendors(),
-		"group_ratio":        groupRatio,
-		"usable_group":       usableGroup,
-		"supported_endpoint": model.GetSupportedEndpointMap(),
-		"auto_groups":        autoGroups,
-		"pricing_version":    "a42d372ccf0b5dd13ecf71203521f9d2",
+		"success":               true,
+		"data":                  pricing,
+		"vendors":               model.GetVendors(),
+		"group_ratio":           groupRatio,
+		"usable_group":          usableGroup,
+		"supported_endpoint":    model.GetSupportedEndpointMap(),
+		"auto_groups":           autoGroups,
+		"pricing_version":       "a42d372ccf0b5dd13ecf71203521f9d2",
+		"user_pricing_revision": userPricingRevision,
 	})
 }
 

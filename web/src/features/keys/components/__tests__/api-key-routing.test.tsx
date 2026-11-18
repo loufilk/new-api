@@ -100,6 +100,49 @@ afterEach(() => {
 })
 
 describe('API key routing controls', () => {
+  it('keeps cross-group retry disabled when a second manual group is selected', async () => {
+    const user = userEvent.setup()
+    render(
+      <RoutingForm defaults={{ group: 'default', cross_group_retry: false }} />
+    )
+
+    await user.click(screen.getByRole('combobox', { name: 'Group' }))
+    await user.click(screen.getByRole('option', { name: /^vip/ }))
+    await user.keyboard('{Escape}')
+
+    expect(
+      screen.getByRole('switch', { name: 'Cross-group retry' })
+    ).not.toBeChecked()
+    await user.click(screen.getByRole('button', { name: 'Submit key' }))
+    await waitFor(() => expect(submitted).toHaveBeenCalled())
+    expect(submitted.mock.calls[0][0]).toMatchObject({
+      auto_groups: ['default', 'vip'],
+      cross_group_retry: false,
+    })
+  })
+
+  it('keeps cross-group retry disabled when a single group is replaced with global Auto', async () => {
+    const user = userEvent.setup()
+    render(
+      <RoutingForm defaults={{ group: 'default', cross_group_retry: false }} />
+    )
+
+    await user.click(
+      screen.getByRole('button', { name: 'Restore global Auto' })
+    )
+
+    expect(
+      screen.getByRole('switch', { name: 'Cross-group retry' })
+    ).not.toBeChecked()
+    await user.click(screen.getByRole('button', { name: 'Submit key' }))
+    await waitFor(() => expect(submitted).toHaveBeenCalled())
+    expect(submitted.mock.calls[0][0]).toMatchObject({
+      group: 'auto',
+      auto_groups_mode: 'inherit',
+      cross_group_retry: false,
+    })
+  })
+
   it.each([
     { action: 'Move vip up', order: ['vip', 'fast', 'default'] },
     { action: 'Remove default', order: ['fast', 'vip'] },

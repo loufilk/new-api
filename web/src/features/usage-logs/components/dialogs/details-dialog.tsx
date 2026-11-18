@@ -90,6 +90,7 @@ import {
   renderAuditContent,
   renderLogContent,
 } from '../../lib/format'
+import { resolveLogGroupPricing } from '../../lib/group-pricing'
 import { buildQuotaAuditOperation } from '../../lib/quota-audit-operation'
 import {
   getLogTypeConfig,
@@ -126,7 +127,8 @@ function timingTextColorClass(
 
 function formatRatio(ratio: number | undefined): string {
   if (ratio == null) return '-'
-  return ratio.toFixed(4)
+  const rounded = ratio.toFixed(4)
+  return ratio > 0 && Number(rounded) === 0 ? String(ratio) : rounded
 }
 
 function getUsageBillingPathLabel(
@@ -242,14 +244,37 @@ function BillingBreakdown(props: {
     }
   }
 
-  const userGR = other.user_group_ratio
-  const isUserGR = userGR != null && Number.isFinite(userGR) && userGR !== -1
-  const effectiveGR = isUserGR ? userGR : other.group_ratio
-  if (effectiveGR != null && Number.isFinite(effectiveGR)) {
-    rows.push({
-      label: isUserGR ? t('User Exclusive Ratio') : t('Group Ratio'),
-      value: `${formatRatio(effectiveGR)}x`,
-    })
+  const groupPricing = resolveLogGroupPricing(other)
+  if (groupPricing.ratio != null) {
+    let label = t('Group Ratio')
+    if (groupPricing.source === 'account_group') {
+      label = t('User Exclusive Ratio')
+    }
+    if (groupPricing.source === 'user') {
+      label = t('Personal Group Ratio')
+    }
+    rows.push({ label, value: `${formatRatio(groupPricing.ratio)}x` })
+  }
+  if (groupPricing.source === 'user') {
+    const inherited = other.inherited_group_ratio
+    if (
+      typeof inherited === 'number' &&
+      Number.isFinite(inherited) &&
+      inherited >= 0
+    ) {
+      rows.push({
+        label: t('Inherited Group Ratio'),
+        value: `${formatRatio(inherited)}x`,
+      })
+    }
+    const revision = other.user_group_pricing_revision
+    if (
+      typeof revision === 'number' &&
+      Number.isSafeInteger(revision) &&
+      revision > 0
+    ) {
+      rows.push({ label: t('Pricing Rule Version'), value: String(revision) })
+    }
   }
 
   if (

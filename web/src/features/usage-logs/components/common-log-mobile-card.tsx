@@ -33,6 +33,7 @@ import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
 
 import type { UsageLog } from '../data/schema'
 import { formatModelName, logTokenName, parseLogOther } from '../lib/format'
+import { resolveLogGroupPricing } from '../lib/group-pricing'
 import {
   getLogTypeConfig,
   isDisplayableLogType,
@@ -73,10 +74,7 @@ export function CommonLogMobileCard<TData>(props: {
   const model = formatModelName(log, isAdminView)
   const config = getLogTypeConfig(log.type)
   const group = log.group || other?.group || ''
-  const groupRatio =
-    other?.user_group_ratio != null && other.user_group_ratio !== -1
-      ? other.user_group_ratio
-      : other?.group_ratio
+  const groupRatio = resolveLogGroupPricing(other).ratio
   const fields: Record<FieldName, LogField> = {
     model: {
       label: t('Model'),

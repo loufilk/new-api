@@ -290,6 +290,10 @@ export interface LogOtherData {
   model_price?: number
   group_ratio?: number
   user_group_ratio?: number
+  user_group_price_override?: number
+  group_ratio_source?: 'global' | 'account_group' | 'user' | string
+  inherited_group_ratio?: number
+  user_group_pricing_revision?: number
   cache_ratio?: number
   cache_creation_ratio?: number
   cache_creation_ratio_5m?: number
