@@ -43,6 +43,7 @@ interface AffiliateRewardsCardProps {
   affiliateLink: string
   onTransfer: () => void
   onWithdraw?: () => void
+  withdrawLabel?: string
   availableQuota: number
   complianceConfirmed?: boolean
   referralRate: number
@@ -121,7 +122,7 @@ export function AffiliateRewardsCard(props: AffiliateRewardsCardProps) {
           ) : null}
           {props.onWithdraw && (
             <Button size='sm' variant='outline' onClick={props.onWithdraw}>
-              {t('Contact support to withdraw')}
+              {props.withdrawLabel ?? t('Contact support to withdraw')}
             </Button>
           )}
         </div>

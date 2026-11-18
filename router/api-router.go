@@ -59,6 +59,8 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 	// host controller/service packages.
 	scopes.PaymentRoutes = RegisterPaymentRoutes
 	scopes.AgentPlatformRoutes = RegisterAgentPlatformRoutes
+	RegisterCommerceRoutes(apiRouter)
+	RegisterReferralWithdrawalRoutes(apiRouter)
 	{
 		apiRouter.GET("/setup", controller.GetSetup)
 		apiRouter.POST("/setup", anonymousRequestBodyLimit, controller.PostSetup)

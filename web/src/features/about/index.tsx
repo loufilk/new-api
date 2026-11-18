@@ -17,11 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { Construction } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
+import { Layers3 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { ErrorState } from '@/components/error-state'
 import { PublicLayout } from '@/components/layout'
 import { RichContent } from '@/components/rich-content'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { isHttpUrl, isLikelyHtml } from '@/lib/content-format'
 import { requireServerSuccess } from '@/lib/server-error-message'
@@ -36,15 +39,28 @@ function EmptyAboutState() {
     <div className='flex min-h-[60vh] items-center justify-center p-8'>
       <div className='max-w-2xl space-y-6 text-center'>
         <div className='flex justify-center'>
-          <Construction className='text-muted-foreground h-24 w-24' />
+          <span className='bg-primary/10 text-primary rounded-2xl p-5'>
+            <Layers3 className='size-9' aria-hidden='true' />
+          </span>
         </div>
         <div className='space-y-2'>
-          <h2 className='text-2xl font-bold'>{t('No About Content Set')}</h2>
-          <p className='text-muted-foreground'>
+          <h1 className='text-3xl font-semibold tracking-tight'>
+            {t('One workspace. Every model.')}
+          </h1>
+          <p className='text-muted-foreground leading-7'>
             {t(
-              'The administrator has not configured any about content yet. You can set it in the settings page, supporting HTML or URL.'
+              'Connect your tools, choose the right models, and keep every request in view.'
             )}
           </p>
+        </div>
+        <div className='flex flex-wrap justify-center gap-3'>
+          <Button render={<Link to='/pricing' />}>{t('Explore models')}</Button>
+          <Button variant='outline' render={<Link to='/contact' />}>
+            {t('Support Center')}
+          </Button>
+          <Button variant='outline' render={<Link to='/partner' />}>
+            {t('Partner application')}
+          </Button>
         </div>
         <div className='space-y-4 text-sm'>
           <p>
@@ -115,7 +131,7 @@ function EmptyAboutState() {
 
 export function About() {
   const { t } = useTranslation()
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['about-content'],
     queryFn: async () => requireServerSuccess(await getAboutContent()),
   })
@@ -141,7 +157,14 @@ export function About() {
   if (!hasContent) {
     return (
       <PublicLayout>
-        <EmptyAboutState />
+        {isError ? (
+          <ErrorState
+            title={t('Loading failed')}
+            onRetry={() => void refetch()}
+          />
+        ) : (
+          <EmptyAboutState />
+        )}
       </PublicLayout>
     )
   }

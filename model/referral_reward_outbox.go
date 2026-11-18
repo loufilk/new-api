@@ -47,7 +47,9 @@ type ReferralRewardInbox struct {
 
 func (*ReferralRewardInbox) BeforeUpdate(*gorm.DB) error { return ErrLedgerImmutable }
 func (*ReferralRewardInbox) BeforeDelete(*gorm.DB) error { return ErrLedgerImmutable }
-func ReferralRewardModels() []any                        { return []any{&ReferralRewardOutbox{}, &ReferralRewardInbox{}} }
+func ReferralRewardModels() []any {
+	return append([]any{&ReferralRewardOutbox{}, &ReferralRewardInbox{}}, ReferralWithdrawalModels()...)
+}
 
 type referralRewardSnapshot struct {
 	UserID    int    `json:"user_id"`

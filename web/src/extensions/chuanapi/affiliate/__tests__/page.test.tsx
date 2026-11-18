@@ -60,6 +60,26 @@ function readResponses(quota = 1000000) {
     if (String(url).includes('/referral/rewards')) {
       data = { items: [], total: 0 }
     }
+    if (url === '/api/referral-withdrawals') data = { items: [], total: 0 }
+    if (url === '/api/referral-withdrawals/summary') {
+      data = {
+        available_quota: quota,
+        reserved_quota: 0,
+        consumed_quota: 0,
+        eligible: false,
+        config: {
+          revision: 0,
+          enabled: false,
+          min_consumed_quota: 0,
+          min_withdrawal_quota: 5000000,
+          quota_per_usdt: 500000,
+          bsc_fee_bps: 0,
+          polygon_fee_bps: 0,
+          trc20_fee_bps: 0,
+          instructions: '',
+        },
+      }
+    }
     return { data: { success: true, data } }
   })
 }

@@ -33,6 +33,7 @@ import type { PricingModel } from '../types'
 import { CachedPriceCell } from './cached-price-cell'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelPriceCell, type ModelPriceCellOptions } from './model-price-cell'
+import { ModelPriceContext } from './model-price-context'
 
 // ----------------------------------------------------------------------------
 // Pricing Table Columns
@@ -89,7 +90,13 @@ export function usePricingColumns(
         <DataTableColumnHeader column={column} title={t('Price')} />
       ),
       cell: ({ row }) => (
-        <ModelPriceCell model={row.original} options={options} />
+        <div className='space-y-1.5'>
+          <ModelPriceCell model={row.original} options={options} />
+          <ModelPriceContext
+            model={row.original}
+            selectedGroup={options.selectedGroup}
+          />
+        </div>
       ),
       size: 180,
       enableSorting: false,

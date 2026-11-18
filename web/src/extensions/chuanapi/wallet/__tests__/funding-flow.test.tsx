@@ -284,7 +284,11 @@ describe('wallet funding flow', () => {
     await screen.findByLabelText('Custom Amount')
     const recharge = screen.getByRole('region', { name: 'Add Funds' })
     const rewards = screen.getByRole('region', { name: 'Invitation Rewards' })
-    expect(recharge.parentElement).toHaveClass('grid', 'lg:grid-cols-2')
+    expect(recharge.parentElement).toHaveClass(
+      'grid',
+      'items-start',
+      'lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]'
+    )
     expect(recharge.parentElement).toBe(rewards.parentElement)
     expect(recharge.nextElementSibling).toBe(rewards)
     expect(recharge).toHaveClass('min-w-0')

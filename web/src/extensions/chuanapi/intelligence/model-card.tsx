@@ -16,12 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Cpu, Play } from 'lucide-react'
+import { Cpu, History, Play } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { getLobeIcon } from '@/lib/lobe-icon'
 
+import { QualityHistoryDialog } from './quality-history-dialog'
 import { ResultRow } from './result-row'
 import { latestModelTestRuns } from './timeline'
 import type { TestRun } from './types'
@@ -38,6 +40,7 @@ export function ModelTestCard(props: {
   onSelect: (run: TestRun) => void
 }) {
   const { t } = useTranslation()
+  const [historyOpen, setHistoryOpen] = useState(false)
   const recent = latestModelTestRuns([
     ...(props.siteRuns ?? []).map((run) => ({
       ...run,
@@ -61,6 +64,15 @@ export function ModelTestCard(props: {
           )}
         </span>
         <h3 className='min-w-0 text-sm font-medium break-all'>{props.model}</h3>
+        <Button
+          variant='ghost'
+          size='sm'
+          className='ml-auto shrink-0 text-xs md:ml-0'
+          onClick={() => setHistoryOpen(true)}
+        >
+          <History className='size-3.5' aria-hidden />
+          {t('History')}
+        </Button>
       </div>
       <div className='divide-border/60 min-w-0 divide-y'>
         <ResultRow
@@ -90,6 +102,15 @@ export function ModelTestCard(props: {
           }
         />
       </div>
+      {historyOpen && (
+        <QualityHistoryDialog
+          model={props.model}
+          group={props.group}
+          runs={recent}
+          onSelect={props.onSelect}
+          onClose={() => setHistoryOpen(false)}
+        />
+      )}
     </article>
   )
 }

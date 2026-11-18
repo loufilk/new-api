@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   Activity,
+  BookOpen,
   Box,
   ClipboardList,
   CreditCard,
@@ -26,13 +27,17 @@ import {
   Image as ImageIcon,
   Key,
   LayoutDashboard,
+  Megaphone,
   LifeBuoy,
   ListTodo,
   PlugZap,
   Radio,
+  ReceiptText,
+  Rocket,
   ServerCog,
   Settings,
   ShieldCheck,
+  TrendingUp,
   Ticket,
   User,
   Users,
@@ -43,6 +48,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { SidebarBadges, SidebarData } from '@/components/layout/types'
 import { useStatus } from '@/hooks/use-status'
+import { hasPermission } from '@/lib/admin-permissions'
 import { isAgentWorkspaceUser } from '@/lib/agent-permissions'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
@@ -87,27 +93,6 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
     navGroups: [
       ...agentGroups,
       {
-        id: 'chat',
-        title: t('Chat'),
-        items: [
-          {
-            title: t('Text Generation'),
-            url: '/playground',
-            icon: FlaskConical,
-          },
-          {
-            title: t('Image Generation'),
-            url: '/image',
-            icon: ImageIcon,
-          },
-          {
-            title: t('Third-party'),
-            icon: PlugZap,
-            type: 'chat-presets',
-          },
-        ],
-      },
-      {
         id: 'general',
         title: t('General'),
         items: [
@@ -120,6 +105,21 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             title: t('Dashboard'),
             url: '/dashboard/models',
             icon: LayoutDashboard,
+          },
+          {
+            title: t('Flow Analysis'),
+            url: '/dashboard/flow',
+            icon: Workflow,
+          },
+          {
+            title: t('Model catalog'),
+            url: '/pricing',
+            icon: Box,
+          },
+          {
+            title: t('Getting started'),
+            url: '/getting-started',
+            icon: Rocket,
           },
           {
             title: t('API Keys'),
@@ -142,6 +142,42 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             activeUrls: ['/usage-logs/drawing'],
             configUrls: ['/usage-logs/drawing', '/usage-logs/task'],
             icon: ListTodo,
+          },
+          {
+            title: t('Channel status'),
+            url: '/channel-status',
+            icon: Activity,
+          },
+          {
+            title: t('Usage rankings'),
+            url: '/rankings',
+            icon: TrendingUp,
+          },
+          {
+            title: t('System announcements'),
+            url: '/system-announcements',
+            icon: Megaphone,
+          },
+        ],
+      },
+      {
+        id: 'chat',
+        title: t('Chat'),
+        items: [
+          {
+            title: t('Text Generation'),
+            url: '/playground',
+            icon: FlaskConical,
+          },
+          {
+            title: t('Image Generation'),
+            url: '/image',
+            icon: ImageIcon,
+          },
+          {
+            title: t('Third-party'),
+            icon: PlugZap,
+            type: 'chat-presets',
           },
         ],
       },
@@ -178,6 +214,16 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             icon: Users,
           },
           {
+            title: t('Invoices'),
+            url: '/invoice',
+            icon: ReceiptText,
+          },
+          {
+            title: t('Partner application'),
+            url: '/partner-apply',
+            icon: PlugZap,
+          },
+          {
             title: t('Support Center'),
             url: '/support',
             icon: LifeBuoy,
@@ -191,6 +237,11 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             title: t('Security & Access'),
             url: '/security',
             icon: ShieldCheck,
+          },
+          {
+            title: t('Documentation'),
+            url: '/help',
+            icon: BookOpen,
           },
         ],
       },
@@ -213,6 +264,43 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             url: '/users',
             icon: Users,
           },
+          ...(hasPermission(user, 'referral_withdrawals', 'read') ||
+          hasPermission(user, 'referral_withdrawal_settings', 'read')
+            ? [
+                {
+                  title: t('Referral withdrawals'),
+                  url: '/referral-withdrawals',
+                  icon: Wallet,
+                },
+              ]
+            : []),
+          ...(hasPermission(user, 'commerce_invoices', 'read')
+            ? [
+                {
+                  title: t('Invoice review'),
+                  url: '/operations/invoices',
+                  icon: ReceiptText,
+                },
+              ]
+            : []),
+          ...(hasPermission(user, 'commerce_partners', 'read')
+            ? [
+                {
+                  title: t('Partner review'),
+                  url: '/operations/partners',
+                  icon: PlugZap,
+                },
+              ]
+            : []),
+          ...(hasPermission(user, 'commerce_settings', 'read')
+            ? [
+                {
+                  title: t('Commerce settings'),
+                  url: '/operations/commerce-settings',
+                  icon: Settings,
+                },
+              ]
+            : []),
           {
             title: t('Redemption Codes'),
             url: '/redemption-codes',

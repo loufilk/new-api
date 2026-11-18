@@ -19,8 +19,12 @@ For commercial licensing, please contact support@quantumnous.com
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ErrorState } from '@/components/error-state'
 import { PublicLayout } from '@/components/layout'
 import { PageTransition } from '@/components/page-transition'
+import { Badge } from '@/components/ui/badge'
+import { IntegrationWizard } from '@/extensions/chuanapi/onboarding/integration-wizard'
+import { useAuthStore } from '@/stores/auth-store'
 
 import {
   LoadingSkeleton,
@@ -39,6 +43,7 @@ import { usePricingData } from './hooks/use-pricing-data'
 
 export function Pricing() {
   const { t } = useTranslation()
+  const isAuthenticated = useAuthStore((state) => Boolean(state.auth.user))
   const [selectedModelName, setSelectedModelName] = useState<string | null>(
     null
   )
@@ -51,6 +56,8 @@ export function Pricing() {
     endpointMap,
     autoGroups,
     isLoading,
+    error,
+    refetch,
     priceRate,
     usdExchangeRate,
   } = usePricingData()
@@ -162,6 +169,17 @@ export function Pricing() {
     )
   }
 
+  if (error) {
+    return (
+      <PublicLayout>
+        <ErrorState
+          title={t('Unable to load available models')}
+          onRetry={() => void refetch()}
+        />
+      </PublicLayout>
+    )
+  }
+
   return (
     <PublicLayout showMainContainer={false}>
       <div className='relative'>
@@ -193,6 +211,24 @@ export function Pricing() {
             <p className='text-muted-foreground/60 mx-auto mt-2 max-w-2xl text-xs leading-relaxed sm:text-sm'>
               {t(
                 'Discover curated AI models, compare pricing and capabilities, and choose the right model for every scenario.'
+              )}
+            </p>
+            <div className='mt-4 flex flex-wrap items-center justify-center gap-2'>
+              <Badge variant='secondary'>
+                {t('{{count}} calling groups', {
+                  count: availableGroups.length,
+                })}
+              </Badge>
+              <Badge variant='outline'>
+                {isAuthenticated
+                  ? t('Your account pricing')
+                  : t('Public pricing')}
+              </Badge>
+              <IntegrationWizard initialGroup={groupFilter} />
+            </div>
+            <p className='text-muted-foreground mx-auto mt-3 max-w-2xl text-xs leading-relaxed'>
+              {t(
+                'Select a calling group to see its prices. “From” shows the lowest available group price; billing follows the group used by your API key.'
               )}
             </p>
             <SearchBar
@@ -290,6 +326,7 @@ export function Pricing() {
               usdExchangeRate={usdExchangeRate ?? 1}
               tokenUnit={tokenUnit}
               showRechargePrice={showRechargePrice}
+              selectedGroup={groupFilter}
             />
           )}
         </PageTransition>

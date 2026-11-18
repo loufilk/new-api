@@ -20,6 +20,7 @@ import { useQuery } from '@tanstack/react-query'
 import { FileWarning } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { ErrorState } from '@/components/error-state'
 import { PublicLayout } from '@/components/layout'
 import { RichContent } from '@/components/rich-content'
 import { Button } from '@/components/ui/button'
@@ -43,7 +44,7 @@ export function LegalDocument({
   emptyMessage,
 }: LegalDocumentProps) {
   const { t } = useTranslation()
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: [queryKey],
     queryFn: fetchDocument,
     staleTime: 10 * 60 * 1000,
@@ -68,7 +69,22 @@ export function LegalDocument({
     )
   }
 
-  if (!success || !hasContent) {
+  if (isError || (data && !success)) {
+    return (
+      <PublicLayout>
+        <div className='mx-auto max-w-2xl py-12'>
+          <h1 className='mb-6 text-2xl font-semibold'>{title}</h1>
+          <ErrorState
+            title={t('Loading failed')}
+            description={t('Please check your connection and try again.')}
+            onRetry={() => void refetch()}
+          />
+        </div>
+      </PublicLayout>
+    )
+  }
+
+  if (!hasContent) {
     return (
       <PublicLayout>
         <div className='mx-auto max-w-2xl py-12'>
@@ -79,9 +95,7 @@ export function LegalDocument({
               </div>
               <div className='space-y-1'>
                 <CardTitle className='text-lg font-semibold'>{title}</CardTitle>
-                <p className='text-muted-foreground text-sm'>
-                  {data?.message || emptyMessage}
-                </p>
+                <p className='text-muted-foreground text-sm'>{emptyMessage}</p>
               </div>
             </CardHeader>
           </Card>
@@ -127,7 +141,7 @@ export function LegalDocument({
       {contentIsHtml ? (
         <RichContent mode='html' htmlVariant='isolated' content={rawContent} />
       ) : (
-        <div className='mx-auto max-w-4xl space-y-6 py-12'>
+        <article className='bg-card mx-auto my-8 max-w-4xl space-y-6 rounded-2xl border p-6 shadow-xs sm:my-12 sm:p-10'>
           <div className='space-y-2'>
             <h1 className='text-3xl font-semibold tracking-tight'>{title}</h1>
           </div>
@@ -137,7 +151,7 @@ export function LegalDocument({
             content={rawContent}
             className='prose-neutral dark:prose-invert max-w-none'
           />
-        </div>
+        </article>
       )}
     </PublicLayout>
   )

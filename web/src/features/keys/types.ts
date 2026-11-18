@@ -121,7 +121,9 @@ export type ApiKeyUpdateData = Omit<ApiKeyFormData, 'remain_quota'> & {
 
 export interface TokenGroupDetail {
   name: string
+  description?: string
   ratio: number
+  request_count?: number | null
   success_rate: number | null
   available: boolean
   history: Array<number | null>

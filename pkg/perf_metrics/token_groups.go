@@ -12,8 +12,9 @@ const TokenGroupHistoryBucketSeconds = int64(3600)
 const TokenGroupHistoryBuckets = 24
 
 type TokenGroupHistory struct {
-	SuccessRate *float64   `json:"success_rate"`
-	History     []*float64 `json:"history"`
+	SuccessRate  *float64   `json:"success_rate"`
+	History      []*float64 `json:"history"`
+	RequestCount int64      `json:"request_count"`
 }
 
 // QueryTokenGroupHistory reports request-weighted real outcomes. It combines
@@ -72,6 +73,7 @@ func QueryTokenGroupHistory(ctx context.Context, groups []string, now time.Time)
 			rate := math.Round(successRate(total)*100) / 100
 			history.SuccessRate = &rate
 		}
+		history.RequestCount = total.requestCount
 		result[group] = history
 	}
 	return result, startTs, endTs, nil

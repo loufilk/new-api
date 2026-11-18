@@ -181,6 +181,23 @@ func validateAnnouncements(announcementsStr string) error {
 		"default": true, "ongoing": true, "success": true, "warning": true, "error": true,
 	}
 	for i, ann := range list {
+		if title, exists := ann["title"]; exists {
+			text, valid := title.(string)
+			if !valid || exceedsMaxCharacters(text, 140) {
+				return common.NewMessage("Announcement #{{index}} title must be at most 140 characters", map[string]any{"index": i + 1})
+			}
+		}
+		if category, exists := ann["category"]; exists && category != "announcement" && category != "timeline" {
+			return common.NewMessage("Announcement #{{index}} has an invalid category", map[string]any{"index": i + 1})
+		}
+		if status, exists := ann["status"]; exists && status != "draft" && status != "published" {
+			return common.NewMessage("Announcement #{{index}} has an invalid publication status", map[string]any{"index": i + 1})
+		}
+		if pinned, exists := ann["pinned"]; exists {
+			if _, valid := pinned.(bool); !valid {
+				return common.NewMessage("Announcement #{{index}} pinned state must be a boolean", map[string]any{"index": i + 1})
+			}
+		}
 		content, ok := ann["content"].(string)
 		if !ok || content == "" {
 			return common.NewMessage("Announcement #{{index}} is missing the content field", map[string]any{"index": i + 1})
@@ -255,7 +272,30 @@ func getPublishTime(item map[string]any) time.Time {
 
 func GetAnnouncements() []map[string]any {
 	list := getJSONList(GetConsoleSetting().Announcements)
+	return publishedAnnouncements(list, time.Now())
+}
+
+// Drafts and future publications remain administrator-only. Legacy entries
+// without an explicit status retain the existing published interpretation.
+func publishedAnnouncements(list []map[string]any, now time.Time) []map[string]any {
+	published := make([]map[string]any, 0, len(list))
+	for _, item := range list {
+		if status, exists := item["status"]; exists && status != "published" {
+			continue
+		}
+		publishedAt := getPublishTime(item)
+		if publishedAt.IsZero() || publishedAt.After(now) {
+			continue
+		}
+		published = append(published, item)
+	}
+	list = published
 	sort.SliceStable(list, func(i, j int) bool {
+		leftPinned, _ := list[i]["pinned"].(bool)
+		rightPinned, _ := list[j]["pinned"].(bool)
+		if leftPinned != rightPinned {
+			return leftPinned
+		}
 		return getPublishTime(list[i]).After(getPublishTime(list[j]))
 	})
 	return list

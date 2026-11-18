@@ -25,6 +25,8 @@ export type VerificationMethod =
   | 'oauth'
   | 'session'
 export type SecurityProofScope =
+  | 'referral.withdrawal.create'
+  | 'referral.withdrawal.review'
   | 'channel.key.read'
   | 'passkey.register'
   | 'passkey.delete'
@@ -51,6 +53,31 @@ export type SecurityProofScope =
 export type AdminUserManageAction = 'disable' | 'enable' | 'promote' | 'demote'
 
 export type VerificationOperation =
+  | {
+      scope: 'referral.withdrawal.create'
+      context: {
+        request_key: string
+        input: {
+          amount_quota: number
+          network: string
+          address: string
+          policy_revision: number
+        }
+      }
+    }
+  | {
+      scope: 'referral.withdrawal.review'
+      context: {
+        withdrawal_id: number
+        request_key: string
+        input: {
+          expected_revision: number
+          action: string
+          note: string
+          transaction_hash: string
+        }
+      }
+    }
   | { scope: 'channel.key.read'; context: { channel_id: number } }
   | {
       scope: 'account.binding.bind'
@@ -94,6 +121,8 @@ export type VerificationOperation =
   | {
       scope: Exclude<
         SecurityProofScope,
+        | 'referral.withdrawal.create'
+        | 'referral.withdrawal.review'
         | 'channel.key.read'
         | 'account.binding.bind'
         | 'account.binding.unbind'

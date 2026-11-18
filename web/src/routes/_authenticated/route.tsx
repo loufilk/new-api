@@ -16,34 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 
 import { AuthenticatedLayout } from '@/components/layout'
-import { sanitizeAuthRedirect } from '@/features/auth/lib/auth-redirect'
-import { resolveAuthentication } from '@/lib/auth-session'
-import { useAuthStore } from '@/stores/auth-store'
+import { AuthSessionError } from '@/features/auth/components/auth-session-error'
+import { requireAuthenticatedSession } from '@/features/auth/lib/session-route-guards'
 
 export const Route = createFileRoute('/_authenticated')({
-  beforeLoad: async ({ location }) => {
-    // The root guard may have skipped its refresh because no session hint was
-    // present. That skip is an optimization for public pages and must not
-    // decide a protected route, so resolve against the server before
-    // redirecting. An in-memory session returns without a request.
-    await resolveAuthentication()
-
-    const { auth } = useAuthStore.getState()
-
-    if (!auth.user || !auth.accessToken) {
-      throw redirect({
-        to: '/sign-in',
-        search: {
-          redirect:
-            sanitizeAuthRedirect(location.href, window.location.origin) ??
-            undefined,
-        },
-        replace: true,
-      })
-    }
-  },
+  beforeLoad: requireAuthenticatedSession,
+  errorComponent: AuthSessionError,
   component: AuthenticatedLayout,
 })

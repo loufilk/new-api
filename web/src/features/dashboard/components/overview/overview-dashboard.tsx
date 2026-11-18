@@ -48,6 +48,7 @@ import {
 } from '@/components/page-transition'
 import { Button } from '@/components/ui/button'
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
+import { IntegrationWizard } from '@/extensions/chuanapi/onboarding/integration-wizard'
 import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
 import type { ApiKey } from '@/features/keys/types'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
@@ -163,7 +164,15 @@ function normalizeEndpoint(sourceUrl?: string): string {
 }
 
 function getPreferredKey(keys: ApiKey[]): ApiKey | null {
-  return keys.find((item) => item.status === 1) ?? keys[0] ?? null
+  const now = Math.floor(Date.now() / 1000)
+  return (
+    keys.find(
+      (item) =>
+        item.status === 1 &&
+        (item.expired_time === -1 || item.expired_time > now) &&
+        (item.unlimited_quota || item.remain_quota > 0)
+    ) ?? null
+  )
 }
 
 function formatDisplayKey(key?: string): string {
@@ -603,8 +612,8 @@ export function OverviewDashboard() {
   const heroSignals = useMemo<HeroSignal[]>(
     () => [
       {
-        label: t('Route active'),
-        value: apiInfoItems.length > 0 ? t('Online') : t('Current domain'),
+        label: t('API address'),
+        value: apiInfoItems.length > 0 ? t('Configured') : t('Current domain'),
         icon: RadioTower,
         tone: 'info',
       },
@@ -616,7 +625,7 @@ export function OverviewDashboard() {
       },
       {
         label: t('Model selected'),
-        value: modelsQuery.data?.[0] ?? t('Loading'),
+        value: modelsQuery.data?.[0] ?? t('No available models'),
         icon: Timer,
         tone: 'chart-4',
       },
@@ -626,9 +635,9 @@ export function OverviewDashboard() {
 
   const requestExample = useMemo<RequestExample>(() => {
     const endpoint = normalizeEndpoint(apiInfoItems[0]?.url)
-    const model = modelsQuery.data?.[0] ?? 'gpt-4o-mini'
+    const model = modelsQuery.data?.[0] ?? 'MODEL_ID'
     const keyName = preferredKey?.name ?? t('No API key yet')
-    const ready = Boolean(preferredKey?.id && model)
+    const ready = Boolean(preferredKey?.id && modelsQuery.data?.[0])
 
     return {
       endpoint,
@@ -663,6 +672,11 @@ export function OverviewDashboard() {
   return (
     <SectionPageLayout>
       <SectionPageLayout.Title>{t('Overview')}</SectionPageLayout.Title>
+      <SectionPageLayout.Description>
+        {t(
+          'Your balance, recent usage, service notices, and the next step for your integration.'
+        )}
+      </SectionPageLayout.Description>
       <SectionPageLayout.Actions>
         {setupStatusReady && setupComplete && (
           <Button
@@ -677,6 +691,7 @@ export function OverviewDashboard() {
             {t('Setup guide')}
           </Button>
         )}
+        <IntegrationWizard />
       </SectionPageLayout.Actions>
       <SectionPageLayout.Content>
         <div className='flex flex-col gap-4'>
@@ -825,7 +840,7 @@ export function OverviewDashboard() {
           {showContentPanels && (
             <CardStaggerContainer
               className={cn(
-                'grid grid-cols-1 gap-4',
+                'grid grid-cols-1 items-start gap-4',
                 showLeftContentPanels &&
                   showUptimePanel &&
                   'xl:grid-cols-[minmax(0,1fr)_22rem]'
@@ -834,7 +849,7 @@ export function OverviewDashboard() {
               {showLeftContentPanels && (
                 <div
                   className={cn(
-                    'grid min-w-0 grid-cols-1 gap-4',
+                    'grid min-w-0 grid-cols-1 content-start items-start gap-4',
                     (showApiInfoPanel ||
                       showAnnouncementsPanel ||
                       showFAQPanel) &&

@@ -37,6 +37,11 @@ export function SystemInfo() {
           </Badge>
         </span>
       </SectionPageLayout.Title>
+      <SectionPageLayout.Description>
+        {t(
+          'Inspect service status, runtime information, and system resources.'
+        )}
+      </SectionPageLayout.Description>
       <SectionPageLayout.Content>
         <div className='space-y-4'>
           <SystemInstancesPanel />

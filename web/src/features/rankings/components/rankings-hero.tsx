@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
 
-import { cn } from '@/lib/utils'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 import type { RankingPeriod } from '../types'
 
@@ -54,39 +54,26 @@ export function RankingsHero(props: RankingsHeroProps) {
         </p>
       </div>
 
-      {/* Underline tabs for period — clean and unobtrusive. */}
-      <div
-        role='tablist'
-        aria-label={t('Period')}
-        className='border-border/60 flex items-center border-b'
-      >
-        {PERIODS.map((p) => {
-          const isActive = props.period === p.id
-          return (
-            <button
-              key={p.id}
-              role='tab'
-              type='button'
-              aria-selected={isActive}
-              onClick={() => props.onPeriodChange(p.id)}
-              className={cn(
-                'focus-visible:ring-ring/40 relative -mb-px rounded-sm px-3 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none',
-                isActive
-                  ? 'text-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
-            >
-              {t(p.labelKey)}
-              <span
-                aria-hidden
-                className={cn(
-                  'bg-foreground absolute inset-x-3 -bottom-px h-[2px] rounded-full transition-opacity',
-                  isActive ? 'opacity-100' : 'opacity-0'
-                )}
-              />
-            </button>
-          )
-        })}
+      <div className='flex flex-wrap items-end justify-between gap-3 border-b pb-3'>
+        <Tabs
+          value={props.period}
+          onValueChange={(value) => {
+            if (PERIODS.some((period) => period.id === value)) {
+              props.onPeriodChange(value as RankingPeriod)
+            }
+          }}
+        >
+          <TabsList aria-label={t('Period')}>
+            {PERIODS.map((period) => (
+              <TabsTrigger key={period.id} value={period.id} className='px-4'>
+                {t(period.labelKey)}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <p className='text-muted-foreground text-xs'>
+          {t('Rankings reflect platform usage in the selected period.')}
+        </p>
       </div>
     </section>
   )

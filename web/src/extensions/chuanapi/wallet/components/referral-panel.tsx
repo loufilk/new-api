@@ -81,7 +81,13 @@ export function ReferralPanel() {
         user={user.data ?? null}
         affiliateLink={affiliate.affiliateLink}
         onTransfer={() => setTransferOpen(true)}
-        onWithdraw={() => setWithdrawalOpen(true)}
+        onWithdraw={() => {
+          if (isAgent) setWithdrawalOpen(true)
+          else window.location.assign('/affiliate#referral-withdrawals')
+        }}
+        withdrawLabel={
+          isAgent ? t('Contact support to withdraw') : t('Request withdrawal')
+        }
         availableQuota={wallet.summary?.referral_available_quota ?? 0}
         complianceConfirmed={
           info.topupInfo?.payment_compliance_confirmed === true

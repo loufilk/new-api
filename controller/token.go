@@ -329,11 +329,13 @@ func GetTokenAutoGroups(c *gin.Context) {
 		}
 	}
 	type groupDetail struct {
-		Name        string     `json:"name"`
-		Ratio       float64    `json:"ratio"`
-		SuccessRate *float64   `json:"success_rate"`
-		Available   bool       `json:"available"`
-		History     []*float64 `json:"history"`
+		Name         string     `json:"name"`
+		Description  string     `json:"description"`
+		Ratio        float64    `json:"ratio"`
+		RequestCount *int64     `json:"request_count"`
+		SuccessRate  *float64   `json:"success_rate"`
+		Available    bool       `json:"available"`
+		History      []*float64 `json:"history"`
 	}
 	details := make([]groupDetail, 0, len(selectable))
 	for _, group := range selectable {
@@ -341,8 +343,13 @@ func GetTokenAutoGroups(c *gin.Context) {
 		if !ok {
 			history.History = make([]*float64, perfmetrics.TokenGroupHistoryBuckets)
 		}
+		var requestCount *int64
+		if metricsAvailable {
+			requestCount = &history.RequestCount
+		}
 		details = append(details, groupDetail{
 			Name: group, Ratio: policy.ResolveGroupRatio(userGroup, group).GroupRatio,
+			Description: setting.GetUsableGroupDescription(group), RequestCount: requestCount,
 			SuccessRate: history.SuccessRate, Available: available[group], History: history.History,
 		})
 	}

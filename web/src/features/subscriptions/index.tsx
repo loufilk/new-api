@@ -40,6 +40,11 @@ function SubscriptionsContent() {
         <SectionPageLayout.Title>
           {t('Subscription Management')}
         </SectionPageLayout.Title>
+        <SectionPageLayout.Description>
+          {t(
+            'Configure subscription plans and manage active user subscriptions.'
+          )}
+        </SectionPageLayout.Description>
         <SectionPageLayout.Actions>
           <div className='flex items-center gap-2'>
             <Alert variant='default' className='hidden px-3 py-2 sm:flex'>

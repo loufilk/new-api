@@ -24,21 +24,12 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import * as z from 'zod'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { StaticDataTable } from '@/components/data-table/static/static-data-table'
 import { StaticRowActions } from '@/components/data-table/static/static-row-actions'
 import { DateTimePicker } from '@/components/datetime-picker'
 import { Dialog } from '@/components/dialog'
 import { StatusBadge } from '@/components/status-badge'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -76,6 +67,10 @@ type Announcement = {
   publishDate: string
   type: 'default' | 'ongoing' | 'success' | 'warning' | 'error'
   extra?: string
+  title?: string
+  category?: 'announcement' | 'timeline'
+  status?: 'draft' | 'published'
+  pinned?: boolean
 }
 
 type AnnouncementsSectionProps = {
@@ -84,6 +79,10 @@ type AnnouncementsSectionProps = {
 }
 
 const announcementSchema = z.object({
+  title: z.string().max(140, 'Title cannot exceed 140 characters'),
+  category: z.enum(['announcement', 'timeline']),
+  status: z.enum(['draft', 'published']),
+  pinned: z.boolean(),
   content: z
     .string()
     .min(1, 'Content is required')
@@ -163,6 +162,10 @@ export function AnnouncementsSection({
       publishDate: new Date().toISOString(),
       type: 'default',
       extra: '',
+      title: '',
+      category: 'announcement',
+      status: 'published',
+      pinned: false,
     },
   })
 
@@ -206,6 +209,10 @@ export function AnnouncementsSection({
       publishDate: new Date().toISOString(),
       type: 'default',
       extra: '',
+      title: '',
+      category: 'announcement',
+      status: 'published',
+      pinned: false,
     })
     setShowDialog(true)
   }
@@ -217,6 +224,10 @@ export function AnnouncementsSection({
       publishDate: announcement.publishDate,
       type: announcement.type,
       extra: announcement.extra || '',
+      title: announcement.title || '',
+      category: announcement.category || 'announcement',
+      status: announcement.status || 'published',
+      pinned: announcement.pinned === true,
     })
     setShowDialog(true)
   }
@@ -268,7 +279,8 @@ export function AnnouncementsSection({
       )
       toast.success(t('Announcement updated. Click "Save Settings" to apply.'))
     } else {
-      const newId = Math.max(...announcements.map((item) => item.id), 0) + 1
+      const newId =
+        Math.max(Date.now(), ...announcements.map((item) => item.id)) + 1
       setAnnouncements((prev) => [...prev, { id: newId, ...values }])
       toast.success(t('Announcement added. Click "Save Settings" to apply.'))
     }
@@ -381,7 +393,42 @@ export function AnnouncementsSection({
               id: 'content',
               header: t('Content'),
               cellClassName: 'max-w-xs truncate',
-              cell: (announcement) => announcement.content,
+              cell: (announcement) => (
+                <div className='space-y-1'>
+                  <p className='truncate font-medium'>
+                    {announcement.title || announcement.content}
+                  </p>
+                  <div className='flex flex-wrap items-center gap-2'>
+                    {announcement.pinned && (
+                      <StatusBadge
+                        label={t('Pinned')}
+                        variant='info'
+                        copyable={false}
+                      />
+                    )}
+                    <StatusBadge
+                      label={
+                        announcement.category === 'timeline'
+                          ? t('Timeline')
+                          : t('Announcement')
+                      }
+                      variant='neutral'
+                      copyable={false}
+                    />
+                    <StatusBadge
+                      label={
+                        announcement.status === 'draft'
+                          ? t('Draft')
+                          : t('Published / scheduled')
+                      }
+                      variant={
+                        announcement.status === 'draft' ? 'warning' : 'success'
+                      }
+                      copyable={false}
+                    />
+                  </div>
+                </div>
+              ),
             },
             {
               id: 'publish-date',
@@ -478,6 +525,112 @@ export function AnnouncementsSection({
           >
             <FormField
               control={form.control}
+              name='title'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Announcement title')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      placeholder={t(
+                        'Optional title for the announcement list'
+                      )}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+              <FormField
+                control={form.control}
+                name='category'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Category')}</FormLabel>
+                    <Select
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      items={[
+                        { value: 'announcement', label: t('Announcement') },
+                        { value: 'timeline', label: t('Timeline') },
+                      ]}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value='announcement'>
+                          {t('Announcement')}
+                        </SelectItem>
+                        <SelectItem value='timeline'>
+                          {t('Timeline')}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='status'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Publication status')}</FormLabel>
+                    <Select
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      items={[
+                        {
+                          value: 'published',
+                          label: t('Published / scheduled'),
+                        },
+                        { value: 'draft', label: t('Draft') },
+                      ]}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value='published'>
+                          {t('Published / scheduled')}
+                        </SelectItem>
+                        <SelectItem value='draft'>{t('Draft')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+            <FormField
+              control={form.control}
+              name='pinned'
+              render={({ field }) => (
+                <FormItem className='flex items-center gap-2 rounded-lg border p-3'>
+                  <FormControl>
+                    <Checkbox
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                  <FormLabel>{t('Pin this announcement')}</FormLabel>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Drafts remain private. Published entries become visible at the selected publication time.'
+              )}
+            </p>
+            <FormField
+              control={form.control}
               name='content'
               render={({ field }) => (
                 <FormItem>
@@ -543,7 +696,7 @@ export function AnnouncementsSection({
                           <div
                             className={`h-3 w-3 rounded-full ${option.color}`}
                           />
-                          {option.label}
+                          {t(option.label)}
                         </div>
                       ),
                     }))}
@@ -565,7 +718,7 @@ export function AnnouncementsSection({
                               <div
                                 className={`h-3 w-3 rounded-full ${option.color}`}
                               />
-                              {option.label}
+                              {t(option.label)}
                             </div>
                           </SelectItem>
                         ))}
@@ -601,26 +754,21 @@ export function AnnouncementsSection({
         </Form>
       </Dialog>
 
-      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('Are you sure?')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deleteTarget === 'single'
-                ? t('This announcement will be removed from the list.')
-                : t('{{count}} announcements will be removed from the list.', {
-                    count: selectedIds.length,
-                  })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
-            <AlertDialogAction variant='destructive' onClick={confirmDelete}>
-              {t('Delete')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={showDeleteDialog}
+        onOpenChange={setShowDeleteDialog}
+        title={t('Are you sure?')}
+        desc={
+          deleteTarget === 'single'
+            ? t('This announcement will be removed from the list.')
+            : t('{{count}} announcements will be removed from the list.', {
+                count: selectedIds.length,
+              })
+        }
+        destructive
+        confirmText={t('Delete')}
+        handleConfirm={confirmDelete}
+      />
     </SettingsSection>
   )
 }

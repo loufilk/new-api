@@ -99,14 +99,14 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
   return (
     <div
       data-wallet-stats-grid
-      className='grid grid-cols-2 overflow-hidden rounded-lg border lg:grid-cols-4'
+      className='bg-card grid grid-cols-2 overflow-hidden rounded-2xl border lg:grid-cols-4'
     >
       {stats.map((item, index) => (
         <div
           key={item.key}
           data-wallet-stat={item.key}
           className={cn(
-            'min-w-0 px-2.5 py-2.5 sm:px-4 sm:py-3',
+            'min-w-0 px-3 py-4 sm:px-5 sm:py-5',
             index % 2 === 1 && 'border-l',
             index >= 2 && 'border-t lg:border-t-0',
             index > 0 && 'lg:border-l'
@@ -120,7 +120,7 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
             </>
           ) : (
             <>
-              <div className='flex flex-wrap items-center justify-between gap-2'>
+              <div className='flex flex-col items-start gap-4'>
                 <div className='flex items-center gap-1.5'>
                   <IconBadge tone={item.tone} size='stat'>
                     <item.icon />
@@ -131,12 +131,12 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
                 </div>
                 <div
                   data-wallet-stat-value
-                  className='text-foreground min-w-0 font-mono text-sm font-bold tracking-tight break-all tabular-nums sm:text-lg'
+                  className='text-foreground min-w-0 font-mono text-xl font-bold tracking-tight break-all tabular-nums sm:text-2xl'
                 >
                   {item.value}
                 </div>
               </div>
-              <div className='text-muted-foreground mt-1 hidden text-xs md:block'>
+              <div className='text-muted-foreground mt-2 text-xs leading-relaxed'>
                 {item.description}
               </div>
               {item.key === 'bonus' &&

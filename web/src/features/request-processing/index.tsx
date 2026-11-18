@@ -313,6 +313,11 @@ export function RequestProcessing() {
         <SectionPageLayout.Title>
           {t('Request processing')}
         </SectionPageLayout.Title>
+        <SectionPageLayout.Description>
+          {t(
+            'Manage request rules, routing behavior, and transformation policies.'
+          )}
+        </SectionPageLayout.Description>
         <SectionPageLayout.Actions>
           <NodeSyncIndicator topics={['options']} />
           <Button

@@ -46,6 +46,7 @@ import type { PricingModel, PriceType, TokenUnit } from '../types'
 import { ModelApiActions } from './model-api-actions'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
+import { ModelPriceContext } from './model-price-context'
 
 export interface ModelCardProps {
   model: PricingModel
@@ -340,6 +341,10 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
             model={props.model}
             appearance='caption'
             className='text-sm'
+          />
+          <ModelPriceContext
+            model={model}
+            selectedGroup={props.selectedGroup}
           />
           {dynamicSummary?.providerCount && (
             <span className='text-muted-foreground text-sm break-words'>

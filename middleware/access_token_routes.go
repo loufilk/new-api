@@ -41,6 +41,12 @@ func accessTokenScopeRule(scope string) accessTokenRouteRule {
 // Casbin-guarded routes declare themselves through
 // DeclareAccessTokenPermissionRoute when they are registered.
 var accessTokenRouteRules = map[string]accessTokenRouteRule{
+	"GET /api/referral-withdrawals/summary":     accessTokenSessionRule,
+	"GET /api/referral-withdrawals":             accessTokenSessionRule,
+	"GET /api/referral-withdrawals/:id":         accessTokenSessionRule,
+	"POST /api/referral-withdrawals/quote":      accessTokenSessionRule,
+	"POST /api/referral-withdrawals":            accessTokenSessionRule,
+	"POST /api/referral-withdrawals/:id/cancel": accessTokenSessionRule,
 	// Agent financial/business endpoints are browser-session-only. Declare their
 	// existing deny-PAT boundary explicitly; these rules never grant token scopes.
 	"GET /api/agent-platform/self":                              accessTokenSessionRule,
@@ -163,6 +169,26 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/user/model-tests/runs":            accessTokenSessionRule,
 	"GET /api/user/model-tests/runs/:id":         accessTokenSessionRule,
 	"POST /api/user/model-tests/runs/:id/cancel": accessTokenSessionRule,
+	// Invoice and partner records contain private application data. Their
+	// review workflows deliberately use live browser sessions, like support.
+	"GET /api/commerce/config":                        accessTokenSessionRule,
+	"GET /api/invoices/eligible-orders":               accessTokenSessionRule,
+	"GET /api/invoices":                               accessTokenSessionRule,
+	"GET /api/invoices/:id":                           accessTokenSessionRule,
+	"POST /api/invoices":                              accessTokenSessionRule,
+	"POST /api/invoices/:id/cancel":                   accessTokenSessionRule,
+	"GET /api/partner-applications":                   accessTokenSessionRule,
+	"GET /api/partner-applications/:id":               accessTokenSessionRule,
+	"POST /api/partner-applications":                  accessTokenSessionRule,
+	"POST /api/partner-applications/:id/cancel":       accessTokenSessionRule,
+	"GET /api/admin/commerce/config":                  accessTokenSessionRule,
+	"PUT /api/admin/commerce/config":                  accessTokenSessionRule,
+	"GET /api/admin/invoices":                         accessTokenSessionRule,
+	"GET /api/admin/invoices/:id":                     accessTokenSessionRule,
+	"POST /api/admin/invoices/:id/review":             accessTokenSessionRule,
+	"GET /api/admin/partner-applications":             accessTokenSessionRule,
+	"GET /api/admin/partner-applications/:id":         accessTokenSessionRule,
+	"POST /api/admin/partner-applications/:id/review": accessTokenSessionRule,
 	// Support has no dedicated PAT scope. Require login sessions rather than
 	// grant ticket access through unrelated profile or user permissions.
 	"GET /api/support/tickets":                                      accessTokenSessionRule,

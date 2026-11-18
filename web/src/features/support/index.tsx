@@ -263,6 +263,7 @@ export function SupportCenter(
               key={ticket.id}
               variant={selectedId === ticket.id ? 'secondary' : 'outline'}
               className='h-auto w-full justify-start px-3 py-3 text-left whitespace-normal'
+              aria-pressed={selectedId === ticket.id}
               onClick={() => handleTicketSelect(ticket)}
             >
               <div className='min-w-0 flex-1'>
@@ -330,6 +331,15 @@ export function SupportCenter(
     <>
       <SectionPageLayout stackActionsOnMobile>
         <SectionPageLayout.Title>{t('Support Center')}</SectionPageLayout.Title>
+        <SectionPageLayout.Description>
+          {admin
+            ? t(
+                'Manage conversations, prioritize unanswered requests and keep customers informed.'
+              )
+            : t(
+                'Get help with API calls, payments and account access. Replies and attachments stay together.'
+              )}
+        </SectionPageLayout.Description>
         <SectionPageLayout.Actions>
           {!admin && (
             <Button onClick={() => setCreateOpen(true)}>
@@ -345,17 +355,17 @@ export function SupportCenter(
               <StatusCounter
                 label={t('Platform processing')}
                 count={counts?.processing ?? 0}
-                loading={listQuery.isLoading}
+                loading={listQuery.isLoading || listQuery.isError}
               />
               <StatusCounter
                 label={t('Waiting for your reply')}
                 count={counts?.awaiting_user ?? 0}
-                loading={listQuery.isLoading}
+                loading={listQuery.isLoading || listQuery.isError}
               />
               <StatusCounter
                 label={t('Resolved')}
                 count={counts?.resolved ?? 0}
-                loading={listQuery.isLoading}
+                loading={listQuery.isLoading || listQuery.isError}
               />
             </div>
 
@@ -395,7 +405,11 @@ export function SupportCenter(
                     className='w-full sm:w-48'
                     aria-label={t('Status')}
                   >
-                    <SelectValue />
+                    <SelectValue>
+                      {statusFilter === 'all'
+                        ? t('All statuses')
+                        : supportTicketStatusLabel(t, statusFilter)}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent alignItemWithTrigger={false}>
                     <SelectItem value='all'>{t('All statuses')}</SelectItem>
@@ -424,6 +438,20 @@ export function SupportCenter(
                     {t('Unread only')}
                   </Label>
                 </div>
+                {(keyword || statusFilter !== 'all' || unreadOnly) && (
+                  <Button
+                    variant='ghost'
+                    onClick={() => {
+                      setKeyword('')
+                      setSearchInput('')
+                      setStatusFilter('all')
+                      setUnreadOnly(false)
+                      setPage(1)
+                    }}
+                  >
+                    {t('Reset filters')}
+                  </Button>
+                )}
               </CardContent>
             </Card>
 

@@ -48,6 +48,12 @@ vi.mock('@/lib/api-url', async (importOriginal) => {
 const storageKey = 'dashboard_overview_setup_guide_expanded'
 let client: QueryClient
 let keyLookupError: Error | null
+let keyState: {
+  status?: number
+  expired_time?: number
+  remain_quota?: number
+  unlimited_quota?: boolean
+}
 
 beforeEach(() => {
   window.localStorage.clear()
@@ -65,6 +71,7 @@ beforeEach(() => {
   })
   apiBaseUrl.value = ''
   keyLookupError = null
+  keyState = {}
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
     switch (url) {
       case '/api/token/?p=1&size=10':
@@ -87,6 +94,7 @@ beforeEach(() => {
                   accessed_time: 0,
                   model_limits_enabled: false,
                   routing_strategy: '',
+                  ...keyState,
                 },
               ],
               total: 1,
@@ -138,6 +146,21 @@ async function renderOverview() {
 }
 
 describe('overview setup guide', () => {
+  it.each([
+    { status: 2 },
+    { expired_time: 1 },
+    { remain_quota: 0, unlimited_quota: false },
+  ])(
+    'keeps the key setup incomplete for an unusable key: %j',
+    async (state) => {
+      keyState = state
+      await renderOverview()
+      expect(await screen.findByText('Needs API key')).toBeVisible()
+      expect(
+        screen.queryByRole('button', { name: 'Setup guide' })
+      ).not.toBeInTheDocument()
+    }
+  )
   it('shows usage first and only a header entry when setup is complete', async () => {
     await renderOverview()
 

@@ -416,7 +416,11 @@ func referralAvailableQuotaTx(tx *gorm.DB, userID int) (int64, error) {
 		}
 		frozen += int64(reward.RewardQuota - reward.ReversedQuota)
 	}
-	return int64(user.AffQuota) - frozen, nil
+	reserved, err := referralWithdrawalReservedTx(tx, userID)
+	if err != nil {
+		return 0, err
+	}
+	return int64(user.AffQuota) - frozen - reserved, nil
 }
 
 func MatureReferralCommissions(ctx context.Context, limit int) (int, error) {

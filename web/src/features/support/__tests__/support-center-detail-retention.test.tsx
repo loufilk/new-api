@@ -224,6 +224,9 @@ test('admin keeps the selected conversation when a status filter empties the lis
       await screen.findByRole('button', { name: /Awaiting admin action/ })
     )
     await screen.findByText('Admin detail must stay visible')
+    expect(
+      screen.getByRole('button', { name: /Awaiting admin action/ })
+    ).toHaveAttribute('aria-pressed', 'true')
 
     await user.click(screen.getByRole('combobox', { name: 'Status' }))
     await user.click(screen.getByRole('option', { name: 'Resolved' }))

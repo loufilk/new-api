@@ -146,6 +146,11 @@ export function AgentPortal() {
     <>
       <SectionPageLayout>
         <SectionPageLayout.Title>{t('Agent Overview')}</SectionPageLayout.Title>
+        <SectionPageLayout.Description>
+          {t(
+            'Manage your reseller balance, redemption codes, and customer activity.'
+          )}
+        </SectionPageLayout.Description>
         <SectionPageLayout.Content>
           <div className='mx-auto flex w-full max-w-[1440px] flex-col gap-4'>
             <div className='grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]'>

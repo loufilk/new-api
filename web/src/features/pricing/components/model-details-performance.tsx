@@ -25,7 +25,9 @@ import {
   StaticDataTable,
   staticDataTableClassNames as tableStyles,
 } from '@/components/data-table'
+import { ErrorState } from '@/components/error-state'
 import { GroupBadge } from '@/components/group-badge'
+import { Skeleton } from '@/components/ui/skeleton'
 import { getPerfMetrics } from '@/features/performance-metrics/api'
 import {
   formatLatency,
@@ -159,7 +161,25 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
     return map
   }, [groups])
 
-  if (metricsQuery.isLoading || performances.length === 0) {
+  if (metricsQuery.isLoading) {
+    return (
+      <div aria-label={t('Loading performance data')} className='space-y-4'>
+        <Skeleton className='h-24 w-full' />
+        <Skeleton className='h-56 w-full' />
+      </div>
+    )
+  }
+
+  if (metricsQuery.isError) {
+    return (
+      <ErrorState
+        title={t('Unable to load performance data')}
+        onRetry={() => void metricsQuery.refetch()}
+      />
+    )
+  }
+
+  if (performances.length === 0) {
     return (
       <div className='text-muted-foreground rounded-lg border p-6 text-center text-sm'>
         {t('Performance data is not yet available for this model.')}
@@ -170,7 +190,9 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
   const avgTps = summary?.avg_tps ?? 0
   const avgLatency = summary?.avg_latency_ms ?? 0
   const successRate = summary?.success_rate ?? Number.NaN
-  const incidentCount = uptimeSeries.reduce((s, p) => s + p.incidents, 0)
+  const failedWindowCount = series.filter(
+    (point) => Number.isFinite(point.success_rate) && point.success_rate < 100
+  ).length
 
   return (
     <div className='flex flex-col gap-4'>
@@ -191,11 +213,11 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
           label={t('Success rate')}
           value={formatUptimePct(successRate)}
           hint={
-            incidentCount > 0
-              ? t('{{count}} incidents in the last 24 hours', {
-                  count: incidentCount,
+            failedWindowCount > 0
+              ? t('{{count}} sampling windows with failures', {
+                  count: failedWindowCount,
                 })
-              : t('No incidents in the last 24 hours')
+              : t('No failures in the available samples')
           }
           valueClassName={getSuccessRateTextClass(successRate)}
         />
@@ -276,11 +298,11 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
             'Success rate excludes business rejections and includes the current partial hour.'
           )}
           accent={
-            incidentCount > 0 ? (
+            failedWindowCount > 0 ? (
               <span className='inline-flex items-center gap-1 text-amber-600 dark:text-amber-400'>
                 <AlertTriangle className='size-3.5' />
-                {t('{{count}} incidents', {
-                  count: incidentCount,
+                {t('Sampling windows with failures: {{count}}', {
+                  count: failedWindowCount,
                 })}
               </span>
             ) : null

@@ -19,19 +19,29 @@ For commercial licensing, please contact support@quantumnous.com
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
+export const EMPTY_NOTIFICATION_KEYS: string[] = []
+
+export function notificationScope(userId?: number): string {
+  return userId && Number.isInteger(userId) && userId > 0
+    ? `user:${userId}`
+    : 'public'
+}
+
 interface NotificationState {
   // Last read Notice content signature (full trimmed message)
   lastReadNotice: string
   // Array of read announcement keys (id or content hash)
   readAnnouncementKeys: string[]
+  lastReadNoticeByUser: Record<string, string>
+  readAnnouncementKeysByUser: Record<string, string[]>
   // Timestamp of last "Close Today" action
   closedUntilDate: string | null
   // Shared across headers for this page session; deliberately not persisted.
   autoPopupShown: boolean
 
   // Actions
-  markNoticeRead: (noticeContent: string) => void
-  markAnnouncementsRead: (keys: string[]) => void
+  markNoticeRead: (noticeContent: string, scope?: string) => void
+  markAnnouncementsRead: (keys: string[], scope?: string) => void
   setClosedUntilDate: (date: string | null) => void
   setAutoPopupShown: () => void
   isAnnouncementRead: (key: string) => boolean
@@ -47,16 +57,41 @@ export const useNotificationStore = create<NotificationState>()(
     (set, get) => ({
       lastReadNotice: '',
       readAnnouncementKeys: [],
+      lastReadNoticeByUser: {},
+      readAnnouncementKeysByUser: {},
       closedUntilDate: null,
       autoPopupShown: false,
 
-      markNoticeRead: (noticeContent: string) => {
+      markNoticeRead: (noticeContent: string, scope = 'public') => {
         // Persist the full trimmed content so edits beyond 100 chars register
         const normalizedContent = noticeContent.trim()
-        set({ lastReadNotice: normalizedContent })
+        if (scope === 'public') {
+          set({ lastReadNotice: normalizedContent })
+          return
+        }
+        set((state) => ({
+          lastReadNoticeByUser: {
+            ...state.lastReadNoticeByUser,
+            [scope]: normalizedContent,
+          },
+        }))
       },
 
-      markAnnouncementsRead: (keys: string[]) => {
+      markAnnouncementsRead: (keys: string[], scope = 'public') => {
+        if (scope !== 'public') {
+          set((state) => ({
+            readAnnouncementKeysByUser: {
+              ...state.readAnnouncementKeysByUser,
+              [scope]: [
+                ...new Set([
+                  ...(state.readAnnouncementKeysByUser[scope] ?? []),
+                  ...keys,
+                ]),
+              ],
+            },
+          }))
+          return
+        }
         set((state) => ({
           readAnnouncementKeys: [
             ...new Set([...state.readAnnouncementKeys, ...keys]),
@@ -88,6 +123,8 @@ export const useNotificationStore = create<NotificationState>()(
       partialize: (state) => ({
         lastReadNotice: state.lastReadNotice,
         readAnnouncementKeys: state.readAnnouncementKeys,
+        lastReadNoticeByUser: state.lastReadNoticeByUser,
+        readAnnouncementKeysByUser: state.readAnnouncementKeysByUser,
         closedUntilDate: state.closedUntilDate,
       }),
     }

@@ -20,6 +20,8 @@ import { useNavigate, useSearch } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { EmptyState } from '@/components/empty-state'
+import { ErrorState } from '@/components/error-state'
 import { PublicLayout } from '@/components/layout'
 import { PageTransition } from '@/components/page-transition'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -65,7 +67,20 @@ export function Rankings() {
       rankingsQuery.error instanceof Error
         ? rankingsQuery.error.message
         : t('Unable to load rankings data')
-    rankingsBody = <RankingsError message={errorMessage} />
+    rankingsBody = (
+      <ErrorState
+        title={t('Unable to load rankings')}
+        description={errorMessage}
+        onRetry={() => void rankingsQuery.refetch()}
+      />
+    )
+  } else if (snapshot.models.length === 0 && snapshot.vendors.length === 0) {
+    rankingsBody = (
+      <EmptyState
+        title={t('No rankings for this period')}
+        description={t('Try another period to explore recorded model usage.')}
+      />
+    )
   } else {
     rankingsBody = (
       <>
@@ -123,20 +138,6 @@ function RankingsLoading() {
       <Skeleton className='h-[420px] w-full rounded-xl' />
       <Skeleton className='h-[360px] w-full rounded-xl' />
       <Skeleton className='h-[180px] w-full rounded-xl' />
-    </div>
-  )
-}
-
-function RankingsError(props: { message: string }) {
-  const { t } = useTranslation()
-  return (
-    <div className='bg-card rounded-xl border border-dashed px-6 py-12 text-center'>
-      <h2 className='text-foreground text-base font-semibold'>
-        {t('Unable to load rankings')}
-      </h2>
-      <p className='text-muted-foreground mx-auto mt-2 max-w-md text-sm'>
-        {props.message}
-      </p>
     </div>
   )
 }

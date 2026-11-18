@@ -32,8 +32,10 @@ import { Button } from '@/components/ui/button'
 import { getSiteTests, getTestCatalogue } from './api'
 import { BudgetDialog } from './budget-dialog'
 import { ModelTestGroups } from './model-groups'
+import { QualityToolbar } from './quality-toolbar'
 import { TestResultDialog } from './result-dialog'
 import { SelfTestDialog } from './self-test-dialog'
+import { filterQualityTargets, summarizeQualityTargets } from './target-summary'
 import type { TestRun } from './types'
 import { useModelTest } from './use-model-test'
 
@@ -50,6 +52,8 @@ export function IntelligencePage() {
 export function IntelligenceDashboard() {
   const { t } = useTranslation()
   const [selected, setSelected] = useState<TestRun | null>(null)
+  const [search, setSearch] = useState('')
+  const [qualityState, setQualityState] = useState('all')
   const [selfTest, setSelfTest] = useState<{
     model: string
     group: string
@@ -101,6 +105,15 @@ export function IntelligenceDashboard() {
     site.isFetchedAfterMount && !site.isError && site.data?.enabled === true
       ? site.data.targets.filter((target) => target.enabled === true)
       : []
+  const targetSummaries = summarizeQualityTargets(currentTargets, [
+    ...sharedPoints,
+    ...(site.data?.items ?? []),
+  ])
+  const visibleTargets = filterQualityTargets(
+    targetSummaries,
+    search,
+    qualityState
+  )
   const testDisabled =
     running || test.estimate.isPending || unresolvedPending || history.isError
 
@@ -241,9 +254,17 @@ export function IntelligenceDashboard() {
           </AlertDescription>
         </Alert>
       ))}
+      <QualityToolbar
+        targets={targetSummaries}
+        pending={site.isPending}
+        search={search}
+        onSearch={setSearch}
+        state={qualityState}
+        onState={setQualityState}
+      />
       <div className='min-w-0 space-y-4'>
         <ModelTestGroups
-          targets={currentTargets}
+          targets={visibleTargets}
           catalogue={catalogue.data}
           eligibleModels={
             test.enabled ? data?.eligible_models_by_group : undefined
@@ -257,6 +278,17 @@ export function IntelligenceDashboard() {
           onEstimate={setSelfTest}
           onSelect={setSelected}
         />
+        {!site.isPending &&
+          !site.isError &&
+          currentTargets.length > 0 &&
+          visibleTargets.length === 0 && (
+            <EmptyState
+              icon={Brain}
+              bordered
+              title={t('No matching quality targets')}
+              description={t('Try another model, group or result filter.')}
+            />
+          )}
         {!site.isPending && !site.isError && !currentTargets.length && (
           <EmptyState
             icon={Brain}

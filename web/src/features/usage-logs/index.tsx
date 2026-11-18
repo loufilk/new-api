@@ -128,6 +128,15 @@ function UsageLogsContent() {
         <SectionPageLayout.Title>
           {t(pageMeta.titleKey)}
         </SectionPageLayout.Title>
+        <SectionPageLayout.Description>
+          {activeCategory === 'common'
+            ? t(
+                'Trace each request, its serving group, token usage, and final charge.'
+              )
+            : t(
+                'Track generation tasks, completion status, and settlement details.'
+              )}
+        </SectionPageLayout.Description>
         <SectionPageLayout.Actions>
           {canManageScope && (
             <Tabs value={viewScope} onValueChange={handleViewScopeChange}>

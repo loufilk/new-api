@@ -148,3 +148,37 @@ test('an unfinished optional image URL does not block saving valid announcement 
   const payload = request.mock.calls[0][1] as { value: string }
   expect(JSON.parse(payload.value)[0].content).toBe('Keep this text')
 })
+
+test('administrator can save a pinned release draft with its publication metadata intact', async () => {
+  const { request, user } = renderSettings()
+  await user.click(screen.getByRole('button', { name: 'Add Announcement' }))
+  const dialog = screen.getByRole('dialog', { name: 'Add Announcement' })
+  await user.type(
+    within(dialog).getByRole('textbox', { name: 'Announcement title' }),
+    'Release preview'
+  )
+  fireEvent.change(within(dialog).getByRole('textbox', { name: 'Content' }), {
+    target: { value: 'Draft content' },
+  })
+  await user.click(within(dialog).getByRole('combobox', { name: 'Category' }))
+  await user.click(screen.getByRole('option', { name: 'Timeline' }))
+  await user.click(
+    within(dialog).getByRole('combobox', { name: 'Publication status' })
+  )
+  await user.click(screen.getByRole('option', { name: 'Draft' }))
+  await user.click(
+    within(dialog).getByRole('checkbox', { name: 'Pin this announcement' })
+  )
+  await user.click(within(dialog).getByRole('button', { name: 'Add' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  await user.click(screen.getByRole('button', { name: 'Save Settings' }))
+  await waitFor(() => expect(request).toHaveBeenCalledTimes(1))
+  const payload = request.mock.calls[0][1] as { value: string }
+  expect(JSON.parse(payload.value)[0]).toMatchObject({
+    title: 'Release preview',
+    category: 'timeline',
+    status: 'draft',
+    pinned: true,
+    content: 'Draft content',
+  })
+})

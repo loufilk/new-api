@@ -156,9 +156,12 @@ describe('security sidebar visibility', () => {
       '/wallet',
       '/intelligence',
       '/affiliate',
+      '/invoice',
+      '/partner-apply',
       '/support',
       '/profile',
       '/security',
+      '/help',
     ])
     expect(
       result.current
@@ -193,6 +196,57 @@ describe('security sidebar visibility', () => {
         .flatMap((group) => group.items)
         .some((item) => item.title === 'Security & Access')
     ).toBe(true)
+  })
+})
+
+describe('console expansion navigation', () => {
+  it('hides related new entries when the existing section controls are disabled', () => {
+    const { result } = sidebarFor({
+      console: { enabled: true, detail: false, token: false },
+      personal: { enabled: true, topup: false, personal: false },
+    })
+    const links = result.current
+      .flatMap((group) => group.items)
+      .flatMap((item) => ('url' in item ? [item.url] : []))
+    for (const url of [
+      '/dashboard/flow',
+      '/pricing',
+      '/rankings',
+      '/getting-started',
+      '/channel-status',
+      '/system-announcements',
+      '/invoice',
+      '/partner-apply',
+      '/help',
+    ]) {
+      expect(links).not.toContain(url)
+    }
+    expect(links).toContain('/security')
+    expect(links).toContain('/usage-logs/common')
+  })
+
+  it('shows only the operations entries granted by the server permission matrix', () => {
+    useAuthStore.getState().auth.setUser({
+      id: 2,
+      username: 'reviewer',
+      role: ROLE.ADMIN,
+      permissions: {
+        admin_permissions: {
+          commerce_invoices: { read: true },
+          commerce_partners: { read: false },
+          commerce_settings: { read: false },
+        },
+      },
+    })
+    const view = renderHook(() => useSidebarData(), {
+      wrapper: agentSidebarWrapper,
+    })
+    const links = view.result.current.navGroups
+      .flatMap((group) => group.items)
+      .flatMap((item) => ('url' in item ? [item.url] : []))
+    expect(links).toContain('/operations/invoices')
+    expect(links).not.toContain('/operations/partners')
+    expect(links).not.toContain('/operations/commerce-settings')
   })
 })
 

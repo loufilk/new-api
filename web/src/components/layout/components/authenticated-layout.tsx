@@ -30,6 +30,8 @@ import { getCookie } from '@/lib/cookies'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
+import '@/styles/console.css'
+
 import { AppHeader } from './app-header'
 import { AppSidebar } from './app-sidebar'
 
@@ -50,9 +52,12 @@ export function AuthenticatedLayout(props: AuthenticatedLayoutProps) {
   return (
     <LayoutProvider>
       <SearchProvider>
-        <SidebarProvider defaultOpen={defaultOpen} className='flex-col'>
+        <SidebarProvider
+          defaultOpen={defaultOpen}
+          className='console-workspace flex-col'
+        >
           <SkipToMain />
-          <AppHeader />
+          <AppHeader showTopNav={false} />
           <div className='flex min-h-0 w-full flex-1'>
             <AppSidebar />
             <SidebarInset

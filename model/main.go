@@ -461,6 +461,7 @@ func mainAutoMigrateModels(registry *extension.Registry) []any {
 	}
 	coreModels = append(coreModels, BonusSourceModels()...)
 	coreModels = append(coreModels, ReferralRewardModels()...)
+	coreModels = append(coreModels, CommerceModels()...)
 	if registry == nil {
 		return coreModels
 	}

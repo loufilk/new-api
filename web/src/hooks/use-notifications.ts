@@ -22,7 +22,12 @@ import { useCallback, useEffect, useState, useMemo } from 'react'
 import { useStatus } from '@/hooks/use-status'
 import { getNotice } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
-import { useNotificationStore } from '@/stores/notification-store'
+import { useAuthStore } from '@/stores/auth-store'
+import {
+  EMPTY_NOTIFICATION_KEYS,
+  notificationScope,
+  useNotificationStore,
+} from '@/stores/notification-store'
 
 function hashString(input: string): string {
   let hash = 0
@@ -41,7 +46,7 @@ function hashString(input: string): string {
  * Generate a unique key for an announcement
  * Prefer backend id, fall back to a content hash so edits register
  */
-function getAnnouncementKey(item: Record<string, unknown>): string {
+export function getAnnouncementKey(item: Record<string, unknown>): string {
   if (!item) return ''
 
   if (item.id !== undefined && item.id !== null) {
@@ -64,6 +69,8 @@ function getAnnouncementKey(item: Record<string, unknown>): string {
  * Provides unread counts and read status management
  */
 export function useNotifications(options: { autoOpen?: boolean } = {}) {
+  const userId = useAuthStore((state) => state.auth.user?.id)
+  const readerScope = notificationScope(userId)
   const [popoverOpen, setPopoverOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<'notice' | 'announcements'>(
     'notice'
@@ -94,8 +101,10 @@ export function useNotifications(options: { autoOpen?: boolean } = {}) {
 
   // Notification store
   const {
-    lastReadNotice,
-    readAnnouncementKeys,
+    lastReadNotice: publicLastReadNotice,
+    readAnnouncementKeys: publicReadAnnouncementKeys,
+    lastReadNoticeByUser,
+    readAnnouncementKeysByUser,
     markNoticeRead,
     markAnnouncementsRead,
     closedUntilDate,
@@ -103,6 +112,14 @@ export function useNotifications(options: { autoOpen?: boolean } = {}) {
     setAutoPopupShown,
     setClosedUntilDate,
   } = useNotificationStore()
+  const lastReadNotice =
+    readerScope === 'public'
+      ? publicLastReadNotice
+      : (lastReadNoticeByUser[readerScope] ?? '')
+  const readAnnouncementKeys =
+    readerScope === 'public'
+      ? publicReadAnnouncementKeys
+      : (readAnnouncementKeysByUser[readerScope] ?? EMPTY_NOTIFICATION_KEYS)
 
   // Extract notice content
   const noticeContent = noticeResponse?.success
@@ -133,9 +150,9 @@ export function useNotifications(options: { autoOpen?: boolean } = {}) {
       const allKeys = announcements.map((item: Record<string, unknown>) =>
         getAnnouncementKey(item)
       )
-      markAnnouncementsRead(allKeys)
+      markAnnouncementsRead(allKeys, readerScope)
     }
-  }, [announcements, markAnnouncementsRead])
+  }, [announcements, markAnnouncementsRead, readerScope])
 
   // Handle popover open
   const handleOpenPopover = useCallback(
@@ -147,7 +164,7 @@ export function useNotifications(options: { autoOpen?: boolean } = {}) {
 
       // Mark currently visible content as read when opening the notification center
       if (noticeContent) {
-        markNoticeRead(noticeContent)
+        markNoticeRead(noticeContent, readerScope)
       }
       if (nextTab === 'announcements') {
         markAnnouncementsAsRead()
@@ -162,6 +179,7 @@ export function useNotifications(options: { autoOpen?: boolean } = {}) {
       announcements.length,
       noticeContent,
       markNoticeRead,
+      readerScope,
       markAnnouncementsAsRead,
       setAutoPopupShown,
     ]

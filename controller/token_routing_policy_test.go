@@ -338,11 +338,13 @@ func TestTokenGroupMetadataIsAuthorizedWeightedAndUnknownSafe(t *testing.T) {
 			MetricsAvailable     bool     `json:"metrics_available"`
 			HistoryBucketSeconds int64    `json:"history_bucket_seconds"`
 			GroupDetails         []struct {
-				Name        string     `json:"name"`
-				Ratio       float64    `json:"ratio"`
-				Available   bool       `json:"available"`
-				SuccessRate *float64   `json:"success_rate"`
-				History     []*float64 `json:"history"`
+				Name         string     `json:"name"`
+				Description  string     `json:"description"`
+				RequestCount *int64     `json:"request_count"`
+				Ratio        float64    `json:"ratio"`
+				Available    bool       `json:"available"`
+				SuccessRate  *float64   `json:"success_rate"`
+				History      []*float64 `json:"history"`
 			} `json:"group_details"`
 		}
 		require.NoError(t, common.Unmarshal(response.Data, &data))
@@ -353,6 +355,8 @@ func TestTokenGroupMetadataIsAuthorizedWeightedAndUnknownSafe(t *testing.T) {
 		require.Len(t, data.GroupDetails, 2)
 		first, second := data.GroupDetails[0], data.GroupDetails[1]
 		assert.True(t, first.Available)
+		assert.Equal(t, "Default", first.Description)
+
 		assert.False(t, second.Available)
 		assert.Equal(t, float64(2), second.Ratio)
 		assert.Nil(t, second.SuccessRate)
@@ -361,11 +365,17 @@ func TestTokenGroupMetadataIsAuthorizedWeightedAndUnknownSafe(t *testing.T) {
 			assert.Nil(t, bucket)
 		}
 		if enabled {
+			require.NotNil(t, first.RequestCount)
+			assert.EqualValues(t, 10, *first.RequestCount)
+			require.NotNil(t, second.RequestCount)
+			assert.Zero(t, *second.RequestCount)
 			require.NotNil(t, first.SuccessRate)
 			assert.Equal(t, float64(90), *first.SuccessRate)
 			require.NotNil(t, first.History[23])
 			assert.Equal(t, float64(90), *first.History[23])
 		} else {
+			assert.Nil(t, first.RequestCount)
+			assert.Nil(t, second.RequestCount)
 			assert.Nil(t, first.SuccessRate)
 			for _, bucket := range first.History {
 				assert.Nil(t, bucket)

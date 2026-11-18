@@ -66,6 +66,7 @@ function heightFor(uptime: number): string {
 }
 
 export function UptimeSparkline(props: UptimeSparklineProps) {
+  const { t } = useTranslation()
   const size = props.size ?? 'md'
   const showOverall = props.showOverall ?? true
 
@@ -90,7 +91,9 @@ export function UptimeSparkline(props: UptimeSparklineProps) {
       <div
         className={cn('flex items-end', containerHeight, gap)}
         role='img'
-        aria-label={`30 day uptime ${overall.toFixed(2)}%`}
+        aria-label={t('Sampled success rate {{percentage}}%', {
+          percentage: overall.toFixed(2),
+        })}
       >
         {props.series.map((day) => (
           <Tooltip key={day.date}>

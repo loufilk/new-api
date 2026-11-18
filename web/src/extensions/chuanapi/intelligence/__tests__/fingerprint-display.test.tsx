@@ -164,6 +164,8 @@ test('a short timeline fills unused slots from the latest result and opens actua
   )
   expect(points[0]).toHaveClass('h-11')
   await userEvent.tab()
+  expect(screen.getByRole('button', { name: 'History' })).toHaveFocus()
+  await userEvent.tab()
   expect(points[0]).toHaveFocus()
   expect(await screen.findByRole('tooltip')).toHaveTextContent(
     'Reference model'

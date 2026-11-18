@@ -141,8 +141,50 @@ export function Security() {
       <SectionPageLayout.Title>
         {t('Security & Access')}
       </SectionPageLayout.Title>
+      <SectionPageLayout.Description>
+        {t(
+          'Manage how you sign in, review active sessions, and control application access.'
+        )}
+      </SectionPageLayout.Description>
       <SectionPageLayout.Content>
-        <div className='mx-auto w-full max-w-7xl'>{content}</div>
+        <div className='mx-auto w-full max-w-7xl space-y-5'>
+          {!loading && profile && (
+            <nav
+              aria-label={t('Security sections')}
+              className='flex flex-wrap gap-2'
+            >
+              <Button
+                variant='outline'
+                size='sm'
+                render={<a href='#security-authentication' />}
+              >
+                {t('Login & Authentication')}
+              </Button>
+              <Button
+                variant='outline'
+                size='sm'
+                render={<a href='#security-access' />}
+              >
+                {t('Sessions & Access')}
+              </Button>
+              <Button
+                variant='outline'
+                size='sm'
+                render={<a href='#security-verification' />}
+              >
+                {t('Security verification')}
+              </Button>
+              <Button
+                variant='outline'
+                size='sm'
+                render={<a href='#security-privacy' />}
+              >
+                {t('Privacy')}
+              </Button>
+            </nav>
+          )}
+          {content}
+        </div>
       </SectionPageLayout.Content>
     </SectionPageLayout>
   )

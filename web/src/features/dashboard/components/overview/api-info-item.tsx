@@ -42,32 +42,20 @@ export function ApiInfoItemComponent(props: ApiInfoItemProps) {
   const status = props.status
 
   return (
-    <div className='group hover:bg-muted/40 flex items-center justify-between gap-2 px-3 py-2.5 transition-colors sm:gap-3 sm:px-5 sm:py-3'>
-      <div className='flex min-w-0 flex-1 items-center gap-2 sm:gap-3'>
-        <span
-          className={cn(
-            'inline-block size-2 shrink-0 rounded-full',
-            getBgColorClass(item.color)
-          )}
-        />
-
-        <div className='flex min-w-0 flex-1 flex-col gap-0.5'>
-          <div className='flex items-baseline gap-2'>
-            <span className='font-mono text-sm font-semibold'>
-              {item.route}
-            </span>
-            <span className='text-muted-foreground/60 hidden truncate text-xs md:inline'>
-              {item.description}
-            </span>
-          </div>
-          <span className='text-muted-foreground/40 truncate font-mono text-xs'>
-            {item.url}
+    <div className='group hover:bg-muted/30 space-y-2.5 px-4 py-3 transition-colors sm:px-5'>
+      <div className='flex items-start justify-between gap-3'>
+        <div className='flex min-w-0 items-start gap-2'>
+          <span
+            className={cn(
+              'mt-1.5 inline-block size-2 shrink-0 rounded-full',
+              getBgColorClass(item.color)
+            )}
+          />
+          <span className='min-w-0 text-sm leading-relaxed font-semibold break-words'>
+            {item.route}
           </span>
         </div>
-      </div>
-
-      <div className='flex shrink-0 items-center gap-2'>
-        <div className='flex items-center'>
+        <div className='flex shrink-0 items-center'>
           {status.testing && (
             <StatusBadge
               label={t('Testing...')}
@@ -91,51 +79,62 @@ export function ApiInfoItemComponent(props: ApiInfoItemProps) {
             <StatusBadge label={t('N/A')} variant='neutral' copyable={false} />
           )}
         </div>
+      </div>
 
-        <div className='flex items-center gap-0.5'>
-          <Button
-            variant='ghost'
-            size='sm'
-            onClick={() => props.onTest(item.url)}
-            disabled={status.testing}
-            className='size-7 p-0'
-            title={t('Test Latency')}
-          >
-            <Zap
-              className={cn('size-3.5', status.testing && 'animate-pulse')}
-            />
-          </Button>
+      {item.description && (
+        <p className='text-muted-foreground text-xs leading-relaxed break-words'>
+          {item.description}
+        </p>
+      )}
+      <code className='bg-muted/50 text-foreground/80 block rounded-md px-2.5 py-2 text-xs leading-relaxed break-all'>
+        {item.url}
+      </code>
 
-          <Button
-            variant='ghost'
-            size='sm'
-            onClick={() => openExternalSpeedTest(item.url)}
-            className='hidden size-7 p-0 sm:inline-flex'
-            title={t('External Speed Test')}
-          >
-            <Gauge className='size-3.5' />
-          </Button>
+      <div className='flex flex-wrap items-center justify-end gap-1'>
+        <Button
+          variant='ghost'
+          size='sm'
+          onClick={() => props.onTest(item.url)}
+          disabled={status.testing}
+          className='h-7 gap-1.5 px-2'
+          title={t('Test Latency')}
+          aria-label={t('Test Latency')}
+        >
+          <Zap className={cn('size-3.5', status.testing && 'animate-pulse')} />
+          <span>{t('Test Latency')}</span>
+        </Button>
 
-          <CopyButton
-            value={item.url}
-            variant='ghost'
-            size='sm'
-            className='size-7 p-0'
-            iconClassName='size-3.5'
-            tooltip={t('Copy URL')}
-            aria-label={t('Copy URL')}
-          />
+        <Button
+          variant='ghost'
+          size='sm'
+          onClick={() => openExternalSpeedTest(item.url)}
+          className='size-7 p-0'
+          title={t('External Speed Test')}
+          aria-label={t('External Speed Test')}
+        >
+          <Gauge className='size-3.5' />
+        </Button>
 
-          <Button
-            variant='ghost'
-            size='sm'
-            className='hidden size-7 p-0 sm:inline-flex'
-            title={t('Open in New Tab')}
-            render={<a href={item.url} target='_blank' rel='noreferrer' />}
-          >
-            <ExternalLink className='size-3.5' />
-          </Button>
-        </div>
+        <CopyButton
+          value={item.url}
+          variant='ghost'
+          size='sm'
+          className='size-7 p-0'
+          iconClassName='size-3.5'
+          tooltip={t('Copy URL')}
+          aria-label={t('Copy URL')}
+        />
+
+        <Button
+          variant='ghost'
+          size='sm'
+          className='size-7 p-0'
+          title={t('Open in New Tab')}
+          aria-label={t('Open in New Tab')}
+          render={<a href={item.url} target='_blank' rel='noreferrer' />}
+        >
+          <ExternalLink className='size-3.5' />
+        </Button>
       </div>
     </div>
   )

@@ -94,6 +94,24 @@ export function getDisplayGroupRatio(
   return minRatio === Number.POSITIVE_INFINITY ? 1 : minRatio
 }
 
+/** Describe the same effective ratio used by the existing price formatters. */
+export function getDisplayPriceContext(
+  model: PricingModel,
+  selectedGroup?: string
+) {
+  const groups = Array.isArray(model.enable_groups) ? model.enable_groups : []
+  const ratio = getDisplayGroupRatio(model, selectedGroup)
+  const selected = Boolean(
+    selectedGroup &&
+    selectedGroup !== FILTER_ALL &&
+    groups.includes(selectedGroup)
+  )
+  const group = selected
+    ? selectedGroup
+    : (groups.find((item) => model.group_ratio?.[item] === ratio) ?? groups[0])
+  return { group, ratio, isStartingPrice: !selected && groups.length > 1 }
+}
+
 /**
  * Replace model placeholder in endpoint path
  */

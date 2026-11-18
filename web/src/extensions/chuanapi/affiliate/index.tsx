@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -24,6 +24,7 @@ import { ErrorState } from '@/components/error-state'
 import { SectionPageLayout } from '@/components/layout'
 import { LoadingState } from '@/components/loading-state'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Card, CardContent } from '@/components/ui/card'
 import { getSelf } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
@@ -37,9 +38,11 @@ import {
   useWalletSummary,
 } from '../wallet/hooks'
 import type { UserWalletData } from '../wallet/types'
+import { ReferralWithdrawals } from './withdrawals'
 
 export function AffiliatePage() {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
   const [transferOpen, setTransferOpen] = useState(false)
   const affiliate = useAffiliate()
@@ -67,7 +70,12 @@ export function AffiliatePage() {
       return false
     }
     if (!(await affiliate.transferQuota(quota))) return false
-    await Promise.all([user.refetch(), wallet.refetch(), rewards.refetch()])
+    await Promise.all([
+      user.refetch(),
+      wallet.refetch(),
+      rewards.refetch(),
+      queryClient.invalidateQueries({ queryKey: ['referral-withdrawals'] }),
+    ])
     return true
   }
 
@@ -77,8 +85,43 @@ export function AffiliatePage() {
         <SectionPageLayout.Title>
           {t('Invitation Rewards')}
         </SectionPageLayout.Title>
+        <SectionPageLayout.Description>
+          {t(
+            'Share your invitation link, track qualifying rewards and choose how to use them.'
+          )}
+        </SectionPageLayout.Description>
         <SectionPageLayout.Content>
-          <div className='mx-auto flex w-full max-w-5xl flex-col gap-5'>
+          <div className='mx-auto flex w-full max-w-7xl flex-col gap-5'>
+            <Card>
+              <CardContent className='grid gap-5 sm:grid-cols-3'>
+                {[
+                  [
+                    'Share your link',
+                    'Friends register through your personal invitation link.',
+                  ],
+                  [
+                    'Earn from eligible payments',
+                    'Qualifying top-ups create rewards with a visible settlement status.',
+                  ],
+                  [
+                    'Use available rewards',
+                    'Transfer released rewards to your wallet or follow the withdrawal process.',
+                  ],
+                ].map(([title, description], index) => (
+                  <div key={title} className='flex items-start gap-3'>
+                    <span className='bg-primary/10 text-primary flex size-9 shrink-0 items-center justify-center rounded-xl text-sm font-semibold'>
+                      0{index + 1}
+                    </span>
+                    <div>
+                      <h2 className='text-sm font-semibold'>{t(title)}</h2>
+                      <p className='text-muted-foreground mt-2 text-xs leading-relaxed'>
+                        {t(description)}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
             <Alert>
               <AlertDescription>{t('affiliate.scope')}</AlertDescription>
             </Alert>
@@ -115,6 +158,7 @@ export function AffiliatePage() {
                 loading={affiliate.loading}
               />
             )}
+            <ReferralWithdrawals />
           </div>
         </SectionPageLayout.Content>
       </SectionPageLayout>

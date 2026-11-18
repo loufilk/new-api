@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Link } from '@tanstack/react-router'
+import { ImagePlus } from 'lucide-react'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -252,6 +254,9 @@ function ImageGenerationWorkspace() {
           <span>
             {t('Create an API key first, then return to generate images.')}
           </span>
+          <Button type='button' size='sm' render={<Link to='/keys' />}>
+            {t('Create API Key')}
+          </Button>
           <Button
             type='button'
             variant='outline'
@@ -294,14 +299,32 @@ function ImageGenerationWorkspace() {
 
   return (
     <div className='mx-auto grid w-full max-w-7xl min-w-0 gap-5'>
-      <div>
-        <h1 className='text-xl font-semibold tracking-tight'>
-          {t('Image Generation')}
-        </h1>
-        <p className='text-muted-foreground text-sm'>
-          {t('Turn text prompts into images. Results stay in this browser.')}
-        </p>
-      </div>
+      <header className='bg-card flex flex-wrap items-center justify-between gap-4 rounded-2xl border p-5 shadow-xs sm:p-6'>
+        <div className='flex min-w-0 items-start gap-4'>
+          <span className='bg-primary/10 text-primary flex size-11 shrink-0 items-center justify-center rounded-xl'>
+            <ImagePlus aria-hidden='true' className='size-5' />
+          </span>
+          <div className='min-w-0 space-y-1.5'>
+            <h1 className='text-xl font-semibold tracking-tight'>
+              {t('Image Generation')}
+            </h1>
+            <p className='text-muted-foreground text-sm'>
+              {t(
+                'Turn text prompts into images. Results stay in this browser.'
+              )}
+            </p>
+          </div>
+        </div>
+        <Button
+          variant='outline'
+          size='sm'
+          render={
+            <Link to='/usage-logs/$section' params={{ section: 'task' }} />
+          }
+        >
+          {t('Task Logs')}
+        </Button>
+      </header>
       <div aria-live='polite' className='sr-only'>
         {generation.isGenerating ? t('Generating images...') : null}
       </div>
@@ -329,7 +352,7 @@ function ImageGenerationWorkspace() {
         </Alert>
       ) : null}
       <div className='grid min-w-0 gap-4'>
-        <h2 className='text-center text-xl font-semibold'>
+        <h2 className='text-sm font-semibold'>
           {t('Start generating images')}
         </h2>
         <GenerationForm

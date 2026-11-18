@@ -156,6 +156,19 @@ describe('wallet stats card', () => {
     ).toHaveLength(3)
   })
 
+  test('keeps the balance usage rules readable on narrow screens', () => {
+    render(<WalletStatsCard user={user} summary={summary} />)
+
+    expect(screen.getByText('Purchased and redeemed quota')).not.toHaveClass(
+      'hidden'
+    )
+    expect(
+      screen.getByText(
+        'Signup bonus applies to eligible models; invitation rewards apply to all models'
+      )
+    ).not.toHaveClass('hidden')
+  })
+
   test('uses a two-column mobile grid and a four-column desktop grid with internal dividers', () => {
     const { container } = render(
       <WalletStatsCard user={user} summary={summary} />

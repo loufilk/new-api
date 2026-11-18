@@ -164,6 +164,28 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 	}
 	var normalized any
 	switch operation.Scope {
+	case VerificationScopeReferralWithdrawalCreate:
+		var context ReferralWithdrawalCreateContext
+		if len(fields) != 2 || common.Unmarshal(operation.Context, &context) != nil || !model.ValidReferralTransferIdempotencyKey(context.RequestKey) {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		input, err := model.NormalizeReferralWithdrawalInput(context.Input)
+		if err != nil {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		context.Input = input
+		normalized = context
+	case VerificationScopeReferralWithdrawalReview:
+		var context ReferralWithdrawalReviewContext
+		if len(fields) != 3 || common.Unmarshal(operation.Context, &context) != nil || context.WithdrawalID <= 0 || !model.ValidReferralTransferIdempotencyKey(context.RequestKey) {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		input, err := model.NormalizeReferralWithdrawalAction(context.Input)
+		if err != nil || input.Action == "cancel" {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		context.Input = input
+		normalized = context
 	case VerificationScopeChannelKeyRead:
 		var context ChannelKeyReadContext
 		if len(fields) != 1 || common.Unmarshal(fields["channel_id"], &context.ChannelID) != nil || context.ChannelID <= 0 {
@@ -333,6 +355,7 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 			return nil, model.ErrTwoFANotEnabled
 		}
 	case VerificationScopePasskeyRegister, VerificationScopeTwoFASetup,
+		VerificationScopeReferralWithdrawalCreate, VerificationScopeReferralWithdrawalReview,
 		VerificationScopeAccessTokenGenerate, VerificationScopeAccessTokenUpdate, VerificationScopeAccessTokenRevoke,
 		VerificationScopeAccountBind, VerificationScopeAccountUnbind,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
@@ -386,7 +409,7 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 	if scope == VerificationScopeChannelKeyRead && state.Role != common.RoleRootUser {
 		return nil, ErrVerificationForbidden
 	}
-	if strings.HasPrefix(scope, verificationScopeAdminUserPrefix) && state.Role < common.RoleAdminUser {
+	if (strings.HasPrefix(scope, verificationScopeAdminUserPrefix) || scope == VerificationScopeReferralWithdrawalReview) && state.Role < common.RoleAdminUser {
 		return nil, ErrVerificationForbidden
 	}
 	if err := requireAccessTokenVerificationScope(identity, scope); err != nil {
@@ -400,6 +423,8 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 	for i := range methods {
 		if methods[i].Method == VerificationMethodPassword && !common.PasswordLoginEnabled {
 			switch scope {
+			case VerificationScopeReferralWithdrawalCreate, VerificationScopeReferralWithdrawalReview:
+				methods[i].Available, methods[i].Reason = false, "Password authentication is disabled."
 			case VerificationScopeAccountBind, VerificationScopeAccountUnbind, VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
 				VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete,
 				VerificationScopeAdminUserManage, VerificationScopeAdminUserPasskeyReset,

@@ -144,7 +144,7 @@ const FLOW_STAGE_META: Record<
   },
   group: {
     labelKey: 'Group',
-    descKey: 'The user group applied to the requests',
+    descKey: 'The actual calling group that served the requests',
   },
   model: {
     labelKey: 'Model',
@@ -542,6 +542,47 @@ export function FlowCharts(props: FlowChartsProps) {
 
   return (
     <div className='flex flex-col gap-3'>
+      <div className='grid gap-3 sm:grid-cols-3' aria-label={t('Flow summary')}>
+        {[
+          {
+            label: t('Total spending'),
+            value: formatQuota(flowData.summary.quota),
+            icon: WalletCards,
+          },
+          {
+            label: t('Total requests'),
+            value: formatFlowMetricNumber(flowData.summary.requests),
+            icon: Activity,
+          },
+          {
+            label: t('Total tokens'),
+            value: formatFlowMetricNumber(flowData.summary.tokens),
+            icon: Hash,
+          },
+        ].map((item) => {
+          const Icon = item.icon
+          let value = item.value
+          if (maskSensitive) value = '••••'
+          if (isLoading || isError) value = '—'
+          return (
+            <div
+              key={item.label}
+              className='bg-card rounded-xl border p-4 shadow-xs'
+            >
+              <div className='text-muted-foreground flex items-center gap-2 text-xs'>
+                <Icon className='size-4' />
+                {item.label}
+              </div>
+              <p className='mt-2 font-mono text-2xl font-semibold tabular-nums'>
+                {value}
+              </p>
+              <p className='text-muted-foreground mt-1 text-xs'>
+                {t('Within the current time range and filters')}
+              </p>
+            </div>
+          )
+        })}
+      </div>
       <div className='flex flex-col gap-2 xl:flex-row xl:items-end xl:justify-between'>
         <div className='flex min-w-0 flex-wrap items-end gap-2'>
           <div className='flex min-w-0 flex-col gap-1.5'>

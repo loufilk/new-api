@@ -115,6 +115,11 @@ export function Redemptions() {
         <SectionPageLayout.Title>
           {center ? t('Redemption Code Center') : t('Redemption Code Records')}
         </SectionPageLayout.Title>
+        <SectionPageLayout.Description>
+          {t(
+            'Create and track redemption codes, balances, and redemption records.'
+          )}
+        </SectionPageLayout.Description>
         <SectionPageLayout.Actions>
           {(!isAgent || center) && (
             <RedemptionsPrimaryButtons

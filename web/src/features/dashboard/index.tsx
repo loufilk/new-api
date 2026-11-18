@@ -181,18 +181,29 @@ function PerformanceOverviewFallback() {
   )
 }
 
-const SECTION_META: Record<DashboardSectionId, { titleKey: string }> = {
+const SECTION_META: Record<
+  DashboardSectionId,
+  { titleKey: string; descriptionKey: string }
+> = {
   overview: {
     titleKey: 'Overview',
+    descriptionKey:
+      'Your balance, recent usage, service notices, and the next step for your integration.',
   },
   models: {
     titleKey: 'Model Call Analytics',
+    descriptionKey:
+      'Compare model usage, token consumption, and spending in the selected time range.',
   },
   flow: {
     titleKey: 'Flow',
+    descriptionKey:
+      'Follow requests from API keys through their actual calling groups and models. Select a node to focus the flow.',
   },
   users: {
     titleKey: 'User Analytics',
+    descriptionKey:
+      'Compare usage and spending across users in the selected time range.',
   },
 }
 
@@ -329,6 +340,9 @@ export function Dashboard() {
   return (
     <SectionPageLayout>
       <SectionPageLayout.Title>{t(meta.titleKey)}</SectionPageLayout.Title>
+      <SectionPageLayout.Description>
+        {t(meta.descriptionKey)}
+      </SectionPageLayout.Description>
       <SectionPageLayout.Content>
         <div className='space-y-3 sm:space-y-4'>
           <div className='flex flex-wrap items-center justify-between gap-1.5 sm:gap-2'>

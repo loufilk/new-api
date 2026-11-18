@@ -293,11 +293,16 @@ export function Wallet(_props: WalletProps) {
     <>
       <SectionPageLayout>
         <SectionPageLayout.Title>{t('Wallet')}</SectionPageLayout.Title>
+        <SectionPageLayout.Description>
+          {t(
+            'Manage paid balance, redeem credits and follow every wallet transaction.'
+          )}
+        </SectionPageLayout.Description>
         <SectionPageLayout.Actions>
           <RechargeHistoryButton />
         </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
-          <div className='mx-auto flex w-full max-w-[1600px] flex-col gap-3'>
+          <div className='mx-auto flex w-full max-w-7xl flex-col gap-5'>
             {walletError ? (
               <ErrorState
                 className='min-h-[160px] rounded-lg border'
@@ -311,7 +316,7 @@ export function Wallet(_props: WalletProps) {
                 summaryLoading={walletLoading}
               />
             )}
-            <div className='grid items-stretch gap-4 lg:grid-cols-2'>
+            <div className='grid items-start gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]'>
               <section aria-label={t('Add Funds')} className='min-w-0'>
                 <RechargeFormCard
                   topupInfo={topupInfo}
@@ -348,7 +353,22 @@ export function Wallet(_props: WalletProps) {
                 <ReferralPanel />
               </section>
             </div>
-            <LedgerTable />
+            <section
+              className='min-w-0 space-y-3'
+              aria-label={t('Wallet activity')}
+            >
+              <div>
+                <h2 className='text-lg font-semibold'>
+                  {t('Wallet activity')}
+                </h2>
+                <p className='text-muted-foreground mt-1 text-sm'>
+                  {t(
+                    'Trace credits, consumption and adjustments across your balance accounts.'
+                  )}
+                </p>
+              </div>
+              <LedgerTable />
+            </section>
           </div>
         </SectionPageLayout.Content>
       </SectionPageLayout>

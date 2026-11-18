@@ -88,6 +88,11 @@ export function TaskPlugins() {
     <>
       <SectionPageLayout fixedContent>
         <SectionPageLayout.Title>{t('Plugins')}</SectionPageLayout.Title>
+        <SectionPageLayout.Description>
+          {t(
+            'Configure task integrations and inspect their available actions and billing fields.'
+          )}
+        </SectionPageLayout.Description>
         <SectionPageLayout.Actions>
           <NodeSyncIndicator
             topics={['plugins', 'options']}

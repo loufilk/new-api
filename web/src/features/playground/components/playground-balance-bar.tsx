@@ -31,10 +31,17 @@ export function PlaygroundBalanceBar({ quota }: PlaygroundBalanceBarProps) {
   const { t } = useTranslation()
 
   return (
-    <div className='flex items-center justify-between gap-2'>
-      <h1 className='text-foreground text-sm font-semibold tracking-tight md:text-base'>
-        {t('Playground')}
-      </h1>
+    <div className='bg-card flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 shadow-xs'>
+      <div className='min-w-0'>
+        <h1 className='text-foreground text-base font-semibold tracking-tight'>
+          {t('Playground')}
+        </h1>
+        <p className='text-muted-foreground mt-1 hidden text-xs sm:block'>
+          {t(
+            'Try a model, compare its responses, and inspect the request in your logs.'
+          )}
+        </p>
+      </div>
 
       <div className='flex items-center gap-2'>
         <span className='text-muted-foreground bg-background/70 flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium'>

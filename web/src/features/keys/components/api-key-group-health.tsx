@@ -29,7 +29,10 @@ export function ApiKeyGroupHealth(props: { detail?: TokenGroupDetail }) {
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const rate = props.detail?.success_rate
   const validRate =
-    typeof rate === 'number' && Number.isFinite(rate) && rate >= 0 && rate <= 1
+    typeof rate === 'number' &&
+    Number.isFinite(rate) &&
+    rate >= 0 &&
+    rate <= 100
   const history = Array.from({ length: 24 }, (_, index) => ({
     hour: index - 24,
     rate: props.detail?.history?.[index] ?? null,
@@ -43,14 +46,14 @@ export function ApiKeyGroupHealth(props: { detail?: TokenGroupDetail }) {
             typeof sample === 'number' &&
             Number.isFinite(sample) &&
             sample >= 0 &&
-            sample <= 1
+            sample <= 100
           return (
             <span
               key={bucket.hour}
               className={cn(
                 'min-w-0 flex-1 rounded-[2px] bg-muted',
-                known && sample >= 0.95 && 'bg-emerald-500',
-                known && sample > 0 && sample < 0.95 && 'bg-amber-400',
+                known && sample >= 95 && 'bg-emerald-500',
+                known && sample > 0 && sample < 95 && 'bg-amber-400',
                 known && sample === 0 && 'bg-red-400'
               )}
             />
@@ -62,7 +65,7 @@ export function ApiKeyGroupHealth(props: { detail?: TokenGroupDetail }) {
         <span>
           {validRate
             ? t('{{rate}}% success rate', {
-                rate: formatNumber(rate * 100, locale),
+                rate: formatNumber(rate, locale),
               })
             : t('No performance data')}
         </span>

@@ -40,13 +40,19 @@ import {
 export type RefreshOutcome =
   | { kind: 'authenticated'; bundle: AuthBundle }
   | { kind: 'anonymous' }
-  | { kind: 'transient_error'; error: unknown }
+  | {
+      kind: 'transient_error'
+      error: unknown
+      status?: number
+      retryAt?: number
+    }
   | { kind: 'out_of_sync'; code?: string }
 
 export interface AuthRefreshHTTPResponse {
   status: number
   data?: unknown
   error?: unknown
+  retryAfter?: string
 }
 
 export interface AuthRefreshRuntime {
@@ -74,6 +80,18 @@ export class AuthRotationError extends Error {
   }
 }
 
+export class AuthSessionUnavailableError extends Error {
+  readonly retryAt: number
+
+  constructor(outcome: Extract<RefreshOutcome, { kind: 'transient_error' }>) {
+    // Route errors can be logged by the router. Keep transport objects and
+    // their request headers out of the public error and its cause chain.
+    super('Session verification is temporarily unavailable')
+    this.name = 'AuthSessionUnavailableError'
+    this.retryAt = outcome.retryAt ?? Date.now()
+  }
+}
+
 const authClient = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: true,
@@ -87,6 +105,10 @@ const refreshRaceDelays = [80, 200, 500] as const
 let refreshPromise: Promise<RefreshOutcome> | null = null
 let authEpoch = 0
 let authSessionEpoch = 0
+let refreshCooldown: {
+  epoch: number
+  outcome: Extract<RefreshOutcome, { kind: 'transient_error' }>
+} | null = null
 
 // Token refresh/rotation keeps an owner's in-flight requests valid. Identity
 // changes do not: a logout followed by a login must invalidate them even when
@@ -178,6 +200,7 @@ export function applyAuthBundle(
 ): void {
   const previousSID = useAuthStore.getState().auth.session?.sid
   authEpoch += 1
+  refreshCooldown = null
   useAuthStore.getState().auth.setBundle(bundle)
   // Keep the frontend host's non-credential hint in sync with the successful
   // authentication result and the server session's own expiry; the API host's
@@ -219,6 +242,7 @@ export function clearAuthentication(
 ): void {
   const sid = useAuthStore.getState().auth.session?.sid
   authEpoch += 1
+  refreshCooldown = null
   useAuthStore.getState().auth.reset(bootstrapState)
   // Explicit sign-out and server-side invalidation both land here, so the
   // frontend host's hint is cleared in lockstep with the session.
@@ -238,6 +262,22 @@ export function clearAuthenticatedClientState(
 
 function waitForRefreshRace(delay: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, delay))
+}
+
+function authenticationRetryAt(response: AuthRefreshHTTPResponse): number {
+  const now = Date.now()
+  const retryAfter = response.retryAfter?.trim()
+  if (retryAfter) {
+    if (/^\d+$/.test(retryAfter)) {
+      const seconds = Number(retryAfter)
+      const deadline = now + Math.max(1000, seconds * 1000)
+      if (Number.isSafeInteger(deadline)) return deadline
+    } else {
+      const deadline = Date.parse(retryAfter)
+      if (Number.isFinite(deadline) && deadline > now) return deadline
+    }
+  }
+  return now + (response.status === 429 ? 30_000 : 5000)
 }
 
 export function createRefreshRunner(
@@ -292,6 +332,8 @@ export function createRefreshRunner(
       return {
         kind: 'transient_error',
         error: response.error ?? response.data,
+        status: response.status,
+        retryAt: authenticationRetryAt(response),
       }
     }
 
@@ -324,10 +366,18 @@ async function requestRefresh(
     return { status: response.status, data: response.data }
   } catch (error: unknown) {
     if (!axios.isAxiosError(error)) return { status: 0, error }
+    const headers = error.response?.headers
+    const retryAfter =
+      headers instanceof axios.AxiosHeaders
+        ? headers.get('Retry-After')
+        : Object.entries(headers ?? {}).find(
+            ([name]) => name.toLowerCase() === 'retry-after'
+          )?.[1]
     return {
       status: error.response?.status ?? 0,
       data: error.response?.data,
       error,
+      retryAfter: typeof retryAfter === 'string' ? retryAfter : undefined,
     }
   }
 }
@@ -370,11 +420,30 @@ async function performRefreshWithBrowserLock(
 }
 
 export function refreshAuthentication(): Promise<RefreshOutcome> {
+  // The root guard, child guard and API client can ask sequentially after the
+  // first request finishes. Share its temporary failure as well as its promise.
+  if (
+    refreshCooldown?.epoch === authEpoch &&
+    (refreshCooldown.outcome.retryAt ?? 0) > Date.now()
+  ) {
+    return Promise.resolve(refreshCooldown.outcome)
+  }
   if (!refreshPromise) {
     const refreshEpoch = authEpoch
-    refreshPromise = performRefreshWithBrowserLock(refreshEpoch).finally(() => {
-      refreshPromise = null
-    })
+    refreshPromise = performRefreshWithBrowserLock(refreshEpoch)
+      .then((outcome) => {
+        if (
+          authEpoch === refreshEpoch &&
+          outcome.kind === 'transient_error' &&
+          outcome.retryAt
+        ) {
+          refreshCooldown = { epoch: refreshEpoch, outcome }
+        }
+        return outcome
+      })
+      .finally(() => {
+        refreshPromise = null
+      })
   }
   return refreshPromise
 }

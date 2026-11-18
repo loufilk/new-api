@@ -19,8 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
-import { toIntlLocale } from '@/i18n/languages'
-import { formatNumber } from '@/lib/format'
+import { GroupRatioBadge } from '@/features/keys/components/auto-group-visuals'
 
 import { ModelTestCard } from './model-card'
 import type {
@@ -56,8 +55,7 @@ export function ModelTestGroups(props: {
   onEstimate: (selection: ModelSelection) => void
   onSelect: (run: TestRun) => void
 }) {
-  const { t, i18n } = useTranslation()
-  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const { t } = useTranslation()
   return groupModels(props.targets).map(({ group, models }) => {
     const groupInfo = props.catalogue?.groups.find(
       (item) => item.name === group
@@ -75,7 +73,8 @@ export function ModelTestGroups(props: {
               variant='secondary'
               className='rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700 dark:bg-sky-950 dark:text-sky-300'
             >
-              {t('Ratio')} {formatNumber(groupInfo.ratio, locale)}×
+              {t('Your effective multiplier')}{' '}
+              <GroupRatioBadge ratio={groupInfo.ratio} />
             </Badge>
           )}
         </header>

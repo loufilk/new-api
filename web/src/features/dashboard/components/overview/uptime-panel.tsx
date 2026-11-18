@@ -108,7 +108,7 @@ export function UptimePanel() {
       loading={loading}
       empty={!groups.length}
       emptyMessage={t('No uptime monitoring configured')}
-      height='h-80'
+      height='h-28'
       contentClassName='p-0'
       headerActions={
         <Button
@@ -125,7 +125,7 @@ export function UptimePanel() {
         </Button>
       }
     >
-      <ScrollArea className='h-80'>
+      <ScrollArea className='max-h-72 [&_[data-slot=scroll-area-viewport]]:max-h-72'>
         <div>
           {groups.map((group, groupIdx) => (
             <div key={group.categoryName}>

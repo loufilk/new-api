@@ -3,6 +3,7 @@ package console_setting
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/stretchr/testify/assert"
@@ -123,4 +124,44 @@ func TestAnnouncementsTotalByteLimit(t *testing.T) {
 	t.Run("oversized malformed JSON is rejected before parsing", func(t *testing.T) {
 		assert.EqualError(t, ValidateConsoleSettings(strings.Repeat("x", 256*1024+1), "Announcements"), "Announcements cannot exceed 256 KiB in total")
 	})
+}
+
+func TestAnnouncementPublicationFiltersAndPinnedOrder(t *testing.T) {
+	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	items := []map[string]any{
+		{"id": 1, "content": "legacy", "publishDate": "2026-11-17T12:00:00Z"},
+		{"id": 2, "content": "draft", "publishDate": "2026-11-18T10:00:00Z", "status": "draft", "pinned": true},
+		{"id": 3, "content": "scheduled", "publishDate": "2026-11-19T12:00:00Z", "status": "published"},
+		{"id": 4, "content": "pinned", "publishDate": "2026-11-16T12:00:00Z", "status": "published", "pinned": true},
+		{"id": 5, "content": "newest", "publishDate": "2026-11-18T12:00:00Z", "status": "published", "category": "timeline"},
+	}
+	published := publishedAnnouncements(items, now)
+	require.Len(t, published, 3)
+	assert.Equal(t, 4, published[0]["id"])
+	assert.Equal(t, 5, published[1]["id"])
+	assert.Equal(t, 1, published[2]["id"])
+	assert.Len(t, items, 5, "publication filtering must not remove stored drafts")
+	assert.Len(t, publishedAnnouncements(items, now.Add(24*time.Hour)), 4)
+}
+
+func TestAnnouncementPublicationMetadataValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		field string
+		value any
+	}{
+		{"title type", "title", false}, {"title length", "title", strings.Repeat("a", 141)},
+		{"category", "category", "invalid"}, {"status", "status", "invalid"}, {"pinned", "pinned", "true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			item := map[string]any{"content": "content", "publishDate": "2026-11-18T12:00:00Z"}
+			item[tc.field] = tc.value
+			data, err := common.Marshal([]any{item})
+			require.NoError(t, err)
+			require.Error(t, ValidateConsoleSettings(string(data), "Announcements"))
+		})
+	}
+	data, err := common.Marshal([]any{map[string]any{"content": "content", "publishDate": "2026-11-18T12:00:00Z", "title": "title", "category": "timeline", "status": "draft", "pinned": true}})
+	require.NoError(t, err)
+	require.NoError(t, ValidateConsoleSettings(string(data), "Announcements"))
 }
