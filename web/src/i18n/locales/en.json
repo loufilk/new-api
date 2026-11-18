@@ -10395,6 +10395,7 @@
     "All Accounts": "All accounts",
     "Session verification is temporarily unavailable": "Session verification is temporarily unavailable",
     "Please wait, then retry to continue to this page.": "Please wait, then retry to continue to this page.",
-    "Retry in {{seconds}}s": "Retry in {{seconds}}s"
+    "Retry in {{seconds}}s": "Retry in {{seconds}}s",
+    "Withdrawal eligibility and fees are shown in the application form.": "Withdrawal eligibility and fees are shown in the application form."
   }
 }

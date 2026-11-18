@@ -10395,6 +10395,7 @@
     "All Accounts": "すべてのアカウント",
     "Session verification is temporarily unavailable": "現在、ログイン状態を確認できません",
     "Please wait, then retry to continue to this page.": "しばらく待ってから再試行すると、このページに進めます。",
-    "Retry in {{seconds}}s": "{{seconds}}秒後に再試行"
+    "Retry in {{seconds}}s": "{{seconds}}秒後に再試行",
+    "Withdrawal eligibility and fees are shown in the application form.": "出金条件と手数料は申請フォームに表示されます。"
   }
 }

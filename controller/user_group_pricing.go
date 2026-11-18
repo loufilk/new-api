@@ -140,7 +140,16 @@ func UpdateUserGroupPricing(c *gin.Context) {
 	if requestID == "" {
 		requestID = common.NewRequestId()
 	}
-	_, err = model.SaveUserGroupPricing(c.Request.Context(), c.GetInt("id"), target.Id, model.UserGroupPricingUpdate{Ratios: ratios, ExpectedRevision: *request.ExpectedRevision, RequestID: requestID})
+	_, err = model.SaveUserGroupPricing(c.Request.Context(), c.GetInt("id"), target.Id, model.UserGroupPricingUpdate{Ratios: ratios, ExpectedRevision: *request.ExpectedRevision, RequestID: requestID}, func(tx *gorm.DB, actor *model.User) error {
+		allowed, err := authz.CanInTx(tx, actor.Id, actor.Role, authz.UserGroupPricingUpdate)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return model.ErrUserGroupPricingPermission
+		}
+		return nil
+	})
 	if err != nil {
 		userGroupPricingAPIError(c, err)
 		return

@@ -69,7 +69,7 @@ func GetCommerceConfig(ctx context.Context) (*CommerceConfig, error) {
 	return &config, result.Error
 }
 
-func SaveCommerceConfig(ctx context.Context, actorID int, input CommerceConfig) (*CommerceConfig, error) {
+func SaveCommerceConfig(ctx context.Context, actorID int, input CommerceConfig, permissions ...AdminUserPermissionCheck) (*CommerceConfig, error) {
 	input.InvoiceCurrency = strings.ToUpper(strings.TrimSpace(input.InvoiceCurrency))
 	input.InvoiceInstructions = strings.TrimSpace(input.InvoiceInstructions)
 	input.PartnerInstructions = strings.TrimSpace(input.PartnerInstructions)
@@ -82,7 +82,7 @@ func SaveCommerceConfig(ctx context.Context, actorID int, input CommerceConfig) 
 		}
 	}
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := commerceActor(tx, actorID, true); err != nil {
+		if err := commerceActor(tx, actorID, true, permissions...); err != nil {
 			return err
 		}
 		defaults := DefaultCommerceConfig()
@@ -105,13 +105,21 @@ func SaveCommerceConfig(ctx context.Context, actorID int, input CommerceConfig) 
 	return &input, err
 }
 
-func commerceActor(tx *gorm.DB, actorID int, admin bool) error {
+func commerceActor(tx *gorm.DB, actorID int, admin bool, permissions ...AdminUserPermissionCheck) error {
 	var actor User
 	if err := lockForUpdate(tx).Select("id", "role", "status").First(&actor, actorID).Error; err != nil {
 		return ErrCommerceForbidden
 	}
 	if actor.Status != common.UserStatusEnabled || !common.IsValidateRole(actor.Role) || (admin && actor.Role < common.RoleAdminUser) {
 		return ErrCommerceForbidden
+	}
+	for _, check := range permissions {
+		if check == nil {
+			return ErrCommerceForbidden
+		}
+		if err := check(tx, &actor); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -10395,6 +10395,7 @@
     "All Accounts": "全部账户",
     "Session verification is temporarily unavailable": "暂时无法验证登录状态",
     "Please wait, then retry to continue to this page.": "请稍候重试，继续访问此页面。",
-    "Retry in {{seconds}}s": "{{seconds}} 秒后重试"
+    "Retry in {{seconds}}s": "{{seconds}} 秒后重试",
+    "Withdrawal eligibility and fees are shown in the application form.": "提现条件和手续费以申请表显示的规则为准。"
   }
 }

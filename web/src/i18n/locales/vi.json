@@ -10395,6 +10395,7 @@
     "All Accounts": "Tất cả tài khoản",
     "Session verification is temporarily unavailable": "Tạm thời không thể xác minh phiên đăng nhập",
     "Please wait, then retry to continue to this page.": "Vui lòng chờ rồi thử lại để tiếp tục truy cập trang này.",
-    "Retry in {{seconds}}s": "Thử lại sau {{seconds}} giây"
+    "Retry in {{seconds}}s": "Thử lại sau {{seconds}} giây",
+    "Withdrawal eligibility and fees are shown in the application form.": "Điều kiện và phí rút tiền được hiển thị trong biểu mẫu yêu cầu."
   }
 }

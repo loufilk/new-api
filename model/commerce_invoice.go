@@ -244,7 +244,7 @@ func ListInvoiceApplications(ctx context.Context, userID int, admin bool, status
 	return items, count, err
 }
 
-func ReviewInvoiceApplication(ctx context.Context, actorID int, id int64, admin bool, input CommerceReview) (*InvoiceApplication, error) {
+func ReviewInvoiceApplication(ctx context.Context, actorID int, id int64, admin bool, input CommerceReview, permissions ...AdminUserPermissionCheck) (*InvoiceApplication, error) {
 	input.Note, input.InvoiceNumber = strings.TrimSpace(input.Note), strings.TrimSpace(input.InvoiceNumber)
 	input.DeliveryURL, input.FeeReceiptReference = strings.TrimSpace(input.DeliveryURL), strings.TrimSpace(input.FeeReceiptReference)
 	input.FeeRefundReference = strings.TrimSpace(input.FeeRefundReference)
@@ -253,7 +253,7 @@ func ReviewInvoiceApplication(ctx context.Context, actorID int, id int64, admin 
 	}
 	var row InvoiceApplication
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := commerceActor(tx, actorID, admin); err != nil {
+		if err := commerceActor(tx, actorID, admin, permissions...); err != nil {
 			return err
 		}
 		query := lockForUpdate(tx).Where("id = ?", id)

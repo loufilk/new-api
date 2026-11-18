@@ -40,6 +40,19 @@ func commerceActor(c *gin.Context, admin bool, permission authz.Permission) bool
 	return true
 }
 
+func commercePermission(permission authz.Permission) model.AdminUserPermissionCheck {
+	return func(tx *gorm.DB, actor *model.User) error {
+		allowed, err := authz.CanInTx(tx, actor.Id, actor.Role, permission)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return model.ErrCommerceForbidden
+		}
+		return nil
+	}
+}
+
 func commerceBody(c *gin.Context, target any) bool {
 	body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 128*1024))
 	if err != nil || common.Unmarshal(body, target) != nil {
@@ -78,7 +91,7 @@ func UpdateCommerceConfig(c *gin.Context) {
 	if !commerceBody(c, &input) {
 		return
 	}
-	result, err := model.SaveCommerceConfig(c.Request.Context(), c.GetInt("id"), input)
+	result, err := model.SaveCommerceConfig(c.Request.Context(), c.GetInt("id"), input, commercePermission(authz.CommerceSettingsUpdate))
 	if err != nil {
 		commerceError(c, err)
 		return
@@ -169,7 +182,11 @@ func reviewInvoice(c *gin.Context, admin bool) {
 		commerceError(c, model.ErrCommerceForbidden)
 		return
 	}
-	result, err := model.ReviewInvoiceApplication(c.Request.Context(), c.GetInt("id"), id, admin, input)
+	var checks []model.AdminUserPermissionCheck
+	if admin {
+		checks = append(checks, commercePermission(authz.CommerceInvoiceReview))
+	}
+	result, err := model.ReviewInvoiceApplication(c.Request.Context(), c.GetInt("id"), id, admin, input, checks...)
 	if err != nil {
 		commerceError(c, err)
 		return
@@ -248,7 +265,11 @@ func reviewPartner(c *gin.Context, admin bool) {
 		commerceError(c, model.ErrCommerceForbidden)
 		return
 	}
-	result, err := model.ReviewPartnerApplication(c.Request.Context(), c.GetInt("id"), id, admin, input)
+	var checks []model.AdminUserPermissionCheck
+	if admin {
+		checks = append(checks, commercePermission(authz.CommercePartnerReview))
+	}
+	result, err := model.ReviewPartnerApplication(c.Request.Context(), c.GetInt("id"), id, admin, input, checks...)
 	if err != nil {
 		commerceError(c, err)
 		return

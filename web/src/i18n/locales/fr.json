@@ -10395,6 +10395,7 @@
     "All Accounts": "Tous les comptes",
     "Session verification is temporarily unavailable": "La vérification de votre session est temporairement indisponible",
     "Please wait, then retry to continue to this page.": "Patientez, puis réessayez pour accéder à cette page.",
-    "Retry in {{seconds}}s": "Réessayer dans {{seconds}} s"
+    "Retry in {{seconds}}s": "Réessayer dans {{seconds}} s",
+    "Withdrawal eligibility and fees are shown in the application form.": "Les conditions et frais de retrait sont indiqués dans le formulaire de demande."
   }
 }

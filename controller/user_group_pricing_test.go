@@ -99,3 +99,32 @@ func TestUserGroupPricingPostgresAPIContractAndPermissions(t *testing.T) {
 	require.NoError(t, f.db.Model(&model.UserGroupPricingAudit{}).Where("user_id = ?", f.user.Id).Count(&auditCount).Error)
 	assert.EqualValues(t, 3, auditCount)
 }
+
+func TestUserGroupPricingPostgresRevokedPermissionCannotCommitPricing(t *testing.T) {
+	if os.Getenv("TEST_POSTGRES_DSN") == "" {
+		t.Skip("requires isolated PostgreSQL 18.6 TEST_POSTGRES_DSN")
+	}
+	if groupRenameControllerIsolatedProcess(t) {
+		return
+	}
+	f := setupInterceptionControllerTest(t)
+	require.NoError(t, i18n.Init())
+	require.NoError(t, f.db.AutoMigrate(&model.Option{}, &model.UserGroupPricing{}, &model.UserGroupPricingAudit{}, &model.Channel{}, &model.Token{}, &model.Ability{}, &model.SubscriptionPlan{}))
+	require.NoError(t, f.db.Create(&model.Option{Key: "GroupRatio", Value: `{"public":0.8}`}).Error)
+	require.NoError(t, authz.SetUserPermissions(f.admin.Id, authz.PermissionsMap{authz.ResourceUserGroupPricing: {"read": true, "update": true}}))
+	response := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(response)
+	body := &groupGuardBodyReader{reader: strings.NewReader(`{"expected_revision":0,"ratios":{"public":0}}`), beforeRead: func() {
+		require.NoError(t, authz.SetUserPermissions(f.admin.Id, authz.PermissionsMap{authz.ResourceUserGroupPricing: {"read": true, "update": false}}))
+	}}
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/user/group-pricing", body)
+	c.Set("id", f.admin.Id)
+	c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(f.user.Id)}}
+	UpdateUserGroupPricing(c)
+	assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+	var policies, audits int64
+	require.NoError(t, f.db.Model(&model.UserGroupPricing{}).Count(&policies).Error)
+	require.NoError(t, f.db.Model(&model.UserGroupPricingAudit{}).Count(&audits).Error)
+	assert.Zero(t, policies, "revoking pricing permission must prevent the policy mutation")
+	assert.Zero(t, audits, "a rejected mutation must not produce a committed pricing audit")
+}

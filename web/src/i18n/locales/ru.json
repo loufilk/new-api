@@ -10395,6 +10395,7 @@
     "All Accounts": "Все счета",
     "Session verification is temporarily unavailable": "Проверка сеанса временно недоступна",
     "Please wait, then retry to continue to this page.": "Подождите и повторите попытку, чтобы открыть эту страницу.",
-    "Retry in {{seconds}}s": "Повторить через {{seconds}} с"
+    "Retry in {{seconds}}s": "Повторить через {{seconds}} с",
+    "Withdrawal eligibility and fees are shown in the application form.": "Условия вывода и комиссии указаны в форме заявки."
   }
 }

@@ -80,6 +80,7 @@ export function AffiliateRewardsCard(props: AffiliateRewardsCardProps) {
   }
 
   const hasRewards = props.availableQuota > 0
+  const isAgent = !!props.user?.agent_profile && (props.user.role ?? 1) < 10
   const stats = [
     [t('Referral Rewards Available'), formatQuota(props.availableQuota)],
     [
@@ -206,9 +207,13 @@ export function AffiliateRewardsCard(props: AffiliateRewardsCardProps) {
               )}
             </li>
             <li>
-              {t(
-                'Handled by support. Minimum $20 combined, once per calendar month, with a 2% fee.'
-              )}
+              {isAgent
+                ? t(
+                    'Handled by support. Minimum $20 combined, once per calendar month, with a 2% fee.'
+                  )
+                : t(
+                    'Withdrawal eligibility and fees are shown in the application form.'
+                  )}
             </li>
           </ol>
         </CollapsibleContent>

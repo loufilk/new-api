@@ -10395,6 +10395,7 @@
     "All Accounts": "全部帳戶",
     "Session verification is temporarily unavailable": "暫時無法驗證登入狀態",
     "Please wait, then retry to continue to this page.": "請稍候重試，繼續存取此頁面。",
-    "Retry in {{seconds}}s": "{{seconds}} 秒後重試"
+    "Retry in {{seconds}}s": "{{seconds}} 秒後重試",
+    "Withdrawal eligibility and fees are shown in the application form.": "提領條件與手續費以申請表顯示的規則為準。"
   }
 }

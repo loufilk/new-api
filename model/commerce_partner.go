@@ -166,14 +166,14 @@ func ListPartnerApplications(ctx context.Context, userID int, admin bool, status
 	return items, count, nil
 }
 
-func ReviewPartnerApplication(ctx context.Context, actorID int, id int64, admin bool, input CommerceReview) (*PartnerApplication, error) {
+func ReviewPartnerApplication(ctx context.Context, actorID int, id int64, admin bool, input CommerceReview, permissions ...AdminUserPermissionCheck) (*PartnerApplication, error) {
 	input.Note = strings.TrimSpace(input.Note)
 	if input.ExpectedRevision < 1 || !commerceText(input.Note, 0, 1000) {
 		return nil, ErrCommerceInvalid
 	}
 	var row PartnerApplication
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := commerceActor(tx, actorID, admin); err != nil {
+		if err := commerceActor(tx, actorID, admin, permissions...); err != nil {
 			return err
 		}
 		query := lockForUpdate(tx).Where("id = ?", id)

@@ -23,7 +23,7 @@ export const quickStart: GuideDoc = {
   title: '快速开始：5 分钟发出第一个请求',
   description: '注册、创建令牌，并发出你的第一个请求。',
   recommended: true,
-  updated: '2026-08-30',
+  updated: '2026-11-18',
   body: `
 > Base URL 固定为 \`{{BASE_URL}}/v1\`。令牌只在控制台创建，请妥善保管，泄露后立即在控制台删除重建。
 
@@ -38,7 +38,8 @@ export const quickStart: GuideDoc = {
 进入 [控制台 → API 令牌](/keys)，点击「创建令牌」。建议：
 
 - 每个应用 / 工具使用独立令牌，方便单独禁用与统计
-- 新手直接使用默认分组即可；额度选「无限额度」时实际消耗钱包余额
+- 创建令牌时必须选择至少一个当前账户可用的调用分组；先在 [定价页](/pricing) 确认该分组支持目标模型
+- 「无限额度」表示不设令牌自身的额度上限，调用仍按实际用量计费
 - 令牌属于敏感凭证，请勿公开分享；泄露时在列表中删除并重建即可
 
 ## 第 3 步：确认余额
@@ -57,7 +58,7 @@ curl {{BASE_URL}}/v1/chat/completions \\
   }'
 \`\`\`
 
-把 \`MODEL_ID\` 换成 [定价页](/pricing) 展示的真实 model id——不要沿用其他平台的模型名，目录之外的名称会返回 404。也可以用接口列出当前令牌可见的模型：
+把 \`MODEL_ID\` 换成所选调用分组中支持 Chat Completions 接口的真实 model id。需要 Responses、Claude Messages 等接口时，可使用 [接入向导](/getting-started) 按模型生成对应配置。也可以用接口列出当前令牌可见的模型：
 
 \`\`\`bash
 curl {{BASE_URL}}/v1/models \\

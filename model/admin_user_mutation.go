@@ -15,6 +15,10 @@ type AdminUserMutationGuard struct {
 	Expected User
 }
 
+// AdminUserPermissionCheck revalidates a management permission after the caller
+// has locked the authoritative actor row and before its mutation is committed.
+type AdminUserPermissionCheck func(*gorm.DB, *User) error
+
 // ValidateAdminUserCreationTx keeps the creator's role and session authoritative
 // until user insertion and permission configuration commit.
 func ValidateAdminUserCreationTx(tx *gorm.DB, identity AuthSessionIdentity, role int) error {

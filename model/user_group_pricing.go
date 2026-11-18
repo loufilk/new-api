@@ -155,7 +155,7 @@ func (policy *UserGroupPricing) ResolveGroupRatio(userGroup, callingGroup string
 	return result
 }
 
-func SaveUserGroupPricing(ctx context.Context, actorID, userID int, update UserGroupPricingUpdate) (*UserGroupPricing, error) {
+func SaveUserGroupPricing(ctx context.Context, actorID, userID int, update UserGroupPricingUpdate, permissions ...AdminUserPermissionCheck) (*UserGroupPricing, error) {
 	if DB == nil {
 		return nil, ErrUserGroupPricingUnavailable
 	}
@@ -201,6 +201,14 @@ func SaveUserGroupPricing(ctx context.Context, actorID, userID int, update UserG
 		}
 		if actor.Role != common.RoleRootUser && actor.Role <= target.Role {
 			return ErrUserGroupPricingPermission
+		}
+		for _, check := range permissions {
+			if check == nil {
+				return ErrUserGroupPricingPermission
+			}
+			if err := check(tx, actor); err != nil {
+				return err
+			}
 		}
 
 		values, err := lockAndLoadGroupRenameOptions(tx, []string{"GroupRatio", "group_ratio_setting.group_ratio"})

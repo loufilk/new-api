@@ -164,6 +164,47 @@ describe('affiliate rewards card', () => {
     ).toBeInTheDocument()
   })
 
+  test('shows configured application terms for ordinary withdrawals without quoting the agent fee', () => {
+    renderCard()
+
+    expect(
+      screen.getByText(
+        'Withdrawal eligibility and fees are shown in the application form.'
+      )
+    ).toBeVisible()
+    expect(
+      screen.queryByText(
+        'Handled by support. Minimum $20 combined, once per calendar month, with a 2% fee.'
+      )
+    ).not.toBeInTheDocument()
+  })
+
+  test('retains support withdrawal terms for a user with an agent profile', () => {
+    renderCard({
+      user: {
+        ...user,
+        role: 1,
+        agent_profile: {
+          user_id: user.id,
+          status: 'active',
+          sales_frozen: false,
+          settlement_frozen: false,
+          version: 1,
+          created_at: 0,
+          updated_at: 0,
+          updated_by: 1,
+          reason: '',
+        },
+      },
+    })
+
+    expect(
+      screen.getByText(
+        'Handled by support. Minimum $20 combined, once per calendar month, with a 2% fee.'
+      )
+    ).toBeVisible()
+  })
+
   test('renders a 0% rule when referral rewards are disabled', () => {
     renderCard({ referralRate: 0 })
 

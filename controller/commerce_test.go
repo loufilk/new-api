@@ -72,3 +72,62 @@ func TestCommercePostgresAPIReadWriteOwnershipAndPermissionBoundaries(t *testing
 	require.NoError(t, f.db.Model(&model.User{}).Where("id = ?", f.root.Id).Update("status", common.UserStatusDisabled).Error)
 	assert.Equal(t, http.StatusForbidden, commerceControllerRequest(f.root.Id, int(created.Data.ID), "", "", GetAdminInvoiceApplication).Code)
 }
+
+func TestCommercePostgresRevokedPermissionCannotCommitManagementWrites(t *testing.T) {
+	if groupRenameControllerIsolatedProcess(t) {
+		return
+	}
+	f := setupInterceptionControllerTest(t)
+	require.NoError(t, i18n.Init())
+	require.NoError(t, f.db.AutoMigrate(append(model.CommerceModels(), &model.TopUp{})...))
+	config := model.DefaultCommerceConfig()
+	config.InvoiceEnabled = true
+	storedConfig, err := model.SaveCommerceConfig(context.Background(), f.root.Id, config)
+	require.NoError(t, err)
+	order := model.TopUp{UserId: f.user.Id, TradeNo: "commerce-revoked-grant", Status: common.TopUpStatusSuccess, PaidCurrency: "CNY", PaidCurrencyExponent: 2, PaidAmountMinor: 12500, CompleteTime: common.GetTimestamp()}
+	require.NoError(t, f.db.Create(&order).Error)
+	invoice, err := model.CreateInvoiceApplication(context.Background(), f.user.Id, "revoked-invoice", model.InvoiceCreate{OrderIDs: []int{order.Id}, Kind: "general", TitleType: "individual", Title: "Example buyer", Email: "invoice@example.com"})
+	require.NoError(t, err)
+	partner, err := model.CreatePartnerApplication(context.Background(), f.user.Id, "revoked-partner", model.PartnerCreate{SiteName: "Example API", SiteURL: "https://supplier.example.com", ContactName: "Supplier", ContactEmail: "partner@example.com", Description: "API supply and availability details", Quotes: []model.PartnerQuote{{Group: "Standard", Models: "example-model", Rate: "0.35"}}})
+	require.NoError(t, err)
+	config.InvoiceEnabled, config.Revision = false, storedConfig.Revision
+	configBody, err := common.Marshal(config)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name       string
+		permission authz.Permission
+		id         int64
+		body       string
+		handler    gin.HandlerFunc
+	}{
+		{"settings", authz.CommerceSettingsUpdate, 0, string(configBody), UpdateCommerceConfig},
+		{"invoice", authz.CommerceInvoiceReview, invoice.ID, `{"expected_revision":1,"action":"approve"}`, ReviewInvoiceApplication},
+		{"partner", authz.CommercePartnerReview, partner.ID, `{"expected_revision":1,"action":"approve","note":"Accepted"}`, ReviewPartnerApplication},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, authz.SetUserPermissions(f.admin.Id, authz.PermissionsMap{tc.permission.Resource: {tc.permission.Action: true}}))
+			require.True(t, authz.Can(f.admin.Id, f.admin.Role, tc.permission))
+			response := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(response)
+			body := &groupGuardBodyReader{reader: strings.NewReader(tc.body), beforeRead: func() {
+				// The initial controller permission check already succeeded; revoke
+				// before the write transaction acquires the authoritative actor lock.
+				require.NoError(t, authz.SetUserPermissions(f.admin.Id, authz.PermissionsMap{tc.permission.Resource: {tc.permission.Action: false}}))
+			}}
+			c.Request = httptest.NewRequest(http.MethodPost, "/api/commerce-test", body)
+			c.Set("id", f.admin.Id)
+			c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(tc.id)}}
+			tc.handler(c)
+			assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+		})
+	}
+	afterConfig, err := model.GetCommerceConfig(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, storedConfig, afterConfig)
+	afterInvoice, err := model.GetInvoiceApplication(context.Background(), f.user.Id, invoice.ID, false)
+	require.NoError(t, err)
+	assert.Equal(t, invoice, afterInvoice)
+	afterPartner, err := model.GetPartnerApplication(context.Background(), f.user.Id, partner.ID, false)
+	require.NoError(t, err)
+	assert.Equal(t, partner, afterPartner)
+}

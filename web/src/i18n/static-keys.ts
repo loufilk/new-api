@@ -1547,4 +1547,5 @@ export const STATIC_I18N_KEYS = [
   '{{network}} fee (basis points)',
   'Resolve pending referral withdrawals before deleting this account',
   'All Accounts',
+  'Withdrawal eligibility and fees are shown in the application form.',
 ] as const
