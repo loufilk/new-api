@@ -96,7 +96,9 @@ export function ApiKeyRoutingFields(props: {
       shouldDirty: true,
       shouldValidate: true,
     })
-    form.setValue('cross_group_retry', next.length > 1, { shouldDirty: true })
+    if (next.length < 2 || group !== 'auto') {
+      form.setValue('cross_group_retry', next.length > 1, { shouldDirty: true })
+    }
   }
 
   return (
@@ -362,7 +364,11 @@ export function ApiKeyRoutingFields(props: {
                   shouldDirty: true,
                   shouldValidate: true,
                 })
-                form.setValue('cross_group_retry', true, { shouldDirty: true })
+                if (group !== 'auto') {
+                  form.setValue('cross_group_retry', true, {
+                    shouldDirty: true,
+                  })
+                }
               }}
             >
               {t('Restore global Auto')}

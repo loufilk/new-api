@@ -27,6 +27,11 @@ export function ApiKeysDialogs() {
   return (
     <>
       <ApiKeysMutateDrawer
+        key={
+          open === 'update'
+            ? `update:${currentRow?.id ?? 'none'}`
+            : (open ?? 'closed')
+        }
         open={open === 'create' || open === 'update'}
         onOpenChange={(isOpen) => !isOpen && setOpen(null)}
         currentRow={open === 'update' ? currentRow || undefined : undefined}

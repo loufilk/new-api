@@ -27,6 +27,7 @@ import {
   type GetApiKeysResponse,
   type SearchApiKeysParams,
   type ApiKeyFormData,
+  type ApiKeyUpdateData,
   type TokenAutoGroupsConfig,
   type CCSwitchApp,
 } from './types'
@@ -51,7 +52,9 @@ export async function getApiKeys(
   params: GetApiKeysParams = {}
 ): Promise<GetApiKeysResponse> {
   const { p = 1, size = 10 } = params
-  const res = await api.get(`/api/token/?p=${p}&size=${size}`)
+  const queryParams = new URLSearchParams({ p: String(p), size: String(size) })
+  if (params.status?.length) queryParams.set('status', params.status.join(','))
+  const res = await api.get(`/api/token/?${queryParams.toString()}`)
   return parseApiKeysResponse(res.data)
 }
 
@@ -63,6 +66,7 @@ export async function searchApiKeys(
   const queryParams = new URLSearchParams()
   if (p != null) queryParams.set('p', String(p))
   if (size != null) queryParams.set('size', String(size))
+  if (params.status?.length) queryParams.set('status', params.status.join(','))
   const query = queryParams.toString()
   const res = await api.post(`/api/token/search${query ? `?${query}` : ''}`, {
     keyword,
@@ -123,7 +127,7 @@ export async function createApiKey(
 
 // Update an existing API key
 export async function updateApiKey(
-  data: ApiKeyFormData & { id: number }
+  data: ApiKeyUpdateData
 ): Promise<ApiResponse<ApiKey>> {
   const res = await api.put('/api/token/', data)
   return res.data
@@ -164,11 +168,16 @@ export async function fetchTokenKey(
 }
 
 // Batch fetch real (unmasked) keys for multiple tokens
-export async function fetchTokenKeysBatch(ids: number[]): Promise<{
+export async function fetchTokenKeysBatch(
+  ids: number[],
+  config?: { signal?: AbortSignal }
+): Promise<{
   success: boolean
   message?: string
   data?: { keys: Record<number, string> }
 }> {
-  const res = await api.post('/api/token/batch/keys', { ids })
+  const res = config
+    ? await api.post('/api/token/batch/keys', { ids }, config)
+    : await api.post('/api/token/batch/keys', { ids })
   return res.data
 }

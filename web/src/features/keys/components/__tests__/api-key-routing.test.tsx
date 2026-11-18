@@ -100,6 +100,38 @@ afterEach(() => {
 })
 
 describe('API key routing controls', () => {
+  it.each([
+    { action: 'Move vip up', order: ['vip', 'fast', 'default'] },
+    { action: 'Remove default', order: ['fast', 'vip'] },
+    { action: 'Restore global Auto', order: [] },
+  ])(
+    'keeps cross-group retry disabled when the user selects $action',
+    async ({ action, order }) => {
+      const user = userEvent.setup()
+      render(
+        <RoutingForm
+          defaults={{
+            group: 'auto',
+            auto_groups_mode: 'custom',
+            auto_groups: ['fast', 'vip', 'default'],
+            cross_group_retry: false,
+          }}
+        />
+      )
+
+      await user.click(screen.getByRole('button', { name: action }))
+      expect(
+        screen.getByRole('switch', { name: 'Cross-group retry' })
+      ).not.toBeChecked()
+      await user.click(screen.getByRole('button', { name: 'Submit key' }))
+      await waitFor(() => expect(submitted).toHaveBeenCalled())
+      expect(submitted.mock.calls[0][0]).toMatchObject({
+        auto_groups: order,
+        cross_group_retry: false,
+      })
+    }
+  )
+
   it('disables manual groups when smart routing is on and restores the exact manual order when off', async () => {
     const user = userEvent.setup()
     render(

@@ -16,11 +16,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import React, { useState, useCallback, useRef, useEffect } from 'react'
+import React, {
+  useState,
+  useCallback,
+  useRef,
+  useEffect,
+  useSyncExternalStore,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
 import useDialogState from '@/hooks/use-dialog'
+import { getAuthSessionEpoch } from '@/lib/auth-session'
 import { handleServerError } from '@/lib/handle-server-error'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { fetchTokenKey, fetchTokenKeysBatch } from '../api'
 import { ERROR_MESSAGES } from '../constants'
@@ -46,6 +54,24 @@ type ApiKeysContextType = {
 const ApiKeysContext = React.createContext<ApiKeysContextType | null>(null)
 
 export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
+  const ownerEpoch = useSyncExternalStore(
+    useAuthStore.subscribe,
+    getAuthSessionEpoch
+  )
+  return (
+    <SessionApiKeysProvider key={ownerEpoch} ownerEpoch={ownerEpoch}>
+      {children}
+    </SessionApiKeysProvider>
+  )
+}
+
+function SessionApiKeysProvider({
+  children,
+  ownerEpoch,
+}: {
+  children: React.ReactNode
+  ownerEpoch: number
+}) {
   const { t } = useTranslation()
   const [open, setOpen] = useDialogState<ApiKeysDialogType>(null)
   const [currentRow, setCurrentRow] = useState<ApiKey | null>(null)
@@ -58,9 +84,23 @@ export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
 
   const [copiedKeyId, setCopiedKeyId] = useState<number | null>(null)
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const mountedRef = useRef(true)
+  const requestControllers = useRef(new Set<AbortController>())
+
+  const isCurrentOwner = useCallback(
+    () => mountedRef.current && getAuthSessionEpoch() === ownerEpoch,
+    [ownerEpoch]
+  )
 
   useEffect(() => {
-    return () => clearTimeout(copiedTimerRef.current)
+    mountedRef.current = true
+    const controllers = requestControllers.current
+    return () => {
+      mountedRef.current = false
+      clearTimeout(copiedTimerRef.current)
+      for (const controller of controllers) controller.abort()
+      controllers.clear()
+    }
   }, [])
 
   const markKeyCopied = useCallback((id: number) => {
@@ -75,13 +115,17 @@ export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
 
   const resolveRealKey = useCallback(
     async (id: number): Promise<string | null> => {
+      if (!isCurrentOwner()) return null
       if (resolvedKeys[id]) return resolvedKeys[id]
       if (id in pendingRequests.current) return pendingRequests.current[id]
 
+      const controller = new AbortController()
+      requestControllers.current.add(controller)
       const request = (async () => {
         setLoadingKeys((prev) => ({ ...prev, [id]: true }))
         try {
-          const res = await fetchTokenKey(id)
+          const res = await fetchTokenKey(id, { signal: controller.signal })
+          if (!isCurrentOwner() || controller.signal.aborted) return null
           if (res.success && res.data?.key) {
             const fullKey = `sk-${res.data.key}`
             setResolvedKeys((prev) => ({ ...prev, [id]: fullKey }))
@@ -90,26 +134,32 @@ export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
           handleServerError(res, t(ERROR_MESSAGES.UNEXPECTED))
           return null
         } catch (error) {
-          handleServerError(error, t(ERROR_MESSAGES.UNEXPECTED))
+          if (isCurrentOwner() && !controller.signal.aborted) {
+            handleServerError(error, t(ERROR_MESSAGES.UNEXPECTED))
+          }
           return null
         } finally {
+          requestControllers.current.delete(controller)
           delete pendingRequests.current[id]
-          setLoadingKeys((prev) => {
-            const next = { ...prev }
-            delete next[id]
-            return next
-          })
+          if (isCurrentOwner()) {
+            setLoadingKeys((prev) => {
+              const next = { ...prev }
+              delete next[id]
+              return next
+            })
+          }
         }
       })()
 
       pendingRequests.current[id] = request
       return request
     },
-    [resolvedKeys, t]
+    [resolvedKeys, t, isCurrentOwner]
   )
 
   const resolveRealKeysBatch = useCallback(
     async (ids: number[]): Promise<Record<number, string>> => {
+      if (!isCurrentOwner()) return {}
       const uncachedIds = ids.filter((id) => !resolvedKeys[id])
       if (uncachedIds.length === 0) {
         const result: Record<number, string> = {}
@@ -121,8 +171,13 @@ export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
         setLoadingKeys((prev) => ({ ...prev, [id]: true }))
       }
 
+      const controller = new AbortController()
+      requestControllers.current.add(controller)
       try {
-        const res = await fetchTokenKeysBatch(uncachedIds)
+        const res = await fetchTokenKeysBatch(uncachedIds, {
+          signal: controller.signal,
+        })
+        if (!isCurrentOwner() || controller.signal.aborted) return {}
         if (res.success && res.data?.keys) {
           const newKeys: Record<number, string> = {}
           for (const [idStr, key] of Object.entries(res.data.keys)) {
@@ -139,19 +194,22 @@ export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
         handleServerError(res, t(ERROR_MESSAGES.UNEXPECTED))
         return {}
       } catch (error) {
-        handleServerError(error, t(ERROR_MESSAGES.UNEXPECTED))
+        if (isCurrentOwner() && !controller.signal.aborted) {
+          handleServerError(error, t(ERROR_MESSAGES.UNEXPECTED))
+        }
         return {}
       } finally {
-        for (const id of uncachedIds) {
+        requestControllers.current.delete(controller)
+        if (isCurrentOwner()) {
           setLoadingKeys((prev) => {
             const next = { ...prev }
-            delete next[id]
+            for (const id of uncachedIds) delete next[id]
             return next
           })
         }
       }
     },
-    [resolvedKeys, t]
+    [resolvedKeys, t, isCurrentOwner]
   )
 
   return (

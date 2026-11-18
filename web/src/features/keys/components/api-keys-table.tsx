@@ -265,6 +265,10 @@ export function ApiKeysTable() {
     },
   })
   const shouldSearch = Boolean(globalFilter?.trim() || tokenFilter.trim())
+  const statusFilter = columnFilters.find(
+    (filter) => filter.id === 'status'
+  )?.value
+  const statuses = Array.isArray(statusFilter) ? statusFilter.map(Number) : []
 
   // Fetch data with React Query
   // eslint-disable-next-line @tanstack/query/exhaustive-deps
@@ -275,6 +279,7 @@ export function ApiKeysTable() {
       pagination.pageSize,
       globalFilter,
       tokenFilter,
+      statuses,
       refreshTrigger,
     ],
     queryFn: async () => {
@@ -284,10 +289,12 @@ export function ApiKeysTable() {
             token: tokenFilter,
             p: pagination.pageIndex + 1,
             size: pagination.pageSize,
+            status: statuses,
           })
         : await getApiKeys({
             p: pagination.pageIndex + 1,
             size: pagination.pageSize,
+            status: statuses,
           })
 
       if (!result.success) {
@@ -324,6 +331,7 @@ export function ApiKeysTable() {
     onGlobalFilterChange,
     onColumnFiltersChange,
     manualPagination: true,
+    manualFiltering: true,
     totalCount: data?.total || 0,
     ensurePageInRange,
   })

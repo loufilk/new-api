@@ -126,3 +126,63 @@ func TestSearchTokensPostPreservesOwnershipAndCredentialPrivacy(t *testing.T) {
 		assert.NotContains(t, string(auditJSON), secret, "search bodies and credentials must not enter the audit trail")
 	}
 }
+
+func TestTokenStatusFilterAppliesBeforePaginationAndSearch(t *testing.T) {
+	db, user, original := setupTokenWriteRegression(t)
+	first := seedToken(t, db, user.Id, "match first", "synthetic-first-filter-key")
+	enabled := seedToken(t, db, user.Id, "match enabled", "synthetic-enabled-filter-key")
+	expired := seedToken(t, db, user.Id, "match expired", "synthetic-expired-filter-key")
+	last := seedToken(t, db, user.Id, "match last", "synthetic-last-filter-key")
+	foreign := seedToken(t, db, user.Id+1, "match foreign", "synthetic-foreign-filter-key")
+	deleted := seedToken(t, db, user.Id, "match deleted", "synthetic-deleted-filter-key")
+	require.NoError(t, db.Model(&model.Token{}).Where("id IN ?", []int{first.Id, last.Id, foreign.Id, deleted.Id}).Update("status", common.TokenStatusDisabled).Error)
+	require.NoError(t, db.Model(expired).Update("status", common.TokenStatusExpired).Error)
+	require.NoError(t, db.Delete(deleted).Error)
+	for _, tc := range []struct {
+		name, method, path string
+		body               any
+		total              int
+		ids                []int
+		invalid            bool
+	}{
+		{name: "unfiltered", method: http.MethodGet, path: "/api/token/?p=1&size=10", total: 5, ids: []int{last.Id, expired.Id, enabled.Id, first.Id, original.Id}},
+		{name: "filtered first page", method: http.MethodGet, path: "/api/token/?status=2&p=1&size=1", total: 2, ids: []int{last.Id}},
+		{name: "filtered second page", method: http.MethodGet, path: "/api/token/?status=2&p=2&size=1", total: 2, ids: []int{first.Id}},
+		{name: "multiple states", method: http.MethodGet, path: "/api/token/?status=2,3&p=1&size=10", total: 3, ids: []int{last.Id, expired.Id, first.Id}},
+		{name: "GET search", method: http.MethodGet, path: "/api/token/search?status=2&keyword=match%25&p=2&size=1", total: 2, ids: []int{first.Id}},
+		{name: "POST search", method: http.MethodPost, path: "/api/token/search?status=2&p=2&size=1", body: map[string]any{"keyword": "match%"}, total: 2, ids: []int{first.Id}},
+		{name: "POST credential match", method: http.MethodPost, path: "/api/token/search?status=2&p=1&size=10", body: map[string]any{"token": first.Key}, total: 1, ids: []int{first.Id}},
+		{name: "POST credential filtered out", method: http.MethodPost, path: "/api/token/search?status=1&p=1&size=10", body: map[string]any{"token": first.Key}, ids: []int{}},
+		{name: "invalid list status", method: http.MethodGet, path: "/api/token/?status=99", invalid: true},
+		{name: "invalid search status", method: http.MethodPost, path: "/api/token/search?status=1,bad", body: map[string]any{"keyword": "match%"}, invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, recorder := newAuthenticatedContext(t, tc.method, tc.path, tc.body, user.Id)
+			if ctx.Request.URL.Path == "/api/token/search" {
+				SearchTokens(ctx)
+			} else {
+				GetAllTokens(ctx)
+			}
+			response := decodeAPIResponse(t, recorder)
+			if tc.invalid {
+				assert.False(t, response.Success)
+				assert.Equal(t, "Invalid token status", response.Message)
+				return
+			}
+			require.True(t, response.Success, response.Message)
+			var page struct {
+				Total int                 `json:"total"`
+				Items []tokenResponseItem `json:"items"`
+			}
+			require.NoError(t, common.Unmarshal(response.Data, &page))
+			ids := make([]int, 0, len(page.Items))
+			for _, token := range page.Items {
+				ids = append(ids, token.ID)
+			}
+			assert.Equal(t, tc.total, page.Total)
+			assert.Equal(t, tc.ids, ids)
+			assert.NotContains(t, recorder.Body.String(), first.Key)
+			assert.NotContains(t, ctx.Request.URL.String(), first.Key)
+		})
+	}
+}

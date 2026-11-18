@@ -39,10 +39,12 @@ import {
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
+import { useState } from 'react'
 import { I18nextProvider } from 'react-i18next'
 import { Toaster, toast } from 'sonner'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+import { PageFooterProvider } from '@/components/layout/components/page-footer'
 import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 import { Route as KeysRoute } from '@/routes/_authenticated/keys'
@@ -53,6 +55,7 @@ import {
 
 import { apiKeySchema, type ApiKey } from '../../types'
 import { ApiKeyQuotaCell } from '../api-key-quota-cell'
+import { ModelLimitsCell } from '../api-keys-cells'
 import { useApiKeysColumns } from '../api-keys-columns'
 import { ApiKeysProvider } from '../api-keys-provider'
 import { ApiKeysTable } from '../api-keys-table'
@@ -79,6 +82,27 @@ await i18n.init({
   initAsync: false,
 })
 const clients: QueryClient[] = []
+
+it('distinguishes an enabled empty model allowlist from disabled model restrictions', () => {
+  const view = render(
+    <I18nextProvider i18n={i18n}>
+      <ModelLimitsCell
+        apiKey={{ ...key, model_limits_enabled: true, model_limits: '' }}
+      />
+    </I18nextProvider>
+  )
+  expect(screen.getByText('0 models')).toBeVisible()
+  expect(screen.queryByText('Unlimited')).not.toBeInTheDocument()
+
+  view.rerender(
+    <I18nextProvider i18n={i18n}>
+      <ModelLimitsCell
+        apiKey={{ ...key, model_limits_enabled: false, model_limits: '' }}
+      />
+    </I18nextProvider>
+  )
+  expect(screen.getByText('Unlimited')).toBeVisible()
+})
 
 function QuotaTable(props: { apiKey: ApiKey }) {
   const columns = useApiKeysColumns(now).filter(
@@ -296,11 +320,15 @@ it('keeps a long amount within its column while showing the full amount in detai
 })
 
 function KeysPage() {
+  const [footer, setFooter] = useState<HTMLDivElement | null>(null)
   return (
-    <ApiKeysProvider>
-      <ApiKeysTable />
-      <Toaster />
-    </ApiKeysProvider>
+    <PageFooterProvider container={footer}>
+      <ApiKeysProvider>
+        <ApiKeysTable />
+        <div ref={setFooter} />
+        <Toaster />
+      </ApiKeysProvider>
+    </PageFooterProvider>
   )
 }
 
@@ -386,6 +414,53 @@ it('searches by a pasted API key without adding it to browser history', async ()
   expect(router.history.location.href).not.toContain(secret)
   expect(router.history.location.href).not.toContain('token=')
   expect(screen.getByText('production')).toBeInTheDocument()
+})
+
+it('filters status on the server, resets the page, and uses the filtered total', async () => {
+  const { router } = await renderKeysPage()
+  vi.mocked(api.get).mockImplementation(async (url) => {
+    if (url.startsWith('/api/token/')) {
+      const filtered =
+        new URL(url, 'https://fixture.invalid').searchParams.get('status') ===
+        '2'
+      return {
+        data: {
+          success: true,
+          data: {
+            items: [
+              filtered
+                ? { ...key, name: 'disabled from another page', status: 2 }
+                : key,
+            ],
+            total: filtered ? 1 : 45,
+          },
+        },
+      }
+    }
+    return { data: { success: true, data: { default: { ratio: 1 } } } }
+  })
+  await act(async () => {
+    await clients.at(-1)?.invalidateQueries({ queryKey: ['keys'] })
+  })
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Go to next page' }))
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/token/?p=2&size=20')
+  )
+  await user.click(screen.getByRole('button', { name: 'Status' }))
+  await user.click(screen.getByRole('option', { name: 'Disabled' }))
+  await user.keyboard('{Escape}')
+
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/token/?p=1&size=20&status=2')
+  )
+  expect(await screen.findByText('disabled from another page')).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Go to next page' })).toBeDisabled()
+  expect(
+    screen.getByRole('button', { name: 'Go to previous page' })
+  ).toBeDisabled()
+  expect(screen.queryByText('45')).not.toBeInTheDocument()
+  expect(router.state.location.search.status).toEqual(['2'])
 })
 
 it('resets the private key search through the shared table toolbar', async () => {
@@ -514,7 +589,11 @@ it.each([true, false])(
     await user.click(screen.getByRole('button', { name: 'Open menu' }))
     expect(post).not.toHaveBeenCalled()
     await user.click(screen.getByRole('menuitem', { name: 'Copy Key' }))
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/token/7/key'))
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith('/api/token/7/key', undefined, {
+        signal: expect.any(AbortSignal),
+      })
+    )
     if (success) {
       await waitFor(() =>
         expect(copy).toHaveBeenCalledWith('sk-fake-key-for-test-only')

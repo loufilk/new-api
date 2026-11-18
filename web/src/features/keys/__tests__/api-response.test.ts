@@ -72,12 +72,16 @@ it('keeps API key search credentials in the request body instead of the URL', as
     token: 'sk-synthetic-search-secret',
     p: 2,
     size: 20,
+    status: [2, 3],
   })
 
-  expect(post).toHaveBeenCalledWith('/api/token/search?p=2&size=20', {
-    keyword: 'production',
-    token: 'sk-synthetic-search-secret',
-  })
+  expect(post).toHaveBeenCalledWith(
+    '/api/token/search?p=2&size=20&status=2%2C3',
+    {
+      keyword: 'production',
+      token: 'sk-synthetic-search-secret',
+    }
+  )
   expect(get).not.toHaveBeenCalled()
   expect(result.data?.items[0]?.id).toBe(legacyKey.id)
 })

@@ -89,48 +89,39 @@ describe('API key Auto group form mapping', () => {
     ]
 
     for (const apiKey of inheritedApiKeys) {
-      const defaults = transformApiKeyToFormDefaults(
-        apiKey,
-        ['default', 'vip'],
-        2
-      )
+      const defaults = transformApiKeyToFormDefaults(apiKey)
 
       expect(defaults.auto_groups_mode).toBe('inherit')
       expect(defaults.auto_groups).toEqual([])
     }
   })
 
-  test('filters a stored snapshot before applying a lowered limit', () => {
-    const defaults = transformApiKeyToFormDefaults(
-      {
-        ...baseApiKey,
-        auto_groups: ['revoked', 'vip', 'default'],
-      },
-      ['default', 'vip'],
-      2
-    )
+  test('keeps a stored manual snapshot intact and reports a lowered limit', () => {
+    const defaults = transformApiKeyToFormDefaults({
+      ...baseApiKey,
+      auto_groups: ['revoked', 'vip', 'default'],
+    })
 
     expect(defaults.auto_groups_mode).toBe('custom')
-    expect(defaults.auto_groups).toEqual(['vip', 'default'])
-  })
-
-  test('keeps a fully filtered snapshot custom and rejects it until resolved', () => {
-    const defaults = transformApiKeyToFormDefaults(
-      { ...baseApiKey, auto_groups: ['revoked'] },
-      ['default'],
-      2
-    )
-
-    expect(defaults.auto_groups_mode).toBe('custom')
-    expect(defaults.auto_groups).toEqual([])
-
+    expect(defaults.auto_groups).toEqual(['revoked', 'vip', 'default'])
     const result = getApiKeyFormSchema(t, 2).safeParse(defaults)
     expect(result.success).toBe(false)
     if (result.success) return
     expect(result.error.issues[0]?.path).toEqual(['auto_groups'])
-    expect(result.error.issues[0]?.message).toBe(
-      'Select at least one Auto group or restore global Auto.'
-    )
+    expect(result.error.issues[0]?.message).toBe('Select at most 2 Auto groups')
+  })
+
+  test('keeps a stored manual snapshot custom when every group loses access', () => {
+    const defaults = transformApiKeyToFormDefaults({
+      ...baseApiKey,
+      auto_groups: ['revoked'],
+    })
+
+    expect(defaults.auto_groups_mode).toBe('custom')
+    expect(defaults.auto_groups).toEqual(['revoked'])
+    expect(transformFormDataToPayload(defaults).auto_groups).toEqual([
+      'revoked',
+    ])
   })
 
   test('submits a valid custom snapshot in its configured order', () => {
@@ -216,16 +207,30 @@ describe('API key user quota query form mapping', () => {
 })
 
 describe('API key routing policy persistence', () => {
-  test('does not erase dormant stored groups when editing a smart key after authorization or group limits change', () => {
-    const values = transformApiKeyToFormDefaults(
-      {
+  test.each([
+    { enabled: true, models: '' },
+    { enabled: false, models: 'dormant-model' },
+  ])(
+    'preserves the model restriction flag $enabled independently of its stored list',
+    ({ enabled, models }) => {
+      const values = transformApiKeyToFormDefaults({
         ...baseApiKey,
-        smart_routing: true,
-        auto_groups: ['renamed-old', 'vip', 'default'],
-      },
-      ['vip', 'default'],
-      1
-    )
+        model_limits_enabled: enabled,
+        model_limits: models,
+      })
+
+      expect(transformFormDataToPayload(values)).toMatchObject({
+        model_limits_enabled: enabled,
+        model_limits: models,
+      })
+    }
+  )
+  test('does not erase dormant stored groups when editing a smart key after authorization or group limits change', () => {
+    const values = transformApiKeyToFormDefaults({
+      ...baseApiKey,
+      smart_routing: true,
+      auto_groups: ['renamed-old', 'vip', 'default'],
+    })
     expect(transformFormDataToPayload(values).auto_groups).toEqual([
       'renamed-old',
       'vip',
@@ -242,17 +247,14 @@ describe('API key routing policy persistence', () => {
     })
   })
   test('preserves smart strategy and disabled manual selections through edit and save', () => {
-    const values = transformApiKeyToFormDefaults(
-      {
-        ...baseApiKey,
-        smart_routing: true,
-        routing_strategy: 'speed',
-        no_retry_within_group: true,
-        project_label: 'Team A',
-        auto_groups: ['vip', 'default'],
-      },
-      ['default', 'vip']
-    )
+    const values = transformApiKeyToFormDefaults({
+      ...baseApiKey,
+      smart_routing: true,
+      routing_strategy: 'speed',
+      no_retry_within_group: true,
+      project_label: 'Team A',
+      auto_groups: ['vip', 'default'],
+    })
     expect(transformFormDataToPayload(values)).toMatchObject({
       smart_routing: true,
       routing_strategy: 'speed',
@@ -309,5 +311,20 @@ test('counts Unicode project-label characters consistently with the backend limi
       ...values,
       project_label: '😀'.repeat(101),
     }).success
+  ).toBe(false)
+})
+
+test('validates token names by Unicode characters without accepting more than fifty', () => {
+  const values = {
+    ...getApiKeyFormDefaultValues(),
+    group: 'vip',
+  }
+  expect(
+    getApiKeyFormSchema(t).safeParse({ ...values, name: '密'.repeat(50) })
+      .success
+  ).toBe(true)
+  expect(
+    getApiKeyFormSchema(t).safeParse({ ...values, name: '密'.repeat(51) })
+      .success
   ).toBe(false)
 })

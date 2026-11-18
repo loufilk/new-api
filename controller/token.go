@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -50,6 +51,7 @@ type tokenRequest struct {
 	RoutingStrategy    *string              `json:"routing_strategy"`
 	NoRetryWithinGroup *bool                `json:"no_retry_within_group"`
 	ProjectLabel       *string              `json:"project_label"`
+	RemainQuota        *int                 `json:"remain_quota"`
 	// 指针区分“未传”和显式 false：新建时未传即开启，更新时未传则保留原值。
 	AllowUserQuotaQuery *bool `json:"allow_user_quota_query"`
 }
@@ -190,15 +192,47 @@ func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) boo
 	return true
 }
 
+func tokenListStatuses(c *gin.Context) ([]int, error) {
+	filter := c.Query("status")
+	if filter == "" {
+		return nil, nil
+	}
+	statuses := make([]int, 0, 4)
+	for value := range strings.SplitSeq(filter, ",") {
+		status, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil {
+			return nil, common.NewMessage("Invalid token status")
+		}
+		switch status {
+		case common.TokenStatusEnabled, common.TokenStatusDisabled, common.TokenStatusExpired, common.TokenStatusExhausted:
+			if !slices.Contains(statuses, status) {
+				statuses = append(statuses, status)
+			}
+		default:
+			return nil, common.NewMessage("Invalid token status")
+		}
+	}
+	return statuses, nil
+}
+
 func GetAllTokens(c *gin.Context) {
 	userId := c.GetInt("id")
-	pageInfo := common.GetPageQuery(c)
-	tokens, err := model.GetAllUserTokens(userId, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	statuses, err := tokenListStatuses(c)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	total, _ := model.CountUserTokens(userId)
+	pageInfo := common.GetPageQuery(c)
+	tokens, err := model.GetAllUserTokens(userId, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), statuses...)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	total, err := model.CountUserTokens(userId, statuses...)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
 	common.ApiSuccess(c, pageInfo)
@@ -206,6 +240,11 @@ func GetAllTokens(c *gin.Context) {
 
 func SearchTokens(c *gin.Context) {
 	userId := c.GetInt("id")
+	statuses, err := tokenListStatuses(c)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	var keyword, token string
 	if c.Request.Method == http.MethodPost {
 		var request struct {
@@ -223,7 +262,7 @@ func SearchTokens(c *gin.Context) {
 
 	pageInfo := common.GetPageQuery(c)
 
-	tokens, total, err := model.SearchUserTokens(userId, keyword, token, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	tokens, total, err := model.SearchUserTokens(userId, keyword, token, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), statuses...)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -620,11 +659,14 @@ func AddToken(c *gin.Context) {
 	}
 	defer guard.Close()
 	token := request.Token
+	if request.RemainQuota != nil {
+		token.RemainQuota = *request.RemainQuota
+	}
 	if err := request.applyRoutingSettings(&token); err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if len(token.Name) > 50 {
+	if utf8.RuneCountInString(token.Name) > 50 {
 		common.ApiErrorT(c, "Token name is too long")
 		return
 	}
@@ -752,15 +794,18 @@ func UpdateToken(c *gin.Context) {
 	}
 	defer guard.Close()
 	token := request.Token
+	if request.RemainQuota != nil {
+		token.RemainQuota = *request.RemainQuota
+	}
 	params := tokenAuditParams(c)
 	if token.Id > 0 {
 		params["id"] = token.Id
 	}
-	if len(token.Name) > 50 {
+	if statusOnly == "" && utf8.RuneCountInString(token.Name) > 50 {
 		common.ApiErrorT(c, "Token name is too long")
 		return
 	}
-	if !token.UnlimitedQuota {
+	if statusOnly == "" && !token.UnlimitedQuota && request.RemainQuota != nil {
 		if token.RemainQuota < 0 {
 			common.ApiErrorT(c, "Quota value cannot be negative")
 			return
@@ -782,7 +827,7 @@ func UpdateToken(c *gin.Context) {
 		return
 	}
 	previous := *cleanToken
-	if token.Status == common.TokenStatusEnabled {
+	if statusOnly == "" && token.Status == common.TokenStatusEnabled {
 		if cleanToken.Status == common.TokenStatusExpired && cleanToken.ExpiredTime <= common.GetTimestamp() && cleanToken.ExpiredTime != -1 {
 			common.ApiErrorT(c, "Token has expired and cannot be enabled. Please modify the expiration time or set it to never expire")
 			return
@@ -793,9 +838,6 @@ func UpdateToken(c *gin.Context) {
 		}
 	}
 	if statusOnly != "" {
-		if token.Status == common.TokenStatusEnabled && !cleanToken.SmartRouting && !validateTokenRequestRoutingScope(c, cleanToken) {
-			return
-		}
 		cleanToken.Status = token.Status
 	} else {
 		// Existing empty selections still inherit their owner's group. An
@@ -817,7 +859,9 @@ func UpdateToken(c *gin.Context) {
 		// If you add more fields, please also update token.Update()
 		cleanToken.Name = token.Name
 		cleanToken.ExpiredTime = token.ExpiredTime
-		cleanToken.RemainQuota = token.RemainQuota
+		if request.RemainQuota != nil {
+			cleanToken.RemainQuota = token.RemainQuota
+		}
 		cleanToken.UnlimitedQuota = token.UnlimitedQuota
 		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
 		cleanToken.ModelLimits = token.ModelLimits
@@ -851,7 +895,28 @@ func UpdateToken(c *gin.Context) {
 	if !finishControllerGroupConfigRead(c, guard) {
 		return
 	}
-	err = cleanToken.UpdateAtGroupConfigVersion(c.GetInt64("auth_version"), guard.Version)
+	if statusOnly != "" {
+		userGroup, groupErr := getTokenRequestUserGroup(c)
+		if groupErr != nil {
+			common.ApiError(c, groupErr)
+			return
+		}
+		previous.Status, err = cleanToken.UpdateStatusAtGroupConfigVersion(c.GetInt64("auth_version"), guard.Version, func(current *model.Token) error {
+			if current.SmartRouting {
+				return nil
+			}
+			if scopeErr := service.ValidateTokenRoutingScope(userGroup, current); scopeErr != nil {
+				message := i18n.MsgAuthTokenGroupForbidden
+				if errors.Is(scopeErr, service.ErrTokenGroupDeprecated) {
+					message = i18n.MsgAuthTokenGroupDeprecated
+				}
+				return errors.New(i18n.T(c, message, map[string]any{"Group": current.Group}))
+			}
+			return nil
+		})
+	} else {
+		err = cleanToken.UpdateFromSnapshotAtGroupConfigVersion(previous, c.GetInt64("auth_version"), guard.Version)
+	}
 	if errors.Is(err, model.ErrGroupConfigChanged) {
 		groupConfigReadFailure(c)
 		return
@@ -871,7 +936,7 @@ func UpdateToken(c *gin.Context) {
 		}{
 			{"name", previous.Name != cleanToken.Name},
 			{"expired_time", previous.ExpiredTime != cleanToken.ExpiredTime},
-			{"remain_quota", previous.RemainQuota != cleanToken.RemainQuota},
+			{"remain_quota", request.RemainQuota != nil && previous.RemainQuota != token.RemainQuota},
 			{"unlimited_quota", previous.UnlimitedQuota != cleanToken.UnlimitedQuota},
 			{"model_limits_enabled", previous.ModelLimitsEnabled != cleanToken.ModelLimitsEnabled},
 			{"model_limits", previous.ModelLimits != cleanToken.ModelLimits},

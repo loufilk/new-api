@@ -74,6 +74,7 @@ export interface ApiResponse<T = unknown> {
 export interface GetApiKeysParams {
   p?: number
   size?: number
+  status?: number[]
 }
 
 export interface GetApiKeysResponse {
@@ -92,6 +93,7 @@ export interface SearchApiKeysParams {
   token?: string
   p?: number
   size?: number
+  status?: number[]
 }
 
 export interface ApiKeyFormData {
@@ -110,6 +112,11 @@ export interface ApiKeyFormData {
   group: string
   auto_groups: string[]
   cross_group_retry: boolean
+}
+
+export type ApiKeyUpdateData = Omit<ApiKeyFormData, 'remain_quota'> & {
+  id: number
+  remain_quota?: number
 }
 
 export interface TokenGroupDetail {
