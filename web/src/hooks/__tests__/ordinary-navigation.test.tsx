@@ -58,14 +58,20 @@ async function renderNavigation(
   role: number,
   accountPoolEnabled = false,
   modelTestEnabled: unknown = false,
-  path = '/wallet'
+  path = '/wallet',
+  sidebar: { admin?: object; user?: object } = {}
 ) {
-  useAuthStore.getState().auth.setUser({ id: 7, username: 'user', role })
+  useAuthStore.getState().auth.setUser({
+    id: 7,
+    username: 'user',
+    role,
+    sidebar_modules: sidebar.user ? JSON.stringify(sidebar.user) : '',
+  })
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   client.setQueryData(['status'], {
-    SidebarModulesAdmin: '',
+    SidebarModulesAdmin: sidebar.admin ? JSON.stringify(sidebar.admin) : '',
     account_pool_enabled: accountPoolEnabled,
     model_test_enabled: modelTestEnabled,
   })
@@ -82,7 +88,7 @@ async function renderNavigation(
 }
 
 it.each([1, 5])(
-  'role %s sees the same fifteen console entries in reference order',
+  'role %s sees the console entries with native text and image generation',
   async (role) => {
     await renderNavigation(role)
     expect(await screen.findByRole('link', { name: 'Wallet' })).toHaveAttribute(
@@ -99,6 +105,8 @@ it.each([1, 5])(
         'Channel status',
         'Task Logs',
         'System announcements',
+        'Text Generation',
+        'Image Generation',
         'Wallet',
         'Invitation Rewards',
         'Invoices',
@@ -136,11 +144,11 @@ it.each([1, 5, 10, 100])(
     const links = screen
       .getAllByRole('link')
       .map((link) => link.getAttribute('href'))
+    expect(links).toContain('/playground')
+    expect(links).toContain('/image')
     for (const extra of [
       '/account-pool',
       '/intelligence',
-      '/playground',
-      '/image',
       '/getting-started',
       '/dashboard/flow',
       '/pricing',
@@ -152,5 +160,48 @@ it.each([1, 5, 10, 100])(
     ]) {
       expect(links).not.toContain(extra)
     }
+  }
+)
+
+it.each([
+  {
+    condition: 'administrator disables images',
+    admin: { chat: { enabled: true, image: false } },
+    user: undefined,
+    playgroundVisible: true,
+    imageVisible: false,
+  },
+  {
+    condition: 'user disables text generation',
+    admin: undefined,
+    user: { chat: { enabled: true, playground: false } },
+    playgroundVisible: false,
+    imageVisible: true,
+  },
+  {
+    condition: 'administrator disables the chat section despite user settings',
+    admin: { chat: { enabled: false } },
+    user: { chat: { enabled: true, playground: true, image: true } },
+    playgroundVisible: false,
+    imageVisible: false,
+  },
+  {
+    condition: 'user disables the chat section',
+    admin: undefined,
+    user: { chat: { enabled: false } },
+    playgroundVisible: false,
+    imageVisible: false,
+  },
+])(
+  '$condition preserves the corresponding generation menu visibility',
+  async (sidebar) => {
+    await renderNavigation(ROLE.USER, false, false, '/wallet', sidebar)
+    await screen.findByRole('link', { name: 'Wallet' })
+    expect(
+      Boolean(screen.queryByRole('link', { name: 'Text Generation' }))
+    ).toBe(sidebar.playgroundVisible)
+    expect(
+      Boolean(screen.queryByRole('link', { name: 'Image Generation' }))
+    ).toBe(sidebar.imageVisible)
   }
 )

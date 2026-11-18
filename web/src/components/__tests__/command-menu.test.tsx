@@ -73,7 +73,11 @@ afterEach(() => {
   window.localStorage.clear()
 })
 
-async function searchEntriesFor(role: number, sidebarModulesAdmin = '') {
+async function searchEntriesFor(
+  role: number,
+  sidebarModulesAdmin = '',
+  path = '/dashboard/overview'
+) {
   useAuthStore.getState().auth.setUser({ id: 1, username: 'alice', role })
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -90,7 +94,7 @@ async function searchEntriesFor(role: number, sidebarModulesAdmin = '') {
         </SearchProvider>
       ),
     }),
-    history: createMemoryHistory({ initialEntries: ['/dashboard/overview'] }),
+    history: createMemoryHistory({ initialEntries: [path] }),
   })
   await router.load()
   render(
@@ -109,15 +113,22 @@ test('regular users only find their own console pages in search', async () => {
   const entries = await searchEntriesFor(ROLE.USER)
 
   expect(entries).toEqual(
-    expect.arrayContaining(['API Keys', 'Usage Logs', 'Wallet', 'Profile'])
+    expect.arrayContaining([
+      'API Keys',
+      'Usage Logs',
+      'Text Generation',
+      'Image Generation',
+      'Wallet',
+      'Profile',
+    ])
   )
   for (const entry of [...adminEntries, ...superAdminEntries]) {
     expect(entries).not.toContain(entry)
   }
 })
 
-test('admins find admin pages in search but not super admin pages', async () => {
-  const entries = await searchEntriesFor(ROLE.ADMIN)
+test('admins find admin pages in management search but not super admin pages', async () => {
+  const entries = await searchEntriesFor(ROLE.ADMIN, '', '/channels')
 
   expect(entries).toEqual(expect.arrayContaining(adminEntries))
   for (const entry of superAdminEntries) {
@@ -125,8 +136,8 @@ test('admins find admin pages in search but not super admin pages', async () => 
   }
 })
 
-test('super admins find Request processing right after Plugins', async () => {
-  const entries = await searchEntriesFor(ROLE.SUPER_ADMIN)
+test('super admins find Request processing right after Plugins in management search', async () => {
+  const entries = await searchEntriesFor(ROLE.SUPER_ADMIN, '', '/channels')
 
   expect(entries).toEqual(expect.arrayContaining(superAdminEntries))
   expect(entries.indexOf('Request processing')).toBe(
@@ -137,15 +148,20 @@ test('super admins find Request processing right after Plugins', async () => {
 test('pages hidden in the sidebar settings stay out of search', async () => {
   const entries = await searchEntriesFor(
     ROLE.USER,
-    JSON.stringify({ personal: { enabled: true, topup: false } })
+    JSON.stringify({
+      chat: { enabled: true, image: false },
+      personal: { enabled: true, topup: false },
+    })
   )
 
   expect(entries).not.toContain('Wallet')
+  expect(entries).not.toContain('Image Generation')
+  expect(entries).toContain('Text Generation')
   expect(entries).toContain('Profile')
 })
 
-test('root users find both admin and root pages in search', async () => {
-  const entries = await searchEntriesFor(ROLE.SUPER_ADMIN)
+test('root users find both admin and root pages in management search', async () => {
+  const entries = await searchEntriesFor(ROLE.SUPER_ADMIN, '', '/channels')
   expect(entries).toEqual(
     expect.arrayContaining([...adminEntries, ...superAdminEntries])
   )

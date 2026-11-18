@@ -22,8 +22,10 @@ import {
   ClipboardList,
   CreditCard,
   FileText,
+  FlaskConical,
   Gift,
   HeartPulse,
+  Image as ImageIcon,
   Key,
   LayoutDashboard,
   Megaphone,
@@ -106,6 +108,22 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             title: t('System announcements'),
             url: '/system-announcements',
             icon: Megaphone,
+          },
+        ],
+      },
+      {
+        id: 'chat',
+        title: t('Chat'),
+        items: [
+          {
+            title: t('Text Generation'),
+            url: '/playground',
+            icon: FlaskConical,
+          },
+          {
+            title: t('Image Generation'),
+            url: '/image',
+            icon: ImageIcon,
           },
         ],
       },

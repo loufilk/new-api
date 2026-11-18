@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +23,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -29,22 +32,54 @@ func setupDashboardAuthMiddlewareTest(t *testing.T) {
 	previousDB := model.DB
 	previousLogDB := model.LOG_DB
 	previousType := common.MainDatabaseType()
+	previousLogType := common.LogDatabaseType()
 	previousRedis := common.RedisEnabled
 	previousSecret := common.SessionSecret
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	var db *gorm.DB
+	var err error
+	dbType := common.DatabaseTypeSQLite
+	if dsn := os.Getenv("TEST_POSTGRES_DSN"); dsn != "" {
+		require.Equal(t, "1", os.Getenv("NO_AGENT_FIXTURE_OWNED"))
+		parsed, parseErr := url.Parse(dsn)
+		require.NoError(t, parseErr)
+		require.Equal(t, "postgres", parsed.Scheme)
+		require.Equal(t, "127.0.0.1", parsed.Hostname())
+		admin, openErr := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+		require.NoError(t, openErr)
+		adminSQL, sqlErr := admin.DB()
+		require.NoError(t, sqlErr)
+		t.Cleanup(func() { require.NoError(t, adminSQL.Close()) })
+		var version string
+		require.NoError(t, admin.Raw("SHOW server_version_num").Scan(&version).Error)
+		require.Equal(t, "180006", version)
+		schema := fmt.Sprintf("auth_middleware_%d", time.Now().UnixNano())
+		require.NoError(t, admin.Exec("CREATE SCHEMA "+schema).Error)
+		t.Cleanup(func() { require.NoError(t, admin.Exec("DROP SCHEMA "+schema+" CASCADE").Error) })
+		query := parsed.Query()
+		query.Set("search_path", schema)
+		parsed.RawQuery = query.Encode()
+		db, err = gorm.Open(postgres.Open(parsed.String()), &gorm.Config{})
+		dbType = common.DatabaseTypePostgreSQL
+	} else {
+		db, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	}
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuditLog{}, &model.UserAccessToken{}, &model.Option{},
-		&model.Token{}, &model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{}, &model.AgentInvitation{}))
+		&model.Token{}, &model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{}, &model.AgentInvitation{},
+		&model.UserCallInterception{}, &model.ReferralWithdrawal{}))
 	model.DB = db
 	model.LOG_DB = db
-	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	common.SetDatabaseTypes(dbType, dbType)
 	common.RedisEnabled = false
 	common.SessionSecret = "middleware-auth-test-secret"
 	require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(time.Now().Unix()))
 	t.Cleanup(func() {
 		model.DB = previousDB
 		model.LOG_DB = previousLogDB
-		common.SetMainDatabaseType(previousType)
+		common.SetDatabaseTypes(previousType, previousLogType)
 		common.RedisEnabled = previousRedis
 		common.SessionSecret = previousSecret
 	})
@@ -86,7 +121,7 @@ func createMiddlewarePATUser(t *testing.T, username, token string) *model.User {
 	user := &model.User{
 		Username: username, Password: "password-placeholder", Role: common.RoleCommonUser,
 		Status: common.UserStatusEnabled, Group: "default", AccessToken: &token, AuthVersion: 1,
-		AffCode: "middleware-aff-" + username,
+		AffCode: "auth-" + username,
 	}
 	require.NoError(t, model.DB.Create(user).Error)
 	return user
@@ -365,6 +400,91 @@ func TestTryUserAuthCredentialClassification(t *testing.T) {
 	router.ServeHTTP(databaseFailureResponse, databaseFailureRequest)
 	assert.Equal(t, http.StatusInternalServerError, databaseFailureResponse.Code)
 	assert.Contains(t, databaseFailureResponse.Body.String(), "AUTH_INTERNAL_ERROR")
+}
+
+// Self-deleting an account soft-deletes the user but leaves its API keys in
+// place; those keys must be rejected as invalid, not as a database failure,
+// including when Redis still held the owner from an earlier request.
+func TestTokenAuthRejectsKeysOfDeletedUser(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/v1/chat/completions", TokenAuth(), func(c *gin.Context) { c.Status(http.StatusOK) })
+	router.GET("/api/usage/token", TokenAuthReadOnly(), func(c *gin.Context) { c.Status(http.StatusOK) })
+	request := func(path, key string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer sk-"+key)
+		req.Header.Set("Accept-Language", "zh-CN")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		return response
+	}
+
+	for _, redisEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("redis=%t", redisEnabled), func(t *testing.T) {
+			setupDashboardAuthMiddlewareTest(t)
+			if redisEnabled {
+				useRateLimitMiniRedis(t)
+			}
+			require.NoError(t, model.DB.AutoMigrate(&model.Token{}))
+			t.Setenv("LOG_SQL_DSN", "")
+			// Shares the main database and initializes its quoted column names,
+			// which the API key lookup needs.
+			require.NoError(t, model.InitLogDB())
+			user := createMiddlewarePATUser(t, "deleted-key-owner", "deleted-key-owner-pat")
+			key := "deletedownerkey0123456789abcdefghijklmnopqrstuvwx"
+			require.NoError(t, model.DB.Create(&model.Token{
+				UserId: user.Id, Key: key, Name: "owner key", Status: common.TokenStatusEnabled,
+				ExpiredTime: -1, UnlimitedQuota: true,
+			}).Error)
+
+			for _, path := range []string{"/v1/chat/completions", "/api/usage/token"} {
+				assert.Equal(t, http.StatusOK, request(path, key).Code, path)
+			}
+			_, err := model.DeleteUserById(user.Id)
+			require.NoError(t, err)
+			for _, path := range []string{"/v1/chat/completions", "/api/usage/token"} {
+				response := request(path, key)
+				assert.Equal(t, http.StatusUnauthorized, response.Code, path)
+				assert.Contains(t, response.Body.String(), `"message":"无效的令牌`, path)
+			}
+		})
+	}
+}
+
+func TestTokenAuthDistinguishesInvalidKeysFromUserDatabaseErrors(t *testing.T) {
+	setupDashboardAuthMiddlewareTest(t)
+	require.NoError(t, i18n.Init())
+	t.Setenv("LOG_SQL_DSN", "")
+	require.NoError(t, model.InitLogDB())
+	user := createMiddlewarePATUser(t, "key-error-owner", "key-error-owner-pat")
+	const key = "userlookuperrorkey0123456789abcdefghijklmnopqrstuv"
+	require.NoError(t, model.DB.Create(&model.Token{
+		UserId: user.Id, Key: key, Name: "owner key", Status: common.TokenStatusEnabled,
+		ExpiredTime: -1, UnlimitedQuota: true,
+	}).Error)
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/v1/chat/completions", TokenAuth(), func(c *gin.Context) { c.Status(http.StatusOK) })
+	router.GET("/api/usage/token", TokenAuthReadOnly(), func(c *gin.Context) { c.Status(http.StatusOK) })
+	for _, path := range []string{"/v1/chat/completions", "/api/usage/token"} {
+		response := middlewareBearerRequest(router, path, "sk-"+key)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		response = middlewareBearerRequest(router, path, "sk-unknownkey0123456789abcdefghijklmnopqrstuv")
+		assert.Equal(t, http.StatusUnauthorized, response.Code, response.Body.String())
+	}
+	const callbackName = "test:relay-auth-user-read-failure"
+	require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table == "users" {
+			tx.AddError(errors.New("forced user database read failure"))
+		}
+	}))
+	t.Cleanup(func() { model.DB.Callback().Query().Remove(callbackName) })
+	for _, path := range []string{"/v1/chat/completions", "/api/usage/token"} {
+		response := middlewareBearerRequest(router, path, "sk-"+key)
+		assert.Equal(t, http.StatusInternalServerError, response.Code, response.Body.String())
+		assert.NotContains(t, response.Body.String(), "forced user database read failure")
+	}
 }
 
 func createMiddlewareScopedToken(t *testing.T, userID int, expiresAt int64, scopes ...string) (string, *model.UserAccessToken) {

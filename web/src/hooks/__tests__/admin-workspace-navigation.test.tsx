@@ -102,7 +102,7 @@ async function renderNavigation(role: number, path: string) {
 }
 
 it.each([ROLE.ADMIN, ROLE.SUPER_ADMIN])(
-  'role %s sees only the fifteen user entries on the overview',
+  'role %s sees the user console and native generation tools on the overview',
   async (role) => {
     await renderNavigation(role, '/dashboard/overview')
     const workspace = await screen.findByRole('navigation', {
@@ -112,8 +112,14 @@ it.each([ROLE.ADMIN, ROLE.SUPER_ADMIN])(
       within(workspace)
         .getAllByRole('heading')
         .map((item) => item.textContent)
-    ).toEqual(['General', 'Personal'])
-    expect(within(workspace).getAllByRole('link')).toHaveLength(15)
+    ).toEqual(['General', 'Chat', 'Personal'])
+    expect(within(workspace).getAllByRole('link')).toHaveLength(17)
+    expect(
+      within(workspace).getByRole('link', { name: 'Text Generation' })
+    ).toHaveAttribute('href', '/playground')
+    expect(
+      within(workspace).getByRole('link', { name: 'Image Generation' })
+    ).toHaveAttribute('href', '/image')
     expect(
       within(workspace).queryByRole('link', { name: 'Channels' })
     ).not.toBeInTheDocument()

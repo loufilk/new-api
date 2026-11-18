@@ -61,6 +61,23 @@ export function SidebarModulesCard() {
 
   const sectionDefs: SectionDef[] = [
     {
+      key: 'chat',
+      title: t('Chat Area'),
+      description: t('Text Generation and chat functions'),
+      modules: [
+        {
+          key: 'playground',
+          title: t('Text Generation'),
+          description: t('AI model testing environment'),
+        },
+        {
+          key: 'image',
+          title: t('Image Generation'),
+          description: t('Create images from text prompts'),
+        },
+      ],
+    },
+    {
       key: 'console',
       title: t('Console Area'),
       description: t('Data management and log viewing'),
@@ -243,6 +260,7 @@ export function SidebarModulesCard() {
                   </p>
                 </div>
                 <Switch
+                  aria-label={section.title}
                   checked={sectionEnabled}
                   onCheckedChange={(v) => toggleSection(section.key, v)}
                 />
@@ -264,6 +282,7 @@ export function SidebarModulesCard() {
                       </p>
                     </div>
                     <Switch
+                      aria-label={mod.title}
                       checked={config[section.key]?.[mod.key] !== false}
                       onCheckedChange={(v) =>
                         toggleModule(section.key, mod.key, v)

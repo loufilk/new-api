@@ -45,7 +45,7 @@ const ADMIN_VIEW_PATH_PATTERN =
  * - Returns the matching nested {@link SidebarView} (with its nav
  *   groups) when the URL belongs to a registered drill-in workspace.
  * - Administrative routes show the administration group with a way back to
- *   the console. User-facing routes show only the general and personal groups.
+ *   the console. User-facing routes show general, chat, and personal groups.
  * - Navigation is narrowed by:
  *     · admin-only group visibility (role-based);
  *     · `useSidebarConfig` (admin × user `sidebar_modules` overlay).
@@ -111,7 +111,8 @@ export function useSidebarView(): ResolvedSidebarView {
     key: ROOT_VIEW_KEY,
     view: null,
     navGroups: rootNavGroups.filter(
-      (group) => group.id === 'general' || group.id === 'personal'
+      (group) =>
+        group.id === 'general' || group.id === 'chat' || group.id === 'personal'
     ),
   }
 }

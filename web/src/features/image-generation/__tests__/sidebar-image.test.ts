@@ -69,8 +69,8 @@ afterEach(() => {
   window.localStorage.removeItem('status')
 })
 
-describe('image tools stay available without a separate sidebar group', () => {
-  test('console navigation does not add text or image generation entries', () => {
+describe('native generation tools are available in the chat sidebar group', () => {
+  test('chat navigation links directly to text and image generation without third-party tools', () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     })
@@ -80,13 +80,10 @@ describe('image tools stay available without a separate sidebar group', () => {
     })
     try {
       const chat = result.current.navGroups.find((group) => group.id === 'chat')
-      const urls = result.current.navGroups
-        .flatMap((group) => group.items)
-        .filter((item) => 'url' in item)
-        .map((item) => (item as { url: string }).url)
-      expect(chat).toBeUndefined()
-      expect(urls).not.toContain('/playground')
-      expect(urls).not.toContain('/image')
+      expect(chat?.items).toMatchObject([
+        { title: 'Text Generation', url: '/playground' },
+        { title: 'Image Generation', url: '/image' },
+      ])
     } finally {
       unmount()
       client.clear()
