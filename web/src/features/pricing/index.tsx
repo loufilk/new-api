@@ -23,7 +23,6 @@ import { ErrorState } from '@/components/error-state'
 import { PublicLayout } from '@/components/layout'
 import { PageTransition } from '@/components/page-transition'
 import { Badge } from '@/components/ui/badge'
-import { IntegrationWizard } from '@/extensions/chuanapi/onboarding/integration-wizard'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
@@ -224,7 +223,6 @@ export function Pricing() {
                   ? t('Your account pricing')
                   : t('Public pricing')}
               </Badge>
-              <IntegrationWizard initialGroup={groupFilter} />
             </div>
             <p className='text-muted-foreground mx-auto mt-3 max-w-2xl text-xs leading-relaxed'>
               {t(

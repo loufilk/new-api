@@ -35,14 +35,15 @@ import { useSidebarData } from '@/hooks/use-sidebar-data'
 
 function SidebarTestLayout() {
   const sidebar = useSidebarData()
-  const chat = sidebar.navGroups.find((group) => group.id === 'chat')
-  const items = (chat?.items ?? []).filter(
+  const general = sidebar.navGroups.find((group) => group.id === 'general')
+  const items = (general?.items ?? []).filter(
     (item) =>
-      'url' in item && (item.url === '/playground' || item.url === '/image')
+      'url' in item &&
+      (item.url === '/keys' || item.url === '/usage-logs/common')
   )
   return (
     <SidebarProvider>
-      <NavGroup title={chat?.title ?? 'Chat'} items={items} />
+      <NavGroup title={general?.title ?? 'General'} items={items} />
       <Outlet />
     </SidebarProvider>
   )
@@ -57,28 +58,24 @@ function createSidebarTestRouter() {
     path: '/',
     component: () => <div>home</div>,
   })
-  const playgroundRoute = createRoute({
+  const keysRoute = createRoute({
     getParentRoute: () => rootRoute,
-    path: '/playground',
-    component: () => <div>playground</div>,
+    path: '/keys',
+    component: () => <div>keys</div>,
   })
-  const imageRoute = createRoute({
+  const logsRoute = createRoute({
     getParentRoute: () => rootRoute,
-    path: '/image',
-    component: () => <div>image</div>,
+    path: '/usage-logs/common',
+    component: () => <div>logs</div>,
   })
-  const routeTree = rootRoute.addChildren([
-    indexRoute,
-    playgroundRoute,
-    imageRoute,
-  ])
+  const routeTree = rootRoute.addChildren([indexRoute, keysRoute, logsRoute])
   return createRouter({
     routeTree,
     history: createMemoryHistory({ initialEntries: ['/'] }),
   })
 }
 
-describe('sidebar playground/image stay inside the SPA router', () => {
+describe('console sidebar links stay inside the SPA router', () => {
   test.each([false, true])(
     'both entries remain internal when account pool enabled=%s',
     (accountPoolEnabled) => {
@@ -95,11 +92,13 @@ describe('sidebar playground/image stay inside the SPA router', () => {
           </QueryClientProvider>
         ),
       })
-      const chat = result.current.navGroups.find((group) => group.id === 'chat')
-      expect(chat).toBeDefined()
+      const general = result.current.navGroups.find(
+        (group) => group.id === 'general'
+      )
+      expect(general).toBeDefined()
 
-      for (const url of ['/playground', '/image']) {
-        const item = (chat?.items ?? []).find(
+      for (const url of ['/keys', '/usage-logs/common']) {
+        const item = (general?.items ?? []).find(
           (entry) => 'url' in entry && entry.url === url
         ) as { url: string; external?: boolean } | undefined
         expect(item).toBeDefined()
@@ -108,16 +107,16 @@ describe('sidebar playground/image stay inside the SPA router', () => {
       }
 
       expect(
-        (chat?.items ?? [])
+        (general?.items ?? [])
           .filter((item) => 'url' in item)
           .map((item) => (item as { url: string }).url)
-      ).toEqual(expect.arrayContaining(['/playground', '/image']))
+      ).toEqual(expect.arrayContaining(['/keys', '/usage-logs/common']))
       unmount()
       queryClient.clear()
     }
   )
 
-  test('clicking playground/image navigates via the router without a document reload', async () => {
+  test('clicking keys and logs navigates via the router without a document reload', async () => {
     const user = userEvent.setup()
     const router = createSidebarTestRouter()
     const queryClient = new QueryClient({
@@ -133,9 +132,9 @@ describe('sidebar playground/image stay inside the SPA router', () => {
       </QueryClientProvider>
     )
 
-    for (const url of ['/playground', '/image']) {
+    for (const url of ['/keys', '/usage-logs/common']) {
       const link = screen.getByRole('link', {
-        name: url === '/playground' ? /Text Generation/i : /Image Generation/i,
+        name: url === '/keys' ? /API Keys/i : /Usage Logs/i,
       })
       // Internal SPA links must not open a new document or tab.
       expect(link.getAttribute('href')).toBe(url)

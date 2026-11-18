@@ -117,7 +117,7 @@ export function AppHeader({
 }: AppHeaderProps) {
   const { t } = useTranslation()
   // Prioritize dynamically generated links from backend
-  const dynamicLinks = useTopNavLinks()
+  const dynamicLinks = useTopNavLinks('console')
   const links = dynamicLinks.length > 0 ? dynamicLinks : navLinks
 
   // Notifications hook

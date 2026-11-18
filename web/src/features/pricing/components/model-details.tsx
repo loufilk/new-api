@@ -49,7 +49,6 @@ import {
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { IntegrationWizard } from '@/extensions/chuanapi/onboarding/integration-wizard'
 import { getPerfMetrics } from '@/features/performance-metrics/api'
 import {
   formatLatency,
@@ -1541,10 +1540,6 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
         <ModelPriceContext
           model={{ ...props.model, group_ratio: props.groupRatio }}
           selectedGroup={props.selectedGroup}
-        />
-        <IntegrationWizard
-          initialModel={props.model.model_name}
-          initialGroup={props.selectedGroup}
         />
       </div>
 

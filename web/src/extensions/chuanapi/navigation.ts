@@ -36,6 +36,7 @@ const LEGACY_QUICKSTART_URLS = new Set([
 export const chuanapiToolsNavigationExtension: NavigationExtension = {
   id: 'chuanapi/tools-navigation',
   apply(links, context) {
+    if (context.surface === 'console') return links.map((link) => ({ ...link }))
     const enabled = context.status?.account_pool_enabled === true
     const canViewTests = context.isAuthenticated
     const result = links.filter(

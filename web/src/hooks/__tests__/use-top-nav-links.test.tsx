@@ -35,7 +35,10 @@ import { STATUS_QUERY_KEY } from '@/lib/status-query'
 
 const queryClients: QueryClient[] = []
 
-function renderNavLinks(status: Record<string, unknown>) {
+function renderNavLinks(
+  status: Record<string, unknown>,
+  surface: 'public' | 'console' = 'public'
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -50,7 +53,7 @@ function renderNavLinks(status: Record<string, unknown>) {
     )
   }
 
-  return renderHook(() => useTopNavLinks(), { wrapper: Wrapper })
+  return renderHook(() => useTopNavLinks(surface), { wrapper: Wrapper })
 }
 
 function findLink(links: TopNavLink[], title: string) {
@@ -62,6 +65,29 @@ afterEach(() => {
 })
 
 describe('top navigation docs entry', () => {
+  test('the console exposes only the eight reference entries even when optional tools are enabled', () => {
+    const { result } = renderNavLinks(
+      { account_pool_enabled: true, model_test_enabled: true },
+      'console'
+    )
+
+    expect(result.current.map((link) => link.title)).toEqual([
+      'Home',
+      'Console',
+      'Model Square',
+      'Channel status',
+      'Partner application',
+      'Rankings',
+      'Docs',
+      'Service Center',
+    ])
+    expect(result.current.at(-1)?.children?.map((link) => link.href)).toEqual([
+      '/affiliate',
+      '/system-announcements',
+      '/contact',
+    ])
+  })
+
   test('a blank docs configuration falls back to the built-in /help SPA route', () => {
     const { result } = renderNavLinks({})
 

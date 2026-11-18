@@ -58,7 +58,7 @@ curl {{BASE_URL}}/v1/chat/completions \\
   }'
 \`\`\`
 
-把 \`MODEL_ID\` 换成所选调用分组中支持 Chat Completions 接口的真实 model id。需要 Responses、Claude Messages 等接口时，可使用 [接入向导](/getting-started) 按模型生成对应配置。也可以用接口列出当前令牌可见的模型：
+把 \`MODEL_ID\` 换成所选调用分组中支持 Chat Completions 接口的真实 model id。需要 Responses、Claude Messages 等接口时，请查看 [协议兼容总览](/help/guides/compatibility) 和 [API 参考](/help/api)。也可以用接口列出当前令牌可见的模型：
 
 \`\`\`bash
 curl {{BASE_URL}}/v1/models \\

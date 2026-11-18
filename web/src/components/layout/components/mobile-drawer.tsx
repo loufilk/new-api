@@ -364,11 +364,29 @@ export function MobileDrawer(props: MobileDrawerProps) {
                     key={`${link.title}-${link.href}`}
                     className='border-border border-b p-2.5 last:border-b-0'
                   >
-                    <MobileNavLink
-                      link={link}
-                      authenticated={!!props.user}
-                      onNavigate={props.onClose}
-                    />
+                    {link.children?.length ? (
+                      <div className='space-y-3'>
+                        <p className='text-muted-foreground text-xs'>
+                          {link.title}
+                        </p>
+                        <div className='flex flex-col gap-3 ps-2'>
+                          {link.children.map((child) => (
+                            <MobileNavLink
+                              key={child.href}
+                              link={child}
+                              authenticated={!!props.user}
+                              onNavigate={props.onClose}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <MobileNavLink
+                        link={link}
+                        authenticated={!!props.user}
+                        onNavigate={props.onClose}
+                      />
+                    )}
                   </div>
                 ))
               )}

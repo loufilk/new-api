@@ -18,13 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   Activity,
-  BookOpen,
   Box,
   ClipboardList,
   CreditCard,
   FileText,
-  FlaskConical,
-  Image as ImageIcon,
+  Gift,
+  HeartPulse,
   Key,
   LayoutDashboard,
   Megaphone,
@@ -33,11 +32,10 @@ import {
   PlugZap,
   Radio,
   ReceiptText,
-  Rocket,
   ServerCog,
   Settings,
   ShieldCheck,
-  TrendingUp,
+  Store,
   Ticket,
   User,
   Users,
@@ -47,9 +45,7 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import type { SidebarBadges, SidebarData } from '@/components/layout/types'
-import { useStatus } from '@/hooks/use-status'
 import { hasPermission } from '@/lib/admin-permissions'
-import { isAgentWorkspaceUser } from '@/lib/agent-permissions'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -61,37 +57,10 @@ import { useAuthStore } from '@/stores/auth-store'
  */
 export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
   const { t } = useTranslation()
-  const { status } = useStatus()
   const user = useAuthStore((state) => state.auth.user)
-  const agentGroups: SidebarData['navGroups'] = isAgentWorkspaceUser(user)
-    ? [
-        {
-          id: 'agent',
-          title: t('Agent'),
-          items: [
-            {
-              title: t('Agent Overview'),
-              url: '/agent-platform',
-              icon: Users,
-            },
-            {
-              title: t('Redemption Code Center'),
-              url: '/redemption-codes?view=center',
-              icon: Ticket,
-            },
-            {
-              title: t('Redemption Code Records'),
-              url: '/redemption-codes?view=records',
-              icon: ClipboardList,
-            },
-          ],
-        },
-      ]
-    : []
 
   return {
     navGroups: [
-      ...agentGroups,
       {
         id: 'general',
         title: t('General'),
@@ -105,21 +74,6 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             title: t('Dashboard'),
             url: '/dashboard/models',
             icon: LayoutDashboard,
-          },
-          {
-            title: t('Flow Analysis'),
-            url: '/dashboard/flow',
-            icon: Workflow,
-          },
-          {
-            title: t('Model catalog'),
-            url: '/pricing',
-            icon: Box,
-          },
-          {
-            title: t('Getting started'),
-            url: '/getting-started',
-            icon: Rocket,
           },
           {
             title: t('API Keys'),
@@ -137,6 +91,11 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             icon: ClipboardList,
           },
           {
+            title: t('Channel status'),
+            url: '/channel-status',
+            icon: HeartPulse,
+          },
+          {
             title: t('Task Logs'),
             url: '/usage-logs/task',
             activeUrls: ['/usage-logs/drawing'],
@@ -144,40 +103,9 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             icon: ListTodo,
           },
           {
-            title: t('Channel status'),
-            url: '/channel-status',
-            icon: Activity,
-          },
-          {
-            title: t('Usage rankings'),
-            url: '/rankings',
-            icon: TrendingUp,
-          },
-          {
             title: t('System announcements'),
             url: '/system-announcements',
             icon: Megaphone,
-          },
-        ],
-      },
-      {
-        id: 'chat',
-        title: t('Chat'),
-        items: [
-          {
-            title: t('Text Generation'),
-            url: '/playground',
-            icon: FlaskConical,
-          },
-          {
-            title: t('Image Generation'),
-            url: '/image',
-            icon: ImageIcon,
-          },
-          {
-            title: t('Third-party'),
-            icon: PlugZap,
-            type: 'chat-presets',
           },
         ],
       },
@@ -190,28 +118,10 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             url: '/wallet',
             icon: Wallet,
           },
-          ...(status?.account_pool_enabled === true
-            ? [
-                {
-                  title: t('pool.title'),
-                  url: '/account-pool',
-                  icon: ServerCog,
-                },
-              ]
-            : []),
-          ...(user
-            ? [
-                {
-                  title: t('intelligence.title'),
-                  url: '/intelligence',
-                  icon: FlaskConical,
-                },
-              ]
-            : []),
           {
-            title: t('Invitation Rewards'),
+            title: t('Invitation Rewards', { context: 'console' }),
             url: '/affiliate',
-            icon: Users,
+            icon: Gift,
           },
           {
             title: t('Invoices'),
@@ -221,10 +131,10 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
           {
             title: t('Partner application'),
             url: '/partner-apply',
-            icon: PlugZap,
+            icon: Store,
           },
           {
-            title: t('Support Center'),
+            title: t('My tickets'),
             url: '/support',
             icon: LifeBuoy,
           },
@@ -237,11 +147,6 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             title: t('Security & Access'),
             url: '/security',
             icon: ShieldCheck,
-          },
-          {
-            title: t('Documentation'),
-            url: '/help',
-            icon: BookOpen,
           },
         ],
       },

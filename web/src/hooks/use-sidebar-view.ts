@@ -25,6 +25,7 @@ import type {
   NavGroup,
   ResolvedSidebarView,
   SidebarBadges,
+  SidebarView,
 } from '@/components/layout/types'
 import { useModelPricingIssueBadge } from '@/features/system-settings/models/pricing-issues'
 import { ROLE } from '@/lib/roles'
@@ -35,13 +36,17 @@ import { useSidebarData } from './use-sidebar-data'
 
 /** Sentinel key used for the root navigation in animation `key=` props */
 const ROOT_VIEW_KEY = '__root'
+const ADMIN_VIEW_PATH_PATTERN =
+  /^\/(?:channels|model-management|users|referral-withdrawals|operations|redemption-codes|agent-platform\/finance|subscriptions|system-info|task-plugins|request-processing)(?:\/|$)/
 
 /**
  * Resolve the active sidebar view for the current location.
  *
  * - Returns the matching nested {@link SidebarView} (with its nav
  *   groups) when the URL belongs to a registered drill-in workspace.
- * - Otherwise returns the root navigation, narrowed by:
+ * - Administrative routes show the administration group with a way back to
+ *   the console. User-facing routes show only the general and personal groups.
+ * - Navigation is narrowed by:
  *     · admin-only group visibility (role-based);
  *     · `useSidebarConfig` (admin × user `sidebar_modules` overlay).
  *
@@ -81,9 +86,32 @@ export function useSidebarView(): ResolvedSidebarView {
     }
   }
 
+  if (
+    (userRole ?? ROLE.GUEST) >= ROLE.ADMIN &&
+    ADMIN_VIEW_PATH_PATTERN.test(pathname)
+  ) {
+    const adminNavGroups = rootNavGroups.filter((group) => group.id === 'admin')
+    const adminView: SidebarView = {
+      id: 'administration',
+      pathPattern: ADMIN_VIEW_PATH_PATTERN,
+      parent: {
+        to: '/dashboard/overview',
+        label: 'Back to Dashboard',
+      },
+      getNavGroups: () => adminNavGroups,
+    }
+    return {
+      key: adminView.id,
+      view: adminView,
+      navGroups: adminNavGroups,
+    }
+  }
+
   return {
     key: ROOT_VIEW_KEY,
     view: null,
-    navGroups: rootNavGroups,
+    navGroups: rootNavGroups.filter(
+      (group) => group.id === 'general' || group.id === 'personal'
+    ),
   }
 }

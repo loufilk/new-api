@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
+import { ChevronDown } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -26,6 +27,12 @@ import { NotificationPopover } from '@/components/notification-popover'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {
   Sheet,
   SheetClose,
@@ -98,10 +105,10 @@ export function PublicHeader(props: PublicHeaderProps) {
     loading,
     logoLoaded,
   } = useSystemConfig()
-  const dynamicLinks = useTopNavLinks()
-  const notifications = useNotifications({ autoOpen: showNotifications })
   const routerState = useRouterState()
   const pathname = routerState.location.pathname
+  const dynamicLinks = useTopNavLinks(pathname === '/' ? 'public' : 'console')
+  const notifications = useNotifications({ autoOpen: showNotifications })
 
   const user = auth.user
   const isAuthenticated = !!user
@@ -264,6 +271,58 @@ export function PublicHeader(props: PublicHeaderProps) {
             <div className='hidden min-w-0 items-center gap-0.5 @min-[64rem]/public-header:flex'>
               {links.map((link) => {
                 const isActive = pathname === link.href
+                if (link.children?.length) {
+                  return (
+                    <DropdownMenu key={link.href} modal={false}>
+                      <DropdownMenuTrigger
+                        render={
+                          <Button
+                            variant='ghost'
+                            disabled={link.disabled}
+                            className='text-muted-foreground hover:text-foreground h-auto shrink-0 gap-1 rounded-lg px-3 py-1.5 text-sm font-medium whitespace-nowrap'
+                          />
+                        }
+                      >
+                        {t(link.title)}
+                        <ChevronDown className='size-3' aria-hidden='true' />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align='end' className='min-w-40'>
+                        {link.children.map((child) => (
+                          <DropdownMenuItem
+                            key={child.href}
+                            disabled={child.disabled}
+                            render={
+                              child.documentNavigation || child.external ? (
+                                <a
+                                  href={child.href}
+                                  target={child.external ? '_blank' : undefined}
+                                  rel={
+                                    child.external
+                                      ? 'noopener noreferrer'
+                                      : undefined
+                                  }
+                                  onClick={(event) =>
+                                    handleNavLinkClick(event, child)
+                                  }
+                                />
+                              ) : (
+                                <Link
+                                  to={child.href}
+                                  disabled={child.disabled}
+                                  onClick={(event) =>
+                                    handleNavLinkClick(event, child)
+                                  }
+                                />
+                              )
+                            }
+                          >
+                            {t(child.title)}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )
+                }
                 if (link.documentNavigation) {
                   return (
                     <a
@@ -422,64 +481,84 @@ export function PublicHeader(props: PublicHeaderProps) {
         </SheetClose>
         <div className='flex min-h-0 flex-1 flex-col justify-between gap-6 overflow-y-auto overscroll-contain px-8 pt-20 pb-10'>
           <nav className='flex flex-col gap-1'>
-            {links.map((link, i) => {
-              const isActive = pathname === link.href
-              const linkClassName = cn(
-                'flex items-center gap-3 py-3 text-base font-medium tracking-tight wrap-anywhere transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]',
-                mobileOpen
-                  ? 'translate-y-0 opacity-100'
-                  : 'translate-y-4 opacity-0',
-                isActive ? 'text-foreground' : 'text-muted-foreground',
-                link.disabled && 'pointer-events-none opacity-50'
-              )
-              const transitionStyle = {
-                transitionDelay: mobileOpen ? `${100 + i * 50}ms` : '0ms',
-              }
-              if (link.documentNavigation) {
+            {links
+              .flatMap((link) => [
+                { link, nested: false },
+                ...(link.children ?? []).map((child) => ({
+                  link: child,
+                  nested: true,
+                })),
+              ])
+              .map(({ link, nested }, i) => {
+                const isActive = pathname === link.href
+                const linkClassName = cn(
+                  'flex items-center gap-3 py-3 text-base font-medium tracking-tight wrap-anywhere transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]',
+                  mobileOpen
+                    ? 'translate-y-0 opacity-100'
+                    : 'translate-y-4 opacity-0',
+                  isActive ? 'text-foreground' : 'text-muted-foreground',
+                  nested && 'pl-4 text-sm',
+                  link.disabled && 'pointer-events-none opacity-50'
+                )
+                const transitionStyle = {
+                  transitionDelay: mobileOpen ? `${100 + i * 50}ms` : '0ms',
+                }
+                if (link.children?.length) {
+                  return (
+                    <p
+                      key={`${link.title}-${link.href}`}
+                      className={linkClassName}
+                      style={transitionStyle}
+                    >
+                      {t(link.title)}
+                    </p>
+                  )
+                }
+                if (link.documentNavigation) {
+                  return (
+                    <a
+                      key={`${link.title}-${link.href}`}
+                      href={link.href}
+                      aria-disabled={link.disabled}
+                      tabIndex={link.disabled ? -1 : undefined}
+                      onClick={(event) => handleNavLinkClick(event, link, true)}
+                      className={linkClassName}
+                      style={transitionStyle}
+                    >
+                      {t(link.title)}
+                    </a>
+                  )
+                }
+                if (link.external) {
+                  return (
+                    <a
+                      key={`${link.title}-${link.href}`}
+                      href={link.href}
+                      target='_blank'
+                      rel='noopener noreferrer'
+                      aria-disabled={link.disabled}
+                      tabIndex={link.disabled ? -1 : undefined}
+                      onClick={(event) => handleNavLinkClick(event, link, true)}
+                      className={linkClassName}
+                      style={transitionStyle}
+                    >
+                      {t(link.title)}
+                    </a>
+                  )
+                }
                 return (
-                  <a
+                  <Link
                     key={`${link.title}-${link.href}`}
-                    href={link.href}
-                    aria-disabled={link.disabled}
-                    tabIndex={link.disabled ? -1 : undefined}
+                    to={link.href}
+                    disabled={link.disabled}
                     onClick={(event) => handleNavLinkClick(event, link, true)}
                     className={linkClassName}
                     style={transitionStyle}
                   >
                     {t(link.title)}
-                  </a>
+                  </Link>
                 )
-              }
-              if (link.external) {
-                return (
-                  <a
-                    key={`${link.title}-${link.href}`}
-                    href={link.href}
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    aria-disabled={link.disabled}
-                    tabIndex={link.disabled ? -1 : undefined}
-                    onClick={(event) => handleNavLinkClick(event, link, true)}
-                    className={linkClassName}
-                    style={transitionStyle}
-                  >
-                    {t(link.title)}
-                  </a>
-                )
-              }
-              return (
-                <Link
-                  key={`${link.title}-${link.href}`}
-                  to={link.href}
-                  disabled={link.disabled}
-                  onClick={(event) => handleNavLinkClick(event, link, true)}
-                  className={linkClassName}
-                  style={transitionStyle}
-                >
-                  {t(link.title)}
-                </Link>
-              )
-            })}
+              })}
           </nav>
 
           <div

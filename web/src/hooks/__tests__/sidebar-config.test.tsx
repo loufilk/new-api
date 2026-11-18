@@ -76,7 +76,7 @@ function agentSidebarWrapper(props: { children: ReactNode }) {
   )
 }
 
-it('root uses one agent management entry while only agents see the sales workspace', () => {
+it('keeps one agent management entry without adding a sales workspace for legacy agent accounts', () => {
   for (const role of [ROLE.SUPER_ADMIN, ROLE.ADMIN, ROLE.USER]) {
     useAuthStore.getState().auth.setUser({
       id: 1,
@@ -110,8 +110,8 @@ it('root uses one agent management entry while only agents see the sales workspa
     wrapper: agentSidebarWrapper,
   })
   expect(
-    view.result.current.navGroups.find((group) => group.id === 'agent')?.items
-  ).toHaveLength(3)
+    view.result.current.navGroups.find((group) => group.id === 'agent')
+  ).toBeUndefined()
 })
 
 function sidebarFor(admin?: object, user?: object, canConfigure = true) {
@@ -154,14 +154,12 @@ describe('security sidebar visibility', () => {
         ?.items.flatMap((item) => ('url' in item ? [item.url] : []))
     ).toEqual([
       '/wallet',
-      '/intelligence',
       '/affiliate',
       '/invoice',
       '/partner-apply',
       '/support',
       '/profile',
       '/security',
-      '/help',
     ])
     expect(
       result.current
@@ -199,8 +197,8 @@ describe('security sidebar visibility', () => {
   })
 })
 
-describe('console expansion navigation', () => {
-  it('hides related new entries when the existing section controls are disabled', () => {
+describe('console navigation configuration', () => {
+  it('hides retained related entries when their section controls are disabled', () => {
     const { result } = sidebarFor({
       console: { enabled: true, detail: false, token: false },
       personal: { enabled: true, topup: false, personal: false },
@@ -209,15 +207,13 @@ describe('console expansion navigation', () => {
       .flatMap((group) => group.items)
       .flatMap((item) => ('url' in item ? [item.url] : []))
     for (const url of [
-      '/dashboard/flow',
-      '/pricing',
-      '/rankings',
-      '/getting-started',
+      '/dashboard/overview',
+      '/dashboard/models',
+      '/keys',
       '/channel-status',
       '/system-announcements',
       '/invoice',
       '/partner-apply',
-      '/help',
     ]) {
       expect(links).not.toContain(url)
     }
@@ -372,8 +368,8 @@ describe('model pricing badge', () => {
       .querySelectorAll('li')
   }
 
-  it('counts each task model once on the System Settings entry of the main sidebar', async () => {
-    await renderSidebar('/dashboard/overview', ROLE.SUPER_ADMIN, () => [
+  it('counts each task model once on the System Settings entry of the management sidebar', async () => {
+    await renderSidebar('/channels', ROLE.SUPER_ADMIN, () => [
       issue('kling-v3', 'kling'),
       issue('shared-video', 'alpha'),
       issue('shared-video', 'beta'),
@@ -396,7 +392,7 @@ describe('model pricing badge', () => {
   it('follows plugin changes and saved prices without a page reload', async () => {
     let issues = [issue('kling-v3', 'kling')]
     const { client } = await renderSidebar(
-      '/dashboard/overview',
+      '/channels',
       ROLE.SUPER_ADMIN,
       () => issues
     )

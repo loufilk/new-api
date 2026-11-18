@@ -38,7 +38,7 @@ function wrapper(props: { children: ReactNode }) {
 
 afterEach(() => useAuthStore.getState().auth.reset())
 
-it('shows the simplified agent entries without legacy agent workspaces', () => {
+it('keeps the same console groups for a legacy agent without adding a sales workspace', () => {
   useAuthStore.getState().auth.setUser({ id: 7, username: 'agent', role: 5 })
   const { result } = renderHook(() => useSidebarData(), { wrapper })
   expect(
@@ -46,21 +46,24 @@ it('shows the simplified agent entries without legacy agent workspaces', () => {
       group.items.map((item) => 'url' in item && item.url)
     )
   ).toEqual(
-    expect.arrayContaining([
-      '/wallet',
-      '/keys',
-      '/playground',
-      '/profile',
-      '/security',
-      '/agent-platform',
-      '/redemption-codes?view=center',
-      '/redemption-codes?view=records',
-    ])
+    expect.arrayContaining(['/wallet', '/keys', '/profile', '/security'])
   )
   const urls = result.current.navGroups.flatMap((group) =>
     group.items.map((item) => ('url' in item ? item.url : undefined))
   )
-  expect(urls).not.toContain('/agent-redemption')
+  expect(result.current.navGroups.map((group) => group.id)).toEqual([
+    'general',
+    'personal',
+    'admin',
+  ])
+  for (const url of [
+    '/agent-platform',
+    '/agent-redemption',
+    '/redemption-codes?view=center',
+    '/redemption-codes?view=records',
+  ]) {
+    expect(urls).not.toContain(url)
+  }
 })
 
 it('preserves administrator workspace navigation including agent management', () => {

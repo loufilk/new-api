@@ -57,7 +57,8 @@ afterEach(() => {
 async function renderNavigation(
   role: number,
   accountPoolEnabled = false,
-  modelTestEnabled: unknown = false
+  modelTestEnabled: unknown = false,
+  path = '/wallet'
 ) {
   useAuthStore.getState().auth.setUser({ id: 7, username: 'user', role })
   const client = new QueryClient({
@@ -70,7 +71,7 @@ async function renderNavigation(
   })
   const router = createRouter({
     routeTree: createRootRoute({ component: Navigation }),
-    history: createMemoryHistory({ initialEntries: ['/wallet'] }),
+    history: createMemoryHistory({ initialEntries: [path] }),
   })
   await router.load()
   render(
@@ -81,53 +82,37 @@ async function renderNavigation(
 }
 
 it.each([1, 5])(
-  'role %s retains ordinary navigation and only its authorized A07 workspace',
+  'role %s sees the same fifteen console entries in reference order',
   async (role) => {
     await renderNavigation(role)
     expect(await screen.findByRole('link', { name: 'Wallet' })).toHaveAttribute(
       'href',
       '/wallet'
     )
-    for (const name of [
-      'API Keys',
-      'Text Generation',
-      'Image Generation',
-      'Profile',
-      'Security & Access',
-    ]) {
-      expect(screen.getByRole('link', { name })).toBeInTheDocument()
-    }
-    expect(
-      screen.queryByRole('link', { name: 'Redemption Codes' })
-    ).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole('link', { name: 'Users' })
-    ).not.toBeInTheDocument()
-    expect(
-      screen
-        .getAllByRole('link')
-        .map((link) => link.getAttribute('href'))
-        .filter((href) => href?.startsWith('/agent-'))
-    ).toEqual(role === 5 ? ['/agent-platform'] : [])
-    for (const view of ['center', 'records']) {
-      const codes = screen
-        .getAllByRole('link')
-        .filter(
-          (link) =>
-            link.getAttribute('href') === `/redemption-codes?view=${view}`
-        )
-      expect(codes).toHaveLength(role === 5 ? 1 : 0)
-    }
-    expect(
-      screen
-        .getAllByRole('link')
-        .some((link) => link.getAttribute('href') === '/agent-platform/finance')
-    ).toBe(false)
+    expect(screen.getAllByRole('link').map((link) => link.textContent)).toEqual(
+      [
+        'Overview',
+        'Dashboard',
+        'API Keys',
+        'Usage Logs',
+        'Audit Logs',
+        'Channel status',
+        'Task Logs',
+        'System announcements',
+        'Wallet',
+        'Invitation Rewards',
+        'Invoices',
+        'Partner application',
+        'My tickets',
+        'Profile',
+        'Security & Access',
+      ]
+    )
   }
 )
 
 it('administrators retain normal redemption and user management but no reseller workspace', async () => {
-  await renderNavigation(ROLE.ADMIN)
+  await renderNavigation(ROLE.ADMIN, false, false, '/channels')
   expect(
     await screen.findByRole('link', { name: 'Redemption Codes' })
   ).toHaveAttribute('href', '/redemption-codes')
@@ -144,47 +129,28 @@ it('administrators retain normal redemption and user management but no reseller 
 })
 
 it.each([1, 5, 10, 100])(
-  'role %s sees the account pool entry only when enabled',
+  'role %s keeps extra tools out of console navigation when their services are enabled',
   async (role) => {
-    await renderNavigation(role)
-    expect(
-      screen
-        .getAllByRole('link')
-        .some((link) => link.getAttribute('href') === '/account-pool')
-    ).toBe(false)
-    cleanup()
-    await renderNavigation(role, true)
-    expect(
-      screen
-        .getAllByRole('link')
-        .filter((link) => link.getAttribute('href') === '/account-pool')
-    ).toHaveLength(1)
-  }
-)
-
-it.each([1, 5, 10, 100])(
-  'role %s sees read-only model history even when new tests are disabled without hiding playground',
-  async (role) => {
-    await renderNavigation(role, true, 'true')
-    expect(
-      screen
-        .getAllByRole('link')
-        .some((link) => link.getAttribute('href') === '/intelligence')
-    ).toBe(true)
-    expect(
-      screen.getByRole('link', { name: 'Text Generation' })
-    ).toHaveAttribute('href', '/playground')
-    cleanup()
-    await renderNavigation(role, false, true)
-    expect(
-      screen
-        .getAllByRole('link')
-        .filter((link) => link.getAttribute('href') === '/intelligence')
-    ).toHaveLength(1)
-    expect(
-      screen
-        .getAllByRole('link')
-        .some((link) => link.getAttribute('href') === '/account-pool')
-    ).toBe(false)
+    await renderNavigation(role, true, true)
+    await screen.findByRole('link', { name: 'Wallet' })
+    const links = screen
+      .getAllByRole('link')
+      .map((link) => link.getAttribute('href'))
+    for (const extra of [
+      '/account-pool',
+      '/intelligence',
+      '/playground',
+      '/image',
+      '/getting-started',
+      '/dashboard/flow',
+      '/pricing',
+      '/rankings',
+      '/help',
+      '/agent-platform',
+      '/redemption-codes?view=center',
+      '/redemption-codes?view=records',
+    ]) {
+      expect(links).not.toContain(extra)
+    }
   }
 )

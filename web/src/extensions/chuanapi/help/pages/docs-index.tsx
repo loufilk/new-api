@@ -25,7 +25,6 @@ import { EmptyState } from '@/components/empty-state'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { IntegrationWizard } from '@/extensions/chuanapi/onboarding/integration-wizard'
 
 import { AiDocsCallout } from '../components/ai-docs-callout'
 import { DocsShell } from '../components/docs-shell'
@@ -70,7 +69,6 @@ export function DocsIndexPage() {
             )}
           </p>
           <div className='flex flex-wrap gap-2'>
-            <IntegrationWizard variant='default' size='default' />
             <Button
               variant='outline'
               render={

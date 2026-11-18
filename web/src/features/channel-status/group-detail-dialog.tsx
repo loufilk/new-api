@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -25,7 +24,6 @@ import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { getApiKeyScopeModels } from '@/features/keys/api'
 import { ApiKeyGroupHealth } from '@/features/keys/components/api-key-group-health'
 import { GroupRatioBadge } from '@/features/keys/components/auto-group-visuals'
@@ -69,11 +67,6 @@ export function GroupDetailDialog(props: {
       }
       contentClassName='sm:max-w-3xl'
       bodyClassName='space-y-5'
-      footer={
-        <Button variant='outline' render={<Link to='/intelligence' />}>
-          {t('View quality history')}
-        </Button>
-      }
     >
       <div className='grid grid-cols-2 gap-3'>
         <div className='bg-muted/40 space-y-2 rounded-xl p-4'>

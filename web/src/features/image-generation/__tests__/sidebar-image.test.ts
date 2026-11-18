@@ -69,8 +69,8 @@ afterEach(() => {
   window.localStorage.removeItem('status')
 })
 
-describe('sidebar exposes Text Generation and Image Generation in order', () => {
-  test('chat group lists text generation before image generation', () => {
+describe('image tools stay available without a separate sidebar group', () => {
+  test('console navigation does not add text or image generation entries', () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     })
@@ -80,20 +80,13 @@ describe('sidebar exposes Text Generation and Image Generation in order', () => 
     })
     try {
       const chat = result.current.navGroups.find((group) => group.id === 'chat')
-      const urls = (chat?.items ?? [])
+      const urls = result.current.navGroups
+        .flatMap((group) => group.items)
         .filter((item) => 'url' in item)
         .map((item) => (item as { url: string }).url)
-      const playgroundIndex = urls.indexOf('/playground')
-      const imageIndex = urls.indexOf('/image')
-      expect(playgroundIndex).toBeGreaterThanOrEqual(0)
-      expect(imageIndex).toBeGreaterThan(playgroundIndex)
-
-      const titles = (chat?.items ?? [])
-        .filter((item) => 'url' in item)
-        .map((item) => (item as { title: string }).title)
-      expect(titles).toContain('Text Generation')
-      expect(titles).toContain('Image Generation')
-      expect(titles).not.toContain('Playground')
+      expect(chat).toBeUndefined()
+      expect(urls).not.toContain('/playground')
+      expect(urls).not.toContain('/image')
     } finally {
       unmount()
       client.clear()

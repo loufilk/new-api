@@ -83,7 +83,7 @@ export function AffiliatePage() {
     <>
       <SectionPageLayout>
         <SectionPageLayout.Title>
-          {t('Invitation Rewards')}
+          {t('Invitation Rewards', { context: 'console' })}
         </SectionPageLayout.Title>
         <SectionPageLayout.Description>
           {t(

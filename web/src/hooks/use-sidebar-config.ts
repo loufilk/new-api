@@ -106,7 +106,6 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/dashboard/flow': { section: 'console', module: 'detail' },
   '/pricing': { section: 'console', module: 'detail' },
   '/rankings': { section: 'console', module: 'detail' },
-  '/getting-started': { section: 'console', module: 'token' },
   '/channel-status': { section: 'console', module: 'detail' },
   '/system-announcements': { section: 'console', module: 'detail' },
   '/dashboard/users': { section: 'console', module: 'detail' },

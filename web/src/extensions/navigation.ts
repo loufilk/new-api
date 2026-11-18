@@ -21,6 +21,7 @@ import type { TopNavLink } from '@/components/layout/types'
 export type NavigationExtensionContext = {
   isAuthenticated: boolean
   status: Record<string, unknown> | null
+  surface?: 'public' | 'console'
 }
 
 export type NavigationExtension = {

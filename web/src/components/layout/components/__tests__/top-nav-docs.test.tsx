@@ -42,13 +42,18 @@ import { TopNav } from '../top-nav'
 
 const queryClients: QueryClient[] = []
 
-function NavHarness() {
-  const links = useTopNavLinks()
+function NavHarness(props: { surface: 'public' | 'console' }) {
+  const links = useTopNavLinks(props.surface)
   return <TopNav links={links} />
 }
 
-async function renderTopNav(status: Record<string, unknown>) {
-  const rootRoute = createRootRoute({ component: NavHarness })
+async function renderTopNav(
+  status: Record<string, unknown>,
+  surface: 'public' | 'console' = 'public'
+) {
+  const rootRoute = createRootRoute({
+    component: () => <NavHarness surface={surface} />,
+  })
   const indexRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/',
@@ -83,6 +88,29 @@ afterEach(() => {
 })
 
 describe('top navigation docs entry rendering', () => {
+  test('the console service menu opens the three reference destinations', async () => {
+    const user = userEvent.setup()
+    await renderTopNav({}, 'console')
+    const nav = screen.getByRole('navigation')
+    const serviceMenu = within(nav).getByRole('button', {
+      name: 'Service Center',
+    })
+    expect(serviceMenu).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(serviceMenu)
+
+    const menu = await screen.findByRole('menu', { name: 'Service Center' })
+    expect(
+      within(menu)
+        .getAllByRole('menuitem')
+        .map((item) => item.getAttribute('href'))
+    ).toEqual(['/affiliate', '/system-announcements', '/contact'])
+    await user.keyboard('{Escape}')
+    await waitFor(() =>
+      expect(serviceMenu).toHaveAttribute('aria-expanded', 'false')
+    )
+  })
+
   test('clicking the legacy quickstart entry navigates the SPA to /help', async () => {
     const user = userEvent.setup()
     const router = await renderTopNav({

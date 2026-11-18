@@ -52,7 +52,6 @@ import { Route as AuthenticatedChatChatIdRouteImport } from './routes/_authentic
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
 import { Route as AuthenticatedDashboardSectionRouteImport } from './routes/_authenticated/dashboard/$section'
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
-import { Route as AuthenticatedGettingStartedIndexRouteImport } from './routes/_authenticated/getting-started/index'
 import { Route as AuthenticatedImageIndexRouteImport } from './routes/_authenticated/image/index'
 import { Route as AuthenticatedIntelligenceIndexRouteImport } from './routes/_authenticated/intelligence/index'
 import { Route as AuthenticatedInvoiceIndexRouteImport } from './routes/_authenticated/invoice/index'
@@ -324,12 +323,6 @@ const AuthenticatedErrorsErrorRoute =
   AuthenticatedErrorsErrorRouteImport.update({
     id: '/errors/$error',
     path: '/errors/$error',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
-const AuthenticatedGettingStartedIndexRoute =
-  AuthenticatedGettingStartedIndexRouteImport.update({
-    id: '/getting-started/',
-    path: '/getting-started/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedImageIndexRoute = AuthenticatedImageIndexRouteImport.update({
@@ -658,7 +651,6 @@ export interface FileRoutesByFullPath {
   '/channel-status/': typeof AuthenticatedChannelStatusIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
-  '/getting-started/': typeof AuthenticatedGettingStartedIndexRoute
   '/image/': typeof AuthenticatedImageIndexRoute
   '/intelligence/': typeof AuthenticatedIntelligenceIndexRoute
   '/invoice/': typeof AuthenticatedInvoiceIndexRoute
@@ -748,7 +740,6 @@ export interface FileRoutesByTo {
   '/channel-status': typeof AuthenticatedChannelStatusIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
-  '/getting-started': typeof AuthenticatedGettingStartedIndexRoute
   '/image': typeof AuthenticatedImageIndexRoute
   '/intelligence': typeof AuthenticatedIntelligenceIndexRoute
   '/invoice': typeof AuthenticatedInvoiceIndexRoute
@@ -842,7 +833,6 @@ export interface FileRoutesById {
   '/_authenticated/channel-status/': typeof AuthenticatedChannelStatusIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
-  '/_authenticated/getting-started/': typeof AuthenticatedGettingStartedIndexRoute
   '/_authenticated/image/': typeof AuthenticatedImageIndexRoute
   '/_authenticated/intelligence/': typeof AuthenticatedIntelligenceIndexRoute
   '/_authenticated/invoice/': typeof AuthenticatedInvoiceIndexRoute
@@ -935,7 +925,6 @@ export interface FileRouteTypes {
     | '/channel-status/'
     | '/channels/'
     | '/dashboard/'
-    | '/getting-started/'
     | '/image/'
     | '/intelligence/'
     | '/invoice/'
@@ -1025,7 +1014,6 @@ export interface FileRouteTypes {
     | '/channel-status'
     | '/channels'
     | '/dashboard'
-    | '/getting-started'
     | '/image'
     | '/intelligence'
     | '/invoice'
@@ -1118,7 +1106,6 @@ export interface FileRouteTypes {
     | '/_authenticated/channel-status/'
     | '/_authenticated/channels/'
     | '/_authenticated/dashboard/'
-    | '/_authenticated/getting-started/'
     | '/_authenticated/image/'
     | '/_authenticated/intelligence/'
     | '/_authenticated/invoice/'
@@ -1489,13 +1476,6 @@ declare module '@tanstack/react-router' {
       path: '/errors/$error'
       fullPath: '/errors/$error'
       preLoaderRoute: typeof AuthenticatedErrorsErrorRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/getting-started/': {
-      id: '/_authenticated/getting-started/'
-      path: '/getting-started'
-      fullPath: '/getting-started/'
-      preLoaderRoute: typeof AuthenticatedGettingStartedIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/image/': {
@@ -1940,7 +1920,6 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedChannelStatusIndexRoute: typeof AuthenticatedChannelStatusIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
-  AuthenticatedGettingStartedIndexRoute: typeof AuthenticatedGettingStartedIndexRoute
   AuthenticatedImageIndexRoute: typeof AuthenticatedImageIndexRoute
   AuthenticatedIntelligenceIndexRoute: typeof AuthenticatedIntelligenceIndexRoute
   AuthenticatedInvoiceIndexRoute: typeof AuthenticatedInvoiceIndexRoute
@@ -1990,7 +1969,6 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedChannelStatusIndexRoute: AuthenticatedChannelStatusIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
-  AuthenticatedGettingStartedIndexRoute: AuthenticatedGettingStartedIndexRoute,
   AuthenticatedImageIndexRoute: AuthenticatedImageIndexRoute,
   AuthenticatedIntelligenceIndexRoute: AuthenticatedIntelligenceIndexRoute,
   AuthenticatedInvoiceIndexRoute: AuthenticatedInvoiceIndexRoute,

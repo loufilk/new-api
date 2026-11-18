@@ -17,14 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Link } from '@tanstack/react-router'
-import { Menu } from 'lucide-react'
+import { ChevronDown, Menu } from 'lucide-react'
 import { useMemo } from 'react'
 
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
@@ -65,6 +67,21 @@ export function TopNav({ className, links, ...props }: TopNavProps) {
           </DropdownMenuTrigger>
           <DropdownMenuContent side='bottom' align='start'>
             {normalizedLinks.map((link) => {
+              if (link.children?.length) {
+                return (
+                  <DropdownMenuGroup key={link.href}>
+                    <DropdownMenuLabel>{link.title}</DropdownMenuLabel>
+                    {link.children.map((child) => (
+                      <DropdownMenuItem
+                        key={child.href}
+                        render={<Link to={child.href} />}
+                      >
+                        {child.title}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuGroup>
+                )
+              }
               const {
                 title,
                 href,
@@ -116,7 +133,7 @@ export function TopNav({ className, links, ...props }: TopNavProps) {
       {/* 桌面端水平导航 */}
       <nav
         className={cn(
-          'hidden items-center space-x-4 lg:flex lg:space-x-4 xl:space-x-6',
+          'hidden items-center gap-4 whitespace-nowrap lg:flex',
           className
         )}
         {...props}
@@ -131,6 +148,36 @@ export function TopNav({ className, links, ...props }: TopNavProps) {
             documentNavigation,
           } = link
           const linkClassName = `hover:text-primary text-sm font-medium transition-colors ${isActive ? '' : 'text-muted-foreground'}`
+          if (link.children?.length) {
+            return (
+              <DropdownMenu key={href} modal={false}>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      variant='ghost'
+                      className={cn(
+                        'h-auto gap-1 p-0 hover:bg-transparent',
+                        linkClassName
+                      )}
+                    />
+                  }
+                >
+                  {title}
+                  <ChevronDown className='size-3' aria-hidden='true' />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align='end' className='min-w-40'>
+                  {link.children.map((child) => (
+                    <DropdownMenuItem
+                      key={child.href}
+                      render={<Link to={child.href} />}
+                    >
+                      {child.title}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )
+          }
           if (documentNavigation) {
             return (
               <a key={`${title}-${href}`} href={href} className={linkClassName}>

@@ -32,7 +32,11 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import useDialogState from '@/hooks/use-dialog'
-import { useIsSidebarModuleVisible } from '@/hooks/use-sidebar-config'
+import {
+  useIsSidebarModuleVisible,
+  useSidebarConfig,
+} from '@/hooks/use-sidebar-config'
+import { useSidebarData } from '@/hooks/use-sidebar-data'
 import { useUserDisplay } from '@/hooks/use-user-display'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { ROLE } from '@/lib/roles'
@@ -46,7 +50,19 @@ export function ProfileDropdown() {
   const [open, setOpen] = useDialogState()
   const user = useAuthStore((state) => state.auth.user)
   const { displayName, roleLabel } = useUserDisplay(user)
-  const isSuperAdmin = user?.role === ROLE.SUPER_ADMIN
+  const sidebarData = useSidebarData()
+  const visibleSidebarGroups = useSidebarConfig(sidebarData.navGroups)
+  const adminDestination =
+    user && user.role >= ROLE.ADMIN
+      ? visibleSidebarGroups
+          .find((group) => group.id === 'admin')
+          ?.items.find(
+            (item) =>
+              item.url &&
+              (item.requiredRole === undefined ||
+                user.role >= item.requiredRole)
+          )?.url
+      : undefined
   const isWalletVisible = useIsSidebarModuleVisible('/wallet')
   const isSecurityVisible = useIsSidebarModuleVisible('/security')
   const avatarName = user?.username || displayName
@@ -122,17 +138,12 @@ export function ProfileDropdown() {
             </DropdownMenuItem>
           )}
 
-          {isSuperAdmin && (
+          {adminDestination && (
             <DropdownMenuItem
-              onClick={() =>
-                navigate({
-                  to: '/system-settings/site/$section',
-                  params: { section: 'system-info' },
-                })
-              }
+              onClick={() => navigate({ to: adminDestination })}
             >
               <Settings className='size-4' />
-              {t('System Settings')}
+              {t('Administration')}
             </DropdownMenuItem>
           )}
 

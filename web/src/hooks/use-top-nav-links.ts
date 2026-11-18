@@ -38,7 +38,9 @@ import { useAuthStore } from '@/stores/auth-store'
  *   about: true
  * }
  */
-export function useTopNavLinks(): TopNavLink[] {
+export function useTopNavLinks(
+  surface: 'public' | 'console' = 'public'
+): TopNavLink[] {
   const { t } = useTranslation()
   const { status } = useStatus()
   const { auth } = useAuthStore()
@@ -78,6 +80,13 @@ export function useTopNavLinks(): TopNavLink[] {
     })
   }
 
+  if (surface === 'console') {
+    links.push(
+      { title: t('Channel status'), href: '/health' },
+      { title: t('Partner application'), href: '/partner' }
+    )
+  }
+
   // Rankings
   const rankings = modules?.rankings
   if (rankings && typeof rankings === 'object' && rankings.enabled) {
@@ -88,7 +97,9 @@ export function useTopNavLinks(): TopNavLink[] {
   // Docs (built-in /help by default; explicit external URLs stay same-tab
   // document navigations, while legacy marketing entries resolve to /help)
   if (modules?.docs !== false) {
-    links.push({ title: t('API Access'), href: '/help/api' })
+    if (surface === 'public') {
+      links.push({ title: t('API Access'), href: '/help/api' })
+    }
     const docsHref = resolvePublicDocsUrl(status?.docs_link)
     links.push({
       title: t('Docs'),
@@ -99,7 +110,7 @@ export function useTopNavLinks(): TopNavLink[] {
   }
 
   // About
-  if (modules?.about !== false) {
+  if (surface === 'public' && modules?.about !== false) {
     links.push({
       title: t('About'),
       href: '/about',
@@ -107,8 +118,24 @@ export function useTopNavLinks(): TopNavLink[] {
     })
   }
 
+  if (surface === 'console') {
+    links.push({
+      title: t('Service Center'),
+      href: '/contact',
+      children: [
+        {
+          title: t('Invitation Rewards', { context: 'console' }),
+          href: '/affiliate',
+        },
+        { title: t('System announcements'), href: '/system-announcements' },
+        { title: t('Contact us'), href: '/contact' },
+      ],
+    })
+  }
+
   return applyNavigationExtensions(links, {
     isAuthenticated: isAuthed,
     status: (status as Record<string, unknown> | null) ?? null,
+    surface,
   })
 }

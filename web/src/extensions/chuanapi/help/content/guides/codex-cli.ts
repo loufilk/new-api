@@ -53,9 +53,7 @@ wire_api = "responses"
 
 ## 选择支持 Responses 的模型
 
-当前 Codex 配置只支持 \`wire_api = "responses"\`。在 [接入向导](/getting-started) 中选择模型，只有目录声明支持 Responses API 的模型才会出现 Codex CLI 选项。
-
-模型 ID、API 令牌分组与模型限制需要匹配。可以在 [定价页](/pricing) 筛选调用分组，并查看模型详情中的 API 协议。
+当前 Codex 配置只支持 \`wire_api = "responses"\`。在 [定价页](/pricing) 筛选调用分组，并查看模型详情中的 API 协议，选择声明支持 Responses API 的模型。模型 ID、API 令牌分组与模型限制需要匹配。
 
 协议差异见 [协议兼容总览](/help/guides/compatibility)。
 

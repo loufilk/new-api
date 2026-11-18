@@ -330,7 +330,9 @@ export function SupportCenter(
   return (
     <>
       <SectionPageLayout stackActionsOnMobile>
-        <SectionPageLayout.Title>{t('Support Center')}</SectionPageLayout.Title>
+        <SectionPageLayout.Title>
+          {admin ? t('Support Center') : t('My tickets')}
+        </SectionPageLayout.Title>
         <SectionPageLayout.Description>
           {admin
             ? t(

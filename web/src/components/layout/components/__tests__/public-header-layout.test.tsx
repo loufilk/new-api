@@ -36,6 +36,7 @@ import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
+import '@/extensions/bootstrap'
 import { STATUS_QUERY_KEY } from '@/lib/status-query'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
@@ -80,7 +81,11 @@ afterEach(async () => {
   useSystemConfigStore.getState().setLoading(true)
 })
 
-async function renderHeader(requiresAuth = false) {
+async function renderHeader(
+  requiresAuth = false,
+  initialPath = '/',
+  allModules = false
+) {
   const rootRoute = createRootRoute({
     component: () => (
       <PublicHeader
@@ -90,25 +95,38 @@ async function renderHeader(requiresAuth = false) {
       />
     ),
   })
-  const routes = ['/', '/help', '/sign-in'].map((path) =>
-    createRoute({ getParentRoute: () => rootRoute, path })
-  )
+  const routes = [
+    '/',
+    '/help',
+    '/sign-in',
+    '/pricing',
+    '/health',
+    '/partner',
+    '/rankings',
+    '/contact',
+    '/affiliate',
+    '/system-announcements',
+  ].map((path) => createRoute({ getParentRoute: () => rootRoute, path }))
   const router = createRouter({
     routeTree: rootRoute.addChildren(routes),
-    history: createMemoryHistory({ initialEntries: ['/'] }),
+    history: createMemoryHistory({ initialEntries: [initialPath] }),
   })
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   queryClients.push(client)
   client.setQueryData(STATUS_QUERY_KEY, {
+    account_pool_enabled: allModules,
     HeaderNavModules: JSON.stringify({
       home: true,
-      console: false,
-      pricing: { enabled: requiresAuth, requireAuth: requiresAuth },
-      rankings: { enabled: false },
+      console: allModules,
+      pricing: {
+        enabled: requiresAuth || allModules,
+        requireAuth: requiresAuth,
+      },
+      rankings: { enabled: allModules },
       docs: true,
-      about: false,
+      about: allModules,
     }),
   })
   client.setQueryData(['notice'], { success: true, data: '' })
@@ -122,6 +140,103 @@ async function renderHeader(requiresAuth = false) {
 }
 
 describe('public header responsive navigation', () => {
+  test('keeps home navigation and switches to the reference menu when entering the model square', async () => {
+    const router = await renderHeader(false, '/', true)
+    const banner = screen.getByRole('banner')
+    expect(
+      within(banner).getByRole('link', { name: 'API Access' })
+    ).toBeVisible()
+    expect(within(banner).getByRole('link', { name: 'About' })).toBeVisible()
+    expect(
+      within(banner)
+        .getAllByRole('link')
+        .some((link) => link.getAttribute('href') === '/account-pool')
+    ).toBe(true)
+    expect(
+      within(banner).queryByRole('button', { name: 'Service Center' })
+    ).not.toBeInTheDocument()
+
+    await act(() => router.navigate({ to: '/pricing' }))
+    const desktop = within(banner).getByRole('link', {
+      name: 'Home',
+    }).parentElement
+    if (!desktop) throw new Error('Desktop navigation container is missing')
+    expect(
+      within(desktop)
+        .getAllByRole('link')
+        .map((link) => link.textContent)
+        .filter((name) => name !== 'Sign in')
+    ).toEqual([
+      'Home',
+      'Console',
+      'Model Square',
+      'Channel status',
+      'Partner application',
+      'Rankings',
+      'Docs',
+    ])
+    expect(
+      within(desktop).getByRole('button', { name: 'Service Center' })
+    ).toBeVisible()
+    const urls = within(desktop)
+      .getAllByRole('link')
+      .map((link) => link.getAttribute('href'))
+    for (const href of [
+      '/account-pool',
+      '/intelligence',
+      '/help/api',
+      '/about',
+    ]) {
+      expect(urls).not.toContain(href)
+    }
+  })
+
+  test('the desktop service dropdown opens by keyboard and navigates through its three destinations', async () => {
+    const router = await renderHeader(false, '/help', true)
+    const user = userEvent.setup()
+    screen.getByRole('button', { name: 'Service Center' }).focus()
+    await user.keyboard('{Enter}')
+    const menu = await screen.findByRole('menu', { name: 'Service Center' })
+    expect(
+      within(menu)
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent)
+    ).toEqual(['Invitation Rewards', 'System announcements', 'Contact us'])
+    await user.click(
+      within(menu).getByRole('menuitem', { name: 'System announcements' })
+    )
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/system-announcements')
+    )
+    await waitFor(() =>
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    )
+  })
+
+  test('the compact menu includes service destinations and closes after choosing one', async () => {
+    const router = await renderHeader(false, '/pricing', true)
+    const user = userEvent.setup()
+    await user.click(
+      screen.getByRole('button', { name: 'Toggle navigation menu' })
+    )
+    const menu = await screen.findByRole('dialog', {
+      name: 'Toggle navigation menu',
+    })
+    expect(within(menu).getByText('Service Center')).toBeVisible()
+    for (const name of [
+      'Invitation Rewards',
+      'System announcements',
+      'Contact us',
+    ]) {
+      expect(within(menu).getByRole('link', { name })).toBeVisible()
+    }
+    await user.click(within(menu).getByRole('link', { name: 'Contact us' }))
+    await waitFor(() => expect(router.state.location.pathname).toBe('/contact'))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+  })
+
   test('scrolling contracts the pill without retaining a viewport-sized desktop navigation', async () => {
     await renderHeader()
     const banner = screen.getByRole('banner')
@@ -226,27 +341,30 @@ describe('public header responsive navigation', () => {
     )
   })
 
-  test('a protected compact link closes navigation and preserves the cancellable sign-in prompt', async () => {
-    const user = userEvent.setup()
-    await renderHeader(true)
-    await user.click(
-      screen.getByRole('button', { name: 'Toggle navigation menu' })
-    )
-    const menu = await screen.findByRole('dialog', {
-      name: 'Toggle navigation menu',
-    })
-    await user.click(within(menu).getByRole('link', { name: 'Model Square' }))
-    const prompt = await screen.findByRole('dialog', {
-      name: 'Sign in required',
-    })
-    expect(
-      screen.queryByRole('dialog', { name: 'Toggle navigation menu' })
-    ).not.toBeInTheDocument()
-    await user.click(within(prompt).getByRole('button', { name: 'Cancel' }))
-    await waitFor(() =>
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    )
-  })
+  test.each(['/', '/pricing'])(
+    'a protected compact link on %s closes navigation and preserves the cancellable sign-in prompt',
+    async (path) => {
+      const user = userEvent.setup()
+      await renderHeader(true, path)
+      await user.click(
+        screen.getByRole('button', { name: 'Toggle navigation menu' })
+      )
+      const menu = await screen.findByRole('dialog', {
+        name: 'Toggle navigation menu',
+      })
+      await user.click(within(menu).getByRole('link', { name: 'Model Square' }))
+      const prompt = await screen.findByRole('dialog', {
+        name: 'Sign in required',
+      })
+      expect(
+        screen.queryByRole('dialog', { name: 'Toggle navigation menu' })
+      ).not.toBeInTheDocument()
+      await user.click(within(prompt).getByRole('button', { name: 'Cancel' }))
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      )
+    }
+  )
 
   test('growing the header back to desktop width dismisses an open compact menu', async () => {
     const user = userEvent.setup()
