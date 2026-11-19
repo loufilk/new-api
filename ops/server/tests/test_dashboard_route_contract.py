@@ -73,6 +73,14 @@ class DashboardRouteContractTest(unittest.TestCase):
         ):
             self.assertIn(path, matcher_tokens)
 
+    def test_customer_and_admin_invoice_deep_links_belong_to_new_api(self) -> None:
+        matcher_tokens = set(self.ui_matcher.split())
+        for path in ("/invoice", "/invoice/*", "/invoice-management", "/invoice-management/*"):
+            with self.subTest(path=path):
+                self.assertIn(path, matcher_tokens)
+        for overbroad in ("/invoice*", "/invoice-management*"):
+            self.assertNotIn(overbroad, matcher_tokens)
+
     def test_task_plugin_and_error_deep_links_belong_to_new_api(self) -> None:
         matcher_tokens = set(self.ui_matcher.split())
         for path in ("/task-plugins", "/task-plugins/*", "/401", "/403", "/404", "/500", "/503"):

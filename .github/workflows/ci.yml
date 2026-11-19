@@ -464,6 +464,13 @@ jobs:
           go test -tags api_only ./controller -run '^TestLog(ListRejectsUnboundedPagination|PageOptionalCountPostgres)$' -count=1 -v
           go test -tags api_only ./model -run '^Test(QuotaFlushPostgres|AuthCacheNativeHotPathUsesNoDatabaseQueries|AuthCacheNativeOrdinaryColdReadRechecksConcurrentRevocation)' -count=1 -v
           go test -tags api_only ./relay/channel/openai ./service -run 'TestNativeChat|TestOaiStream|TestAppendRelayLogAdminInfo' -count=1 -v
+      - name: CORE rollback entry point and proxy route contracts
+        if: ${{ (github.head_ref || github.ref_name) == 'fix/im18-dependency-migration-20261119' }}
+        run: |
+          bash -n ops/upgrade/core-newapi-cutover.sh
+          python3 -m unittest discover -s ops/server/tests -p 'test_core_newapi_cutover.py' -v
+          python3 -m unittest discover -s ops/server/tests -p 'test_dashboard_route_contract.py' -v
+          python3 ops/upgrade/core-rollback-rehearsal/test_oci.py
       - name: Passkey, payment and protocol dependency contracts
         if: ${{ (github.head_ref || github.ref_name) == 'fix/im18-dependency-migration-20261119' }}
         run: |

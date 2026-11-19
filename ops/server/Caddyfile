@@ -115,6 +115,7 @@ http://:8081 {
 		@new_api_ui {
 			path /sign-in /sign-in/* /sign-up /sign-up/* /forgot-password /forgot-password/* /oauth /oauth/* /otp /otp/* /register /register/* /reset /reset/* /user/reset /user/reset/*
 			path /dashboard /dashboard/* /keys /keys/* /usage-logs /usage-logs/* /wallet /wallet/* /profile /profile/*
+			path /invoice /invoice/* /invoice-management /invoice-management/*
 			path /pricing /pricing/*
 			path /playground /playground/*
 			path /image /image/*
