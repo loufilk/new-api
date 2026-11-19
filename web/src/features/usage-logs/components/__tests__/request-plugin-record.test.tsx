@@ -17,14 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import {
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-} from '@tanstack/react-table'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, describe, expect, test, vi } from 'vitest'
+
+import { flexRender, useConsoleTable } from '@/lib/console-table'
 
 import type { UsageLog } from '../../data/schema'
 import type { LogOtherData, RequestPluginRecordEntry } from '../../types'
@@ -170,10 +167,9 @@ function renderDetails(isAdmin: boolean) {
 }
 
 function ModelCell(props: { other?: LogOtherData }) {
-  const table = useReactTable({
+  const table = useConsoleTable({
     data: [makeLog(props.other)],
     columns: useCommonLogsColumns(false, false),
-    getCoreRowModel: getCoreRowModel(),
   })
   const cell = table
     .getRowModel()

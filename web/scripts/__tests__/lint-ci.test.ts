@@ -27,6 +27,7 @@ import {
   evaluateLintCi,
   hashContent,
   isSafeBaselinePath,
+  matchCompilerDebt,
   normalizeDiagnosticPath,
   normalizeLineEndings,
   parseOxlintOutput,
@@ -42,7 +43,7 @@ const configSha256 = 'a'.repeat(64)
 const baselineMeta = {
   version: 1,
   upstreamRevision: '7fd06381976cbea126d1f20973548bf60f20e37d',
-  oxlintVersion: '1.74.0',
+  oxlintVersion: '1.94.0',
   configSha256,
 }
 
@@ -560,6 +561,74 @@ describe('planBaselineWrite', () => {
   })
 })
 
+describe('React Compiler migration debt', () => {
+  const content = 'original fork source'
+  const path = 'src/draft.tsx'
+  const item = fingerprint({
+    code: 'react(refs)',
+    message: 'existing observation',
+  })
+  const snapshot = {
+    files: { [path]: { sha256: hashContent(content), diagnostics: [item] } },
+  }
+
+  for (const [label, observed, source, expected] of [
+    ['unchanged source and exact finding', [item], content, 1],
+    ['changed source with the old finding', [item], `${content} changed`, 0],
+    ['additional finding in the same file', [item, item], content, 0],
+    ['changed location', [{ ...item, line: item.line + 1 }], content, 0],
+    ['changed severity', [{ ...item, severity: 'warning' }], content, 0],
+    ['changed wording', [{ ...item, message: 'new observation' }], content, 0],
+  ] as const) {
+    test(label, () => {
+      const observations = observed.map((entry) => ({
+        path,
+        fingerprint: entry,
+      }))
+      expect(matchCompilerDebt(observations, snapshot, () => source).size).toBe(
+        expected
+      )
+    })
+  }
+
+  test('never exempts an old mandatory rule even if supplied as compiler debt', () => {
+    const priorRule = fingerprint({ code: 'react(exhaustive-deps)' })
+    const badSnapshot = {
+      files: {
+        [path]: { sha256: hashContent(content), diagnostics: [priorRule] },
+      },
+    }
+    expect(
+      matchCompilerDebt(
+        [{ path, fingerprint: priorRule }],
+        badSnapshot,
+        () => content
+      ).size
+    ).toBe(0)
+  })
+
+  test('matched compiler debt does not hide another rule, new file or process failure', () => {
+    const observations = [
+      { path, fingerprint: item },
+      { path, fingerprint: fingerprint({ code: 'react(exhaustive-deps)' }) },
+      { path: 'src/new.tsx', fingerprint: { ...item } },
+    ]
+    const result = evaluateLintCi({
+      baseline: { ...baselineMeta, files: {} },
+      lintResult: { diagnostics: observations, numberOfFiles: 2 },
+      exitCode: 2,
+      configHash: configSha256,
+      readFile: () => content,
+      compilerDebt: matchCompilerDebt(observations, snapshot, () => content),
+    })
+    expect(result.ok).toBe(false)
+    expect(result.failures).toHaveLength(3)
+    expect(result.failures.join('\n')).toContain('react(exhaustive-deps)')
+    expect(result.failures.join('\n')).toContain('src/new.tsx')
+    expect(result.failures.join('\n')).toContain('unexpected code 2')
+  })
+})
+
 describe('checked-in baseline', () => {
   const baseline = JSON.parse(readFileSync(baselinePath, 'utf8'))
 
@@ -568,7 +637,7 @@ describe('checked-in baseline', () => {
     expect(baseline.upstreamRevision).toBe(
       'b0bf2580e2491869ee9fe861c12b86153c3fe5f4'
     )
-    expect(baseline.oxlintVersion).toBe('1.74.0')
+    expect(baseline.oxlintVersion).toBe('1.94.0')
     expect(baseline.configSha256).toMatch(/^[0-9a-f]{64}$/)
     const entries = Object.entries(baseline.files)
     expect(entries.length).toBeGreaterThan(0)

@@ -3,7 +3,7 @@ module github.com/QuantumNous/new-api/tools/fingerprint-service
 go 1.27.4
 
 require (
-	github.com/Ikaleio/lm-detector/sdk/go v0.0.0
+	github.com/Ikaleio/lm-detector/sdk/go v0.2.0
 	github.com/stretchr/testify v1.12.1
 )
 

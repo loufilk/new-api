@@ -101,7 +101,7 @@ export function RequestPluginConfigField(props: RequestPluginConfigFieldProps) {
   const invalid = props.error ? true : undefined
   const error = props.error && (
     <FieldError className={layout === 'row' ? undefined : 'text-xs'}>
-      {t(props.error.message, props.error.values)}
+      {t(props.error.message, props.error.values ?? {})}
     </FieldError>
   )
   const label = (

@@ -12,7 +12,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/waffo-com/waffo-go/core"
+	"github.com/waffo-com/waffo-go/v2/core"
 	"gorm.io/gorm"
 )
 
@@ -71,6 +71,7 @@ func TestValidateWaffoPaymentCallbackRejectsAmountCurrencyIdentityMismatch(t *te
 	require.NoError(t, paymentcore.InsertTopUpWithBinding(topUp, binding))
 
 	base := &core.PaymentNotificationResult{
+		OrderStatus:      core.OrderStatusPaySuccess,
 		PaymentRequestID: tradeNo,
 		MerchantOrderID:  tradeNo,
 		AcquiringOrderID: "ACQ_SITE_1",

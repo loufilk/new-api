@@ -16,6 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+
+import * as React from 'react'
+
 import {
   type ColumnDef,
   type ColumnFiltersState,
@@ -28,18 +31,11 @@ import {
   type TableOptions,
   type Updater,
   type VisibilityState,
-  getCoreRowModel,
-  getExpandedRowModel,
-  getFacetedRowModel,
-  getFacetedUniqueValues,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  useReactTable,
-} from '@tanstack/react-table'
-import * as React from 'react'
+  consoleTableFeatures,
+  useConsoleTable,
+} from '@/lib/console-table'
 
-type DataTableFeatureOptions<TData> = Pick<
+type DataTableFeatureOptions<TData extends object> = Pick<
   TableOptions<TData>,
   | 'enableRowSelection'
   | 'getRowId'
@@ -88,15 +84,16 @@ type DataTableRowModelOptions = {
   withExpandedRowModel?: boolean
 }
 
-type UseDataTableOptions<TData> = DataTableFeatureOptions<TData> &
-  DataTableStateOptions &
-  DataTableRowModelOptions & {
-    data: TData[]
-    columns: ColumnDef<TData, unknown>[]
-    totalCount?: number
-    pageCount?: number
-    ensurePageInRange?: (pageCount: number) => void
-  }
+type UseDataTableOptions<TData extends object> =
+  DataTableFeatureOptions<TData> &
+    DataTableStateOptions &
+    DataTableRowModelOptions & {
+      data: TData[]
+      columns: ColumnDef<TData, unknown>[]
+      totalCount?: number
+      pageCount?: number
+      ensurePageInRange?: (pageCount: number) => void
+    }
 
 type ColumnSizingBounds = Record<
   string,
@@ -106,7 +103,7 @@ type ColumnSizingBounds = Record<
   }
 >
 
-type ColumnWithSizing<TData> = ColumnDef<TData, unknown> & {
+type ColumnWithSizing<TData extends object> = ColumnDef<TData, unknown> & {
   accessorKey?: string | number
   columns?: ColumnDef<TData, unknown>[]
 }
@@ -171,7 +168,7 @@ function readColumnVisibility(storageKey: string | undefined): VisibilityState {
   }
 }
 
-function getColumnId<TData>(column: ColumnDef<TData, unknown>) {
+function getColumnId<TData extends object>(column: ColumnDef<TData, unknown>) {
   const columnWithSizing = column as ColumnWithSizing<TData>
 
   if (typeof columnWithSizing.id === 'string') {
@@ -189,7 +186,7 @@ function getColumnId<TData>(column: ColumnDef<TData, unknown>) {
   return undefined
 }
 
-function buildColumnSizingBounds<TData>(
+function buildColumnSizingBounds<TData extends object>(
   columns: ColumnDef<TData, unknown>[]
 ): ColumnSizingBounds {
   return columns.reduce<ColumnSizingBounds>((bounds, column) => {
@@ -275,7 +272,9 @@ function readColumnSizing(
   }
 }
 
-export function useDataTable<TData>(options: UseDataTableOptions<TData>) {
+export function useDataTable<TData extends object>(
+  options: UseDataTableOptions<TData>
+) {
   const {
     data,
     columns,
@@ -377,7 +376,25 @@ export function useDataTable<TData>(options: UseDataTableOptions<TData>) {
       Boolean(options.sorting) ||
       Boolean(options.onSortingChange))
 
-  const table = useReactTable({
+  const features = React.useMemo(
+    () =>
+      consoleTableFeatures({
+        filter: withFilteredRowModel,
+        sort: withSortedRowModel,
+        paginate: withPaginationRowModel,
+        expand: withExpandedRowModel,
+        facet: withFacetedRowModel,
+      }),
+    [
+      withFilteredRowModel,
+      withSortedRowModel,
+      withPaginationRowModel,
+      withExpandedRowModel,
+      withFacetedRowModel,
+    ]
+  )
+  const table = useConsoleTable({
+    features,
     data,
     columns,
     rowCount: totalCount,
@@ -388,15 +405,19 @@ export function useDataTable<TData>(options: UseDataTableOptions<TData>) {
       columnSizing,
       rowSelection,
       expanded,
-      columnFilters: options.columnFilters,
-      globalFilter: options.globalFilter,
+      ...(options.columnFilters !== undefined && {
+        columnFilters: options.columnFilters,
+      }),
+      ...(options.globalFilter !== undefined && {
+        globalFilter: options.globalFilter,
+      }),
       pagination,
     },
     enableRowSelection: options.enableRowSelection,
     enableSorting: resolvedEnableSorting,
     getRowId: options.getRowId,
     getSubRows: options.getSubRows,
-    globalFilterFn: options.globalFilterFn,
+    ...(options.globalFilterFn && { globalFilterFn: options.globalFilterFn }),
     autoResetPageIndex: options.autoResetPageIndex,
     manualFiltering,
     manualPagination,
@@ -408,24 +429,13 @@ export function useDataTable<TData>(options: UseDataTableOptions<TData>) {
     onColumnSizingChange,
     onRowSelectionChange,
     onExpandedChange,
-    onColumnFiltersChange: options.onColumnFiltersChange,
-    onGlobalFilterChange: options.onGlobalFilterChange,
+    ...(options.onColumnFiltersChange && {
+      onColumnFiltersChange: options.onColumnFiltersChange,
+    }),
+    ...(options.onGlobalFilterChange && {
+      onGlobalFilterChange: options.onGlobalFilterChange,
+    }),
     onPaginationChange,
-    getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: withFilteredRowModel
-      ? getFilteredRowModel()
-      : undefined,
-    getPaginationRowModel: withPaginationRowModel
-      ? getPaginationRowModel()
-      : undefined,
-    getSortedRowModel: withSortedRowModel ? getSortedRowModel() : undefined,
-    getFacetedRowModel: withFacetedRowModel ? getFacetedRowModel() : undefined,
-    getFacetedUniqueValues: withFacetedRowModel
-      ? getFacetedUniqueValues()
-      : undefined,
-    getExpandedRowModel: withExpandedRowModel
-      ? getExpandedRowModel()
-      : undefined,
   })
 
   const actualPageCount = table.getPageCount()

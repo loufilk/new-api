@@ -1,0 +1,2031 @@
+{
+  "revision": "d89acdd4179a08c6b8f1957370720aa1877baa27",
+  "oxlintVersion": "1.94.0",
+  "configSha256": "e4d28b65d320733f66ff7052358d335a0291b1351b0733bec1b01f8d2f54f585",
+  "files": {
+    "src/components/activity-time-cell.tsx": {
+      "sha256": "87a3e4a44dad3ebb27fb00c05d83e4a17791f6cc2036c4b024b6012c7092636f",
+      "diagnostics": [
+        {
+          "code": "react(purity)",
+          "severity": "error",
+          "line": 57,
+          "column": 28,
+          "message": "Cannot call impure function during render"
+        }
+      ]
+    },
+    "src/components/ai-elements/code-block.tsx": {
+      "sha256": "1e10a541df1bfd52aa6f0df13221c1812d30101333a0b930e1c2b22fdbe2a38a",
+      "diagnostics": [
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 340,
+          "column": 31,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/components/ai-elements/web-preview.tsx": {
+      "sha256": "98bcea1085a25c30d9c99219d355a92c25238e70539849d684453a9a5a46440e",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 171,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/components/data-table/core/__tests__/pagination.test.tsx": {
+      "sha256": "1592686d119c48714f6435177c38c6855e3a812c2433fb261e86fe9e2e05bfe1",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 34,
+          "column": 17,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/components/data-table/hooks/use-data-table.ts": {
+      "sha256": "64a1795830f34e62b7f2abde9d47b3cd4f21ea9940cce597e333a71c414963e4",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 380,
+          "column": 17,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/components/data-table/hooks/use-debounced-column-filter.ts": {
+      "sha256": "26bbef97d24bd38070a9aa89d5557d0ad087c40af15d2dc7f970086dabed9eb8",
+      "diagnostics": [
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 46,
+          "column": 27,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/components/data-table/toolbar/__tests__/mobile-filter.test.tsx": {
+      "sha256": "8b20ddf8afbe0ce4d5bfbacfff2d4802e715487be8bb7b92de8b4228a70243b7",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 47,
+          "column": 17,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/components/datetime-picker.tsx": {
+      "sha256": "74c35d4eef7149ec7133f093755ca10ab3c1c90bed4224e9c81d1c575b8fc837",
+      "diagnostics": [
+        {
+          "code": "react(purity)",
+          "severity": "error",
+          "line": 62,
+          "column": 23,
+          "message": "Cannot call impure function during render"
+        },
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 69,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/components/floating-window.tsx": {
+      "sha256": "8839c3e7671a8848bec57c5a6a927e918cf2a5a767182c411b65fca938fda1d7",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 227,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/components/json-code-editor.tsx": {
+      "sha256": "4653c87b5283691ec921c2adbf3d012df9bf90bd799021c50ff323fec12ffc62",
+      "diagnostics": [
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 99,
+          "column": 17,
+          "message": "Cannot access refs during render"
+        },
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 100,
+          "column": 20,
+          "message": "Cannot access refs during render"
+        },
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 101,
+          "column": 18,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/components/layout/components/app-header.tsx": {
+      "sha256": "545388cb22822a185c670bd2e2f4b7ca29d8f9e2035a8707ce215bdce5fe2b84",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 134,
+          "column": 21,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/components/layout/components/footer.tsx": {
+      "sha256": "d41c753b56e558e5fc5c64baa2d51618a9ec06a5be743d65e9bf87da1ac82724",
+      "diagnostics": [
+        {
+          "code": "react(purity)",
+          "severity": "error",
+          "line": 185,
+          "column": 23,
+          "message": "Cannot call impure function during render"
+        }
+      ]
+    },
+    "src/components/layout/components/public-header.tsx": {
+      "sha256": "3dc03091620327ef30aa7b35bebcfc16a8459709692e94218565fc1db90229e4",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 158,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/components/password-strength.tsx": {
+      "sha256": "91cb97ecc419eb677fd66e2087e828afc603f6068b5eefd1f5a6038b133fdc57",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 203,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/extensions/chuanapi/account-pool/index.tsx": {
+      "sha256": "afa7d3da3d34aaf27553e7cfb19bfea8f0a56d2a094b05d2780bd06575aa618a",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 120,
+          "column": 17,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/extensions/chuanapi/intelligence/budget-dialog.tsx": {
+      "sha256": "3427e8c92cbfe28644d420aacc4f05918a0b53ea6e879607382bed9a2d279e94",
+      "diagnostics": [
+        {
+          "code": "react(purity)",
+          "severity": "error",
+          "line": 35,
+          "column": 31,
+          "message": "Cannot call impure function during render"
+        }
+      ]
+    },
+    "src/extensions/chuanapi/intelligence/index.tsx": {
+      "sha256": "b8ea8dd1e2bd4067a1fe0455f25f79cd24c1f17e820c7cbdd12cf15682f4b9f5",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 83,
+          "column": 34,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/extensions/chuanapi/intelligence/use-model-test.ts": {
+      "sha256": "22670298a8be163f75189aafbc6fc7d4d9f03b14f30198f94d35a54ec8cd0112",
+      "diagnostics": [
+        {
+          "code": "react(immutability)",
+          "severity": "error",
+          "line": 226,
+          "column": 7,
+          "message": "This value cannot be modified"
+        }
+      ]
+    },
+    "src/extensions/chuanapi/invoice/admin/settings-dialog.tsx": {
+      "sha256": "cd3774280584a4f281a46a00774ab8dfe918d7eb26f1b9b2c0b2cc303b9c9882",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 90,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        },
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 120,
+          "column": 36,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/extensions/chuanapi/new-user-benefit/benefit-settings.tsx": {
+      "sha256": "f46e140354f35e41e5538a8994c36a1e717db4110d08d51129c192b5d1dd3e52",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 117,
+          "column": 18,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/extensions/chuanapi/payment/payment-method-dialog.tsx": {
+      "sha256": "21e7922996496c5ca6fc0b4da8fd41c6cbea7ab570507c420fd25d72c22108cd",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 126,
+          "column": 21,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/extensions/chuanapi/payment/payment-settings-section.tsx": {
+      "sha256": "49d19a1894f07de0503a057121ab8c3702f38faabdda063f39c72a17032f0e0d",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 846,
+          "column": 29,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/extensions/chuanapi/wallet/components/recharge-form-card.tsx": {
+      "sha256": "0c248b8a9ebf5197e6b5fb7b64e3c7f5e6dd04a63b8bcd4544d78e4a76d114e2",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 120,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/extensions/chuanapi/wallet/index.tsx": {
+      "sha256": "36e56272c2c969d25510ae20eeccf39a41b6826de6e436c5a414632b8ff0b02f",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 119,
+          "column": 10,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/about/index.tsx": {
+      "sha256": "f695ef36277360c199e3277f2ff3af82cd2078ea51f98f048b817fdd1ced38ec",
+      "diagnostics": [
+        {
+          "code": "react(purity)",
+          "severity": "error",
+          "line": 33,
+          "column": 23,
+          "message": "Cannot call impure function during render"
+        }
+      ]
+    },
+    "src/features/agent-platform/hooks/use-request-id.ts": {
+      "sha256": "90969c3e38cd78ce52e875e0398135c1a7b2174c62b3b3ffeb32671bbcc19ca5",
+      "diagnostics": [
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 31,
+          "column": 24,
+          "message": "Cannot access refs during render"
+        },
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 31,
+          "column": 34,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/features/auth/components/session-recovery-error.tsx": {
+      "sha256": "ee6c59c595759c43d0496351ba3eef8b04879fd71202f67d611ecb95db237b51",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 40,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/auth/hooks/use-oauth-login.ts": {
+      "sha256": "5896805a7a05470338064fd67f964d7aea300f1a3106945f9b4fb84013a25a42",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 53,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/auth/otp/components/otp-form.tsx": {
+      "sha256": "2bbca62ce4fb32e89922f72236288b391517d9030cb7b415527b87e7be70e8d2",
+      "diagnostics": [
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 37,
+          "column": 19,
+          "message": "Cannot access refs during render"
+        },
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 40,
+          "column": 28,
+          "message": "Cannot access refs during render"
+        },
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 89,
+          "column": 6,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/features/auth/passkey/hooks/use-passkey-management.ts": {
+      "sha256": "c8a5c126aa73bb87525b5d2c80a8753d35e92bae77dd0995d2ab99174c4d51f9",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 71,
+          "column": 10,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/auth/sign-in/components/user-auth-form.tsx": {
+      "sha256": "d1da1b0450a02cead76236050cc2c67a8a6b408903949e190d8e506886e1ffd0",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 129,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/auth/sign-up/components/sign-up-form.tsx": {
+      "sha256": "d50795147f1a36e3bdd43ef107aee6661c4c391fde4fbcada808e3ad74a5e041",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 110,
+          "column": 22,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/channels/components/__tests__/channel-plugin-config-fields.test.tsx": {
+      "sha256": "f3c4f68ee0a4fa6ad77e6dd7d97fdd512ad5ac599d65c4b59f91cf24c75983da",
+      "diagnostics": [
+        {
+          "code": "react(globals)",
+          "severity": "error",
+          "line": 66,
+          "column": 3,
+          "message": "Cannot reassign variables declared outside of the component/hook"
+        }
+      ]
+    },
+    "src/features/channels/components/__tests__/channels-columns-status-tooltip-content.test.tsx": {
+      "sha256": "bc85b569147c74a65972d44efb741ec092adf582231c70b8efcc9cb9834d6ea9",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 34,
+          "column": 17,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/channels/components/channels-table.tsx": {
+      "sha256": "0a8c14c3266a53f48b311ad6fbdbfb84e4b22bdaab35fc1004902891a21c2670",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 339,
+          "column": 22,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        },
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 524,
+          "column": 13,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/features/channels/components/dialogs/edit-tag-dialog.tsx": {
+      "sha256": "c22cf4646c5653accaf51c5439b52e4c96073ad7f07fa993941fc3144b9484ab",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 97,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/channels/components/dialogs/param-override-editor-dialog.tsx": {
+      "sha256": "3c74d7729b4019884d3e0752dfb5d181c798695970996a47b2dbe43e53fd36ba",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 1206,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        },
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 1228,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/channels/components/drawers/channel-configuration.tsx": {
+      "sha256": "7153409cab58e88c8d916bdab9810e393db12a3b4a14156cf874e779795d90b4",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 99,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/channels/components/drawers/channel-provider-picker.tsx": {
+      "sha256": "ee5b1ec6dea4c97253d4212c349f2ba8f1a2be9e86a1f1d905d005f996441f35",
+      "diagnostics": [
+        {
+          "code": "react(preserve-manual-memoization)",
+          "severity": "error",
+          "line": 183,
+          "column": 6,
+          "message": "Existing memoization could not be preserved"
+        }
+      ]
+    },
+    "src/features/channels/components/model-mapping-editor.tsx": {
+      "sha256": "37d8a1264999d0c87a086a67a12a32b35963e7fbb5f17db8036caa20c0e2d949",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 208,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/channels/hooks/use-channel-key-disclosure.ts": {
+      "sha256": "69dc03eed38edb9973ba042a6d0281098c90f192daafa347d1ec6b06576751f8",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 46,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/channels/hooks/use-channel-model-discovery.ts": {
+      "sha256": "1fb0d6781a64320f8cb9ffc797891ac0cb945d8f37a919b5135d17b753ba6950",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 49,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/channels/hooks/use-channel-priority-drag.ts": {
+      "sha256": "90743d5ab0f37d748e9032883faefa6782eeb15cd1a1dc90db067a5ef108fda6",
+      "diagnostics": [
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 143,
+          "column": 9,
+          "message": "Cannot access refs during render"
+        },
+        {
+          "code": "react(immutability)",
+          "severity": "error",
+          "line": 484,
+          "column": 11,
+          "message": "This value cannot be modified"
+        },
+        {
+          "code": "react(immutability)",
+          "severity": "error",
+          "line": 619,
+          "column": 47,
+          "message": "Cannot access variable while it is being initialized"
+        }
+      ]
+    },
+    "src/features/channels/hooks/use-channel-priority-order.ts": {
+      "sha256": "ab90a2318e7a4eae19e54cb07dc30ccfc7420c2a45bc1f767a0f601716e6ecb0",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 218,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/channels/hooks/use-plugin-login.ts": {
+      "sha256": "5020bea69b0ddb05be0e5da672e0db8c7c70a87df57df838074f4c52b5d196ae",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 113,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/channels/hooks/use-redirect-panel-placement.ts": {
+      "sha256": "70f64649df719ee70a84d831477cf5329f81f98b0762caf81b65123b81542b79",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 49,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/dashboard/components/flow/flow-charts.tsx": {
+      "sha256": "ecb055fc8746e633fbb8b3c4143af1eb3a137b357a56b13d7855579c9f578228",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 292,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/dashboard/components/models/consumption-distribution-chart.tsx": {
+      "sha256": "c050b595c0ea5afc5d0ced3346a7389c6d41df8b6cbf2f6519dacf4556806679",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 79,
+          "column": 33,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/dashboard/components/models/model-charts.tsx": {
+      "sha256": "7c79026ec862e5daabe9b4f3ea14657ec31a61ec82ca6b5bb2c963ffeb43e151",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 77,
+          "column": 32,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/dashboard/hooks/use-performance-summary.ts": {
+      "sha256": "8b9b89c95fafaa4c47083f34365c11fb3a4a4c8f814fecf0dcb31133cc3e7f41",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 49,
+          "column": 24,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/image-generation/hooks/use-image-data.ts": {
+      "sha256": "b6e5704c077c294f5143c89f53ae3ba48312a36b6177e1cd4b2e2572f1468e8e",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 81,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        },
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 87,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/image-generation/hooks/use-image-history.ts": {
+      "sha256": "1974608bc5d2bbcd8204fb9eced8750ddfacfc41a01aa4317aa14109760ecc68",
+      "diagnostics": [
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 568,
+          "column": 36,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/features/keys/components/__tests__/api-key-listing.test.tsx": {
+      "sha256": "eb88e1ebee3b52dc8cef165f339eeea9cf494d8d24b95555f2e62f868e5e8dec",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 111,
+          "column": 17,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/keys/components/api-key-group-combobox.tsx": {
+      "sha256": "e7fd1f5fd24b3a4a17d9b5c68a0b7a36c2c8c1860f9f8053a2356bbb70bfa48d",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 96,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/keys/components/api-key-group-presets.tsx": {
+      "sha256": "af82b339f34503fd885f3c60fa2fa08b84e6106166bdcfae26e77ef7bfe4e63a",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 56,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/keys/components/api-keys-mutate-drawer.tsx": {
+      "sha256": "061d8a804a6ece3900942a8ebd687b3aac69e50142e58b4c3af03eb334f752ed",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 291,
+          "column": 24,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/keys/components/dialogs/cc-switch-dialog.tsx": {
+      "sha256": "7b4d30b860c957d2df4bfdc2bb0ef70d7bcca97012cc5ed3044e492c5dfdf25a",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 80,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/model-pricing/model-pricing-panel.tsx": {
+      "sha256": "6ec442acf54e37cf4324e8bb8ddb08000e0d86ef5147d30125537d5c92438ceb",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 86,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/model-pricing/pricing-amount-input.tsx": {
+      "sha256": "90a33f771bcabc1731556b5bea446e37961ad65efce8fbc523016f46d5d2c4f6",
+      "diagnostics": [
+        {
+          "code": "react(immutability)",
+          "severity": "error",
+          "line": 91,
+          "column": 26,
+          "message": "Cannot modify local variables after render completes"
+        }
+      ]
+    },
+    "src/features/models/__tests__/model-listing.test.tsx": {
+      "sha256": "8b19f5325a27a6f0f49edc5c26a41344894ddb902ca315b91eb8f911645d9de9",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 99,
+          "column": 17,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/models/components/dialogs/create-deployment-drawer.tsx": {
+      "sha256": "89dd66c9873a7dc62f3209dc40d64dd29eca0a3e7f98f6dfe891d3a0c97b6615",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 137,
+          "column": 22,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/models/components/dialogs/extend-deployment-dialog.tsx": {
+      "sha256": "bc432e4e1943192d3c117094daed8df3b43bd9e9d7947a5ecb4420520730579c",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 55,
+          "column": 15,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/models/components/dialogs/prefill-group-management-dialog.tsx": {
+      "sha256": "f248208db38645dda269ae1e0a6de418401719ea6c62a2424bd66c6a9f3d07e4",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 133,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/models/components/dialogs/rename-deployment-dialog.tsx": {
+      "sha256": "7c109b000dd3842fb09a26425b3ae5d892d705c0fc207c8e8d2f71287dd6b347",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 51,
+          "column": 15,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/models/components/dialogs/vendors-management-dialog.tsx": {
+      "sha256": "0e00a0b229d8f3b673c918ab1e4c9f89b3999e13169e7c8b26dd6bee155e05ec",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 60,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/models/components/drawers/model-mutate-drawer.tsx": {
+      "sha256": "3f3b8349b82404daebf711208625c410dd697f9e451a4d4feaa6e80fe990ee9b",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 130,
+          "column": 31,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/models/components/drawers/prefill-group-form-drawer.tsx": {
+      "sha256": "8faae19f60acd156a2050d5303c529178953a999d8bcd315f47bf36a2470e22e",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 106,
+          "column": 24,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/playground/hooks/use-stream-request.ts": {
+      "sha256": "b58da5fb3100cac6a4598be76ecb01ed0e43b6256b028afd6a780fb1dd62e020",
+      "diagnostics": [
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 196,
+          "column": 8,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/features/profile/components/checkin-calendar-card.tsx": {
+      "sha256": "d7eac48de57ec8da9c049fa9154bdb62f98764e84f366ec7c2ec12f15633f6a5",
+      "diagnostics": [
+        {
+          "code": "react(purity)",
+          "severity": "error",
+          "line": 123,
+          "column": 15,
+          "message": "Cannot call impure function during render"
+        },
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 134,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/profile/components/language-preferences-card.tsx": {
+      "sha256": "ad2c954f032c633a57b973cf48317b6e161228434101dde4479715357a1aad0f",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 56,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/profile/components/tabs/notification-tab.tsx": {
+      "sha256": "0481f11f3288e0bd798d468672a338a76faeaa31aed1f80332199f5ed5d442e8",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 111,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/profile/hooks/use-profile.ts": {
+      "sha256": "d60943aa9581156ccfe7fdbac9a670e255c2920d6e2515f758b0637dab54c948",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 122,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/redemption-codes/components/redemptions-mutate-drawer.tsx": {
+      "sha256": "a22662c653fed339bfe335fee1213ea0aa552141761985ffba2e75d1e39f6c3e",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 160,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/security/components/access-tokens-card.tsx": {
+      "sha256": "bdce6b4704ee315abe297f3c0f18f12ccba76305f04795823e2013d5ad2d8a04",
+      "diagnostics": [
+        {
+          "code": "react(purity)",
+          "severity": "error",
+          "line": 92,
+          "column": 15,
+          "message": "Cannot call impure function during render"
+        }
+      ]
+    },
+    "src/features/security/components/account-bindings.tsx": {
+      "sha256": "27e614ba386d5363f8bf4d23012f61d07b17546ea116e0c1af43d9c90d7b1fe3",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 128,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        },
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 242,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/security/components/dialogs/access-token-create-dialog.tsx": {
+      "sha256": "20ae1b10731dcc92fb26d553840c2d9c90cf44acfd96c42d48c1b4eee140ea9c",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 66,
+          "column": 18,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/security/components/dialogs/delete-account-dialog.tsx": {
+      "sha256": "c4bed4fe43fb302bb90a248124ecc5e20999754fec763a0ae701eba7a0e05eab",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 50,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/security/components/dialogs/email-bind-dialog.tsx": {
+      "sha256": "b7ce76b5f83563c6434710f363bea6df1e37bcc4a5fd296548a5f9b4214025fb",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 88,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        },
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 96,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        },
+        {
+          "code": "react(purity)",
+          "severity": "error",
+          "line": 123,
+          "column": 17,
+          "message": "Cannot call impure function during render"
+        }
+      ]
+    },
+    "src/features/security/components/dialogs/telegram-bind-dialog.tsx": {
+      "sha256": "bbe40555395c4b741126dc78123b71b6d76773a4ff6e489d75da2deed14027db",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 84,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/security/components/dialogs/two-fa-backup-dialog.tsx": {
+      "sha256": "3cc464203c2040a8d983f7965f06bd4c7b760f5a684ce0add26f06fb923e5afa",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 46,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/security/components/dialogs/two-fa-disable-dialog.tsx": {
+      "sha256": "e999e6ef5ddf9b053aeef119dc58b45aad72436f99ca642850964077905728be",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 47,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/security/components/passkey-card.tsx": {
+      "sha256": "c7f5e2002c11a4708d4ad239f4c62e63d131a4a94b1341aca463a48324606a2e",
+      "diagnostics": [
+        {
+          "code": "react(preserve-manual-memoization)",
+          "severity": "error",
+          "line": 109,
+          "column": 6,
+          "message": "Existing memoization could not be preserved"
+        }
+      ]
+    },
+    "src/features/security/components/privacy-card.tsx": {
+      "sha256": "5aa6ae22eac466c56e5a4806c5319fc178076597e9b843681478a5b5530aaa62",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 46,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/security/hooks/use-two-fa.ts": {
+      "sha256": "9b32840e46d8402292d1bf07a5ee4e39b2fd7b249eb94411e3dc6155b96ef624",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 56,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/subscriptions/components/dialogs/reset-subscriptions-dialog.tsx": {
+      "sha256": "ad7fbb4ca2bf6cfbed232e2bd92c0e352ee2350d3d43caeb27754f7fe7b30af8",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 40,
+          "column": 17,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/subscriptions/components/dialogs/subscription-purchase-dialog.tsx": {
+      "sha256": "8ef9d6f90bf02c02d5c6d5bfe083bd904d523372ab75cecb7276b7e4b2f4bf70",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 73,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/subscriptions/components/dialogs/user-subscriptions-dialog.tsx": {
+      "sha256": "9c7fa42c8c13b39038b1186569794ceb5ac9c2481e9a00f652db1c245b6eaac8",
+      "diagnostics": [
+        {
+          "code": "react(preserve-manual-memoization)",
+          "severity": "error",
+          "line": 157,
+          "column": 6,
+          "message": "Existing memoization could not be preserved"
+        },
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 161,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/subscriptions/components/subscriptions-mutate-drawer.tsx": {
+      "sha256": "b732a5aca71bd4309f7f7b98212b17da0dcf61aa33bc89eb74e000ab7892f641",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 153,
+          "column": 24,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/support/components/create-ticket-dialog.tsx": {
+      "sha256": "a3a0cf352dba3bf20a356f79e92d6c25303932244de3f0e5750f2529a8e9a301",
+      "diagnostics": [
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 76,
+          "column": 18,
+          "message": "Cannot access refs during render"
+        },
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 90,
+          "column": 36,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/features/support/components/support-attachments.tsx": {
+      "sha256": "fa44d37fa2a0c920dfdf0a1cc8e895cd065e05d880040a55f9a1f7553f81cbd2",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 52,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/support/components/ticket-detail.tsx": {
+      "sha256": "c99ad38fd38dc722d96f326f17cede105ffd7442ed267114c6f7841596fd1440",
+      "diagnostics": [
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 85,
+          "column": 41,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/features/support/index.tsx": {
+      "sha256": "af4c91b29ba77967160c5eb5f975d1878aa21967d007ff6b355bcdc4b64158d2",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 84,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/system-settings/auth/oauth-section.tsx": {
+      "sha256": "a665438230f33238062f465563bb067c62f76c4fa4e6c0dfcba88700c9bb52f4",
+      "diagnostics": [
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 446,
+          "column": 53,
+          "message": "Cannot access refs during render"
+        },
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 448,
+          "column": 41,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/features/system-settings/auth/passkey-section.tsx": {
+      "sha256": "5faf0da61983efe8e47757ff58f43fc8c6565199af8156fce4f352cfd8bb16cb",
+      "diagnostics": [
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 337,
+          "column": 51,
+          "message": "Cannot access refs during render"
+        },
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 339,
+          "column": 39,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/features/system-settings/components/settings-page-context.tsx": {
+      "sha256": "5587d0391d8006e974faf1b4248853951c656d1af2c8f4898d86b4213daa8393",
+      "diagnostics": [
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 139,
+          "column": 18,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/features/system-settings/content/account-pool-section.tsx": {
+      "sha256": "1abc6ddba2183425261e80553d57651c29c0c68885bbd9300d539067230e4544",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 55,
+          "column": 36,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/system-settings/content/announcements-section.tsx": {
+      "sha256": "4132de67ade28a11880d53e81f2295b81104ef5ed8dc381a3d3052056a0b1163",
+      "diagnostics": [
+        {
+          "code": "react(purity)",
+          "severity": "error",
+          "line": 163,
+          "column": 20,
+          "message": "Cannot call impure function during render"
+        },
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 173,
+          "column": 9,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        },
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 186,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/system-settings/content/chat-settings-section.tsx": {
+      "sha256": "2a64e5d52713613eae65281ebfaea397a27ebded850e2415d1b0f90f45ed0717",
+      "diagnostics": [
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 136,
+          "column": 39,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/features/system-settings/content/dashboard-section.tsx": {
+      "sha256": "5b12ef58afab834dfc79240658060833df237bd74622e9e34c4aeba4269bc8fe",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 97,
+          "column": 21,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/system-settings/content/faq-section.tsx": {
+      "sha256": "72019083e9bad027407c85cd93747f9ed41c3da55ab58ca7bd63fcd8d6463140",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 109,
+          "column": 9,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        },
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 122,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/system-settings/content/json-toggle-section.tsx": {
+      "sha256": "c985a79942835867e2db1e46dd8cd721385df5c509e31a0484be14c059ff0b35",
+      "diagnostics": [
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 170,
+          "column": 39,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/features/system-settings/content/model-test-section.tsx": {
+      "sha256": "f96ab81896b7cf53753b9553045056a2cddd22f0fe40ead177418b526a333938",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 93,
+          "column": 18,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/system-settings/content/uptime-kuma-section.tsx": {
+      "sha256": "d1afa8d434d4236b9def75556d0c6d6a17c008d5e8295050db2deaeae2f83e00",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 118,
+          "column": 9,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        },
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 131,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/system-settings/general/checkin-settings-section.tsx": {
+      "sha256": "58aab3c2fbe2a763049f8b3f7834fca8e6551d5a66f3c55d77977d6cf605c8a9",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 76,
+          "column": 19,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/system-settings/integrations/amount-discount-dialog.tsx": {
+      "sha256": "dee9cfe5a9417da7d2d7a99abb952e99beb23c228471a18bb387abf35039e339",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 86,
+          "column": 24,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/system-settings/integrations/ionet-deployment-settings-section.tsx": {
+      "sha256": "3c6de799d592ad0e62fbac290bd78c2689cc7c4c6fa7ba2833ba37a5024af4d4",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 79,
+          "column": 19,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/system-settings/integrations/monitoring-settings-section.tsx": {
+      "sha256": "33f3a57956baa869310d2e4fe266aeb72ddffd417cfac9866efe7d6721694c35",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 146,
+          "column": 30,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/system-settings/maintenance/header-navigation-section.tsx": {
+      "sha256": "44bf9f3d321d0573f3c1fde4fb4e52de10011f5aaa3c68b0953456db5d0b2f67",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 286,
+          "column": 40,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/system-settings/maintenance/performance-section.tsx": {
+      "sha256": "5e1c8fcb5bdab596abcfa63084c7331331a621314407e82662fc3a08fd2734c1",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 299,
+          "column": 23,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/system-settings/maintenance/server-log-files.tsx": {
+      "sha256": "06d42cc26dbceb47284a9c79fb6ab9fe40eff8db23d09806ba35526733033112",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 87,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/system-settings/maintenance/sidebar-modules-section.tsx": {
+      "sha256": "e50e175c76e72a41cb746ca06d16ff4507749b6e9c9ebbce1d63aa12d08553ce",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 269,
+          "column": 36,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/system-settings/models/channel-selector-dialog.tsx": {
+      "sha256": "02da4d7df2e45ed82fab8180b262d8c08cbc5dee2d80ad179bda6d50367c0bdf",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 90,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/system-settings/models/claude-settings-card.tsx": {
+      "sha256": "4dd46db77fc923f23f57abd39f355aa5790513677e401659386adbe3a7e9040c",
+      "diagnostics": [
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 189,
+          "column": 39,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/features/system-settings/models/draft-number-input.tsx": {
+      "sha256": "93f5eeb1ebf30cfcdc6eb414b939b604c68583a386c88505e3ca7b837945e3a6",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 71,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/system-settings/models/gemini-settings-card.tsx": {
+      "sha256": "f302393cf09703c7c941f6626232ffd6c603d81e841de06c6392a3fb0e911730",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 192,
+          "column": 28,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/system-settings/models/global-settings-card.tsx": {
+      "sha256": "f6f00a16a8664218a5111b772adcc6a09d745b77f5cf5e79e2fdaac14251c12a",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 163,
+          "column": 23,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/system-settings/models/grok-settings-card.tsx": {
+      "sha256": "347d181fb92f5139be60b7596a051ec3b4ebee2256b60e53a89f32e31989ef2a",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 138,
+          "column": 19,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/system-settings/models/group-ratio-form.tsx": {
+      "sha256": "bb195b652fd798fdbcdc26408fe804814ebb4a887dd9bfda986834619cb7bcf4",
+      "diagnostics": [
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 377,
+          "column": 40,
+          "message": "Cannot access refs during render"
+        },
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 494,
+          "column": 53,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/features/system-settings/models/group-ratio-visual-editor.tsx": {
+      "sha256": "dee6e67aef416fb3f04b8646f3433125d4cb27ebb0e7ba05f7279e41a6c3bbcb",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 535,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        },
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 1205,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/system-settings/models/ratio-settings-card.tsx": {
+      "sha256": "58afce19aac9c49750bd4d5c1be52696ef33dc2f190cf47fa0f308a3ad17295e",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 242,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        },
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 299,
+          "column": 5,
+          "message": "Cannot access refs during render"
+        },
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 394,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        },
+        {
+          "code": "react(preserve-manual-memoization)",
+          "severity": "error",
+          "line": 640,
+          "column": 6,
+          "message": "Existing memoization could not be preserved"
+        }
+      ]
+    },
+    "src/features/system-settings/models/request-simulation.tsx": {
+      "sha256": "60238c6095b84462802b7a082ea5ef4dfeb28a45d57c803d37ae6d993085428e",
+      "diagnostics": [
+        {
+          "code": "react(preserve-manual-memoization)",
+          "severity": "error",
+          "line": 111,
+          "column": 18,
+          "message": "Existing memoization could not be preserved"
+        },
+        {
+          "code": "react(purity)",
+          "severity": "error",
+          "line": 144,
+          "column": 40,
+          "message": "Cannot call impure function during render"
+        }
+      ]
+    },
+    "src/features/system-settings/models/tier-price-fields.tsx": {
+      "sha256": "e1188d23506b1932320e71a9b1e625d70abd471314d16111c50b03254b3d33cc",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 150,
+          "column": 26,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/system-settings/models/upstream-ratio-sync.tsx": {
+      "sha256": "8652f5a48fcce2c7836c477a1f6521afd29c867c0ee1122200a88cf335b57aa2",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 149,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/system-settings/models/visual-billing-document-editor.tsx": {
+      "sha256": "7495dc066f5c096405500a3a1d6ebe3d305b5a9bb4b7e260d74280c38906ebab",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 235,
+          "column": 20,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/system-settings/request-limits/ssrf-section.tsx": {
+      "sha256": "6f1f8fc55f63da92e98f33a01ff74662f939d01ae01beb21548b919ffd12bb24",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 204,
+          "column": 28,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/system-settings/request-policies/channel-health-section.tsx": {
+      "sha256": "df52bd1fa2309500ed35002fc0135a8af63986013ee07252595c0f77ca9d0fe8",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 248,
+          "column": 34,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/system-settings/request-policies/request-checks-section.tsx": {
+      "sha256": "46c13234bb54870ca73a2293f0b90af051fc95b7265333d1c5b242d2797141ec",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 177,
+          "column": 36,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/task-plugins/__tests__/plugin-card.test.tsx": {
+      "sha256": "d804dffa54a480f594a8723f73bc1a7df847953826382b4e4d3e1aec5a3a7445",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 81,
+          "column": 17,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/task-plugins/components/marketplace-sources-dialog.tsx": {
+      "sha256": "363c7e282a32a0bf818f36b8f2a05f28392c1cc9a275ce00408bff2310e0eacc",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 75,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/task-plugins/components/plugin-icon.tsx": {
+      "sha256": "e3817320450fd9d4b6db8d74a6ad8b6a91e1501440267df83fc95ba9d0608a7a",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 63,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/task-plugins/components/request-plugin-try-panel.tsx": {
+      "sha256": "5799ec54a677a4cab62a806a072ce3f3326b12e41b3dc8181f7fabdd1b899058",
+      "diagnostics": [
+        {
+          "code": "react(use-memo)",
+          "severity": "error",
+          "line": 564,
+          "column": 25,
+          "message": "Expected the first argument to be an inline function expression"
+        }
+      ]
+    },
+    "src/features/usage-logs/components/__tests__/detail-preview.test.tsx": {
+      "sha256": "bc9946cf9a8f90c13e5dc525a7ecc278fc8f5359a9b02be7358e081fcd2d730c",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 90,
+          "column": 17,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/usage-logs/components/__tests__/group-filter.test.tsx": {
+      "sha256": "8b2082d3aced00fc657c35652b0b7ee6ecbf1bb5e8a7a202346cac4227f1b1eb",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 63,
+          "column": 17,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/usage-logs/components/__tests__/log-type-filter.test.tsx": {
+      "sha256": "1ec76bfbeb2711dae252170ed06aae5c1f1ca9080e85b39fbf6ea6ad4e7bc221",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 44,
+          "column": 17,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/usage-logs/components/__tests__/mobile-filter.test.tsx": {
+      "sha256": "5ecc99ff3354353b10f3530ccf14aee329231d2c7d3bb115a8fd3d4e45172a08",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 62,
+          "column": 17,
+          "message": "Use of incompatible library"
+        },
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 190,
+          "column": 17,
+          "message": "Use of incompatible library"
+        },
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 232,
+          "column": 19,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/usage-logs/components/__tests__/quota-adjustment.test.tsx": {
+      "sha256": "21371d388f6391768c1bca2e70a7a20b1096304017c49d20938ef607f0210378",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 66,
+          "column": 17,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/usage-logs/components/__tests__/request-plugin-record.test.tsx": {
+      "sha256": "55bb677a6fe6e9d7a367f3e9b653ed3ad07949adcc782a69c5d07b2f5eef8ef7",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 173,
+          "column": 17,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/usage-logs/components/dialogs/export-logs-dialog.tsx": {
+      "sha256": "25d058c1a9f88d291c1ab87930ac66b77f14ebeb1bf3445002c9d04a18ca487a",
+      "diagnostics": [
+        {
+          "code": "react(purity)",
+          "severity": "error",
+          "line": 70,
+          "column": 32,
+          "message": "Cannot call impure function during render"
+        }
+      ]
+    },
+    "src/features/usage-logs/components/dialogs/user-info-dialog.tsx": {
+      "sha256": "5901f067768093062b83d9f860e6d6075e078d7febba46606870dc9453faf2cb",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 77,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/usage-logs/components/task-logs-filter-bar.tsx": {
+      "sha256": "0a238e102df2a93f4fa163c71b7a22a298b22efd9019f5b12fe8afd1f7a38916",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 102,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/users/call-interception/form.tsx": {
+      "sha256": "3ac2e941866175826f204399e2cde65a3459b1da37a7682051102929503632a6",
+      "diagnostics": [
+        {
+          "code": "react(refs)",
+          "severity": "error",
+          "line": 213,
+          "column": 34,
+          "message": "Cannot access refs during render"
+        }
+      ]
+    },
+    "src/features/users/call-interception/logs.tsx": {
+      "sha256": "5e98e35f04e9a196314f6bc8e9644befa032d911b89f03af3999cc673ad082ba",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 107,
+          "column": 17,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/users/components/__tests__/quota-display.test.tsx": {
+      "sha256": "027b1406ce6be12637c8b57c3acbbe94a8fef62f82880bba9dcb32dfe9967491",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 74,
+          "column": 17,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/features/users/components/dialogs/user-binding-dialog.tsx": {
+      "sha256": "3534295387cf6a8be21baae98324d471a2d28b87becebdafbafcf80dc103366e",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 216,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/features/users/components/users-mutate-drawer.tsx": {
+      "sha256": "e37c9531d8d13b0df84cd1dabe05c72c10df63a052dd8905fefd37a1ff42a456",
+      "diagnostics": [
+        {
+          "code": "react(incompatible-library)",
+          "severity": "error",
+          "line": 182,
+          "column": 27,
+          "message": "Use of incompatible library"
+        }
+      ]
+    },
+    "src/hooks/use-minimum-loading-time.ts": {
+      "sha256": "95cacd56798b37fac62c16f1de86b6f0c9fa8c31c71da822793d1414656ee56b",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 36,
+          "column": 7,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/hooks/use-mobile.ts": {
+      "sha256": "ef7819dca1b563a8c725701016e59eb93488e76db10389b6330be5b92b67b427",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 32,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/hooks/use-mobile.tsx": {
+      "sha256": "ef7819dca1b563a8c725701016e59eb93488e76db10389b6330be5b92b67b427",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 32,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/hooks/use-notifications.ts": {
+      "sha256": "3c99512ef7ad749f4ad0b79a7ef0c066a15068b522881280747fdcbb46408173",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 183,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    },
+    "src/lib/theme-radius.ts": {
+      "sha256": "90fad18b2047b9092287601abcf68ccf448972b927665deb7c9981d5926ef66c",
+      "diagnostics": [
+        {
+          "code": "react(set-state-in-effect)",
+          "severity": "error",
+          "line": 47,
+          "column": 5,
+          "message": "Calling setState synchronously within an effect can trigger cascading renders"
+        }
+      ]
+    }
+  }
+}

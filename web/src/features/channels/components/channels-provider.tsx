@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 /* eslint-disable react-refresh/only-export-components */
 import { useQueryClient } from '@tanstack/react-query'
-import type { OnChangeFn, SortingState } from '@tanstack/react-table'
 import React, {
   createContext,
   useContext,
@@ -27,6 +26,8 @@ import React, {
   useMemo,
   useEffect,
 } from 'react'
+
+import type { OnChangeFn, SortingState } from '@/lib/console-table'
 
 import { useChannelUpstreamUpdates } from '../hooks/use-channel-upstream-updates'
 import { channelsQueryKeys } from '../lib'

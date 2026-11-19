@@ -16,14 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type {
-  ColumnFiltersState,
-  OnChangeFn,
-  PaginationState,
-  RowSelectionState,
-  VisibilityState,
-  SortingState,
-} from '@tanstack/react-table'
+
 import { Copy, Plus } from 'lucide-react'
 import {
   useState,
@@ -57,6 +50,14 @@ import {
 import { usePricingData } from '@/features/pricing/hooks/use-pricing-data'
 import { splitPluginBillingExprKey } from '@/features/pricing/lib/plugin-pricing'
 import { useMediaQuery } from '@/hooks'
+import type {
+  ColumnFiltersState,
+  OnChangeFn,
+  PaginationState,
+  RowSelectionState,
+  VisibilityState,
+  SortingState,
+} from '@/lib/console-table'
 
 import { safeJsonParse } from '../utils/json-parser'
 import type { PricingMode } from './model-pricing-core'
@@ -731,9 +732,9 @@ const ModelRatioVisualEditorComponent = forwardRef<
   const hasRows = table.getRowModel().rows.length > 0
 
   let emptyStateText = t('No models configured. Use Add model to get started.')
-  if (table.getState().globalFilter) {
+  if (table.state.globalFilter) {
     emptyStateText = t('No models match your search')
-  } else if (table.getState().columnFilters.length > 0) {
+  } else if (table.state.columnFilters.length > 0) {
     emptyStateText = t('No models match the selected filters')
   } else if (filterMode === 'unset') {
     emptyStateText = candidateModelsLoading

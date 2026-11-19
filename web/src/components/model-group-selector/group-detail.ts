@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { TranslateText } from '@/i18n/translate'
 import { translateServerText } from '@/lib/server-error-message'
 
 export interface GroupDetailSource {
@@ -31,7 +32,7 @@ export interface GroupDetailSource {
  */
 export function formatGroupDetail(
   group: GroupDetailSource,
-  t: (key: string, options?: Record<string, unknown>) => string
+  t: TranslateText
 ): string {
   const description = group.desc
     ? translateServerText(t, group.desc)

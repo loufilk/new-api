@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { flexRender, type Cell } from '@tanstack/react-table'
+
 import { ChevronRight, KeyRound } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -28,6 +28,7 @@ import { StatusBadge, type StatusVariant } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
+import { flexRender, type Cell } from '@/lib/console-table'
 import dayjs from '@/lib/dayjs'
 import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
 
@@ -58,7 +59,7 @@ type LogField = {
 }
 
 /** Mobile summaries use tappable fields; desktop tooltip cells cannot reveal full text on touch. */
-export function CommonLogMobileCard<TData>(props: {
+export function CommonLogMobileCard<TData extends object>(props: {
   log: UsageLog
   cells: Map<string, Cell<TData, unknown>>
 }) {

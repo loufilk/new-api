@@ -16,11 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type {
-  ColumnDef,
-  Row,
-  Table as TanstackTable,
-} from '@tanstack/react-table'
+import * as React from 'react'
+
+import { PageFooterPortal } from '@/components/layout/components/page-footer'
+import { useMediaQuery } from '@/hooks'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -39,10 +38,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import * as React from 'react'
-
-import { PageFooterPortal } from '@/components/layout/components/page-footer'
-import { useMediaQuery } from '@/hooks'
+import type {
+  ColumnDef,
+  Row,
+  Table as TanstackTable,
+} from '@/lib/console-table'
 import { cn } from '@/lib/utils'
 
 import {
@@ -66,14 +66,14 @@ import { MobileCardList } from './mobile-card-list'
  * Pass-through configuration for the default {@link DataTableToolbar}.
  * Pass `toolbar` (ReactNode) instead to fully replace the default toolbar.
  */
-export type DataTablePageToolbarProps<TData> = Omit<
+export type DataTablePageToolbarProps<TData extends object> = Omit<
   React.ComponentProps<typeof DataTableToolbar<TData>>,
   'table'
 >
 
-export type DataTablePageProps<TData> = {
+export type DataTablePageProps<TData extends object> = {
   /**
-   * TanStack Table instance returned from `useReactTable`.
+   * TanStack Table instance returned from `useConsoleTable`.
    */
   table: TanstackTable<TData>
 
@@ -314,7 +314,9 @@ export type DataTablePageProps<TData> = {
  * For complex layouts (custom mobile, expanded rows, custom toolbar), use the
  * `toolbar` / `mobile` / `renderRow` slots instead of the `*Props` variants.
  */
-export function DataTablePage<TData>(props: DataTablePageProps<TData>) {
+export function DataTablePage<TData extends object>(
+  props: DataTablePageProps<TData>
+) {
   const isMobile = useMediaQuery('(max-width: 640px)')
   const showMobile = isMobile && !props.hideMobile
 
@@ -365,7 +367,7 @@ export function DataTablePage<TData>(props: DataTablePageProps<TData>) {
   )
 }
 
-function renderToolbar<TData>(
+function renderToolbar<TData extends object>(
   props: DataTablePageProps<TData>,
   viewToggle: React.ReactNode
 ): React.ReactNode {
@@ -388,7 +390,7 @@ function renderToolbar<TData>(
   return null
 }
 
-function renderPagination<TData>(
+function renderPagination<TData extends object>(
   props: DataTablePageProps<TData>
 ): React.ReactNode {
   if (props.showPagination === false) {
@@ -409,7 +411,7 @@ function renderPagination<TData>(
   )
 }
 
-function renderMobile<TData>(
+function renderMobile<TData extends object>(
   props: DataTablePageProps<TData>,
   showMobile: boolean,
   cardViewActive: boolean,
@@ -490,7 +492,7 @@ function renderMobile<TData>(
   return <div className='min-h-0 flex-1 overflow-y-auto'>{mobileContent}</div>
 }
 
-function renderDesktop<TData>(
+function renderDesktop<TData extends object>(
   props: DataTablePageProps<TData>,
   showMobile: boolean,
   cardViewActive: boolean,

@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { Table } from '@tanstack/react-table'
+
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -29,12 +29,13 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import type { Table } from '@/lib/console-table'
 
-type DataTableViewOptionsProps<TData> = {
+type DataTableViewOptionsProps<TData extends object> = {
   table: Table<TData>
 }
 
-export function DataTableViewOptions<TData>({
+export function DataTableViewOptions<TData extends object>({
   table,
 }: DataTableViewOptionsProps<TData>) {
   const { t } = useTranslation()

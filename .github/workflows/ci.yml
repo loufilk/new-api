@@ -8,6 +8,7 @@ on:
       - 'fix/im8-clean-review-20261119'
       - 'feat/customer-invoice-center-20261119'
       - 'fix/im16-latency-deps-20261119'
+      - 'fix/im18-dependency-migration-20261119'
   pull_request:
     types: [opened, synchronize, closed]
   workflow_dispatch:
@@ -27,7 +28,7 @@ jobs:
   backend:
     name: Backend vet, build, and test
     if: >-
-      !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119","feat/customer-invoice-center-20261119","fix/im16-latency-deps-20261119"]'), github.head_ref || github.ref_name) &&
+      !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119","feat/customer-invoice-center-20261119","fix/im16-latency-deps-20261119","fix/im18-dependency-migration-20261119"]'), github.head_ref || github.ref_name) &&
       (github.event.action != 'closed' || github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -125,7 +126,7 @@ jobs:
   frontend:
     name: Frontend typecheck and test
     if: >-
-      !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119","feat/customer-invoice-center-20261119","fix/im16-latency-deps-20261119"]'), github.head_ref || github.ref_name) &&
+      !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119","feat/customer-invoice-center-20261119","fix/im16-latency-deps-20261119","fix/im18-dependency-migration-20261119"]'), github.head_ref || github.ref_name) &&
       (github.event.action != 'closed' || github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -400,8 +401,8 @@ jobs:
         run: go build -ldflags "-X github.com/QuantumNous/new-api/common.Version=$(cat VERSION)" -o "$RUNNER_TEMP/new-api" .
 
   im16-latency:
-    name: im.16 latency fixes (PostgreSQL 18.7 and Redis 8.10)
-    if: ${{ (github.head_ref || github.ref_name) == 'fix/im16-latency-deps-20261119' && (github.event.action != 'closed' || github.event.pull_request.merged == true) }}
+    name: Latency and dependency migration (PostgreSQL 18.7 and Redis 8.10)
+    if: ${{ contains(fromJSON('["fix/im16-latency-deps-20261119","fix/im18-dependency-migration-20261119"]'), github.head_ref || github.ref_name) && (github.event.action != 'closed' || github.event.pull_request.merged == true) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
@@ -432,6 +433,7 @@ jobs:
       TEST_MODEL_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_model?sslmode=disable
       TEST_SECURITY_DIALECT: postgres
       AUDIT_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_fixture?sslmode=disable
+      TEST_AUTHZ_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_fixture?sslmode=disable
       TEST_AUTH_REDIS_DSN: redis://127.0.0.1:6379/0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -462,13 +464,19 @@ jobs:
           go test -tags api_only ./controller -run '^TestLog(ListRejectsUnboundedPagination|PageOptionalCountPostgres)$' -count=1 -v
           go test -tags api_only ./model -run '^Test(QuotaFlushPostgres|AuthCacheNativeHotPathUsesNoDatabaseQueries|AuthCacheNativeOrdinaryColdReadRechecksConcurrentRevocation)' -count=1 -v
           go test -tags api_only ./relay/channel/openai ./service -run 'TestNativeChat|TestOaiStream|TestAppendRelayLogAdminInfo' -count=1 -v
+      - name: Passkey, payment and protocol dependency contracts
+        if: ${{ (github.head_ref || github.ref_name) == 'fix/im18-dependency-migration-20261119' }}
+        run: |
+          go test -tags api_only ./controller -run '^(TestPasskey(LegacyCredentialColumns|FinishLegacySession|DomainsPreserveCredentialsAcrossVerificationFlows|DomainsRejectInvalidAssertions)|TestStripe(CheckoutMerchantContract|PaidWebhookPostgreSQL)|TestWaffo(CreationFailurePreservesSuccessfulWebhook|CreateOutcomePrecedesSignedWebhook|SDKFailureBeforeRequestMarksPendingFailed)|Test(TaskPlugin|BuiltInKling)Responses(Stream|NonStream)DecodesWithOfficialGoSDK)$' -count=1 -v
+          go test -tags api_only ./service/authz -run '^TestLegacyScopedPoliciesDoNotExpandPermissionsPostgreSQL$' -count=1 -v
+          go test ./service/passkey ./i18n -count=1
       - name: Build and verify the browser console
         working-directory: web
         run: |
           bun install --frozen-lockfile
           bun check -b --singleThreaded
           bun run lint:ci
-          bun run test src/features/usage-logs --maxWorkers=2
+          bun run test src/features/usage-logs src/features/channels src/components/data-table src/i18n --maxWorkers=2
           bun run build
       - name: Build the integrated gateway
         run: go build -mod=readonly .

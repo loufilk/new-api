@@ -25,11 +25,6 @@ import {
   RouterProvider,
 } from '@tanstack/react-router'
 import {
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-} from '@tanstack/react-table'
-import {
   act,
   cleanup,
   render,
@@ -47,6 +42,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { PageFooterProvider } from '@/components/layout/components/page-footer'
 import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
+import { flexRender, useConsoleTable } from '@/lib/console-table'
 import { Route as KeysRoute } from '@/routes/_authenticated/keys'
 import {
   DEFAULT_CURRENCY_CONFIG,
@@ -108,10 +104,9 @@ function QuotaTable(props: { apiKey: ApiKey }) {
   const columns = useApiKeysColumns(now).filter(
     (column) => column.id === 'quota'
   )
-  const table = useReactTable({
+  const table = useConsoleTable({
     columns,
     data: [props.apiKey],
-    getCoreRowModel: getCoreRowModel(),
   })
   return (
     <table>
@@ -741,6 +736,7 @@ it('freezes the confirmed deletion target when the server reorders the current p
   const { post } = await renderKeysPage()
   const user = userEvent.setup()
   await user.click(screen.getByRole('checkbox', { name: 'Select row' }))
+  expect(screen.getByRole('checkbox', { name: 'Select all' })).toBeChecked()
   await user.click(
     screen.getByRole('button', { name: 'Delete selected API keys' })
   )

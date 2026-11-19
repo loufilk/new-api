@@ -2,11 +2,12 @@ package common
 
 import (
 	"fmt"
+	"runtime"
 	"sync/atomic"
 	"time"
 
-	"github.com/shirou/gopsutil/cpu"
-	"github.com/shirou/gopsutil/mem"
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/mem"
 )
 
 // DiskSpaceInfo 磁盘空间信息
@@ -101,8 +102,15 @@ func collectSystemStatus(usage *containerUsage) SystemStatus {
 	}
 	if containerMemory, ok := usage.memoryUsage(); ok {
 		status.MemoryUsage = containerMemory
-	} else if memInfo, err := mem.VirtualMemory(); err == nil {
+	} else if memInfo, err := mem.VirtualMemory(); err == nil && memInfo.Total > 0 {
 		status.MemoryUsage = memInfo.UsedPercent
+		if runtime.GOOS == "linux" {
+			// Keep existing overload thresholds calibrated to gopsutil v3's cache-excluding
+			// host metric; v4's UsedPercent subtracts MemAvailable instead.
+			total := float64(memInfo.Total)
+			used := max(0, total-float64(memInfo.Free)-float64(memInfo.Buffers)-float64(memInfo.Cached))
+			status.MemoryUsage = used / total * 100
+		}
 	}
 
 	diskInfo := GetDiskSpaceInfo()

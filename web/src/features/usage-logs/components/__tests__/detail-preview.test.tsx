@@ -18,11 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-} from '@tanstack/react-table'
-import {
   act,
   cleanup,
   fireEvent,
@@ -36,6 +31,7 @@ import { afterAll, afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import en from '@/i18n/locales/en.json'
 import zh from '@/i18n/locales/zh.json'
+import { flexRender, useConsoleTable } from '@/lib/console-table'
 import { useAuthStore } from '@/stores/auth-store'
 import {
   DEFAULT_CURRENCY_CONFIG,
@@ -87,10 +83,9 @@ function DetailPreview(props: {
   isAdmin: boolean
   type?: number
 }) {
-  const table = useReactTable({
+  const table = useConsoleTable({
     data: [makeLog(props.other, props.type)],
     columns: useCommonLogsColumns(props.isAdmin, false),
-    getCoreRowModel: getCoreRowModel(),
   })
   const cell = table
     .getRowModel()

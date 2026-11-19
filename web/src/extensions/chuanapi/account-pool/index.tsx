@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { getCoreRowModel, useReactTable } from '@tanstack/react-table'
 import { RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -36,6 +35,7 @@ import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { useStatus } from '@/hooks/use-status'
 import { toIntlLocale } from '@/i18n/languages'
+import { useConsoleTable } from '@/lib/console-table'
 import { formatNumber } from '@/lib/format'
 import {
   STATUS_QUERY_KEY,
@@ -117,10 +117,9 @@ export function AccountPoolDashboard() {
         })
     }
   }, [client, enabled])
-  const table = useReactTable({
+  const table = useConsoleTable({
     data: snapshot?.items ?? emptyAccounts,
     columns: [],
-    getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
     rowCount: snapshot?.total ?? 0,
     state: {

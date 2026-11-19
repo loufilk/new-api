@@ -16,10 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { Row, Table as TanstackTable } from '@tanstack/react-table'
+
 import * as React from 'react'
 
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
+import type { Column, Row, Table as TanstackTable } from '@/lib/console-table'
 import { cn } from '@/lib/utils'
 
 import {
@@ -47,12 +48,11 @@ export type {
 export { DataTableRow } from './data-table-row'
 export { DataTableRowActionMenu } from './row-action-menu'
 
-export function DataTableView<TData>(props: DataTableViewProps<TData>) {
+export function DataTableView<TData extends object>(
+  props: DataTableViewProps<TData>
+) {
   const rows = props.rows ?? props.table.getRowModel().rows
-  const colSpan = React.useMemo(
-    () => props.table.getVisibleLeafColumns().length,
-    [props.table]
-  )
+  const colSpan = props.table.getVisibleLeafColumns().length
   const columnClassName = useResolvedColumnClassName(
     props.table,
     props.getColumnClassName,
@@ -86,7 +86,7 @@ export function DataTableView<TData>(props: DataTableViewProps<TData>) {
   )
 }
 
-function UnifiedTableView<TData>({
+function UnifiedTableView<TData extends object>({
   props,
   rows,
   colSpan,
@@ -116,7 +116,7 @@ function UnifiedTableView<TData>({
   )
 }
 
-function SplitHeaderTableView<TData>({
+function SplitHeaderTableView<TData extends object>({
   props,
   rows,
   colSpan,
@@ -165,15 +165,16 @@ function SplitHeaderTableView<TData>({
   )
 }
 
-function useResolvedColumnClassName<TData>(
+function useResolvedColumnClassName<TData extends object>(
   table: TanstackTable<TData>,
   getColumnClassName?: DataTableColumnClassName,
   pinnedColumns?: DataTablePinnedColumn[]
 ) {
+  const allColumns = table.getAllColumns()
   const allPinnedColumns = React.useMemo(() => {
-    const metaPinnedColumns = getMetaPinnedColumns(table)
+    const metaPinnedColumns = getMetaPinnedColumns(allColumns)
     return mergePinnedColumns(pinnedColumns, metaPinnedColumns)
-  }, [table, pinnedColumns])
+  }, [allColumns, pinnedColumns])
 
   const pinnedColumnById = React.useMemo(
     () => getPinnedColumnMap(allPinnedColumns),
@@ -187,10 +188,10 @@ function useResolvedColumnClassName<TData>(
   )
 }
 
-function getMetaPinnedColumns<TData>(
-  table: TanstackTable<TData>
+function getMetaPinnedColumns<TData extends object>(
+  allColumns: Column<TData>[]
 ): DataTablePinnedColumn[] {
-  return table.getAllColumns().flatMap((column) => {
+  return allColumns.flatMap((column) => {
     const side = column.columnDef.meta?.pinned
     if (!side) {
       return []
@@ -224,7 +225,9 @@ function mergePinnedColumns(
   ]
 }
 
-function getTableSizing<TData>(props: DataTableViewProps<TData>): {
+function getTableSizing<TData extends object>(
+  props: DataTableViewProps<TData>
+): {
   colgroup?: React.ReactNode
   style?: React.CSSProperties
 } {
@@ -242,7 +245,7 @@ function getTableSizing<TData>(props: DataTableViewProps<TData>): {
   }
 }
 
-function renderTableBody<TData>(
+function renderTableBody<TData extends object>(
   props: DataTableViewProps<TData>,
   rows: Row<TData>[],
   colSpan: number,
@@ -255,7 +258,7 @@ function renderTableBody<TData>(
   )
 }
 
-function renderTableBodyContent<TData>(
+function renderTableBodyContent<TData extends object>(
   props: DataTableViewProps<TData>,
   rows: Row<TData>[],
   colSpan: number,
@@ -285,7 +288,7 @@ function renderTableBodyContent<TData>(
   )
 }
 
-function renderEmptyState<TData>(
+function renderEmptyState<TData extends object>(
   props: DataTableViewProps<TData>,
   colSpan: number
 ) {
@@ -311,7 +314,7 @@ function renderEmptyState<TData>(
   )
 }
 
-function renderDefaultRow<TData>(
+function renderDefaultRow<TData extends object>(
   props: DataTableViewProps<TData>,
   row: Row<TData>,
   getColumnClassName: DataTableColumnClassName

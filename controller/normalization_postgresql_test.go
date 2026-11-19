@@ -26,7 +26,7 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	waffoutils "github.com/waffo-com/waffo-go/utils"
+	waffoutils "github.com/waffo-com/waffo-go/v2/utils"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
@@ -437,6 +437,50 @@ func TestWaffoPancakeNormalizationPostgreSQL(t *testing.T) {
 		assert.Equal(t, common.TopUpStatusSuccess, topUp.Status)
 		assertUserCreditedOnce(t, buyer, tradeNo, expectedPaid)
 		assertReferralCommissionOnce(t, buyer, tradeNo, expectedPaid)
+	})
+
+	t.Run("waffo_interim_or_unknown_never_settles_or_closes", func(t *testing.T) {
+		buyer := newBuyer()
+		tradeNo := normalizationPGTradePrefix + "waffo-interim"
+		normalizationPGWaffoOrder(t, db, buyer, tradeNo, "100.00")
+		const acquiring = "ACQ_NORM_INTERIM"
+		deliver := func(id, status string) *httptest.ResponseRecorder {
+			body := normalizationPGWaffoPayload(tradeNo, id, "MER_NORM", "100.00", "USD", status)
+			return runNormalizationPGWaffoWebhook(t, signedNormalizationPGWaffoRequest(t, body, privateKeyB64))
+		}
+		require.Contains(t, deliver("ACQ_UNKNOWN", "NEW_PROVIDER_STATE").Body.String(), `"message":"failed"`)
+		binding, err := paymentcore.GetPaymentOrderBinding(tradeNo)
+		require.NoError(t, err)
+		require.Empty(t, binding.ProviderOrderID, "unrecognized states must not pin the provider identity")
+		for _, progress := range []string{"PAY_IN_PROGRESS", "AUTHORIZATION_REQUIRED", "AUTHED_WAITING_CAPTURE"} {
+			ack := deliver(acquiring, progress)
+			require.Equal(t, http.StatusOK, ack.Code)
+			require.Contains(t, ack.Body.String(), `"message":"success"`)
+			require.Equal(t, common.TopUpStatusPending, model.GetTopUpByTradeNo(tradeNo).Status)
+			var count int64
+			require.NoError(t, db.Model(&model.BalanceLedger{}).Where("reference_id = ?", tradeNo).Count(&count).Error)
+			require.Zero(t, count)
+		}
+		for range 2 {
+			require.Contains(t, deliver(acquiring, "PAY_SUCCESS").Body.String(), `"message":"success"`)
+		}
+		assertUserCreditedOnce(t, buyer, tradeNo, int(100*quotaPerUnit))
+		assertReferralCommissionOnce(t, buyer, tradeNo, int(100*quotaPerUnit))
+	})
+
+	t.Run("waffo_terminal_close_without_payment", func(t *testing.T) {
+		buyer := newBuyer()
+		tradeNo := normalizationPGTradePrefix + "waffo-terminal"
+		normalizationPGWaffoOrder(t, db, buyer, tradeNo, "100.00")
+		for range 2 {
+			body := normalizationPGWaffoPayload(tradeNo, "ACQ_NORM_CLOSE", "MER_NORM", "100.00", "USD", "ORDER_CLOSE")
+			ack := runNormalizationPGWaffoWebhook(t, signedNormalizationPGWaffoRequest(t, body, privateKeyB64))
+			require.Contains(t, ack.Body.String(), `"message":"success"`)
+		}
+		require.Equal(t, common.TopUpStatusFailed, model.GetTopUpByTradeNo(tradeNo).Status)
+		var count int64
+		require.NoError(t, db.Model(&model.BalanceLedger{}).Where("reference_id = ?", tradeNo).Count(&count).Error)
+		require.Zero(t, count)
 	})
 
 	t.Run("waffo_late_close_callback_does_not_downgrade", func(t *testing.T) {

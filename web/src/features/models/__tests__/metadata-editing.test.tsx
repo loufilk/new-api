@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import type { Row } from '@tanstack/react-table'
 import {
   render,
   screen,
@@ -32,6 +31,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { pricingOptions } from '@/features/model-pricing/pricing'
 import { api } from '@/lib/api'
+import type { Row } from '@/lib/console-table'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { DataTableRowActions } from '../components/data-table-row-actions'

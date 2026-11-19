@@ -24,7 +24,6 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { getCoreRowModel, useReactTable } from '@tanstack/react-table'
 import {
   render,
   screen,
@@ -40,6 +39,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import zhTW from '@/i18n/locales/zh-TW.json'
 import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
+import { useConsoleTable } from '@/lib/console-table'
 
 import { CommonLogsFilterBar } from '../common-logs-filter-bar'
 import { CompactDateTimeRangePicker } from '../compact-date-time-range-picker'
@@ -59,10 +59,9 @@ beforeEach(() => {
 })
 
 function Fixture() {
-  const table = useReactTable({
+  const table = useConsoleTable({
     data: [],
     columns: [],
-    getCoreRowModel: getCoreRowModel(),
   })
   return (
     <UsageLogsProvider>
@@ -187,10 +186,9 @@ it('keeps all quick actions visible without opening a menu', async () => {
 })
 
 function LoadingFixture(props: { loading: boolean; onSearch: () => void }) {
-  const table = useReactTable({
+  const table = useConsoleTable({
     data: [],
     columns: [],
-    getCoreRowModel: getCoreRowModel(),
   })
   return (
     <LogsFilterToolbar
@@ -229,10 +227,9 @@ it('keeps Search visible while loading and prevents repeated searches', async ()
 
 it('places the end action between Search and View on desktop', () => {
   function DesktopFixture() {
-    const table = useReactTable({
+    const table = useConsoleTable({
       data: [],
       columns: [],
-      getCoreRowModel: getCoreRowModel(),
     })
     return (
       <LogsFilterToolbar

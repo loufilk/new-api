@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { Table } from '@tanstack/react-table'
+
 import { ChevronDown, Loader2, X as Cross2Icon } from 'lucide-react'
 import * as React from 'react'
 import { useState, type ReactNode } from 'react'
@@ -25,6 +25,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useDebounce, useMediaQuery } from '@/hooks'
+import type { Table } from '@/lib/console-table'
 import { cn } from '@/lib/utils'
 
 import { DataTableFacetedFilter } from './faceted-filter'
@@ -49,7 +50,7 @@ type SearchDraft = {
   value: string
 }
 
-export type DataTableToolbarProps<TData> = {
+export type DataTableToolbarProps<TData extends object> = {
   table: Table<TData>
   /**
    * Placeholder for the default search input. Defaults to `t('Filter...')`.
@@ -156,7 +157,9 @@ export type DataTableToolbarProps<TData> = {
  * No background panel, no row separators — relies on whitespace and the
  * adjacent table border for visual hierarchy.
  */
-export function DataTableToolbar<TData>(props: DataTableToolbarProps<TData>) {
+export function DataTableToolbar<TData extends object>(
+  props: DataTableToolbarProps<TData>
+) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const [isSearchComposing, setIsSearchComposing] = useState(false)
@@ -167,15 +170,15 @@ export function DataTableToolbar<TData>(props: DataTableToolbarProps<TData>) {
   const hasSearch = props.onSearch != null
 
   const isFiltered =
-    props.table.getState().columnFilters.length > 0 ||
-    !!props.table.getState().globalFilter ||
+    props.table.state.columnFilters.length > 0 ||
+    !!props.table.state.globalFilter ||
     !!props.hasAdditionalFilters
 
   const placeholder = props.searchPlaceholder ?? t('Filter...')
   const currentSearchValue = props.searchKey
     ? ((props.table.getColumn(props.searchKey)?.getFilterValue() as string) ??
       '')
-    : ((props.table.getState().globalFilter as string | undefined) ?? '')
+    : ((props.table.state.globalFilter as string | undefined) ?? '')
 
   const [searchDraft, setSearchDraft] = useState<SearchDraft | null>(null)
   const activeSearchDraft =

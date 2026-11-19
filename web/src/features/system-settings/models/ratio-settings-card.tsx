@@ -23,6 +23,7 @@ import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import * as z from 'zod'
+import { shallow } from 'zustand/shallow'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { ErrorState } from '@/components/error-state'
@@ -38,6 +39,7 @@ import {
 import { pricingOptions } from '@/features/model-pricing/pricing'
 import { useMediaQuery } from '@/hooks'
 import { toIntlLocale } from '@/i18n/languages'
+import type { TranslateText } from '@/i18n/translate'
 import { formatNumber } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import {
@@ -67,10 +69,8 @@ import {
   validateJsonString,
 } from './utils'
 
-type Translate = (key: string, options?: Record<string, unknown>) => string
-
 function formatJsonValidationError(
-  t: Translate,
+  t: TranslateText,
   error?: JsonValidationError,
   fallback = 'Invalid JSON'
 ) {
@@ -114,7 +114,7 @@ function formatJsonValidationError(
 }
 
 function createJsonStringField(
-  t: Translate,
+  t: TranslateText,
   options?: Parameters<typeof validateJsonString>[1]
 ) {
   return z.string().superRefine((value, ctx) => {
@@ -128,7 +128,7 @@ function createJsonStringField(
   })
 }
 
-const createModelSchema = (t: Translate) =>
+const createModelSchema = (t: TranslateText) =>
   z.object({
     ModelPrice: createJsonStringField(t),
     ModelRatio: createJsonStringField(t),
@@ -144,7 +144,7 @@ const createModelSchema = (t: Translate) =>
     PluginBillingExpr: createJsonStringField(t),
   })
 
-const createGroupSchema = (t: Translate) =>
+const createGroupSchema = (t: TranslateText) =>
   z.object({
     GroupRatio: createJsonStringField(t),
     TopupGroupRatio: createJsonStringField(t),
@@ -176,6 +176,23 @@ type GroupRenameBaseline = {
   GroupSpecialUsableGroup: string
   MaxTokenAutoGroups: string
   DefaultUseAutoGroup: string
+}
+
+function normalizedModelValues(values: ModelFormValues) {
+  return {
+    ModelPrice: normalizeJsonString(values.ModelPrice),
+    ModelRatio: normalizeJsonString(values.ModelRatio),
+    CacheRatio: normalizeJsonString(values.CacheRatio),
+    CreateCacheRatio: normalizeJsonString(values.CreateCacheRatio),
+    CompletionRatio: normalizeJsonString(values.CompletionRatio),
+    ImageRatio: normalizeJsonString(values.ImageRatio),
+    AudioRatio: normalizeJsonString(values.AudioRatio),
+    AudioCompletionRatio: normalizeJsonString(values.AudioCompletionRatio),
+    ExposeRatioEnabled: values.ExposeRatioEnabled,
+    BillingMode: normalizeJsonString(values.BillingMode),
+    BillingExpr: normalizeJsonString(values.BillingExpr),
+    PluginBillingExpr: normalizeJsonString(values.PluginBillingExpr),
+  }
 }
 
 const GROUP_RENAME_STALE_CODE = 'GROUP_RENAME_STALE'
@@ -218,7 +235,7 @@ type RatioSettingsCardProps = {
 
 export function RatioSettingsCard({
   modelDefaults: initialModelDefaults,
-  groupDefaults,
+  groupDefaults: incomingGroupDefaults,
   toolPricesDefault,
   titleKey = 'Pricing Ratios',
   visibleTabs = ['models', 'groups', 'tool-prices', 'upstream-sync'],
@@ -237,12 +254,10 @@ export function RatioSettingsCard({
   const savePricing = useSaveModelPricing()
   const [pricingBaseline, setPricingBaseline] =
     useState<ModelPricingConfig | null>(null)
-  useEffect(() => {
-    if (!pricingBaseline && pricingQuery.data) {
-      setPricingBaseline(pricingQuery.data)
-    }
-  }, [pricingBaseline, pricingQuery.data])
-  const modelDefaults = useMemo(
+  if (!pricingBaseline && pricingQuery.data) {
+    setPricingBaseline(pricingQuery.data)
+  }
+  const incomingModelDefaults = useMemo(
     () =>
       pricingBaseline
         ? {
@@ -279,29 +294,33 @@ export function RatioSettingsCard({
     onError: (error) => handleServerError(error),
   })
 
-  const modelNormalizedDefaults = useRef({
-    ModelPrice: normalizeJsonString(modelDefaults.ModelPrice),
-    ModelRatio: normalizeJsonString(modelDefaults.ModelRatio),
-    CacheRatio: normalizeJsonString(modelDefaults.CacheRatio),
-    CreateCacheRatio: normalizeJsonString(modelDefaults.CreateCacheRatio),
-    CompletionRatio: normalizeJsonString(modelDefaults.CompletionRatio),
-    ImageRatio: normalizeJsonString(modelDefaults.ImageRatio),
-    AudioRatio: normalizeJsonString(modelDefaults.AudioRatio),
-    AudioCompletionRatio: normalizeJsonString(
-      modelDefaults.AudioCompletionRatio
-    ),
-    ExposeRatioEnabled: modelDefaults.ExposeRatioEnabled,
-    BillingMode: normalizeJsonString(modelDefaults.BillingMode),
-    BillingExpr: normalizeJsonString(modelDefaults.BillingExpr),
-    PluginBillingExpr: normalizeJsonString(modelDefaults.PluginBillingExpr),
+  // The settings registry constructs fresh prop objects on each parent render.
+  // Only new field values or an explicitly reloaded pricing revision reset the
+  // editor. Never replace an acknowledged save with unchanged, cached props.
+  const [loadedModel, setLoadedModel] = useState({
+    values: incomingModelDefaults,
+    revision: pricingBaseline,
   })
-  const [savedModelValues, setSavedModelValues] = useState(
-    modelNormalizedDefaults.current
+  const modelDefaults = loadedModel.values
+  const [savedModelValues, setSavedModelValues] = useState(() =>
+    normalizedModelValues(modelDefaults)
   )
+  if (
+    pricingBaseline !== loadedModel.revision ||
+    !shallow(incomingModelDefaults, modelDefaults)
+  ) {
+    setLoadedModel({ values: incomingModelDefaults, revision: pricingBaseline })
+    setSavedModelValues(normalizedModelValues(incomingModelDefaults))
+  }
 
+  const [groupDefaults, setGroupDefaults] = useState(incomingGroupDefaults)
   const [groupBaseline, setGroupBaseline] = useState<GroupRenameBaseline>(() =>
     groupRenameBaselineFromDefaults(groupDefaults)
   )
+  if (!shallow(incomingGroupDefaults, groupDefaults)) {
+    setGroupDefaults(incomingGroupDefaults)
+    setGroupBaseline(groupRenameBaselineFromDefaults(incomingGroupDefaults))
+  }
   const modelSchema = useMemo(() => createModelSchema(t), [t])
   const groupSchema = useMemo(() => createGroupSchema(t), [t])
   const groupRenameBaseline = useMemo<GroupRenameEditableValues>(
@@ -354,24 +373,6 @@ export function RatioSettingsCard({
   })
 
   useEffect(() => {
-    modelNormalizedDefaults.current = {
-      ModelPrice: normalizeJsonString(modelDefaults.ModelPrice),
-      ModelRatio: normalizeJsonString(modelDefaults.ModelRatio),
-      CacheRatio: normalizeJsonString(modelDefaults.CacheRatio),
-      CreateCacheRatio: normalizeJsonString(modelDefaults.CreateCacheRatio),
-      CompletionRatio: normalizeJsonString(modelDefaults.CompletionRatio),
-      ImageRatio: normalizeJsonString(modelDefaults.ImageRatio),
-      AudioRatio: normalizeJsonString(modelDefaults.AudioRatio),
-      AudioCompletionRatio: normalizeJsonString(
-        modelDefaults.AudioCompletionRatio
-      ),
-      ExposeRatioEnabled: modelDefaults.ExposeRatioEnabled,
-      BillingMode: normalizeJsonString(modelDefaults.BillingMode),
-      BillingExpr: normalizeJsonString(modelDefaults.BillingExpr),
-      PluginBillingExpr: normalizeJsonString(modelDefaults.PluginBillingExpr),
-    }
-    setSavedModelValues(modelNormalizedDefaults.current)
-
     modelForm.reset({
       ...modelDefaults,
       ModelPrice: formatJsonForTextarea(modelDefaults.ModelPrice),
@@ -391,8 +392,6 @@ export function RatioSettingsCard({
   }, [modelDefaults, modelForm])
 
   useEffect(() => {
-    setGroupBaseline(groupRenameBaselineFromDefaults(groupDefaults))
-
     groupForm.reset({
       ...groupDefaults,
       GroupRatio: formatJsonForTextarea(groupDefaults.GroupRatio),
@@ -408,31 +407,17 @@ export function RatioSettingsCard({
 
   const saveModelRatios = useCallback(
     async (values: ModelFormValues) => {
-      const normalized = {
-        ModelPrice: normalizeJsonString(values.ModelPrice),
-        ModelRatio: normalizeJsonString(values.ModelRatio),
-        CacheRatio: normalizeJsonString(values.CacheRatio),
-        CreateCacheRatio: normalizeJsonString(values.CreateCacheRatio),
-        CompletionRatio: normalizeJsonString(values.CompletionRatio),
-        ImageRatio: normalizeJsonString(values.ImageRatio),
-        AudioRatio: normalizeJsonString(values.AudioRatio),
-        AudioCompletionRatio: normalizeJsonString(values.AudioCompletionRatio),
-        ExposeRatioEnabled: values.ExposeRatioEnabled,
-        BillingMode: normalizeJsonString(values.BillingMode),
-        BillingExpr: normalizeJsonString(values.BillingExpr),
-        PluginBillingExpr: normalizeJsonString(values.PluginBillingExpr),
-      }
+      const normalized = normalizedModelValues(values)
 
       if (!pricingBaseline) return
       try {
         const changes = buildPricingChanges(
           pricingBaseline,
-          pricingOptions(modelNormalizedDefaults.current),
+          pricingOptions(savedModelValues),
           pricingOptions(normalized)
         )
         const visibilityChanged =
-          normalized.ExposeRatioEnabled !==
-          modelNormalizedDefaults.current.ExposeRatioEnabled
+          normalized.ExposeRatioEnabled !== savedModelValues.ExposeRatioEnabled
         if (!changes.length && !visibilityChanged) {
           toast.info(t('No model price changes to save'))
           return
@@ -446,14 +431,20 @@ export function RatioSettingsCard({
         }
         const refreshed = await pricingQuery.refetch()
         setPricingBaseline(refreshed.data ?? null)
-        modelNormalizedDefaults.current = normalized
         setSavedModelValues(normalized)
         toast.success(t('Model pricing saved'))
       } catch (error) {
         handleServerError(error)
       }
     },
-    [t, updateOption, pricingBaseline, savePricing, pricingQuery]
+    [
+      t,
+      updateOption,
+      pricingBaseline,
+      savePricing,
+      pricingQuery,
+      savedModelValues,
+    ]
   )
 
   const reloadCurrentGroupSettings = useCallback(async () => {
@@ -637,7 +628,7 @@ export function RatioSettingsCard({
 
   const handleResetRatios = useCallback(() => {
     setConfirmOpen(true)
-  }, [])
+  }, [setConfirmOpen])
 
   const { mutate: resetMutate } = resetMutation
   const handleConfirmReset = useCallback(() => {

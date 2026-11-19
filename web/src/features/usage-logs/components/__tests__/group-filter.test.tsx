@@ -24,7 +24,6 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { getCoreRowModel, useReactTable } from '@tanstack/react-table'
 import {
   cleanup,
   fireEvent,
@@ -37,6 +36,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { useConsoleTable } from '@/lib/console-table'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { CommonLogsFilterBar } from '../common-logs-filter-bar'
@@ -60,10 +60,9 @@ function setMobileViewport() {
 }
 
 function FilterFixture() {
-  const table = useReactTable({
+  const table = useConsoleTable({
     data: [],
     columns: [],
-    getCoreRowModel: getCoreRowModel(),
   })
   return (
     <UsageLogsProvider>

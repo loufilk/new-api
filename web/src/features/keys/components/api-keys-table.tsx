@@ -18,11 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
-import {
-  flexRender,
-  type ColumnFiltersState,
-  type Table as TanstackTable,
-} from '@tanstack/react-table'
 import { Database } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -46,6 +41,11 @@ import {
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
+import {
+  flexRender,
+  type ColumnFiltersState,
+  type Table as TanstackTable,
+} from '@/lib/console-table'
 import { createServerError } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
@@ -347,11 +347,14 @@ export function ApiKeysTable() {
     tokenFilter,
     statuses,
   ])
+  // The v9 React view changes on every selected-state/option update. Depend
+  // only on the stable table action so selecting a row is not itself a reset.
+  const resetSelection = table.resetRowSelection
   useEffect(() => {
-    table.resetRowSelection()
-  }, [selectionScope, table])
+    resetSelection()
+  }, [selectionScope, resetSelection])
 
-  const columnVisibility = table.getState().columnVisibility
+  const columnVisibility = table.state.columnVisibility
   useEffect(() => {
     // Restore the dates hidden by the previous default when adopting the combined time column.
     if (

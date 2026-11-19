@@ -17,24 +17,20 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import {
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-} from '@tanstack/react-table'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, test } from 'vitest'
+
+import { flexRender, useConsoleTable } from '@/lib/console-table'
 
 import { channelSchema, type Channel } from '../../types'
 import { useChannelsColumns } from '../channels-columns'
 import { ChannelsProvider } from '../channels-provider'
 
 function ExampleAutoDisabledStatusCell(props: { channel: Channel }) {
-  const table = useReactTable({
+  const table = useConsoleTable({
     data: [props.channel],
     columns: useChannelsColumns({ enableSelection: false }),
-    getCoreRowModel: getCoreRowModel(),
   })
   const cell = table
     .getRowModel()

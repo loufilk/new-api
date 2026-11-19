@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -219,6 +220,28 @@ func TestContainerMemoryUsageFallsBackWhenUnavailable(t *testing.T) {
 			assert.False(t, ok, "拿不到可信工作集时交由调用方回退宿主机口径")
 		})
 	}
+}
+
+func TestLinuxHostMemoryFallbackPreservesOverloadThreshold(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("uses Linux procfs data")
+	}
+	proc := t.TempDir()
+	t.Setenv("HOST_PROC", proc)
+	// Without cgroup data, the original host threshold excludes reclaimable cache.
+	// MemAvailable alone would report 95% and trip this administrator's 90% threshold.
+	require.NoError(t, os.WriteFile(filepath.Join(proc, "meminfo"), []byte(
+		"MemTotal: 1000 kB\nMemFree: 80 kB\nBuffers: 20 kB\nCached: 170 kB\nSReclaimable: 30 kB\nMemAvailable: 50 kB\n",
+	), 0600))
+	status := collectSystemStatus(newTestContainerUsage(t, 4, nil))
+	require.InDelta(t, 70, status.MemoryUsage, 0.001)
+
+	config := PerformanceMonitorConfig{Enabled: true, MemoryThreshold: 90}
+	var detector overloadDetector
+	for range overloadConsecutiveSamples {
+		detector.mark(&status, config)
+	}
+	assert.Nil(t, CheckSystemOverload(status, config, status.SampledAt))
 }
 
 func TestSystemOverloadRequiresConsecutiveSamples(t *testing.T) {

@@ -92,6 +92,9 @@
 - **TypeScript**：避免 `any`，优先具体类型或 `unknown`；为参数与返回值显式标注类型；仅类型用途的导入使用 `import type { X } from '...'`。
 - **类型检查**：每次改动 TypeScript 或 TSX 代码后都要执行类型检查（如 `bun check -b`）；若出现类型错误，须修复至无错误为止，不得遗留。
 - **Lint 检查**：每次完成代码改动前，必须对所涉及文件执行 lint 检查，并修复这些文件中的所有 lint error；不得遗留 error。warning 可按变更范围与风险评估处理。
+- **Oxlint 1.94 / React Compiler**：构建尚未启用 React Compiler；不关闭其 lint 规则，也不把 fork 的代码视为上游。与 1.74 的 `--print-config` 对比，原 206 项规则的严重级别及选项均保留，项目自定义 `intl-locale` 仍是 error。运行 `bun run lint` 可查看全部原始诊断；`bun run lint:ci` 单独报告上游例外与 im.17 遗留 Compiler 诊断数。CI 通过不代表原始诊断为零。
+  - 上游例外仍由 `scripts/lint-baseline.json` 管理。另在未修改的 fork 提交 `d89acdd4179a08c6b8f1957370720aa1877baa27` 上用 1.94 与同一配置实际扫描，生成只读的 `scripts/lint-compiler-im17.json`（182 条、150 个文件）。这不是一般豁免：只有完整文件 SHA-256 和完整诊断列表（规则、级别、行列、文本）均匹配，才可保留；新文件或任何已修改文件的此类诊断必须修复，不能刷新快照来消除失败。
+  - 新版新增的 Compiler 规则为 `error-boundaries`、`globals`、`immutability`、`incompatible-library`、`preserve-manual-memoization`、`purity`、`refs`、`set-state-in-effect`、`set-state-in-render`、`static-components`、`use-memo`、`void-use-memo`（均属 `react/`）。其中只有快照中实际出现的八项可能匹配历史诊断。未来新增规则仍强制执行。
 - **解构**：对象非必要不要进行解构，特别是组件的 props；直接使用 `props.xxx` 更清晰，避免不必要的解构增加代码复杂度。
 
 ### 3.3 组件

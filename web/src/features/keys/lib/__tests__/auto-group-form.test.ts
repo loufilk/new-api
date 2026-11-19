@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { TFunction } from 'i18next'
+import { t } from 'i18next'
 import { describe, expect, test } from 'vitest'
 
 import { apiKeySchema, type ApiKey } from '../../types'
@@ -26,13 +26,6 @@ import {
   transformApiKeyToFormDefaults,
   transformFormDataToPayload,
 } from '../api-key-form'
-
-const t = ((key: string, options?: Record<string, unknown>) => {
-  if (options?.max !== undefined) {
-    return key.replace('{{max}}', String(options.max))
-  }
-  return key
-}) as TFunction
 
 function autoGroupDefaults() {
   return {

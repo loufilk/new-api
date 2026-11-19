@@ -24,6 +24,20 @@ import { fileURLToPath } from 'node:url'
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const baselinePath = join(webRoot, 'scripts', 'lint-baseline.json')
+const compilerSnapshotPath = join(webRoot, 'scripts', 'lint-compiler-im17.json')
+const im17Revision = 'd89acdd4179a08c6b8f1957370720aa1877baa27'
+// Only these newly introduced React Compiler rules produced findings on im.17.
+// Other rules, including future compiler rules, cannot match this snapshot.
+const compilerRules = new Set([
+  'react(globals)',
+  'react(immutability)',
+  'react(incompatible-library)',
+  'react(preserve-manual-memoization)',
+  'react(purity)',
+  'react(refs)',
+  'react(set-state-in-effect)',
+  'react(use-memo)',
+])
 const oxlintConfig = '.oxlintrc.json'
 const oxlintTarget = '.'
 const acceptedExitCodes = new Set([0, 1])
@@ -136,12 +150,36 @@ export function parseOxlintOutput(stdout, rootDir = webRoot) {
   }
 }
 
+// No history or network is needed in a shallow CI checkout. Both the complete
+// source file and the sorted, full set of observed fingerprints must match.
+export function matchCompilerDebt(diagnostics, snapshot, readFile) {
+  const byFile = new Map()
+  for (const item of diagnostics) {
+    if (!compilerRules.has(item.fingerprint.code)) continue
+    const group = byFile.get(item.path) ?? []
+    group.push(item.fingerprint)
+    byFile.set(item.path, group)
+  }
+  const matched = new Set()
+  for (const [path, actual] of byFile) {
+    const entry = snapshot.files[path]
+    if (!entry || !isSafeBaselinePath(path)) continue
+    const source = readFile(path)
+    if (source == null || hashContent(source) !== entry.sha256) continue
+    if (sameFingerprintList(sortFingerprints(actual), entry.diagnostics)) {
+      for (const fingerprint of actual) matched.add(fingerprint)
+    }
+  }
+  return matched
+}
+
 export function evaluateLintCi({
   baseline,
   lintResult,
   exitCode,
   configHash,
   readFile,
+  compilerDebt = new Set(),
 }) {
   const failures = []
 
@@ -233,6 +271,7 @@ export function evaluateLintCi({
 
   const observed = new Map()
   for (const item of lintResult.diagnostics) {
+    if (compilerDebt.has(item.fingerprint)) continue
     const list = observed.get(item.path) ?? []
     list.push(item.fingerprint)
     observed.set(item.path, list)
@@ -528,7 +567,13 @@ function writeBaseline(options) {
   const plan = planBaselineWrite({
     previousFiles: previous.files ?? {},
     adoptedPaths: options.adoptPaths,
-    lintResult,
+    // Compiler debt is never written into the upstream file baseline.
+    lintResult: {
+      ...lintResult,
+      diagnostics: lintResult.diagnostics.filter(
+        (item) => !compilerRules.has(item.fingerprint.code)
+      ),
+    },
     readFile: readWorkspaceFile,
     upstreamRevision,
     readUpstreamFile: readUpstreamFileFromGit,
@@ -581,7 +626,25 @@ function checkBaseline() {
     process.exitCode = 2
     return
   }
+  const snapshot = JSON.parse(readFileSync(compilerSnapshotPath, 'utf8'))
+  if (
+    snapshot.revision !== im17Revision ||
+    snapshot.oxlintVersion !== installedVersion ||
+    snapshot.configSha256 !== readConfigHash()
+  ) {
+    console.error(
+      'lint:ci: React Compiler snapshot revision, version or configuration does not match'
+    )
+    process.exitCode = 2
+    return
+  }
+  const compilerDebt = matchCompilerDebt(
+    lintResult?.diagnostics ?? [],
+    snapshot,
+    readWorkspaceFile
+  )
   const { ok, failures } = evaluateLintCi({
+    compilerDebt,
     baseline,
     lintResult,
     exitCode: lint.status,
@@ -589,14 +652,16 @@ function checkBaseline() {
     readFile: readWorkspaceFile,
   })
   const allowed = lintResult
-    ? lintResult.diagnostics.filter((item) =>
-        Object.hasOwn(baseline.files ?? {}, item.path)
+    ? lintResult.diagnostics.filter(
+        (item) =>
+          !compilerDebt.has(item.fingerprint) &&
+          Object.hasOwn(baseline.files ?? {}, item.path)
       ).length
     : 0
   console.log(
     `lint:ci checked ${lintResult?.numberOfFiles ?? 0} files, ${
       lintResult?.diagnostics.length ?? 0
-    } diagnostics (${allowed} allowed for pinned upstream files), oxlint ${installedVersion ?? 'unknown'}`
+    } diagnostics (${allowed} in pinned upstream files; ${compilerDebt.size} exact pre-existing React Compiler findings in unchanged im.17 files), oxlint ${installedVersion ?? 'unknown'}`
   )
   if (!ok) {
     console.error('lint:ci failed:')

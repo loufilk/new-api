@@ -5,7 +5,7 @@ DO NOT send optional commentary
 ## ChuanAPI production validation scope
 
 The owner's instruction on 2026-11-18 sets PostgreSQL 18.6 as the production
-database baseline. For the im.17 dependency candidate, verify the affected
+database baseline. For the dependency migration candidate, verify the affected
 contracts on PostgreSQL 18.7 in isolation and compare with the 18.6 baseline.
 Do not access the production database for tests.
 This scope supersedes the multi-database verification requirements below: do not

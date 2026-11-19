@@ -16,8 +16,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { Row, Table } from '@tanstack/react-table'
+
 import { Database } from 'lucide-react'
+import * as React from 'react'
+import { useTranslation } from 'react-i18next'
+
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import { Skeleton } from '@/components/ui/skeleton'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -36,17 +47,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import * as React from 'react'
-import { useTranslation } from 'react-i18next'
-
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@/components/ui/empty'
-import { Skeleton } from '@/components/ui/skeleton'
+import type { Row, Table } from '@/lib/console-table'
 import { cn } from '@/lib/utils'
 
 import { tableHasCompactMeta } from './card-cell-utils'
@@ -65,7 +66,7 @@ export type DataTableCardHelpers = {
   isSelected: boolean
 }
 
-export interface DataTableCardGridProps<TData> {
+export interface DataTableCardGridProps<TData extends object> {
   table: Table<TData>
   isLoading?: boolean
   emptyTitle?: string
@@ -133,7 +134,9 @@ function CardGridSkeleton(props: {
  * The default generic card omits the `select` column. Custom `renderCard`
  * implementations can use `helpers.isSelected` to keep selection UI in sync.
  */
-export function DataTableCardGrid<TData>(props: DataTableCardGridProps<TData>) {
+export function DataTableCardGrid<TData extends object>(
+  props: DataTableCardGridProps<TData>
+) {
   const { t } = useTranslation()
 
   const resolvedEmptyTitle = props.emptyTitle ?? t('No Data')

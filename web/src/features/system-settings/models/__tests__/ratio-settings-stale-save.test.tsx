@@ -114,19 +114,25 @@ function renderCard() {
   actionsContainer = document.createElement('div')
   document.body.appendChild(actionsContainer)
 
-  render(
+  const content = (groupDefaults: typeof GROUP_DEFAULTS) => (
     <QueryClientProvider client={queryClient}>
       <SettingsPageProvider actionsContainer={actionsContainer}>
         <RatioSettingsCard
           modelDefaults={MODEL_DEFAULTS}
-          groupDefaults={GROUP_DEFAULTS}
+          groupDefaults={groupDefaults}
           toolPricesDefault='{}'
           visibleTabs={['groups']}
         />
       </SettingsPageProvider>
     </QueryClientProvider>
   )
-  return { queryClient, invalidateSpy }
+  const view = render(content(GROUP_DEFAULTS))
+  return {
+    queryClient,
+    invalidateSpy,
+    updateDefaults: (next: typeof GROUP_DEFAULTS) =>
+      view.rerender(content(next)),
+  }
 }
 
 function staleAxiosError() {
@@ -162,6 +168,23 @@ async function renameVipAndSave() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+})
+
+test('an equivalent options refresh keeps the draft, but changed group defaults reset it', async () => {
+  const { updateDefaults } = renderCard()
+  fireEvent.change(await screen.findByDisplayValue('vip'), {
+    target: { value: 'vip2' },
+  })
+
+  updateDefaults({ ...GROUP_DEFAULTS })
+  expect(screen.getByDisplayValue('vip2')).toBeInTheDocument()
+  updateDefaults({
+    ...GROUP_DEFAULTS,
+    GroupRatio: '{"enterprise":2}',
+    UserUsableGroups: '{"enterprise":"Current group"}',
+  })
+  expect(await screen.findByDisplayValue('enterprise')).toBeInTheDocument()
+  expect(screen.queryByDisplayValue('vip2')).not.toBeInTheDocument()
 })
 
 describe('group settings save conflict handling', () => {
@@ -218,7 +241,7 @@ describe('group settings save conflict handling', () => {
         },
       },
     })
-    const { invalidateSpy } = renderCard()
+    const { invalidateSpy, updateDefaults } = renderCard()
 
     await renameVipAndSave()
 
@@ -231,6 +254,10 @@ describe('group settings save conflict handling', () => {
       queryKey: ['system-options'],
     })
 
+    // Parent section builders allocate new objects even when the query cache
+    // still contains the pre-save options. A re-render is not a new snapshot.
+    updateDefaults({ ...GROUP_DEFAULTS })
+    expect(screen.getByDisplayValue('vip2')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
     await waitFor(() =>
       expect(vi.mocked(toast.info)).toHaveBeenCalledWith('No changes to save')

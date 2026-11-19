@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation } from '@tanstack/react-query'
-import type { Row } from '@tanstack/react-table'
 import { Trash2, Edit, Power, PowerOff } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -34,6 +33,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import type { Row } from '@/lib/console-table'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { updateRedemptionStatus } from '../api'
@@ -42,11 +42,11 @@ import { isRedemptionExpired } from '../lib'
 import { redemptionSchema } from '../types'
 import { useRedemptions } from './redemptions-provider'
 
-interface DataTableRowActionsProps<TData> {
+interface DataTableRowActionsProps<TData extends object> {
   row: Row<TData>
 }
 
-export function DataTableRowActions<TData>({
+export function DataTableRowActions<TData extends object>({
   row,
 }: DataTableRowActionsProps<TData>) {
   const { t } = useTranslation()

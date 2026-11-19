@@ -33,10 +33,11 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/stripe/stripe-go/v81/webhook"
-	waffo "github.com/waffo-com/waffo-go"
-	waffonet "github.com/waffo-com/waffo-go/net"
-	"github.com/waffo-com/waffo-go/utils"
+	"github.com/stripe/stripe-go/v87/webhook"
+	waffo "github.com/waffo-com/waffo-go/v2"
+	waffoerrors "github.com/waffo-com/waffo-go/v2/errors"
+	waffonet "github.com/waffo-com/waffo-go/v2/net"
+	"github.com/waffo-com/waffo-go/v2/utils"
 	"gorm.io/gorm"
 )
 
@@ -181,6 +182,22 @@ func stalePaymentFixture(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "stale-payment.db")), &gorm.Config{})
 	require.NoError(t, err)
+	return initStalePaymentFixture(t, db, common.DatabaseTypeSQLite)
+}
+
+// Keep the separate-process Stripe fixture on its original SQLite file. Waffo
+// can exercise the exact same signed race on an explicitly isolated PostgreSQL.
+func staleWaffoPaymentFixture(t *testing.T) *gorm.DB {
+	t.Helper()
+	if dsn := strings.TrimSpace(os.Getenv("TEST_POSTGRES_DSN")); dsn != "" {
+		db, _ := newAuditTestDatabase(t, "postgres", dsn)
+		return initStalePaymentFixture(t, db, common.DatabaseTypePostgreSQL)
+	}
+	return stalePaymentFixture(t)
+}
+
+func initStalePaymentFixture(t *testing.T, db *gorm.DB, databaseType common.DatabaseType) *gorm.DB {
+	t.Helper()
 	oldDB := model.DB
 	model.DB = db
 	t.Cleanup(func() {
@@ -190,7 +207,7 @@ func stalePaymentFixture(t *testing.T) *gorm.DB {
 		require.NoError(t, pool.Close())
 	})
 	require.NoError(t, db.AutoMigrate(append([]any{&model.TopUp{}, &model.SubscriptionOrder{}, &model.Option{}, &paymentcore.PaymentOrderBinding{}, &model.User{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.Log{}, &model.SubscriptionPlan{}, &model.UserSubscription{}}, model.BonusSourceModels()...)...))
-	require.NoError(t, db.AutoMigrate(&model.PaymentReceipt{}, &model.AgentCommissionOutbox{}))
+	require.NoError(t, db.AutoMigrate(&model.PaymentReceipt{}, &model.AgentCommissionOutbox{}, &model.SystemSyncTopic{}, &model.SystemTask{}))
 	confirmPaymentComplianceForTest(t)
 	oldLog, oldRedis := model.LOG_DB, common.RedisEnabled
 	oldKind, oldLogKind, oldMaster := common.MainDatabaseType(), common.LogDatabaseType(), common.IsMasterNode
@@ -206,7 +223,7 @@ func stalePaymentFixture(t *testing.T) *gorm.DB {
 		model.InvalidateSubscriptionPlanCache(29601)
 	})
 	model.LOG_DB, common.RedisEnabled = db, false
-	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	common.SetMainDatabaseType(databaseType)
 	// The shared, non-master log branch initializes model's quoted columns
 	// without opening another database or running any migrations.
 	common.IsMasterNode = false
@@ -288,7 +305,7 @@ func TestWaffoCreationFailurePreservesSuccessfulWebhook(t *testing.T) {
 			if runStalePaymentFixtureChild(t) {
 				return
 			}
-			db := stalePaymentFixture(t)
+			db := staleWaffoPaymentFixture(t)
 			configureStaleWaffo(t, keys.PrivateKey, keys.PublicKey)
 			requestReady := make(chan *waffonet.HttpRequest, 1)
 			release := make(chan struct{})
@@ -325,11 +342,21 @@ func TestWaffoCreationFailurePreservesSuccessfulWebhook(t *testing.T) {
 			case <-done:
 				require.FailNow(t, "creation returned before upstream barrier", recorder.Body.String())
 			}
+			assert.Equal(t, http.MethodPost, request.Method)
+			assert.Equal(t, "https://api.waffo.com/api/v1/order/create", request.URL)
+			assert.Equal(t, "1.0.0", request.Headers["X-API-VERSION"])
+			assert.True(t, utils.Verify(string(request.Body), request.Headers["X-SIGNATURE"], keys.PublicKey))
 			var payload struct {
-				MerchantOrderID string `json:"merchantOrderId"`
+				PaymentRequestID string `json:"paymentRequestId"`
+				MerchantOrderID  string `json:"merchantOrderId"`
+				OrderAmount      string `json:"orderAmount"`
+				OrderCurrency    string `json:"orderCurrency"`
 			}
 			require.NoError(t, common.Unmarshal(request.Body, &payload))
 			require.NotEmpty(t, payload.MerchantOrderID)
+			assert.Equal(t, payload.MerchantOrderID, payload.PaymentRequestID)
+			assert.Equal(t, "10.00", payload.OrderAmount)
+			assert.Equal(t, "USD", payload.OrderCurrency)
 			binding, err := paymentcore.GetPaymentOrderBinding(payload.MerchantOrderID)
 			require.NoError(t, err)
 			require.Empty(t, binding.ProviderOrderID)
@@ -347,7 +374,7 @@ func TestWaffoCreationFailurePreservesSuccessfulWebhook(t *testing.T) {
 			} else {
 				code, merchantID, acquiringID := "0", payload.MerchantOrderID, "ACQ_WINNER"
 				if failure == "rejected_response" {
-					code = "E9999"
+					code = "A0003"
 				}
 				if failure == "response_identity" {
 					merchantID = "OTHER_ORDER"
@@ -377,11 +404,68 @@ func TestWaffoCreationFailurePreservesSuccessfulWebhook(t *testing.T) {
 	}
 }
 
+func TestWaffoCreateOutcomePrecedesSignedWebhook(t *testing.T) {
+	for _, outcome := range []string{"transport_timeout", "E0001", "A0013", "A0003"} {
+		t.Run(outcome, func(t *testing.T) {
+			if runStalePaymentFixtureChild(t) {
+				return
+			}
+			db := staleWaffoPaymentFixture(t)
+			keys, err := waffo.GenerateKeyPair()
+			require.NoError(t, err)
+			configureStaleWaffo(t, keys.PrivateKey, keys.PublicKey)
+			factory := func() (*waffo.Waffo, error) {
+				sdk, err := getWaffoSDK()
+				if err != nil {
+					return nil, err
+				}
+				cfg := *sdk.GetConfig()
+				cfg.CustomTransport = staleWaffoTransport(func(_ context.Context, _ *waffonet.HttpRequest) (*waffonet.HttpResponse, error) {
+					if outcome == "transport_timeout" {
+						return nil, waffoerrors.NewNetworkError("test timeout after send", context.DeadlineExceeded)
+					}
+					body, err := common.Marshal(map[string]string{"code": outcome})
+					require.NoError(t, err)
+					signature, err := utils.Sign(string(body), keys.PrivateKey)
+					require.NoError(t, err)
+					return &waffonet.HttpResponse{StatusCode: http.StatusBadRequest, Body: body, Headers: map[string]string{"X-SIGNATURE": signature}}, nil
+				})
+				return waffo.New(&cfg), nil
+			}
+			c, recorder := staleCreationContext(`{"amount":10}`)
+			requestWaffoPay(c, factory)
+			require.Contains(t, recorder.Body.String(), "Failed to start payment")
+			var order model.TopUp
+			require.NoError(t, db.First(&order).Error)
+			before := captureStalePaymentSnapshot(t, db, order.TradeNo, false)
+			require.Empty(t, before.Ledgers)
+			require.Zero(t, before.User.QuotaPaid)
+			if outcome == "A0003" { // explicit parameter rejection
+				require.Equal(t, common.TopUpStatusFailed, order.Status)
+				return
+			}
+			require.Equal(t, common.TopUpStatusPending, order.Status)
+			body := normalizationPGWaffoPayload(order.TradeNo, "ACQ_LATER", "MER_SYNTHETIC", "10.00", "USD", "PAY_SUCCESS")
+			for range 2 {
+				ack := runNormalizationPGWaffoWebhook(t, signedNormalizationPGWaffoRequest(t, body, keys.PrivateKey))
+				require.Equal(t, http.StatusOK, ack.Code)
+				require.Contains(t, ack.Body.String(), `"message":"success"`)
+			}
+			after := captureStalePaymentSnapshot(t, db, order.TradeNo, false)
+			require.Equal(t, common.TopUpStatusSuccess, after.TopUp.Status)
+			require.Equal(t, int(10*common.QuotaPerUnit), after.User.QuotaPaid)
+			require.Len(t, after.Ledgers, 1)
+			require.Len(t, after.Operations, 1)
+			require.EqualValues(t, 1000, after.TopUp.PaidAmountMinor)
+		})
+	}
+}
+
 func TestWaffoSDKFailureBeforeRequestMarksPendingFailed(t *testing.T) {
 	if runStalePaymentFixtureChild(t) {
 		return
 	}
-	db := stalePaymentFixture(t)
+	db := staleWaffoPaymentFixture(t)
 	configureStaleWaffo(t, "not-used", "not-used")
 	c, recorder := staleCreationContext(`{"amount":10}`)
 	requestWaffoPay(c, func() (*waffo.Waffo, error) {

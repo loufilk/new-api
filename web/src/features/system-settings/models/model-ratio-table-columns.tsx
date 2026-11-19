@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { ColumnDef } from '@tanstack/react-table'
+
 import { Undo2 } from 'lucide-react'
 
 import { DataTableColumnHeader } from '@/components/data-table/core/column-header'
@@ -24,6 +24,8 @@ import { StaticRowActions } from '@/components/data-table/static/static-row-acti
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import type { TranslateText } from '@/i18n/translate'
+import type { ColumnDef } from '@/lib/console-table'
 import { cn } from '@/lib/utils'
 
 import {
@@ -56,7 +58,7 @@ type BuildModelRatioColumnsOptions = {
   taskModelNames?: Set<string>
   /** Task model prices the gateway reports a plugin cannot charge, by model. */
   pricingIssues?: Map<string, ModelPricingIssue[]>
-  t: (key: string, options?: Record<string, unknown>) => string
+  t: TranslateText
 }
 
 export function buildModelRatioColumns({
@@ -74,7 +76,10 @@ export function buildModelRatioColumns({
       header: ({ table }) => (
         <Checkbox
           checked={table.getIsAllPageRowsSelected()}
-          indeterminate={table.getIsSomePageRowsSelected()}
+          indeterminate={
+            table.getIsSomePageRowsSelected() &&
+            !table.getIsAllPageRowsSelected()
+          }
           onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
           aria-label={t('Select all')}
           className='translate-y-[2px]'
@@ -235,7 +240,7 @@ export function buildModelRatioColumns({
           </span>
         </div>
       ),
-      sortingFn: (rowA, rowB) =>
+      sortFn: (rowA, rowB) =>
         getPriceSummary(rowA.original, t).localeCompare(
           getPriceSummary(rowB.original, t)
         ),

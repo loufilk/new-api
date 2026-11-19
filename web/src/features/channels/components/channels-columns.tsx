@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 /* eslint-disable react-refresh/only-export-components */
 import { useQueryClient } from '@tanstack/react-query'
-import type { ColumnDef } from '@tanstack/react-table'
 import {
   AlertTriangle,
   ChevronDown,
@@ -47,6 +46,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { toIntlLocale } from '@/i18n/languages'
+import type { ColumnDef } from '@/lib/console-table'
 import {
   formatCurrencyFromUSD,
   formatQuotaWithCurrency,
@@ -692,7 +692,10 @@ export function useChannelsColumns(
               header: ({ table }) => (
                 <Checkbox
                   checked={table.getIsAllPageRowsSelected()}
-                  indeterminate={table.getIsSomePageRowsSelected()}
+                  indeterminate={
+                    table.getIsSomePageRowsSelected() &&
+                    !table.getIsAllPageRowsSelected()
+                  }
                   onCheckedChange={(value) =>
                     table.toggleAllPageRowsSelected(!!value)
                   }

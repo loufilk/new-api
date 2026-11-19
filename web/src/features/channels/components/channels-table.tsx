@@ -18,13 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
-import type {
-  ColumnFiltersState,
-  OnChangeFn,
-  SortingState,
-  Row,
-  ColumnDef,
-} from '@tanstack/react-table'
 import { Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { useState, useMemo, useEffect } from 'react'
 import { createPortal } from 'react-dom'
@@ -48,6 +41,13 @@ import {
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { hasPermission } from '@/lib/admin-permissions'
+import type {
+  ColumnFiltersState,
+  OnChangeFn,
+  SortingState,
+  Row,
+  ColumnDef,
+} from '@/lib/console-table'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
@@ -335,9 +335,7 @@ export function ChannelsTable() {
     !enableTagMode &&
     hasPermission(user, 'channel', 'write')
   const reorderActive = reorderEnabled && canReorder
-  useEffect(() => {
-    if (!canReorder) setReorderEnabled(false)
-  }, [canReorder])
+  if (!canReorder && reorderEnabled) setReorderEnabled(false)
   const reorderScope = JSON.stringify([
     viewMode,
     reorderActive,
@@ -355,7 +353,13 @@ export function ChannelsTable() {
     scope: reorderScope,
     enabled: reorderActive,
   })
-  const drag = useChannelPriorityDrag({
+  const {
+    root: dragRoot,
+    feedbackContainer,
+    rootEvents,
+    start,
+    keyDown,
+  } = useChannelPriorityDrag({
     items: channels,
     desc: sortDesc,
     enabled: reorderActive && !priorityOrder.saving && !isFetching,
@@ -373,8 +377,8 @@ export function ChannelsTable() {
   else if (priorityOrder.saving || isFetching) dragReason = 'busy'
 
   const dragControls = useMemo(
-    () => ({ reason: dragReason, start: drag.start, keyDown: drag.keyDown }),
-    [dragReason, drag.start, drag.keyDown]
+    () => ({ reason: dragReason, start, keyDown }),
+    [dragReason, start, keyDown]
   )
 
   // Reuse the same handle cell in the table and channel cards.
@@ -435,11 +439,12 @@ export function ChannelsTable() {
     ensurePageInRange,
   })
 
+  const resetSelection = table.resetRowSelection
   useEffect(() => {
     if (!batchMode) {
-      table.resetRowSelection()
+      resetSelection()
     }
-  }, [batchMode, table])
+  }, [batchMode, resetSelection])
 
   // Prepare filter options from existing channel types only.
   const typeFilterOptions = useMemo(() => {
@@ -513,15 +518,15 @@ export function ChannelsTable() {
           priorityActionContainer
         )}
       <ChannelPriorityDropHint
-        container={drag.feedbackContainer}
+        container={feedbackContainer}
         order={priorityOrder}
         channels={channels}
       />
       <div
-        ref={drag.root}
+        ref={dragRoot}
         role='region'
         aria-label={t('Channels')}
-        {...drag.rootEvents}
+        {...rootEvents}
         className='relative h-full min-h-0 data-[priority-dragging=true]:select-none data-[priority-dragging=true]:[&_[data-sortable-id]]:pointer-events-none'
       >
         <DataTablePage

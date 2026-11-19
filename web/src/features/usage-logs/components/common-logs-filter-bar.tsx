@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient, useIsFetching, useQuery } from '@tanstack/react-query'
 import { useNavigate, getRouteApi } from '@tanstack/react-router'
-import type { Table } from '@tanstack/react-table'
 import { Eye, EyeOff } from 'lucide-react'
 import { useState, useCallback, useMemo, useId } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -43,6 +42,7 @@ import {
 import { getGroups } from '@/features/users/api'
 import { useMediaQuery } from '@/hooks'
 import { getUserGroups } from '@/lib/api'
+import type { Table } from '@/lib/console-table'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { LOG_TYPE_ALL_VALUE, LOG_TYPE_FILTERS } from '../constants'
@@ -115,11 +115,11 @@ function buildSearchSourceKey(values: {
     .join('\u001f')
 }
 
-interface CommonLogsFilterBarProps<TData> {
+interface CommonLogsFilterBarProps<TData extends object> {
   table: Table<TData>
 }
 
-export function CommonLogsFilterBar<TData>(
+export function CommonLogsFilterBar<TData extends object>(
   props: CommonLogsFilterBarProps<TData>
 ) {
   const { t } = useTranslation()

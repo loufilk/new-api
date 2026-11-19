@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { Column } from '@tanstack/react-table'
+
 import { Check as CheckIcon, PlusCircle as PlusCircledIcon } from 'lucide-react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
@@ -38,9 +38,10 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { Separator } from '@/components/ui/separator'
+import type { Column } from '@/lib/console-table'
 import { cn } from '@/lib/utils'
 
-type DataTableFacetedFilterProps<TData, TValue> = {
+type DataTableFacetedFilterProps<TData extends object, TValue> = {
   column?: Column<TData, TValue>
   title?: string
   options: {
@@ -54,7 +55,9 @@ type DataTableFacetedFilterProps<TData, TValue> = {
   singleSelect?: boolean
 }
 
-function DataTableFacetedFilterInner<TData, TValue>({
+// Columns are stable objects: the same instance can expose new filter values
+// and facet counts. Render on parent table updates even if these props match.
+export function DataTableFacetedFilter<TData extends object, TValue>({
   column,
   title,
   options,
@@ -202,10 +205,6 @@ function DataTableFacetedFilterInner<TData, TValue>({
     </Popover>
   )
 }
-
-export const DataTableFacetedFilter = React.memo(
-  DataTableFacetedFilterInner
-) as typeof DataTableFacetedFilterInner
 
 function getNextSelectedValues(
   selectedValues: Set<string>,

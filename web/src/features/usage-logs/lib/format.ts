@@ -28,6 +28,7 @@ import {
   getCachePriceLabels,
   getTierCachePricingMode,
 } from '@/features/pricing/lib/cache-pricing'
+import type { TranslateText } from '@/i18n/translate'
 import { translateServerText } from '@/lib/server-error-message'
 
 import type { UsageLog } from '../data/schema'
@@ -585,11 +586,13 @@ const AUDIT_TEMPLATES: Record<string, string> = {
  */
 export function renderLogContent(
   other: LogOtherData | null | undefined,
-  t: (key: string, opts?: Record<string, unknown>) => string
+  t: TranslateText
 ): string | null {
   const parts = other?.content_parts
   if (!Array.isArray(parts) || parts.length === 0) return null
-  return parts.map((part) => t(part.key, part.params)).join(', ')
+  return parts
+    .map((part) => (part.params ? t(part.key, part.params) : t(part.key)))
+    .join(', ')
 }
 
 /**
@@ -598,7 +601,7 @@ export function renderLogContent(
  */
 export function logTokenName(
   log: Pick<UsageLog, 'token_id' | 'token_name'>,
-  t: (key: string, opts?: Record<string, unknown>) => string
+  t: TranslateText
 ): string {
   return log.token_id === 0
     ? translateServerText(t, log.token_name)
@@ -612,7 +615,7 @@ export function logTokenName(
  */
 export function renderAuditContent(
   other: LogOtherData | null | undefined,
-  t: (key: string, opts?: Record<string, unknown>) => string
+  t: TranslateText
 ): string | null {
   const op = other?.op
   if (!op?.action) return null

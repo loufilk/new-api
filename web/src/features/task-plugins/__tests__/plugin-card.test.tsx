@@ -16,14 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import {
-  getCoreRowModel,
-  useReactTable,
-  type ColumnDef,
-} from '@tanstack/react-table'
+
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
+
+import { useConsoleTable, type ColumnDef } from '@/lib/console-table'
 
 import { MarketplacePluginCard } from '../components/marketplace-plugin-card'
 import { PluginCard } from '../components/plugin-card'
@@ -78,10 +76,9 @@ function PluginCardHarness({
   item: TaskPluginListItem
   kind?: PluginKind
 }) {
-  const table = useReactTable({
+  const table = useConsoleTable({
     data: [item],
     columns: stubColumns,
-    getCoreRowModel: getCoreRowModel(),
   })
   return <PluginCard row={table.getRowModel().rows[0]} kind={kind} />
 }

@@ -25,11 +25,6 @@ import {
   RouterProvider,
 } from '@tanstack/react-router'
 import {
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-} from '@tanstack/react-table'
-import {
   act,
   cleanup,
   render,
@@ -45,6 +40,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
+import { flexRender, useConsoleTable } from '@/lib/console-table'
 import { formatTimestampToDate } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth-store'
 import {
@@ -71,7 +67,7 @@ function QuotaTable(props: { remaining: number; used: number }) {
       column.id ?? ('accessorKey' in column ? String(column.accessorKey) : '')
     )
   )
-  const table = useReactTable({
+  const table = useConsoleTable({
     columns,
     data: [
       {
@@ -86,7 +82,6 @@ function QuotaTable(props: { remaining: number; used: number }) {
         group: 'default',
       } as User,
     ],
-    getCoreRowModel: getCoreRowModel(),
   })
   return (
     <table>

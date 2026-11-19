@@ -160,7 +160,7 @@ export function RequestPluginConfigModelValues(
                   />
                   {modelError && (
                     <FieldError className='text-xs'>
-                      {t(modelError.message, modelError.values)}
+                      {t(modelError.message, modelError.values ?? {})}
                     </FieldError>
                   )}
                 </Field>

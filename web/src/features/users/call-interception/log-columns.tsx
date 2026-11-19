@@ -16,12 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { ColumnDef } from '@tanstack/react-table'
+
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
 import { toIntlLocale } from '@/i18n/languages'
+import type { ColumnDef } from '@/lib/console-table'
 import { formatNumber, formatTimestampToDate } from '@/lib/format'
 
 import type { InterceptionLog, InterceptionLogKind } from './types'

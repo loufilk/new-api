@@ -46,6 +46,28 @@ afterAll(() => {
   }
 })
 
+test('reopening an override editor discards the cancelled draft and restores the saved source', async () => {
+  const user = userEvent.setup()
+  const props = {
+    value: JSON.stringify({
+      operations: [{ mode: 'copy', from: 'saved.source', to: 'target' }],
+    }),
+    onOpenChange: vi.fn(),
+    onSave: vi.fn(),
+  }
+  const view = render(<ParamOverrideEditorDialog open {...props} />)
+  const field = await screen.findByDisplayValue('saved.source')
+  await user.clear(field)
+  await user.type(field, 'unsaved')
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  expect(props.onOpenChange).toHaveBeenCalledWith(false)
+  view.rerender(<ParamOverrideEditorDialog open={false} {...props} />)
+  view.rerender(<ParamOverrideEditorDialog open {...props} />)
+  expect(await screen.findByDisplayValue('saved.source')).toBeVisible()
+  expect(screen.queryByDisplayValue('unsaved')).not.toBeInTheDocument()
+  expect(props.onSave).not.toHaveBeenCalled()
+})
+
 test.each([
   'Client-provided function.',
   '42',

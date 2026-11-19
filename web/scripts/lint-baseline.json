@@ -1,7 +1,7 @@
 {
   "version": 1,
   "upstreamRevision": "b0bf2580e2491869ee9fe861c12b86153c3fe5f4",
-  "oxlintVersion": "1.74.0",
+  "oxlintVersion": "1.94.0",
   "configSha256": "e4d28b65d320733f66ff7052358d335a0291b1351b0733bec1b01f8d2f54f585",
   "note": "Curated allowlist of known upstream lint diagnostics. Each path must be byte-identical (LF-normalized sha256) to the pinned upstream revision; modified or new files must lint clean. Adopt new upstream files explicitly with --adopt after confirming they match the pinned revision.",
   "files": {

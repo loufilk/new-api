@@ -5,8 +5,8 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-	casbinmodel "github.com/casbin/casbin/v2/model"
-	"github.com/casbin/casbin/v2/persist"
+	casbinmodel "github.com/casbin/casbin/v3/model"
+	"github.com/casbin/casbin/v3/persist"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )

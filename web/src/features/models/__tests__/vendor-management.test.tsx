@@ -243,7 +243,12 @@ describe('vendor management', () => {
     ).toBeVisible()
     expect(screen.getByText('1 linked model records')).toBeVisible()
     expect(screen.getByRole('cell', { name: '24' })).toBeVisible()
+    const modelLink = screen.getByRole('button', { name: 'example-*' })
     const user = userEvent.setup()
+    // Selecting a row updates table state without replacing the record or
+    // unmounting other interactive cells in that row.
+    await user.click(screen.getByRole('checkbox', { name: 'Select example-*' }))
+    expect(screen.getByRole('button', { name: 'example-*' })).toBe(modelLink)
     await user.type(
       screen.getByPlaceholderText('Filter by model name...'),
       'example'

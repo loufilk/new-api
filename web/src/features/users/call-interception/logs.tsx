@@ -17,11 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import {
-  getCoreRowModel,
-  useReactTable,
-  type PaginationState,
-} from '@tanstack/react-table'
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -44,6 +39,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { toIntlLocale } from '@/i18n/languages'
+import { useConsoleTable, type PaginationState } from '@/lib/console-table'
 import { formatNumber } from '@/lib/format'
 
 import { callInterceptionKey, getCallInterceptionLogs } from './api'
@@ -104,10 +100,9 @@ export function CallInterceptionLogs(props: Props) {
     gcTime: 0,
   })
   const columns = useInterceptionLogColumns(props.kind)
-  const table = useReactTable({
+  const table = useConsoleTable({
     columns,
     data: query.data?.items ?? EMPTY_LOGS,
-    getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
     rowCount: query.data?.total ?? 0,
     state: { pagination },

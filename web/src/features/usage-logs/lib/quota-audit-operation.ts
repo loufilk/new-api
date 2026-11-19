@@ -16,9 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { TranslateText } from '@/i18n/translate'
 import { formatLogQuota } from '@/lib/format'
-
-type Translate = (key: string, opts?: Record<string, unknown>) => string
 
 const QUOTA_OPERATIONS: Record<string, { label: string; named: string }> = {
   'user.quota_add': {
@@ -35,7 +34,7 @@ const QUOTA_OPERATIONS: Record<string, { label: string; named: string }> = {
   },
 }
 
-function quotaText(value: unknown, t: Translate): string {
+function quotaText(value: unknown, t: TranslateText): string {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return formatLogQuota(value)
   }
@@ -47,7 +46,7 @@ export function buildQuotaAuditOperation(
   action: string,
   params: Record<string, unknown>,
   success: boolean,
-  t: Translate
+  t: TranslateText
 ) {
   const unknownMode = action === 'generic' && params.action === 'add_quota'
   const operation = unknownMode

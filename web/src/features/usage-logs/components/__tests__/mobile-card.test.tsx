@@ -18,11 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
-  getCoreRowModel,
-  useReactTable,
-  type VisibilityState,
-} from '@tanstack/react-table'
-import {
   cleanup,
   render,
   screen,
@@ -32,6 +27,7 @@ import {
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 
+import { useConsoleTable, type VisibilityState } from '@/lib/console-table'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -73,10 +69,9 @@ function Fixture(props: {
   const columns = useCommonLogsColumns(props.admin ?? true, false)
   const context = useUsageLogsContext()
   // eslint-disable-next-line react-hooks/incompatible-library -- Use the real v8 row model in this uncompiled test fixture.
-  const table = useReactTable({
+  const table = useConsoleTable({
     data: props.logs ?? [log],
     columns,
-    getCoreRowModel: getCoreRowModel(),
     state: { columnVisibility: props.visibility ?? {} },
   })
   return (

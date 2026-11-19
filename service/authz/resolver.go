@@ -2,7 +2,7 @@ package authz
 
 import "slices"
 
-import "github.com/casbin/casbin/v2"
+import "github.com/casbin/casbin/v3"
 
 // Can reports whether the subject may perform the permission. A superuser role
 // short-circuits to allow. Otherwise a per-user override wins, then the union of

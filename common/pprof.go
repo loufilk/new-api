@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/pkg/lifecycle"
-	"github.com/shirou/gopsutil/cpu"
+	"github.com/shirou/gopsutil/v4/cpu"
 )
 
 // Monitor retains the embedded-host compatibility entry point.

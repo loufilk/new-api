@@ -16,11 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { flexRender, type Row } from '@tanstack/react-table'
+
 import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
+import { flexRender, type Row } from '@/lib/console-table'
 import { resolveLocalizedText } from '@/lib/localized-text'
 
 import type { PluginKind } from '../lib/plugin-kinds'
