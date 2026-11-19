@@ -19,9 +19,10 @@ For commercial licensing, please contact support@quantumnous.com
 import { createFileRoute, redirect } from '@tanstack/react-router'
 
 import { AuthenticatedLayout } from '@/components/layout'
+import { SessionRecoveryError } from '@/features/auth/components/session-recovery-error'
 import { sanitizeAuthRedirect } from '@/features/auth/lib/auth-redirect'
+import { AuthRefreshUnavailable } from '@/lib/auth-refresh-backoff'
 import { resolveAuthentication } from '@/lib/auth-session'
-import { useAuthStore } from '@/stores/auth-store'
 
 export const Route = createFileRoute('/_authenticated')({
   beforeLoad: async ({ location }) => {
@@ -29,11 +30,15 @@ export const Route = createFileRoute('/_authenticated')({
     // present. That skip is an optimization for public pages and must not
     // decide a protected route, so resolve against the server before
     // redirecting. An in-memory session returns without a request.
-    await resolveAuthentication()
-
-    const { auth } = useAuthStore.getState()
-
-    if (!auth.user || !auth.accessToken) {
+    const outcome = await resolveAuthentication()
+    if (outcome.kind === 'transient_error') {
+      // Block child loaders and keep the exact URL until the server can give
+      // a verdict. Cached identity (including an expired token) is not enough.
+      throw outcome.error instanceof AuthRefreshUnavailable
+        ? outcome.error
+        : new AuthRefreshUnavailable(Date.now())
+    }
+    if (outcome.kind !== 'authenticated') {
       throw redirect({
         to: '/sign-in',
         search: {
@@ -45,5 +50,6 @@ export const Route = createFileRoute('/_authenticated')({
       })
     }
   },
+  errorComponent: SessionRecoveryError,
   component: AuthenticatedLayout,
 })

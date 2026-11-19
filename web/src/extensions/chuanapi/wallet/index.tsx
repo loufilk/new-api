@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 
 import { ErrorState } from '@/components/error-state'
 import { SectionPageLayout } from '@/components/layout'
+import type { WalletPageProps } from '@/extensions/wallet'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
@@ -55,11 +56,7 @@ import type {
   WaffoPayMethod,
 } from './types'
 
-interface WalletProps {
-  initialShowHistory?: boolean
-}
-
-export function Wallet(_props: WalletProps) {
+export function Wallet(props: WalletPageProps) {
   const { t } = useTranslation()
   const [user, setUser] = useState<UserWalletData | null>(null)
   const [userLoading, setUserLoading] = useState(true)
@@ -294,7 +291,15 @@ export function Wallet(_props: WalletProps) {
       <SectionPageLayout>
         <SectionPageLayout.Title>{t('Wallet')}</SectionPageLayout.Title>
         <SectionPageLayout.Actions>
-          <RechargeHistoryButton />
+          <RechargeHistoryButton
+            open={
+              props.onHistoryOpenChange
+                ? props.initialShowHistory === true
+                : undefined
+            }
+            defaultOpen={props.initialShowHistory}
+            onOpenChange={props.onHistoryOpenChange}
+          />
         </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
           <div className='mx-auto flex w-full max-w-[1600px] flex-col gap-3'>

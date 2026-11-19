@@ -266,31 +266,32 @@ function RechargeHistory(props: RechargeHistoryProps) {
   )
 }
 
-export function RechargeHistoryButton(props: RechargeHistoryProps) {
+type RechargeHistoryButtonProps = RechargeHistoryProps & {
+  open?: boolean
+  defaultOpen?: boolean
+  onOpenChange?: (open: boolean) => void
+}
+
+export function RechargeHistoryButton(props: RechargeHistoryButtonProps) {
   const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
   const user = useAuthStore((state) => state.auth.user)
   if (!user || (props.admin && user.role !== 100)) return null
   const title = props.admin ? t('All recharge records') : t('Recharge history')
   return (
-    <>
-      <Button
-        type='button'
-        variant='outline'
-        size='sm'
-        onClick={() => setOpen(true)}
-      >
-        <Receipt className='size-4' aria-hidden='true' />
-        {title}
-      </Button>
-      <Dialog
-        open={open}
-        onOpenChange={setOpen}
-        title={title}
-        contentClassName='sm:max-w-4xl'
-      >
-        {open && <RechargeHistory admin={props.admin} />}
-      </Dialog>
-    </>
+    <Dialog
+      open={props.open}
+      defaultOpen={props.defaultOpen}
+      onOpenChange={props.onOpenChange}
+      title={title}
+      contentClassName='sm:max-w-4xl'
+      trigger={
+        <Button type='button' variant='outline' size='sm'>
+          <Receipt className='size-4' aria-hidden='true' />
+          {title}
+        </Button>
+      }
+    >
+      <RechargeHistory admin={props.admin} />
+    </Dialog>
   )
 }

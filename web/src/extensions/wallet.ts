@@ -19,7 +19,9 @@ For commercial licensing, please contact support@quantumnous.com
 import type { ReactNode } from 'react'
 
 export type WalletPageProps = {
+  /** Without a change handler, this only sets the initial dialog state. */
   initialShowHistory?: boolean
+  onHistoryOpenChange?: (open: boolean) => void
 }
 
 export type WalletPage = (props: WalletPageProps) => ReactNode

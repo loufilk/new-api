@@ -246,6 +246,9 @@ jobs:
           go test -p 1 ./middleware -run '^TestTokenAuthRejectsKeysOfDeletedUser$' -count=1 -timeout=5m
           go test -p 1 ./controller -run '^(TestChannelTestOpenAIChatCompatibility|TestOpenAIChatSamplingCompatibility)' -count=1 -timeout=5m
 
+      - name: Newly created channel is immediately routable
+        run: go test -p 1 ./controller -run '^TestAddChannelPublishesCommittedRoutesPostgres$' -count=1 -timeout=5m
+
       - name: Automatic group routing
         run: go test -json -p 1 ./service -run '^Test(TokenRoutingPostgres|TokenRoutingSmartSameChannelRetry|LegacySelectedGroupReservesBeforeDispatch|SelectedGroupRejectsFreeRealtimeOwnerOnPaidRetry|PrepareTieredBillingForSelectedGroup)' -count=1 -timeout=5m
 
@@ -293,6 +296,15 @@ jobs:
           src/features/keys/components/__tests__/api-key-model-scope.test.tsx
           src/features/keys/components/__tests__/api-keys-mutate-drawer.test.tsx
           src/features/keys/__tests__/api-response.test.ts
+          --maxWorkers=2
+
+      - name: Session refresh and wallet return regressions
+        working-directory: web
+        run: >-
+          bun run test
+          src/lib/auth-session.test.ts
+          src/features/auth/lib/__tests__/session-recovery.test.tsx
+          src/extensions/chuanapi/wallet/__tests__/recharge-history-link.test.tsx
           --maxWorkers=2
 
       - name: Playground regression

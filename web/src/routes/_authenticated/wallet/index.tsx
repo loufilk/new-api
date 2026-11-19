@@ -32,6 +32,21 @@ export const Route = createFileRoute('/_authenticated/wallet/')({
 
 function RouteComponent() {
   const { show_history } = Route.useSearch()
+  const navigate = Route.useNavigate()
   const WalletPage = extensionWalletPage().page
-  return <WalletPage initialShowHistory={show_history} />
+  return (
+    <WalletPage
+      initialShowHistory={show_history}
+      onHistoryOpenChange={(open) => {
+        void navigate({
+          search: (previous) => ({
+            ...previous,
+            show_history: open || undefined,
+          }),
+          replace: true,
+          resetScroll: false,
+        })
+      }}
+    />
+  )
 }

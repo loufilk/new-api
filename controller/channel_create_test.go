@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -257,4 +258,87 @@ func TestAddChannelPanicRollsBackWithoutSuccess(t *testing.T) {
 	require.NoError(t, database.Model(&model.Ability{}).Count(&abilities).Error)
 	assert.Zero(t, channels)
 	assert.Zero(t, abilities)
+}
+
+func TestAddChannelPublishesCommittedRoutesPostgres(t *testing.T) {
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("requires an isolated PostgreSQL TEST_POSTGRES_DSN")
+	}
+	db, isolatedDSN := newAuditTestDatabase(t, "postgres", dsn)
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.SystemTask{}, &model.SystemSyncTopic{}))
+	t.Setenv("TEST_CHANNEL_SQL_DSN", isolatedDSN)
+	rootID := setupChannelCreateTest(t)
+	common.MemoryCacheEnabled = true
+	var createdIDs []int
+	t.Cleanup(func() {
+		_, err := model.BatchDeleteChannels(createdIDs)
+		require.NoError(t, err)
+		model.InitChannelCache()
+	})
+
+	create := func(name, mode, key string) int {
+		t.Helper()
+		body, err := common.Marshal(AddChannelRequest{Mode: mode, MultiKeyMode: constant.MultiKeyModePolling, Channel: &model.Channel{
+			Name: name, Type: constant.ChannelTypeOpenAI, Group: "default", Models: name, Key: key,
+		}})
+		require.NoError(t, err)
+		response := postAddChannel(t, rootID, common.RoleRootUser, string(body))
+		require.Equal(t, http.StatusOK, response.Code)
+		var result struct {
+			Success bool
+			Data    struct {
+				ID int
+			}
+		}
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		require.True(t, result.Success, response.Body.String())
+		require.Positive(t, result.Data.ID)
+		createdIDs = append(createdIDs, result.Data.ID)
+		return result.Data.ID
+	}
+	route := func(group, name string) *model.Channel {
+		t.Helper()
+		ch, err := model.GetRandomSatisfiedChannel(group, name, 0, nil)
+		require.NoError(t, err)
+		return ch
+	}
+	first := create("polling", "multi_to_single", "fixture-first\nfixture-second")
+	ch := route("default", "polling")
+	require.NotNil(t, ch, "a successful create must be immediately routable without a sync tick")
+	require.Equal(t, first, ch.Id)
+	key, _, apiErr := ch.GetNextEnabledKey()
+	require.Nil(t, apiErr)
+	assert.Equal(t, "fixture-first", key)
+	second := create("second", "single", "fixture-single")
+	ch = route("default", "second")
+	require.NotNil(t, ch)
+	assert.Equal(t, second, ch.Id)
+	assert.Nil(t, route("other", "second"))
+	ch = route("default", "polling")
+	require.NotNil(t, ch)
+	key, _, apiErr = ch.GetNextEnabledKey()
+	require.Nil(t, apiErr)
+	assert.Equal(t, "fixture-second", key, "creating another channel must not rewind the polling cursor")
+
+	before, err := model.GetLatestSyncRevisions()
+	require.NoError(t, err)
+	const hook = "test:channel-create-cache-query-error"
+	queries := model.DB.Callback().Query()
+	require.NoError(t, queries.Before("gorm:query").Register(hook, func(tx *gorm.DB) {
+		if tx.Statement.Table == "abilities" {
+			tx.AddError(errors.New("fixture interrupted refresh"))
+		}
+	}))
+	third := create("pending", "single", "fixture-pending")
+	require.NoError(t, queries.Remove(hook))
+	assert.Nil(t, route("default", "pending"), "failed refresh must not publish a partial snapshot")
+	require.NotNil(t, route("default", "second"))
+	revisions, err := model.GetLatestSyncRevisions()
+	require.NoError(t, err)
+	assert.Greater(t, revisions[model.SyncTopicChannels], before[model.SyncTopicChannels], "the failed refresh must not suppress distributed reconciliation")
+	require.NoError(t, model.RefreshChannelCache(t.Context()))
+	ch = route("default", "pending")
+	require.NotNil(t, ch)
+	assert.Equal(t, third, ch.Id, "reconciliation uses the original committed channel")
 }

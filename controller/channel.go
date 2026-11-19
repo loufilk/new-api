@@ -940,6 +940,12 @@ func AddChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	// BatchInsertChannels has committed and notified the other nodes. Publish
+	// the local snapshot before replying so the first relay need not wait for
+	// reconciliation. A refresh failure is logged, not a failed/retryable insert.
+	if len(channels) > 0 && common.MemoryCacheEnabled {
+		model.InitChannelCache()
+	}
 	createAudit := map[string]any{
 		"name":  addChannelRequest.Channel.Name,
 		"type":  addChannelRequest.Channel.Type,

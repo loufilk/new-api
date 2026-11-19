@@ -23,6 +23,12 @@ import { t } from 'i18next'
 import i18n from '@/i18n/config'
 import { toBackendLanguage } from '@/i18n/languages'
 import { API_BASE_URL } from '@/lib/api-url'
+import {
+  AuthRefreshUnavailable,
+  getRefreshRetryAt,
+  refreshRetryDeadline,
+  setRefreshRetryAt,
+} from '@/lib/auth-refresh-backoff'
 import { publishAuthSessionEvent } from '@/lib/auth-session-sync'
 import {
   clearSessionHint,
@@ -46,7 +52,7 @@ export type RefreshOutcome =
 export interface AuthRefreshHTTPResponse {
   status: number
   data?: unknown
-  error?: unknown
+  retryAfter?: unknown
 }
 
 export interface AuthRefreshRuntime {
@@ -55,7 +61,7 @@ export interface AuthRefreshRuntime {
   parseBundle: (value: unknown) => AuthBundle | null
   acceptBundle: (bundle: AuthBundle) => void
   clear: (synchronizeTabs: boolean, bootstrapState?: AuthBootstrapState) => void
-  markTransient: () => void
+  markTransient: (retryAt: number) => void
   wait: (delay: number) => Promise<void>
   isCurrent?: () => boolean
 }
@@ -178,6 +184,7 @@ export function applyAuthBundle(
 ): void {
   const previousSID = useAuthStore.getState().auth.session?.sid
   authEpoch += 1
+  setRefreshRetryAt(0)
   useAuthStore.getState().auth.setBundle(bundle)
   // Keep the frontend host's non-credential hint in sync with the successful
   // authentication result and the server session's own expiry; the API host's
@@ -219,6 +226,7 @@ export function clearAuthentication(
 ): void {
   const sid = useAuthStore.getState().auth.session?.sid
   authEpoch += 1
+  setRefreshRetryAt(0)
   useAuthStore.getState().auth.reset(bootstrapState)
   // Explicit sign-out and server-side invalidation both land here, so the
   // frontend host's hint is cleared in lockstep with the session.
@@ -258,7 +266,7 @@ export function createRefreshRunner(
     const code =
       typeof responseData?.code === 'string' ? responseData.code : undefined
     const bundle = runtime.parseBundle(responseData?.data)
-    if (responseData?.success === true && bundle) {
+    if (response.status === 200 && responseData?.success === true && bundle) {
       runtime.acceptBundle(bundle)
       return { kind: 'authenticated', bundle }
     }
@@ -287,11 +295,17 @@ export function createRefreshRunner(
       return { kind: 'anonymous' }
     }
 
-    if (!response.status || response.status >= 500 || response.status === 429) {
-      runtime.markTransient()
+    if (
+      !response.status ||
+      response.status >= 500 ||
+      response.status === 429 ||
+      response.status === 408
+    ) {
+      const retryAt = refreshRetryDeadline(response.status, response.retryAfter)
+      runtime.markTransient(retryAt)
       return {
         kind: 'transient_error',
-        error: response.error ?? response.data,
+        error: new AuthRefreshUnavailable(retryAt),
       }
     }
 
@@ -323,11 +337,11 @@ async function requestRefresh(
     )
     return { status: response.status, data: response.data }
   } catch (error: unknown) {
-    if (!axios.isAxiosError(error)) return { status: 0, error }
+    if (!axios.isAxiosError(error)) return { status: 0 }
     return {
       status: error.response?.status ?? 0,
       data: error.response?.data,
-      error,
+      retryAfter: error.response?.headers['retry-after'],
     }
   }
 }
@@ -345,7 +359,10 @@ function runRefresh(refreshEpoch: number): Promise<RefreshOutcome> {
       }
       clearAuthentication(synchronizeTabs, bootstrapState)
     },
-    markTransient: () => useAuthStore.getState().auth.setBootstrapState('idle'),
+    markTransient: (retryAt) => {
+      setRefreshRetryAt(retryAt)
+      useAuthStore.getState().auth.setBootstrapState('idle')
+    },
     wait: waitForRefreshRace,
     isCurrent: () => authEpoch === refreshEpoch,
   })()
@@ -356,20 +373,39 @@ async function performRefreshWithBrowserLock(
 ): Promise<RefreshOutcome> {
   try {
     if (typeof navigator === 'undefined' || !navigator.locks) {
-      return runRefresh(refreshEpoch)
+      return await runRefresh(refreshEpoch)
     }
-    return navigator.locks.request(
+    return await navigator.locks.request(
       'new-api:auth-refresh',
       { mode: 'exclusive' },
       () => runRefresh(refreshEpoch)
     )
-  } catch (error: unknown) {
+  } catch {
+    if (refreshEpoch !== authEpoch) {
+      return {
+        kind: 'transient_error',
+        error: new AuthRefreshSupersededError(),
+      }
+    }
+    const retryAt = refreshRetryDeadline(0)
+    setRefreshRetryAt(retryAt)
     useAuthStore.getState().auth.setBootstrapState('idle')
-    return { kind: 'transient_error', error }
+    return {
+      kind: 'transient_error',
+      error: new AuthRefreshUnavailable(retryAt),
+    }
   }
 }
 
 export function refreshAuthentication(): Promise<RefreshOutcome> {
+  const retryAt = getRefreshRetryAt()
+  if (retryAt) {
+    useAuthStore.getState().auth.setBootstrapState('idle')
+    return Promise.resolve({
+      kind: 'transient_error',
+      error: new AuthRefreshUnavailable(retryAt),
+    })
+  }
   if (!refreshPromise) {
     const refreshEpoch = authEpoch
     refreshPromise = performRefreshWithBrowserLock(refreshEpoch).finally(() => {
@@ -421,7 +457,20 @@ export async function resolveAuthentication(): Promise<RefreshOutcome> {
   }
 
   auth.setBootstrapState('checking')
-  return refreshAuthentication()
+  const outcome = await refreshAuthentication()
+  if (
+    outcome.kind === 'transient_error' &&
+    outcome.error instanceof AuthRefreshSupersededError
+  ) {
+    // A newer login or explicit sign-out won the race with this check.
+    const current = currentValidAuthBundle()
+    if (current) return { kind: 'authenticated', bundle: current }
+    const latest = useAuthStore.getState().auth
+    if (!latest.user && latest.bootstrapState === 'complete') {
+      return { kind: 'anonymous' }
+    }
+  }
+  return outcome
 }
 
 /**
