@@ -460,6 +460,7 @@ func mainAutoMigrateModels(registry *extension.Registry) []any {
 	coreModels = append(coreModels, BonusSourceModels()...)
 	coreModels = append(coreModels, ReferralRewardModels()...)
 	coreModels = append(coreModels, CustomerInvoiceModels()...)
+	coreModels = append(coreModels, &QuotaDataFlushCursor{})
 	if registry == nil {
 		return coreModels
 	}

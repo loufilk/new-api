@@ -537,6 +537,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const { t } = useTranslation()
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
   const other = parseLogOther(props.log.other)
+  const firstTimingMs =
+    other?.first_downstream_content_ms ??
+    (other?.frt != null && other.frt > 0 ? other.frt : null)
   const typeConfig = getLogTypeConfig(props.log.type)
 
   const isViolation = isViolationFeeLog(other)
@@ -793,41 +796,45 @@ export function DetailsDialog(props: DetailsDialogProps) {
             />
           )}
 
-          {showTiming && props.log.use_time > 0 && (
-            <DetailRow
-              label={t('Response Time')}
-              value={
-                <span
-                  className={cn(
-                    'font-medium',
-                    timingTextColorClass(
-                      getResponseTimeColor(
-                        props.log.use_time,
-                        props.log.completion_tokens
+          {showTiming &&
+            (props.log.use_time > 0 ||
+              (props.log.is_stream && firstTimingMs != null)) && (
+              <DetailRow
+                label={t('Response Time')}
+                value={
+                  <span
+                    className={cn(
+                      'font-medium',
+                      timingTextColorClass(
+                        getResponseTimeColor(
+                          props.log.use_time,
+                          props.log.completion_tokens
+                        )
                       )
-                    )
-                  )}
-                >
-                  {formatUseTime(props.log.use_time)}
-                  {props.log.is_stream &&
-                    other?.frt != null &&
-                    other.frt > 0 && (
+                    )}
+                  >
+                    {formatUseTime(props.log.use_time)}
+                    {props.log.is_stream && firstTimingMs != null && (
                       <span
                         className={cn(
                           'font-normal',
                           timingTextColorClass(
-                            getFirstResponseTimeColor(other.frt / 1000)
+                            getFirstResponseTimeColor(firstTimingMs / 1000)
                           )
                         )}
                       >
                         {' '}
-                        (FRT: {formatUseTime(other.frt / 1000)})
+                        (
+                        {other?.first_downstream_content_ms != null
+                          ? 'TTFT'
+                          : 'FRT'}
+                        : {formatUseTime(firstTimingMs / 1000)})
                       </span>
                     )}
-                </span>
-              }
-            />
-          )}
+                  </span>
+                }
+              />
+            )}
         </div>
 
         {/* Request conversion (admin only, not for refund) */}

@@ -810,6 +810,7 @@ export function useCommonLogsColumns(
               useTimeSec={useTime}
               completionTokens={log.completion_tokens}
               frtMs={other?.frt}
+              firstContentMs={other?.first_downstream_content_ms}
               isStream={log.is_stream}
             />
           )

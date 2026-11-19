@@ -110,7 +110,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: new-api
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      # Preserve the legacy default. On a NEW official PG18 install set the
+      # parent mount; on an existing cluster inspect PGDATA and mounts first.
+      - pg_data:${POSTGRES_VOLUME_TARGET:-/var/lib/postgresql/data}
     networks:
       - new-api-network
     healthcheck:

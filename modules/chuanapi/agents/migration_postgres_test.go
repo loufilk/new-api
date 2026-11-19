@@ -33,7 +33,7 @@ func agentMigrationFixture(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	var version string
 	require.NoError(t, admin.Raw("SHOW server_version").Scan(&version).Error)
-	require.Contains(t, version, "18.6")
+	require.Regexp(t, `^18\.(6|7)(\s|$)`, version)
 	schema := fmt.Sprintf("agent_migration_%d", time.Now().UnixNano())
 	require.NoError(t, admin.Exec(fmt.Sprintf("CREATE SCHEMA %q", schema)).Error)
 	config, err := pgx.ParseConfig(dsn)

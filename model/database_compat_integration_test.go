@@ -207,11 +207,11 @@ func TestDatabaseCompatibilityReal(t *testing.T) {
 	}
 	require.NoError(t, DB.Create(&first).Error)
 
-	increaseQuotaData(&QuotaData{
+	require.NoError(t, persistQuotaDataBatch(DB, common.GetUUID(), 1, []*QuotaData{{
 		UserID: user.Id, Username: unique, ModelName: "compat-model",
 		CreatedAt: bucket, UseGroup: "default", TokenID: 101, ChannelID: 202,
 		NodeName: "compat-node", TokenUsed: 7, Count: 2, Quota: 77,
-	})
+	}}))
 
 	rows, err := GetQuotaDataByUserId(user.Id, bucket, bucket)
 	require.NoError(t, err)

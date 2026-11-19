@@ -22,7 +22,7 @@ import { exportLogs } from '../api'
 
 vi.mock('@/lib/api-url', async (original) => ({
   ...(await original<typeof import('@/lib/api-url')>()),
-  apiUrl: (path: string) => 'https://api.example.invalid/gateway' + path,
+  apiUrl: (path: string) => `https://api.example.invalid/gateway${path}`,
 }))
 vi.mock('@/lib/api', () => ({
   api: {},

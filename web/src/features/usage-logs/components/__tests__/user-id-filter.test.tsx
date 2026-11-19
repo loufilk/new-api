@@ -26,6 +26,7 @@ import {
   type ErrorComponentProps,
 } from '@tanstack/react-router'
 import {
+  act,
   cleanup,
   render,
   screen,
@@ -42,6 +43,7 @@ import { Route as UsageLogsRoute } from '@/routes/_authenticated/usage-logs/$sec
 import { useAuthStore } from '@/stores/auth-store'
 
 import { usageLogSchema } from '../../data/schema'
+import { LOG_SUMMARY_FRESH_MS } from '../../lib/utils'
 import { UsageLogsProvider, useUsageLogsContext } from '../usage-logs-provider'
 import { UsageLogsTable } from '../usage-logs-table'
 
@@ -128,7 +130,11 @@ async function renderLogs(
       url.startsWith('/api/log?') ||
       url.startsWith('/api/log/self?')
     ) {
-      data = { items: [record], total: 201 }
+      const params = new URL(url, 'http://localhost').searchParams
+      data = {
+        items: [record],
+        total: params.get('skip_total') === '1' ? -1 : 201,
+      }
     }
     return { data: { success: true, data } }
   })
@@ -195,7 +201,7 @@ it('keeps numeric usernames separate and sends the applied ID to both logs and s
 
 it('retains the exact ID and other filters when paginating the log table', async () => {
   const { router, get } = await renderLogs(
-    '/usage-logs/common?userId=%229007199254740993%22&username=alice&model=gpt-6&group=default'
+    '/usage-logs/common?userId=%229007199254740993%22&username=alice&model=gpt-6&group=default&pageSize=1'
   )
   get.mockClear()
   await userEvent.click(screen.getByRole('button', { name: 'Go to next page' }))
@@ -219,6 +225,30 @@ it('retains the exact ID and other filters when paginating the log table', async
     expect(request?.searchParams.get('username')).toBe('alice')
     expect(request?.searchParams.get('model_name')).toBe('gpt-6')
     expect(request?.searchParams.get('group')).toBe('default')
+    expect(request?.searchParams.get('skip_total')).toBe('1')
+  })
+  expect(get.mock.calls.some(([url]) => url.startsWith('/api/log/stat?'))).toBe(
+    false
+  )
+  expect(screen.getByRole('button', { name: 'Go to next page' })).toBeEnabled()
+})
+
+it('refreshes stale counts and statistics on navigation without polling while idle', async () => {
+  const { get } = await renderLogs('/usage-logs/common?pageSize=1')
+  get.mockClear()
+  const staleTime = Date.now() + LOG_SUMMARY_FRESH_MS + 1
+  vi.spyOn(Date, 'now').mockReturnValue(staleTime)
+  await userEvent.click(screen.getByRole('button', { name: 'Go to next page' }))
+  await waitFor(() => {
+    const requests = get.mock.calls.map(
+      ([url]) => new URL(url, 'http://localhost')
+    )
+    const page = requests.find(
+      (url) => url.pathname === '/api/log' && url.searchParams.get('p') === '2'
+    )
+    expect(page).toBeDefined()
+    expect(page?.searchParams.has('skip_total')).toBe(false)
+    expect(requests.some((url) => url.pathname === '/api/log/stat')).toBe(true)
   })
 })
 
@@ -344,7 +374,7 @@ it('keeps mobile filters open after an invalid ID and closes only after a valid 
   )
 })
 
-it.each(['user ID', 'view scope'])(
+it.each(['user ID', 'view scope', 'signed-in account'])(
   'does not show previous logs or statistics while a different %s is loading',
   async (change) => {
     const { get } = await renderLogs('/usage-logs/common?userId=42')
@@ -371,7 +401,11 @@ it.each(['user ID', 'view scope'])(
       const request = new URL(url, 'http://localhost')
       const changedScope = request.pathname.startsWith('/api/log/self')
       const changedId = request.searchParams.get('user_id') === '43'
-      if (changedScope || changedId) {
+      if (
+        changedScope ||
+        changedId ||
+        useAuthStore.getState().auth.user?.id === 8
+      ) {
         await pendingRequest
         return {
           data: {
@@ -389,9 +423,15 @@ it.each(['user ID', 'view scope'])(
       const input = screen.getByRole('textbox', { name: 'User ID' })
       await userEvent.clear(input)
       await userEvent.type(input, '43{Enter}')
-    } else {
+    } else if (change === 'view scope') {
       await userEvent.click(
         screen.getByRole('button', { name: 'Switch scope' })
+      )
+    } else {
+      act(() =>
+        useAuthStore
+          .getState()
+          .auth.setUser({ id: 8, username: 'next-viewer', role: 10 })
       )
     }
     await waitFor(() => {

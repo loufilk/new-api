@@ -202,7 +202,7 @@ func setupXunfeiPostgres(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	var version string
 	require.NoError(t, admin.Raw("SHOW server_version_num").Scan(&version).Error)
-	require.Equal(t, "180006", version)
+	require.Contains(t, []string{"180006", "180007"}, version)
 	schema := "xunfei_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	require.NoError(t, admin.Exec("CREATE SCHEMA "+schema).Error)
 	query := parsed.Query()

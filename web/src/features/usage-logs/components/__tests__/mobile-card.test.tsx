@@ -72,6 +72,7 @@ function Fixture(props: {
 }) {
   const columns = useCommonLogsColumns(props.admin ?? true, false)
   const context = useUsageLogsContext()
+  // eslint-disable-next-line react-hooks/incompatible-library -- Use the real v8 row model in this uncompiled test fixture.
   const table = useReactTable({
     data: props.logs ?? [log],
     columns,
@@ -283,7 +284,7 @@ it.each([false, true])(
         .closest('.col-start-2')
     ).not.toBeNull()
     if (streaming) {
-      expect(within(row as HTMLElement).getByText('First token')).toBeVisible()
+      expect(within(row as HTMLElement).getByText('FRT')).toBeVisible()
     }
   }
 )
@@ -362,4 +363,19 @@ it('shows loading placeholders without displaying stale log fields', () => {
   expect(
     screen.queryByRole('button', { name: /^Model:/ })
   ).not.toBeInTheDocument()
+})
+
+it('shows first downstream output as first token, not the earlier upstream event', () => {
+  renderLogs({
+    logs: [
+      {
+        ...log,
+        is_stream: true,
+        other: JSON.stringify({ frt: 1000, first_downstream_content_ms: 3200 }),
+      },
+    ],
+  })
+  const metric = screen.getByText('First token').parentElement
+  expect(metric).toHaveTextContent('3.2')
+  expect(screen.queryByText('FRT')).not.toBeInTheDocument()
 })

@@ -10,8 +10,9 @@ const (
 	ContextKeyPromptTokens           ContextKey = "prompt_tokens"
 	ContextKeyEstimatedTokens        ContextKey = "estimated_tokens"
 
-	ContextKeyOriginalModel    ContextKey = "original_model"
-	ContextKeyRequestStartTime ContextKey = "request_start_time"
+	ContextKeyOriginalModel      ContextKey = "original_model"
+	ContextKeyGatewayIngressTime ContextKey = "gateway_ingress_time"
+	ContextKeyRequestStartTime   ContextKey = "request_start_time"
 	// The Responses handler owns the SSE error response, even when the client
 	// disconnected or a write failed. Do not retry or append a JSON HTTP error.
 	ContextKeyResponsesStreamErrorHandled ContextKey = "responses_stream_error_handled"

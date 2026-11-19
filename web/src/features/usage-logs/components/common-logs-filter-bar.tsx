@@ -312,7 +312,13 @@ export function CommonLogsFilterBar<TData>(
     'Only used to find historical logs. New records are available in Audit Logs.'
   )
 
-  const statsBar = <CommonLogsStats />
+  // Re-observe the same filter-keyed query on navigation. A fresh sample
+  // needs no request; a stale one refreshes without polling an idle tab.
+  const statsBar = (
+    <CommonLogsStats
+      key={`${searchParams.page ?? 1}:${searchParams.pageSize ?? ''}`}
+    />
+  )
   const sensitiveToggle = (
     <Tooltip>
       <TooltipTrigger

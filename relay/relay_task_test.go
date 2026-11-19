@@ -82,7 +82,7 @@ func setupRelayChannelPostgresDB(t *testing.T, dsn string) *gorm.DB {
 	t.Cleanup(func() { require.NoError(t, adminConn.Close()) })
 	var version string
 	require.NoError(t, admin.Raw("SHOW server_version_num").Scan(&version).Error)
-	require.Equal(t, "180006", version)
+	require.Contains(t, []string{"180006", "180007"}, version)
 	schema := fmt.Sprintf("relay_group_%d", time.Now().UnixNano())
 	require.NoError(t, admin.Exec("CREATE SCHEMA "+schema).Error)
 	query := parsed.Query()

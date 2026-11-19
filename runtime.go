@@ -126,8 +126,7 @@ func (app *applicationRuntime) Shutdown(server *http.Server) bool {
 			done <- err
 			return
 		}
-		model.FlushRuntimeData()
-		done <- common.StopPyroScope()
+		done <- errors.Join(model.FlushRuntimeData(cleanup), common.StopPyroScope())
 	}()
 	select {
 	case err := <-done:

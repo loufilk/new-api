@@ -238,8 +238,9 @@ export async function pollAcceptedImageTask(params: {
   signal?: AbortSignal
   onTerminalFailure?: () => void
 }): Promise<GeneratedImage[]> {
-  if (!/^[a-f0-9]{48}$/.test(params.id))
+  if (!/^[a-f0-9]{48}$/.test(params.id)) {
     throw new Error(t('Image generation failed'))
+  }
   let delay = 2000
   while (Date.now() < params.expiresAt) {
     params.signal?.throwIfAborted()
@@ -256,8 +257,9 @@ export async function pollAcceptedImageTask(params: {
       if (!axios.isAxiosError(error)) throw error
       const status = error.response?.status
       if (status === 404 || status === 410) params.onTerminalFailure?.()
-      if (status && status !== 408 && status !== 429 && status < 500)
+      if (status && status !== 408 && status !== 429 && status < 500) {
         throw error
+      }
       await waitForImageTask(params.signal, delay)
       delay = Math.min(delay * 2, 10_000)
       continue

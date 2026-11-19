@@ -91,14 +91,16 @@ export function useImageGeneration() {
       }
       try {
         const retrieve = async () => {
-          if (input.acceptedTask)
+          if (input.acceptedTask) {
             return pollAcceptedImageTask({
               ...input.acceptedTask,
               signal: controller.signal,
               onTerminalFailure: input.onTerminalFailure,
             })
-          if (input.apiKeyId == null)
+          }
+          if (input.apiKeyId == null) {
             throw new Error(t('Please select an API key'))
+          }
           const fullKey = await loadFullTokenKey(
             input.apiKeyId,
             controller.signal

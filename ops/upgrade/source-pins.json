@@ -22,7 +22,7 @@
     "pinned_at": "2026-10-31T09:09:00Z",
     "verified_at": "2026-10-31T09:47:00Z"
   },
-  "version": "v1.0.0-rc.51.chuanapi.im.16",
+  "version": "v1.0.0-rc.51.chuanapi.im.17",
   "customer_invoice_feature": {
     "branch": "feat/customer-invoice-center-20261119",
     "base_commit": "5c370275b838d37d0ea4480810a2ebc2d7dd49ca",

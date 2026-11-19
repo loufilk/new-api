@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
@@ -23,16 +24,18 @@ func TestAppendRelayLogAdminInfoIncludesStreamDiagnostics(t *testing.T) {
 	c.Set(common.UpstreamRequestIdKey, "req_upstream_123")
 
 	start := time.Unix(1_700_000_000, 0)
+	common.SetContextKey(c, constant.ContextKeyGatewayIngressTime, start.Add(-100*time.Millisecond))
 	status := relaycommon.NewStreamStatus()
 	status.RecordError("reasoning replay recovery failed")
 	status.SetEndReason(relaycommon.StreamEndReasonTimeout, errors.New("output-loop detected"))
 	info := &relaycommon.RelayInfo{
-		StartTime:             start,
-		FirstResponseTime:     start.Add(275 * time.Millisecond),
-		IsStream:              true,
-		ReceivedResponseCount: 17,
-		StreamStatus:          status,
-		ChannelMeta:           &relaycommon.ChannelMeta{},
+		StartTime:                  start,
+		FirstResponseTime:          start.Add(275 * time.Millisecond),
+		FirstDownstreamContentTime: start.Add(300 * time.Millisecond),
+		IsStream:                   true,
+		ReceivedResponseCount:      17,
+		StreamStatus:               status,
+		ChannelMeta:                &relaycommon.ChannelMeta{},
 	}
 	other := model.NewLogOther()
 
@@ -45,6 +48,8 @@ func TestAppendRelayLogAdminInfoIncludesStreamDiagnostics(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 17, diagnostics["event_count"])
 	assert.Equal(t, int64(275), diagnostics["first_event_ms"])
+	assert.Equal(t, int64(400), diagnostics["first_downstream_content_ms"])
+	assert.Equal(t, int64(400), snapshot["first_downstream_content_ms"])
 	assert.Equal(t, "req_upstream_123", diagnostics["upstream_request_id"])
 	assert.Equal(t, "timeout", diagnostics["termination"])
 	assert.Equal(t, false, diagnostics["client_disconnected"])

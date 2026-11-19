@@ -217,13 +217,14 @@ test.each(['error', 'EOF'])(
       'message',
       JSON.stringify({ choices: [{ delta: { content: 'part' } }] })
     )
-    if (termination === 'error')
+    if (termination === 'error') {
       source.emit(
         'message',
         JSON.stringify({
           error: { message: 'Upstream interrupted', code: 'interrupted' },
         })
       )
+    }
     source.readyState = 2
     source.emit('readystatechange')
     source.emit('message', '[DONE]')

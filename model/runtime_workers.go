@@ -40,9 +40,9 @@ func StartRuntimeWorkers(group *lifecycle.Group, frequency int) {
 		lifecycle.Periodic(schedule, work, func() time.Duration { return interval }, false, func(context.Context) { loadOptionsFromDatabase() })
 	})
 	group.Go("quota-data", func(schedule, work context.Context) {
-		lifecycle.Periodic(schedule, work, func() time.Duration { return time.Duration(common.DataExportInterval) * time.Minute }, true, func(context.Context) {
+		lifecycle.Periodic(schedule, work, func() time.Duration { return time.Duration(common.DataExportInterval) * time.Minute }, true, func(ctx context.Context) {
 			if common.DataExportEnabled {
-				SaveQuotaDataCache()
+				_ = saveQuotaDataCache(ctx)
 			}
 		})
 	})
@@ -56,11 +56,12 @@ func StartRuntimeWorkers(group *lifecycle.Group, frequency int) {
 
 // FlushRuntimeData runs only after HTTP, task handlers and detached refund
 // work have joined, so no producer can race the final flush.
-func FlushRuntimeData() {
+func FlushRuntimeData(ctx context.Context) error {
 	if common.BatchUpdateEnabled {
 		batchUpdate()
 	}
 	if common.DataExportEnabled {
-		SaveQuotaDataCache()
+		return saveQuotaDataCache(ctx)
 	}
+	return nil
 }

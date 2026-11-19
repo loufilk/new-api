@@ -523,6 +523,8 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 // UserId is an exact ID filter, independent of Username (both intersect).
 // Self endpoints bind UserId from authentication and omit Username/Channel.
 type LogFilter struct {
+	// Only list requests may opt out of an exact count (total = -1).
+	SkipTotal         bool
 	Type              int
 	StartTimestamp    int64
 	EndTimestamp      int64
@@ -574,12 +576,21 @@ func (f LogFilter) apply(tx *gorm.DB) (*gorm.DB, error) {
 	return tx, nil
 }
 
+func logPageTotal(tx *gorm.DB, skipTotal bool) (int64, error) {
+	if skipTotal {
+		return -1, nil
+	}
+	var total int64
+	err := tx.Session(&gorm.Session{}).Model(&Log{}).Count(&total).Error
+	return total, err
+}
+
 func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int64, err error) {
 	tx, err := filter.apply(LOG_DB)
 	if err != nil {
 		return nil, 0, err
 	}
-	err = tx.Model(&Log{}).Count(&total).Error
+	total, err = logPageTotal(tx, filter.SkipTotal)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -638,14 +649,12 @@ func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int
 	return logs, total, err
 }
 
-const logSearchCountLimit = 10000
-
 func GetUserLogs(userId int, filter LogFilter, startIdx int, num int) (logs []*Log, total int64, err error) {
 	tx, err := filter.apply(LOG_DB.Where("logs.user_id = ?", userId))
 	if err != nil {
 		return nil, 0, err
 	}
-	err = tx.Model(&Log{}).Limit(logSearchCountLimit).Count(&total).Error
+	total, err = logPageTotal(tx, filter.SkipTotal)
 	if err != nil {
 		common.SysError(common.LogText("failed to count user logs: %s", err.Error()))
 		return nil, 0, common.NewMessage("Failed to query logs")

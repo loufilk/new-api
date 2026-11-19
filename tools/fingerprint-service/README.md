@@ -17,7 +17,7 @@ See [UPSTREAM.md](UPSTREAM.md) for the snapshot and data provenance.
 
 ## Build and test offline
 
-Use Go 1.27.3 and a dependency cache already containing the modules listed in
+Use Go 1.27.4 and a dependency cache already containing the modules listed in
 `go.mod` and `go.sum`. An offline build deliberately fails if they are missing;
 it must not automatically fetch a different SDK or reference bank.
 

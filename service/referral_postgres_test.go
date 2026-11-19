@@ -50,8 +50,8 @@ func openReferralPostgreSQLFixture(t *testing.T) *referralPGFixture {
 	require.NoError(t, admin.Raw("SHOW server_version").Scan(&version).Error)
 	require.NotEmpty(t, version)
 	t.Logf("PostgreSQL %s", version)
-	require.True(t, strings.HasPrefix(version, "18.6"),
-		"Referral PostgreSQL 验证环境必须是生产目标 PostgreSQL 18.6，实际为 %s", version)
+	require.True(t, strings.HasPrefix(version, "18.6") || strings.HasPrefix(version, "18.7"),
+		"Referral PostgreSQL 验证环境必须是生产目标 PostgreSQL 18.6/18.7，实际为 %s", version)
 
 	schema := fmt.Sprintf("referral_pg_%d", time.Now().UnixNano())
 	require.NoError(t, admin.Exec(fmt.Sprintf("CREATE SCHEMA %q", schema)).Error)

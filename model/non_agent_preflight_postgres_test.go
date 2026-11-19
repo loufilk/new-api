@@ -27,7 +27,7 @@ func nonAgentPreflightFixture(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	var version int
 	require.NoError(t, admin.Raw("SHOW server_version_num").Scan(&version).Error)
-	require.Equal(t, 180006, version)
+	require.Contains(t, []int{180006, 180007}, version)
 	schema := "non_agent_" + common.GetUUID()
 	require.NoError(t, admin.Exec(fmt.Sprintf("CREATE SCHEMA %q", schema)).Error)
 	q := u.Query()

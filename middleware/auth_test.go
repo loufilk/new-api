@@ -392,7 +392,7 @@ func setupDeletedAPIKeyAuthTest(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(t, adminSQL.Close()) })
 	var version string
 	require.NoError(t, admin.Raw("SHOW server_version_num").Scan(&version).Error)
-	require.Equal(t, "180006", version)
+	require.Contains(t, []string{"180006", "180007"}, version)
 	schema := "deleted_api_key_auth_" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	require.NoError(t, admin.Exec("CREATE SCHEMA "+schema).Error)
 	t.Cleanup(func() { assert.NoError(t, admin.Exec("DROP SCHEMA "+schema+" CASCADE").Error) })

@@ -49,8 +49,8 @@ func TestMain(m *testing.M) {
 	if nativeDSN != "" {
 		common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
 		var version string
-		if err := db.Raw("SHOW server_version_num").Scan(&version).Error; err != nil || version != "180006" {
-			panic("native model tests require PostgreSQL 18.6")
+		if err := db.Raw("SHOW server_version_num").Scan(&version).Error; err != nil || (version != "180006" && version != "180007") {
+			panic("native model tests require PostgreSQL 18.6 or 18.7")
 		}
 	} else if mysqlDSN != "" {
 		common.SetDatabaseTypes(common.DatabaseTypeMySQL, common.DatabaseTypeMySQL)
@@ -90,6 +90,7 @@ func TestMain(m *testing.M) {
 		&Log{},
 		&Channel{},
 		&QuotaData{},
+		&QuotaDataFlushCursor{},
 		&Ability{},
 		&TopUp{},
 		&SubscriptionPlan{},

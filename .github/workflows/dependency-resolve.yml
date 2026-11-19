@@ -23,11 +23,11 @@ jobs:
       LOG_SQL_DSN: ''
       REDIS_CONN_STRING: ''
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           cache: false
@@ -53,7 +53,7 @@ jobs:
           go mod verify > "$OUT/module-verification.txt"
           git archive --format=tar.gz -o "$OUT/source.tar.gz" HEAD
           printf '%s\n' 'Resolution only. No application tests, database compatibility, source migration, commit, push or deployment are implied.' > "$OUT/SCOPE.txt"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: dependency-resolution-${{ github.sha }}

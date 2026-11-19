@@ -438,7 +438,7 @@ func TestDoubaoRelayedImageStreamSettlement(t *testing.T) {
 			f := newTaskSubmissionFinancialFixtureForModel(t, "native-stream-"+tc.prompt, initial, held, seedream)
 			var version string
 			require.NoError(t, f.db.Raw("SHOW server_version_num").Scan(&version).Error)
-			require.Equal(t, "180006", version)
+			require.Contains(t, []string{"180006", "180007"}, version)
 			f.channel.Type, f.channel.Name, f.channel.Key, f.channel.BaseURL = constant.ChannelTypeDoubaoVideo, "ark-native-stream", "synthetic-ark-key", &upstream.URL
 			f.channel.Status, f.channel.Models, f.channel.Group = common.ChannelStatusEnabled, seedream, "default"
 			require.NoError(t, f.db.Save(&f.channel).Error)

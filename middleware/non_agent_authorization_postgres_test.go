@@ -30,7 +30,7 @@ func TestLegacyConsumerRoleAuthorizationPostgres(t *testing.T) {
 	require.NoError(t, err)
 	var version string
 	require.NoError(t, db.Raw("SHOW server_version_num").Scan(&version).Error)
-	require.Equal(t, "180006", version)
+	require.Contains(t, []string{"180006", "180007"}, version)
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.UserAccessToken{}, &model.Token{}, &model.AuditLog{}, &model.Option{}, &model.SubscriptionPlan{}, &model.Channel{}, &model.Ability{}))
 	oldDB, oldLog, oldRedis, oldSecret := model.DB, model.LOG_DB, common.RedisEnabled, common.SessionSecret
 	oldMain, oldLogType := common.MainDatabaseType(), common.LogDatabaseType()

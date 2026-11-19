@@ -54,6 +54,7 @@ interface TimingMetricsCellProps {
   useTimeSec: number
   completionTokens: number
   frtMs?: number
+  firstContentMs?: number
   isStream: boolean
   className?: string
   /**
@@ -70,8 +71,10 @@ export function TimingMetricsCell(props: TimingMetricsCellProps) {
   const { t } = useTranslation()
   const indicator = props.indicator ?? 'bar'
   const showFirstToken = props.isStream
-  const firstTokenSeconds =
-    props.frtMs != null && props.frtMs > 0 ? props.frtMs / 1000 : null
+  const legacyFirstEventMs =
+    props.frtMs != null && props.frtMs > 0 ? props.frtMs : null
+  const firstContentMs = props.firstContentMs ?? legacyFirstEventMs
+  const firstTokenSeconds = firstContentMs == null ? null : firstContentMs / 1000
   const firstTokenVariant: StatusVariant =
     firstTokenSeconds == null
       ? 'neutral'
@@ -104,7 +107,7 @@ export function TimingMetricsCell(props: TimingMetricsCellProps) {
             />
           )}
           <span className='text-muted-foreground shrink-0'>
-            {t('First token')}
+            {props.firstContentMs != null ? t('First token') : 'FRT'}
           </span>
           <span className={cn('tabular-nums', textColorMap[firstTokenVariant])}>
             {firstTokenLabel}

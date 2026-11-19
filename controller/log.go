@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -84,13 +85,28 @@ func limitLogTimeRange(startTimestamp int64, endTimestamp int64) (int64, error) 
 	return startTimestamp, nil
 }
 
+// Invalid negative limits disable GORM pagination. Bound both the SQL limit
+// and index arithmetic (including the synthetic IDs in a self response).
+func logPageQuery(c *gin.Context) *common.PageInfo {
+	page := common.GetPageQuery(c)
+	if page.PageSize < 1 || page.Page < 1 || page.Page > math.MaxInt/page.PageSize {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return nil
+	}
+	return page
+}
+
 func GetAllLogs(c *gin.Context) {
-	pageInfo := common.GetPageQuery(c)
+	pageInfo := logPageQuery(c)
+	if pageInfo == nil {
+		return
+	}
 	filter, err := logFilterFromQuery(c, true)
 	if err != nil {
 		common.ApiErrorStatus(c, http.StatusBadRequest, err)
 		return
 	}
+	filter.SkipTotal = c.Query("skip_total") == "1"
 	logs, total, err := model.GetAllLogs(filter, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
@@ -108,7 +124,10 @@ func GetAllLogs(c *gin.Context) {
 }
 
 func GetUserLogs(c *gin.Context) {
-	pageInfo := common.GetPageQuery(c)
+	pageInfo := logPageQuery(c)
+	if pageInfo == nil {
+		return
+	}
 	filter, err := logFilterFromQuery(c, false)
 	if err != nil {
 		common.ApiErrorStatus(c, http.StatusUnauthorized, err)
@@ -122,6 +141,7 @@ func GetUserLogs(c *gin.Context) {
 		}
 		filter.StartTimestamp = startTimestamp
 	}
+	filter.SkipTotal = c.Query("skip_total") == "1"
 	logs, total, err := model.GetUserLogs(c.GetInt("id"), filter, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)

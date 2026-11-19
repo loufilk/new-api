@@ -45,7 +45,7 @@ func TestModelTestHistoryAuthPostgresRetainsSessionSecurityWithoutGroupPolicy(t 
 	require.NoError(t, err)
 	var version string
 	require.NoError(t, db.Raw("SHOW server_version_num").Scan(&version).Error)
-	require.Equal(t, "180006", version)
+	require.Contains(t, []string{"180006", "180007"}, version)
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.UserAccessToken{}, &model.AuditLog{}, &model.Option{}))
 	oldDB, oldLog, oldRedis, oldMemory, oldSecret := model.DB, model.LOG_DB, common.RedisEnabled, common.MemoryCacheEnabled, common.SessionSecret
 	oldMain, oldLogType := common.MainDatabaseType(), common.LogDatabaseType()

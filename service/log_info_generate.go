@@ -113,6 +113,14 @@ func appendStreamAdminDiagnostics(ctx *gin.Context, relayInfo *relaycommon.Relay
 		diagnostics["first_event_ms"] = relayInfo.FirstResponseTime.Sub(relayInfo.StartTime).Milliseconds()
 	}
 	if ctx != nil {
+		// Deliberately do not fall back to StartTime: it is set after auth and
+		// initial channel selection, and would understate the gateway latency.
+		ingress := common.GetContextKeyTime(ctx, constant.ContextKeyGatewayIngressTime)
+		if !ingress.IsZero() && !relayInfo.FirstDownstreamContentTime.Before(ingress) {
+			ms := relayInfo.FirstDownstreamContentTime.Sub(ingress).Milliseconds()
+			diagnostics["first_downstream_content_ms"] = ms
+			other.SetPublic("first_downstream_content_ms", ms)
+		}
 		if upstreamRequestID := ctx.GetString(common.UpstreamRequestIdKey); upstreamRequestID != "" {
 			diagnostics["upstream_request_id"] = upstreamRequestID
 		}

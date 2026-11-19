@@ -23,7 +23,7 @@ func TestConsumeLogExportsCacheUsageWithSeparateLogDatabase(t *testing.T) {
 		return db
 	}
 	mainDB, logDB := open("main.db"), open("log.db")
-	require.NoError(t, mainDB.AutoMigrate(&User{}, &QuotaData{}))
+	require.NoError(t, mainDB.AutoMigrate(&User{}, &QuotaData{}, &QuotaDataFlushCursor{}))
 	require.NoError(t, logDB.AutoMigrate(&Log{}))
 	require.NoError(t, mainDB.Create(&User{Id: 1, Username: "split-cache-user", Setting: "{}"}).Error)
 

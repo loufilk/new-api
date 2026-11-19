@@ -96,11 +96,21 @@ let initPromise: Promise<typeof i18n> | null = null
 /** Initialize i18next before React mounts while loading only active locales. */
 export function initI18n(): Promise<typeof i18n> {
   if (initPromise) return initPromise
+  // The detector filters whitespace before calling convertDetectedLanguage.
+  // Normalize legacy saved aliases through the application's allowlisted codes.
+  let savedLanguage: InterfaceLanguageCode | undefined
+  try {
+    const saved = window.localStorage.getItem('i18nextLng')
+    if (saved?.trim()) savedLanguage = normalizeInterfaceLanguage(saved)
+  } catch {
+    // Storage can be blocked by browser privacy settings; use the navigator.
+  }
   initPromise = i18n
     .use(localeBackend)
     .use(LanguageDetector)
     .use(initReactI18next)
     .init({
+      lng: savedLanguage,
       fallbackLng: 'en',
       supportedLngs: INTERFACE_LANGUAGE_OPTIONS.map(
         (language) => language.code
@@ -112,7 +122,7 @@ export function initI18n(): Promise<typeof i18n> {
         escapeValue: false,
       },
       detection: {
-        order: ['localStorage', 'navigator'],
+        order: ['navigator'],
         caches: ['localStorage'],
         convertDetectedLanguage: normalizeInterfaceLanguage,
       },

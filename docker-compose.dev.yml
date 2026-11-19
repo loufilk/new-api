@@ -11,7 +11,11 @@
 # Stop:
 #   docker compose -f docker-compose.dev.yml down
 #
-# Reset data:
+# PostgreSQL 18 starts with a fresh dev_pg18_data volume. If the old PG15
+# dev_pg_data matters, dump it with PG15 and restore into PG18; never mount it
+# directly or delete it as part of this upgrade.
+#
+# Reset CURRENT development data (destructive):
 #   docker compose -f docker-compose.dev.yml down -v
 
 services:
@@ -45,14 +49,14 @@ services:
       - dev-network
 
   redis:
-    image: redis:7-alpine
+    image: redis:8.10.3-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3
     container_name: new-api-dev-redis
     restart: unless-stopped
     networks:
       - dev-network
 
   postgres:
-    image: postgres:15-alpine
+    image: postgres:18.7-alpine@sha256:ff64c9e3bdf8e2120107d3559de8db314e8305f7e38c5105903c6295876738ff
     container_name: new-api-dev-pg
     restart: unless-stopped
     environment:
@@ -60,7 +64,7 @@ services:
       POSTGRES_PASSWORD: 123456
       POSTGRES_DB: new-api
     volumes:
-      - dev_pg_data:/var/lib/postgresql/data
+      - dev_pg18_data:/var/lib/postgresql
     networks:
       - dev-network
     healthcheck:
@@ -71,7 +75,7 @@ services:
 
 volumes:
   dev_data:
-  dev_pg_data:
+  dev_pg18_data:
 
 networks:
   dev-network:

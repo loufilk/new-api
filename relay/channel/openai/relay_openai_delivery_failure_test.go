@@ -156,7 +156,13 @@ func TestOaiStreamDeliveryFailureStopsAllFormatsAndKeepsObservedOutput(t *testin
 				assertStreamDeliveryFailure(t, apiErr, w)
 				require.NotNil(t, usage)
 				assert.Equal(t, 8, usage.PromptTokens)
-				assert.Equal(t, service.ResponseText2Usage(c, "partial output already observed", info.UpstreamModelName, 8).CompletionTokens, usage.CompletionTokens)
+				observed := "partial output already observed"
+				if format == types.RelayFormatOpenAI {
+					// Native Chat flushes immediately; the next chunk was never handled.
+					observed = "partial output"
+					assert.True(t, info.FirstDownstreamContentTime.IsZero(), "failed output and role preludes are not TTFT")
+				}
+				assert.Equal(t, service.ResponseText2Usage(c, observed, info.UpstreamModelName, 8).CompletionTokens, usage.CompletionTokens)
 				assert.Equal(t, usage.PromptTokens+usage.CompletionTokens, usage.TotalTokens)
 				assert.True(t, common.GetContextKeyBool(c, constant.ContextKeyStreamErrorHandled))
 				assert.NotContains(t, w.Body.String(), "already observed")

@@ -5,8 +5,9 @@ DO NOT send optional commentary
 ## ChuanAPI production validation scope
 
 The owner's instruction on 2026-11-18 sets PostgreSQL 18.6 as the production
-database baseline for this branch. Verify database changes against that version
-in an isolated local instance. Do not access the production database for tests.
+database baseline. For the im.17 dependency candidate, verify the affected
+contracts on PostgreSQL 18.7 in isolation and compare with the 18.6 baseline.
+Do not access the production database for tests.
 This scope supersedes the multi-database verification requirements below: do not
 run SQLite, MySQL, or older PostgreSQL compatibility matrices for this deployment.
 
@@ -36,7 +37,7 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 
 ## Tech Stack
 
-- **Backend**: Go 1.27.3 for the root module and `relaykit/`, Go 1.26 for `tokenkit/` (see each module’s `go.mod`), Gin web framework, GORM v2 ORM
+- **Backend**: Go 1.27.4 for the root module and `relaykit/`, Go 1.26 for `tokenkit/` (see each module’s `go.mod`), Gin web framework, GORM v2 ORM
 - **Frontend**: React 19, TypeScript, Rsbuild 2, TanStack Router/Query/Table, Zustand, Base UI, Tailwind CSS 4
 - **Databases**: SQLite, MySQL, PostgreSQL for the primary database (all three must be supported); a separately configured log database also supports ClickHouse
 - **Cache**: Redis (go-redis) + in-memory cache

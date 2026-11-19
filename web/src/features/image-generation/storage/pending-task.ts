@@ -54,8 +54,9 @@ export function readPendingImageTask(
         item.success &&
         key === prefix + item.data.id &&
         item.data.expiresAt > Date.now()
-      )
+      ) {
         return item.data
+      }
       localStorage.removeItem(key)
     }
   } catch {
@@ -72,8 +73,9 @@ export function writePendingImageTask(
     !owner ||
     owner !== getImageHistoryOwnerId() ||
     !/^[0-9a-f]{48}$/.test(id)
-  )
+  ) {
     return
+  }
   try {
     const key = `image-pending:v1:${owner}:${id}`
     if (task) localStorage.setItem(key, JSON.stringify(pendingTask.parse(task)))

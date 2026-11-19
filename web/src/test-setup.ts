@@ -103,6 +103,14 @@ Object.defineProperty(window, 'matchMedia', {
   }),
 })
 
+// jsdom computes Vaul's CSS keyframe names but does not run the animations.
+// In this reduced-motion test environment, let Radix unmount closed drawers
+// without waiting for an animationend event that the DOM cannot deliver.
+const drawerMotion = document.createElement('style')
+drawerMotion.textContent =
+  '[data-vaul-drawer][data-state], [data-vaul-overlay][data-state] { animation-name: none !important; }'
+document.head.append(drawerMotion)
+
 // jsdom does not implement Range geometry. CodeMirror measures text through
 // these browser APIs; actual wrapping and scrolling are checked in browser QA.
 if (!Range.prototype.getClientRects) {

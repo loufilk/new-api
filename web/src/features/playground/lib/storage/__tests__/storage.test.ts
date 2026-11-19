@@ -110,8 +110,8 @@ test('storage calls without a signed-in user do not persist shared data', () => 
 
 test('legitimately repeated Markdown headings survive reloading saved chat', () => {
   useAuthStore.getState().auth.setUser({ id: 1, username: 'A', role: 1 })
-  const section = '## 1. Example\n' + 'x'.repeat(750) + '\n'
-  const content = 'Opening paragraph\n' + section.repeat(3)
+  const section = `## 1. Example\n${'x'.repeat(750)}\n`
+  const content = `Opening paragraph\n${section.repeat(3)}`
   saveMessages([{ ...messages[0], versions: [{ id: 'v1', content }] }])
   expect(loadMessages()?.[0].versions[0].content).toBe(content)
 })

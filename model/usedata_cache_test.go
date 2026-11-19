@@ -4,6 +4,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -22,7 +23,7 @@ func TestConsumeLogExportsNormalizedCacheUsage(t *testing.T) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, sqlDB.Close()) })
-	require.NoError(t, db.AutoMigrate(&User{}, &Log{}, &QuotaData{}))
+	require.NoError(t, db.AutoMigrate(&User{}, &Log{}, &QuotaData{}, &QuotaDataFlushCursor{}))
 	require.NoError(t, db.Create(&User{Id: 1, Username: "cache-user", Setting: "{}"}).Error)
 
 	previousDB, previousLogDB := DB, LOG_DB
@@ -99,6 +100,15 @@ type quotaDataBeforeCache struct {
 
 func (quotaDataBeforeCache) TableName() string { return "quota_data" }
 
+// Last deployed reporting schema: all four labels varchar(64), both cache counters present.
+type quotaDataIm16 struct {
+	Base                quotaDataBeforeCache `gorm:"embedded"`
+	CacheReadTokens     int64                `gorm:"default:0"`
+	CacheCreationTokens int64                `gorm:"default:0"`
+}
+
+func (quotaDataIm16) TableName() string { return "quota_data" }
+
 // TEST_*_DSN must refer to dedicated test databases: each case recreates quota_data.
 func TestQuotaDataCacheUsageDatabaseMatrix(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
@@ -134,10 +144,14 @@ func TestQuotaDataCacheUsageDatabaseMatrix(t *testing.T) {
 			require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
 			t.Logf("%s version: %s", dialect, version)
 
-			for _, migration := range []string{"fresh", "upgrade"} {
+			migrations := []string{"fresh", "upgrade"}
+			if dialect == "postgres" {
+				migrations = append(migrations, "upgrade-im16")
+			}
+			for _, migration := range migrations {
 				t.Run(migration, func(t *testing.T) {
-					require.NoError(t, db.Migrator().DropTable(&QuotaData{}))
-					t.Cleanup(func() { assert.NoError(t, db.Migrator().DropTable(&QuotaData{})) })
+					require.NoError(t, db.Migrator().DropTable(&QuotaData{}, &QuotaDataFlushCursor{}))
+					t.Cleanup(func() { assert.NoError(t, db.Migrator().DropTable(&QuotaData{}, &QuotaDataFlushCursor{})) })
 					previousDB, previousType := DB, common.MainDatabaseType()
 					DB = db
 					common.SetMainDatabaseType(common.DatabaseType(dialect))
@@ -155,29 +169,79 @@ func TestQuotaDataCacheUsageDatabaseMatrix(t *testing.T) {
 
 					historical := quotaDataBeforeCache{UserID: 9, Username: "historical", ModelName: "legacy-model", CreatedAt: 7200, UseGroup: "legacy", TokenID: 5, ChannelID: 6, NodeName: "old-node", Count: 2, Quota: 37, TokenUsed: 59}
 					var oldIndexes []gorm.Index
-					if migration == "upgrade" {
-						require.NoError(t, db.AutoMigrate(&quotaDataBeforeCache{}))
-						require.False(t, db.Migrator().HasColumn(&QuotaData{}, "cache_read_tokens"))
-						require.NoError(t, db.Create(&historical).Error)
+					if migration != "fresh" {
+						if migration == "upgrade-im16" {
+							require.NoError(t, db.AutoMigrate(&quotaDataIm16{}))
+							var narrow int64
+							require.NoError(t, db.Raw(`SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema()
+								AND table_name = 'quota_data' AND column_name IN ('username', 'model_name', 'use_group', 'node_name')
+								AND character_maximum_length = 64`).Scan(&narrow).Error)
+							require.EqualValues(t, 4, narrow)
+							im16 := quotaDataIm16{Base: historical, CacheReadTokens: 13, CacheCreationTokens: 19}
+							require.NoError(t, db.Create(&im16).Error)
+							historical = im16.Base
+						} else {
+							require.NoError(t, db.AutoMigrate(&quotaDataBeforeCache{}))
+							require.False(t, db.Migrator().HasColumn(&QuotaData{}, "cache_read_tokens"))
+							require.NoError(t, db.Create(&historical).Error)
+						}
 						oldIndexes, err = db.Migrator().GetIndexes(&quotaDataBeforeCache{})
 						require.NoError(t, err)
 					}
 					for range 2 {
-						require.NoError(t, db.AutoMigrate(&QuotaData{}))
+						require.NoError(t, db.AutoMigrate(&QuotaData{}, &QuotaDataFlushCursor{}))
 					}
 					require.True(t, db.Migrator().HasColumn(&QuotaData{}, "cache_read_tokens"))
 					require.True(t, db.Migrator().HasColumn(&QuotaData{}, "cache_creation_tokens"))
 					for _, index := range oldIndexes {
 						assert.True(t, db.Migrator().HasIndex(&QuotaData{}, index.Name()), "upgrade preserves existing index %s", index.Name())
 					}
-					if migration == "upgrade" {
+					if migration != "fresh" {
 						var oldRow quotaDataBeforeCache
 						require.NoError(t, db.First(&oldRow, historical.Id).Error)
 						assert.Equal(t, historical, oldRow, "upgrade preserves every original column")
 						var upgraded QuotaData
 						require.NoError(t, db.First(&upgraded, historical.Id).Error)
-						assert.Zero(t, upgraded.CacheReadTokens)
-						assert.Zero(t, upgraded.CacheCreationTokens, "historical usage is not fabricated")
+						if migration == "upgrade-im16" {
+							assert.EqualValues(t, 13, upgraded.CacheReadTokens)
+							assert.EqualValues(t, 19, upgraded.CacheCreationTokens)
+						} else {
+							assert.Zero(t, upgraded.CacheReadTokens)
+							assert.Zero(t, upgraded.CacheCreationTokens, "historical usage is not fabricated")
+						}
+					}
+
+					if dialect == "postgres" {
+						// PostgreSQL uses text like the source log; indexes and old rows
+						// survive the widening. Never clip labels: many distinct catalog
+						// model names share the first 64 characters.
+						var widened int64
+						require.NoError(t, db.Raw(`SELECT count(*) FROM information_schema.columns
+							WHERE table_schema = current_schema() AND table_name = 'quota_data'
+							AND column_name IN ('username', 'model_name', 'use_group', 'node_name')
+							AND data_type = 'text'`).Scan(&widened).Error)
+						require.EqualValues(t, 4, widened)
+						wide := QuotaDataLogParams{UserID: 23, Username: strings.Repeat("名", 65), ModelName: strings.Repeat("m", 127) + "a",
+							UseGroup: strings.Repeat("g", 90), NodeName: strings.Repeat("n", 255), CreatedAt: 14401, Quota: 3}
+						LogQuotaData(wide)
+						other := wide
+						other.ModelName = strings.Repeat("m", 127) + "b"
+						LogQuotaData(other)
+						LogQuotaData(QuotaDataLogParams{UserID: 24, ModelName: "ordinary", CreatedAt: wide.CreatedAt, Quota: 8})
+						require.NoError(t, saveQuotaDataCache(t.Context()))
+						LogQuotaData(wide)
+						require.NoError(t, saveQuotaDataCache(t.Context()))
+						var buckets []QuotaData
+						require.NoError(t, db.Where("created_at = 14400").Order("user_id, model_name").Find(&buckets).Error)
+						require.Len(t, buckets, 3)
+						require.Equal(t, wide.ModelName, buckets[0].ModelName)
+						require.Equal(t, wide.Username, buckets[0].Username)
+						require.Equal(t, wide.UseGroup, buckets[0].UseGroup)
+						require.Equal(t, wide.NodeName, buckets[0].NodeName)
+						require.Equal(t, 6, buckets[0].Quota)
+						require.Equal(t, other.ModelName, buckets[1].ModelName)
+						require.Equal(t, 3, buckets[1].Quota)
+						require.Equal(t, 8, buckets[2].Quota)
 					}
 
 					params := QuotaDataLogParams{UserID: 1, Username: "alice", ModelName: "cache-model", CreatedAt: 3607, UseGroup: "default", TokenID: 1, ChannelID: 1, NodeName: "node-a", Quota: 10, TokenUsed: 15, CacheReadTokens: 3, CacheCreationTokens: 5}

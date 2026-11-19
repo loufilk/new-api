@@ -131,8 +131,9 @@ describe('chat completion reasoning', () => {
 test('appends identical and prefix-sharing OpenAI content and reasoning deltas exactly', () => {
   let message = createLoadingAssistantMessage(0)
   for (const type of ['reasoning', 'content'] as const) {
-    for (const chunk of ['哈', '哈', '哈哈!'])
+    for (const chunk of ['哈', '哈', '哈哈!']) {
       message = applyStreamingChunk(message, type, chunk)
+    }
   }
   expect(message.versions[0].content).toBe('哈哈哈哈!')
   expect(message.reasoning?.content).toBe('哈哈哈哈!')

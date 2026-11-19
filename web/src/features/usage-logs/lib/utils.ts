@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 /**
  * Utility functions for usage logs feature
  */
+import type { QueryClient } from '@tanstack/react-query'
+
 import { createServerError } from '@/lib/server-error-message'
 
 import {
@@ -248,11 +250,27 @@ export function buildApiParams(config: {
 // Data Fetching
 // ============================================================================
 
+// A sample belongs to a search, not a page. Implicit "today" must also
+// change scope at local midnight without creating a new key every second.
+export function logFilterScope(search: Record<string, unknown>) {
+  const { page: _page, pageSize: _pageSize, ...filters } = search
+  const defaultDay =
+    filters.startTime || filters.endTime
+      ? undefined
+      : getDefaultTimeRange().start.getTime()
+  return { filters, defaultDay }
+}
+
+export const LOG_SUMMARY_FRESH_MS = 30_000
+
+type LogCountSample = { total: number; endTimestamp?: number }
+
 /**
  * Fetch logs based on category type
  */
 export async function fetchLogsByCategory(
-  config: FetchLogsConfig
+  config: FetchLogsConfig,
+  countCache?: { client: QueryClient; scope: string }
 ): Promise<GetLogsResponse> {
   const { logCategory, isAdmin, page, pageSize, searchParams, columnFilters } =
     config
@@ -265,7 +283,46 @@ export async function fetchLogsByCategory(
       columnFilters,
       isAdmin,
     })
-    return isAdmin ? await getAllLogs(params) : await getUserLogs(params)
+    const fetchPage = isAdmin ? getAllLogs : getUserLogs
+    if (!countCache) return fetchPage(params)
+
+    const key = ['usage-log-count', countCache.scope]
+    const state = countCache.client.getQueryState<LogCountSample>(key)
+    const sample =
+      page > 1 &&
+      state &&
+      !state.isInvalidated &&
+      Date.now() - state.dataUpdatedAt < LOG_SUMMARY_FRESH_MS
+        ? state.data
+        : undefined
+    if (sample) {
+      // For an implicit "today" range reuse the exact end used for the count.
+      const result = await fetchPage({
+        ...params,
+        skip_total: 1,
+        end_timestamp: sample.endTimestamp,
+      })
+      if (!result.success || !result.data) return result
+      if (result.data.total !== -1) return result // older server
+      const offset = (page - 1) * pageSize
+      const rows = result.data.items.length
+      // Recount if newer inserts or retention deletes visibly invalidate the sample.
+      const expectedRows = Math.min(
+        pageSize,
+        Math.max(0, sample.total - offset)
+      )
+      if (rows === expectedRows) {
+        return { ...result, data: { ...result.data, total: sample.total } }
+      }
+    }
+    const result = await fetchPage(params)
+    if (result.success && result.data && result.data.total >= 0) {
+      countCache.client.setQueryData<LogCountSample>(key, {
+        total: result.data.total,
+        endTimestamp: params.end_timestamp,
+      })
+    }
+    return result
   }
 
   // For drawing and task logs
