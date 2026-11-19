@@ -63,6 +63,14 @@ func snapshotAccessLogPath() gin.HandlerFunc {
 		cleanPath := c.Request.URL.Path
 		rawQuery := c.Request.URL.RawQuery
 		switch {
+		case strings.HasPrefix(cleanPath, "/api/invoice/"), strings.HasPrefix(cleanPath, "/api/admin/invoice/"):
+			// Client mistakes (such as putting a tax ID into the search string
+			// or the document path) must not copy invoice PII into access logs.
+			rawQuery = ""
+			path = c.FullPath()
+			if path == "" {
+				path = "[unmatched invoice route]"
+			}
 		case strings.HasPrefix(cleanPath, "/api/oauth/"), strings.HasPrefix(cleanPath, "/oauth/"),
 			cleanPath == "/api/stripe/webhook", cleanPath == "/api/creem/webhook", cleanPath == "/api/waffo/webhook",
 			strings.HasPrefix(cleanPath, "/api/waffo-pancake/webhook/"), cleanPath == "/api/user/epay/notify",

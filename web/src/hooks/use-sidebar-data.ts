@@ -30,6 +30,7 @@ import {
   ListTodo,
   PlugZap,
   Radio,
+  Receipt,
   ServerCog,
   Settings,
   ShieldCheck,
@@ -177,6 +178,15 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             url: '/affiliate',
             icon: Users,
           },
+          ...(user && status?.customer_invoice_enabled === true
+            ? [
+                {
+                  title: t('Invoice Center', { defaultValue: '开票中心' }),
+                  url: '/invoice',
+                  icon: Receipt,
+                },
+              ]
+            : []),
           {
             title: t('Support Center'),
             url: '/support',
@@ -222,6 +232,12 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             title: t('Agent management'),
             url: '/agent-platform/finance',
             icon: Users,
+            requiredRole: ROLE.SUPER_ADMIN,
+          },
+          {
+            title: t('Invoice Management', { defaultValue: '开票管理' }),
+            url: '/invoice-management',
+            icon: Receipt,
             requiredRole: ROLE.SUPER_ADMIN,
           },
           {

@@ -89,6 +89,7 @@ export interface ApiResponse<T = unknown> {
 
 export interface SystemStatus {
   account_pool_enabled?: boolean
+  customer_invoice_enabled?: boolean
   success?: boolean
   message?: string
   data?: {

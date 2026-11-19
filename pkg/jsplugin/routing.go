@@ -500,6 +500,8 @@ var reservedRouteNamespaces = []string{
 	"/agent-redemption",
 	"/image",
 	"/intelligence",
+	"/invoice",
+	"/invoice-management",
 	"/model-management",
 	"/support",
 	"/agent-pay",

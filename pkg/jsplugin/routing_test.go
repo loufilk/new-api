@@ -1262,7 +1262,7 @@ func TestReservedRouteNamespacesCoverConsolePages(t *testing.T) {
 
 // Keep the customized console protected even in backend-only source bundles.
 func TestReservedRouteNamespacesProtectChuanAPIConsole(t *testing.T) {
-	for _, namespace := range []string{"/account-pool", "/affiliate", "/agent-platform", "/agent-redemption", "/image", "/intelligence", "/model-management", "/support", "/agent-pay", "/help", "/model-monitor"} {
+	for _, namespace := range []string{"/account-pool", "/affiliate", "/agent-platform", "/agent-redemption", "/image", "/intelligence", "/invoice", "/invoice-management", "/model-management", "/support", "/agent-pay", "/help", "/model-monitor"} {
 		t.Run(namespace, func(t *testing.T) {
 			for _, suffix := range []string{"", "/", "/:section", "/*rest"} {
 				route := Route{Method: "GET", Path: namespace + suffix, Type: RouteTypeQuery, Render: "native"}

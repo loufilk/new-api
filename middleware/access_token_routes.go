@@ -41,6 +41,24 @@ func accessTokenScopeRule(scope string) accessTokenRouteRule {
 // Casbin-guarded routes declare themselves through
 // DeclareAccessTokenPermissionRoute when they are registered.
 var accessTokenRouteRules = map[string]accessTokenRouteRule{
+	// Private customer invoice records and finance actions are session-only.
+	"GET /api/invoice/config":                                 accessTokenSessionRule,
+	"GET /api/invoice/summary":                                accessTokenSessionRule,
+	"GET /api/invoice/orders":                                 accessTokenSessionRule,
+	"GET /api/invoice/applications":                           accessTokenSessionRule,
+	"GET /api/invoice/applications/:id":                       accessTokenSessionRule,
+	"GET /api/invoice/applications/:id/document":              accessTokenSessionRule,
+	"POST /api/invoice/applications":                          accessTokenSessionRule,
+	"POST /api/invoice/applications/:id/cancel":               accessTokenSessionRule,
+	"GET /api/admin/invoice/applications":                     accessTokenSessionRule,
+	"GET /api/admin/invoice/applications/:id":                 accessTokenSessionRule,
+	"GET /api/admin/invoice/applications/:id/document":        accessTokenSessionRule,
+	"POST /api/admin/invoice/applications/:id/claim":          accessTokenSessionRule,
+	"POST /api/admin/invoice/applications/:id/release":        accessTokenSessionRule,
+	"POST /api/admin/invoice/applications/:id/reject":         accessTokenSessionRule,
+	"POST /api/admin/invoice/applications/:id/issue":          accessTokenSessionRule,
+	"POST /api/admin/invoice/applications/:id/reconciliation": accessTokenSessionRule,
+
 	// Agent financial/business endpoints are browser-session-only. Declare their
 	// existing deny-PAT boundary explicitly; these rules never grant token scopes.
 	"GET /api/agent-platform/self":                              accessTokenSessionRule,

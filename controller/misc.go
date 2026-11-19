@@ -54,6 +54,7 @@ func GetStatus(c *gin.Context) {
 
 	data := gin.H{
 		"account_pool_enabled":          accountPoolEnabled,
+		"customer_invoice_enabled":      model.GetCustomerInvoicePolicy().Enabled,
 		"model_test_enabled":            modelTestEnabled,
 		"model_test_settings_available": modelTestSettingsErr == nil,
 		"version":                       common.Version,

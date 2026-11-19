@@ -50,6 +50,8 @@ import { Route as AuthenticatedDashboardSectionRouteImport } from './routes/_aut
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
 import { Route as AuthenticatedImageIndexRouteImport } from './routes/_authenticated/image/index'
 import { Route as AuthenticatedIntelligenceIndexRouteImport } from './routes/_authenticated/intelligence/index'
+import { Route as AuthenticatedInvoiceManagementIndexRouteImport } from './routes/_authenticated/invoice-management/index'
+import { Route as AuthenticatedInvoiceIndexRouteImport } from './routes/_authenticated/invoice/index'
 import { Route as AuthenticatedKeysIndexRouteImport } from './routes/_authenticated/keys/index'
 import { Route as AuthenticatedModelManagementIndexRouteImport } from './routes/_authenticated/model-management/index'
 import { Route as AuthenticatedModelManagementSectionRouteImport } from './routes/_authenticated/model-management/$section'
@@ -302,6 +304,18 @@ const AuthenticatedIntelligenceIndexRoute =
   AuthenticatedIntelligenceIndexRouteImport.update({
     id: '/intelligence/',
     path: '/intelligence/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedInvoiceManagementIndexRoute =
+  AuthenticatedInvoiceManagementIndexRouteImport.update({
+    id: '/invoice-management/',
+    path: '/invoice-management/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedInvoiceIndexRoute =
+  AuthenticatedInvoiceIndexRouteImport.update({
+    id: '/invoice/',
+    path: '/invoice/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedKeysIndexRoute = AuthenticatedKeysIndexRouteImport.update({
@@ -572,6 +586,8 @@ export interface FileRoutesByFullPath {
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/image/': typeof AuthenticatedImageIndexRoute
   '/intelligence/': typeof AuthenticatedIntelligenceIndexRoute
+  '/invoice-management/': typeof AuthenticatedInvoiceManagementIndexRoute
+  '/invoice/': typeof AuthenticatedInvoiceIndexRoute
   '/keys/': typeof AuthenticatedKeysIndexRoute
   '/model-management/': typeof AuthenticatedModelManagementIndexRoute
   '/playground/': typeof AuthenticatedPlaygroundIndexRoute
@@ -650,6 +666,8 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
   '/image': typeof AuthenticatedImageIndexRoute
   '/intelligence': typeof AuthenticatedIntelligenceIndexRoute
+  '/invoice-management': typeof AuthenticatedInvoiceManagementIndexRoute
+  '/invoice': typeof AuthenticatedInvoiceIndexRoute
   '/keys': typeof AuthenticatedKeysIndexRoute
   '/model-management': typeof AuthenticatedModelManagementIndexRoute
   '/playground': typeof AuthenticatedPlaygroundIndexRoute
@@ -732,6 +750,8 @@ export interface FileRoutesById {
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/_authenticated/image/': typeof AuthenticatedImageIndexRoute
   '/_authenticated/intelligence/': typeof AuthenticatedIntelligenceIndexRoute
+  '/_authenticated/invoice-management/': typeof AuthenticatedInvoiceManagementIndexRoute
+  '/_authenticated/invoice/': typeof AuthenticatedInvoiceIndexRoute
   '/_authenticated/keys/': typeof AuthenticatedKeysIndexRoute
   '/_authenticated/model-management/': typeof AuthenticatedModelManagementIndexRoute
   '/_authenticated/playground/': typeof AuthenticatedPlaygroundIndexRoute
@@ -813,6 +833,8 @@ export interface FileRouteTypes {
     | '/dashboard/'
     | '/image/'
     | '/intelligence/'
+    | '/invoice-management/'
+    | '/invoice/'
     | '/keys/'
     | '/model-management/'
     | '/playground/'
@@ -891,6 +913,8 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/image'
     | '/intelligence'
+    | '/invoice-management'
+    | '/invoice'
     | '/keys'
     | '/model-management'
     | '/playground'
@@ -972,6 +996,8 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard/'
     | '/_authenticated/image/'
     | '/_authenticated/intelligence/'
+    | '/_authenticated/invoice-management/'
+    | '/_authenticated/invoice/'
     | '/_authenticated/keys/'
     | '/_authenticated/model-management/'
     | '/_authenticated/playground/'
@@ -1319,6 +1345,20 @@ declare module '@tanstack/react-router' {
       path: '/intelligence'
       fullPath: '/intelligence/'
       preLoaderRoute: typeof AuthenticatedIntelligenceIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/invoice-management/': {
+      id: '/_authenticated/invoice-management/'
+      path: '/invoice-management'
+      fullPath: '/invoice-management/'
+      preLoaderRoute: typeof AuthenticatedInvoiceManagementIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/invoice/': {
+      id: '/_authenticated/invoice/'
+      path: '/invoice'
+      fullPath: '/invoice/'
+      preLoaderRoute: typeof AuthenticatedInvoiceIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/keys/': {
@@ -1698,6 +1738,8 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
   AuthenticatedImageIndexRoute: typeof AuthenticatedImageIndexRoute
   AuthenticatedIntelligenceIndexRoute: typeof AuthenticatedIntelligenceIndexRoute
+  AuthenticatedInvoiceManagementIndexRoute: typeof AuthenticatedInvoiceManagementIndexRoute
+  AuthenticatedInvoiceIndexRoute: typeof AuthenticatedInvoiceIndexRoute
   AuthenticatedKeysIndexRoute: typeof AuthenticatedKeysIndexRoute
   AuthenticatedModelManagementIndexRoute: typeof AuthenticatedModelManagementIndexRoute
   AuthenticatedPlaygroundIndexRoute: typeof AuthenticatedPlaygroundIndexRoute
@@ -1738,6 +1780,9 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
   AuthenticatedImageIndexRoute: AuthenticatedImageIndexRoute,
   AuthenticatedIntelligenceIndexRoute: AuthenticatedIntelligenceIndexRoute,
+  AuthenticatedInvoiceManagementIndexRoute:
+    AuthenticatedInvoiceManagementIndexRoute,
+  AuthenticatedInvoiceIndexRoute: AuthenticatedInvoiceIndexRoute,
   AuthenticatedKeysIndexRoute: AuthenticatedKeysIndexRoute,
   AuthenticatedModelManagementIndexRoute:
     AuthenticatedModelManagementIndexRoute,

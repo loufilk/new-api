@@ -213,6 +213,7 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 		}
 
 		registerPlaygroundRoutes(apiRouter)
+		RegisterCustomerInvoiceRoutes(apiRouter)
 
 		// Subscription billing (plans, purchase, admin management)
 		subscriptionRoute := apiRouter.Group("/subscription")

@@ -97,6 +97,9 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 		&BonusSourceReconciliationCursor{},
 		&ReferralRewardOutbox{},
 		&ReferralRewardInbox{},
+		&CustomerInvoiceApplication{},
+		&CustomerInvoiceItem{},
+		&CustomerInvoiceDocument{},
 		&BalanceLedgerOperation{},
 		&BalanceLedger{},
 		&ModelBonusEligibleAudit{},
@@ -111,7 +114,8 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 
 func TestMainAutoMigrateModelsWithoutRegistryKeepsCoreModels(t *testing.T) {
 	models := mainAutoMigrateModels(nil)
-	require.Len(t, models, 66)
+	require.Len(t, models, 69)
 	assert.IsType(t, &Channel{}, models[0])
-	assert.IsType(t, &ReferralRewardInbox{}, models[len(models)-1])
+	assert.IsType(t, &ReferralRewardInbox{}, models[65])
+	assert.IsType(t, &CustomerInvoiceDocument{}, models[len(models)-1])
 }
