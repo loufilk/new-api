@@ -47,6 +47,7 @@ type CustomerInvoiceApplication struct {
 	Title                string  `json:"-" gorm:"type:varchar(128);not null"`
 	TaxID                string  `json:"-" gorm:"type:varchar(20);not null"`
 	Category             string  `json:"-" gorm:"type:varchar(32);not null"`
+	CategoryName         string  `json:"-" gorm:"type:varchar(60);not null;default:''"`
 	Email                string  `json:"-" gorm:"type:varchar(254);not null"`
 	Address              string  `json:"-" gorm:"type:varchar(255);not null"`
 	Phone                string  `json:"-" gorm:"type:varchar(32);not null"`
@@ -141,6 +142,7 @@ type CustomerInvoiceSummary struct {
 	InvoiceType            string `json:"invoice_type"`
 	TitleType              string `json:"title_type"`
 	Category               string `json:"category"`
+	CategoryName           string `json:"category_name,omitempty"`
 	CreatedAt              int64  `json:"created_at"`
 	UpdatedAt              int64  `json:"updated_at"`
 	IssuedAt               int64  `json:"issued_at,omitempty"`
@@ -196,7 +198,7 @@ func normalizeCustomerInvoice(input CustomerInvoiceInput) (CustomerInvoiceInput,
 	}
 	if !invoiceKeyPattern.MatchString(input.IdempotencyKey) || len(input.OrderIDs) == 0 || len(input.OrderIDs) > customerInvoiceMaxOrders ||
 		(input.InvoiceType != "ordinary" && input.InvoiceType != "special") || (input.TitleType != "personal" && input.TitleType != "company") ||
-		(input.Category != "technical_service" && input.Category != "software_development") || !validInvoiceText(input.Title, 128) || !validInvoiceText(input.Email, 254) || len(input.Email) > 254 {
+		!invoiceCategoryIDPattern.MatchString(input.Category) || !validInvoiceText(input.Title, 128) || !validInvoiceText(input.Email, 254) || len(input.Email) > 254 {
 		return input, ErrCustomerInvoiceInvalid
 	}
 	email, err := mail.ParseAddress(input.Email)

@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
 
+import { invoiceCategoryIdSchema } from '../categories'
+
 const text = z.string().trim()
 const requiredText = (limit: number) =>
   text
@@ -31,7 +33,7 @@ export const invoiceSchema = z
   .object({
     invoice_type: z.enum(['ordinary', 'special']),
     title_type: z.literal('company'),
-    category: z.enum(['technical_service', 'software_development']),
+    category: invoiceCategoryIdSchema,
     title: requiredText(128),
     email: requiredText(254).pipe(z.email('Enter a valid email address.')),
     tax_id: text.regex(

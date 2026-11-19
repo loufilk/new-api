@@ -328,7 +328,7 @@ test('two disabled invoice types leave history available and do not load orders'
   )
 })
 
-test('a stale fee policy forces a fresh selection and consent; submitting opens an unpaid application without choosing a method', async () => {
+test('a stale fee and category policy forces a fresh selection and consent; submitting opens an unpaid application without choosing a method', async () => {
   const user = userEvent.setup()
   let changed = false
   let created = false
@@ -366,6 +366,9 @@ test('a stale fee policy forces a fresh selection and consent; submitting opens 
       data = {
         enabled: true,
         version: changed ? 2 : 1,
+        categories: changed
+          ? [{ id: 'cloud_ops', name: 'Cloud operations', enabled: true }]
+          : undefined,
         ordinary: changed ? withFee : free,
         special: free,
         fee_payment_methods: [
@@ -425,7 +428,16 @@ test('a stale fee policy forces a fresh selection and consent; submitting opens 
       screen.getByRole('checkbox', { name: 'EXAMPLE-FEE' })
     ).not.toBeChecked()
   )
+  const choose = screen.getByRole('combobox', { name: 'Invoice category' })
+  await waitFor(() => expect(choose).toHaveValue(''))
+  expect(
+    within(choose).queryByRole('option', { name: 'Technical services' })
+  ).toBeNull()
   await user.click(screen.getByRole('checkbox', { name: 'EXAMPLE-FEE' }))
+  expect(
+    screen.getByRole('button', { name: 'Submit and choose payment' })
+  ).toBeDisabled()
+  await user.selectOptions(choose, 'cloud_ops')
   expect(
     screen.getByText('Estimated invoice fee').parentElement
   ).toHaveTextContent('0.25')
@@ -446,9 +458,60 @@ test('a stale fee policy forces a fresh selection and consent; submitting opens 
   const [, first] = post.mock.calls[0]
   const [, next] = post.mock.calls[1]
   expect(first).toMatchObject({ settings_version: 1, title_type: 'company' })
-  expect(next).toMatchObject({ settings_version: 2, title_type: 'company' })
+  expect(next).toMatchObject({
+    settings_version: 2,
+    title_type: 'company',
+    category: 'cloud_ops',
+  })
   expect(next).not.toHaveProperty('fee_rail')
   expect((first as { idempotency_key: string }).idempotency_key).not.toEqual(
     (next as { idempotency_key: string }).idempotency_key
   )
+})
+
+test('an explicitly empty catalog closes new applications while history and detail show the submitted name literally', async () => {
+  const user = userEvent.setup()
+  const snapshot = { ...entry, category_name: 'Original category name' }
+  const get = vi.spyOn(api, 'get').mockImplementation(async (path) => {
+    let data: unknown = { items: [snapshot], total: 1 }
+    if (path === '/api/invoice/config') {
+      const free = {
+        enabled: true,
+        fee_enabled: false,
+        fee_rate_bps: 0,
+        tax_rate_bps: 0,
+      }
+      data = {
+        enabled: true,
+        version: 2,
+        ordinary: free,
+        special: free,
+        categories: [],
+      }
+    }
+    if (path === '/api/invoice/summary') data = totals
+    if (path === '/api/invoice/applications/4') {
+      data = { ...snapshot, title: 'Example', orders: [] }
+    }
+    return { data: { success: true, data } }
+  })
+  renderCenter()
+  expect(
+    await screen.findByText(/New applications are currently closed/)
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('combobox', { name: 'Invoice category' })
+  ).toBeNull()
+  expect(get.mock.calls.some(([path]) => path === '/api/invoice/orders')).toBe(
+    false
+  )
+  expect(
+    await screen.findByText(snapshot.category_name, { exact: false })
+  ).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Details #4' }))
+  expect(
+    await within(await screen.findByRole('dialog')).findByText(
+      snapshot.category_name
+    )
+  ).toBeVisible()
 })

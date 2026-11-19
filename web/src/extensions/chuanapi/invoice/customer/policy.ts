@@ -18,7 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
 
-import { invoiceSettingsSchema, type InvoiceTypeSettings } from '../contracts'
+import {
+  defaultInvoiceCategories,
+  invoiceCategoriesSchema,
+  invoiceSettingsSchema,
+  type InvoiceTypeSettings,
+} from '../contracts'
 
 const paymentMethod = z.discriminatedUnion('rail', [
   z.object({
@@ -38,10 +43,16 @@ const capabilities = z.object({
   fee_payment_methods: z.array(paymentMethod).default([]),
   wallet_quota_per_cent: z.int().nonnegative().default(0),
 })
-const config = invoiceSettingsSchema.extend(capabilities.shape)
+const config = invoiceSettingsSchema.extend({
+  ...capabilities.shape,
+  categories: invoiceCategoriesSchema
+    .default(defaultInvoiceCategories)
+    .transform((items) => items.filter((item) => item.enabled)),
+})
 const legacyConfig = capabilities
   .extend({
     // Never downgrade an incomplete modern policy into two free invoice types.
+    categories: z.array(z.never()).optional(),
     version: z.never().optional(),
     ordinary: z.never().optional(),
     special: z.never().optional(),
@@ -53,7 +64,13 @@ const legacyConfig = capabilities
       fee_rate_bps: 0,
       tax_rate_bps: 0,
     }
-    return { ...base, version: undefined, ordinary: free, special: free }
+    return {
+      ...base,
+      categories: base.categories ?? defaultInvoiceCategories,
+      version: undefined,
+      ordinary: free,
+      special: free,
+    }
   })
 
 export const customerConfigSchema = z.union([config, legacyConfig])

@@ -240,6 +240,18 @@
     "Fee merchant order": "手数料の加盟店注文番号",
     "Fee provider reference": "決済事業者の手数料取引番号",
     "Invoice fee": "発票発行手数料",
+    "Invoice category": "発票の記載項目",
+    "Technical services": "技術サービス",
+    "Software development": "ソフトウェア開発",
+    "Invoice categories": "発票の記載項目",
+    "Add invoice category": "発票の記載項目を追加",
+    "Use 1–60 characters without control characters.": "制御文字を含まない 1～60 文字で入力してください。",
+    "Invoice category names must be unique.": "発票の記載項目には異なる名前を付けてください。",
+    "If no category is enabled, customers cannot apply for an invoice.": "有効な項目がない場合、利用者は発票の発行を申請できません。",
+    "Up to 30 invoice categories are allowed.": "発票の記載項目は 30 件まで登録できます。",
+    "Select an invoice category": "発票の記載項目を選択してください",
+    "This invoice category is currently unavailable": "この項目での発票発行は現在受け付けていません",
+    "Update the server to edit invoice categories.": "発票の記載項目を編集するには、サーバーを更新してください。",
     "Invoice fee refund": "発票発行手数料の返金"
   }
 }

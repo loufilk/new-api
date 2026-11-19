@@ -41,6 +41,8 @@ func customerInvoiceError(c *gin.Context, err error) {
 		status, code, key = http.StatusForbidden, "INVOICE_DISABLED", "Disabled by current policy"
 	case errors.Is(err, model.ErrCustomerInvoiceSettingsConflict):
 		status, code, key = http.StatusConflict, "INVOICE_SETTINGS_CONFLICT", "Invoice settings changed. Refresh and try again."
+	case errors.Is(err, model.ErrCustomerInvoiceCategoryUnavailable):
+		status, code, key = http.StatusConflict, "INVOICE_CATEGORY_UNAVAILABLE", "This invoice category is currently unavailable"
 	case errors.Is(err, model.ErrCustomerInvoiceTypeDisabled):
 		status, code, key = http.StatusForbidden, "INVOICE_TYPE_DISABLED", "This invoice type is currently unavailable"
 	case errors.Is(err, model.ErrCustomerInvoiceFeePaymentUnavailable):
@@ -130,6 +132,7 @@ func GetCustomerInvoiceConfig(c *gin.Context) {
 		return
 	}
 	settings, err := model.GetCustomerInvoiceSettings(c.Request.Context())
+	settings.Categories = settings.Categories.EnabledOnly()
 	respondCustomerInvoice(c, struct {
 		Enabled bool `json:"enabled"`
 		model.CustomerInvoiceSettings
@@ -200,9 +203,10 @@ func (input invoiceTypeSettingsInput) toSettings() (model.CustomerInvoiceTypeSet
 
 func UpdateAdminCustomerInvoiceSettings(c *gin.Context) {
 	var input struct {
-		Version  *int64                   `json:"version"`
-		Ordinary invoiceTypeSettingsInput `json:"ordinary"`
-		Special  invoiceTypeSettingsInput `json:"special"`
+		Categories model.CustomerInvoiceCategories `json:"categories"`
+		Version    *int64                          `json:"version"`
+		Ordinary   invoiceTypeSettingsInput        `json:"ordinary"`
+		Special    invoiceTypeSettingsInput        `json:"special"`
 	}
 	if !readCustomerInvoiceJSON(c, &input) {
 		return
@@ -213,7 +217,7 @@ func UpdateAdminCustomerInvoiceSettings(c *gin.Context) {
 		customerInvoiceError(c, model.ErrCustomerInvoiceInvalid)
 		return
 	}
-	proposed := model.CustomerInvoiceSettings{Version: *input.Version, Ordinary: ordinary, Special: special}
+	proposed := model.CustomerInvoiceSettings{Version: *input.Version, Ordinary: ordinary, Special: special, Categories: input.Categories}
 	settings, err := model.UpdateCustomerInvoiceSettings(c.Request.Context(), c.GetInt("id"), proposed)
 	respondAdminInvoiceSettings(c, settings, err)
 }

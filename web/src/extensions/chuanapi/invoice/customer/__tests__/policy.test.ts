@@ -18,6 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { expect, test } from 'vitest'
 
+import {
+  invoiceCategoryOptionLabel,
+  invoiceCategorySnapshotLabel,
+} from '../../categories'
 import { customerConfigSchema, estimateInvoiceFee } from '../policy'
 
 const ordinary = {
@@ -63,4 +67,69 @@ test('fees round half-up exactly once and remain precise beyond the JS safe inte
     90071992547409930n
   )
   expect(estimateInvoiceFee(999n, special)).toBe(0n)
+})
+
+test('only an absent catalog inherits the two legacy categories; empty, disabled and malformed catalogs never reopen them', () => {
+  const base = { version: 6, enabled: true, ordinary, special }
+  const custom = { id: 'hosting_2', name: 'Server hosting', enabled: true }
+  expect(
+    customerConfigSchema.safeParse({ enabled: true, categories: [custom] })
+      .success
+  ).toBe(false)
+  expect(customerConfigSchema.parse(base).categories).toEqual([
+    { id: 'technical_service', name: '技术服务费', enabled: true },
+    { id: 'software_development', name: '软件开发费', enabled: true },
+  ])
+  expect(
+    customerConfigSchema.parse({ ...base, categories: [] }).categories
+  ).toEqual([])
+  expect(
+    customerConfigSchema.parse({
+      ...base,
+      categories: [
+        custom,
+        { ...custom, id: 'old', name: 'Old', enabled: false },
+      ],
+    }).categories
+  ).toEqual([custom])
+  for (const categories of [
+    null,
+    [{}],
+    [{ ...custom, id: 'not allowed!' }],
+    [custom, { ...custom, id: 'other', name: 'Ｓerver Hosting' }],
+  ]) {
+    expect(
+      customerConfigSchema.safeParse({ ...base, categories }).success
+    ).toBe(false)
+  }
+})
+
+test('only the original built-in choices and records without a name are translated', () => {
+  const technical = {
+    id: 'technical_service',
+    name: '技术服务费',
+    enabled: true,
+  }
+  const translate = (key: string) => key
+  expect(invoiceCategoryOptionLabel(technical, translate)).toBe(
+    'Technical services'
+  )
+  expect(
+    invoiceCategoryOptionLabel(
+      { ...technical, name: 'Edited label' },
+      translate
+    )
+  ).toBe('Edited label')
+  expect(
+    invoiceCategoryOptionLabel({ ...technical, id: 'hosting' }, translate)
+  ).toBe('技术服务费')
+  expect(invoiceCategorySnapshotLabel(technical.id, undefined, translate)).toBe(
+    'Technical services'
+  )
+  expect(
+    invoiceCategorySnapshotLabel(technical.id, technical.name, translate)
+  ).toBe(technical.name)
+  expect(invoiceCategorySnapshotLabel('custom_id', undefined, translate)).toBe(
+    'custom_id'
+  )
 })

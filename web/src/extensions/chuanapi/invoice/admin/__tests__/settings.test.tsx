@@ -213,3 +213,157 @@ test('a saving dialog ignores Escape and repeated submissions until the server c
   finish()
   await waitFor(() => expect(close).toHaveBeenCalledOnce())
 })
+
+const first = { id: 'technical_service', name: '技术服务费', enabled: true }
+const second = { id: 'software_development', name: '软件开发费', enabled: true }
+
+test('editing categories retains accepted IDs and order and saves a new trimmed name under a generated ID with the same CAS version', async () => {
+  const { user, put, close } = setup({
+    ...settings,
+    categories: [first, second],
+  })
+  const editor = within(
+    await screen.findByRole('group', { name: 'Invoice categories' })
+  )
+  await user.clear(editor.getByRole('textbox', { name: 'Category Name 1' }))
+  await user.type(
+    editor.getByRole('textbox', { name: 'Category Name 1' }),
+    '企业技术服务'
+  )
+  await user.click(editor.getByRole('switch', { name: 'Enabled 2' }))
+  await user.click(editor.getByRole('button', { name: 'Add invoice category' }))
+  await user.type(
+    editor.getByRole('textbox', { name: 'Category Name 3' }),
+    '  项目咨询  '
+  )
+  put.mockImplementationOnce(async (_, body) =>
+    result({ ...(body as object), version: 6 })
+  )
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(close).toHaveBeenCalledOnce())
+  expect(put).toHaveBeenCalledExactlyOnceWith(
+    path,
+    {
+      ...settings,
+      categories: [
+        { ...first, name: '企业技术服务' },
+        { ...second, enabled: false },
+        {
+          id: expect.stringMatching(/^cat_[a-f0-9]{16}$/),
+          name: '项目咨询',
+          enabled: true,
+        },
+      ],
+    },
+    { singleUseAuthorization: true }
+  )
+})
+
+test('a disabled category still reserves its name until renamed and removing an unsaved addition does not change stored categories', async () => {
+  const { user, put } = setup({
+    ...settings,
+    categories: [{ ...first, name: 'API', enabled: false }],
+  })
+  const editor = within(
+    await screen.findByRole('group', { name: 'Invoice categories' })
+  )
+  await user.click(editor.getByRole('button', { name: 'Add invoice category' }))
+  const name = editor.getByRole('textbox', { name: 'Category Name 2' })
+  await user.type(name, 'Ａｐｉ')
+  expect(
+    await editor.findByText('Invoice category names must be unique.')
+  ).toBeVisible()
+  expect(name).toHaveAttribute('aria-invalid', 'true')
+  expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+  await user.click(editor.getByRole('button', { name: 'Cancel 2' }))
+  expect(name).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+  expect(put).not.toHaveBeenCalled()
+})
+
+test('a legacy server shows read-only defaults while an explicit empty catalog does not revive defaults', async () => {
+  const { view } = setup()
+  const legacy = within(
+    await screen.findByRole('group', { name: 'Invoice categories' })
+  )
+  expect(legacy.getByRole('textbox', { name: 'Category Name 1' })).toHaveValue(
+    '技术服务费'
+  )
+  expect(
+    legacy.getByRole('button', { name: 'Add invoice category' })
+  ).toBeDisabled()
+  view.unmount()
+  setup({ ...settings, categories: [] })
+  const empty = within(
+    await screen.findByRole('group', { name: 'Invoice categories' })
+  )
+  expect(empty.queryByRole('textbox')).not.toBeInTheDocument()
+  expect(empty.getByText(/no category is enabled/i)).toBeVisible()
+  expect(
+    empty.getByRole('button', { name: 'Add invoice category' })
+  ).toBeEnabled()
+})
+
+test('the root cannot add a thirty-first category, including disabled ones', async () => {
+  setup({
+    ...settings,
+    categories: Array.from({ length: 30 }, (_, i) => ({
+      id: `c${i}`,
+      name: `Project ${i}`,
+      enabled: false,
+    })),
+  })
+  const editor = within(
+    await screen.findByRole('group', { name: 'Invoice categories' })
+  )
+  expect(editor.getAllByRole('textbox')).toHaveLength(30)
+  expect(
+    editor.getByRole('button', { name: 'Add invoice category' })
+  ).toBeDisabled()
+})
+
+test('when another root disables a category, a stale rename is not retried and reload replaces both the category and version', async () => {
+  const { user, read, put } = setup({ ...settings, categories: [first] })
+  put.mockResolvedValueOnce({
+    data: { success: false, code: 'INVOICE_SETTINGS_CONFLICT' },
+  })
+  const editor = within(
+    await screen.findByRole('group', { name: 'Invoice categories' })
+  )
+  const name = editor.getByRole('textbox', { name: 'Category Name 1' })
+  await user.clear(name)
+  await user.type(name, 'Local rename')
+  const save = screen.getByRole('button', { name: 'Save' })
+  await user.click(save)
+  const reload = await screen.findByRole('button', {
+    name: 'Reload latest settings',
+  })
+  expect(save).toBeDisabled()
+  expect(name).toHaveValue('Local rename')
+  read.mockResolvedValueOnce(
+    result({
+      ...settings,
+      categories: [{ ...first, enabled: false }],
+      version: 6,
+    })
+  )
+  await user.click(reload)
+  await waitFor(() => expect(name).toHaveValue(first.name))
+  expect(editor.getByRole('switch', { name: 'Enabled 1' })).not.toBeChecked()
+  expect(save).toBeDisabled()
+  expect(put).toHaveBeenCalledTimes(1)
+})
+
+test('a server that omits categories in its save response cannot confirm the catalog was saved', async () => {
+  const { user, close } = setup({ ...settings, categories: [first] })
+  const editor = within(
+    await screen.findByRole('group', { name: 'Invoice categories' })
+  )
+  await user.click(editor.getByRole('switch', { name: 'Enabled 1' }))
+  expect(editor.getByText(/no category is enabled/i)).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  expect(
+    await screen.findByText('Update the server to edit invoice categories.')
+  ).toBeVisible()
+  expect(close).not.toHaveBeenCalled()
+})

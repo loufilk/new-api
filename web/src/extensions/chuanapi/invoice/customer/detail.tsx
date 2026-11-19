@@ -28,13 +28,16 @@ import { Button } from '@/components/ui/button'
 import { formatTimestamp } from '@/lib/format'
 import { getServerErrorMessage } from '@/lib/server-error-message'
 
-import { downloadInvoiceDocument, formatInvoiceRate } from '../contracts'
+import {
+  downloadInvoiceDocument,
+  formatInvoiceRate,
+  invoiceCategorySnapshotLabel,
+} from '../contracts'
 import { invoiceAPI, invoiceKey, privateRead } from './api'
 import {
   useInvoiceText,
   invoiceTypeLabels,
   titleTypeLabels,
-  categoryLabels,
   applicationStatusLabel,
   type InvoiceTextKey,
 } from './copy'
@@ -151,7 +154,12 @@ export function ApplicationDetail(props: {
       ['Title type', text(titleTypeLabels[data.title_type])],
       ['Invoice title', data.title],
       ['Tax ID', data.tax_id],
-      ['Invoice category', text(categoryLabels[data.category])],
+      [
+        'Invoice category',
+        invoiceCategorySnapshotLabel(data.category, data.category_name, (key) =>
+          text(key)
+        ),
+      ],
       ['Email address', data.email],
       ['Registered address', data.address],
       ['Registered phone', data.phone],

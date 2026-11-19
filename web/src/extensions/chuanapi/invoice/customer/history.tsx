@@ -35,7 +35,7 @@ import {
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { formatTimestamp } from '@/lib/format'
 
-import type { InvoiceStatus } from '../contracts'
+import { invoiceCategorySnapshotLabel, type InvoiceStatus } from '../contracts'
 import { invoiceAPI, invoiceKey, privateRead } from './api'
 import {
   useInvoiceText,
@@ -125,9 +125,14 @@ export function InvoiceHistory(props: {
                         copyable={false}
                       />
                     </div>
-                    <p className='text-muted-foreground text-xs'>
+                    <p className='text-muted-foreground text-xs break-words'>
                       {formatTimestamp(entry.created_at)} ·{' '}
-                      {text(invoiceTypeLabels[entry.invoice_type])}
+                      {text(invoiceTypeLabels[entry.invoice_type])} ·{' '}
+                      {invoiceCategorySnapshotLabel(
+                        entry.category,
+                        entry.category_name,
+                        (key) => text(key)
+                      )}
                     </p>
                   </div>
                   <div className='flex flex-wrap items-center gap-3'>

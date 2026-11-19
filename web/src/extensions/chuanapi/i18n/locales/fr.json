@@ -240,6 +240,18 @@
     "Fee merchant order": "N° de commande des frais chez le marchand",
     "Fee provider reference": "Référence du paiement des frais chez le prestataire",
     "Invoice fee": "Frais d’émission de facture",
+    "Invoice category": "Catégorie de facturation",
+    "Technical services": "Services techniques",
+    "Software development": "Développement de logiciels",
+    "Invoice categories": "Catégories de facturation",
+    "Add invoice category": "Ajouter une catégorie de facturation",
+    "Use 1–60 characters without control characters.": "Utilisez de 1 à 60 caractères, sans caractères de contrôle.",
+    "Invoice category names must be unique.": "Chaque catégorie de facturation doit avoir un nom unique.",
+    "If no category is enabled, customers cannot apply for an invoice.": "Si aucune catégorie n’est activée, les clients ne pourront pas demander de facture.",
+    "Up to 30 invoice categories are allowed.": "Vous pouvez définir jusqu’à 30 catégories de facturation.",
+    "Select an invoice category": "Sélectionnez une catégorie de facturation",
+    "This invoice category is currently unavailable": "Cette catégorie de facturation est actuellement indisponible",
+    "Update the server to edit invoice categories.": "Mettez à jour le serveur pour pouvoir modifier les catégories de facturation.",
     "Invoice fee refund": "Remboursement des frais d’émission de facture"
   }
 }

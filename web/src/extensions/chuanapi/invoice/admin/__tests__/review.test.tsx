@@ -312,3 +312,21 @@ test('release requires the claimant to attest no invoice exists and no external 
     { singleUseAuthorization: true }
   )
 })
+
+test.each([
+  ['technical_service', '原项目快照', '原项目快照'],
+  ['technical_service', undefined, 'Technical services'],
+  ['software_development', undefined, 'Software development'],
+  ['cat_other', undefined, 'cat_other'],
+] as const)(
+  'history for %s with snapshot %s uses its original label in the queue and detail',
+  async (category, category_name, expected) => {
+    const { user } = setup({ category, category_name })
+    expect(await screen.findByRole('cell', { name: expected })).toBeVisible()
+    await user.click(
+      screen.getByRole('button', { name: 'View application #71' })
+    )
+    const dialog = within(await screen.findByRole('dialog'))
+    expect(await dialog.findByText(expected)).toBeVisible()
+  }
+)

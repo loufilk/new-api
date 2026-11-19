@@ -40,6 +40,7 @@ import {
   putSettings,
   type AdminInvoiceSettings,
 } from './settings-api'
+import { InvoiceCategoryFields } from './settings-category-fields'
 import {
   editSettings,
   settingsFormSchema,
@@ -117,7 +118,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
   })
   const busy = save.isPending || reloading
   const submit = form.handleSubmit((draft) => {
-    const body = settingsPayload(draft)
+    const body = settingsPayload(draft, loaded?.categories !== undefined)
     if (locked.current || stale || !body) return
     locked.current = true
     setError(null)
@@ -204,6 +205,10 @@ export function SettingsDialog(props: SettingsDialogProps) {
               kind='special'
               disabled={busy}
               paymentAvailable={loaded.fee_payment_available === true}
+            />
+            <InvoiceCategoryFields
+              disabled={busy}
+              savedCategories={loaded.categories}
             />
             {(stale || error != null) && (
               <Alert variant='destructive'>

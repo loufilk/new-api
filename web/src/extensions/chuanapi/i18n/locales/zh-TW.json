@@ -240,6 +240,18 @@
     "Fee merchant order": "手續費商戶訂單號",
     "Fee provider reference": "手續費支付平台交易序號",
     "Invoice fee": "開票手續費",
+    "Invoice category": "開票類目",
+    "Technical services": "技術服務費",
+    "Software development": "軟體開發費",
+    "Invoice categories": "開票類目",
+    "Add invoice category": "新增開票類目",
+    "Use 1–60 characters without control characters.": "請輸入 1 至 60 個字元，不得包含控制字元。",
+    "Invoice category names must be unique.": "開票類目名稱不可重複。",
+    "If no category is enabled, customers cannot apply for an invoice.": "若未啟用任何開票類目，客戶將無法申請開票。",
+    "Up to 30 invoice categories are allowed.": "最多可設定 30 個開票類目。",
+    "Select an invoice category": "請選擇開票類目",
+    "This invoice category is currently unavailable": "此開票類目暫不受理",
+    "Update the server to edit invoice categories.": "請先更新伺服器，再編輯開票類目。",
     "Invoice fee refund": "開票手續費退款"
   }
 }

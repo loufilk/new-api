@@ -56,7 +56,9 @@ function CustomerInvoiceCenter(props: { owner: number }) {
   })
   const policy = config.isSuccess ? config.data : undefined
   const accepting =
-    policy?.enabled && (policy.ordinary.enabled || policy.special.enabled)
+    policy?.enabled &&
+    policy.categories.length > 0 &&
+    (policy.ordinary.enabled || policy.special.enabled)
   const fetching = useIsFetching({ queryKey: invoiceKey(props.owner) }) > 0
   const stats = [
     {

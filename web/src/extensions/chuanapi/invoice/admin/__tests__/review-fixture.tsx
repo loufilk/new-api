@@ -79,6 +79,8 @@ export function setup(
         const filter = config.params?.status
         const item = {
           ...summary,
+          category: overrides.category ?? summary.category,
+          category_name: overrides.category_name,
           status: overrides.status ?? summary.status,
           fee_state: overrides.fee_state,
           processing: overrides.processing,

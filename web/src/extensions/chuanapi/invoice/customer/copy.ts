@@ -60,6 +60,7 @@ const chinese = {
   'Invoice title': '发票抬头',
   'Tax ID': '纳税人识别号',
   'Invoice category': '开票类目',
+  'Select an invoice category': '请选择开票类目',
   'Technical services': '技术服务费',
   'Software development': '软件开发费',
   'Email address': '联系邮箱',
@@ -185,10 +186,6 @@ export function applicationStatusLabel(entry: InvoiceSummary): InvoiceTextKey {
   return statusLabels[entry.status]
 }
 
-export const categoryLabels = {
-  technical_service: 'Technical services',
-  software_development: 'Software development',
-} as const
 export const invoiceTypeLabels = {
   ordinary: 'Ordinary invoice',
   special: 'Special VAT invoice',

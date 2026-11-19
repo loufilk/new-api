@@ -20,7 +20,12 @@ import { z } from 'zod'
 
 import { minorMoneyInput } from '@/features/agent-platform/lib/money'
 
-import type { InvoiceSettings, InvoiceTypeSettings } from '../contracts'
+import {
+  defaultInvoiceCategories,
+  invoiceCategoriesSchema,
+  type InvoiceSettings,
+  type InvoiceTypeSettings,
+} from '../contracts'
 
 // Preserve the exact decimal entered; never round a financial setting.
 export function parseRate(text: string): number | null {
@@ -42,6 +47,7 @@ export function settingsFormSchema(rateError: string) {
     version: z.number().int(),
     ordinary: policy,
     special: policy,
+    categories: invoiceCategoriesSchema,
   })
 }
 export type SettingsFormValues = z.infer<ReturnType<typeof settingsFormSchema>>
@@ -57,11 +63,15 @@ export function editSettings(settings: InvoiceSettings): SettingsFormValues {
     version: settings.version,
     ordinary: toFields(settings.ordinary),
     special: toFields(settings.special),
+    categories:
+      settings.categories ??
+      defaultInvoiceCategories.map((item) => ({ ...item })),
   }
 }
 
 export function settingsPayload(
-  draft: SettingsFormValues
+  draft: SettingsFormValues,
+  supportsCategories: boolean
 ): InvoiceSettings | null {
   function toPolicy(
     fields: SettingsFormValues['ordinary']
@@ -79,6 +89,11 @@ export function settingsPayload(
   const ordinary = toPolicy(draft.ordinary)
   const special = toPolicy(draft.special)
   return ordinary && special
-    ? { version: draft.version, ordinary, special }
+    ? {
+        version: draft.version,
+        ordinary,
+        special,
+        ...(supportsCategories && { categories: draft.categories }),
+      }
     : null
 }

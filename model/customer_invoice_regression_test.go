@@ -402,7 +402,7 @@ func TestCustomerInvoiceCompanyTypesAndPrivateDetailsPostgres(t *testing.T) {
 		{"invalid account", func(i *CustomerInvoiceInput) { i.BankAccount = "unavailable" }},
 		{"missing phone", func(i *CustomerInvoiceInput) { i.Phone = "" }},
 		{"invalid email", func(i *CustomerInvoiceInput) { i.Email = "recipient" }},
-		{"unknown category", func(i *CustomerInvoiceInput) { i.Category = "other" }},
+		{"malformed category ID", func(i *CustomerInvoiceInput) { i.Category = "invalid ID" }},
 		{"unknown invoice type", func(i *CustomerInvoiceInput) { i.InvoiceType = "other" }},
 	} {
 		invalid := company

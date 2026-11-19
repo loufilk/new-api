@@ -109,6 +109,10 @@ func SubmitCustomerInvoice(ctx context.Context, owner int, policy CustomerInvoic
 		if !terms.Enabled {
 			return ErrCustomerInvoiceTypeDisabled
 		}
+		a.CategoryName, err = settings.Categories.snapshot(a.Category)
+		if err != nil {
+			return err
+		}
 		a.SettingsVersion, a.TaxRateBPS = settings.Version, terms.TaxRateBPS
 		if terms.FeeEnabled {
 			a.FeeRateBPS = terms.FeeRateBPS
@@ -137,7 +141,7 @@ func SubmitCustomerInvoice(ctx context.Context, owner int, policy CustomerInvoic
 			}
 			return err
 		}
-		if err := tx.Model(&a).Updates(map[string]any{"amount_minor": a.AmountMinor, "order_count": a.OrderCount, "settings_version": a.SettingsVersion,
+		if err := tx.Model(&a).Updates(map[string]any{"amount_minor": a.AmountMinor, "order_count": a.OrderCount, "settings_version": a.SettingsVersion, "category_name": a.CategoryName,
 			"status": a.Status, "fee_state": a.FeeState, "wallet_quota_per_cent": a.WalletQuotaPerCent, "fee_minor": a.FeeMinor, "fee_rate_bps": a.FeeRateBPS, "tax_rate_bps": a.TaxRateBPS}).Error; err != nil {
 			return err
 		}

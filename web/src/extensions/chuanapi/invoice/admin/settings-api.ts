@@ -54,5 +54,12 @@ export async function putSettings(
   const { data } = await api.put<Envelope>(path, body, {
     singleUseAuthorization: true,
   })
-  return readSettings(data)
+  const saved = readSettings(data)
+  if (body.categories !== undefined && saved.categories === undefined) {
+    throw createServerError(
+      null,
+      'Update the server to edit invoice categories.'
+    )
+  }
+  return saved
 }

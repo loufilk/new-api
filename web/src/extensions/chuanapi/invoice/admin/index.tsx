@@ -33,6 +33,7 @@ import { formatTimestamp } from '@/lib/format'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { invoiceCategorySnapshotLabel } from '../contracts'
 import { listInvoices, pageSize, reviewKey, type ReviewFilter } from './api'
 import { DetailDialog } from './detail-dialog'
 import { statusNames, useFinanceLabels } from './i18n'
@@ -153,6 +154,19 @@ function ReviewQueue(props: { reviewer: number }) {
                           2,
                           locale
                         ),
+                    },
+                    {
+                      id: 'category',
+                      header: label('Invoice category', '开票项目'),
+                      cell: (row) => (
+                        <span className='break-all whitespace-normal'>
+                          {invoiceCategorySnapshotLabel(
+                            row.category,
+                            row.category_name,
+                            label
+                          )}
+                        </span>
+                      ),
                     },
                     {
                       id: 'orders',

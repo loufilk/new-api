@@ -240,6 +240,18 @@
     "Fee merchant order": "Mã đơn thu phí của bên bán",
     "Fee provider reference": "Mã giao dịch phí tại cổng thanh toán",
     "Invoice fee": "Phí xuất hóa đơn",
+    "Invoice category": "Hạng mục xuất hóa đơn",
+    "Technical services": "Dịch vụ kỹ thuật",
+    "Software development": "Phát triển phần mềm",
+    "Invoice categories": "Các hạng mục xuất hóa đơn",
+    "Add invoice category": "Thêm hạng mục xuất hóa đơn",
+    "Use 1–60 characters without control characters.": "Nhập từ 1 đến 60 ký tự, không dùng ký tự điều khiển.",
+    "Invoice category names must be unique.": "Tên các hạng mục xuất hóa đơn không được trùng nhau.",
+    "If no category is enabled, customers cannot apply for an invoice.": "Nếu không có hạng mục nào được bật, khách hàng sẽ không thể yêu cầu xuất hóa đơn.",
+    "Up to 30 invoice categories are allowed.": "Bạn có thể thiết lập tối đa 30 hạng mục xuất hóa đơn.",
+    "Select an invoice category": "Chọn hạng mục xuất hóa đơn",
+    "This invoice category is currently unavailable": "Hạng mục xuất hóa đơn này hiện không khả dụng",
+    "Update the server to edit invoice categories.": "Hãy cập nhật máy chủ để có thể chỉnh sửa các hạng mục xuất hóa đơn.",
     "Invoice fee refund": "Hoàn phí xuất hóa đơn"
   }
 }

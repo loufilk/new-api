@@ -240,6 +240,18 @@
     "Fee merchant order": "Номер заказа комиссии у продавца",
     "Fee provider reference": "Идентификатор платежа комиссии у провайдера",
     "Invoice fee": "Комиссия за выставление счёта",
+    "Invoice category": "Категория счёта-фактуры",
+    "Technical services": "Технические услуги",
+    "Software development": "Разработка программного обеспечения",
+    "Invoice categories": "Категории счетов-фактур",
+    "Add invoice category": "Добавить категорию счёта-фактуры",
+    "Use 1–60 characters without control characters.": "Введите от 1 до 60 символов без управляющих символов.",
+    "Invoice category names must be unique.": "Названия категорий счетов-фактур не должны повторяться.",
+    "If no category is enabled, customers cannot apply for an invoice.": "Если ни одна категория не включена, клиенты не смогут запросить счёт-фактуру.",
+    "Up to 30 invoice categories are allowed.": "Можно добавить до 30 категорий счетов-фактур.",
+    "Select an invoice category": "Выберите категорию счёта-фактуры",
+    "This invoice category is currently unavailable": "Эта категория счёта-фактуры сейчас недоступна",
+    "Update the server to edit invoice categories.": "Чтобы редактировать категории счетов-фактур, обновите сервер.",
     "Invoice fee refund": "Возврат комиссии за выставление счёта"
   }
 }

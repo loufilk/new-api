@@ -36,7 +36,7 @@ func TestCustomerInvoiceSettingsCASPostgres(t *testing.T) {
 	t.Setenv("CUSTOMER_INVOICE_ENABLED", "false")
 	start, err := GetCustomerInvoiceSettings(ctx)
 	require.NoError(t, err)
-	require.Equal(t, CustomerInvoiceSettings{Ordinary: CustomerInvoiceTypeSettings{Enabled: true}, Special: CustomerInvoiceTypeSettings{Enabled: true}}, start)
+	require.Equal(t, defaultCustomerInvoiceSettings(), start)
 	_, err = UpdateCustomerInvoiceSettings(ctx, regular, start)
 	require.ErrorIs(t, err, ErrCustomerInvoiceNotFound)
 	noChange, err := UpdateCustomerInvoiceSettings(ctx, first, start)

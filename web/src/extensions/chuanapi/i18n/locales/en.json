@@ -240,6 +240,18 @@
     "Fee merchant order": "Fee merchant order",
     "Fee provider reference": "Fee provider reference",
     "Invoice fee": "Invoice fee",
+    "Invoice category": "Invoice category",
+    "Technical services": "Technical services",
+    "Software development": "Software development",
+    "Invoice categories": "Invoice categories",
+    "Add invoice category": "Add invoice category",
+    "Use 1–60 characters without control characters.": "Use 1–60 characters without control characters.",
+    "Invoice category names must be unique.": "Invoice category names must be unique.",
+    "If no category is enabled, customers cannot apply for an invoice.": "If no category is enabled, customers cannot apply for an invoice.",
+    "Up to 30 invoice categories are allowed.": "Up to 30 invoice categories are allowed.",
+    "Select an invoice category": "Select an invoice category",
+    "This invoice category is currently unavailable": "This invoice category is currently unavailable",
+    "Update the server to edit invoice categories.": "Update the server to edit invoice categories.",
     "Invoice fee refund": "Invoice fee refund"
   }
 }

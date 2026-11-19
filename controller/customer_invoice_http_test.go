@@ -3,12 +3,14 @@ package controller
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -156,6 +158,9 @@ func TestCustomerInvoiceHTTPSettingsRequireExplicitCompleteReplacement(t *testin
 		`{}`, `null`, `{"version":0,` + ordinary + `}`,
 		`{"version":0,` + special + `}`, `{` + ordinary + `,` + special + `}`,
 		`{"version":null,` + ordinary + `,` + special + `}`,
+		`{"version":0,` + ordinary + `,` + special + `,"categories":null}`,
+		`{"version":0,` + ordinary + `,` + special + `,"categories":[{"id":"one","name":"One"}]}`,
+		`{"version":0,` + ordinary + `,` + special + `,"categories":[{"id":"one","name":"One","enabled":false,"unexpected":true}]}`,
 		`{"version":0,` + ordinary + `,` + special + `,"updated_by":123}`,
 		`{"version":0,` + ordinary + `,"special":{"enabled":false,"fee_enabled":null,"fee_rate_bps":0,"tax_rate_bps":0}}`,
 		`{"version":0,` + ordinary + `,"special":{"enabled":false,"fee_enabled":false,"fee_rate_bps":1.2,"tax_rate_bps":0}}`,
@@ -231,4 +236,68 @@ func TestCustomerInvoiceHTTPClaimBodyAndReleaseConfirmation(t *testing.T) {
 	}
 	require.True(t, readCustomerInvoiceJSON(c, &input))
 	require.True(t, bool(input.Confirm))
+}
+
+func TestCustomerInvoiceHTTPAdminAndCustomerCategoriesPostgres(t *testing.T) {
+	db := setupNewUserBenefitControllerPostgres(t)
+	require.NoError(t, db.AutoMigrate(model.CustomerInvoiceModels()...))
+	t.Setenv("CUSTOMER_INVOICE_ENABLED", "true")
+	t.Setenv("CUSTOMER_INVOICE_EPAY_MERCHANT_SCOPE", "invoice-category-fixture")
+	user := createNewUserBenefitControllerUser(t, db, "categories-root", false)
+	require.NoError(t, db.Model(&user).Update("role", common.RoleRootUser).Error)
+	invoke := func(handler gin.HandlerFunc, method, path, input string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Set("id", user.Id)
+		c.Request = httptest.NewRequest(method, path, strings.NewReader(input))
+		c.Request.Header.Set("Content-Type", "application/json")
+		handler(c)
+		return w
+	}
+	read := func(handler gin.HandlerFunc, path string) (int64, []model.CustomerInvoiceCategory) {
+		w := invoke(handler, http.MethodGet, path, "")
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var result struct {
+			Success bool
+			Data    struct {
+				Version    int64
+				Categories []model.CustomerInvoiceCategory
+			}
+		}
+		require.NoError(t, common.Unmarshal(w.Body.Bytes(), &result))
+		require.True(t, result.Success)
+		require.NotNil(t, result.Data.Categories, "the absence of choices must be [] not null")
+		return result.Data.Version, result.Data.Categories
+	}
+	const admin = "/api/admin/invoice/settings"
+	const customer = "/api/invoice/config"
+	const rateFields = `"ordinary":{"enabled":true,"fee_enabled":false,"fee_rate_bps":0,"tax_rate_bps":0},"special":{"enabled":true,"fee_enabled":false,"fee_rate_bps":0,"tax_rate_bps":0}`
+	version, fresh := read(GetAdminCustomerInvoiceSettings, admin)
+	require.Len(t, fresh, 2)
+	publicVersion, public := read(GetCustomerInvoiceConfig, customer)
+	require.Equal(t, fresh, public)
+	require.Equal(t, version, publicVersion)
+	const choices = `[{"id":"one","name":"First","enabled":true},{"id":"two","name":"Disabled choice","enabled":false},{"id":"three","name":"Third","enabled":true}]`
+	write := func(v int64, extra string) *httptest.ResponseRecorder {
+		return invoke(UpdateAdminCustomerInvoiceSettings, http.MethodPut, admin, fmt.Sprintf(`{"version":%d,%s%s}`, v, rateFields, extra))
+	}
+	w := write(version, `,"categories":`+choices)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "Disabled choice")
+	v, all := read(GetAdminCustomerInvoiceSettings, admin)
+	require.Greater(t, v, version)
+	require.Len(t, all, 3)
+	publicVersion, public = read(GetCustomerInvoiceConfig, customer)
+	require.Equal(t, v, publicVersion)
+	require.Equal(t, []model.CustomerInvoiceCategory{all[0], all[2]}, public)
+	require.Equal(t, http.StatusConflict, write(version, `,"categories":[]`).Code)
+	require.Equal(t, http.StatusOK, write(v, "").Code, "pre-category PUT preserves settings and revision")
+	version, stored := read(GetAdminCustomerInvoiceSettings, admin)
+	require.Equal(t, v, version)
+	require.Equal(t, all, stored)
+	w = write(version, `,"categories":[]`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	publicVersion, public = read(GetCustomerInvoiceConfig, customer)
+	require.Greater(t, publicVersion, version)
+	require.Empty(t, public)
 }

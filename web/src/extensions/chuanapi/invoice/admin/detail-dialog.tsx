@@ -29,7 +29,10 @@ import { formatMinorMoney } from '@/features/agent-platform/lib/money'
 import { formatTimestamp } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 
-import { downloadInvoiceDocument } from '../contracts'
+import {
+  downloadInvoiceDocument,
+  invoiceCategorySnapshotLabel,
+} from '../contracts'
 import {
   getInvoice,
   reviewKey,
@@ -63,9 +66,7 @@ function InvoiceFacts(props: { detail: AdminDetail; reviewer: number }) {
     [label('Tax ID', '纳税人识别号'), inv.tax_id],
     [
       label('Invoice category', '开票项目'),
-      inv.category === 'technical_service'
-        ? label('Technical services', '技术服务')
-        : label('Software development', '软件开发'),
+      invoiceCategorySnapshotLabel(inv.category, inv.category_name, label),
     ],
     ...feeFacts(inv, label, locale),
     [label('Email', '邮箱'), inv.email],

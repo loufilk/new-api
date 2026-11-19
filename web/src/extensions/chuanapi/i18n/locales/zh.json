@@ -240,6 +240,18 @@
     "Fee merchant order": "手续费商户订单号",
     "Fee provider reference": "手续费支付平台流水号",
     "Invoice fee": "开票手续费",
+    "Invoice category": "开票类目",
+    "Technical services": "技术服务费",
+    "Software development": "软件开发费",
+    "Invoice categories": "开票类目",
+    "Add invoice category": "添加开票类目",
+    "Use 1–60 characters without control characters.": "请输入 1 至 60 个字符，不得包含控制字符。",
+    "Invoice category names must be unique.": "开票类目名称不能重复。",
+    "If no category is enabled, customers cannot apply for an invoice.": "如果没有启用任何开票类目，客户将无法申请开票。",
+    "Up to 30 invoice categories are allowed.": "最多可设置 30 个开票类目。",
+    "Select an invoice category": "请选择开票类目",
+    "This invoice category is currently unavailable": "该开票类目暂不受理",
+    "Update the server to edit invoice categories.": "请先更新服务端，再编辑开票类目。",
     "Invoice fee refund": "开票手续费退款"
   }
 }

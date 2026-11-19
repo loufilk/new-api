@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { toast } from 'sonner'
 
@@ -32,6 +33,7 @@ import {
   getServerErrorStatus,
 } from '@/lib/server-error-message'
 
+import { invoiceCategoryOptionLabel } from '../categories'
 import { formatInvoiceRate } from '../contracts'
 import { invoiceAPI } from './api'
 import { useInvoiceText, type InvoiceTextKey } from './copy'
@@ -51,16 +53,32 @@ export function ApplicationForm(props: {
   onConflict: () => void
 }) {
   const { text, money, locale } = useInvoiceText()
+  const categories = props.policy.categories
+  const firstCategory = categories[0]
+  const defaults: InvoiceFormInput = {
+    invoice_type: props.policy.ordinary.enabled ? 'ordinary' : 'special',
+    title_type: 'company',
+    category: firstCategory?.id ?? '',
+    title: '',
+    tax_id: '',
+    email: '',
+  }
   const form = useForm<InvoiceFormInput, unknown, InvoiceFields>({
     resolver: zodResolver(invoiceSchema),
-    defaultValues: {
-      invoice_type: props.policy.ordinary.enabled ? 'ordinary' : 'special',
-      title_type: 'company',
-      category: 'technical_service',
-      title: '',
-      email: '',
-    },
+    defaultValues: defaults,
   })
+  const [reviewedName, setReviewedName] = useState<string | undefined>(
+    firstCategory?.name
+  )
+  const categoryId = useWatch({ control: form.control, name: 'category' })
+  const selectedCategory = categories.find(
+    (item) => item.id === categoryId && item.name === reviewedName
+  )
+  // Do not let the native select silently pick the next item after a policy
+  // refresh. A removed or renamed choice needs an explicit new selection.
+  useEffect(() => {
+    if (categoryId && !selectedCategory) form.setValue('category', '')
+  }, [categoryId, selectedCategory, form])
   const type = useWatch({
     control: form.control,
     name: 'invoice_type',
@@ -71,7 +89,8 @@ export function ApplicationForm(props: {
     mutationFn: (request: Parameters<typeof invoiceAPI.submit>) =>
       invoiceAPI.submit(...request),
     onSuccess: (application) => {
-      form.reset()
+      setReviewedName(firstCategory?.name)
+      form.reset(defaults)
       identify.reset()
       props.onSuccess(
         application.status === 'awaiting_payment' ? application.id : undefined
@@ -109,6 +128,7 @@ export function ApplicationForm(props: {
     !props.selection.size ||
     !props.policy.enabled ||
     !typePolicy.enabled ||
+    !selectedCategory ||
     paymentBlocked ||
     mutation.isPending
   const field = (
@@ -171,7 +191,13 @@ export function ApplicationForm(props: {
         <form
           noValidate
           onSubmit={form.handleSubmit((values) => {
-            if (disabled || values.invoice_type !== type) return
+            if (
+              disabled ||
+              values.invoice_type !== type ||
+              values.category !== selectedCategory?.id
+            ) {
+              return
+            }
             const orderIds = [...props.selection.keys()].sort((a, b) => a - b)
             const version = props.policy.version
             props.onBusy(true)
@@ -219,14 +245,25 @@ export function ApplicationForm(props: {
               <NativeSelect
                 id='invoice-category'
                 className='w-full'
-                {...form.register('category')}
+                value={selectedCategory?.id ?? ''}
+                required
+                {...form.register('category', {
+                  onChange: (event: React.ChangeEvent<HTMLSelectElement>) => {
+                    setReviewedName(
+                      categories.find((item) => item.id === event.target.value)
+                        ?.name
+                    )
+                  },
+                })}
               >
-                <NativeSelectOption value='technical_service'>
-                  {text('Technical services')}
+                <NativeSelectOption value='' disabled>
+                  {text('Select an invoice category')}
                 </NativeSelectOption>
-                <NativeSelectOption value='software_development'>
-                  {text('Software development')}
-                </NativeSelectOption>
+                {categories.map((item) => (
+                  <NativeSelectOption key={item.id} value={item.id}>
+                    {invoiceCategoryOptionLabel(item, (key) => text(key))}
+                  </NativeSelectOption>
+                ))}
               </NativeSelect>
             </div>
             {special && (

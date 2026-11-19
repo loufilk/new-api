@@ -216,3 +216,50 @@ test('an ordinary personal payload is invalid even with a company tax ID', () =>
     }).success
   ).toBe(false)
 })
+
+test('renaming a selected category invalidates consent without erasing the typed company title', async () => {
+  const user = userEvent.setup()
+  const client = new QueryClient()
+  const post = vi
+    .spyOn(api, 'post')
+    .mockResolvedValue({ data: { success: true, data: { id: 17 } } })
+  const view = (name: string, version: number) => (
+    <QueryClientProvider client={client}>
+      <ApplicationForm
+        policy={{
+          ...policy,
+          version,
+          categories: [{ id: 'hosting', name, enabled: true }],
+        }}
+        selection={new Map([[1, '100']])}
+        onBusy={vi.fn()}
+        onConflict={vi.fn()}
+        onSuccess={vi.fn()}
+      />
+    </QueryClientProvider>
+  )
+  const { rerender } = render(view('Cloud hosting', 4))
+  const choose = screen.getByRole('combobox', { name: 'Invoice category' })
+  const submit = screen.getByRole('button', { name: 'Submit application' })
+  expect(choose).toHaveValue('hosting')
+  await user.type(screen.getByLabelText('Tax ID'), '123456789012345')
+  await user.type(screen.getByLabelText('Invoice title'), 'Example')
+  await user.type(
+    screen.getByLabelText('Email address'),
+    'test@example.invalid'
+  )
+  rerender(view('New service', 5))
+  expect(choose).toHaveValue('')
+  expect(submit).toBeDisabled()
+  expect(screen.getByLabelText('Invoice title')).toHaveValue('Example')
+  await user.click(submit)
+  expect(post).not.toHaveBeenCalled()
+  await user.selectOptions(choose, 'New service')
+  await user.click(submit)
+  await waitFor(() => expect(post).toHaveBeenCalledOnce())
+  expect(post.mock.calls[0][1]).toMatchObject({
+    category: 'hosting',
+    settings_version: 5,
+    title: 'Example',
+  })
+})

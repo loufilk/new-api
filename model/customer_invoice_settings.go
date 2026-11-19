@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
@@ -11,6 +12,7 @@ import (
 
 var (
 	ErrCustomerInvoiceSettingsConflict      = errors.New("Invoice settings changed; review the current rates")
+	ErrCustomerInvoiceCategoryUnavailable   = errors.New("This invoice category is currently unavailable")
 	ErrCustomerInvoiceTypeDisabled          = errors.New("This invoice type is unavailable")
 	ErrCustomerInvoiceFeePaymentUnavailable = errors.New("Invoice fee payment is unavailable")
 )
@@ -25,9 +27,10 @@ type CustomerInvoiceTypeSettings struct {
 }
 
 type CustomerInvoiceSettings struct {
-	Version  int64                       `json:"version" gorm:"primaryKey;autoIncrement:false"`
-	Ordinary CustomerInvoiceTypeSettings `json:"ordinary" gorm:"embedded;embeddedPrefix:ordinary_"`
-	Special  CustomerInvoiceTypeSettings `json:"special" gorm:"embedded;embeddedPrefix:special_"`
+	Categories CustomerInvoiceCategories   `json:"categories" gorm:"type:text"`
+	Version    int64                       `json:"version" gorm:"primaryKey;autoIncrement:false"`
+	Ordinary   CustomerInvoiceTypeSettings `json:"ordinary" gorm:"embedded;embeddedPrefix:ordinary_"`
+	Special    CustomerInvoiceTypeSettings `json:"special" gorm:"embedded;embeddedPrefix:special_"`
 }
 
 // Each settings write appends an immutable audit record. Revision zero is the
@@ -43,7 +46,7 @@ func (*CustomerInvoiceSettingsRevision) BeforeUpdate(*gorm.DB) error { return Er
 func (*CustomerInvoiceSettingsRevision) BeforeDelete(*gorm.DB) error { return ErrLedgerImmutable }
 
 func defaultCustomerInvoiceSettings() CustomerInvoiceSettings {
-	return CustomerInvoiceSettings{Ordinary: CustomerInvoiceTypeSettings{Enabled: true}, Special: CustomerInvoiceTypeSettings{Enabled: true}}
+	return CustomerInvoiceSettings{Categories: defaultCustomerInvoiceCategories(), Ordinary: CustomerInvoiceTypeSettings{Enabled: true}, Special: CustomerInvoiceTypeSettings{Enabled: true}}
 }
 
 func (s CustomerInvoiceSettings) valid() bool {
@@ -69,6 +72,13 @@ func currentCustomerInvoiceSettings(tx *gorm.DB) (CustomerInvoiceSettings, error
 	}
 	if !r.valid() {
 		return CustomerInvoiceSettings{}, ErrCustomerInvoiceInvalid
+	}
+	if r.Categories == nil {
+		// Prior revisions have SQL NULL. An explicitly saved empty array never
+		// receives defaults and continues to block all new applications.
+		r.Categories = defaultCustomerInvoiceCategories()
+	} else if r.Categories, err = r.Categories.normalized(); err != nil {
+		return CustomerInvoiceSettings{}, err
 	}
 	return r.CustomerInvoiceSettings, nil
 }
@@ -100,7 +110,11 @@ func UpdateCustomerInvoiceSettings(ctx context.Context, actor int, next Customer
 	if !next.valid() {
 		return CustomerInvoiceSettings{}, ErrCustomerInvoiceInvalid
 	}
-	err := invoiceDB(ctx).Transaction(func(tx *gorm.DB) error {
+	var err error
+	if next.Categories, err = next.Categories.normalized(); err != nil {
+		return CustomerInvoiceSettings{}, err
+	}
+	err = invoiceDB(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := requireInvoiceRoot(tx, actor, true); err != nil {
 			return err
 		}
@@ -111,7 +125,10 @@ func UpdateCustomerInvoiceSettings(ctx context.Context, actor int, next Customer
 		if current.Version != next.Version {
 			return ErrCustomerInvoiceSettingsConflict
 		}
-		if current == next {
+		if next.Categories == nil {
+			next.Categories = current.Categories
+		}
+		if current.Ordinary == next.Ordinary && current.Special == next.Special && slices.Equal(current.Categories, next.Categories) {
 			return nil
 		}
 		if next.Version == invoiceMaxSettingsVersion {

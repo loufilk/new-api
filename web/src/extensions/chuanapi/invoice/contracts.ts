@@ -21,6 +21,18 @@ import { z } from 'zod'
 import { api } from '@/lib/api'
 import { createServerError } from '@/lib/server-error-message'
 
+import { invoiceCategoriesSchema } from './categories'
+
+export {
+  defaultInvoiceCategories,
+  invoiceCategoriesSchema,
+  invoiceCategoryIdSchema,
+  invoiceCategorySchema,
+  invoiceCategoryNameKey,
+  invoiceCategorySnapshotLabel,
+  type InvoiceCategory,
+} from './categories'
+
 export type InvoiceStatus =
   | 'awaiting_payment'
   | 'pending'
@@ -37,6 +49,7 @@ const typeSettings = z.object({
 })
 export const invoiceSettingsSchema = z.object({
   version: z.int().nonnegative(),
+  categories: invoiceCategoriesSchema.optional(),
   ordinary: typeSettings,
   special: typeSettings,
 })
@@ -85,7 +98,8 @@ export interface InvoiceSummary {
   order_count: number
   invoice_type: 'ordinary' | 'special'
   title_type: 'personal' | 'company'
-  category: 'technical_service' | 'software_development'
+  category: string
+  category_name?: string
   created_at: number
   updated_at: number
   issued_at?: number
