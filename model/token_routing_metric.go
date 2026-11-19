@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -90,6 +91,21 @@ func GetTokenRoutingCandidates(ctx context.Context, groups []string, modelName s
 	}
 	byID := make(map[int]*Channel, len(channels))
 	for _, ch := range channels {
+		// This is a fresh DB snapshot, so a fully drained multi-key pool is
+		// ineligible before ranking; an authorized healthy pool may still serve.
+		if ch.ChannelInfo.IsMultiKey {
+			usable := false
+			for i, key := range ch.GetKeys() {
+				status, set := ch.ChannelInfo.MultiKeyStatusList[i]
+				if strings.TrimSpace(key) != "" && (!set || status == common.ChannelStatusEnabled) {
+					usable = true
+					break
+				}
+			}
+			if !usable {
+				continue
+			}
+		}
 		if ok, _ := ChannelSatisfiesFilters(ch, modelName, filters); ok {
 			byID[ch.Id] = ch
 		}

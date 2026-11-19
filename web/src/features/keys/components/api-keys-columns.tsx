@@ -119,7 +119,9 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
         header: t('Status'),
         cell: ({ row }) => {
           const statusConfig =
-            API_KEY_STATUSES[row.getValue('status') as number]
+            API_KEY_STATUSES[
+              row.original.effective_status ?? row.original.status
+            ]
           if (!statusConfig) return null
           return (
             <StatusBadge

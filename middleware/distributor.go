@@ -20,7 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
@@ -50,12 +50,17 @@ func Distribute() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, invalidRequestStatus(err), i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 			return
 		}
-		_, pinned, _ := constraints.ResolvedPin()
-		if !pinned {
+		pin, pinned, _ := constraints.ResolvedPin()
+		if !pinned || pin.Source == taskdto.PinSourceOriginTask {
 			// Select a channel for the user
 			// check token model mapping
 			modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
-			if modelLimitEnable {
+			// Native remix has no client model: ResolveOriginTask verifies the
+			// stored model against this same key before setting up its channel.
+			nativeOriginModelPending := !shouldSelectChannel && modelRequest.Model == "" &&
+				c.Request.Method == http.MethodPost && strings.HasPrefix(c.Request.URL.Path, "/v1/videos/") &&
+				strings.HasSuffix(c.Request.URL.Path, "/remix")
+			if modelLimitEnable && !nativeOriginModelPending {
 				s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
 				if !ok {
 					// token model limit is empty, all models are not allowed
@@ -134,10 +139,27 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		if pinned || shouldSelectChannel {
+			if setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model); setupErr != nil {
+				// Do not relay or reserve funds with a partially initialized channel.
+				// Setup failures may include internal details, never return them verbatim.
+				group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+				logger.LogWarn(c, common.LogText("channel setup rejected before relay: channel_id=%d code=%s", c.GetInt("channel_id"), setupErr.GetErrorCode()))
+				abortWithOpenAiMessage(c, http.StatusServiceUnavailable, noAvailableChannelMessage(c, group, modelRequest.Model), setupErr.GetErrorCode())
+				return
+			}
+		} else {
+			// Polling and other channel-free operations still need the model context.
+			common.SetContextKey(c, constant.ContextKeyOriginalModel, modelRequest.Model)
+		}
 		c.Next()
-		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
-			service.RecordChannelAffinity(c, channel.Id)
+		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest && c.Request.Context().Err() == nil {
+			policy := service.RequestPolicy(c)
+			if policy.AffinityEligible && !policy.FinalLogged {
+				if policy.AttemptChannelID == channel.Id || operation_setting.GetChannelAffinitySetting().SwitchOnSuccess {
+					service.RecordChannelAffinity(c, policy.AttemptChannelID)
+				}
+			}
 		}
 	}
 }
@@ -589,13 +611,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 // (modifiers and legacy aliases stripped) are all accepted. The Responses
 // WebSocket relay shares this rule so both transports admit the same names.
 func TokenModelLimitAllows(limit map[string]bool, model string) bool {
-	if limit[model] {
-		return true
-	}
-	if formatted := ratio_setting.FormatMatchingModelName(model); limit[formatted] {
-		return true
-	}
-	return limit[ratio_setting.RoutingMatchModelName(model)]
+	return service.TokenModelLimitAllows(limit, model)
 }
 
 // 修复 #4834: GET /v1/video/generations/:task_id && /v1/video/:task_id 此前不解析 model，
@@ -709,9 +725,11 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelParamOverride, paramOverride)
 	common.SetContextKey(c, constant.ContextKeyChannelHeaderOverride, headerOverride)
-	if nil != channel.OpenAIOrganization && *channel.OpenAIOrganization != "" {
-		common.SetContextKey(c, constant.ContextKeyChannelOrganization, *channel.OpenAIOrganization)
+	organization := ""
+	if channel.OpenAIOrganization != nil {
+		organization = *channel.OpenAIOrganization
 	}
+	common.SetContextKey(c, constant.ContextKeyChannelOrganization, organization)
 	common.SetContextKey(c, constant.ContextKeyChannelAutoBan, channel.GetAutoBan())
 	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, channel.GetModelMapping())
 	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())

@@ -526,7 +526,7 @@ export function GenerationForm(props: GenerationFormProps) {
         {props.asyncMode ? (
           <p className='text-muted-foreground text-xs'>
             {t(
-              'Generate in the background and poll for results. Keep this page open; stopping only ends the wait.'
+              'Stop waiting at any time. You can retrieve the submitted image task from this browser before it expires.'
             )}
           </p>
         ) : null}

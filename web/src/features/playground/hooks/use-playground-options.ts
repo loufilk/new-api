@@ -48,13 +48,12 @@ import {
   getOptionLoadErrorMessage,
   shouldClearModelForGroup,
 } from '../lib'
-import type { GroupOption, ModelOption, PlaygroundConfig } from '../types'
+import type { GroupOption, PlaygroundConfig } from '../types'
 
 type UsePlaygroundOptionsParams = {
   currentGroup: string
   currentModel: string
   setGroups: (groups: GroupOption[]) => void
-  setModels: (models: ModelOption[]) => void
   updateConfig: <K extends keyof PlaygroundConfig>(
     key: K,
     value: PlaygroundConfig[K]
@@ -65,7 +64,6 @@ export function usePlaygroundOptions({
   currentGroup,
   currentModel,
   setGroups,
-  setModels,
   updateConfig,
 }: UsePlaygroundOptionsParams) {
   const { t } = useTranslation()
@@ -118,7 +116,6 @@ export function usePlaygroundOptions({
   useEffect(() => {
     if (!modelsData) return
 
-    setModels(modelsData)
     const fallback = getModelFallback(modelsData, currentModel)
 
     if (fallback) {
@@ -129,7 +126,7 @@ export function usePlaygroundOptions({
     if (shouldClearModelForGroup(modelsData, currentModel)) {
       updateConfig('model', '')
     }
-  }, [modelsData, currentModel, setModels, updateConfig])
+  }, [modelsData, currentModel, updateConfig])
 
   useEffect(() => {
     if (!groupsData) return
@@ -144,5 +141,13 @@ export function usePlaygroundOptions({
 
   return {
     isLoadingModels,
+    models: isModelsError ? [] : (modelsData ?? []),
+    canSendSelection:
+      !isModelsError &&
+      !isGroupsError &&
+      Boolean(
+        groupsData?.some((group) => group.value === currentGroup) &&
+        modelsData?.some((model) => model.value === currentModel)
+      ),
   }
 }

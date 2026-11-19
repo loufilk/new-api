@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -262,8 +263,9 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, actualMoney string
 			alreadyDone, quotaToAdd, ledgerTotalAfter, benefitErr = settleNewUserBenefitTx(tx, topUp, actualPaymentMethod, callbackMoney, facts)
 			return benefitErr
 		}
-		expectedMoney := decimal.NewFromFloat(topUp.Money).Round(2)
-		if !callbackMoney.Equal(expectedMoney) {
+		// Pre-canonicalization orders stored the raw float, but the signed form
+		// sent its fixed two-digit rendering. Accept that exact amount only.
+		if callbackMoney.StringFixed(2) != strconv.FormatFloat(topUp.Money, 'f', 2, 64) {
 			return ErrPaymentAmountMismatch
 		}
 		if topUp.AgentSimpleTopUp && (len(facts) != 1 || actualPaymentMethod != topUp.PaymentMethod) {

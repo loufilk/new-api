@@ -21,8 +21,13 @@ import { useTranslation } from 'react-i18next'
 
 import { handleServerError } from '@/lib/handle-server-error'
 
-import { loadFullTokenKey, requestImageGeneration } from '../api'
+import {
+  loadFullTokenKey,
+  pollAcceptedImageTask,
+  requestImageGeneration,
+} from '../api'
 import { isAbortError } from '../lib/request-builders'
+import type { PendingImageTask } from '../storage/pending-task'
 import type { GeneratedImage } from '../types'
 
 type GenerateInput = {
@@ -35,6 +40,9 @@ type GenerateInput = {
   quality: string
   style: string
   images: File[]
+  acceptedTask?: PendingImageTask
+  onAccepted?: (id: string, expiresAt: number) => void
+  onTerminalFailure?: () => void
   asyncMode?: boolean
 }
 
@@ -62,7 +70,7 @@ export function useImageGeneration() {
   const generate = useCallback(
     async (input: GenerateInput): Promise<GeneratedImage[] | null> => {
       if (abortRef.current && !abortRef.current.signal.aborted) return null
-      if (input.apiKeyId === null || input.apiKeyId === undefined) {
+      if (!input.acceptedTask && input.apiKeyId == null) {
         if (mountedRef.current) setError(t('Please select an API key'))
         return null
       }
@@ -82,26 +90,39 @@ export function useImageGeneration() {
         setError(null)
       }
       try {
-        const fullKey = await loadFullTokenKey(
-          input.apiKeyId,
-          controller.signal
-        )
-        if (controller.signal.aborted) {
-          throw new DOMException('The operation was aborted.', 'AbortError')
+        const retrieve = async () => {
+          if (input.acceptedTask)
+            return pollAcceptedImageTask({
+              ...input.acceptedTask,
+              signal: controller.signal,
+              onTerminalFailure: input.onTerminalFailure,
+            })
+          if (input.apiKeyId == null)
+            throw new Error(t('Please select an API key'))
+          const fullKey = await loadFullTokenKey(
+            input.apiKeyId,
+            controller.signal
+          )
+          if (controller.signal.aborted) {
+            throw new DOMException('The operation was aborted.', 'AbortError')
+          }
+          return requestImageGeneration({
+            fullKey,
+            model: input.model,
+            prompt: input.prompt.trim(),
+            count: input.count,
+            size: input.size,
+            resolution: input.resolution,
+            quality: input.quality,
+            style: input.style,
+            images: input.images,
+            asyncMode: input.asyncMode,
+            onAccepted: input.onAccepted,
+            onTerminalFailure: input.onTerminalFailure,
+            signal: controller.signal,
+          })
         }
-        const images = await requestImageGeneration({
-          fullKey,
-          model: input.model,
-          prompt: input.prompt.trim(),
-          count: input.count,
-          size: input.size,
-          resolution: input.resolution,
-          quality: input.quality,
-          style: input.style,
-          images: input.images,
-          asyncMode: input.asyncMode,
-          signal: controller.signal,
-        })
+        const images = await retrieve()
         if (
           !mountedRef.current ||
           abortRef.current !== controller ||

@@ -194,7 +194,7 @@ func GetEpayClient() *epay.Client {
 	return withUrl
 }
 
-func getPayMoney(amount int64, group string) float64 {
+func getPayMoney(amount int64, group string) decimal.Decimal {
 	dAmount := decimal.NewFromInt(amount)
 	// 充值金额以“展示类型”为准：
 	// - USD/CNY: 前端传 amount 为金额单位；TOKENS: 前端传 tokens，需要换成 USD 金额
@@ -221,7 +221,14 @@ func getPayMoney(amount int64, group string) float64 {
 
 	payMoney := dAmount.Mul(dPrice).Mul(dTopupGroupRatio).Mul(dDiscount)
 
-	return payMoney.InexactFloat64()
+	// Quote once in whole fen; checkout, stored order and webhook must agree.
+	money := payMoney.Round(2)
+	// The legacy DB column is float64. Fail closed if it cannot store the
+	// exact checkout cents; never create an unfulfillable order.
+	if money.IsPositive() && strconv.FormatFloat(money.InexactFloat64(), 'f', 2, 64) != money.StringFixed(2) {
+		return decimal.Zero
+	}
+	return money
 }
 
 func getMinTopup() int64 {
@@ -296,7 +303,7 @@ func RequestEpay(c *gin.Context) {
 	if !finishControllerGroupConfigRead(c, guard) {
 		return
 	}
-	if payMoney < 0.01 {
+	if !payMoney.IsPositive() {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
 		return
 	}
@@ -328,7 +335,7 @@ func RequestEpay(c *gin.Context) {
 		Type:           req.PaymentMethod,
 		ServiceTradeNo: tradeNo,
 		Name:           "API 账户余额充值",
-		Money:          strconv.FormatFloat(payMoney, 'f', 2, 64),
+		Money:          payMoney.StringFixed(2),
 		Device:         epay.PC,
 		NotifyUrl:      notifyUrl,
 		ReturnUrl:      returnUrl,
@@ -347,7 +354,7 @@ func RequestEpay(c *gin.Context) {
 	topUp := &model.TopUp{
 		UserId:          id,
 		Amount:          amount,
-		Money:           payMoney,
+		Money:           payMoney.InexactFloat64(),
 		TradeNo:         tradeNo,
 		PaymentMethod:   req.PaymentMethod,
 		PaymentProvider: model.PaymentProviderEpay,
@@ -360,7 +367,7 @@ func RequestEpay(c *gin.Context) {
 		paymentError(c, common.NewMessage("Failed to create order"))
 		return
 	}
-	logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 充值订单创建成功 user_id=%d trade_no=%s payment_method=%s amount=%d money=%.2f", id, tradeNo, req.PaymentMethod, req.Amount, payMoney))
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 充值订单创建成功 user_id=%d trade_no=%s payment_method=%s amount=%d money=%s", id, tradeNo, req.PaymentMethod, req.Amount, payMoney.StringFixed(2)))
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": params, "url": uri})
 }
 
@@ -534,11 +541,11 @@ func RequestAmount(c *gin.Context) {
 	if !finishControllerGroupConfigRead(c, guard) {
 		return
 	}
-	if payMoney <= 0.01 {
+	if !payMoney.IsPositive() {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": strconv.FormatFloat(payMoney, 'f', 2, 64)})
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": payMoney.StringFixed(2)})
 }
 
 func GetUserTopUps(c *gin.Context) {

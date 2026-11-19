@@ -152,7 +152,12 @@ export async function updateApiKeyStatus(
   id: number,
   status: number
 ): Promise<ApiResponse<ApiKey>> {
-  const res = await api.put('/api/token/?status_only=true', { id, status })
+  const res = await api.put(
+    status === 2
+      ? '/api/token/?status_only=true&disable_only=true'
+      : '/api/token/?status_only=true',
+    { id, status }
+  )
   return res.data
 }
 

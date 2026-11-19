@@ -24,8 +24,16 @@ import { beforeEach, afterEach, expect, test, vi } from 'vitest'
 import { api } from '@/lib/api'
 
 import { ImageGenerationPage } from '../components/ImageGenerationPage'
+import {
+  readPendingImageTask,
+  writePendingImageTask,
+} from '../storage/pending-task'
 import type { ImageHistoryEntry } from '../types'
-import { HISTORY_OWNER_KEY, signInHistoryOwner } from './history-fixture'
+import {
+  HISTORY_OWNER_ID,
+  HISTORY_OWNER_KEY,
+  signInHistoryOwner,
+} from './history-fixture'
 
 const entry: ImageHistoryEntry = {
   id: 'old',
@@ -349,4 +357,51 @@ test('native resolution survives history storage and reuse without silently maki
   expect(
     post.mock.calls.filter(([url]) => url === '/v1/images/generations')
   ).toHaveLength(1)
+})
+
+test('after reload the owner can recover a paid image with no usable key, without a second POST', async () => {
+  const id = '9'.repeat(48)
+  const pending = {
+    id,
+    expiresAt: Date.now() + 60_000,
+    prompt: 'Recovered artwork',
+    model: 'gpt-image-2',
+    size: 'auto',
+    count: 1,
+    quality: 'auto',
+    style: '',
+  }
+  writePendingImageTask(HISTORY_OWNER_ID, id, pending)
+  signInHistoryOwner(202)
+  expect(readPendingImageTask()).toBeNull()
+  expect(readPendingImageTask(HISTORY_OWNER_ID)).toBeNull()
+  signInHistoryOwner()
+  expect(readPendingImageTask()?.id).toBe(id)
+  client.setQueryData(['image-generation-bootstrap'], {
+    keys: [],
+    pricingModels: [],
+  })
+  vi.mocked(api.get).mockResolvedValue({
+    data: {
+      id,
+      status: 'succeeded',
+      result: { data: [{ url: 'https://example.com/recovered.png' }] },
+    },
+  })
+  const post = vi.spyOn(api, 'post')
+  renderPage()
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Retrieve image result' })
+  )
+  await waitFor(() =>
+    expect(localStorage.getItem(HISTORY_OWNER_KEY)).toContain(
+      'Recovered artwork'
+    )
+  )
+  expect(readPendingImageTask()).toBeNull()
+  expect(api.get).toHaveBeenCalledWith(
+    `/v1/images/tasks/${id}`,
+    expect.anything()
+  )
+  expect(post).not.toHaveBeenCalled()
 })

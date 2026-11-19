@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -38,10 +38,6 @@ func ClaudeResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 		Usage:        &dto.Usage{},
 	}
 	var streamErr *types.NewAPIError
-	// streamFailed means a Responses-native terminal error was sent successfully.
-	// In that case the scanner stops without a transport error and the partial
-	// upstream usage remains billable.
-	streamFailed := false
 
 	sendResponsesEvent := func(eventType string, payload dto.ResponsesStreamResponse) bool {
 		payload.Type = eventType
@@ -51,7 +47,7 @@ func ClaudeResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 			return false
 		}
 		if err := helper.ResponseChunkData(c, dto.ResponsesStreamResponse{Type: eventType}, string(data)); err != nil {
-			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			streamErr = service.NewRelayClientGoneError(err)
 			return false
 		}
 		return true
@@ -68,40 +64,17 @@ func ClaudeResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 		}
 		return sendResponsesEvent(event.Type, event.Payload)
 	}
-	failResponsesStream := func(err error) bool {
-		failureResults, handled := state.FailResponsesStream("server_error", err.Error(), "")
-		if !handled {
-			return false
-		}
-		for _, result := range failureResults {
-			if !sendResult(result) {
-				return true
-			}
-		}
-		streamFailed = true
-		return true
-	}
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		var claudeResponse dto.ClaudeResponse
 		if err := common.UnmarshalJsonStr(data, &claudeResponse); err != nil {
-			logger.LogError(c, common.LogText("failed to unmarshal Claude stream event: %s", err.Error()))
-			if failResponsesStream(err) {
-				// A nil streamErr here is intentional: the protocol-level failure
-				// event was delivered, so only the scanner needs to stop.
-				sr.Stop(streamErr)
-				return
-			}
-			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+			streamErr = types.NewErrorWithStatusCode(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
 			sr.Stop(streamErr)
 			return
 		}
 		if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
-			if failResponsesStream(fmt.Errorf("%s", claudeError.Message)) {
-				sr.Stop(streamErr)
-				return
-			}
-			streamErr = types.WithClaudeError(*claudeError, http.StatusInternalServerError)
+			common.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, true)
+			streamErr = types.WithClaudeError(*claudeError, http.StatusBadGateway)
 			sr.Stop(streamErr)
 			return
 		}
@@ -123,10 +96,6 @@ func ClaudeResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 		countClaudeStreamBillableTools(info, &claudeResponse)
 		hostedEvents, consumed, err := hostedBridge.Convert(&claudeResponse, state)
 		if err != nil {
-			if failResponsesStream(err) {
-				sr.Stop(streamErr)
-				return
-			}
 			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 			sr.Stop(streamErr)
 			return
@@ -143,10 +112,6 @@ func ClaudeResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 
 		results, err := service.ConvertStreamResponseChunk(c, info, state, &claudeResponse)
 		if err != nil {
-			if failResponsesStream(err) {
-				sr.Stop(streamErr)
-				return
-			}
 			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 			sr.Stop(streamErr)
 			return
@@ -157,12 +122,30 @@ func ClaudeResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 				return
 			}
 		}
+		if claudeResponse.Type == "message_stop" {
+			sr.Done()
+		}
 	})
-	if streamErr != nil {
-		return nil, streamErr
+	info.StreamStatus.RequireTerminal()
+	failed := func(apiErr *types.NewAPIError) (*dto.Usage, *types.NewAPIError) {
+		failure := apiErr
+		if failure.GetErrorCode() != service.ClientGoneErrorCode && service.RelayRequestCancellation(c) == nil && !info.StreamStatus.ClientGone() {
+			results, _ := state.FailResponsesStream("server_error", failure.Error(), "")
+			for _, result := range results {
+				if !sendResult(result) {
+					failure = streamErr
+					break
+				}
+			}
+		}
+		common.SetContextKey(c, constant.ContextKeyResponsesStreamErrorHandled, true)
+		return InterruptedStreamUsage(c, info, claudeInfo, failure), types.NewError(failure, failure.GetErrorCode(), types.ErrOptionWithSkipRetry())
 	}
-	if streamFailed {
-		return claudeInfo.Usage, nil
+	if streamErr != nil {
+		return failed(streamErr)
+	}
+	if terminalErr := StreamTerminalError(c, info, nil); terminalErr != nil {
+		return failed(terminalErr)
 	}
 
 	HandleStreamFinalResponse(c, info, claudeInfo)
@@ -170,14 +153,11 @@ func ClaudeResponsesStreamHandler(c *gin.Context, resp *http.Response, info *rel
 	state.SetUsage(&openAIUsage)
 	finalResults, err := service.FinalizeStreamResponse(c, info, state)
 	if err != nil {
-		if failResponsesStream(err) {
-			return claudeInfo.Usage, streamErr
-		}
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+		return failed(types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError))
 	}
 	for _, result := range finalResults {
 		if !sendResult(result) {
-			return nil, streamErr
+			return failed(streamErr)
 		}
 	}
 	return claudeInfo.Usage, nil

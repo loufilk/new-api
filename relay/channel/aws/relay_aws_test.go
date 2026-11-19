@@ -494,6 +494,26 @@ func TestAwsStreamHandlerUsesFinalUpstreamUsage(t *testing.T) {
 	assert.Contains(t, recorder.Body.String(), "[DONE]")
 }
 
+func TestAwsStreamHandlerRejectsTruncatedSDKStream(t *testing.T) {
+	client := newAwsTestClient(awsHTTPClientFunc(func(request *http.Request) (*http.Response, error) {
+		var body bytes.Buffer
+		if err := writeAwsStreamEvent(&body, `{"type":"message_start","message":{"id":"msg_test","model":"claude-test","role":"assistant","usage":{"input_tokens":11}}}`); err != nil {
+			return nil, err
+		}
+		return newAwsStreamResponse(request, io.NopCloser(bytes.NewReader(body.Bytes()))), nil
+	}))
+	recorder := httptest.NewRecorder()
+	c := newAwsTestContext(recorder, context.Background())
+	info := newAwsTestRelayInfo()
+	apiErr, usage := awsStreamHandler(c, info, &Adaptor{AwsClient: client, AwsReq: newAwsStreamInput()})
+	require.NotNil(t, apiErr)
+	assert.True(t, relaytypes.IsSkipRetryError(apiErr))
+	require.NotNil(t, usage)
+	assert.Equal(t, 11, usage.PromptTokens)
+	assert.Contains(t, recorder.Body.String(), `"error"`)
+	assert.NotContains(t, recorder.Body.String(), "[DONE]")
+}
+
 func TestAwsStreamHandlerStopsAtClientCancellation(t *testing.T) {
 	originalRelayTimeout := common.RelayTimeout
 	common.RelayTimeout = 0
@@ -574,7 +594,10 @@ func TestAwsStreamHandlerStopsAtClientCancellation(t *testing.T) {
 	}
 
 	require.ErrorIs(t, upstreamContext.Err(), context.Canceled)
-	require.Nil(t, result.err)
+	require.NotNil(t, result.err)
+	assert.Equal(t, "client_gone", string(result.err.GetErrorCode()))
+	assert.True(t, relaytypes.IsSkipRetryError(result.err))
+	assert.True(t, common.GetContextKeyBool(c, constant.ContextKeyUpstreamResponseUsageIncomplete))
 	require.NotNil(t, result.usage)
 	assert.Equal(t, bodyLengthBeforeCancel, responseWriter.Body.Len())
 	assert.NotContains(t, responseWriter.Body.String(), "[DONE]")

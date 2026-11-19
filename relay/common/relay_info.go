@@ -212,6 +212,10 @@ type RelayInfo struct {
 	// ImageQuotaBeforeGroup is the frozen legacy estimate before request ratios.
 	ImageRequestCount     int
 	ImageQuotaBeforeGroup float64
+	// Non-image legacy synchronous pricing: nil for other pricing paths. Keep
+	// the unrounded base even when the first group or prompt estimate is zero.
+	LegacyQuotaBeforeGroup   *float64
+	LegacyReservedGroupRatio float64
 
 	Request dto.Request
 

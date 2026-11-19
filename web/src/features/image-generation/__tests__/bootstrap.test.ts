@@ -145,6 +145,24 @@ describe('loadImagePageBootstrap aggregates every key page', () => {
     ])
   })
 
+  test('excludes enabled-but-expired and exhausted finite keys', async () => {
+    mockedGetApiKeys.mockResolvedValue(
+      makeKeysPage(
+        [
+          { ...makeKey(1), expired_time: Math.floor(Date.now() / 1000) },
+          { ...makeKey(2), unlimited_quota: false, remain_quota: 0 },
+          { ...makeKey(3), unlimited_quota: false, remain_quota: 1 },
+        ],
+        3,
+        100
+      )
+    )
+    mockedGetPricing.mockResolvedValue(makePricing())
+    expect((await loadImagePageBootstrap()).keys.map((key) => key.id)).toEqual([
+      3,
+    ])
+  })
+
   test('loads remaining pages in parallel and merges only enabled keys', async () => {
     mockedGetApiKeys.mockImplementation(async (params) => {
       if (params?.p === 1) {

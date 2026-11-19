@@ -348,13 +348,16 @@ func CacheGetChannel(id int) (*Channel, error) {
 	if !common.MemoryCacheEnabled {
 		return GetChannelById(id, true)
 	}
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+	return cachedChannelLocked(id)
+}
+
+// cachedChannelLocked requires channelSyncLock (read or write).
+func cachedChannelLocked(id int) (*Channel, error) {
 	if channelCacheExpired() {
 		return nil, ErrChannelCacheStale
 	}
-
-	channelSyncLock.RLock()
-	defer channelSyncLock.RUnlock()
-
 	c, ok := channelsIDM[id]
 	if !ok {
 		return nil, fmt.Errorf("channel #%d is absent from cache: %w", id, ErrChannelCacheMiss)
@@ -363,23 +366,9 @@ func CacheGetChannel(id int) (*Channel, error) {
 }
 
 func CacheGetChannelInfo(id int) (*ChannelInfo, error) {
-	if !common.MemoryCacheEnabled {
-		channel, err := GetChannelById(id, true)
-		if err != nil {
-			return nil, err
-		}
-		return &channel.ChannelInfo, nil
-	}
-	if channelCacheExpired() {
-		return nil, ErrChannelCacheStale
-	}
-
-	channelSyncLock.RLock()
-	defer channelSyncLock.RUnlock()
-
-	c, ok := channelsIDM[id]
-	if !ok {
-		return nil, fmt.Errorf("channel #%d is absent from cache: %w", id, ErrChannelCacheMiss)
+	c, err := CacheGetChannel(id)
+	if err != nil {
+		return nil, err
 	}
 	return &c.ChannelInfo, nil
 }

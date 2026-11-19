@@ -660,6 +660,7 @@ func executeTaskSubmissionWith(
 	var taskErr *taskdto.TaskError
 	durable := false
 	deliveryUnknown := false
+	acceptedAsync := false
 	stage := "start"
 	defer func() {
 		if !durable && relayInfo.Billing != nil {
@@ -781,7 +782,13 @@ func executeTaskSubmissionWith(
 		if taskErr == nil || taskErr.DeliveryUnknown {
 			deliveryUnknown = true
 		}
-		if requestErr := c.Request.Context().Err(); requestErr != nil {
+		// Once the provider has acknowledged an asynchronous task with a
+		// recoverable ID, client cancellation stops presentation but must not
+		// discard the pollable identity. The existing bounded SQL handoff
+		// owns persistence; never dispatch again from this point.
+		acceptedAsync = taskErr == nil && result != nil && strings.TrimSpace(result.UpstreamTaskID) != "" &&
+			(result.Immediate == nil || (result.Immediate.Status != model.TaskStatusSuccess && result.Immediate.Status != model.TaskStatusFailure))
+		if requestErr := c.Request.Context().Err(); requestErr != nil && !acceptedAsync {
 			diagnostics.cancelled("after_submit", retryParam.GetRetry()+1)
 			taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
 			break
@@ -829,7 +836,7 @@ func executeTaskSubmissionWith(
 		diagnostics.failed("submit", "missing_result", taskErr, false)
 		return nil, taskErr
 	}
-	if requestErr := c.Request.Context().Err(); requestErr != nil {
+	if requestErr := c.Request.Context().Err(); requestErr != nil && !acceptedAsync {
 		diagnostics.cancelled("before_reserve", retryParam.GetRetry()+1)
 		return nil, service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
 	}
@@ -851,13 +858,15 @@ func executeTaskSubmissionWith(
 			diagnostics.reserve("reserve_complete", result.Quota)
 		}
 	}
-	if requestErr := c.Request.Context().Err(); requestErr != nil {
+	clientErrBeforeHandoff := c.Request.Context().Err()
+	if clientErrBeforeHandoff != nil && !acceptedAsync {
 		diagnostics.cancelled("before_insert", retryParam.GetRetry()+1)
-		return nil, service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
+		return nil, service.TaskErrorWrapperLocal(clientErrBeforeHandoff, "request_cancelled", http.StatusRequestTimeout)
 	}
 
 	stage = "insert"
 	task := model.InitTask(result.Platform, relayInfo)
+	task.PrivateData.ResponsesBackground = responsesTaskBackground(c)
 	task.PrivateData.Execution = service.TaskExecutionSnapshotFromContext(c)
 	task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 	task.PrivateData.WalletDebit = service.WalletSessionDebitShares(relayInfo)
@@ -963,6 +972,9 @@ func executeTaskSubmissionWith(
 	}
 	diagnostics.complete(task, result.Quota)
 
+	if clientErrBeforeHandoff != nil {
+		return nil, service.TaskErrorWrapperLocal(clientErrBeforeHandoff, "request_cancelled", http.StatusRequestTimeout)
+	}
 	return &taskSubmissionOutcome{Result: result, Task: task, RelayInfo: relayInfo}, nil
 }
 

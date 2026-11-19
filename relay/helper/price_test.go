@@ -818,6 +818,15 @@ func TestInputPreConsumeMultiplierLegacyAndRequestPrices(t *testing.T) {
 			price, err := ModelPriceHelper(ctx, info, tc.prompt, &types.TokenCountMeta{MaxTokens: 10000})
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, price.QuotaToPreConsume)
+			if tc.model == "legacy-input-policy" || tc.model == "request-input-policy" {
+				reservation := &priceTestReservation{held: price.QuotaToPreConsume}
+				info.Billing = reservation
+				info.PriceData.GroupRatioInfo.GroupRatio = 2
+				operation_setting.GetQuotaSetting().PreConsumeMultiplier = 10
+				require.Nil(t, service.PrepareTieredBillingForSelectedGroup(ctx, info))
+				require.Equal(t, 2*tc.want, info.PriceData.QuotaToPreConsume, "reprice the original model quote, not today's config")
+				require.Equal(t, 2*tc.want, reservation.held)
+			}
 			if tc.model == "image-input-policy" {
 				reservation := &priceTestReservation{held: price.QuotaToPreConsume}
 				info.Billing = reservation

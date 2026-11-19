@@ -53,17 +53,6 @@ type PendingStreamChunks = {
   reasoning: string
 }
 
-function mergePendingStreamChunk(
-  currentChunk: string,
-  nextChunk: string
-): string {
-  if (!currentChunk || !nextChunk.startsWith(currentChunk)) {
-    return currentChunk + nextChunk
-  }
-
-  return nextChunk
-}
-
 /**
  * Hook for handling chat message sending and receiving
  */
@@ -192,10 +181,7 @@ export function useChatHandler({
     (generation: number, type: 'reasoning' | 'content', chunk: string) => {
       if (generation !== requestGenerationRef.current) return
       if (pendingStreamChunksRef.current.generation !== generation) return
-      pendingStreamChunksRef.current[type] = mergePendingStreamChunk(
-        pendingStreamChunksRef.current[type],
-        chunk
-      )
+      pendingStreamChunksRef.current[type] += chunk
       scheduleStreamFlush(generation)
     },
     [scheduleStreamFlush]

@@ -315,6 +315,12 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
 		Usage:        &dto.Usage{},
 	}
 
+	info.StreamStatus = relaycommon.NewStreamStatus()
+	info.StreamStatus.RequireTerminal()
+	failed := func(apiErr *types.NewAPIError) (*types.NewAPIError, *dto.Usage) {
+		usage, failure := claude.FailStream(c, info, claudeInfo, apiErr)
+		return failure, usage
+	}
 	events := stream.Events()
 streamLoop:
 	for {
@@ -332,21 +338,28 @@ streamLoop:
 			switch v := event.(type) {
 			case *bedrockruntimeTypes.ResponseStreamMemberChunk:
 				info.SetFirstResponseTime()
+				info.ReceivedResponseCount++
 				respErr := claude.HandleStreamResponseData(c, info, claudeInfo, string(v.Value.Bytes))
 				if respErr != nil {
-					return respErr, nil
+					return failed(respErr)
 				}
 			case *bedrockruntimeTypes.UnknownUnionMember:
 				fmt.Println(common.LogText("unknown tag: %v", v.Tag))
-				return types.NewError(errors.New("unknown response type"), types.ErrorCodeInvalidRequest), nil
+				return failed(types.NewError(errors.New("unknown response type"), types.ErrorCodeBadResponse))
 			default:
 				fmt.Println(common.LogText("union is nil or unknown type"))
-				return types.NewError(errors.New("nil or unknown response type"), types.ErrorCodeInvalidRequest), nil
+				return failed(types.NewError(errors.New("nil or unknown response type"), types.ErrorCodeBadResponse))
 			}
 		}
 	}
 
-	_ = stream.Close()
+	sourceErr := ctx.Err()
+	if sourceErr == nil {
+		sourceErr = stream.Err()
+	}
+	if apiErr := claude.StreamTerminalError(c, info, sourceErr); apiErr != nil {
+		return failed(apiErr)
+	}
 	claude.HandleStreamFinalResponse(c, info, claudeInfo)
 	return nil, claudeInfo.Usage
 }

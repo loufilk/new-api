@@ -57,6 +57,9 @@ func TestServeTaskPluginProtocolBackgroundPreservesConcurrentFinancialState(t *t
 				}};
 			`)
 			f.c.Set(pluginruntime.ContextKeyPinnedPlugin, pluginruntime.PinnedPlugin{Generation: pinned.Generation, Plugin: pinned.Plugin})
+			backgroundContext, _ := newPluginProtocolTestContext(false, false)
+			setProtocolRequestBackground(backgroundContext, true)
+			f.c.Set(pluginruntime.ContextKeyProtocolRequest, backgroundContext.MustGet(pluginruntime.ContextKeyProtocolRequest))
 			outcome, taskErr := executeTaskSubmissionWith(f.c, f.info, func(*gin.Context, *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
 				return &relay.TaskSubmitResult{
 					UpstreamTaskID: "provider-background-job", Platform: constant.TaskPlatform(pinned.Plugin.Meta.Key), Quota: 100,
@@ -65,6 +68,9 @@ func TestServeTaskPluginProtocolBackgroundPreservesConcurrentFinancialState(t *t
 			})
 			require.Nil(t, taskErr)
 			require.NotNil(t, outcome)
+			var accepted model.Task
+			require.NoError(t, f.db.First(&accepted, outcome.Task.ID).Error)
+			require.True(t, accepted.PrivateData.ResponsesBackground, "background identity must already be durable before any observer can disconnect")
 			f.assertFinancial(t, model.BillingTaskOwned, 100, 100, 1, 1)
 			require.Nil(t, outcome.Task.PrivateData.FinancialIntent)
 			require.NotNil(t, outcome.Task.PrivateData.Execution)

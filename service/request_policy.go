@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -48,6 +49,7 @@ type RequestPolicyState struct {
 	SessionModeSource      string
 	RuleName               string
 	Successful             bool
+	AffinityEligible       bool
 	AttemptChannelID       int
 	AttemptStartedAt       time.Time
 	RoutingOutcomeRecorded bool
@@ -96,6 +98,7 @@ func (s *RequestPolicyState) BeginAttempt(channel *model.Channel, group string) 
 	s.AttemptStartedAt = time.Now()
 	s.RoutingOutcomeRecorded = false
 	s.Successful = false
+	s.AffinityEligible = false
 	s.OutcomeRecorded = false
 	s.SelectedGroup = group
 	s.AddEvent(PolicyEvent{ChannelID: channel.Id, Decision: PolicyDecision{Action: "attempt", Reason: "channel_selected", Source: "routing"}})
@@ -174,6 +177,7 @@ func MarkRequestPolicySuccess(c *gin.Context, stream *relaycommon.StreamStatus, 
 	}
 	state.OutcomeRecorded = true
 	state.Successful = stream == nil || stream.IsNormalEnd() && !stream.HasErrors() && (stream.ResponseOutcome() == "" || stream.ResponseOutcome() == "completed")
+	state.AffinityEligible = state.Successful && perfmetrics.ClassifyRelayOutcome(nil, info, nil) == perfmetrics.OutcomeSuccess
 	decision := PolicyDecision{Action: "success", Reason: "request_completed", Source: "upstream"}
 	if !state.Successful {
 		decision = PolicyDecision{Action: "stop", Reason: "stream_not_successful", Source: "system"}

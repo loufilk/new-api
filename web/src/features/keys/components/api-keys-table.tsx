@@ -77,7 +77,7 @@ const API_KEYS_MOBILE_SKELETON_IDS = Array.from(
 )
 
 function isDisabledApiKeyRow(apiKey: ApiKey) {
-  return apiKey.status !== API_KEY_STATUS.ENABLED
+  return (apiKey.effective_status ?? apiKey.status) !== API_KEY_STATUS.ENABLED
 }
 
 function ApiKeysMobileSkeleton() {
@@ -141,7 +141,8 @@ function ApiKeysMobileList({
     <div className='min-w-0 space-y-3'>
       {rows.map((row) => {
         const apiKey = row.original
-        const statusConfig = API_KEY_STATUSES[apiKey.status]
+        const statusConfig =
+          API_KEY_STATUSES[apiKey.effective_status ?? apiKey.status]
         const groupCell = row
           .getAllCells()
           .find((cell) => cell.column.id === 'group')
@@ -322,6 +323,7 @@ export function ApiKeysTable() {
     data: apiKeys,
     columns,
     enableRowSelection: true,
+    getRowId: (row) => String(row.id),
     columnFilters,
     columnVisibilityStorageKey: API_KEYS_COLUMN_VISIBILITY_STORAGE_KEY,
     globalFilter,
@@ -335,6 +337,19 @@ export function ApiKeysTable() {
     totalCount: data?.total || 0,
     ensurePageInRange,
   })
+
+  // Selection is page-local. Query changes must never transfer checkmarks to
+  // unrelated credentials; stable ids additionally protect background reordering.
+  const selectionScope = JSON.stringify([
+    pagination.pageIndex,
+    pagination.pageSize,
+    globalFilter,
+    tokenFilter,
+    statuses,
+  ])
+  useEffect(() => {
+    table.resetRowSelection()
+  }, [selectionScope, table])
 
   const columnVisibility = table.getState().columnVisibility
   useEffect(() => {

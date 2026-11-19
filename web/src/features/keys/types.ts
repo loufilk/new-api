@@ -26,6 +26,8 @@ export const apiKeySchema = z.object({
   id: z.number(),
   name: z.string(),
   key: z.string(),
+  settings_version: z.number().int().positive().optional(),
+  effective_status: z.number().int().optional(),
   status: z.number(), // 1: enabled, 2: disabled, 3: expired, 4: exhausted
   remain_quota: z.number(),
   used_quota: z.number(),
@@ -117,6 +119,7 @@ export interface ApiKeyFormData {
 export type ApiKeyUpdateData = Omit<ApiKeyFormData, 'remain_quota'> & {
   id: number
   remain_quota?: number
+  expected_version?: number
 }
 
 export interface TokenGroupDetail {

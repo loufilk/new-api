@@ -221,15 +221,9 @@ func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
 	return writeEventStreamFrame(c, fmt.Sprintf("event: %s\ndata: %s\n\n", resp.Type, jsonData))
 }
 
-func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
-	if requestContextDone(c) {
-		return
-	}
-
+func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) error {
 	data = string(privacy.SanitizeClientPayload(c, []byte(data)))
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s\n", data)})
-	_ = FlushWriter(c)
+	return writeEventStreamFrame(c, fmt.Sprintf("event: %s\ndata: %s\n\n", resp.Type, data))
 }
 
 func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) error {

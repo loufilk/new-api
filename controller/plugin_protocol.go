@@ -160,6 +160,23 @@ func resolveTaskPluginForProtocolRetrieve(platform constant.TaskPlatform) (*plug
 	return plugin, generation, ok
 }
 
+// responsesTaskBackground is taken from the host's validated protocol request,
+// never from an arbitrary field of a provider's native task body.
+func responsesTaskBackground(c *gin.Context) bool {
+	raw, _ := c.Get(pluginruntime.ContextKeyProtocolRequest)
+	request, ok := raw.(pluginruntime.ProtocolRequestContext)
+	if !ok || request.Protocol != "openai_responses" {
+		return false
+	}
+	body, _ := request.Body.(map[string]any)
+	if body["kind"] != string(pluginruntime.BodyJSON) {
+		return false
+	}
+	value, _ := body["value"].(map[string]any)
+	background, _ := value["background"].(bool)
+	return background
+}
+
 func serveTaskPluginProtocol(
 	c *gin.Context,
 	pinned pluginruntime.PinnedEndpoint,
@@ -194,13 +211,8 @@ func serveTaskPluginProtocol(
 		respondPluginProtocolError(c, http.StatusInternalServerError, "task_protocol_error", "Task protocol request failed")
 		return
 	}
+	background := responsesTaskBackground(c)
 	if definition, known := pluginruntime.HostProtocol(pinned.Protocol); known && len(definition.DefinedModes()) > 0 && pinned.Plugin != nil {
-		background := false
-		if body, ok := protocolRequest.Body.(map[string]any); ok && body["kind"] == string(pluginruntime.BodyJSON) {
-			if requestBody, ok := body["value"].(map[string]any); ok {
-				background, _ = requestBody["background"].(bool)
-			}
-		}
 		missing := false
 		if protocolRequest.Stream && !pinned.Plugin.Meta.ProtocolSupports(pinned.Protocol, "stream") {
 			missing = true
@@ -360,22 +372,7 @@ func serveTaskPluginProtocol(
 		createdAt,
 		deps.protocolLimits,
 	)
-	background := false
-	if body, ok := protocolRequest.Body.(map[string]any); ok && body["kind"] == string(pluginruntime.BodyJSON) {
-		if requestBody, ok := body["value"].(map[string]any); ok {
-			background, _ = requestBody["background"].(bool)
-		}
-	}
 	if background {
-		outcome.Task.PrivateData.ResponsesBackground = true
-		if outcome.Task.ID != 0 {
-			metadataContext, cancelMetadata := context.WithTimeout(context.WithoutCancel(clientRequest.Context()), deps.loadTimeout)
-			err := outcome.Task.MarkResponsesBackground(metadataContext)
-			cancelMetadata()
-			if err != nil {
-				logger.LogError(c, common.LogText("persist task background flag failed: %s", err.Error()))
-			}
-		}
 		machine.SetBackground(true)
 		if !protocolRequest.Stream {
 			logger.LogDebug(

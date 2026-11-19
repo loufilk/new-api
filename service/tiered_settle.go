@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
@@ -206,6 +207,16 @@ func refreshTieredBillingGroup(relayInfo *relaycommon.RelayInfo) (*billingexpr.B
 // estimate before sending. If the initial group was free and skipped
 // pre-consume, switching to a paid group creates the session at that point.
 func PrepareTieredBillingForSelectedGroup(c *gin.Context, relayInfo *relaycommon.RelayInfo) *types.NewAPIError {
+	// A free Realtime connection owns a zero wallet identity, not permission
+	// to use paid sources. Stop here rather than dispatch and misprice its
+	// later usage (or silently switch a subscription user to wallet billing).
+	if relayInfo != nil && relayInfo.RelayFormat == types.RelayFormatOpenAIRealtime && relayInfo.Billing != nil && relayInfo.PriceData.FreeModel {
+		price := &relayInfo.PriceData
+		paidRate := price.UsePrice && price.ModelPrice != 0 || !price.UsePrice && price.ModelRatio != 0
+		if price.GroupRatioInfo.GroupRatio != 0 && (relayInfo.TieredBillingSnapshot != nil || paidRate) {
+			return types.NewErrorWithStatusCode(errors.New("free realtime authorization does not cover the selected paid group"), types.ErrorCodeModelPriceError, http.StatusConflict, types.ErrOptionWithSkipRetry())
+		}
+	}
 	snap, err := refreshTieredBillingGroup(relayInfo)
 	if err != nil {
 		return types.NewErrorWithStatusCode(
@@ -216,6 +227,36 @@ func PrepareTieredBillingForSelectedGroup(c *gin.Context, relayInfo *relaycommon
 		)
 	}
 	if snap == nil {
+		if relayInfo == nil || relayInfo.LegacyQuotaBeforeGroup == nil {
+			return nil // Images have an outbound quantity-aware reservation.
+		}
+		price := &relayInfo.PriceData
+		ratio := price.GroupRatioInfo.GroupRatio
+		if ratio == relayInfo.LegacyReservedGroupRatio {
+			return nil // First attempt keeps its original trust/hold policy.
+		}
+		quota, err := common.QuotaFromFloatStrict(*relayInfo.LegacyQuotaBeforeGroup * ratio)
+		if err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeModelPriceError, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		price.QuotaToPreConsume = quota
+		if ratio != 0 && ((price.UsePrice && price.ModelPrice != 0) || (!price.UsePrice && price.ModelRatio != 0)) {
+			// A zero estimate is not a free model. Freeze a funding owner even
+			// if the provider may bill only generated tokens after dispatch.
+			price.FreeModel = false
+			if relayInfo.Billing == nil {
+				previous := relayInfo.ForcePreConsume
+				relayInfo.ForcePreConsume = true
+				defer func() { relayInfo.ForcePreConsume = previous }()
+				if apiErr := PreConsumeBilling(c, quota, relayInfo); apiErr != nil {
+					return apiErr
+				}
+			} else if err := relayInfo.Billing.ReserveBeforeSubmit(quota); err != nil {
+				return types.NewErrorWithStatusCode(err, types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+			}
+			relayInfo.FinalPreConsumedQuota = relayInfo.Billing.GetPreConsumedQuota()
+		}
+		relayInfo.LegacyReservedGroupRatio = ratio
 		return nil
 	}
 	if snap.GroupRatio == 0 {

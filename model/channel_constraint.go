@@ -6,6 +6,8 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 )
 
 var filterEvalOrder = []dto.ChannelFilterKind{
@@ -27,7 +29,7 @@ func ChannelSatisfiesFilters(ch *Channel, modelName string, filters []dto.Channe
 			if filter.Kind != kind {
 				continue
 			}
-			if !channelMatchesFilter(ch, modelName, filter) {
+			if !channelMatchesFilter(ch, modelName, filter, filters) {
 				return false, kind
 			}
 		}
@@ -52,7 +54,7 @@ func filterCandidateIDs(ids []int, modelName string, filters []dto.ChannelFilter
 		next := make([]int, 0, len(kept))
 		for _, id := range kept {
 			channel, exists := channelsIDM[id]
-			if candidatePassesKindFilters(channel, exists, modelName, kind, kindFilters) {
+			if candidatePassesKindFilters(channel, exists, modelName, kind, kindFilters, filters) {
 				next = append(next, id)
 			}
 		}
@@ -74,26 +76,45 @@ func filtersByKind(filters []dto.ChannelFilter, kind dto.ChannelFilterKind) []dt
 	return matched
 }
 
-func candidatePassesKindFilters(ch *Channel, exists bool, modelName string, kind dto.ChannelFilterKind, filters []dto.ChannelFilter) bool {
+func candidatePassesKindFilters(ch *Channel, exists bool, modelName string, kind dto.ChannelFilterKind, kindFilters, filters []dto.ChannelFilter) bool {
 	if kind == dto.FilterRequestPath && !exists {
 		return true
 	}
 	if !exists || ch == nil {
 		return false
 	}
-	for _, filter := range filters {
-		if !channelMatchesFilter(ch, modelName, filter) {
+	for _, filter := range kindFilters {
+		if !channelMatchesFilter(ch, modelName, filter, filters) {
 			return false
 		}
 	}
 	return true
 }
 
-func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilter) bool {
+func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilter, filters []dto.ChannelFilter) bool {
 	switch filter.Kind {
 	case dto.FilterRequestPath:
 		if filter.RequestPath == "" {
 			return true
+		}
+		if ch.Type == constant.ChannelTypeCodex {
+			// A plugin can execute an endpoint it declares for this channel type
+			// instead of the builtin adaptor; leave its decision to the plugin filters.
+			for _, f := range filters {
+				if (f.Kind == dto.FilterTaskPluginEndpoint && !f.TaskPluginRelayOnly || f.Kind == dto.FilterTaskPluginIdentity && f.TaskPluginKey != "") && slices.Contains(f.TaskPluginChannelTypes, ch.Type) {
+					return true
+				}
+			}
+			path := filter.RequestPath
+			if path == "/v1/chat/completions" || path == "/v1/messages" || relayconstant.IsPlaygroundChatPath(path) {
+				global := model_setting.GetGlobalSettings()
+				return !global.PassThroughRequestEnabled && !ch.GetSetting().PassThroughBodyEnabled &&
+					global.ChatCompletionsToResponsesPolicy.Matches(ch.Id, ch.Type, modelName)
+			}
+			switch path {
+			case "/v1/completions", "/v1/images/generations", "/v1/images/edits", "/v1/embeddings", "/v1/rerank", "/v1/audio/speech", "/v1/audio/transcriptions", "/v1/audio/translations":
+				return false
+			}
 		}
 		if !constant.IsAdvancedCustomChannel(ch.Type) {
 			return true

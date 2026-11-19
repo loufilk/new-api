@@ -67,3 +67,16 @@ func TestLegacyCompletionStreamKeepsTerminalTextWithUsage(t *testing.T) {
 	assert.NotContains(t, body, `"delta"`)
 	assert.NotContains(t, body, `"model":"upstream"`)
 }
+
+func TestUnformattedChatStreamPreservesRefusalAudioAndFunctionCalls(t *testing.T) {
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, "public")
+	info := &relaycommon.RelayInfo{OriginModelName: "public", RelayMode: relayconstant.RelayModeChatCompletions, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "private"}}
+	frame := `{"model":"private","choices":[{"index":0,"delta":{"refusal":"no","audio":{"data":"YQ=="},"function_call":{"name":"weather","arguments":"{}"},"extension":{"id":9007199254740993}}}],"vendor_note":"unaltered"}`
+	require.NoError(t, sendStreamData(c, info, frame, false, false))
+	assert.Contains(t, rec.Body.String(), strings.Replace(frame, `"model":"private"`, `"model":"public"`, 1))
+	require.NotNil(t, info.ResponseModel)
+	assert.Equal(t, "private", info.ResponseModel.ReturnedModel)
+}

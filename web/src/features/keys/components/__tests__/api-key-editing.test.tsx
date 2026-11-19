@@ -316,3 +316,23 @@ test('explicitly disabling model restrictions preserves the allowlist for re-ena
     model_limits: 'fixture-model',
   })
 })
+
+test('uses the version of the open edit form, not a later background detail refresh', async () => {
+  const put = await renderEdit({ ...finiteKey, settings_version: 17 })
+  await act(async () => {
+    client.setQueriesData({ queryKey: ['api-key'] }, () => ({
+      success: true,
+      data: { ...finiteKey, settings_version: 18 },
+    }))
+  })
+  await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+  await waitFor(() =>
+    expect(put).toHaveBeenCalledWith(
+      '/api/token/',
+      expect.objectContaining({
+        id: finiteKey.id,
+        expected_version: 17,
+      })
+    )
+  )
+})

@@ -404,3 +404,28 @@ func TestRechargeEpayEnforcesFinalWalletQuotaLimit(t *testing.T) {
 		})
 	}
 }
+
+func TestRechargeEpayUsesExactHistoricalOrCanonicalCheckoutCents(t *testing.T) {
+	truncateTables(t)
+	user := insertUserForPaymentGuardTest(t, 519, 0)
+	for _, tc := range []struct {
+		trade           string
+		stored          float64
+		paid, different string
+	}{
+		{"LEGACY-ROUNDING", 10.125, "10.12", "10.13"},
+		{"CANONICAL-CENTS", 10.13, "10.13", "10.12"},
+	} {
+		order := createEpayTestOrder(t, user.Id, tc.trade, PaymentProviderEpay, common.TopUpStatusPending)
+		require.NoError(t, DB.Model(&order).Update("money", tc.stored).Error)
+		_, err := RechargeEpay(order.TradeNo, "alipay", tc.different, "")
+		require.ErrorIs(t, err, ErrPaymentAmountMismatch)
+		done, err := RechargeEpay(order.TradeNo, "alipay", tc.paid, "")
+		require.NoError(t, err)
+		require.False(t, done)
+		done, err = RechargeEpay(order.TradeNo, "alipay", tc.paid, "")
+		require.NoError(t, err)
+		require.True(t, done)
+	}
+	require.Equal(t, int(4*common.QuotaPerUnit), getUserQuotaForPaymentGuardTest(t, user.Id))
+}

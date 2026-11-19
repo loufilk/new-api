@@ -42,10 +42,8 @@ export function Playground() {
     parameterEnabled,
     messages,
     isLoadingMessages,
-    models,
     groups,
     updateMessages,
-    setModels,
     setGroups,
     updateConfig,
     updateParameterEnabled,
@@ -56,6 +54,13 @@ export function Playground() {
     config,
     parameterEnabled,
     onMessageUpdate: updateMessages,
+  })
+
+  const { isLoadingModels, models, canSendSelection } = usePlaygroundOptions({
+    currentGroup: config.group,
+    currentModel: config.model,
+    setGroups,
+    updateConfig,
   })
 
   // The frontend guard covers every send path (input, starter prompt,
@@ -80,20 +85,13 @@ export function Playground() {
     messages,
     updateMessages,
     sendChat: guardedSendChat,
+    canSend: canSendSelection && !isGenerating && !isQuotaExceeded,
   })
 
   const handleClearMessages = () => {
     handleEditOpenChange(false)
     clearMessages()
   }
-
-  const { isLoadingModels } = usePlaygroundOptions({
-    currentGroup: config.group,
-    currentModel: config.model,
-    setGroups,
-    setModels,
-    updateConfig,
-  })
 
   return (
     <div className='relative flex size-full min-h-0 flex-col overflow-hidden'>
@@ -126,12 +124,13 @@ export function Playground() {
       <div className='mx-auto w-full max-w-4xl'>
         <PlaygroundInput
           config={config}
+          canSendSelection={canSendSelection}
           disabled={isGenerating || isQuotaExceeded}
           groups={groups}
           groupValue={config.group}
           isGenerating={isGenerating}
           isModelLoading={isLoadingModels}
-          modelValue={config.model}
+          modelValue={canSendSelection ? config.model : ''}
           models={models}
           onGroupChange={(value) => updateConfig('group', value)}
           onConfigChange={updateConfig}

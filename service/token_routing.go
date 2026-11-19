@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -84,12 +85,16 @@ func TokenRoutingRetryAvailable(c *gin.Context) bool {
 	if c.Request != nil && c.Request.Context().Err() != nil || c.Writer != nil && c.Writer.Written() {
 		return false
 	}
+	// A pinned continuation can only retry the same channel. A different
+	// channel in the pool is neither needed nor permission for a replay.
+	if pin, ok, _ := GetChannelConstraints(c).ResolvedPin(); ok {
+		if pin.RetryMode == dto.PinRetrySingleAttempt {
+			return false
+		}
+		return !common.GetContextKeyBool(c, constant.ContextKeyTokenNoRetryWithinGroup)
+	}
 	groups := tokenRoutingGroups(c, common.GetContextKeyString(c, constant.ContextKeyTokenGroup))
 	if legacyCrossGroupRetry {
-		// Origin-task pins retain their separate same-channel retry contract.
-		if _, pinned, _ := GetChannelConstraints(c).ResolvedPin(); pinned {
-			return true
-		}
 		index, _ := common.GetContextKeyType[int](c, constant.ContextKeyAutoGroupIndex)
 		if index < 0 || index >= len(groups) {
 			return false
@@ -98,11 +103,6 @@ func TokenRoutingRetryAvailable(c *gin.Context) bool {
 	}
 	state := tokenRoutingState(c)
 	if common.GetContextKeyBool(c, constant.ContextKeyTokenNoRetryWithinGroup) {
-		// An origin-task pin cannot move to another group/channel; do not let
-		// its legacy same-channel retry mode defeat the explicit per-key limit.
-		if pin, found, _ := GetChannelConstraints(c).ResolvedPin(); found && state.channels[pin.ChannelId] {
-			return false
-		}
 		groups = slices.DeleteFunc(slices.Clone(groups), func(g string) bool { return state.groups[g] })
 	}
 	if len(groups) == 0 || c.Request == nil {

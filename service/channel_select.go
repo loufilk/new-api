@@ -359,13 +359,22 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 				FilterKind: kind, Channel: channel,
 			}
 		}
+		if pin.Source == dto.PinSourceOriginTask {
+			tasks, _ := common.GetContextKeyType[[]*model.Task](c, constant.ContextKeyOriginTasks)
+			group, scopeErr := authorizedOriginTaskGroup(c, channel, modelName, tasks)
+			if scopeErr != nil {
+				return nil, "", scopeErr
+			}
+			common.SetContextKey(c, constant.ContextKeyAutoGroup, group)
+			return channel, group, nil
+		}
 		return channel, "", nil
 	}
 
 	usingGroup := retry.TokenGroup
 	var channel *model.Channel
 	var selectGroup string
-	if retry.GetRetry() == 0 {
+	if retry.GetRetry() == 0 && len(c.GetStringSlice("use_channel")) == 0 {
 		if preferredChannelID, found := GetPreferredChannelByAffinity(c, modelName, usingGroup); found {
 			affinityUsable := false
 			preferred, err := model.CacheGetChannel(preferredChannelID)
@@ -376,13 +385,19 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 			if affinitySatisfied {
 				if usingGroup == "auto" {
 					userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-					for _, g := range GetRequestAutoGroups(c, userGroup) {
+					for idx, g := range GetRequestAutoGroups(c, userGroup) {
 						if model.IsChannelEnabledForGroupModel(g, modelName, preferred.Id) {
 							selectGroup = g
 							common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
 							channel = preferred
 							affinityUsable = true
 							MarkChannelAffinityUsed(c, g, preferred.Id)
+							// The affinity hop used this group's only attempt. The extra
+							// retry slot transitions to the next group, never back here.
+							if !tokenRoutingEnabled(c) && common.RetryTimes == 0 &&
+								common.GetContextKeyBool(c, constant.ContextKeyTokenCrossGroupRetry) {
+								common.SetContextKey(c, constant.ContextKeyAutoGroupIndex, idx+1)
+							}
 							break
 						}
 					}

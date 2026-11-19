@@ -28,6 +28,23 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		return nil
 	}
 
+	// The default path is wire-preserving. A typed round trip strips fields
+	// like refusal, audio, legacy function_call and future provider fields.
+	if !forceFormat && !thinkToContent || info != nil && info.RelayMode == relayconstant.RelayModeCompletions {
+		if !ojson.Valid(data) {
+			return fmt.Errorf("invalid upstream completion chunk")
+		}
+		if info != nil {
+			info.ObserveResponseModel(ojson.Get(data, "model").Str)
+			// The real request context already carries its public model. Only
+			// fall back to RelayInfo for internal callers without that context.
+			if privacy.Restricted(c) && privacy.RequestedModel(c) == "" {
+				data = string(privacy.SanitizePayload([]byte(data), info.OriginModelName, false))
+			}
+		}
+		return helper.StringData(c, data)
+	}
+
 	var lastStreamResponse dto.ChatCompletionsStreamResponse
 	if err := common.UnmarshalJsonStr(data, &lastStreamResponse); err != nil {
 		return err
@@ -35,18 +52,6 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 	if info != nil && info.OriginModelName != "" {
 		info.ObserveResponseModel(lastStreamResponse.Model)
 		lastStreamResponse.Model = info.OriginModelName
-	}
-
-	if info != nil && info.RelayMode == relayconstant.RelayModeCompletions {
-		// Legacy completions carry text/logprobs, not chat deltas. Preserve
-		// their wire shape (also under chat-only formatting options) while
-		// retaining model rewriting and StringData's client privacy boundary.
-		data = string(privacy.SanitizePayload([]byte(data), info.OriginModelName, false))
-		return helper.StringData(c, data)
-	}
-
-	if !forceFormat && !thinkToContent {
-		return helper.ObjectData(c, lastStreamResponse)
 	}
 
 	if !thinkToContent {

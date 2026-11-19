@@ -45,7 +45,11 @@ func TopUpQuota(amount int64) (int, error) {
 	quota := decimal.NewFromInt(amount)
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
 		quotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
-		quota = decimal.NewFromInt(quota.Div(quotaPerUnit).IntPart()).Mul(quotaPerUnit)
+		// These providers persist whole units on the order. Do not quote or
+		// charge the fractional unit that settlement cannot deliver.
+		if !quotaPerUnit.IsPositive() || !quota.Mod(quotaPerUnit).IsZero() {
+			return 0, common.NewMessage("Invalid top-up amount")
+		}
 	} else {
 		quota = quota.Mul(decimal.NewFromFloat(common.QuotaPerUnit))
 	}
@@ -59,7 +63,7 @@ func MaxTopUpAmount() int64 {
 	quotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
 	maxStoredAmount := decimal.NewFromInt(common.MaxWalletQuota).Div(quotaPerUnit).Floor()
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
-		return maxStoredAmount.Add(decimal.NewFromInt(1)).Mul(quotaPerUnit).Ceil().Sub(decimal.NewFromInt(1)).IntPart()
+		return maxStoredAmount.Mul(quotaPerUnit).IntPart()
 	}
 	return maxStoredAmount.IntPart()
 }

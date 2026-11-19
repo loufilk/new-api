@@ -35,6 +35,12 @@ import {
   getModelCapability,
   resolveSettingsForModel,
 } from '../lib/model-capabilities'
+import { getImageHistoryOwnerId } from '../storage/history-owner'
+import {
+  readPendingImageTask,
+  writePendingImageTask,
+  type PendingImageTask,
+} from '../storage/pending-task'
 import type { ImageHistoryEntry } from '../types'
 import { GenerationForm } from './GenerationForm'
 import { HistoryPanel } from './HistoryPanel'
@@ -61,6 +67,13 @@ function ImageGenerationWorkspace() {
   const [style, setStyle] = useState('')
   const [count, setCount] = useState(1)
   const [asyncMode, setAsyncMode] = useState(false)
+  const [owner] = useState(getImageHistoryOwnerId)
+  const [pending, setPending] = useState(() => readPendingImageTask(owner))
+  const remember = (id: string, task: PendingImageTask | null) => {
+    if (owner !== getImageHistoryOwnerId()) return
+    writePendingImageTask(owner, id, task)
+    setPending(task ?? readPendingImageTask(owner))
+  }
   const [reuseEntry, setReuseEntry] = useState<ImageHistoryEntry | null>(null)
   const artworkRef = useRef<HTMLDivElement>(null)
   const [completed, setCompleted] = useState(0)
@@ -115,22 +128,36 @@ function ImageGenerationWorkspace() {
     }
   }
 
-  const handleGenerate = async () => {
-    if (generation.isGenerating) return
+  const handleGenerate = async (resume?: PendingImageTask) => {
+    if (generation.isGenerating || (!resume && pending)) return
     setCompletionNotice(null)
-    const images = await generation.generate({
-      apiKeyId: data.apiKeyId,
+    const settings = resume ?? {
+      prompt: prompt.trim(),
       model: data.model,
-      prompt,
       count,
       size,
-      resolution,
+      resolution: capability.resolutions ? resolution : undefined,
       quality,
       style,
-      images: references.items.map((item) => item.file),
+    }
+    let acceptedId = resume?.id
+    const clearPending = () => {
+      if (acceptedId) remember(acceptedId, null)
+    }
+    const images = await generation.generate({
+      ...settings,
+      apiKeyId: data.apiKeyId,
+      images: resume ? [] : references.items.map((item) => item.file),
       asyncMode,
+      acceptedTask: resume,
+      onAccepted: (id, expiresAt) => {
+        acceptedId = id
+        remember(id, { ...settings, id, expiresAt })
+      },
+      onTerminalFailure: clearPending,
     })
     if (images?.length === 0) {
+      clearPending()
       generation.setError(
         t(
           'No usable images were returned. Check request status and billing before submitting again.'
@@ -140,11 +167,11 @@ function ImageGenerationWorkspace() {
     }
     if (images && images.length > 0) {
       const notices: string[] = []
-      if (images.length < count) {
+      if (images.length < settings.count) {
         notices.push(
           t(
             'Returned {{returned}} of {{requested}} requested images. Results are kept; generating again creates a new billable request.',
-            { returned: images.length, requested: count }
+            { returned: images.length, requested: settings.count }
           )
         )
       }
@@ -159,16 +186,8 @@ function ImageGenerationWorkspace() {
       history.setQuery('')
       history.setOrientation('all')
       setCompleted((value) => value + 1)
-      history.pushEntry({
-        prompt: prompt.trim(),
-        model: data.model,
-        size,
-        resolution: capability.resolutions ? resolution : undefined,
-        quality,
-        style,
-        count,
-        images,
-      })
+      history.pushEntry({ ...settings, images })
+      clearPending()
     }
   }
 
@@ -215,7 +234,9 @@ function ImageGenerationWorkspace() {
     document.querySelector<HTMLTextAreaElement>('#image-prompt')?.focus()
   }
 
-  if (data.isLoadingBootstrap) {
+  const recovering =
+    Boolean(pending || generation.error) || history.entries.length > 0
+  if (!recovering && data.isLoadingBootstrap) {
     return (
       <div className='grid gap-4' aria-live='polite'>
         <Skeleton className='h-8 w-48' />
@@ -225,7 +246,7 @@ function ImageGenerationWorkspace() {
     )
   }
 
-  if (data.isBootstrapError) {
+  if (!recovering && data.isBootstrapError) {
     return (
       <Alert variant='destructive'>
         <AlertTitle>{t('Failed to load image generation')}</AlertTitle>
@@ -244,7 +265,7 @@ function ImageGenerationWorkspace() {
     )
   }
 
-  if (data.keys.length === 0) {
+  if (!recovering && data.keys.length === 0) {
     return (
       <Alert>
         <AlertTitle>{t('No API keys available')}</AlertTitle>
@@ -305,6 +326,21 @@ function ImageGenerationWorkspace() {
       <div aria-live='polite' className='sr-only'>
         {generation.isGenerating ? t('Generating images...') : null}
       </div>
+      {pending && !generation.isGenerating ? (
+        <Alert>
+          <AlertTitle>{t('An image task was already submitted.')}</AlertTitle>
+          <AlertDescription>
+            <Button
+              type='button'
+              size='sm'
+              variant='outline'
+              onClick={() => void handleGenerate(pending)}
+            >
+              {t('Retrieve image result')}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
       {modelNotice ? (
         <Alert variant={modelNotice.destructive ? 'destructive' : undefined}>
           <AlertTitle>{modelNotice.title}</AlertTitle>
@@ -371,7 +407,7 @@ function ImageGenerationWorkspace() {
           isGenerating={generation.isGenerating}
           formError={generation.error}
           formNotice={completionNotice}
-          isInitializing={data.isLoadingTokenModels}
+          isInitializing={data.isLoadingTokenModels || Boolean(pending)}
           onGenerate={() => void handleGenerate()}
           onCancel={generation.cancel}
         />

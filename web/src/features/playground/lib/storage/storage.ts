@@ -44,9 +44,6 @@ type StoredEnvelope<T> = {
 }
 
 const TRUNCATED_CONTENT_SUFFIX = '\n\n[...]'
-const MIN_PREFIX_COLLAPSE_LENGTH = 2000
-const MIN_REPEATED_SECTION_COUNT = 3
-const SECTION_HEADING_LINE_PATTERN = /^#{2,6}\s+\d+\.\s+.+$/gm
 
 function getUserStorageKey(key: string): string | null {
   // Legacy data has no owner; never assign it to the next signed-in account.
@@ -133,89 +130,13 @@ function truncateText(text: string, maxLength: number): string {
   return `${text.slice(0, maxLength - TRUNCATED_CONTENT_SUFFIX.length)}${TRUNCATED_CONTENT_SUFFIX}`
 }
 
-type SectionOccurrence = {
-  heading: string
-  index: number
-}
-
-function getSectionOccurrences(text: string): SectionOccurrence[] {
-  const occurrences: SectionOccurrence[] = []
-  const matches = text.matchAll(SECTION_HEADING_LINE_PATTERN)
-  for (const match of matches) {
-    const index = match.index
-    if (index === undefined) {
-      continue
-    }
-
-    occurrences.push({
-      heading: match[0],
-      index,
-    })
-  }
-
-  return occurrences
-}
-
-function getHeadingCounts(
-  occurrences: SectionOccurrence[]
-): Map<string, number> {
-  const counts = new Map<string, number>()
-
-  for (const occurrence of occurrences) {
-    counts.set(occurrence.heading, (counts.get(occurrence.heading) ?? 0) + 1)
-  }
-
-  return counts
-}
-
-function findLastRepeatedSectionRunStart(text: string): number {
-  const occurrences = getSectionOccurrences(text)
-  const headingCounts = getHeadingCounts(occurrences)
-  const lastRepeatedIndexes: number[] = []
-  const seenHeadings = new Set<string>()
-
-  for (let index = occurrences.length - 1; index >= 0; index--) {
-    const occurrence = occurrences[index]
-    const count = headingCounts.get(occurrence.heading) ?? 0
-
-    if (
-      count < MIN_REPEATED_SECTION_COUNT ||
-      seenHeadings.has(occurrence.heading)
-    ) {
-      continue
-    }
-
-    seenHeadings.add(occurrence.heading)
-    lastRepeatedIndexes.push(occurrence.index)
-  }
-
-  if (lastRepeatedIndexes.length === 0) {
-    return -1
-  }
-
-  return Math.min(...lastRepeatedIndexes)
-}
-
-function collapseRepeatedSectionSnapshots(text: string): string {
-  if (text.length < MIN_PREFIX_COLLAPSE_LENGTH) {
-    return text
-  }
-
-  const lastRepeatedRunStart = findLastRepeatedSectionRunStart(text)
-  if (lastRepeatedRunStart === -1) {
-    return text
-  }
-
-  return text.slice(lastRepeatedRunStart)
-}
-
 function normalizeStoredMessageForLoad(message: Message): Message {
   let changed = false
   const versions = message.versions.map((version) => {
-    const collapsedContent = collapseRepeatedSectionSnapshots(version.content)
-    const content = truncateText(collapsedContent, MAX_LOADED_MESSAGE_CHARS)
+    // Repeated headings (including in user prompts) are not proof of a snapshot.
+    const content = truncateText(version.content, MAX_LOADED_MESSAGE_CHARS)
 
-    if (content === version.content && collapsedContent === version.content) {
+    if (content === version.content) {
       return version
     }
 

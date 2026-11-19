@@ -28,7 +28,7 @@ import {
   isStreamClosedReadyState,
   isStreamDoneMessage,
   parseStreamErrorDetails,
-  parseStreamMessageUpdates,
+  parseStreamFrame,
 } from '../lib'
 import type { ChatCompletionRequest } from '../types'
 
@@ -122,7 +122,11 @@ export function createStreamRequestController(
       }
 
       try {
-        const updates = parseStreamMessageUpdates(data)
+        const { updates, error } = parseStreamFrame(data)
+        if (error) {
+          handleError(error.errorMessage, error.errorCode)
+          return
+        }
 
         for (const update of updates) {
           callbacks.onUpdate(update.type, update.chunk)
@@ -195,6 +199,7 @@ export function useStreamRequest() {
       createSource: (payload, headers) =>
         new SSE(apiUrl(API_ENDPOINTS.CHAT_COMPLETIONS), {
           headers,
+          start: false,
           method: 'POST',
           payload: JSON.stringify(payload),
         }) as StreamEventSource,

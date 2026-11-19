@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import axios from 'axios'
 import { t } from 'i18next'
 
 import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
@@ -87,13 +88,22 @@ export async function loadImagePageBootstrap(): Promise<{
     }
   }
 
-  const keys = items.filter((item) => item.status === 1).map(toImageKeyOption)
+  const now = Math.floor(Date.now() / 1000)
+  const keys = items
+    .filter(
+      (item) =>
+        item.status === 1 &&
+        (item.expired_time === -1 || item.expired_time > now) &&
+        (item.unlimited_quota || item.remain_quota > 0)
+    )
+    .map(toImageKeyOption)
 
   return { keys, pricingModels: pricingRes.data ?? [] }
 }
 
 export async function loadImageTokenModels(id: number): Promise<string[]> {
   const res = await api.get(`/api/token/${id}/models`, {
+    params: { endpoint: 'image-generation' },
     skipErrorHandler: true,
   })
   const data = requireServerSuccess(res.data)
@@ -131,6 +141,8 @@ export async function requestImageGeneration(params: {
   style: string
   images: File[]
   asyncMode?: boolean
+  onAccepted?: (id: string, expiresAt: number) => void
+  onTerminalFailure?: () => void
   signal?: AbortSignal
 }): Promise<GeneratedImage[]> {
   const hasReference = params.images.length > 0
@@ -183,7 +195,7 @@ export async function requestImageGeneration(params: {
       preserveAuthorization: true,
     }
   )
-  let result = res.data
+  const result = res.data
   let billingState: 'review' | undefined
   const billingHeader =
     typeof res.headers?.get === 'function'
@@ -200,33 +212,9 @@ export async function requestImageGeneration(params: {
     ) {
       throw new Error(t('Image generation failed'))
     }
-    const deadline = Date.now() + 330_000
-    for (;;) {
-      params.signal?.throwIfAborted()
-      // Session authentication lets the owner retrieve the result even when
-      // generation spent the selected API key's final quota. Never send that
-      // API key to the polling endpoint or follow a server-provided URL.
-      const response = await api.get(`/v1/images/tasks/${id}`, {
-        signal: params.signal,
-        timeout: 15_000,
-        skipErrorHandler: true,
-      })
-      const task = response.data
-      if (task?.status === 'succeeded') {
-        result = task.result
-        billingState = task.billing_state === 'review' ? 'review' : undefined
-        break
-      }
-      if (task?.status === 'failed') {
-        throw new Error(
-          task.result?.error?.message || t('Image generation failed')
-        )
-      }
-      if (task?.status !== 'running' || Date.now() >= deadline) {
-        throw new Error(t('Image generation failed'))
-      }
-      await waitForImageTask(params.signal)
-    }
+    const expiresAt = Date.now() + 15 * 60_000
+    params.onAccepted?.(id, expiresAt)
+    return pollAcceptedImageTask({ ...params, id, expiresAt })
   }
   const images = normalizeImageResponse({
     data: result,
@@ -240,7 +228,68 @@ export async function requestImageGeneration(params: {
   return images
 }
 
-function waitForImageTask(signal?: AbortSignal): Promise<void> {
+// A resumed task only reads the owner's result; never look up a key or resubmit a POST.
+export async function pollAcceptedImageTask(params: {
+  id: string
+  expiresAt: number
+  prompt: string
+  model: string
+  size: string
+  signal?: AbortSignal
+  onTerminalFailure?: () => void
+}): Promise<GeneratedImage[]> {
+  if (!/^[a-f0-9]{48}$/.test(params.id))
+    throw new Error(t('Image generation failed'))
+  let delay = 2000
+  while (Date.now() < params.expiresAt) {
+    params.signal?.throwIfAborted()
+    let response
+    try {
+      response = await api.get(`/v1/images/tasks/${params.id}`, {
+        signal: params.signal,
+        timeout: 15_000,
+        skipErrorHandler: true,
+        disableDuplicate: true,
+      })
+    } catch (error) {
+      params.signal?.throwIfAborted()
+      if (!axios.isAxiosError(error)) throw error
+      const status = error.response?.status
+      if (status === 404 || status === 410) params.onTerminalFailure?.()
+      if (status && status !== 408 && status !== 429 && status < 500)
+        throw error
+      await waitForImageTask(params.signal, delay)
+      delay = Math.min(delay * 2, 10_000)
+      continue
+    }
+    const task = response.data
+    if (task?.id !== params.id) throw new Error(t('Image generation failed'))
+    if (task.status === 'succeeded') {
+      const images = normalizeImageResponse({
+        data: task.result,
+        prompt: params.prompt,
+        model: params.model,
+        size: params.size,
+      })
+      return task.billing_state === 'review'
+        ? images.map((image) => ({ ...image, billingState: 'review' as const }))
+        : images
+    }
+    if (task.status === 'failed') {
+      params.onTerminalFailure?.()
+      throw new Error(
+        task.result?.error?.message || t('Image generation failed')
+      )
+    }
+    if (task.status !== 'running') throw new Error(t('Image generation failed'))
+    delay = 2000
+    await waitForImageTask(params.signal, delay)
+  }
+  params.onTerminalFailure?.()
+  throw new Error(t('Image task is unavailable or expired'))
+}
+
+function waitForImageTask(signal?: AbortSignal, delay = 2000): Promise<void> {
   return new Promise((resolve, reject) => {
     signal?.throwIfAborted()
     const abort = () => {
@@ -251,7 +300,7 @@ function waitForImageTask(signal?: AbortSignal): Promise<void> {
     const timer = setTimeout(() => {
       signal?.removeEventListener('abort', abort)
       resolve()
-    }, 2000)
+    }, delay)
     signal?.addEventListener('abort', abort, { once: true })
   })
 }

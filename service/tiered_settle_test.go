@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -1296,4 +1297,59 @@ func TestBuildTieredTokenParams_UnpricedLongTTLCacheWrites(t *testing.T) {
 			assert.Equal(t, tc.cost, cost)
 		})
 	}
+}
+
+func TestLegacySelectedGroupReservesBeforeDispatch(t *testing.T) {
+	truncate(t)
+	const userID = 710
+	seedUser(t, userID, 1000)
+	seedBonusEligibleModel(t, "gpt-legacy-retry", boolPtr(false))
+	for _, tc := range []struct {
+		id        string
+		unrounded float64
+	}{
+		{"legacy-paid-after-free", 100.75},
+		{"legacy-zero-estimate-paid-after-free", 0},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			ctx.Set(common.RequestIdKey, tc.id)
+			info := &relaycommon.RelayInfo{
+				UserId: userID, RequestId: tc.id, IsPlayground: true, OriginModelName: "gpt-legacy-retry",
+				UserSetting:            dto.UserSetting{BillingPreference: "wallet_only"},
+				LegacyQuotaBeforeGroup: &tc.unrounded,
+				PriceData:              types.PriceData{ModelRatio: 1, FreeModel: true, GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 2}},
+			}
+			require.Nil(t, PrepareTieredBillingForSelectedGroup(ctx, info))
+			require.NotNil(t, info.Billing)
+			require.False(t, info.PriceData.FreeModel)
+			var held model.BillingFinalization
+			require.NoError(t, model.DB.Where("request_id = ?", tc.id).First(&held).Error)
+			require.Equal(t, model.BillingHeld, held.State)
+			require.Equal(t, int(tc.unrounded*2), held.SourceHeld)
+			if tc.unrounded > 0 {
+				info.PriceData.GroupRatioInfo.GroupRatio = 100
+				require.NotNil(t, PrepareTieredBillingForSelectedGroup(ctx, info))
+				require.Equal(t, held.SourceHeld, info.Billing.GetPreConsumedQuota())
+				info.PriceData.GroupRatioInfo.GroupRatio = 0
+				require.Nil(t, PrepareTieredBillingForSelectedGroup(ctx, info))
+				require.Equal(t, held.SourceHeld, info.Billing.GetPreConsumedQuota())
+				require.Zero(t, info.PriceData.QuotaToPreConsume)
+			}
+			require.NoError(t, info.Billing.Settle(0))
+		})
+	}
+}
+
+func TestSelectedGroupRejectsFreeRealtimeOwnerOnPaidRetry(t *testing.T) {
+	base := float64(10)
+	billing := &recordingBillingSettler{}
+	info := &relaycommon.RelayInfo{
+		RelayFormat: relaytypes.RelayFormatOpenAIRealtime, Billing: billing,
+		LegacyQuotaBeforeGroup: &base, PriceData: types.PriceData{FreeModel: true, ModelRatio: 1, GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1}},
+	}
+	require.NotNil(t, PrepareTieredBillingForSelectedGroup(nil, info))
+	require.Empty(t, billing.reserveTargets)
+	require.True(t, info.PriceData.FreeModel)
 }

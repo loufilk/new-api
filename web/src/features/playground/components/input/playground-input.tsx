@@ -40,6 +40,7 @@ interface PlaygroundInputProps {
   config: PlaygroundConfig
   onSubmit: (text: string) => void
   onStop?: () => void
+  canSendSelection?: boolean
   disabled?: boolean
   isGenerating?: boolean
   models: ModelOption[]
@@ -72,6 +73,7 @@ export function PlaygroundInput({
   modelValue,
   onModelChange,
   isModelLoading = false,
+  canSendSelection = true,
   groups,
   groupValue,
   onGroupChange,
@@ -85,7 +87,10 @@ export function PlaygroundInput({
   const [text, setText] = useState('')
 
   const handleSubmit = (message: PromptInputMessage) => {
-    const submittableText = getSubmittableInputText(message, disabled)
+    const submittableText = getSubmittableInputText(
+      message,
+      disabled || !canSendSelection
+    )
 
     if (!submittableText) return
     onSubmit(submittableText)
@@ -119,6 +124,7 @@ export function PlaygroundInput({
             isGenerating={isGenerating}
             isModelLoading={isModelLoading}
             models={models}
+            canSendSelection={canSendSelection}
             modelValue={modelValue}
             onGroupChange={onGroupChange}
             onModelChange={onModelChange}

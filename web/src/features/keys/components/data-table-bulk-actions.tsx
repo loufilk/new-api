@@ -44,7 +44,9 @@ export function DataTableBulkActions<TData>({
 }: DataTableBulkActionsProps<TData>) {
   const { t } = useTranslation()
   const { resolveRealKeysBatch } = useApiKeys()
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleteTargets, setDeleteTargets] = useState<
+    Pick<ApiKey, 'id' | 'name'>[]
+  >([])
   const [isCopying, setIsCopying] = useState(false)
   const selectedRows = table.getFilteredSelectedRowModel().rows
 
@@ -113,7 +115,14 @@ export function DataTableBulkActions<TData>({
               <Button
                 variant='destructive'
                 size='icon'
-                onClick={() => setShowDeleteConfirm(true)}
+                onClick={() =>
+                  setDeleteTargets(
+                    selectedRows.map(({ original }) => {
+                      const { id, name } = original as ApiKey
+                      return { id, name }
+                    })
+                  )
+                }
                 className='size-8'
                 aria-label={t('Delete selected API keys')}
               />
@@ -129,8 +138,11 @@ export function DataTableBulkActions<TData>({
       </BulkActionsToolbar>
 
       <ApiKeysMultiDeleteDialog
-        open={showDeleteConfirm}
-        onOpenChange={setShowDeleteConfirm}
+        open={deleteTargets.length > 0}
+        targets={deleteTargets}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTargets([])
+        }}
         table={table}
       />
     </>

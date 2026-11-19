@@ -27,6 +27,7 @@ type PricingPluginVariant struct {
 }
 
 type Pricing struct {
+	declaredImageEndpoint  bool                                 // explicit model metadata, not inferred from unrelated channels
 	BillingPluginVariants  []PricingPluginVariant               `json:"billing_plugin_variants,omitempty"`
 	ModelName              string                               `json:"model_name"`
 	Description            string                               `json:"description,omitempty"`
@@ -335,6 +336,7 @@ func updatePricing() {
 		modelSupportEndpointsStr[ability.Model] = endpoints
 	}
 
+	declaredImageEndpoints := make(map[string]bool)
 	// 再补充模型自定义端点：若配置有效则追加到已有推断，不再裁剪渠道真实能力
 	for modelName, meta := range metaMap {
 		if strings.TrimSpace(meta.Endpoints) == "" {
@@ -347,6 +349,9 @@ func updatePricing() {
 				switch v.(type) {
 				case string, map[string]any:
 					endpoints = appendPricingEndpoint(endpoints, k)
+					if k == string(constant.EndpointTypeImageGeneration) {
+						declaredImageEndpoints[modelName] = true
+					}
 				}
 			}
 			if len(endpoints) > 0 {
@@ -408,6 +413,7 @@ func updatePricing() {
 	for model, groups := range modelGroupsMap {
 		pricing := Pricing{
 			ModelName:              model,
+			declaredImageEndpoint:  declaredImageEndpoints[model],
 			EnableGroup:            groups.Items(),
 			SupportedEndpointTypes: modelSupportEndpointTypes[model],
 		}

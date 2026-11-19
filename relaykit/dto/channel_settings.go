@@ -295,6 +295,19 @@ func (c *AdvancedCustomConfig) MatchPathForModel(requestPath string, model strin
 		return AdvancedCustomRoute{}, false
 	}
 	model = strings.TrimSpace(model)
+	if route, ok := c.matchPathForModel(requestPath, model); ok {
+		return route, true
+	}
+	// An explicit legacy alias takes precedence. Only the two actual host
+	// Playground routes may fall back to the canonical Chat Completions path.
+	switch requestPath {
+	case "/pg/chat/completions", "/api/user/playground/chat":
+		return c.matchPathForModel(advancedCustomEndpointPathOpenAIChat, model)
+	}
+	return AdvancedCustomRoute{}, false
+}
+
+func (c *AdvancedCustomConfig) matchPathForModel(requestPath, model string) (AdvancedCustomRoute, bool) {
 	for _, route := range c.Routes {
 		if matchAdvancedCustomIncomingPath(strings.TrimSpace(route.IncomingPath), requestPath) &&
 			matchAdvancedCustomRouteModel(route.Models, model) {

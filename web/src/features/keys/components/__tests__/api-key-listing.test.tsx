@@ -370,7 +370,10 @@ async function renderKeysPage(
   client.setQueryData(['status'], {})
   clients.push(client)
   const root = createRootRoute()
-  const auth = createRoute({ getParentRoute: () => root, id: '_authenticated' })
+  const auth = createRoute({
+    getParentRoute: () => root,
+    id: '_authenticated',
+  })
   const keysRoute = createRoute({
     getParentRoute: () => auth,
     path: 'keys/',
@@ -555,10 +558,15 @@ it.each([
     act(() => button.focus())
     await user.keyboard('{Enter}')
     await waitFor(() =>
-      expect(put).toHaveBeenCalledWith('/api/token/?status_only=true', {
-        id: 7,
-        status: nextStatus,
-      })
+      expect(put).toHaveBeenCalledWith(
+        nextStatus === 2
+          ? '/api/token/?status_only=true&disable_only=true'
+          : '/api/token/?status_only=true',
+        {
+          id: 7,
+          status: nextStatus,
+        }
+      )
     )
     await screen.findByText(nextLabel)
     expect(post).not.toHaveBeenCalled()
@@ -727,4 +735,31 @@ it('hides cached row actions if a refresh returns invalid data', async () => {
   expect(await screen.findByText('Failed to load API keys')).toBeVisible()
   expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
   expect(screen.queryByText(key.name)).not.toBeInTheDocument()
+})
+
+it('freezes the confirmed deletion target when the server reorders the current page', async () => {
+  const { post } = await renderKeysPage()
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('checkbox', { name: 'Select row' }))
+  await user.click(
+    screen.getByRole('button', { name: 'Delete selected API keys' })
+  )
+  const dialog = await screen.findByRole('alertdialog')
+  expect(dialog).toHaveTextContent('production (#7)')
+  vi.mocked(api.get).mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data: url.startsWith('/api/token/')
+        ? { items: [{ ...key, id: 8, name: 'replacement' }], total: 1 }
+        : { default: { ratio: 1 } },
+    },
+  }))
+  await act(async () => {
+    await clients.at(-1)?.invalidateQueries({ queryKey: ['keys'] })
+  })
+  expect(dialog).not.toHaveTextContent('replacement')
+  await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith('/api/token/batch', { ids: [7] })
+  )
 })

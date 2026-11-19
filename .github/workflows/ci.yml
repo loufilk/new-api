@@ -195,6 +195,7 @@ jobs:
       NO_AGENT_FIXTURE_OWNED: '1'
       TEST_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_keys_controller?sslmode=disable
       TEST_SERVICE_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_keys_service?sslmode=disable
+      TEST_MODEL_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_keys_model?sslmode=disable
       TEST_TASK_DB_DIALECT: postgres
       TEST_SECURITY_DIALECT: postgres
       SQL_DSN: ''
@@ -228,7 +229,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(docker exec '${{ job.services.postgres.id }}' psql -U postgres -Atc 'SHOW server_version')" = '18.6'
-          for database in newapi_keys_controller newapi_keys_service newapi_keys_task; do
+          for database in newapi_keys_controller newapi_keys_service newapi_keys_task newapi_keys_model; do
             docker exec '${{ job.services.postgres.id }}' createdb -U postgres "$database"
           done
           mkdir -p web/dist
@@ -246,7 +247,7 @@ jobs:
           go test -p 1 ./controller -run '^(TestChannelTestOpenAIChatCompatibility|TestOpenAIChatSamplingCompatibility)' -count=1 -timeout=5m
 
       - name: Automatic group routing
-        run: go test -json -p 1 ./service -run '^TestTokenRoutingPostgres' -count=1 -timeout=5m
+        run: go test -json -p 1 ./service -run '^Test(TokenRoutingPostgres|TokenRoutingSmartSameChannelRetry|LegacySelectedGroupReservesBeforeDispatch|SelectedGroupRejectsFreeRealtimeOwnerOnPaidRetry|PrepareTieredBillingForSelectedGroup)' -count=1 -timeout=5m
 
       - name: Origin-task channel pinning
         env:
@@ -255,6 +256,25 @@ jobs:
           go test -json -p 1 ./controller
           -run '^(TestTokenNoRetryNativeLockedTaskWithoutPinRefundsOnce|TestTokenAutoCrossGroupNativeLockedTaskPreservesRetryBudget)$'
           -count=1 -timeout=5m
+
+      - name: Key editing, initial route and continuity
+        run: |
+          go test -p 1 ./controller -run '^TestKey(EditorSnapshot|ExplicitBudget|ListEffective|EmergencyRevocation)' -count=1 -timeout=5m
+          go test -p 1 ./middleware -run '^Test(Distributor(SetupFailureAndChannelFreeOperations|OrganizationClearedOnNextChannel|AffinityRequiresSuccessfulOutcome)|GroupModelDistributorPostgres|DistributeHonorsOriginTaskChannelPin)$' -count=1 -timeout=5m
+          go test -p 1 ./relay -run '^TestPostgresNativeRemixResolvesAuthorizedOriginBeforeFirstHop$' -count=1 -timeout=5m
+
+      - name: Settlement and payment regressions (PostgreSQL)
+        run: |
+          go test -p 1 ./model -run '^TestRechargeEpay(UsesExactHistoricalOrCanonicalCheckoutCents|CreditsQuotaExactlyOnce)$' -count=1 -timeout=5m
+          go test -p 1 ./controller -run '^Test(EpayQuoteUsesOneCanonicalCentAmount|TopUpQuotaValidation|ExecuteTaskSubmission(PersistsKnownAsyncIDOnCancellationAfterUpstreamAcceptance|PreservesHoldOnCancellationAfterUpstreamAcceptance|DisconnectAfterDurableInsertDoesNotRefund))$' -count=1 -timeout=5m
+
+      - name: Streaming and background task contracts
+        run: |
+          go test -p 1 ./controller -run '^TestServeTaskPluginProtocolBackgroundPreservesConcurrentFinancialState$' -count=1 -timeout=5m
+          go test -p 1 ./relay/channel/claude -run '^TestClaude(StreamRequiresMessageStop|BufferFailureClassification|SDKSourceErrorAndDisconnectBeatCompletion)$' -count=1 -timeout=5m
+          go test -p 1 ./relay/channel/aws -run '^TestAwsStreamHandler(RejectsTruncatedSDKStream|StopsAtClientCancellation|UsesFinalUpstreamUsage)$' -count=1 -timeout=5m
+          go test -p 1 ./relay/channel/openai -run '^TestUnformattedChatStreamPreservesRefusalAudioAndFunctionCalls$' -count=1 -timeout=5m
+          go test -p 1 ./pkg/jsplugin -run '^TestReservedRouteNamespaces(ProtectChuanAPIConsole|CoverConsolePages)$' -count=1 -timeout=5m
 
       - name: Install frontend dependencies
         working-directory: web
@@ -274,6 +294,10 @@ jobs:
           src/features/keys/components/__tests__/api-keys-mutate-drawer.test.tsx
           src/features/keys/__tests__/api-response.test.ts
           --maxWorkers=2
+
+      - name: Playground regression
+        working-directory: web
+        run: bun run test src/features/playground src/features/image-generation --maxWorkers=2
 
       - name: Frontend typecheck and affected lint
         working-directory: web

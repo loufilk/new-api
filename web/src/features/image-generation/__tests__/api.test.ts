@@ -21,7 +21,11 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
-import { loadImageTokenModels, requestImageGeneration } from '../api'
+import {
+  loadImageTokenModels,
+  pollAcceptedImageTask,
+  requestImageGeneration,
+} from '../api'
 
 vi.mock('@/features/keys/api', () => ({
   fetchTokenKey: vi.fn(),
@@ -468,6 +472,7 @@ test('image model discovery requests the owned token scope using the dashboard s
 
   await expect(loadImageTokenModels(7)).resolves.toEqual(['gpt-image-2'])
   expect(api.get).toHaveBeenCalledExactlyOnceWith('/api/token/7/models', {
+    params: { endpoint: 'image-generation' },
     skipErrorHandler: true,
   })
 })
@@ -621,3 +626,32 @@ test.each([false, true])(
     expect(postMock).toHaveBeenCalledTimes(1)
   }
 )
+
+test('resuming a saved image task retries only GET after a temporary network error', async () => {
+  vi.useFakeTimers()
+  try {
+    const id = 'e'.repeat(48)
+    vi.mocked(api.get)
+      .mockRejectedValueOnce({ isAxiosError: true, response: { status: 503 } })
+      .mockResolvedValueOnce({
+        data: {
+          id,
+          status: 'succeeded',
+          result: { data: [{ url: 'https://example.com/kept.png' }] },
+        },
+      })
+    const pending = pollAcceptedImageTask({
+      id,
+      expiresAt: Date.now() + 60_000,
+      prompt: 'recover',
+      model: 'gpt-image-2',
+      size: 'auto',
+    })
+    await vi.advanceTimersByTimeAsync(2001)
+    await expect(pending).resolves.toHaveLength(1)
+    expect(api.get).toHaveBeenCalledTimes(2)
+    expect(api.post).not.toHaveBeenCalled()
+  } finally {
+    vi.useRealTimers()
+  }
+})

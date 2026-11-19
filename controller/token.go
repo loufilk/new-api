@@ -44,6 +44,13 @@ func (input *tokenAutoGroupsInput) UnmarshalJSON(data []byte) error {
 
 type tokenRequest struct {
 	model.Token
+	ExpectedVersion    *int64               `json:"expected_version"`
+	Name               *string              `json:"name"`
+	ExpiredTime        *int64               `json:"expired_time"`
+	UnlimitedQuota     *bool                `json:"unlimited_quota"`
+	ModelLimitsEnabled *bool                `json:"model_limits_enabled"`
+	ModelLimits        *string              `json:"model_limits"`
+	AllowIps           *string              `json:"allow_ips"`
 	AutoGroups         tokenAutoGroupsInput `json:"auto_groups"`
 	Group              *string              `json:"group"`
 	CrossGroupRetry    *bool                `json:"cross_group_retry"`
@@ -54,6 +61,32 @@ type tokenRequest struct {
 	RemainQuota        *int                 `json:"remain_quota"`
 	// 指针区分“未传”和显式 false：新建时未传即开启，更新时未传则保留原值。
 	AllowUserQuotaQuery *bool `json:"allow_user_quota_query"`
+}
+
+// Omitted PUT fields are not permission changes. Explicit false/empty values
+// still let clients disable a setting or clear a restriction deliberately.
+func (request *tokenRequest) applyEditableFields(token *model.Token) {
+	if request.Name != nil {
+		token.Name = *request.Name
+	}
+	if request.ExpiredTime != nil {
+		token.ExpiredTime = *request.ExpiredTime
+	}
+	if request.UnlimitedQuota != nil {
+		token.UnlimitedQuota = *request.UnlimitedQuota
+	}
+	if request.ModelLimitsEnabled != nil {
+		token.ModelLimitsEnabled = *request.ModelLimitsEnabled
+	}
+	if request.ModelLimits != nil {
+		token.ModelLimits = *request.ModelLimits
+	}
+	if request.AllowIps != nil {
+		token.AllowIps = request.AllowIps
+	}
+	if request.RemainQuota != nil {
+		token.RemainQuota = *request.RemainQuota
+	}
 }
 
 func (request *tokenRequest) applyRoutingSettings(token *model.Token) error {
@@ -82,7 +115,9 @@ func (request *tokenRequest) applyRoutingSettings(token *model.Token) error {
 
 type tokenResponse struct {
 	*model.Token
-	AutoGroups []string `json:"auto_groups"`
+	SettingsVersion int64    `json:"settings_version"`
+	EffectiveStatus int      `json:"effective_status"`
+	AutoGroups      []string `json:"auto_groups"`
 }
 
 func maxTokenQuota() int {
@@ -110,7 +145,7 @@ func buildMaskedTokenResponse(token *model.Token) *tokenResponse {
 	if len(autoGroups) == 0 {
 		autoGroups = nil
 	}
-	return &tokenResponse{Token: &maskedToken, AutoGroups: autoGroups}
+	return &tokenResponse{Token: &maskedToken, AutoGroups: autoGroups, SettingsVersion: token.CacheRevision, EffectiveStatus: token.EffectiveStatus(common.GetTimestamp())}
 }
 
 func buildMaskedTokenResponses(tokens []*model.Token) []*tokenResponse {
@@ -509,6 +544,15 @@ func respondWithTokenModels(c *gin.Context, allow func(*model.Channel, string) b
 		common.ApiError(c, err)
 		return
 	}
+	if allow == nil && c.Query("endpoint") == "image-generation" {
+		if token.EffectiveStatus(common.GetTimestamp()) != common.TokenStatusEnabled {
+			if finishControllerGroupConfigRead(c, guard) {
+				common.ApiSuccess(c, []string{})
+			}
+			return
+		}
+		allow = model.NewPlaygroundChannelFilter(constant.EndpointTypeImageGeneration)
+	}
 	user, err := model.GetUserCache(userID)
 	if err != nil {
 		common.ApiError(c, err)
@@ -659,8 +703,11 @@ func AddToken(c *gin.Context) {
 	}
 	defer guard.Close()
 	token := request.Token
-	if request.RemainQuota != nil {
-		token.RemainQuota = *request.RemainQuota
+	token.ExpiredTime = -1
+	request.applyEditableFields(&token)
+	if token.ExpiredTime != -1 && token.ExpiredTime <= 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
 	}
 	if err := request.applyRoutingSettings(&token); err != nil {
 		common.ApiError(c, err)
@@ -767,7 +814,7 @@ func DeleteToken(c *gin.Context) {
 	}
 	params := tokenAuditParams(c)
 	params["id"], params["name"] = token.Id, token.Name
-	err = token.Delete()
+	err = token.DeleteForOwner(c.GetInt64("auth_version"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -788,15 +835,18 @@ func UpdateToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	// The explicit revocation-only transport never admits an enable/full edit.
+	if c.Query("disable_only") == "true" && (statusOnly == "" || request.Token.Status != common.TokenStatusDisabled) {
+		common.ApiErrorT(c, "Invalid token status")
+		return
+	}
 	guard, ok := beginControllerGroupConfigRead(c)
 	if !ok {
 		return
 	}
 	defer guard.Close()
 	token := request.Token
-	if request.RemainQuota != nil {
-		token.RemainQuota = *request.RemainQuota
-	}
+	request.applyEditableFields(&token)
 	params := tokenAuditParams(c)
 	if token.Id > 0 {
 		params["id"] = token.Id
@@ -804,17 +854,6 @@ func UpdateToken(c *gin.Context) {
 	if statusOnly == "" && utf8.RuneCountInString(token.Name) > 50 {
 		common.ApiErrorT(c, "Token name is too long")
 		return
-	}
-	if statusOnly == "" && !token.UnlimitedQuota && request.RemainQuota != nil {
-		if token.RemainQuota < 0 {
-			common.ApiErrorT(c, "Quota value cannot be negative")
-			return
-		}
-		maxQuotaValue := maxTokenQuota()
-		if token.RemainQuota > maxQuotaValue {
-			common.ApiErrorT(c, "Quota value exceeds valid range, maximum is {{max}}", map[string]any{"max": logger.FormatQuota(maxQuotaValue)})
-			return
-		}
 	}
 	cleanToken, err := model.GetTokenByIds(token.Id, userId)
 	if err != nil {
@@ -827,15 +866,9 @@ func UpdateToken(c *gin.Context) {
 		return
 	}
 	previous := *cleanToken
-	if statusOnly == "" && token.Status == common.TokenStatusEnabled {
-		if cleanToken.Status == common.TokenStatusExpired && cleanToken.ExpiredTime <= common.GetTimestamp() && cleanToken.ExpiredTime != -1 {
-			common.ApiErrorT(c, "Token has expired and cannot be enabled. Please modify the expiration time or set it to never expire")
-			return
-		}
-		if cleanToken.Status == common.TokenStatusExhausted && cleanToken.RemainQuota <= 0 && !cleanToken.UnlimitedQuota {
-			common.ApiErrorT(c, "Token quota is exhausted and cannot be enabled. Please modify the remaining quota or set it to unlimited")
-			return
-		}
+	if statusOnly == "" && request.ExpectedVersion != nil && *request.ExpectedVersion != previous.CacheRevision {
+		common.ApiErrorStatus(c, http.StatusConflict, model.ErrTokenSettingsChanged)
+		return
 	}
 	if statusOnly != "" {
 		cleanToken.Status = token.Status
@@ -857,15 +890,21 @@ func UpdateToken(c *gin.Context) {
 		validateManualGroup := !cleanToken.SmartRouting ||
 			(cleanToken.Group != "auto" && cleanToken.Group != previous.Group)
 		// If you add more fields, please also update token.Update()
-		cleanToken.Name = token.Name
-		cleanToken.ExpiredTime = token.ExpiredTime
-		if request.RemainQuota != nil {
-			cleanToken.RemainQuota = token.RemainQuota
+		request.applyEditableFields(cleanToken)
+		if request.ExpiredTime != nil && cleanToken.ExpiredTime != -1 && cleanToken.ExpiredTime <= 0 {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
 		}
-		cleanToken.UnlimitedQuota = token.UnlimitedQuota
-		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
-		cleanToken.ModelLimits = token.ModelLimits
-		cleanToken.AllowIps = token.AllowIps
+		if !cleanToken.UnlimitedQuota && (request.RemainQuota != nil || previous.UnlimitedQuota) {
+			if cleanToken.RemainQuota < 0 {
+				common.ApiErrorT(c, "Quota value cannot be negative")
+				return
+			}
+			if cleanToken.RemainQuota > maxTokenQuota() {
+				common.ApiErrorT(c, "Quota value exceeds valid range, maximum is {{max}}", map[string]any{"max": logger.FormatQuota(maxTokenQuota())})
+				return
+			}
+		}
 		if request.AllowUserQuotaQuery != nil {
 			cleanToken.AllowUserQuotaQuery = *request.AllowUserQuotaQuery
 		}
@@ -895,7 +934,9 @@ func UpdateToken(c *gin.Context) {
 	if !finishControllerGroupConfigRead(c, guard) {
 		return
 	}
-	if statusOnly != "" {
+	if statusOnly != "" && token.Status == common.TokenStatusDisabled {
+		previous.Status, err = cleanToken.DisableForOwner(c.GetInt64("auth_version"))
+	} else if statusOnly != "" {
 		userGroup, groupErr := getTokenRequestUserGroup(c)
 		if groupErr != nil {
 			common.ApiError(c, groupErr)
@@ -915,7 +956,16 @@ func UpdateToken(c *gin.Context) {
 			return nil
 		})
 	} else {
-		err = cleanToken.UpdateFromSnapshotAtGroupConfigVersion(previous, c.GetInt64("auth_version"), guard.Version)
+		var finiteEditMaximum *int
+		if !cleanToken.UnlimitedQuota && (request.RemainQuota != nil || previous.UnlimitedQuota) {
+			maximum := maxTokenQuota()
+			finiteEditMaximum = &maximum
+		}
+		err = cleanToken.UpdateFromSnapshotAtGroupConfigVersion(previous, c.GetInt64("auth_version"), guard.Version, finiteEditMaximum)
+	}
+	if errors.Is(err, model.ErrTokenSettingsChanged) {
+		common.ApiErrorStatus(c, http.StatusConflict, err)
+		return
 	}
 	if errors.Is(err, model.ErrGroupConfigChanged) {
 		groupConfigReadFailure(c)
@@ -981,7 +1031,7 @@ func DeleteTokenBatch(c *gin.Context) {
 		return
 	}
 	userId := c.GetInt("id")
-	count, err := model.BatchDeleteTokens(tokenBatch.Ids, userId)
+	count, err := model.BatchDeleteTokens(tokenBatch.Ids, userId, c.GetInt64("auth_version"))
 	if err != nil {
 		common.ApiError(c, err)
 		return

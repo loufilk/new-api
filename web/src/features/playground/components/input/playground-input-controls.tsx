@@ -27,6 +27,7 @@ import { getInputControlState } from '../../lib'
 import type { GroupOption, ModelOption } from '../../types'
 
 type PlaygroundInputControlsProps = {
+  canSendSelection?: boolean
   disabled?: boolean
   groups: GroupOption[]
   groupValue: string
@@ -43,6 +44,7 @@ type PlaygroundInputControlsProps = {
 
 export function PlaygroundInputControls({
   disabled,
+  canSendSelection = true,
   groups,
   groupValue,
   isGenerating,
@@ -93,7 +95,7 @@ export function PlaygroundInputControls({
     ) : (
       <PromptInputButton
         className='bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground h-8 px-3 font-medium shadow-sm'
-        disabled={!canSubmit}
+        disabled={!canSubmit || !canSendSelection}
         type='submit'
         variant='default'
       >

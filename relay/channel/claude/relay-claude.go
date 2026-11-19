@@ -2,6 +2,8 @@ package claude
 
 import (
 	"cmp"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -94,6 +97,7 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		return types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
+		common.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, true)
 		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
 	}
 	if claudeResponse.Type == "message_start" && claudeResponse.Message != nil {
@@ -124,7 +128,9 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			}
 		}
 		countClaudeStreamBillableTools(info, &claudeResponse)
-		helper.ClaudeChunkData(c, claudeResponse, data)
+		if err := helper.ClaudeChunkData(c, claudeResponse, data); err != nil {
+			return service.NewRelayClientGoneError(err)
+		}
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
 		state, err := claudeToChatStreamState(info)
 		if err != nil {
@@ -146,7 +152,10 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		}
 		err = helper.ObjectData(c, response)
 		if err != nil {
-			logger.LogError(c, common.LogText("send_stream_response_failed: %s", err.Error()))
+			if helper.IsStreamWriteError(err) {
+				return service.NewRelayClientGoneError(err)
+			}
+			return types.NewError(err, types.ErrorCodeJsonMarshalFailed)
 		}
 	} else if info.RelayFormat == types.RelayFormatGemini {
 		state, err := claudeToGeminiStreamState(info)
@@ -216,8 +225,9 @@ func sendGeminiStreamResults(c *gin.Context, results []relayconvert.ResponseResu
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
-		c.Render(-1, common.CustomEvent{Data: "data: " + string(data)})
-		_ = helper.FlushWriter(c)
+		if err := helper.StringData(c, string(data)); err != nil {
+			return service.NewRelayClientGoneError(err)
+		}
 	}
 	return nil
 }
@@ -331,6 +341,68 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 	}
 }
 
+// StreamTerminalError validates the Claude protocol independently of how the
+// SSE/SDK transport ended. A clean transport EOF is not a message_stop.
+func StreamTerminalError(c *gin.Context, info *relaycommon.RelayInfo, sourceErr error) *types.NewAPIError {
+	if stopped := service.RelayRequestCancellation(c); stopped != nil {
+		return stopped
+	}
+	if info.StreamStatus.ClientGone() {
+		return service.NewRelayClientGoneError(info.StreamStatus.EndError)
+	}
+	if info.StreamStatus == nil {
+		return types.NewErrorWithStatusCode(errors.New("missing Claude stream status"), types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+	}
+	if sourceErr == nil && info.StreamStatus.ResponseOutcome() == string(relaycommon.ResponseOutcomeCompleted) {
+		return nil
+	}
+	status := http.StatusBadGateway
+	if info.StreamStatus.EndReason == relaycommon.StreamEndReasonTimeout || errors.Is(sourceErr, context.DeadlineExceeded) {
+		status = http.StatusGatewayTimeout
+	}
+	if sourceErr == nil {
+		sourceErr = fmt.Errorf("upstream Claude stream ended before message_stop")
+	}
+	return types.NewErrorWithStatusCode(sourceErr, types.ErrorCodeBadResponse, status, types.ErrOptionWithSkipRetry())
+}
+
+// InterruptedStreamUsage keeps native evidence without synthesizing a normal
+// terminal. Text produced without a measured output count belongs in review.
+func InterruptedStreamUsage(c *gin.Context, info *relaycommon.RelayInfo, observed *ClaudeResponseInfo, failure *types.NewAPIError) *dto.Usage {
+	info.StreamStatus.SetAPIError(failure)
+	if failure.GetErrorCode() == service.ClientGoneErrorCode {
+		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, failure)
+		info.StreamStatus.MarkCancelled()
+	} else {
+		info.StreamStatus.MarkFailed(string(failure.GetErrorCode()), string(failure.GetErrorType()), failure.StatusCode)
+	}
+	common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, info.StreamStatus)
+	if observed.ResponseText.Len() != 0 && (!observed.Done || observed.Usage == nil || observed.Usage.CompletionTokens == 0) {
+		common.SetContextKey(c, constant.ContextKeyUpstreamResponseUsageIncomplete, true)
+	}
+	if !dto.HasOpenAIUsageTokens(observed.Usage) {
+		return nil
+	}
+	observed.Usage.UsageSemantic = "anthropic"
+	observed.Usage.TotalTokens = observed.Usage.PromptTokens + observed.Usage.CompletionTokens
+	relayconvert.FinalizeClaudeStreamBillingUsage(observed)
+	return observed.Usage
+}
+
+// FailStream accounts for an interrupted SSE or Bedrock Chat/Messages stream
+// and writes at most one protocol-shaped failure; it never sends a normal end.
+func FailStream(c *gin.Context, info *relaycommon.RelayInfo, observed *ClaudeResponseInfo, failure *types.NewAPIError) (*dto.Usage, *types.NewAPIError) {
+	usage := InterruptedStreamUsage(c, info, observed, failure)
+	common.SetContextKey(c, constant.ContextKeyStreamErrorHandled, true)
+	if service.RelayRequestCancellation(c) == nil && !info.StreamStatus.ClientGone() {
+		if err := openai.HandleStreamFailure(c, info, failure); err != nil && helper.IsStreamWriteError(err) {
+			failure = service.NewRelayClientGoneError(err)
+			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, err)
+		}
+	}
+	return usage, types.NewError(failure, failure.GetErrorCode(), types.ErrOptionWithSkipRetry())
+}
+
 func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, *types.NewAPIError) {
 	claudeInfo := &ClaudeResponseInfo{
 		ResponseId:   helper.GetResponseID(c),
@@ -347,8 +419,14 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 		}
 	})
 	info.StreamStatus.RequireTerminal()
+	if err == nil {
+		err = info.StreamStatus.APIError()
+	}
+	if err == nil {
+		err = StreamTerminalError(c, info, nil)
+	}
 	if err != nil {
-		return nil, err
+		return FailStream(c, info, claudeInfo, err)
 	}
 
 	HandleStreamFinalResponse(c, info, claudeInfo)
@@ -359,9 +437,11 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	var claudeResponse dto.ClaudeResponse
 	err := common.Unmarshal(data, &claudeResponse)
 	if err != nil {
+		common.SetContextKey(c, constant.ContextKeyUpstreamResponseDecodeFailed, true)
 		return types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
+		common.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, true)
 		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
 	}
 	info.ObserveResponseModel(claudeResponse.Model)
@@ -450,7 +530,7 @@ func ClaudeHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayI
 	}
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+		return nil, types.NewError(err, types.ErrorCodeReadResponseBodyFailed)
 	}
 	logger.LogDebug(c, "responseBody: %s", responseBody)
 	handleErr := HandleClaudeResponseData(c, info, claudeInfo, resp, responseBody)

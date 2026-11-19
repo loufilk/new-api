@@ -408,7 +408,25 @@ func TestExecuteTaskSubmissionHonorsRouteRetainResult(t *testing.T) {
 	}
 }
 
+// Acknowledgement without an upstream polling ID cannot be reconstructed from
+// a disconnect. Keep the ambiguous hold; do not invent a task or refund it.
 func TestExecuteTaskSubmissionPreservesHoldOnCancellationAfterUpstreamAcceptance(t *testing.T) {
+	f := newTaskSubmissionFinancialFixture(t, "task-cancel-no-id", 1000, 100)
+	ctx, cancel := context.WithCancel(f.c.Request.Context())
+	defer cancel()
+	f.c.Request = f.c.Request.WithContext(ctx)
+	outcome, taskErr := executeTaskSubmissionWith(f.c, f.info, func(*gin.Context, *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		cancel()
+		return &relay.TaskSubmitResult{Platform: "task_plugin", Quota: 100}, nil
+	})
+	require.Nil(t, outcome)
+	require.NotNil(t, taskErr)
+	require.Equal(t, "request_cancelled", taskErr.Code)
+	f.assertTaskCount(t, 0)
+	f.assertUnknownCannotRefund(t)
+}
+
+func TestExecuteTaskSubmissionPersistsKnownAsyncIDOnCancellationAfterUpstreamAcceptance(t *testing.T) {
 	f := newTaskSubmissionFinancialFixture(t, "task-cancel-accepted", 1000, 100)
 	requestContext, cancel := context.WithCancel(f.c.Request.Context())
 	t.Cleanup(cancel)
@@ -424,9 +442,12 @@ func TestExecuteTaskSubmissionPreservesHoldOnCancellationAfterUpstreamAcceptance
 	require.Equal(t, "request_cancelled", taskErr.Code)
 	require.Equal(t, http.StatusRequestTimeout, taskErr.StatusCode)
 	require.Equal(t, 1, calls)
-	f.assertFinancial(t, model.BillingDeliveryUnknown, 100, 0, 0, 1)
-	f.assertTaskCount(t, 0)
-	f.assertUnknownCannotRefund(t)
+	f.assertFinancial(t, model.BillingTaskOwned, 100, 100, 1, 1)
+	f.assertTaskCount(t, 1)
+	var saved model.Task
+	require.NoError(t, f.db.First(&saved).Error)
+	require.Equal(t, "upstream-accepted", saved.PrivateData.UpstreamTaskID)
+	require.Equal(t, f.channel.Id, saved.ChannelId)
 	require.False(t, f.c.Writer.Written())
 }
 

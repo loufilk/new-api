@@ -70,14 +70,6 @@ export function processStreamingContent(
 
 export type StreamChunkType = 'reasoning' | 'content'
 
-function getAppendableChunk(currentContent: string, chunk: string): string {
-  if (!currentContent || !chunk.startsWith(currentContent)) {
-    return chunk
-  }
-
-  return chunk.slice(currentContent.length)
-}
-
 export function applyStreamingChunk(
   message: Message,
   type: StreamChunkType,
@@ -89,22 +81,19 @@ export function applyStreamingChunk(
 
   if (type === 'reasoning') {
     const reasoning = startReasoningTiming(message)
-    const appendableChunk = getAppendableChunk(reasoning.content, chunk)
 
     return {
       ...message,
       reasoning: {
         ...reasoning,
-        content: reasoning.content + appendableChunk,
+        content: reasoning.content + chunk,
       },
       isReasoningStreaming: true,
       status: MESSAGE_STATUS.STREAMING,
     }
   }
 
-  const currentVersion = getCurrentVersion(message)
-  const appendableChunk = getAppendableChunk(currentVersion.content, chunk)
-  const contentMessage = processStreamingContent(message, appendableChunk)
+  const contentMessage = processStreamingContent(message, chunk)
 
   return {
     ...(contentMessage.isReasoningStreaming

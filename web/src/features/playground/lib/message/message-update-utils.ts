@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { ERROR_MESSAGES, MESSAGE_ROLES, MESSAGE_STATUS } from '../../constants'
 import type { Message } from '../../types'
 import { completeAssistantTiming } from './message-timing-utils'
-import { updateCurrentVersionContent } from './message-utils'
+import { getMessageContent, updateCurrentVersionContent } from './message-utils'
 
 /**
  * Update the last assistant message with an error.
@@ -31,9 +31,10 @@ export function updateAssistantMessageWithError(
   title: string = ERROR_MESSAGES.API_REQUEST_ERROR
 ): Message[] {
   return updateLastAssistantMessage(messages, (message) => {
+    const partial = getMessageContent(message)
     const updatedMessage = updateCurrentVersionContent(
       message,
-      `${title}: ${errorMessage}`
+      [partial, `${title}: ${errorMessage}`].filter(Boolean).join('\n\n')
     )
 
     return completeAssistantTiming({

@@ -109,6 +109,7 @@ export function ApiKeysMutateDrawer({
   const userId = useAuthStore((state) => state.auth.user?.id ?? null)
   const { triggerRefresh } = useApiKeys()
   const submittingRef = useRef(false)
+  const originalEdit = useRef<ApiKey | null>(null)
   const mountedRef = useRef(true)
   useEffect(() => {
     mountedRef.current = true
@@ -253,6 +254,7 @@ export function ApiKeysMutateDrawer({
     if (initializedTarget === target) return
     if (isUpdate && currentRow) {
       if (apiKeyData?.success && apiKeyData.data) {
+        originalEdit.current = apiKeyData.data
         form.reset(transformApiKeyToFormDefaults(apiKeyData.data))
         setInitializedTarget(target)
       }
@@ -395,11 +397,12 @@ export function ApiKeysMutateDrawer({
         const updatePayload: ApiKeyUpdateData = {
           ...basePayload,
           id: currentRow.id,
+          expected_version: originalEdit.current?.settings_version,
         }
         if (
           data.unlimited_quota ||
           (!form.getFieldState('remain_quota_dollars').isDirty &&
-            !apiKeyData?.data?.unlimited_quota)
+            !originalEdit.current?.unlimited_quota)
         ) {
           delete updatePayload.remain_quota
         }

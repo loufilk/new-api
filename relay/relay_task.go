@@ -98,23 +98,30 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 	if ch.Status != common.ChannelStatusEnabled {
 		return service.TaskErrorWrapperLocal(errors.New("the channel of the origin task is disabled"), "task_channel_disable", http.StatusBadRequest)
 	}
-	info.LockedChannel = ch
-
-	if originTask.ChannelId != info.ChannelId {
-		key, _, newAPIError := ch.GetNextEnabledKey()
-		if newAPIError != nil {
-			return service.TaskErrorWrapper(newAPIError, "channel_no_available_key", newAPIError.StatusCode, common.UpstreamAddresses(c)...)
-		}
-		common.SetContextKey(c, constant.ContextKeyChannelKey, key)
-		common.SetContextKey(c, constant.ContextKeyChannelType, ch.Type)
-		common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, ch.GetBaseURL())
-		common.SetContextKey(c, constant.ContextKeyChannelId, originTask.ChannelId)
-
-		info.ChannelBaseUrl = ch.GetBaseURL()
-		info.ChannelId = originTask.ChannelId
-		info.ChannelType = ch.Type
-		info.ApiKey = key
+	// The native remix route has no distributor-selected channel/model. Its
+	// first hop must install the complete channel context (not only URL/key),
+	// and must never dereference a not-yet-created ChannelMeta.
+	group, scopeErr := service.AuthorizeNativeOriginTask(c, ch, info.OriginModelName, originTask)
+	if scopeErr != nil {
+		return service.TaskErrorWrapperLocal(scopeErr.Err, string(scopeErr.GetErrorCode()), scopeErr.StatusCode)
 	}
+	constraints := service.GetChannelConstraints(c)
+	if pin, found, _ := constraints.ResolvedPin(); found && pin.ChannelId != ch.Id {
+		return service.TaskErrorWrapperLocal(errors.New("origin task has a different pinned channel"), "origin_task_channel_conflict", http.StatusBadRequest)
+	}
+	if ok, _ := model.ChannelSatisfiesFilters(ch, info.OriginModelName, constraints.Filters); !ok {
+		return service.TaskErrorWrapperLocal(errors.New("origin task channel does not serve this request"), "origin_task_channel_unavailable", http.StatusForbidden)
+	}
+	if common.GetContextKeyInt(c, constant.ContextKeyChannelId) != ch.Id {
+		if setupErr := middleware.SetupContextForSelectedChannel(c, ch, info.OriginModelName); setupErr != nil {
+			return service.TaskErrorWrapperLocal(setupErr.Err, string(setupErr.GetErrorCode()), setupErr.StatusCode)
+		}
+	}
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, info.OriginModelName)
+	common.SetContextKey(c, constant.ContextKeyAutoGroup, group)
+	info.UsingGroup = group
+	info.LockedChannel = ch
+	info.InitChannelMeta(c)
 
 	// 提取 remix 参数（时长、分辨率 → OtherRatios）
 	if info.Action == constant.TaskActionRemix {
@@ -186,6 +193,9 @@ func ApplyChannelPin(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError
 		return service.TaskErrorWrapperLocal(errors.New("the channel of the origin task is disabled"), "origin_task_channel_disabled", http.StatusBadRequest)
 	}
 	info.LockedChannel = ch
+	if group := common.GetContextKeyString(c, constant.ContextKeyAutoGroup); group != "" {
+		info.UsingGroup = group
+	}
 	return nil
 }
 

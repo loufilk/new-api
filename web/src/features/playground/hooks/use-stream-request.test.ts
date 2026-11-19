@@ -197,3 +197,40 @@ describe('latest-wins stream request coordination', () => {
     expect(updates).toEqual(['current'])
   })
 })
+
+test.each(['error', 'EOF'])(
+  'handles terminal %s exactly once after partial output',
+  async (termination) => {
+    const source = new FakeStreamSource()
+    const events: string[] = []
+    const controller = createStreamRequestController({
+      getHeaders: async () => ({}),
+      createSource: () => source,
+      setStreaming: () => {},
+    })
+    await controller.send(payload, {
+      onUpdate: (_, chunk) => events.push(chunk),
+      onError: (reason) => events.push(reason),
+      onComplete: () => events.push('done'),
+    })
+    source.emit(
+      'message',
+      JSON.stringify({ choices: [{ delta: { content: 'part' } }] })
+    )
+    if (termination === 'error')
+      source.emit(
+        'message',
+        JSON.stringify({
+          error: { message: 'Upstream interrupted', code: 'interrupted' },
+        })
+      )
+    source.readyState = 2
+    source.emit('readystatechange')
+    source.emit('message', '[DONE]')
+    expect(events).toEqual([
+      'part',
+      termination === 'error' ? 'Upstream interrupted' : 'Connection closed',
+    ])
+    expect(source.closed).toBe(true)
+  }
+)

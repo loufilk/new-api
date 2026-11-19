@@ -634,7 +634,16 @@ func GetUserModels(c *gin.Context) {
 			groupsToQuery = []string{group}
 		}
 	}
-	models := service.GetGroupsEnabledModels(groupsToQuery)
+	var models []string
+	if c.Query("endpoint") == "chat" {
+		models, err = getRoutableModelsForGroups(user, groupsToQuery, model.NewPlaygroundChannelFilter(constant.EndpointTypeOpenAI))
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	} else {
+		models = service.GetGroupsEnabledModels(groupsToQuery)
+	}
 	if !finishControllerGroupConfigRead(c, guard) {
 		return
 	}
