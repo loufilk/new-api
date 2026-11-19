@@ -3,8 +3,9 @@
 import argparse, hashlib, json, os, platform, re, secrets, shutil, signal, subprocess as sp, sys, tempfile
 from pathlib import Path
 
+from release_identity import locked_revisions, pinned_ref, inspect_image, verify_image_runtime_labels
+
 FLAG = "io.chuanapi.rollback-rehearsal"
-PIN = re.compile(r"(?:sha256:[0-9a-f]{64}|[a-z0-9][a-z0-9._:/-]*@sha256:[0-9a-f]{64})")
 # None of these variable values go on the Docker CLI argument list.
 APPCONF = ("SQL_DSN", "LOG_SQL_DSN", "REDIS_CONN_STRING", "SESSION_SECRET", "CRYPTO_SECRET",
            "NODE_TYPE", "PORT", "HTTP_BIND_ADDRESS", "SYNC_FREQUENCY", "GIN_MODE", "GOMAXPROCS",
@@ -64,9 +65,9 @@ def run():
     a=p.parse_args()
     if os.getuid()==0 or sys.platform!='linux':p.error("run as an unprivileged user on a dedicated Linux test host")
     pins={'stock':a.im13,'target':a.im18,'rollback':a.rollback}
-    if not all(PIN.fullmatch(v) for v in pins.values()):p.error("all images must be full immutable sha256 image IDs or repo@sha256 digests; no tags")
-    revisions={'stock':a.im13_revision,'target':a.im18_revision,'rollback':a.rollback_revision}
-    if not all(re.fullmatch(r'[0-9a-f]{40}', v) for v in revisions.values()):p.error("each source revision must be a full lowercase git SHA")
+    if len(set(pins.values()))!=3 or not all(pinned_ref(v) for v in pins.values()):p.error("three distinct immutable sha256 image IDs or canonical repo@sha256 digests are required; no tags")
+    try:revisions=locked_revisions(a.im13_revision,a.im18_revision,a.rollback_revision)
+    except ValueError as exc:p.error(str(exc))
     if not a.confirm_dedicated_test_host:p.error("explicit dedicated non-production test host confirmation is required")
     if not a.docker_socket.is_absolute() or not a.docker_socket.is_socket():p.error("supply an existing local Docker Unix socket")
     dock=shutil.which('docker')
@@ -79,35 +80,33 @@ def run():
     report={'status':'FAIL','mode':'OCI on dedicated Linux test host','role_artifacts':{},
             'note':'Inner receipt artifact SHA-256 values are shim hashes. Actual inspected image IDs and pins are here.'}
     core=Path(__file__).with_name('rehearse.py').resolve();report['core_harness_sha256']=hashlib.sha256(core.read_bytes()).hexdigest()
+    report['identity_rules_sha256']=hashlib.sha256(core.with_name('release_identity.py').read_bytes()).hexdigest()
     tmp=tempfile.TemporaryDirectory(prefix='im18-oci-wrappers-');work=Path(tmp.name);clientenv={'HOME':str(work),'PATH':os.environ['PATH']}
     try:
         server=json.loads(checked([*cli,'version','--format','{{json .Server}}'],env=clientenv))
         if server.get('Os')!='linux':raise ValueError('local Linux Docker daemon required')
         arch={'x86_64':'amd64','aarch64':'arm64'}.get(platform.machine(),platform.machine())
         for role,pin in pins.items():
-            img=json.loads(checked([*cli,'image','inspect',pin],env=clientenv))[0];iid=img['Id']
-            if not re.fullmatch(r'sha256:[a-f0-9]{64}',iid) or img.get('Os')!='linux' or img.get('Architecture')!=arch:raise ValueError(role+': image must be native Linux architecture')
-            if pin.startswith('sha256:') and iid!=pin:raise ValueError('local image ID mismatch')
-            if not pin.startswith('sha256:') and not any(s.endswith('@'+pin.split('@')[1]) for s in img.get('RepoDigests') or []):raise ValueError(role+': repo digest mismatch')
-            labels=img['Config'].get('Labels') or {}
-            if labels.get('org.opencontainers.image.revision')!=revisions[role]:raise ValueError(role+': expected source revision does not match')
-            if role=='rollback' and labels.get('io.chuanapi.release.mode')!='im13-schema-preserving-rollback':raise ValueError('expected the dedicated rollback image')
-            report['role_artifacts'][role]={'id':iid,'pin':pin,'architecture':arch,'label_revision':labels.get('org.opencontainers.image.revision'),
-                'label_version':labels.get('org.opencontainers.image.version'),'entrypoint':img['Config'].get('Entrypoint')}
+            img,=json.loads(checked([*cli,'image','inspect',pin],env=clientenv))
+            report['role_artifacts'][role]=inspect_image(role,pin,img,arch,revisions)
+        if len({x['id'] for x in report['role_artifacts'].values()})!=3:
+            raise ValueError("role pins must resolve to three distinct image IDs")
         cfg=work/'config.json';write_json(cfg,{'cli':cli,'group':group,'artifacts':report['role_artifacts']})
         for role in pins:
             f=work/role
             f.write_text('#!'+sys.executable+'\nimport os, sys\nos.execv(sys.executable, [sys.executable,'+repr(str(Path(__file__).resolve()))+', "--internal",'+repr(str(cfg))+','+repr(role)+',*sys.argv[1:]])\n')
             f.chmod(0o700)
         cmd=[sys.executable,str(core),'--im13',str(work/'stock'),'--im18',str(work/'target'),'--rollback',str(work/'rollback'),
-             '--pg-bin',str(Path(a.pg_bin).resolve()),'--redis-bin',str(Path(a.redis_bin).resolve()),'--output',str(dst),'--padding-rows',str(a.padding_rows)]
+             '--im18-revision',revisions['target'],'--pg-bin',str(Path(a.pg_bin).resolve()),'--redis-bin',str(Path(a.redis_bin).resolve()),'--output',str(dst),'--padding-rows',str(a.padding_rows)]
         proc=sp.Popen(cmd,start_new_session=True)
         try:rc=proc.wait()
         except BaseException:
             proc.send_signal(signal.SIGINT);proc.wait(timeout=90);raise
         if rc:raise RuntimeError('inner functional rehearsal failed: '+str(rc))
         receipt,=dst.glob('evidence-*/receipt.json')
-        if json.loads(receipt.read_text()).get('status')!='PASS':raise RuntimeError('inner acceptance incomplete')
+        inner=json.loads(receipt.read_text())
+        if inner.get('status')!='PASS':raise RuntimeError('inner acceptance incomplete')
+        verify_image_runtime_labels(report['role_artifacts'],inner)
         stops=[json.loads(f.read_text()) for f in sorted(work.glob('*.stop'))]
         if sorted(s['role'] for s in stops)!=['rollback','stock','target','target'] or any(not s['graceful_signal'] or s['exit'] for s in stops):
             raise RuntimeError('expected exactly four cleanly stopped gateway containers')

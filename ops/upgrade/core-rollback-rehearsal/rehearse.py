@@ -4,6 +4,8 @@ import argparse, contextlib, hashlib, json, os, re, secrets, socket, subprocess 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib import request, error
+from release_identity import (STOCK_REVISION, LOCAL_TARGET_REVISION, ROLLBACK_REVISION,
+                              locked_revisions, version_for, verify_surfaces)
 
 if not __debug__:
     raise SystemExit("Do not use python -O: acceptance assertions are required.")
@@ -12,7 +14,11 @@ for arg in ("im13", "im18", "rollback", "pg-bin", "redis-bin", "output"):
     parser.add_argument("--"+arg, type=lambda p: Path(p).absolute(), required=True)
 parser.add_argument("--padding-rows", type=int, default=256, help="Synthetic short report rows before widening (0..100000)")
 parser.add_argument("--wait-binaries", type=int, default=0, help="Wait this many seconds for the rollback build")
+parser.add_argument("--im18-revision", default=LOCAL_TARGET_REVISION, help="Full, separately approved candidate SHA (default: exact original Linux build)")
 a = parser.parse_args()
+try:revisions=locked_revisions(STOCK_REVISION,a.im18_revision,ROLLBACK_REVISION)
+except ValueError as exc:parser.error(str(exc))
+cli_versions={}
 if not 0 <= a.padding_rows <= 100000:parser.error("padding rows must be in [0,100000]")
 if any(os.environ.get(k) for k in ("SQL_DSN", "LOG_SQL_DSN","REDIS_CONN_STRING")):
     raise SystemExit("Unset existing datastore DSNs. This harness only provisions fresh loopback fixtures.")
@@ -24,7 +30,7 @@ rpw=secrets.token_hex(24); loginpw="LocalOnly#"+secrets.token_hex(16)
 session_vars={"SESSION_SECRET":secrets.token_hex(44),"CRYPTO_SECRET":secrets.token_hex(44)}
 redis=app=holder=None; cluster_up=False; httpd=None; checkpoints=[]; requests=[]; task_ids=[]; pg_log=work/"pg.log"; stage=""
 cols=("username","model_name","use_group","node_name")
-rowlist=[]; streams=[]; money=[]; logcalls=[]; version="v1.0.0-rc.51.chuanapi.im."
+rowlist=[]; streams=[]; money=[]; logcalls=[]
 report={"status":"running","labels":[],"checkpoints":checkpoints,"stages":streams,"synthetic":True}
 def save():
     (run/"receipt.json").write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n")
@@ -89,7 +95,7 @@ def api(method,path,payload=None,auth=None):
     code,_,body=http(method,path,payload,auth);data=json.loads(body)
     assert code==200 and data.get("success"),(method,path,code,data.get("message"))
     return data.get("data")
-def launch(exe,label,want,guard=False,release=None):
+def launch(exe,label,guard=False,release=None):
     global app,stage,base
     stage=label;begin=time.monotonic(); p=port();base=f"http://127.0.0.1:{p}"
     logfile=work/(label+".log")
@@ -106,9 +112,10 @@ def launch(exe,label,want,guard=False,release=None):
             api("GET","/api/readyz");return True
         except (OSError,AssertionError,ValueError):return False
     until(ready,"real gateway "+label,60)
-    assert api("GET","/api/status")["version"]==want
+    role="target" if label=="reup" else label
+    status=verify_surfaces(role,cli_versions[role],api("GET","/api/status")["version"],revisions)
     assert "Redis is enabled" in logfile.read_text()
-    event("ready",phase=label,version=want,ms=timing(begin),mode="verify-only" if guard else "default")
+    event("ready",phase=label,version=status,approved_revision=revisions[role],ms=timing(begin),mode="verify-only" if guard else "default")
 def stop_app():
     global app
     if app is not None:
@@ -271,18 +278,18 @@ def ddl_details():
     assert not patched_ddl,"rollback attempted DDL even if the end-state matched"
     return durations
 try:
-    for name,path,ver in [('stock',a.im13,version+'13'),('target',a.im18,version+'18')]:
-        assert child([path,"--version"])==ver
-        event("artifact",role=name,version=ver,sha256=sha(path))
+    for name,path in [('stock',a.im13),('target',a.im18)]:
+        cli_versions[name]=version_for(name,child([path,"--version"]),revisions)
+        event("artifact",role=name,version=cli_versions[name],approved_revision=revisions[name],sha256=sha(path))
     sysid,rid,rinfo=services()
     event("isolated-services",postgres=sql("show server_version"),pg_system_id=sysid,redis_version=rinfo()['redis_version'],redis_run_id=rid)
     httpd=ThreadingHTTPServer(('127.0.0.1',0),Mock);threading.Thread(target=httpd.serve_forever,daemon=True).start()
-    launch(a.im13,"stock",version+"13");assert types()=={k:["character varying","64"] for k in cols},types()
+    launch(a.im13,"stock");assert types()=={k:["character varying","64"] for k in cols},types()
     configure();seed_labels(False);check_labels();relay();task();history();stop_app()
     if a.padding_rows:
         sql(f"insert into quota_data(user_id,username,model_name,use_group,node_name,created_at,count,quota) select 1000000+i,'fixture-'||i,'model','group','node',3600,1,7 from generate_series(1,{a.padding_rows}) i")
     event("before-widening",**relation_size())
-    acquire_read_lock();launch(a.im18,"target",version+"18",release=release_when_blocked)
+    acquire_read_lock();launch(a.im18,"target",release=release_when_blocked)
     assert api("GET","/api/user/self",auth=admin)["username"]=="upgraderoot"
     assert types()=={k:["text","0"] for k in cols},types();check_labels();history();event("after-widening",**relation_size())
     seed_labels(True);seed_fee();fd=fee_digest();assert re.fullmatch(r"[a-f0-9]{32}",fd);check_labels()
@@ -290,10 +297,10 @@ try:
     schemas={db:schema(db) for db in ('main','logdb')};event("target-schema",hashes=schemas,fee_evidence_digest=fd)
     if not a.rollback.exists() and a.wait_binaries:
         print("awaiting rollback binary",flush=True);until(a.rollback.exists,"patched binary ready",a.wait_binaries)
-    want=version+"13.rollback.1";assert child([a.rollback,"--version"])==want
-    event("artifact",role="rollback",version=want,sha256=sha(a.rollback))
-    for exe,label,want,verify in [(a.rollback,"rollback",want,True),(a.im18,"reup",version+"18",False)]:
-        launch(exe,label,want,guard=verify)
+    cli_versions["rollback"]=version_for("rollback",child([a.rollback,"--version"]),revisions)
+    event("artifact",role="rollback",version=cli_versions["rollback"],approved_revision=revisions["rollback"],sha256=sha(a.rollback))
+    for exe,label,verify in [(a.rollback,"rollback",True),(a.im18,"reup",False)]:
+        launch(exe,label,guard=verify)
         assert sql("select system_identifier from pg_control_system()","postgres")==sysid and rinfo()["run_id"]==rid
         assert api("GET","/api/user/self",auth=admin)["username"]=="upgraderoot"
         assert types()=={k:["text","0"] for k in cols};check_labels();history()

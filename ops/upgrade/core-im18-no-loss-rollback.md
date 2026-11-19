@@ -42,7 +42,7 @@ The second line of inspection must be `linux/amd64 <ROLLBACK_SHA> im13-schema-pr
 
 ## Select and switch only NewAPI
 
-Run these commands on the approved Linux host with the Docker user/service account. Replace the path, project, service and existing digest variables with the values from CORE. Leave the current host, bind mounts and database variables unchanged. For a disposable rehearsal the local immutable image IDs shown above are accepted; production uses registry `repo@sha256:…` pins.
+Run these commands on the approved Linux host with the Docker user/service account. Replace the path, project, service and existing digest variables with the values from CORE. Leave the current host, bind mounts and database variables unchanged. Load the approved pins from an independently reviewed release record, not from an ad hoc source/target choice. Only disposable rehearsals may opt into local immutable IDs with `CORE_ALLOW_LOCAL_IMAGE_IDS=yes`. Production uses exact canonical Docker RepoDigests `repo@sha256:…` pins.
 
 ~~~bash
 # Set once for this session (example paths; use actual CORE paths/project).
@@ -52,6 +52,8 @@ SWITCH=/path/to/reviewed-im18/ops/upgrade/core-newapi-cutover.sh
 export CORE_API_SERVICE=new-api CORE_CUTOVER_PIN_FILE=/srv/core/core-newapi.pin.yml
 # Record immutable image refs and full source SHAs before the window.
 : "$STOCK_IMAGE" "$NEW_IMAGE" "$FALLBACK_IMAGE" "$CANDIDATE_SHA" "$ROLLBACK_SHA"
+export CORE_APPROVED_STOCK_IMAGE="$STOCK_IMAGE" CORE_APPROVED_IM18_IMAGE="$NEW_IMAGE"
+export CORE_APPROVED_ROLLBACK_IMAGE="$FALLBACK_IMAGE" CORE_APPROVED_IM18_REVISION="$CANDIDATE_SHA"
 
 # Say yes only after independently confirming ingress fence and OTHER writers stopped.
 export CORE_TRAFFIC_FENCED=yes CORE_OTHER_WRITERS_STOPPED=yes CORE_BACKUP_VERIFIED=yes
@@ -75,7 +77,7 @@ CORE_FROM_IMAGE="$FALLBACK_IMAGE" CORE_TO_IMAGE="$NEW_IMAGE" CORE_TO_REVISION="$
   CORE_EXECUTE=yes "$SWITCH" upgrade "${BASE[@]}"
 ~~~
 
-The script stops/removes only the existing API container without removing volumes, atomically saves the target pin, recreates the service with `--no-deps --pull never`, and checks origin-local readiness. It does not un-fence traffic. All future Compose invocations for CORE must include `-f "$CORE_CUTOVER_PIN_FILE"` in addition to the same base args. Keep the Caddy and DB/Redis lifecycle independent. If the new container is already stopped following a failed launch, first reconcile any partial schema/writes and inspect logs; then set `CORE_ACCEPT_FAILED_TARGET=yes` for a rollback. If it was never created, likewise verify the slot is empty and set `CORE_EXPECT_NO_API_CONTAINER=yes`. Neither flag clears leases, force-starts an unknown source or restores data. The verify-only image deliberately refuses a partial/incompatible schema rather than repairing it. If required, recover forward to a fully migrated im.18 on the same database under maintenance before trying that rollback; never use stock im.13 to fix the partial database.
+Before any stop, the script validates both approved image pins against their exact inspected digests and full source revisions, release roles, platform, and the live image ID. It accepts only stock im.13 → im.18, im.18 → dedicated im.13 rollback, and dedicated im.13 rollback → im.18. Invoking upgrade with stock im.13 as the target is rejected. It stops/removes only the existing API container without removing volumes, atomically saves the target pin, recreates the service with `--no-deps --pull never`, and checks origin-local readiness. It does not un-fence traffic. All future Compose invocations for CORE must include `-f "$CORE_CUTOVER_PIN_FILE"` in addition to the same base args. Keep the Caddy and DB/Redis lifecycle independent. If the new container is already stopped following a failed launch, first reconcile any partial schema/writes and inspect logs; then set `CORE_ACCEPT_FAILED_TARGET=yes` for a rollback. If it was never created, likewise verify the slot is empty and set `CORE_EXPECT_NO_API_CONTAINER=yes`. Neither flag clears leases, force-starts an unknown source or restores data. The verify-only image deliberately refuses a partial/incompatible schema rather than repairing it. If required, recover forward to a fully migrated im.18 on the same database under maintenance before trying that rollback; never use stock im.13 to fix the partial database.
 
 ## Operator acceptance before re-enabling ingress
 
@@ -144,7 +146,7 @@ env -u SQL_DSN -u LOG_SQL_DSN -u REDIS_CONN_STRING \
   --redis-bin /qa/redis8.8.0/bin --output /qa/receipts
 ~~~
 
-For the **actual OCI gate**, use the companion adapter on an approved dedicated Linux test host (local Docker socket, no production services on that host). Preload all three build images and set their immutable pins. It refuses moving tags and mismatched source labels, uses the local native platform, starts fresh PG and Redis fixtures, and validates that four gateway containers stop gracefully. It uses host networking solely so the containers can reach the fixture's loopback-only servers; do not run this harness on CORE. Only its CLI stub tests were run here.
+For the **actual OCI gate**, use the companion adapter on an approved dedicated Linux test host (local Docker socket, no production services on that host). Preload all three build images and set their immutable pins. It refuses moving tags and mismatched source labels, uses the local native platform, starts fresh PG and Redis fixtures, and validates that four gateway containers stop gracefully. It uses host networking solely so the containers can reach the fixture's loopback-only servers; do not run this harness on CORE. The published stock image must expose the CI-stamped version `v1.0.0-rc.51.chuanapi.im.13+g5c370275b838` (or a longer exact prefix of the same pinned SHA). The adapter checks exact registry digest, full OCI revision, and version label; the running gateway must agree exactly on `--version` and `/api/status`. Rehearsals on locally rebuilt immutable image IDs may use the unadorned release string. Only the CLI/identity stub tests were run here.
 
 ~~~bash
 python3 ops/upgrade/core-rollback-rehearsal/rehearse-oci.py \

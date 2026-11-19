@@ -13,6 +13,20 @@ done
 : "${CORE_FROM_IMAGE:?expected current NewAPI image, pinned by digest}"
 : "${CORE_TO_IMAGE:?target NewAPI image, pinned by digest}"
 : "${CORE_TO_REVISION:?exact 40-character target git SHA}"
+: "${CORE_APPROVED_STOCK_IMAGE:?approved stock im.13 image digest}"
+: "${CORE_APPROVED_IM18_IMAGE:?approved im.18 image digest}"
+: "${CORE_APPROVED_ROLLBACK_IMAGE:?approved dedicated im.13 rollback image digest}"
+: "${CORE_APPROVED_IM18_REVISION:?approved full im.18 source revision}"
+stock_revision=5c370275b838d37d0ea4480810a2ebc2d7dd49ca
+rollback_revision=6f7f6fe297624c65d499d9efaa9d9b57191be9b9
+rollback_mode=im13-schema-preserving-rollback
+[[ $CORE_APPROVED_IM18_REVISION =~ ^[0-9a-f]{40}$ &&
+    $CORE_APPROVED_IM18_REVISION != 0000000000000000000000000000000000000000 &&
+    $CORE_APPROVED_IM18_REVISION != "$stock_revision" &&
+    $CORE_APPROVED_IM18_REVISION != "$rollback_revision" ]] || die 'invalid approved im.18 revision'
+[[ $CORE_APPROVED_STOCK_IMAGE != "$CORE_APPROVED_IM18_IMAGE" &&
+    $CORE_APPROVED_STOCK_IMAGE != "$CORE_APPROVED_ROLLBACK_IMAGE" &&
+    $CORE_APPROVED_IM18_IMAGE != "$CORE_APPROVED_ROLLBACK_IMAGE" ]] || die 'approved pins must be distinct'
 : "${CORE_CUTOVER_PIN_FILE:?absolute persistent Compose override path}"
 [[ $CORE_CUTOVER_PIN_FILE == /* && -d $(dirname -- "$CORE_CUTOVER_PIN_FILE") && ! -L $CORE_CUTOVER_PIN_FILE ]] ||
   die 'the persistent override must be an absolute path in an existing directory, not a symlink'
@@ -22,34 +36,70 @@ for arg in "$@"; do
 done
 svc=${CORE_API_SERVICE:-new-api}
 [[ $svc =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || die 'invalid Compose service'
-for ref in "$CORE_FROM_IMAGE" "$CORE_TO_IMAGE"; do
-  [[ $ref =~ ^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$ || $ref =~ ^sha256:[0-9a-f]{64}$ ]] ||
-    die 'image must be a pinned repo digest or local immutable image ID (for rehearsals)'
+for ref in "$CORE_APPROVED_STOCK_IMAGE" "$CORE_APPROVED_IM18_IMAGE" "$CORE_APPROVED_ROLLBACK_IMAGE" "$CORE_FROM_IMAGE" "$CORE_TO_IMAGE"; do
+  if [[ $ref =~ ^[a-z0-9][a-z0-9._:/-]*@sha256:[0-9a-f]{64}$ ]]; then
+    continue
+  fi
+  [[ ${CORE_ALLOW_LOCAL_IMAGE_IDS:-} == yes && $ref =~ ^sha256:[0-9a-f]{64}$ ]] ||
+    die 'a canonical repository digest is required (local IDs require explicit isolated-rehearsal mode)'
 done
-[[ $CORE_TO_REVISION =~ ^[0-9a-f]{40}$ ]] || die 'target revision must be a full git SHA'
-command -v docker >/dev/null || die 'Docker/Compose is required'
-inspect() { docker image inspect -f "$1" "$2"; }
-platform=${CORE_PLATFORM:-linux/amd64}
-[[ $platform =~ ^linux/(amd64|arm64)$ ]] || die 'unsupported CORE_PLATFORM'
-for ref in "$CORE_FROM_IMAGE" "$CORE_TO_IMAGE"; do
-  [[ $(inspect '{{.Os}}/{{.Architecture}}' "$ref") == "$platform" ]] ||
-    die "image platform does not match $platform"
-done
-revision=$(inspect '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$CORE_TO_IMAGE")
-[[ $revision == "$CORE_TO_REVISION" ]] || die "target revision mismatch: $revision"
-mode=$(inspect '{{index .Config.Labels "io.chuanapi.release.mode"}}' "$CORE_TO_IMAGE")
-case "$phase" in
-  rollback)
-    [[ $mode == im13-schema-preserving-rollback ]] || die 'refusing stock im.13: dedicated rollback image required'
+role_of() {
+  case "$1" in
+    "$CORE_APPROVED_STOCK_IMAGE") printf 'stock' ;;
+    "$CORE_APPROVED_IM18_IMAGE") printf 'im18' ;;
+    "$CORE_APPROVED_ROLLBACK_IMAGE") printf 'fallback' ;;
+    *) die 'image pin is not in the approved release set' ;;
+  esac
+}
+from_role=$(role_of "$CORE_FROM_IMAGE")
+to_role=$(role_of "$CORE_TO_IMAGE")
+case "$phase:$from_role:$to_role" in
+  upgrade:stock:im18|upgrade:fallback:im18) startup_mode=migrate ;;
+  rollback:im18:fallback)
     startup_mode=verify-only
     [[ ${CORE_INVOICES_RECONCILED:-} == yes ]] ||
       die 'first fence new invoice intake and reconcile any in-flight invoice fee callbacks/refunds'
     ;;
-  upgrade)
-    [[ $mode != im13-schema-preserving-rollback ]] || die 'rollback image is not an upgrade target'
-    startup_mode=migrate
-    ;;
+  *) die "transition not allowed: $phase $from_role -> $to_role" ;;
 esac
+revision_for() {
+  case "$1" in
+    stock) printf '%s' "$stock_revision" ;;
+    im18) printf '%s' "$CORE_APPROVED_IM18_REVISION" ;;
+    fallback) printf '%s' "$rollback_revision" ;;
+  esac
+}
+revision=$(revision_for "$to_role")
+[[ $CORE_TO_REVISION == "$revision" ]] || die 'requested target revision differs from the approved revision'
+command -v docker >/dev/null || die 'Docker/Compose is required'
+inspect() { docker image inspect -f "$1" "$2"; }
+platform=${CORE_PLATFORM:-linux/amd64}
+[[ $platform =~ ^linux/(amd64|arm64)$ ]] || die 'unsupported CORE_PLATFORM'
+verify_image() {
+  local ref=$1 role=$2 expected actual mode image_id digests
+  expected=$(revision_for "$role")
+  [[ $(inspect '{{.Os}}/{{.Architecture}}' "$ref") == "$platform" ]] ||
+    die "image platform does not match $platform"
+  actual=$(inspect '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$ref")
+  [[ $actual == "$expected" ]] || die "$role image full revision differs from approved revision"
+  mode=$(inspect '{{index .Config.Labels "io.chuanapi.release.mode"}}' "$ref")
+  case "$role:$mode" in
+    "fallback:$rollback_mode"|stock:|im18:|'stock:<no value>'|'im18:<no value>') ;;
+    *) die "$role image release mode mismatch" ;;
+  esac
+  image_id=$(inspect '{{.Id}}' "$ref")
+  [[ $image_id =~ ^sha256:[0-9a-f]{64}$ ]] || die 'invalid inspected image ID'
+  if [[ $ref == sha256:* ]]; then
+    [[ $ref == "$image_id" ]] || die "$role local image ID mismatch"
+  else
+    digests=$(inspect '{{range .RepoDigests}}{{println .}}{{end}}' "$ref")
+    grep -Fxq -- "$ref" <<< "$digests" || die "$role canonical repo digest mismatch"
+  fi
+  printf '%s' "$image_id"
+}
+from_id=$(verify_image "$CORE_FROM_IMAGE" "$from_role")
+to_id=$(verify_image "$CORE_TO_IMAGE" "$to_role")
+[[ $from_id != "$to_id" ]] || die 'current and target are the same image'
 [[ ${CORE_TRAFFIC_FENCED:-} == yes && ${CORE_OTHER_WRITERS_STOPPED:-} == yes ]] ||
     die 'first fence ingress, drain requests and stop all other writers; confirm explicitly'
 [[ ${CORE_BACKUP_VERIFIED:-} == yes ]] || die 'verify the disaster-recovery backup before switching'
@@ -59,9 +109,6 @@ if [[ ${CORE_EXECUTE:-} == yes ]]; then
   exec 9>>"$CORE_CUTOVER_PIN_FILE.lock"
   flock -n 9 || die 'another switch is using this pin file'
 fi
-from_id=$(inspect '{{.Id}}' "$CORE_FROM_IMAGE")
-to_id=$(inspect '{{.Id}}' "$CORE_TO_IMAGE")
-[[ $from_id != "$to_id" ]] || die 'current and target are the same image'
 export NEW_API_IMAGE="$CORE_FROM_IMAGE"
 base=(docker compose "$@")
 # Expect the specified project and a single current API instance.

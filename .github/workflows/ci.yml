@@ -470,7 +470,7 @@ jobs:
           bash -n ops/upgrade/core-newapi-cutover.sh
           python3 -m unittest discover -s ops/server/tests -p 'test_core_newapi_cutover.py' -v
           python3 -m unittest discover -s ops/server/tests -p 'test_dashboard_route_contract.py' -v
-          python3 ops/upgrade/core-rollback-rehearsal/test_oci.py
+          python3 -m unittest discover -s ops/upgrade/core-rollback-rehearsal -v
       - name: Passkey, payment and protocol dependency contracts
         if: ${{ (github.head_ref || github.ref_name) == 'fix/im18-dependency-migration-20261119' }}
         run: |
