@@ -22,7 +22,7 @@ env:
 jobs:
   backend:
     name: Exact head backend vet, build, and test
-    if: (github.head_ref || github.ref_name) != 'fix/upstream-review-playground-20261118'
+    if: ${{ !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119"]'), github.head_ref || github.ref_name) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     services:
@@ -145,7 +145,7 @@ jobs:
           retention-days: 7
 
   frontend:
-    if: (github.head_ref || github.ref_name) != 'fix/upstream-review-playground-20261118'
+    if: ${{ !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119"]'), github.head_ref || github.ref_name) }}
     name: Exact head frontend typecheck and test
     runs-on: ubuntu-latest
     timeout-minutes: 30

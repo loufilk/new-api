@@ -22,17 +22,25 @@
     "pinned_at": "2026-10-31T09:09:00Z",
     "verified_at": "2026-10-31T09:47:00Z"
   },
-  "version": "v1.0.0-rc.48.chuanapi.im.3",
+  "version": "v1.0.0-rc.51.chuanapi.im.11",
   "current_alignment": {
-    "stage": "api-key-group-selection",
+    "stage": "clean-api-key-upstream-alignment",
     "repository": "loufilk/new-api",
-    "branch": "feat/new-user-recharge-benefit-20261107",
+    "branch": "fix/im8-clean-review-20261119",
+    "source_baseline": {
+      "commit": "fa8e90b78856eb840ac4ecebe22e2c2598b7d377",
+      "tree": "d13e3c0d3a15d68e52384b1b61f4061c7ddccbea"
+    },
+    "previous_upstream_commit": "669d774976369e986f03b6e24fff1042f6f94832",
     "upstream_reference": {
       "repository": "QuantumNous/new-api",
-      "commit": "8c8940c999c6c38031dacdd0139cf7b0e1c38308",
-      "tree": "274b557e8704de62895b861bd10d21cf955f698e"
+      "commit": "3a407cc9b064fe79a4ffac4146b2690c465dc929",
+      "tree": "0a98e4e0891fd804875989da40b74a8995675e62",
+      "release_tag": "v1.0.0-rc.51",
+      "release_commit": "c9c6da2786b6a0912215127e78e28fbc6650c85f",
+      "commits_after_release": 16
     },
-    "verified_at": "2026-11-07T06:32:28Z"
+    "pinned_at": "2026-11-19T01:52:52Z"
   },
   "scope": "Records source history only. production_baseline and feature_reference remain historical pins, not evidence of the currently deployed version. This manifest does not authorize a release, main-branch merge or deployment, and does not assert feature parity.",
   "integrated_feature_baseline": {
