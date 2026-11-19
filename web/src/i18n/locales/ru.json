@@ -10408,6 +10408,8 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "All accessible groups": "Все доступные группы",
+    "This user has unsettled invoices or invoice fee payments. Complete or cancel the applications and settle all payments and refunds before deleting the account.": "У этого пользователя есть незавершённые заявки на выставление счетов или неурегулированные платежи за их оформление. Завершите или отмените заявки и урегулируйте все платежи и возвраты перед удалением аккаунта."
   }
 }

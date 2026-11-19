@@ -70,6 +70,7 @@ func setupManageUserTestDB(t *testing.T) *gorm.DB {
 		}
 	})
 	require.NoError(t, db.AutoMigrate(append([]any{&model.ReferralWithdrawal{}, &model.User{}, &model.UserSession{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.BalanceLedgerOperation{}, &model.BalanceLedger{}, &model.AuthFlow{}, &model.TwoFA{}, &model.PasskeyCredential{}, &model.UserAccessToken{}}, model.BonusSourceModels()...)...))
+	require.NoError(t, db.AutoMigrate(model.CommerceModels()...))
 	require.NoError(t, logDB.AutoMigrate(&model.Log{}, &model.AuditLog{}))
 	versionQuery := "SELECT version()"
 	if dialect == "sqlite" {

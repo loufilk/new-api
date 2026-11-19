@@ -10408,6 +10408,8 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "All accessible groups": "アクセス可能なすべてのグループ",
+    "This user has unsettled invoices or invoice fee payments. Complete or cancel the applications and settle all payments and refunds before deleting the account.": "このユーザーには未完了の請求書発行申請、または未精算の発行手数料があります。申請を完了またはキャンセルし、すべての支払いと返金を精算してからアカウントを削除してください。"
   }
 }

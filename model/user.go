@@ -1067,6 +1067,9 @@ func (user *User) delete(identity *AuthSessionIdentity, guards ...*AdminUserMuta
 		if err = ensureNoPendingReferralWithdrawalsTx(tx, user.Id); err != nil {
 			return err
 		}
+		if err = ensureNoUnsettledInvoicesTx(tx, user.Id); err != nil {
+			return err
+		}
 		nextAuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)
 		if err != nil {
 			return err
@@ -1105,6 +1108,9 @@ func (user *User) hardDelete(guard *AdminUserMutationGuard) (int64, error) {
 		}
 		var err error
 		if err = ensureNoPendingReferralWithdrawalsTx(tx, user.Id); err != nil {
+			return err
+		}
+		if err = ensureNoUnsettledInvoicesTx(tx, user.Id); err != nil {
 			return err
 		}
 		deletedAuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)

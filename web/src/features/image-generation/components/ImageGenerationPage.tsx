@@ -318,11 +318,12 @@ function ImageGenerationWorkspace() {
         <Button
           variant='outline'
           size='sm'
+          role='link'
           render={
-            <Link to='/usage-logs/$section' params={{ section: 'task' }} />
+            <Link to='/usage-logs/$section' params={{ section: 'common' }} />
           }
         >
-          {t('Task Logs')}
+          {t('Usage Logs')}
         </Button>
       </header>
       <div aria-live='polite' className='sr-only'>

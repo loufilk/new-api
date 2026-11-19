@@ -110,7 +110,7 @@ func TestMain(m *testing.M) {
 		&ModelBonusEligibleAudit{},
 		&ReferralCommission{},
 		&UserAccessToken{},
-	}, append(append(append([]any{&PaymentReceipt{}, &RedemptionMutation{}, &AgentRedemptionAccount{}, &AgentRedemptionLedger{}, &AgentRedemptionOperation{}, &AgentInvitation{}, &AgentInvitationPolicy{}, &AgentInvitationPolicyAudit{}}, AgentPlatformModels()...), BonusSourceModels()...), ReferralRewardModels()...)...)...); err != nil {
+	}, append(append(append(append(CommerceModels(), &PaymentReceipt{}, &RedemptionMutation{}, &AgentRedemptionAccount{}, &AgentRedemptionLedger{}, &AgentRedemptionOperation{}, &AgentInvitation{}, &AgentInvitationPolicy{}, &AgentInvitationPolicyAudit{}), AgentPlatformModels()...), BonusSourceModels()...), ReferralRewardModels()...)...)...); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
 
@@ -120,7 +120,7 @@ func TestMain(m *testing.M) {
 func truncateTables(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
-		for _, schema := range append(append(append([]any{&PaymentReceipt{}, &RedemptionMutation{}, &AgentRedemptionAccount{}, &AgentRedemptionLedger{}, &AgentRedemptionOperation{}, &AgentInvitation{}, &AgentInvitationPolicy{}, &AgentInvitationPolicyAudit{}}, AgentPlatformModels()...), BonusSourceModels()...), ReferralRewardModels()...) {
+		for _, schema := range append(append(append(append(CommerceModels(), &PaymentReceipt{}, &RedemptionMutation{}, &AgentRedemptionAccount{}, &AgentRedemptionLedger{}, &AgentRedemptionOperation{}, &AgentInvitation{}, &AgentInvitationPolicy{}, &AgentInvitationPolicyAudit{}), AgentPlatformModels()...), BonusSourceModels()...), ReferralRewardModels()...) {
 			statement := &gorm.Statement{DB: DB}
 			require.NoError(t, statement.Parse(schema))
 			require.NoError(t, DB.Exec("DELETE FROM "+statement.Schema.Table).Error)

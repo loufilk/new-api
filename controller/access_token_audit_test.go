@@ -42,6 +42,7 @@ func setupAccessTokenAudit(t *testing.T) (*model.User, string) {
 	require.NoError(t, db.AutoMigrate(&model.ReferralWithdrawal{}, &model.User{}, &model.UserSession{}, &model.Log{}, &model.AuditLog{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.UserAccessToken{}, &model.Option{},
 		&model.AuthFlow{}, &model.TwoFA{}, &model.TwoFABackupCode{}, &model.PasskeyCredential{}, &model.UserOAuthBinding{},
 		&model.Token{}, &model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{}, &model.AgentInvitation{}))
+	require.NoError(t, db.AutoMigrate(model.CommerceModels()...))
 	model.DB, model.LOG_DB = db, db
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(time.Now().Unix()))

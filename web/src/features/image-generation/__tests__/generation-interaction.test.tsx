@@ -355,3 +355,29 @@ test('native resolution selection is separate from the aspect ratio and locked w
   renderForm({ ...props, isGenerating: true })
   expect(screen.getByLabelText('Output resolution')).toBeDisabled()
 })
+
+test.each(['old-manual-group', 'auto'])(
+  'smart routing shows accessible scope instead of ignored manual groups: %s',
+  (group) => {
+    renderForm({
+      keys: [
+        {
+          id: 1,
+          name: 'key-1',
+          group,
+          smart_routing: true,
+          auto_groups: ['ignored-primary', 'ignored-fallback'],
+          model_limits_enabled: false,
+          model_limits: '',
+          status: 1,
+        },
+      ],
+    })
+    expect(screen.getByText(/Smart Routing/)).toBeVisible()
+    expect(screen.getByText('All accessible groups')).toBeVisible()
+    expect(screen.queryByText('old-manual-group')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('ignored-primary → ignored-fallback')
+    ).not.toBeInTheDocument()
+  }
+)

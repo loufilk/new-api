@@ -10408,6 +10408,8 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "All accessible groups": "Tous les groupes accessibles",
+    "This user has unsettled invoices or invoice fee payments. Complete or cancel the applications and settle all payments and refunds before deleting the account.": "Cet utilisateur a des demandes de facture ou des frais de facturation non réglés. Finalisez ou annulez les demandes, puis réglez tous les paiements et remboursements avant de supprimer le compte."
   }
 }

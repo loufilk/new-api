@@ -77,6 +77,7 @@ func setupSecurityEnrollmentTest(t *testing.T) (*model.User, service.AuthIdentit
 	require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
 	t.Logf("database: %s %s", dialect, version)
 	require.NoError(t, db.AutoMigrate(&model.ReferralWithdrawal{}, &model.User{}, &model.UserSession{}, &model.TwoFA{}, &model.TwoFABackupCode{}, &model.PasskeyCredential{}, &model.AuthFlow{}, &model.UserOAuthBinding{}, &model.Option{}, &model.ExternalIdentityClaim{}, &model.UserAccessToken{}, &model.Token{}, &model.SubscriptionPlan{}, &model.Channel{}, &model.Ability{}, &model.AgentInvitation{}))
+	require.NoError(t, db.AutoMigrate(model.CommerceModels()...))
 	require.NoError(t, logDB.AutoMigrate(&model.AuditLog{}))
 	model.DB, model.LOG_DB = db, logDB
 	require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(time.Now().Unix()))

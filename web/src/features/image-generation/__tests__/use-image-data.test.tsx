@@ -19,11 +19,14 @@ For commercial licensing, please contact support@quantumnous.com
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+
+import { useAuthStore } from '@/stores/auth-store'
 
 import { loadImagePageBootstrap, loadImageTokenModels } from '../api'
 import { useImageData } from '../hooks/use-image-data'
 import type { ImageApiKeyOption } from '../types'
+import { signInHistoryOwner } from './history-fixture'
 
 vi.mock('../api', () => ({
   loadImageTokenModels: vi.fn(),
@@ -67,6 +70,8 @@ function createWrapper() {
 
 beforeEach(() => {
   vi.resetAllMocks()
+  localStorage.clear()
+  signInHistoryOwner()
   bootstrapKeys = [makeKey(1, 'g1')]
   bootstrapMock.mockImplementation(async () => ({
     keys: bootstrapKeys,
@@ -82,6 +87,12 @@ beforeEach(() => {
     }
     return models[id] ?? []
   })
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  useAuthStore.getState().auth.reset()
+  localStorage.clear()
 })
 
 describe('useImageData selects keys and models as availability changes', () => {
@@ -176,4 +187,112 @@ describe('useImageData selects keys and models as availability changes', () => {
 
     await waitFor(() => expect(result.current.model).toBe(''))
   })
+})
+
+test('reopening the image page remembers the owned key explicitly selected last time', async () => {
+  bootstrapKeys = [makeKey(1, 'g1'), makeKey(2, 'g2')]
+  const first = renderHook(() => useImageData(), { wrapper: createWrapper() })
+  await waitFor(() => expect(first.result.current.model).toBe('dall-e-3'))
+  act(() => first.result.current.setApiKeyId(2))
+  await waitFor(() => expect(first.result.current.model).toBe('gpt-image-2'))
+  first.unmount()
+
+  const reopened = renderHook(() => useImageData(), {
+    wrapper: createWrapper(),
+  })
+  await waitFor(() => expect(reopened.result.current.apiKeyId).toBe(2))
+  await waitFor(() => expect(reopened.result.current.model).toBe('gpt-image-2'))
+})
+
+test('a saved key removed from the active list is not queried on reopening', async () => {
+  bootstrapKeys = [makeKey(1, 'g1'), makeKey(2, 'g2')]
+  const first = renderHook(() => useImageData(), { wrapper: createWrapper() })
+  await waitFor(() => expect(first.result.current.apiKeyId).toBe(1))
+  act(() => first.result.current.setApiKeyId(2))
+  await waitFor(() => expect(first.result.current.model).toBe('gpt-image-2'))
+  first.unmount()
+  bootstrapKeys = [makeKey(1, 'g1')]
+  tokenModelsMock.mockClear()
+
+  const reopened = renderHook(() => useImageData(), {
+    wrapper: createWrapper(),
+  })
+  await waitFor(() => expect(reopened.result.current.model).toBe('dall-e-3'))
+  expect(reopened.result.current.apiKeyId).toBe(1)
+  expect(tokenModelsMock).not.toHaveBeenCalledWith(2)
+})
+
+test('switching accounts keeps remembered key choices separate', async () => {
+  bootstrapKeys = [makeKey(1, 'g1'), makeKey(2, 'g2')]
+  const first = renderHook(() => useImageData(), { wrapper: createWrapper() })
+  await waitFor(() => expect(first.result.current.apiKeyId).toBe(1))
+  act(() => first.result.current.setApiKeyId(2))
+  await waitFor(() => expect(first.result.current.model).toBe('gpt-image-2'))
+  first.unmount()
+
+  signInHistoryOwner(202)
+  const other = renderHook(() => useImageData(), { wrapper: createWrapper() })
+  await waitFor(() => expect(other.result.current.apiKeyId).toBe(1))
+  other.unmount()
+
+  signInHistoryOwner(101)
+  const returned = renderHook(() => useImageData(), {
+    wrapper: createWrapper(),
+  })
+  await waitFor(() => expect(returned.result.current.apiKeyId).toBe(2))
+})
+
+test('unavailable browser storage does not prevent selecting and loading an image key', async () => {
+  vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
+    throw new DOMException('Storage blocked', 'SecurityError')
+  })
+  vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+    throw new DOMException('Storage full', 'QuotaExceededError')
+  })
+  bootstrapKeys = [makeKey(1, 'g1'), makeKey(2, 'g2')]
+  const { result } = renderHook(() => useImageData(), {
+    wrapper: createWrapper(),
+  })
+  await waitFor(() => expect(result.current.model).toBe('dall-e-3'))
+  act(() => result.current.setApiKeyId(2))
+  await waitFor(() => expect(result.current.model).toBe('gpt-image-2'))
+})
+
+test('changing smart routing reloads effective models even when the saved manual group is unchanged', async () => {
+  bootstrapKeys = [{ ...makeKey(1, 'g1'), smart_routing: false }]
+  const { result } = renderHook(() => useImageData(), {
+    wrapper: createWrapper(),
+  })
+  await waitFor(() =>
+    expect(result.current.availableModels).toEqual(['dall-e-3', 'gpt-image-2'])
+  )
+  tokenModelsMock.mockResolvedValue(['gpt-image-2'])
+  bootstrapKeys = [{ ...makeKey(1, 'g1'), smart_routing: true }]
+  await act(async () => {
+    await result.current.refetchBootstrap()
+  })
+  await waitFor(() =>
+    expect(result.current.availableModels).toEqual(['gpt-image-2'])
+  )
+})
+
+test('a remembered key is not selected when the account has no active keys', async () => {
+  bootstrapKeys = [makeKey(1, 'g1'), makeKey(2, 'g2')]
+  const first = renderHook(() => useImageData(), { wrapper: createWrapper() })
+  await waitFor(() => expect(first.result.current.apiKeyId).toBe(1))
+  act(() => first.result.current.setApiKeyId(2))
+  await waitFor(() => expect(first.result.current.model).toBe('gpt-image-2'))
+  first.unmount()
+  bootstrapKeys = []
+  tokenModelsMock.mockClear()
+
+  const reopened = renderHook(() => useImageData(), {
+    wrapper: createWrapper(),
+  })
+  await waitFor(() =>
+    expect(reopened.result.current.isLoadingBootstrap).toBe(false)
+  )
+  expect(reopened.result.current.apiKeyId).toBeNull()
+  expect(reopened.result.current.selectedKey).toBeNull()
+  expect(tokenModelsMock).not.toHaveBeenCalled()
 })

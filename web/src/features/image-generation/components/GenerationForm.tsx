@@ -499,13 +499,19 @@ export function GenerationForm(props: GenerationFormProps) {
         {selectedApiKey ? (
           <p className='text-muted-foreground min-w-0 text-xs break-words'>
             <span className='font-medium'>{t('Model Group')}</span>:{' '}
-            {selectedApiKey.group || t('Follow user group')}
-            {selectedApiKey.group === 'auto' &&
-            selectedApiKey.auto_groups?.length ? (
-              <span className='ml-2'>
-                {selectedApiKey.auto_groups.join(' → ')}
-              </span>
-            ) : null}
+            {selectedApiKey.smart_routing
+              ? t('Smart Routing')
+              : selectedApiKey.group || t('Follow user group')}
+            {selectedApiKey.smart_routing && (
+              <span className='ml-2'>{t('All accessible groups')}</span>
+            )}
+            {!selectedApiKey.smart_routing &&
+              selectedApiKey.group === 'auto' &&
+              !!selectedApiKey.auto_groups?.length && (
+                <span className='ml-2'>
+                  {selectedApiKey.auto_groups.join(' → ')}
+                </span>
+              )}
           </p>
         ) : null}
         <div className='flex flex-wrap items-center justify-between gap-2'>

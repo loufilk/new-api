@@ -70,6 +70,7 @@ func setupDashboardAuthMiddlewareTest(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuditLog{}, &model.UserAccessToken{}, &model.Option{},
 		&model.Token{}, &model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{}, &model.AgentInvitation{},
 		&model.UserCallInterception{}, &model.ReferralWithdrawal{}))
+	require.NoError(t, db.AutoMigrate(model.CommerceModels()...))
 	model.DB = db
 	model.LOG_DB = db
 	common.SetDatabaseTypes(dbType, dbType)

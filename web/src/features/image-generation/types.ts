@@ -20,6 +20,7 @@ export type ImageApiKeyOption = {
   id: number
   name: string
   group: string
+  smart_routing?: boolean
   auto_groups?: string[] | null
   model_limits_enabled: boolean
   model_limits: string

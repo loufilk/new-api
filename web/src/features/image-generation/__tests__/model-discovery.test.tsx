@@ -16,14 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { QueryClient } from '@tanstack/react-query'
+import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
-import { ImageGenerationPage } from '../components/ImageGenerationPage'
+import { renderImagePage } from './page-fixture'
 
 let client: QueryClient
 const name = 'grok-imagine-image-2.0'
@@ -65,11 +65,7 @@ function renderPage(
     }
     throw new Error(`Unexpected request: ${url}`)
   })
-  return render(
-    <QueryClientProvider client={client}>
-      <ImageGenerationPage />
-    </QueryClientProvider>
-  )
+  return renderImagePage(client)
 }
 
 test.each([
@@ -98,14 +94,14 @@ test.each([
 ])(
   '$label shows configuration checks without enabling generation',
   async ({ endpoints, tokenModels, selectedKey }) => {
-    renderPage(endpoints, tokenModels, selectedKey)
+    await renderPage(endpoints, tokenModels, selectedKey)
     expect(await screen.findByText(hint)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Generate' })).toBeDisabled()
   }
 )
 
 test('refresh reloads pricing, token limits and owned token models after configuration is repaired', async () => {
-  renderPage(['openai'], [], {
+  await renderPage(['openai'], [], {
     ...key,
     model_limits_enabled: true,
     model_limits: 'dall-e-3',
@@ -164,7 +160,7 @@ test('refresh reloads pricing, token limits and owned token models after configu
 
 test('the Console model enables reference upload, aspect ratio and quality selection', async () => {
   const consoleName = 'grok-imagine-image-2.0-console'
-  renderPage(['image-generation'], [consoleName])
+  await renderPage(['image-generation'], [consoleName])
   client.setQueryData(['image-generation-bootstrap'], {
     keys: [key],
     pricingModels: [
@@ -196,4 +192,13 @@ test('the Console model enables reference upload, aspect ratio and quality selec
       'Console supports up to 3 reference images and low/medium quality. Size sets the aspect ratio; resolution is 1K.'
     )
   ).toBeInTheDocument()
+})
+
+test('the image usage link opens ordinary consumption logs', async () => {
+  const { router } = await renderPage(['image-generation'])
+  const link = screen.getByRole('link', { name: 'Usage Logs' })
+  expect(link).toHaveAttribute('href', '/usage-logs/common')
+  await userEvent.setup().click(link)
+  await screen.findByRole('heading', { name: 'Usage destination' })
+  expect(router.state.location.pathname).toBe('/usage-logs/common')
 })

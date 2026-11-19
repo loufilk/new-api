@@ -213,8 +213,9 @@ func SettleInvoiceEpayFee(ctx context.Context, tradeNo, method string, facts Ver
 			return err
 		}
 		var owner User
-		if err := lockForUpdate(tx.Unscoped()).Select("id").First(&owner, identity.UserID).Error; err != nil {
-			return err
+		ownerErr := lockForUpdate(tx.Unscoped()).Select("id").First(&owner, identity.UserID).Error
+		if ownerErr != nil && !errors.Is(ownerErr, gorm.ErrRecordNotFound) {
+			return ownerErr
 		}
 		var invoice InvoiceApplication
 		if err := lockForUpdate(tx).Where("id = ? AND user_id = ?", identity.InvoiceID, identity.UserID).First(&invoice).Error; err != nil {
@@ -226,6 +227,11 @@ func SettleInvoiceEpayFee(ctx context.Context, tradeNo, method string, facts Ver
 		}
 		if payment.Provider != PaymentProviderEpay || payment.Method != method || facts.Provider != payment.Provider || facts.MerchantScope != payment.MerchantScope || facts.Environment != payment.Environment || facts.Currency != payment.Currency || facts.CurrencyExponent != payment.CurrencyExponent || facts.PaidMinor != payment.AmountMinor || payment.AmountMinor != invoice.FeeMinor || payment.Currency != invoice.Currency || payment.CurrencyExponent != invoice.CurrencyExponent {
 			return ErrPaymentReceiptConflict
+		}
+		// Fully settled payment evidence outlives a deleted account. Accept only
+		// its exact receipt replay below; never create a new ownerless liability.
+		if ownerErr != nil && payment.Status != "paid" && payment.Status != "refunded" {
+			return ownerErr
 		}
 		now := common.GetTimestamp()
 		receipt, err := ClaimPaymentReceiptTx(tx, &PaymentReceipt{Provider: facts.Provider, ProviderReference: facts.ExternalReference,

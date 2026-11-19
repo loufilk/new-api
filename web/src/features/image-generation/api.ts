@@ -49,6 +49,7 @@ export function toImageKeyOption(key: ApiKey): ImageApiKeyOption {
     id: key.id,
     name: key.name,
     group: key.group ?? '',
+    smart_routing: key.smart_routing ?? false,
     auto_groups: key.auto_groups,
     model_limits_enabled: key.model_limits_enabled,
     model_limits: key.model_limits ?? '',

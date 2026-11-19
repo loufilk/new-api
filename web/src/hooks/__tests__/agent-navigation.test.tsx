@@ -46,13 +46,21 @@ it('keeps the same console groups for a legacy agent without adding a sales work
       group.items.map((item) => 'url' in item && item.url)
     )
   ).toEqual(
-    expect.arrayContaining(['/wallet', '/keys', '/profile', '/security'])
+    expect.arrayContaining([
+      '/wallet',
+      '/keys',
+      '/profile',
+      '/security',
+      '/playground',
+      '/image',
+    ])
   )
   const urls = result.current.navGroups.flatMap((group) =>
     group.items.map((item) => ('url' in item ? item.url : undefined))
   )
   expect(result.current.navGroups.map((group) => group.id)).toEqual([
     'general',
+    'chat',
     'personal',
     'admin',
   ])

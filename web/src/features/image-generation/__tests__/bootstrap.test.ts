@@ -23,7 +23,7 @@ import type { ApiKey, GetApiKeysResponse } from '@/features/keys/types'
 import { getPricing } from '@/features/pricing/api'
 import type { PricingData } from '@/features/pricing/types'
 
-import { loadImagePageBootstrap } from '../api'
+import { loadImagePageBootstrap, toImageKeyOption } from '../api'
 
 vi.mock('@/features/keys/api', () => ({
   fetchTokenKey: vi.fn(),
@@ -174,5 +174,14 @@ describe('loadImagePageBootstrap aggregates every key page', () => {
 
     expect(mockedGetApiKeys).toHaveBeenCalledTimes(1)
     expect(bootstrap.keys).toEqual([])
+  })
+})
+
+test('image key options preserve smart routing when the saved manual group is stale', () => {
+  expect(
+    toImageKeyOption({ ...makeKey(1), group: 'old-group', smart_routing: true })
+  ).toMatchObject({
+    smart_routing: true,
+    group: 'old-group',
   })
 })

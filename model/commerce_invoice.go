@@ -19,6 +19,8 @@ const (
 	InvoiceCategorySoftwareDevelopment = "software_development"
 )
 
+var ErrInvoiceUnsettled = errors.New("This user has unsettled invoices or invoice fee payments. Complete or cancel the applications and settle all payments and refunds before deleting the account.")
+
 type InvoiceApplication struct {
 	ID                  int64              `json:"id" gorm:"primaryKey"`
 	UserID              int                `json:"user_id" gorm:"index;uniqueIndex:idx_invoice_user_request,priority:1"`
@@ -103,6 +105,36 @@ type CommerceReview struct {
 	DeliveryURL         string `json:"delivery_url"`
 	FeeReceiptReference string `json:"fee_receipt_reference"`
 	FeeRefundReference  string `json:"fee_refund_reference"`
+}
+
+// The deletion transaction already holds the owner row lock. Invoice creation,
+// payment and review acquire that same lock before changing these obligations.
+func ensureNoUnsettledInvoicesTx(tx *gorm.DB, userID int) error {
+	var invoice InvoiceApplication
+	result := tx.Select("id").Where("user_id = ?", userID).
+		Where("COALESCE(status, '') NOT IN ? OR COALESCE(fee_refund_status, '') NOT IN ? OR (status IN ? AND COALESCE(fee_receipt_reference, '') <> ? AND COALESCE(fee_refund_status, '') <> ?)",
+			[]string{"issued", "cancelled", "rejected"}, []string{"", "refunded"}, []string{"cancelled", "rejected"}, "", "refunded").
+		Limit(1).Find(&invoice)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		return ErrInvoiceUnsettled
+	}
+	// Cancelling an application does not cancel an external payment: a late
+	// callback still needs the owner until it is received and refunded.
+	issued := tx.Model(&InvoiceApplication{}).Select("id").Where("user_id = ? AND status = ?", userID, "issued")
+	var payment InvoiceFeePayment
+	result = tx.Select("id").Where("user_id = ?", userID).
+		Where("COALESCE(refund_status, '') NOT IN ? OR (COALESCE(status, '') <> ? AND (COALESCE(status, '') <> ? OR invoice_id NOT IN (?)))", []string{"", "refunded"}, "refunded", "paid", issued).
+		Limit(1).Find(&payment)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		return ErrInvoiceUnsettled
+	}
+	return nil
 }
 
 func EligibleInvoiceOrders(ctx context.Context, userID int) ([]InvoiceOrder, *CommerceConfig, error) {
@@ -322,6 +354,9 @@ func ReviewInvoiceApplication(ctx context.Context, actorID int, id int64, admin 
 			var users []User
 			if err := lockForUpdate(tx).Select("id").Where("id IN ?", []int{actorID, owner.UserID}).Order("id").Find(&users).Error; err != nil {
 				return err
+			}
+			if input.Action == "confirm_fee" && !slices.ContainsFunc(users, func(user User) bool { return user.Id == owner.UserID }) {
+				return ErrCommerceConflict
 			}
 		}
 		if err := commerceActor(tx, actorID, admin, permissions...); err != nil {

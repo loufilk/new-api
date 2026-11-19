@@ -21,9 +21,17 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { loadImageTokenModels, loadImagePageBootstrap } from '../api'
 import { getAvailableImageModels } from '../lib/model-filter'
+import { getImageHistoryOwnerId } from '../storage/history-owner'
+import {
+  loadImageKeyPreference,
+  saveImageKeyPreference,
+} from '../storage/key-preference'
 
 export function useImageData() {
-  const [apiKeyId, setApiKeyId] = useState<number | null>(null)
+  const ownerId = getImageHistoryOwnerId()
+  const [apiKeyId, setApiKeyId] = useState<number | null>(() =>
+    loadImageKeyPreference(ownerId)
+  )
   const [model, setModel] = useState('')
 
   const bootstrap = useQuery({
@@ -48,6 +56,7 @@ export function useImageData() {
       'image-generation-token-models',
       selectedKey?.id ?? null,
       group,
+      selectedKey?.smart_routing ?? false,
       selectedKey?.auto_groups ?? null,
       selectedKey?.model_limits_enabled ?? false,
       selectedKey?.model_limits ?? '',
@@ -73,7 +82,7 @@ export function useImageData() {
     [pricingModels, tokenModels, selectedKey]
   )
 
-  const effectiveApiKeyId = apiKeyId ?? selectedKey?.id ?? null
+  const effectiveApiKeyId = selectedKey?.id ?? null
 
   useEffect(() => {
     if (keys.length === 0) return
@@ -88,6 +97,13 @@ export function useImageData() {
     }
   }, [availableModels, model])
 
+  const selectApiKey = (id: number | null) => {
+    if (getImageHistoryOwnerId() !== ownerId) return
+    if (id !== null && !keys.some((key) => key.id === id)) return
+    setApiKeyId(id)
+    if (id !== null) saveImageKeyPreference(ownerId, id)
+  }
+
   return {
     keys,
     pricingModels,
@@ -95,7 +111,7 @@ export function useImageData() {
     availableModels,
     selectedKey,
     apiKeyId: effectiveApiKeyId,
-    setApiKeyId,
+    setApiKeyId: selectApiKey,
     model,
     setModel,
     group,

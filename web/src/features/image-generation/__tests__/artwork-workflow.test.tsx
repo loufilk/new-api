@@ -16,16 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { QueryClient } from '@tanstack/react-query'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, afterEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
-import { ImageGenerationPage } from '../components/ImageGenerationPage'
 import type { ImageHistoryEntry } from '../types'
 import { HISTORY_OWNER_KEY, signInHistoryOwner } from './history-fixture'
+import { renderImagePage } from './page-fixture'
 
 const entry: ImageHistoryEntry = {
   id: 'old',
@@ -85,16 +85,12 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 function renderPage() {
-  return render(
-    <QueryClientProvider client={client}>
-      <ImageGenerationPage />
-    </QueryClientProvider>
-  )
+  return renderImagePage(client)
 }
 
 test('reusing an unavailable historical model retains current key and clamps settings without generating', async () => {
   const post = vi.spyOn(api, 'post')
-  renderPage()
+  await renderPage()
   await waitFor(() =>
     expect(screen.getByLabelText('Model')).toHaveTextContent('dall-e-3')
   )
@@ -117,7 +113,7 @@ test('generation resets filters and inserts a single new result without losing o
     }
     throw new Error('Unexpected request')
   })
-  renderPage()
+  await renderPage()
   const user = userEvent.setup()
   await user.type(screen.getByLabelText('Search history'), 'no-match')
   await user.type(screen.getByLabelText('Prompt'), 'New landscape')
@@ -157,7 +153,7 @@ test('reusing with reference images requires confirmation before clearing them',
       static revokeObjectURL() {}
     }
   )
-  renderPage()
+  await renderPage()
   const user = userEvent.setup()
   await waitFor(() =>
     expect(screen.getByLabelText('Model')).toHaveTextContent('gpt-image-1')
@@ -206,7 +202,7 @@ test('empty upstream response retains artwork and warns that a retry can be bill
     }
     return { data: { data: [] } }
   })
-  renderPage()
+  await renderPage()
   const user = userEvent.setup()
   await user.type(screen.getByLabelText('Prompt'), 'New landscape')
   await user.click(screen.getByRole('button', { name: 'Generate' }))
@@ -219,7 +215,7 @@ test('empty upstream response retains artwork and warns that a retry can be bill
 })
 
 test('changing the authenticated account clears the editor and historical preview without adopting old history', async () => {
-  renderPage()
+  await renderPage()
   const user = userEvent.setup()
   await user.type(screen.getByLabelText('Prompt'), 'Private A draft')
   expect(screen.getByAltText('Previous landscape')).toBeInTheDocument()
@@ -264,7 +260,7 @@ test('a partial batch preserves its artwork and warns before another billable su
       },
     }
   })
-  renderPage()
+  await renderPage()
   const user = userEvent.setup()
   await waitFor(() =>
     expect(screen.getByLabelText('Model')).toHaveTextContent('gpt-image-2')
@@ -324,7 +320,7 @@ test('native resolution survives history storage and reuse without silently maki
     }
     return { data: { data: [{ url: 'https://example.com/2k.png' }] } }
   })
-  renderPage()
+  await renderPage()
   const user = userEvent.setup()
   await waitFor(() =>
     expect(screen.getByLabelText('Model')).toHaveTextContent(
