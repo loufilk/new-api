@@ -61,6 +61,29 @@ func openAuthzPostgresSchema(t *testing.T) *gorm.DB {
 	return db
 }
 
+func TestFailedReseedPreservesAdminPermissionsPostgreSQL(t *testing.T) {
+	db := openAuthzPostgresSchema(t)
+	wasMaster := common.IsMasterNode
+	common.IsMasterNode = true
+	t.Cleanup(func() { common.IsMasterNode = wasMaster })
+	require.NoError(t, Init(db))
+	before := Capabilities(42, common.RoleAdminUser)
+	require.True(t, before[ResourceChannel][ActionOperate])
+
+	// Keep the deployed rows, but reject one write in the next startup.
+	require.NoError(t, db.Exec(`ALTER TABLE casbin_rule ADD CONSTRAINT qa_reseed_failure
+		CHECK (v2 <> 'operate') NOT VALID`).Error)
+	require.Error(t, Init(db))
+	assert.Equal(t, before, Capabilities(42, common.RoleAdminUser))
+	require.NoError(t, ReloadPolicy())
+	assert.Equal(t, before, Capabilities(42, common.RoleAdminUser))
+
+	require.NoError(t, db.Exec("ALTER TABLE casbin_rule DROP CONSTRAINT qa_reseed_failure").Error)
+	require.NoError(t, Init(db))
+	require.NoError(t, ReloadPolicy())
+	assert.Equal(t, before, Capabilities(42, common.RoleAdminUser))
+}
+
 // TestLegacyScopedPoliciesDoNotExpandPermissionsPostgreSQL is the PostgreSQL
 // counterpart of TestLegacyScopedPoliciesDoNotExpandPermissions. The 043ff99a
 // authz changes read legacy own/other scoped rows from the real database, so
