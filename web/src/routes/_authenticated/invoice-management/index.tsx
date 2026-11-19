@@ -22,6 +22,7 @@ import {
   redirect,
 } from '@tanstack/react-router'
 
+import { extensionConsoleTools } from '@/extensions'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -31,7 +32,7 @@ export const Route = createFileRoute('/_authenticated/invoice-management/')({
       throw redirect({ to: '/403', replace: true })
     }
   },
-  component: lazyRouteComponent(
-    () => import('@/extensions/chuanapi/invoice/admin')
+  component: lazyRouteComponent(() =>
+    extensionConsoleTools().loadInvoiceManagementPage()
   ),
 })

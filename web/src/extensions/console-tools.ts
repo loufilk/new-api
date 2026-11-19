@@ -21,6 +21,8 @@ import type { ReactNode } from 'react'
 
 export type ModelTestAvailability = { enabled: boolean }
 
+type ConsolePageLoader = () => Promise<{ default: () => ReactNode }>
+
 export type ConsoleToolsExtension = {
   id: string
   accountPoolPage: () => ReactNode
@@ -28,6 +30,8 @@ export type ConsoleToolsExtension = {
   verifyAccountPoolAccess: (client: QueryClient) => Promise<boolean>
   affiliatePage: () => ReactNode
   intelligencePage: () => ReactNode
+  loadInvoicePage: ConsolePageLoader
+  loadInvoiceManagementPage: ConsolePageLoader
 }
 
 let consoleToolsExtension: ConsoleToolsExtension | null = null

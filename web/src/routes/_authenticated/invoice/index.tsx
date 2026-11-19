@@ -18,8 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute, lazyRouteComponent } from '@tanstack/react-router'
 
+import { extensionConsoleTools } from '@/extensions'
+
 export const Route = createFileRoute('/_authenticated/invoice/')({
-  component: lazyRouteComponent(
-    () => import('@/extensions/chuanapi/invoice/customer')
+  component: lazyRouteComponent(() =>
+    extensionConsoleTools().loadInvoicePage()
   ),
 })

@@ -92,6 +92,8 @@ export const chuanapiConsoleToolsExtension: ConsoleToolsExtension = {
   },
   affiliatePage: LazyAffiliate,
   intelligencePage: LazyIntelligence,
+  loadInvoicePage: () => import('./invoice/customer'),
+  loadInvoiceManagementPage: () => import('./invoice/admin'),
 }
 
 export const chuanapiPaymentSettingsExtension: PaymentSettingsExtension = {

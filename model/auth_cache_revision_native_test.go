@@ -18,7 +18,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// These tests use only a disposable PG 18.6 + Redis 8.8 fixture. Barriers expose
+// These tests use only disposable PostgreSQL 18.6/18.7 and Redis 8.8.0/8.10.3 fixtures. Barriers expose
 // the exact read/commit/cache-write ordering, without relying on sleeps.
 func nativeAuthCacheFixture(t *testing.T) {
 	t.Helper()
@@ -34,9 +34,9 @@ func nativeAuthCacheFixture(t *testing.T) {
 	options.ReadTimeout, options.WriteTimeout, options.DialTimeout = time.Second, time.Second, time.Second
 	options.MaxRetries = -1
 	rdb := redis.NewClient(options)
-	info, err := rdb.Info(t.Context(), "server").Result()
+	info, err := rdb.InfoMap(t.Context(), "server").Result()
 	require.NoError(t, err)
-	require.True(t, strings.Contains(info, "redis_version:8.8.0"), info)
+	require.Contains(t, []string{"8.8.0", "8.10.3"}, info["Server"]["redis_version"], "unsupported Redis fixture version")
 	size, err := rdb.DBSize(t.Context()).Result()
 	require.NoError(t, err)
 	require.Zero(t, size, "fixture Redis DB must start empty")
