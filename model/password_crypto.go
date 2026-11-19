@@ -20,6 +20,15 @@ type LoginEncryptionKey struct {
 	PrivateKeyPEM string `json:"-" gorm:"type:text;not null"`
 }
 
+// LoadExistingPasswordEncryption never creates or rotates the shared key during a rollback.
+func LoadExistingPasswordEncryption() error {
+	var stored LoginEncryptionKey
+	if err := DB.Where("slot = ?", activeLoginEncryptionKeySlot).First(&stored).Error; err != nil {
+		return fmt.Errorf("rollback requires an existing active password encryption key: %w", err)
+	}
+	return common.LoadPasswordEncryptionPrivateKey(stored.PrivateKeyPEM)
+}
+
 // InitPasswordEncryption loads the shared login-encryption key from its
 // dedicated store. Concurrent replicas converge through the unique slot.
 func InitPasswordEncryption() error {

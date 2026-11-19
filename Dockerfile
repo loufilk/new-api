@@ -32,7 +32,8 @@ FROM debian:bookworm-slim@sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0
 ARG SOURCE_REVISION
 ARG RELEASE_VERSION
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION \
-      org.opencontainers.image.version=$RELEASE_VERSION
+      org.opencontainers.image.version=$RELEASE_VERSION \
+      io.chuanapi.release.mode="im13-schema-preserving-rollback"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates tzdata libasan8 wget \

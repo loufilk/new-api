@@ -376,43 +376,29 @@ func InitResources(workers *lifecycle.Group) error {
 		common.FatalLog(common.LogText("failed to initialize database: %s", err.Error()))
 		return err
 	}
-	// Before the loads below: a write made while they run is reloaded later.
-	service.ReadStartupSyncRevisions()
-	if err = authz.Init(model.DB); err != nil {
-		common.FatalLog(common.LogText("failed to initialize authorization: %s", err.Error()))
+	// Validate both upgraded databases before starting any worker or modifying application data.
+	if err := model.InitLogDB(); err != nil {
 		return err
 	}
-	if common.IsMasterNode {
-		// The master rewrote the built-in role policies.
-		model.BumpSyncTopic(model.SyncTopicAuthz)
+	// Before the loads below: a write made while they run is reloaded later.
+	service.ReadStartupSyncRevisions()
+	if err := authz.LoadExisting(model.DB); err != nil {
+		return fmt.Errorf("failed to load existing authorization policies: %w", err)
 	}
 	if common.PasswordLoginEncryptionEnabled {
-		if err = model.InitPasswordEncryption(); err != nil {
+		if err = model.LoadExistingPasswordEncryption(); err != nil {
 			common.FatalLog(common.LogText("failed to initialize password encryption: %s", err.Error()))
 			return err
 		}
 	}
 
-	model.CheckSetup()
-
-	// Initialize options, should after model.InitDB()
-	if common.IsMasterNode {
-		if err := model.MigrateRetiredFrontendOptions(); err != nil {
-			common.SysError(common.LogText("failed to migrate retired frontend options: %s", err.Error()))
-		}
-		// ChuanAPI still uses legacy sensitive-word options and per-group
-		// exemptions. Do not convert them into the upstream global filter.
-	}
+	// verifyRollbackMain requires an initialized site. Do not run setup repair,
+	// option migrations, or authorization reseeding on a newer database.
+	constant.Setup = true
 	model.InitOptionMap()
 
 	// 清理旧的磁盘缓存文件
 	common.CleanupOldCacheFiles()
-
-	// Initialize SQL Database
-	err = model.InitLogDB()
-	if err != nil {
-		return err
-	}
 
 	// Initialize Redis
 	err = common.InitRedisClient()

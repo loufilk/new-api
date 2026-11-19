@@ -147,6 +147,18 @@ agent_governances agent_governance_submissions agent_governance_audits agent_gov
 			if rule, ok := rules[table]; ok {
 				query = query.Where(rule.predicate, rule.args...)
 			}
+			if table == "agent_payment_receipts" && slices.Contains(tables, "customer_invoice_applications") {
+				// Preflight runs *before* migration. Old schemas may have only
+				// a purpose column, or an im.14 invoice table without fee columns.
+				// Never require the new schema if there are no fee receipts.
+				var fees []int
+				if err := tx.Table(table).Select("1").Where("purpose = 'invoice_fee'").Limit(1).Scan(&fees).Error; err != nil {
+					return errors.New("non-agent cutover preflight: cannot inspect payment purposes")
+				}
+				if len(fees) != 0 {
+					query = query.Where("NOT EXISTS (?)", linkedInvoiceFeeCutoverEvidence(tx))
+				}
+			}
 			var count int64
 			if err := query.Count(&count).Error; err != nil {
 				return fmt.Errorf("non-agent cutover preflight: cannot inspect %s; retain the original version", table)
@@ -244,4 +256,21 @@ agent_governances agent_governance_submissions agent_governance_audits agent_gov
 		return blocks, fmt.Errorf("%w (%v)", ErrNonAgentCutoverBlocked, blocks)
 	}
 	return blocks, nil
+}
+
+// Both cutover modes retain the invoice subsystem and its reconciliation queue.
+// Exempt a particular receipt, not a purpose string: an orphan, wrong rail,
+// amount mismatch, or unknown lifecycle remains blocked. The proof refers to
+// the outer receipt by its real table name and runs in the same read-only snapshot.
+func linkedInvoiceFeeCutoverEvidence(tx *gorm.DB) *gorm.DB {
+	return tx.Table("customer_invoice_applications AS a").Select("1").
+		Where("agent_payment_receipts.purpose = 'invoice_fee' AND agent_payment_receipts.provider = ? AND agent_payment_receipts.environment = 'live'", PaymentProviderEpay).
+		Where("agent_payment_receipts.currency = 'CNY' AND agent_payment_receipts.currency_exponent = 2 AND agent_payment_receipts.paid_minor BETWEEN 1 AND ?", common.MaxWalletQuota).
+		Where("agent_payment_receipts.provider_reference <> '' AND agent_payment_receipts.provider_reference = TRIM(agent_payment_receipts.provider_reference) AND LENGTH(agent_payment_receipts.receipt_key) = 64").
+		Where("agent_payment_receipts.paid_at > 0 AND agent_payment_receipts.verified_at >= agent_payment_receipts.paid_at").
+		Where("a.fee_receipt_id = agent_payment_receipts.id AND a.user_id = agent_payment_receipts.owner_user_id AND a.user_id > 0").
+		Where("a.merchant_scope = agent_payment_receipts.merchant_scope AND a.merchant_scope <> '' AND a.fee_trade_no = agent_payment_receipts.local_order_key").
+		Where("a.fee_trade_no LIKE 'CIF%' AND LENGTH(a.fee_trade_no) = 32 AND a.fee_rail = 'epay' AND a.fee_payment_method <> '' AND a.fee_gateway <> ''").
+		Where("a.fee_minor = agent_payment_receipts.paid_minor AND a.fee_paid_minor = a.fee_minor AND a.fee_paid_at = agent_payment_receipts.paid_at").
+		Where("((a.status IN ('pending','issued') AND a.fee_state = 'paid') OR (a.status IN ('cancelled','rejected') AND a.fee_state = 'refund_review'))")
 }

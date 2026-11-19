@@ -164,6 +164,9 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, common.DatabaseType, error)
 }
 
 func InitDB() (err error) {
+	if err := requireRollbackConfig(); err != nil {
+		return err
+	}
 	db, dbType, err := chooseDB("SQL_DSN", false)
 	if err == nil {
 		common.SetMainDatabaseType(dbType)
@@ -199,20 +202,7 @@ func InitDB() (err error) {
 		pool.Apply(sqlDB)
 		common.SysLog(fmt.Sprintf("SQL pool log=%t max_open=%d max_idle=%d lifetime=%s idle_time=%s", false, pool.MaxOpen, pool.MaxIdle, pool.Lifetime, pool.IdleTime))
 
-		if !common.IsMasterNode {
-			// Only the master node migrates. A node that cannot read the deadline
-			// keeps rejecting legacy access tokens instead of refusing to start.
-			if err := EnsureLegacyAccessTokenRetireAt(common.GetTimestamp()); err != nil {
-				common.SysError(common.LogText("initialize legacy access token deadline: %s", err.Error()))
-			}
-			return nil
-		}
-		if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
-			//_, _ = sqlDB.Exec("ALTER TABLE channels MODIFY model_mapping TEXT;") // TODO: delete this line when most users have upgraded
-		}
-		common.SysLog(common.LogText("database migration started"))
-		err = migrateDB()
-		return err
+		return verifyRollbackMain(DB)
 	} else {
 		common.FatalLog(err)
 	}
@@ -224,10 +214,7 @@ func InitLogDB() (err error) {
 		LOG_DB = DB
 		common.SetLogDatabaseType(common.MainDatabaseType())
 		initCol()
-		if common.IsMasterNode {
-			return MigrateAuditLogs()
-		}
-		return
+		return verifyRollbackLog(LOG_DB)
 	}
 	db, dbType, err := chooseDB("LOG_SQL_DSN", true)
 	if err == nil {
@@ -255,12 +242,7 @@ func InitLogDB() (err error) {
 		pool.Apply(sqlDB)
 		common.SysLog(fmt.Sprintf("SQL pool log=%t max_open=%d max_idle=%d lifetime=%s idle_time=%s", true, pool.MaxOpen, pool.MaxIdle, pool.Lifetime, pool.IdleTime))
 
-		if !common.IsMasterNode {
-			return nil
-		}
-		common.SysLog(common.LogText("database migration started"))
-		err = migrateLOGDB()
-		return err
+		return verifyRollbackLog(LOG_DB)
 	} else {
 		common.FatalLog(err)
 	}

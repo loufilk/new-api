@@ -40,6 +40,17 @@ func Init(db *gorm.DB) error {
 		}
 	}
 
+	if err := LoadExisting(db); err != nil {
+		return err
+	}
+	if !common.IsMasterNode {
+		return nil
+	}
+	return seedDefaultPolicies()
+}
+
+// LoadExisting initializes the in-memory enforcer without rewriting stored policies.
+func LoadExisting(db *gorm.DB) error {
 	m, err := casbinmodel.NewModelFromString(modelText)
 	if err != nil {
 		return err
@@ -54,10 +65,7 @@ func Init(db *gorm.DB) error {
 	enforcer = e
 	enforcerMu.Unlock()
 
-	if !common.IsMasterNode {
-		return nil
-	}
-	return seedDefaultPolicies()
+	return nil
 }
 
 func currentEnforcer() *casbin.SyncedEnforcer {
