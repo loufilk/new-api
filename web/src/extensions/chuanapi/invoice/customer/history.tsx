@@ -43,21 +43,23 @@ import {
   invoiceTypeLabels,
   applicationStatusLabel,
 } from './copy'
-import { ApplicationDetail } from './detail'
 import { InvoicePager } from './pager'
 
 const tones = {
+  awaiting_payment: 'warning',
   pending: 'warning',
   issued: 'success',
   rejected: 'danger',
   cancelled: 'neutral',
 } as const
 
-export function InvoiceHistory(props: { owner: number }) {
+export function InvoiceHistory(props: {
+  owner: number
+  onDetail: (id: number) => void
+}) {
   const { text, money } = useInvoiceText()
   const [status, setStatus] = useState<InvoiceStatus | ''>('')
   const [page, setPage] = useState(1)
-  const [detailId, setDetailId] = useState<number | null>(null)
   const result = useQuery({
     ...privateRead,
     queryKey: [...invoiceKey(props.owner), 'history', status, page],
@@ -135,7 +137,7 @@ export function InvoiceHistory(props: { owner: number }) {
                     <Button
                       size='sm'
                       variant='outline'
-                      onClick={() => setDetailId(entry.id)}
+                      onClick={() => props.onDetail(entry.id)}
                       aria-label={`${text('Details')} #${entry.id}`}
                     >
                       {text('Details')}
@@ -153,14 +155,6 @@ export function InvoiceHistory(props: { owner: number }) {
           </>
         )}
       </CardContent>
-      {detailId !== null && (
-        <ApplicationDetail
-          key={detailId}
-          owner={props.owner}
-          id={detailId}
-          onClose={() => setDetailId(null)}
-        />
-      )}
     </Card>
   )
 }

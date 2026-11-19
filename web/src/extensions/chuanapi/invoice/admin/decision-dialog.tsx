@@ -50,6 +50,7 @@ interface DecisionFields {
 
 export function DecisionDialog(props: {
   id: number
+  paidRail?: '' | 'wallet' | 'epay'
   kind: DecisionKind
   onCancel: () => void
   onSaved: () => void
@@ -100,6 +101,17 @@ export function DecisionDialog(props: {
       'Use this for a reported refund after issuance. It adds an internal finance note and keeps the invoice and its orders unchanged.',
       '用于开票后发现退款的情况。仅登记内部核对原因，保留原发票和订单，不会作废或重新开放开票。'
     ),
+  }
+  if (reject && props.paidRail === 'wallet') {
+    descriptions.reject += ` ${label(
+      'Rejecting returns the paid fee to the customer’s paid wallet balance.',
+      '驳回后，实付手续费将退回客户的钱包付费余额。'
+    )}`
+  } else if (reject && props.paidRail === 'epay') {
+    descriptions.reject += ` ${label(
+      'Rejecting flags the paid Epay fee for manual refund review. No cash refund is sent here.',
+      '驳回后，已支付的易支付手续费将进入人工退款核对，不会自动原路退款。'
+    )}`
   }
   const numberHint = label(
     'Use 1–64 letters, digits or hyphens with at least one letter or digit.',

@@ -65,6 +65,11 @@ func SubmitCustomerInvoice(ctx context.Context, owner int, policy CustomerInvoic
 			out, err = invoiceDetail(tx, &replay, false)
 			return err
 		}
+		// Personal titles are historical, read/replay-only; never admit a new
+		// personal application. Scope this restriction after idempotent replay.
+		if input.TitleType != "company" {
+			return ErrCustomerInvoiceInvalid
+		}
 		if err := lockInvoiceTopUps(tx, owner, input.OrderIDs); err != nil {
 			return err
 		}
@@ -86,6 +91,45 @@ func SubmitCustomerInvoice(ctx context.Context, owner int, policy CustomerInvoic
 			line.ActiveTopUpID = &line.TopUpID
 			a.AmountMinor += line.AmountMinor
 		}
+		settings, err := lockCustomerInvoiceSettings(tx, false)
+		if err != nil {
+			return err
+		}
+		var expected int64
+		if input.SettingsVersion != nil {
+			expected = *input.SettingsVersion
+		}
+		if settings.Version != expected {
+			return ErrCustomerInvoiceSettingsConflict
+		}
+		terms := settings.Ordinary
+		if a.InvoiceType == "special" {
+			terms = settings.Special
+		}
+		if !terms.Enabled {
+			return ErrCustomerInvoiceTypeDisabled
+		}
+		a.SettingsVersion, a.TaxRateBPS = settings.Version, terms.TaxRateBPS
+		if terms.FeeEnabled {
+			a.FeeRateBPS = terms.FeeRateBPS
+		}
+		a.FeeMinor, err = customerInvoiceFeeMinor(a.AmountMinor, a.FeeRateBPS)
+		if err != nil {
+			return err
+		}
+		a.FeeState = "none"
+		if a.FeeMinor > 0 {
+			if policy.WalletFeeAvailable {
+				rate := CustomerInvoiceWalletQuotaPerCent()
+				if _, err := CustomerInvoiceWalletFeeQuote(a.FeeMinor, rate); err == nil {
+					a.WalletQuotaPerCent = rate
+				}
+			}
+			if (a.WalletQuotaPerCent == 0 && !policy.EpayFeeAvailable) || a.FeeMinor > int64(common.MaxWalletQuota) {
+				return ErrCustomerInvoiceFeePaymentUnavailable
+			}
+			a.Status, a.FeeState = "awaiting_payment", "unpaid"
+		}
 		a.OrderCount = len(items)
 		if err := tx.Create(&items).Error; err != nil {
 			if isDuplicateKeyError(err) {
@@ -93,7 +137,8 @@ func SubmitCustomerInvoice(ctx context.Context, owner int, policy CustomerInvoic
 			}
 			return err
 		}
-		if err := tx.Model(&a).Updates(map[string]any{"amount_minor": a.AmountMinor, "order_count": a.OrderCount}).Error; err != nil {
+		if err := tx.Model(&a).Updates(map[string]any{"amount_minor": a.AmountMinor, "order_count": a.OrderCount, "settings_version": a.SettingsVersion,
+			"status": a.Status, "fee_state": a.FeeState, "wallet_quota_per_cent": a.WalletQuotaPerCent, "fee_minor": a.FeeMinor, "fee_rate_bps": a.FeeRateBPS, "tax_rate_bps": a.TaxRateBPS}).Error; err != nil {
 			return err
 		}
 		out, err = invoiceDetail(tx, &a, false)
@@ -117,6 +162,7 @@ func RejectCustomerInvoice(ctx context.Context, actor int, id int64, reason stri
 }
 
 func closePendingInvoice(ctx context.Context, actor int, id int64, status, reason string, admin bool) (*CustomerInvoiceDetail, error) {
+	var refreshWallet int
 	var out *CustomerInvoiceDetail
 	err := invoiceDB(ctx).Transaction(func(tx *gorm.DB) error {
 		if admin {
@@ -129,8 +175,34 @@ func closePendingInvoice(ctx context.Context, actor int, id int64, status, reaso
 			return err
 		}
 		if a.Status != status || a.Reason != reason || a.ActionBy != actor {
-			if a.Status != "pending" || a.ProcessingBy != 0 || a.ProcessingAt != 0 {
+			if (a.Status != "pending" && a.Status != "awaiting_payment") || a.ProcessingBy != 0 || a.ProcessingAt != 0 {
 				return ErrCustomerInvoiceConflict
+			}
+			switch {
+			case a.Status == "awaiting_payment":
+				// No rail-switch or release after a payable external order exists.
+				if a.FeeMinor <= 0 || a.FeeState != "unpaid" || a.FeeRail != "" || a.FeeTradeNo != nil || a.FeePaidMinor != 0 ||
+					a.FeePaidAt != 0 || a.FeeReceiptID != 0 || a.FeeGateway != "" || a.FeePaymentMethod != "" {
+					return ErrCustomerInvoiceConflict
+				}
+			case a.FeeMinor > 0:
+				if a.FeeRail == "wallet" {
+					if err := refundCustomerInvoiceWalletFeeTx(tx, &a, actor); err != nil {
+						return err
+					}
+					a.FeeState = "refunded"
+					refreshWallet = a.UserID
+				} else {
+					if err := verifyCustomerInvoiceFeeTx(tx, &a); err != nil {
+						return err
+					}
+					// A real Epay receipt exists: record manual refund review, never imply a cash payout.
+					a.FeeState = "refund_review"
+				}
+			default:
+				if err := verifyCustomerInvoiceFeeTx(tx, &a); err != nil {
+					return err
+				}
 			}
 			released := tx.Model(&CustomerInvoiceItem{}).Where("application_id = ? AND active_top_up_id = top_up_id", a.ID).Update("active_top_up_id", nil)
 			if released.Error != nil {
@@ -139,7 +211,7 @@ func closePendingInvoice(ctx context.Context, actor int, id int64, status, reaso
 			if a.OrderCount <= 0 || released.RowsAffected != int64(a.OrderCount) {
 				return ErrCustomerInvoiceConflict
 			}
-			if err := tx.Model(&a).Updates(map[string]any{"status": status, "reason": reason, "action_by": actor}).Error; err != nil {
+			if err := tx.Model(&a).Updates(map[string]any{"status": status, "reason": reason, "action_by": actor, "fee_state": a.FeeState}).Error; err != nil {
 				return err
 			}
 		}
@@ -149,6 +221,9 @@ func closePendingInvoice(ctx context.Context, actor int, id int64, status, reaso
 	if err != nil {
 		return nil, err
 	}
+	if refreshWallet > 0 {
+		RefreshUserQuotaCache(refreshWallet, 0)
+	}
 	return out, nil
 }
 
@@ -156,6 +231,29 @@ func closePendingInvoice(ctx context.Context, actor int, id int64, status, reaso
 // a matching total or the customer's current balance. The 30-day cutoff is for
 // intake; a finance delay doesn't invalidate a timely, still-unrefunded order.
 func reconcileCustomerInvoice(tx *gorm.DB, a *CustomerInvoiceApplication) error {
+	if a.TitleType != "company" {
+		return ErrCustomerInvoiceInvalid
+	}
+	if err := verifyCustomerInvoiceFeeTx(tx, a); err != nil {
+		return err
+	}
+	// The shared refund registry may contain verified evidence that an Epay
+	// fee was reversed; don't claim or issue against a reversed payment.
+	if a.FeeRail == "epay" {
+		var reversed int64
+		if err := tx.Model(&AgentCommissionRefundFact{}).
+			Where("provider = ? AND cumulative_refunded_minor > 0 AND payment_reference = (?)", PaymentProviderEpay,
+				tx.Model(&PaymentReceipt{}).Select("provider_reference").Where("id = ?", a.FeeReceiptID)).Count(&reversed).Error; err != nil {
+			return err
+		}
+		if reversed != 0 {
+			return ErrCustomerInvoiceConflict
+		}
+	}
+	return reconcileCustomerInvoiceOrders(tx, a)
+}
+
+func reconcileCustomerInvoiceOrders(tx *gorm.DB, a *CustomerInvoiceApplication) error {
 	if a.OrderCount <= 0 || a.OrderCount > customerInvoiceMaxOrders || a.AmountMinor <= 0 {
 		return ErrCustomerInvoiceConflict
 	}

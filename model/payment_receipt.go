@@ -60,7 +60,8 @@ func ValidatePaymentReceipt(receipt *PaymentReceipt) error {
 	if receipt.Provider == PaymentProviderStripe && !strings.HasPrefix(receipt.ProviderReference, "pi_") {
 		return ErrPaymentReceiptConflict
 	}
-	if receipt.Purpose != "topup" {
+	if receipt.Purpose != "topup" && !(receipt.Purpose == "invoice_fee" && receipt.Provider == PaymentProviderEpay &&
+		receipt.Currency == "CNY" && receipt.CurrencyExponent == 2 && receipt.Environment == "live" && invoiceFeeTradePattern.MatchString(receipt.LocalOrderKey)) {
 		return ErrPaymentReceiptConflict
 	}
 	if receipt.Environment != "live" && receipt.Environment != "test" {

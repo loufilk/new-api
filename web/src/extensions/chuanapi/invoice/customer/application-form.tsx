@@ -32,6 +32,7 @@ import {
   getServerErrorStatus,
 } from '@/lib/server-error-message'
 
+import { formatInvoiceRate } from '../contracts'
 import { invoiceAPI } from './api'
 import { useInvoiceText, type InvoiceTextKey } from './copy'
 import {
@@ -40,52 +41,76 @@ import {
   type InvoiceFields,
 } from './form-schema'
 import type { OrderSelection } from './orders'
+import { estimateInvoiceFee, type CustomerInvoiceConfig } from './policy'
 
 export function ApplicationForm(props: {
+  policy: CustomerInvoiceConfig
   selection: OrderSelection
   onBusy: (busy: boolean) => void
-  onSuccess: () => void
+  onSuccess: (paymentId?: number) => void
   onConflict: () => void
 }) {
-  const { text, money } = useInvoiceText()
+  const { text, money, locale } = useInvoiceText()
   const form = useForm<InvoiceFormInput, unknown, InvoiceFields>({
     resolver: zodResolver(invoiceSchema),
     defaultValues: {
-      invoice_type: 'ordinary',
+      invoice_type: props.policy.ordinary.enabled ? 'ordinary' : 'special',
       title_type: 'company',
       category: 'technical_service',
       title: '',
       email: '',
     },
   })
-  const [type, titleType] = useWatch({
+  const type = useWatch({
     control: form.control,
-    name: ['invoice_type', 'title_type'],
+    name: 'invoice_type',
   })
   const identify = useRequestId()
   const mutation = useMutation({
     gcTime: 0,
-    mutationFn: (fields: InvoiceFields) => {
-      const ids = [...props.selection.keys()].sort((a, b) => a - b)
-      return invoiceAPI.submit(fields, ids, identify([fields, ids]))
-    },
-    onSuccess: () => {
+    mutationFn: (request: Parameters<typeof invoiceAPI.submit>) =>
+      invoiceAPI.submit(...request),
+    onSuccess: (application) => {
       form.reset()
       identify.reset()
-      props.onSuccess()
+      props.onSuccess(
+        application.status === 'awaiting_payment' ? application.id : undefined
+      )
       toast.success(text('Application submitted.'))
     },
     meta: { errorToast: false },
     onError: (error) => {
-      if (getServerErrorStatus(error) === 409) props.onConflict()
+      const status = getServerErrorStatus(error)
+      if (status === 409 || status === 403) props.onConflict()
     },
     onSettled: () => props.onBusy(false),
   })
   const special = type === 'special'
-  const company = titleType === 'company'
-  const total = [...props.selection.values()]
-    .reduce((sum, amount) => sum + BigInt(amount), 0n)
-    .toString()
+  const total = [...props.selection.values()].reduce(
+    (sum, amount) => sum + BigInt(amount),
+    0n
+  )
+  const typePolicy = props.policy[type]
+  const fee = estimateInvoiceFee(total, typePolicy)
+  const paymentAvailable =
+    fee <= BigInt(Number.MAX_SAFE_INTEGER) &&
+    props.policy.fee_payment_methods.some(
+      (method) =>
+        method.rail === 'epay' ||
+        (props.policy.wallet_quota_per_cent > 0 &&
+          fee * BigInt(props.policy.wallet_quota_per_cent) <=
+            BigInt(Number.MAX_SAFE_INTEGER))
+    )
+  const paymentBlocked = fee > 0n && !paymentAvailable
+  let submitLabel: InvoiceTextKey =
+    fee > 0n ? 'Submit and choose payment' : 'Submit application'
+  if (mutation.isPending) submitLabel = 'Submitting…'
+  const disabled =
+    !props.selection.size ||
+    !props.policy.enabled ||
+    !typePolicy.enabled ||
+    paymentBlocked ||
+    mutation.isPending
   const field = (
     name:
       | 'title'
@@ -146,52 +171,47 @@ export function ApplicationForm(props: {
         <form
           noValidate
           onSubmit={form.handleSubmit((values) => {
-            if (props.selection.size === 0 || mutation.isPending) return
+            if (disabled || values.invoice_type !== type) return
+            const orderIds = [...props.selection.keys()].sort((a, b) => a - b)
+            const version = props.policy.version
             props.onBusy(true)
-            mutation.mutate(values)
+            mutation.mutate([
+              values,
+              orderIds,
+              identify([values, orderIds, version]),
+              version,
+            ])
           })}
         >
           <fieldset className='space-y-4' disabled={mutation.isPending}>
-            <div className='grid grid-cols-2 gap-3'>
-              <div className='space-y-1.5'>
-                <Label htmlFor='invoice-type'>{text('Invoice type')}</Label>
-                <NativeSelect
-                  className='w-full'
-                  id='invoice-type'
-                  {...form.register('invoice_type', {
-                    onChange: (e) => {
-                      if (e.target.value === 'special') {
-                        form.setValue('title_type', 'company')
-                      }
-                    },
-                  })}
+            <div className='space-y-1.5'>
+              <Label htmlFor='invoice-type'>{text('Invoice type')}</Label>
+              <NativeSelect
+                className='w-full'
+                id='invoice-type'
+                {...form.register('invoice_type')}
+              >
+                <NativeSelectOption
+                  value='ordinary'
+                  disabled={!props.policy.ordinary.enabled}
                 >
-                  <NativeSelectOption value='ordinary'>
-                    {text('Ordinary invoice')}
-                  </NativeSelectOption>
-                  <NativeSelectOption value='special'>
-                    {text('Special VAT invoice')}
-                  </NativeSelectOption>
-                </NativeSelect>
-              </div>
-              <div className='space-y-1.5'>
-                <Label htmlFor='invoice-title-type'>{text('Title type')}</Label>
-                <NativeSelect
-                  id='invoice-title-type'
-                  className='w-full'
-                  {...form.register('title_type')}
+                  {text('Ordinary invoice')}
+                </NativeSelectOption>
+                <NativeSelectOption
+                  value='special'
+                  disabled={!props.policy.special.enabled}
                 >
-                  <NativeSelectOption value='company'>
-                    {text('Company')}
-                  </NativeSelectOption>
-                  <NativeSelectOption disabled={special} value='personal'>
-                    {text('Individual')}
-                  </NativeSelectOption>
-                </NativeSelect>
-              </div>
+                  {text('Special VAT invoice')}
+                </NativeSelectOption>
+              </NativeSelect>
             </div>
+            <p className='text-muted-foreground text-xs'>
+              {text(
+                'Only company invoices are available. Enter the registered company name and tax ID.'
+              )}
+            </p>
             {field('title', 'Invoice title')}
-            {company && field('tax_id', 'Tax ID')}
+            {field('tax_id', 'Tax ID')}
             <div className='space-y-1.5'>
               <Label htmlFor='invoice-category'>
                 {text('Invoice category')}
@@ -230,9 +250,50 @@ export function ApplicationForm(props: {
               </div>
               <div className='flex justify-between gap-2'>
                 <dt>{text('Invoice amount')}</dt>
-                <dd className='font-semibold tabular-nums'>{money(total)}</dd>
+                <dd className='font-semibold tabular-nums'>
+                  {money(total.toString())}
+                </dd>
               </div>
+              <div className='flex justify-between gap-2'>
+                <dt>{text('Estimated invoice fee')}</dt>
+                <dd className='tabular-nums'>
+                  {money(fee.toString())} (
+                  {formatInvoiceRate(
+                    typePolicy.fee_enabled ? typePolicy.fee_rate_bps : 0,
+                    locale
+                  )}
+                  )
+                </dd>
+              </div>
+              {props.policy.version != null && props.policy.version > 0 && (
+                <div className='flex justify-between gap-2'>
+                  <dt>{text('Configured tax rate (reference only)')}</dt>
+                  <dd className='tabular-nums'>
+                    {formatInvoiceRate(typePolicy.tax_rate_bps, locale)}
+                  </dd>
+                </div>
+              )}
             </dl>
+            {fee > 0n && paymentAvailable && typePolicy.enabled && (
+              <p className='text-muted-foreground text-sm'>
+                {text(
+                  'Submitting will not charge you. Choose a payment method in the application details.'
+                )}
+              </p>
+            )}
+            {(!typePolicy.enabled || paymentBlocked) && (
+              <p
+                id='invoice-fee-warning'
+                role='status'
+                className='bg-muted rounded-lg p-3 text-sm'
+              >
+                {text(
+                  !typePolicy.enabled
+                    ? 'This invoice type is currently unavailable'
+                    : 'This application requires a fee. It cannot be submitted until fee payment is available.'
+                )}
+              </p>
+            )}
             {mutation.isError && (
               <p role='alert' className='text-destructive text-sm'>
                 {getServerErrorMessage(mutation.error)}
@@ -241,11 +302,14 @@ export function ApplicationForm(props: {
             <Button
               className='w-full'
               type='submit'
-              disabled={!props.selection.size || mutation.isPending}
+              disabled={disabled}
+              aria-describedby={
+                !typePolicy.enabled || paymentBlocked
+                  ? 'invoice-fee-warning'
+                  : undefined
+              }
             >
-              {mutation.isPending
-                ? text('Submitting…')
-                : text('Submit application')}
+              {text(submitLabel)}
             </Button>
           </fieldset>
         </form>

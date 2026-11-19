@@ -28,7 +28,7 @@ import { Button } from '@/components/ui/button'
 import { formatTimestamp } from '@/lib/format'
 import { getServerErrorMessage } from '@/lib/server-error-message'
 
-import { downloadInvoiceDocument } from '../contracts'
+import { downloadInvoiceDocument, formatInvoiceRate } from '../contracts'
 import { invoiceAPI, invoiceKey, privateRead } from './api'
 import {
   useInvoiceText,
@@ -38,14 +38,18 @@ import {
   applicationStatusLabel,
   type InvoiceTextKey,
 } from './copy'
+import { FeePayment } from './payment'
+import type { FeePaymentMethod } from './policy'
 
 export function ApplicationDetail(props: {
   owner: number
   id: number
+  paymentMethods: FeePaymentMethod[]
   onClose: () => void
 }) {
-  const { text, money } = useInvoiceText()
+  const { text, money, locale } = useInvoiceText()
   const client = useQueryClient()
+  const [paying, setPaying] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const pendingDownload = useRef<AbortController | null>(null)
   useEffect(() => () => pendingDownload.current?.abort(), [])
@@ -86,13 +90,62 @@ export function ApplicationDetail(props: {
   const canCancel =
     detail.isSuccess &&
     !detail.isFetching &&
-    data?.status === 'pending' &&
-    !data.processing
+    !paying &&
+    ((data?.status === 'pending' && !data.processing) ||
+      (data?.status === 'awaiting_payment' &&
+        data.fee_state === 'unpaid' &&
+        !data.fee_rail))
   let rows: [InvoiceTextKey, string | undefined][] = []
   if (data) {
+    const snapshot = (data.settings_version ?? 0) > 0
+    const feeStateLabels = {
+      unpaid: 'Unpaid',
+      checkout: 'Payment in progress',
+      paid: 'Paid',
+      refunded: 'Refunded',
+      refund_review: 'Fee refund review',
+    } as const
     rows = [
       ['Application status', text(applicationStatusLabel(data))],
       ['Invoice amount', money(data.amount_minor)],
+      [
+        'Fee at application',
+        snapshot && data.fee_minor != null ? money(data.fee_minor) : undefined,
+      ],
+      [
+        'Fee rate at application',
+        snapshot && data.fee_rate_bps != null
+          ? formatInvoiceRate(data.fee_rate_bps, locale)
+          : undefined,
+      ],
+      [
+        'Configured tax rate at application',
+        snapshot && data.tax_rate_bps != null
+          ? formatInvoiceRate(data.tax_rate_bps, locale)
+          : undefined,
+      ],
+      [
+        'Fee payment status',
+        data.fee_state && data.fee_state !== 'none'
+          ? text(feeStateLabels[data.fee_state])
+          : undefined,
+      ],
+      [
+        'Fee payment method',
+        data.fee_rail === 'wallet'
+          ? text('Paid wallet balance')
+          : data.fee_payment_method || undefined,
+      ],
+      [
+        'Paid invoice fee',
+        data.fee_paid_at && data.fee_paid_minor != null
+          ? money(data.fee_paid_minor)
+          : undefined,
+      ],
+      [
+        'Fee paid at',
+        data.fee_paid_at ? formatTimestamp(data.fee_paid_at) : undefined,
+      ],
       ['Submitted at', formatTimestamp(data.created_at)],
       ['Invoice type', text(invoiceTypeLabels[data.invoice_type])],
       ['Title type', text(titleTypeLabels[data.title_type])],
@@ -117,7 +170,11 @@ export function ApplicationDetail(props: {
       <Dialog
         open
         onOpenChange={(open) => {
-          if (!open && !(confirming && (canCancel || cancel.isPending))) {
+          if (
+            !open &&
+            !paying &&
+            !(confirming && (canCancel || cancel.isPending))
+          ) {
             props.onClose()
           }
         }}
@@ -166,6 +223,20 @@ export function ApplicationDetail(props: {
                   </div>
                 ))}
             </dl>
+            {data.status === 'awaiting_payment' && (
+              <FeePayment
+                owner={props.owner}
+                detail={data}
+                methods={props.paymentMethods}
+                disabled={
+                  !detail.isSuccess ||
+                  detail.isFetching ||
+                  confirming ||
+                  cancel.isPending
+                }
+                onBusy={setPaying}
+              />
+            )}
             <h3 className='mt-4 font-medium'>{text('Included orders')}</h3>
             <ul className='mt-2 divide-y rounded-lg border px-3'>
               {(data.orders || []).map((order) => (
@@ -199,9 +270,22 @@ export function ApplicationDetail(props: {
           if (!cancel.isPending) setConfirming(open)
         }}
         title={text('Cancel this application?')}
-        desc={text(
-          'Eligible orders in this application will become available again.'
-        )}
+        desc={
+          <>
+            {text(
+              'Eligible orders in this application will become available again.'
+            )}
+            {data?.fee_state === 'paid' && (
+              <p className='mt-2'>
+                {text(
+                  data.fee_rail === 'wallet'
+                    ? 'If cancelled, the fee will be returned to your paid balance.'
+                    : 'If cancelled, your fee refund will require manual review.'
+                )}
+              </p>
+            )}
+          </>
+        }
         cancelBtnText={text('Keep application')}
         confirmText={text('Cancel application')}
         isLoading={cancel.isPending}

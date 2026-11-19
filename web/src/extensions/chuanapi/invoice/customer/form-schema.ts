@@ -30,34 +30,20 @@ const requiredText = (limit: number) =>
 export const invoiceSchema = z
   .object({
     invoice_type: z.enum(['ordinary', 'special']),
-    title_type: z.enum(['company', 'personal']),
+    title_type: z.literal('company'),
     category: z.enum(['technical_service', 'software_development']),
     title: requiredText(128),
     email: requiredText(254).pipe(z.email('Enter a valid email address.')),
-    tax_id: text.optional(),
+    tax_id: text.regex(
+      /^[A-Za-z0-9]{15,20}$/,
+      'Enter a 15–20 character tax ID using letters and digits.'
+    ),
     address: text.optional(),
     phone: text.optional(),
     bank_name: text.optional(),
     bank_account: text.optional(),
   })
   .superRefine((values, ctx) => {
-    if (values.invoice_type === 'special' && values.title_type !== 'company') {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['title_type'],
-        message: 'Special invoices require a company title.',
-      })
-    }
-    if (
-      values.title_type === 'company' &&
-      !/^[A-Za-z0-9]{15,20}$/.test(values.tax_id ?? '')
-    ) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['tax_id'],
-        message: 'Enter a 15–20 character tax ID using letters and digits.',
-      })
-    }
     if (values.invoice_type !== 'special') return
     for (const [field, limit] of [
       ['address', 255],
@@ -93,7 +79,7 @@ export const invoiceSchema = z
   .transform(
     ({ tax_id, address, phone, bank_name, bank_account, ...fields }) => ({
       ...fields,
-      ...(fields.title_type === 'company' && { tax_id: tax_id?.toUpperCase() }),
+      tax_id: tax_id.toUpperCase(),
       ...(fields.invoice_type === 'special' && {
         address,
         phone,

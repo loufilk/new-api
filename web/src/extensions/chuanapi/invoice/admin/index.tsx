@@ -36,10 +36,12 @@ import { useAuthStore } from '@/stores/auth-store'
 import { listInvoices, pageSize, reviewKey, type ReviewFilter } from './api'
 import { DetailDialog } from './detail-dialog'
 import { statusNames, useFinanceLabels } from './i18n'
+import { SettingsDialog } from './settings-dialog'
 import { ReviewStatus } from './status'
 
 function ReviewQueue(props: { reviewer: number }) {
   const { label, locale } = useFinanceLabels()
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [status, setStatus] = useState<ReviewFilter>('pending')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<number | null>(null)
@@ -62,8 +64,8 @@ function ReviewQueue(props: { reviewer: number }) {
         <div className='space-y-4'>
           <p className='text-muted-foreground text-sm'>
             {label(
-              'Review customer applications and record invoices already issued by finance. This console does not collect fees, issue invoices or send email.',
-              '审核客户申请，登记财务已开具的发票。此处不收取费用，不代开发票，也不发送邮件。'
+              'Review applications after any required fee is paid. Record invoices already issued by finance; this console does not issue invoices or send email.',
+              '应付手续费结清后方可审核开票。此处仅登记财务已开具的发票，不代开发票或发送邮件。'
             )}
           </p>
           <div className='flex flex-wrap items-center gap-2'>
@@ -88,12 +90,22 @@ function ReviewQueue(props: { reviewer: number }) {
                     : label(...names)}
                 </NativeSelectOption>
               ))}
+              <NativeSelectOption value='fee_refund_review'>
+                {label('Fee refund review', '手续费退款待人工核对')}
+              </NativeSelectOption>
               <NativeSelectOption value='refund_review'>
                 {label('Refund review', '退款待核对')}
               </NativeSelectOption>
             </NativeSelect>
             <Button
               className='ms-auto'
+              size='sm'
+              variant='outline'
+              onClick={() => setSettingsOpen(true)}
+            >
+              {label('Invoice settings', '开票设置')}
+            </Button>
+            <Button
               size='sm'
               variant='outline'
               disabled={query.isFetching}
@@ -158,6 +170,7 @@ function ReviewQueue(props: { reviewer: number }) {
                       cell: (row) => (
                         <ReviewStatus
                           status={row.status}
+                          feeRefundReview={row.fee_state === 'refund_review'}
                           refundReview={row.requires_reconciliation}
                           processing={row.processing}
                           claimant={row.processing_by}
@@ -183,6 +196,12 @@ function ReviewQueue(props: { reviewer: number }) {
                 onChange={setPage}
               />
             </>
+          )}
+          {settingsOpen && (
+            <SettingsDialog
+              reviewer={props.reviewer}
+              onClose={() => setSettingsOpen(false)}
+            />
           )}
           {selected != null && (
             <DetailDialog

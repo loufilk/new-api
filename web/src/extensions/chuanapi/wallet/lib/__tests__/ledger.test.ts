@@ -31,6 +31,13 @@ describe('ledgerReasonLabelKey', () => {
     )
   })
 
+  test.each([
+    ['invoice_fee', 'Invoice fee'],
+    ['invoice_fee_refund', 'Invoice fee refund'],
+  ])('maps the %s wallet transaction to its display label', (reason, key) => {
+    expect(ledgerReasonLabelKey(reason)).toBe(key)
+  })
+
   test('passes through unknown reasons for forward compatibility', () => {
     expect(ledgerReasonLabelKey('future_reason')).toBe('future_reason')
     expect(ledgerReasonLabelKey('')).toBe('')

@@ -22,6 +22,7 @@ import type { InvoiceStatus } from '../contracts'
 import { statusNames, useFinanceLabels } from './i18n'
 
 const variants = {
+  awaiting_payment: 'warning',
   pending: 'warning',
   issued: 'success',
   rejected: 'danger',
@@ -31,6 +32,7 @@ const variants = {
 export function ReviewStatus(props: {
   status: InvoiceStatus
   refundReview?: boolean
+  feeRefundReview?: boolean
   processing?: boolean
   claimant?: number
   reviewer?: number
@@ -54,6 +56,13 @@ export function ReviewStatus(props: {
         label={text}
         copyable={false}
       />
+      {props.feeRefundReview && (
+        <StatusBadge
+          variant='warning'
+          label={label('Fee refund review', '手续费退款待人工核对')}
+          copyable={false}
+        />
+      )}
       {props.refundReview && (
         <StatusBadge
           variant='warning'

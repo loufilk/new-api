@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -113,6 +114,7 @@ func TestCustomerInvoiceHTTPErrorNeverLeaksRawText(t *testing.T) {
 func TestCustomerInvoiceHTTPReadOnlyWhenDisabled(t *testing.T) {
 	t.Setenv("CUSTOMER_INVOICE_ENABLED", "false")
 	t.Setenv("CUSTOMER_INVOICE_EPAY_MERCHANT_SCOPE", "non-public-test-scope")
+	t.Setenv("CUSTOMER_INVOICE_WALLET_QUOTA_PER_CNY_CENT", "")
 	response := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(response)
 	GetCustomerInvoiceConfig(c)
@@ -125,15 +127,68 @@ func TestCustomerInvoiceHTTPReadOnlyWhenDisabled(t *testing.T) {
 	require.NotContains(t, response.Body.String(), "non-public-test-scope")
 }
 
+func TestCustomerInvoiceHTTPWalletCapabilityRequiresMerchantRateAndCurrentCompliance(t *testing.T) {
+	t.Setenv("CUSTOMER_INVOICE_ENABLED", "false") // intake switch is separate
+	t.Setenv("CUSTOMER_INVOICE_EPAY_MERCHANT_SCOPE", "demo-merchant")
+	t.Setenv("CUSTOMER_INVOICE_WALLET_QUOTA_PER_CNY_CENT", "500")
+	setting := operation_setting.GetPaymentSetting()
+	confirmed, terms := setting.ComplianceConfirmed, setting.ComplianceTermsVersion
+	t.Cleanup(func() {
+		setting.ComplianceConfirmed, setting.ComplianceTermsVersion = confirmed, terms
+	})
+	setting.ComplianceConfirmed, setting.ComplianceTermsVersion = true, "old-terms"
+	require.Zero(t, invoiceWalletPaymentAvailable())
+	setting.ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
+	require.EqualValues(t, 500, invoiceWalletPaymentAvailable())
+	methods, rate := customerInvoiceFeeMethods()
+	require.EqualValues(t, 500, rate)
+	require.Contains(t, methods, customerInvoiceFeeMethod{ID: "paid_wallet", Name: "Paid balance", Rail: "wallet"})
+	t.Setenv("CUSTOMER_INVOICE_EPAY_MERCHANT_SCOPE", "")
+	methods, rate = customerInvoiceFeeMethods()
+	require.Zero(t, rate)
+	require.Empty(t, methods)
+}
+
+func TestCustomerInvoiceHTTPSettingsRequireExplicitCompleteReplacement(t *testing.T) {
+	const ordinary = `"ordinary":{"enabled":true,"fee_enabled":false,"fee_rate_bps":0,"tax_rate_bps":0}`
+	const special = `"special":{"enabled":false,"fee_enabled":false,"fee_rate_bps":0,"tax_rate_bps":0}`
+	for _, body := range []string{
+		`{}`, `null`, `{"version":0,` + ordinary + `}`,
+		`{"version":0,` + special + `}`, `{` + ordinary + `,` + special + `}`,
+		`{"version":null,` + ordinary + `,` + special + `}`,
+		`{"version":0,` + ordinary + `,` + special + `,"updated_by":123}`,
+		`{"version":0,` + ordinary + `,"special":{"enabled":false,"fee_enabled":null,"fee_rate_bps":0,"tax_rate_bps":0}}`,
+		`{"version":0,` + ordinary + `,"special":{"enabled":false,"fee_enabled":false,"fee_rate_bps":1.2,"tax_rate_bps":0}}`,
+	} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPut, "/api/admin/invoice/settings", strings.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+		UpdateAdminCustomerInvoiceSettings(c)
+		require.Equal(t, http.StatusBadRequest, w.Code, body)
+		require.Contains(t, w.Body.String(), "INVOICE_INVALID")
+	}
+}
+
 func TestCustomerInvoiceHTTPAdminStatusFilter(t *testing.T) {
-	for _, admin := range []bool{false, true} {
+	for _, tc := range []struct {
+		filter        string
+		admin, expect bool
+	}{
+		{"refund_review", false, false},
+		{"refund_review", true, true},
+		{"fee_refund_review", false, false},
+		{"fee_refund_review", true, true},
+		{"awaiting_payment", true, true},
+		{"awaiting_payment", false, true},
+	} {
 		response := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(response)
-		c.Request = httptest.NewRequest(http.MethodGet, "/?status=refund_review", nil)
-		q, ok := customerInvoicePageQuery(c, true, admin)
-		require.Equal(t, admin, ok)
-		if admin {
-			require.Equal(t, "refund_review", q.Status)
+		c.Request = httptest.NewRequest(http.MethodGet, "/?status="+tc.filter, nil)
+		q, ok := customerInvoicePageQuery(c, true, tc.admin)
+		require.Equal(t, tc.expect, ok)
+		if tc.expect {
+			require.Equal(t, tc.filter, q.Status)
 		} else {
 			require.Equal(t, http.StatusBadRequest, response.Code)
 		}

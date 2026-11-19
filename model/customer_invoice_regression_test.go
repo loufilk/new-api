@@ -82,7 +82,7 @@ func customerInvoiceTestOrder(t *testing.T, owner int, reference string, minor i
 }
 
 func customerInvoiceTestInput(key string, ids ...int) CustomerInvoiceInput {
-	return CustomerInvoiceInput{IdempotencyKey: key, OrderIDs: ids, InvoiceType: "ordinary", TitleType: "personal",
+	return CustomerInvoiceInput{IdempotencyKey: key, OrderIDs: ids, InvoiceType: "ordinary", TitleType: "company", TaxID: "TEST00000000000123",
 		Title: "Invoice Fixture", Email: "receipt@example.test", Category: "technical_service"}
 }
 

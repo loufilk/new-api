@@ -128,7 +128,7 @@ test('select all uses only the displayed page; switching accounts drops all sele
     screen.getByRole('button', { name: 'Submit application' })
   ).toBeDisabled()
 })
-test('closed submissions retain access to details and confirmed cancellation of an existing pending application', async () => {
+test('closed submissions retain historical personal titles, fee snapshots and management of pending applications', async () => {
   const user = userEvent.setup()
   let cancelled = false
   const get = vi.spyOn(api, 'get').mockImplementation(async (path) => {
@@ -144,6 +144,10 @@ test('closed submissions retain access to details and confirmed cancellation of 
     if (path === '/api/invoice/applications/4') {
       data = {
         ...entry,
+        settings_version: 3,
+        fee_rate_bps: 125,
+        tax_rate_bps: 600,
+        fee_minor: '12',
         title: 'Test title',
         email: 'test@example.invalid',
         orders: [],
@@ -166,6 +170,16 @@ test('closed submissions retain access to details and confirmed cancellation of 
   await user.click(await screen.findByRole('button', { name: 'Details #4' }))
   const detail = await screen.findByRole('dialog')
   expect(await within(detail).findByText('Test title')).toBeVisible()
+  expect(within(detail).getByText('Individual')).toBeVisible()
+  expect(
+    within(detail).getByText('Fee at application').parentElement
+  ).toHaveTextContent('0.12')
+  expect(
+    within(detail).getByText('Fee rate at application').parentElement
+  ).toHaveTextContent('1.25%')
+  expect(
+    within(detail).getByText('Configured tax rate at application').parentElement
+  ).toHaveTextContent('6%')
   expect(
     within(detail).queryByRole('button', { name: 'Download PDF' })
   ).toBeNull()
@@ -284,4 +298,157 @@ test('a finance claim racing with cancellation refreshes the pending status with
     await screen.findByText('Invoice processing', { selector: 'span' })
   ).toBeInTheDocument()
   expect(post).toHaveBeenCalledOnce()
+})
+
+test('two disabled invoice types leave history available and do not load orders', async () => {
+  const off = {
+    enabled: false,
+    fee_enabled: false,
+    fee_rate_bps: 0,
+    tax_rate_bps: 0,
+  }
+  const get = vi.spyOn(api, 'get').mockImplementation(async (path) => {
+    let data: unknown = { items: [entry], total: 1 }
+    if (path === '/api/invoice/config') {
+      data = { enabled: true, version: 4, ordinary: off, special: off }
+    }
+    if (path === '/api/invoice/summary') data = totals
+    return { data: { success: true, data } }
+  })
+  renderCenter()
+  await screen.findByText(/New applications are currently closed/)
+  expect(
+    await screen.findByRole('button', { name: 'Details #4' })
+  ).toBeEnabled()
+  expect(
+    screen.queryByRole('button', { name: 'Submit application' })
+  ).toBeNull()
+  expect(get.mock.calls.some(([path]) => path === '/api/invoice/orders')).toBe(
+    false
+  )
+})
+
+test('a stale fee policy forces a fresh selection and consent; submitting opens an unpaid application without choosing a method', async () => {
+  const user = userEvent.setup()
+  let changed = false
+  let created = false
+  const free = {
+    enabled: true,
+    fee_enabled: false,
+    fee_rate_bps: 0,
+    tax_rate_bps: 0,
+  }
+  const withFee = {
+    ...free,
+    fee_enabled: true,
+    fee_rate_bps: 250,
+    tax_rate_bps: 600,
+  }
+  const application = {
+    ...entry,
+    id: 44,
+    title_type: 'company',
+    status: 'awaiting_payment',
+    settings_version: 2,
+    fee_state: 'unpaid',
+    fee_rail: '',
+    fee_minor: '25',
+    fee_rate_bps: 250,
+    tax_rate_bps: 600,
+    amount_minor: '1000',
+    title: 'Example',
+    email: 'test@example.invalid',
+    orders: [],
+  }
+  vi.spyOn(api, 'get').mockImplementation(async (path) => {
+    let data: unknown = { items: [], total: 0 }
+    if (path === '/api/invoice/config') {
+      data = {
+        enabled: true,
+        version: changed ? 2 : 1,
+        ordinary: changed ? withFee : free,
+        special: free,
+        fee_payment_methods: [
+          { id: 'wxpay', name: 'WeChat Pay', rail: 'epay' },
+        ],
+      }
+    }
+    if (path === '/api/invoice/summary') data = totals
+    if (path === '/api/invoice/orders' && !created) {
+      data = {
+        items: [
+          {
+            id: 2,
+            reference: 'EXAMPLE-FEE',
+            amount_minor: '1000',
+            paid_at: 1,
+            type: 'topup',
+            currency: 'CNY',
+          },
+        ],
+        total: 1,
+      }
+    }
+    if (path === '/api/invoice/applications' && created) {
+      data = { items: [application], total: 1 }
+    }
+    if (path === '/api/invoice/applications/44') data = application
+    return { data: { success: true, data } }
+  })
+  const post = vi.spyOn(api, 'post').mockImplementation(async () => {
+    if (!changed) {
+      changed = true
+      throw Object.assign(new Error('Conflict'), {
+        response: {
+          status: 409,
+          data: { message: 'Invoice settings changed. Refresh and try again.' },
+        },
+      })
+    }
+    created = true
+    return { data: { success: true, data: application } }
+  })
+  renderCenter()
+  await user.click(await screen.findByRole('checkbox', { name: 'EXAMPLE-FEE' }))
+  await user.type(screen.getByLabelText('Invoice title'), 'Example')
+  await user.type(screen.getByLabelText('Tax ID'), '123456789012345')
+  await user.type(
+    screen.getByLabelText('Email address'),
+    'test@example.invalid'
+  )
+  await user.click(screen.getByRole('button', { name: 'Submit application' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    /settings changed/i
+  )
+  await waitFor(() =>
+    expect(
+      screen.getByRole('checkbox', { name: 'EXAMPLE-FEE' })
+    ).not.toBeChecked()
+  )
+  await user.click(screen.getByRole('checkbox', { name: 'EXAMPLE-FEE' }))
+  expect(
+    screen.getByText('Estimated invoice fee').parentElement
+  ).toHaveTextContent('0.25')
+  await user.click(
+    screen.getByRole('button', { name: 'Submit and choose payment' })
+  )
+  const dialog = await screen.findByRole('dialog')
+  expect(
+    await within(dialog).findByRole('combobox', { name: 'Fee payment method' })
+  ).toHaveValue('')
+  expect(
+    within(dialog).getByRole('button', { name: 'Choose a payment method' })
+  ).toBeDisabled()
+  expect(post.mock.calls.map(([path]) => path)).toEqual([
+    '/api/invoice/applications',
+    '/api/invoice/applications',
+  ])
+  const [, first] = post.mock.calls[0]
+  const [, next] = post.mock.calls[1]
+  expect(first).toMatchObject({ settings_version: 1, title_type: 'company' })
+  expect(next).toMatchObject({ settings_version: 2, title_type: 'company' })
+  expect(next).not.toHaveProperty('fee_rail')
+  expect((first as { idempotency_key: string }).idempotency_key).not.toEqual(
+    (next as { idempotency_key: string }).idempotency_key
+  )
 })

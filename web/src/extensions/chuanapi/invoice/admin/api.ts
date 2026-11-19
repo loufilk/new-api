@@ -26,12 +26,18 @@ import type {
   InvoiceSummary,
 } from '../contracts'
 
-export type ReviewFilter = InvoiceStatus | 'refund_review' | ''
+export type ReviewFilter =
+  | InvoiceStatus
+  | 'refund_review'
+  | 'fee_refund_review'
+  | ''
 export interface AdminSummary extends InvoiceSummary {
   processing_by?: number
   requires_reconciliation?: boolean
 }
 export interface AdminDetail extends InvoiceDetail {
+  fee_trade_no?: string
+  fee_provider_reference?: string
   processing_by?: number
   requires_reconciliation?: boolean
   reconciliation_reason?: string

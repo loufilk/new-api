@@ -28,6 +28,19 @@ type CustomerInvoiceApplication struct {
 	InvoiceNumber        *string `json:"-" gorm:"type:varchar(64);uniqueIndex:idx_ci_merchant_number,priority:2"`
 	Status               string  `json:"-" gorm:"type:varchar(16);not null;index:idx_ci_owner_status,priority:2;index:idx_ci_status_created,priority:1"`
 	AmountMinor          int64   `json:"-" gorm:"not null"`
+	FeeState             string  `json:"-" gorm:"type:varchar(16);not null;default:none"`
+	FeeRail              string  `json:"-" gorm:"type:varchar(16);not null;default:''"`
+	FeePaidMinor         int64   `json:"-" gorm:"not null;default:0"`
+	FeePaidAt            int64   `json:"-" gorm:"not null;default:0"`
+	WalletQuotaPerCent   int64   `json:"-" gorm:"not null;default:0"`
+	FeeTradeNo           *string `json:"-" gorm:"type:varchar(64);uniqueIndex:idx_ci_fee_trade_no"`
+	FeePaymentMethod     string  `json:"-" gorm:"type:varchar(50);not null;default:''"`
+	FeeGateway           string  `json:"-" gorm:"type:varchar(512);not null;default:''"`
+	FeeReceiptID         int64   `json:"-" gorm:"not null;default:0"`
+	SettingsVersion      int64   `json:"-" gorm:"not null;default:0"`
+	FeeMinor             int64   `json:"-" gorm:"not null;default:0"`
+	FeeRateBPS           int     `json:"-" gorm:"column:fee_rate_bps;not null;default:0"`
+	TaxRateBPS           int     `json:"-" gorm:"column:tax_rate_bps;not null;default:0"`
 	OrderCount           int     `json:"-" gorm:"not null"`
 	InvoiceType          string  `json:"-" gorm:"type:varchar(16);not null"`
 	TitleType            string  `json:"-" gorm:"type:varchar(16);not null"`
@@ -66,7 +79,7 @@ type CustomerInvoiceItem struct {
 }
 
 func CustomerInvoiceModels() []any {
-	return []any{&CustomerInvoiceApplication{}, &CustomerInvoiceItem{}, &CustomerInvoiceDocument{}}
+	return []any{&CustomerInvoiceApplication{}, &CustomerInvoiceItem{}, &CustomerInvoiceDocument{}, &CustomerInvoiceSettingsRevision{}}
 }
 
 type CustomerInvoiceQuery struct {
@@ -75,18 +88,19 @@ type CustomerInvoiceQuery struct {
 }
 
 type CustomerInvoiceInput struct {
-	OrderIDs       []int  `json:"order_ids"`
-	IdempotencyKey string `json:"idempotency_key"`
-	InvoiceType    string `json:"invoice_type"`
-	TitleType      string `json:"title_type"`
-	Title          string `json:"title"`
-	TaxID          string `json:"tax_id,omitempty"`
-	Category       string `json:"category"`
-	Email          string `json:"email"`
-	Address        string `json:"address,omitempty"`
-	Phone          string `json:"phone,omitempty"`
-	BankName       string `json:"bank_name,omitempty"`
-	BankAccount    string `json:"bank_account,omitempty"`
+	SettingsVersion *int64 `json:"settings_version,omitempty"`
+	OrderIDs        []int  `json:"order_ids"`
+	IdempotencyKey  string `json:"idempotency_key"`
+	InvoiceType     string `json:"invoice_type"`
+	TitleType       string `json:"title_type"`
+	Title           string `json:"title"`
+	TaxID           string `json:"tax_id,omitempty"`
+	Category        string `json:"category"`
+	Email           string `json:"email"`
+	Address         string `json:"address,omitempty"`
+	Phone           string `json:"phone,omitempty"`
+	BankName        string `json:"bank_name,omitempty"`
+	BankAccount     string `json:"bank_account,omitempty"`
 }
 
 type CustomerInvoiceOrder struct {
@@ -107,6 +121,17 @@ type CustomerInvoiceTotals struct {
 	Currency       string `json:"currency"`
 }
 type CustomerInvoiceSummary struct {
+	FeeState               string `json:"fee_state"`
+	FeeRail                string `json:"fee_rail"`
+	FeePaidMinor           string `json:"fee_paid_minor"`
+	FeePaidAt              int64  `json:"fee_paid_at"`
+	WalletQuotaPerCent     int64  `json:"wallet_quota_per_cent"`
+	WalletFeeQuota         string `json:"wallet_fee_quota"`
+	FeePaymentMethod       string `json:"fee_payment_method,omitempty"`
+	SettingsVersion        int64  `json:"settings_version"`
+	FeeRateBPS             int    `json:"fee_rate_bps"`
+	TaxRateBPS             int    `json:"tax_rate_bps"`
+	FeeMinor               string `json:"fee_minor"`
 	ID                     int64  `json:"id"`
 	UserID                 int    `json:"user_id,omitempty"`
 	Status                 string `json:"status"`
@@ -125,6 +150,8 @@ type CustomerInvoiceSummary struct {
 	RequiresReconciliation bool   `json:"requires_reconciliation,omitempty"`
 }
 type CustomerInvoiceDetail struct {
+	FeeTradeNo           string `json:"fee_trade_no,omitempty"`
+	FeeProviderReference string `json:"fee_provider_reference,omitempty"`
 	CustomerInvoiceSummary
 	Title                string                 `json:"title"`
 	TaxID                string                 `json:"tax_id,omitempty"`
@@ -154,6 +181,16 @@ func validInvoiceText(s string, max int) bool {
 }
 
 func normalizeCustomerInvoice(input CustomerInvoiceInput) (CustomerInvoiceInput, error) {
+	if input.SettingsVersion != nil {
+		if *input.SettingsVersion < 0 || *input.SettingsVersion > invoiceMaxSettingsVersion {
+			return input, ErrCustomerInvoiceInvalid
+		}
+		// No version and explicit zero denote identical legacy terms. Keep the
+		// im.14 idempotency hash byte-for-byte stable for existing applications.
+		if *input.SettingsVersion == 0 {
+			input.SettingsVersion = nil
+		}
+	}
 	for _, s := range []*string{&input.IdempotencyKey, &input.Title, &input.TaxID, &input.Email, &input.Address, &input.Phone, &input.BankName, &input.BankAccount} {
 		*s = strings.TrimSpace(*s)
 	}

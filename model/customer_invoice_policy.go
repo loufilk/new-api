@@ -10,8 +10,10 @@ import (
 // CustomerInvoicePolicy scopes v1 invoices to one verified Epay merchant. The
 // merchant value never belongs in public status or in customer response data.
 type CustomerInvoicePolicy struct {
-	Enabled       bool
-	MerchantScope string
+	Enabled            bool
+	MerchantScope      string
+	EpayFeeAvailable   bool
+	WalletFeeAvailable bool
 }
 
 func GetCustomerInvoicePolicy() CustomerInvoicePolicy {

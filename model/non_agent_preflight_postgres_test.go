@@ -202,3 +202,66 @@ func TestNonAgentPreflightNeverInfersRetirementFromOrphanedSourceTerminalState(t
 	require.NoError(t, db.Table("agent_fund_slices").Select("state").Scan(&state).Error)
 	assert.Equal(t, "spent", state)
 }
+
+func TestNonAgentPreflightInvoiceFeeBeforeSchemaUpgradePostgres(t *testing.T) {
+	db := nonAgentPreflightFixture(t)
+	require.NoError(t, db.Exec("CREATE TABLE agent_payment_receipts (purpose text); INSERT INTO agent_payment_receipts VALUES ('topup')").Error)
+	require.NoError(t, db.Exec("CREATE TABLE customer_invoice_applications (id bigint)").Error)
+	for _, a07 := range []bool{false, true} {
+		_, err := nonAgentCutoverPreflight(db, a07)
+		require.NoError(t, err)
+	}
+	require.NoError(t, db.Exec("INSERT INTO agent_payment_receipts VALUES ('invoice_fee')").Error)
+	for _, a07 := range []bool{false, true} {
+		_, err := nonAgentCutoverPreflight(db, a07)
+		require.Error(t, err, "fee with incomplete schema is not proof")
+	}
+	require.NoError(t, db.Exec("DROP TABLE customer_invoice_applications").Error)
+	for _, a07 := range []bool{false, true} {
+		blocks, err := nonAgentCutoverPreflight(db, a07)
+		require.ErrorIs(t, err, ErrNonAgentCutoverBlocked)
+		assert.Equal(t, []NonAgentCutoverBlock{{Table: "agent_payment_receipts", Rows: 1}}, blocks)
+	}
+}
+
+func TestNonAgentPreflightOnlyLinkedInvoiceFeesPostgres(t *testing.T) {
+	db := nonAgentPreflightFixture(t)
+	require.NoError(t, db.AutoMigrate(&PaymentReceipt{}, &CustomerInvoiceApplication{}))
+	trade := "CIF" + common.GetUUID()[:29]
+	r, err := ClaimPaymentReceiptTx(db, &PaymentReceipt{Provider: PaymentProviderEpay, ProviderReference: "synthetic-provider-fee", MerchantScope: "fixture-issuer", Environment: "live",
+		Purpose: "invoice_fee", LocalOrderKey: trade, OwnerUserID: 17, Currency: "CNY", CurrencyExponent: 2, PaidMinor: 12, PaidAt: 1001, VerifiedAt: 1002})
+	require.NoError(t, err)
+	app := CustomerInvoiceApplication{UserID: 17, MerchantScope: r.MerchantScope, Status: "pending", IdempotencyKey: "fixture", InvoiceType: "ordinary", TitleType: "company", FeeRateBPS: 100, AmountMinor: 1200,
+		FeeState: "paid", FeeRail: "epay", FeePaidMinor: 12, FeeMinor: 12, FeePaidAt: 1001, FeePaymentMethod: "wxpay", FeeGateway: "https://provider.example.test/", FeeTradeNo: &trade, FeeReceiptID: r.ID}
+	require.NoError(t, db.Create(&app).Error)
+	for _, a07 := range []bool{false, true} {
+		_, err := nonAgentCutoverPreflight(db, a07)
+		require.NoError(t, err)
+	}
+	for _, tc := range []struct {
+		field     string
+		bad, good any
+	}{
+		{"fee_receipt_id", 0, r.ID}, {"user_id", 3, 17}, {"fee_rail", "wallet", "epay"}, {"fee_minor", 11, 12}, {"fee_paid_minor", 11, 12},
+		{"fee_trade_no", "CIF" + common.GetUUID()[:29], trade}, {"merchant_scope", "wrong", "fixture-issuer"}, {"fee_state", "unpaid", "paid"}, {"status", "future", "pending"},
+	} {
+		require.NoError(t, db.Model(&app).Update(tc.field, tc.bad).Error)
+		for _, a07 := range []bool{false, true} {
+			blocks, err := nonAgentCutoverPreflight(db, a07)
+			require.ErrorIs(t, err, ErrNonAgentCutoverBlocked, tc.field)
+			assert.Equal(t, []NonAgentCutoverBlock{{Table: "agent_payment_receipts", Rows: 1}}, blocks)
+		}
+		require.NoError(t, db.Model(&app).Update(tc.field, tc.good).Error)
+	}
+	require.NoError(t, db.Model(&app).Updates(map[string]any{"status": "cancelled", "fee_state": "refund_review"}).Error)
+	for _, a07 := range []bool{false, true} {
+		_, err := nonAgentCutoverPreflight(db, a07)
+		require.NoError(t, err, "the retained manual reconciliation queue owns this paid receipt")
+	}
+	require.NoError(t, db.Exec("UPDATE agent_payment_receipts SET purpose='unknown' WHERE id=?", r.ID).Error)
+	for _, a07 := range []bool{false, true} {
+		blocks, err := nonAgentCutoverPreflight(db, a07)
+		require.ErrorIs(t, err, ErrNonAgentCutoverBlocked)
+		assert.Equal(t, []NonAgentCutoverBlock{{Table: "agent_payment_receipts", Rows: 1}}, blocks)
+	}
+}

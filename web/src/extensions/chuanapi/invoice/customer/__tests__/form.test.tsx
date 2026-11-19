@@ -25,10 +25,24 @@ import { api } from '@/lib/api'
 
 import { ApplicationForm } from '../application-form'
 import { invoiceSchema } from '../form-schema'
+import { customerConfigSchema } from '../policy'
+
+const free = {
+  enabled: true,
+  fee_enabled: false,
+  fee_rate_bps: 0,
+  tax_rate_bps: 0,
+}
+const policy = customerConfigSchema.parse({
+  enabled: true,
+  version: 7,
+  ordinary: free,
+  special: free,
+})
 
 afterEach(() => vi.restoreAllMocks())
 
-test('an ordinary personal application omits company details and reuses the same key after transport failure', async () => {
+test('an ordinary company application submits its reviewed version and reuses the same key after transport failure', async () => {
   const user = userEvent.setup()
   const post = vi
     .spyOn(api, 'post')
@@ -38,6 +52,7 @@ test('an ordinary personal application omits company details and reuses the same
   render(
     <QueryClientProvider client={new QueryClient()}>
       <ApplicationForm
+        policy={policy}
         selection={
           new Map([
             [21, '101'],
@@ -52,8 +67,10 @@ test('an ordinary personal application omits company details and reuses the same
   )
   expect(screen.getByText(/1\.23/)).toBeInTheDocument()
   await user.type(screen.getByLabelText('Tax ID'), '123456789012345')
-  await user.selectOptions(screen.getByLabelText('Title type'), 'personal')
-  expect(screen.queryByLabelText('Tax ID')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Title type')).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('option', { name: 'Individual' })
+  ).not.toBeInTheDocument()
   await user.type(screen.getByLabelText('Invoice title'), 'Example')
   await user.type(
     screen.getByLabelText('Email address'),
@@ -71,7 +88,9 @@ test('an ordinary personal application omits company details and reuses the same
     order_ids: [17, 21],
     idempotency_key: expect.any(String),
     invoice_type: 'ordinary',
-    title_type: 'personal',
+    title_type: 'company',
+    tax_id: '123456789012345',
+    settings_version: 7,
     category: 'technical_service',
     title: 'Example',
     email: 'test@example.invalid',
@@ -84,6 +103,7 @@ test('switching to special VAT requires a company, tax ID, contact and bank deta
   render(
     <QueryClientProvider client={new QueryClient()}>
       <ApplicationForm
+        policy={policy}
         selection={new Map([[21, '1']])}
         onBusy={vi.fn()}
         onSuccess={vi.fn()}
@@ -91,10 +111,10 @@ test('switching to special VAT requires a company, tax ID, contact and bank deta
       />
     </QueryClientProvider>
   )
-  await user.selectOptions(screen.getByLabelText('Title type'), 'personal')
   await user.selectOptions(screen.getByLabelText('Invoice type'), 'special')
-  expect(screen.getByLabelText('Title type')).toHaveValue('company')
-  expect(screen.getByRole('option', { name: 'Individual' })).toBeDisabled()
+  expect(
+    screen.queryByRole('option', { name: 'Individual' })
+  ).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Submit application' }))
   for (const label of [
     'Registered address',
@@ -125,4 +145,74 @@ test('special company invoice preserves leading bank account zeros and normalize
     tax_id: 'ABCDEFGHIJKLMN0',
     bank_account: '000123',
   })
+})
+
+test('only the enabled type can be selected; a positive fee requires an available payment channel', async () => {
+  const policyWithFee = {
+    ...policy,
+    ordinary: { ...free, enabled: false },
+    special: {
+      ...free,
+      fee_enabled: true,
+      fee_rate_bps: 100,
+      tax_rate_bps: 1300,
+    },
+  }
+  const { rerender } = render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ApplicationForm
+        policy={policyWithFee}
+        selection={new Map([[2, '50']])}
+        onBusy={vi.fn()}
+        onConflict={vi.fn()}
+        onSuccess={vi.fn()}
+      />
+    </QueryClientProvider>
+  )
+  expect(
+    screen.getByRole('option', { name: 'Ordinary invoice' })
+  ).toBeDisabled()
+  expect(screen.getByLabelText('Invoice type')).toHaveValue('special')
+  expect(
+    screen.getByText('Estimated invoice fee').parentElement
+  ).toHaveTextContent(/0.01/)
+  expect(
+    screen.getByText('Configured tax rate (reference only)').parentElement
+  ).toHaveTextContent('13%')
+  expect(
+    screen.getByRole('button', { name: 'Submit and choose payment' })
+  ).toBeDisabled()
+  expect(screen.getByRole('status')).toHaveTextContent(/cannot be submitted/)
+  rerender(
+    <QueryClientProvider client={new QueryClient()}>
+      <ApplicationForm
+        policy={{
+          ...policyWithFee,
+          fee_payment_methods: [
+            { id: 'wxpay', name: 'WeChat Pay', rail: 'epay' },
+          ],
+        }}
+        selection={new Map([[2, '50']])}
+        onBusy={vi.fn()}
+        onConflict={vi.fn()}
+        onSuccess={vi.fn()}
+      />
+    </QueryClientProvider>
+  )
+  expect(
+    screen.getByRole('button', { name: 'Submit and choose payment' })
+  ).toBeEnabled()
+  expect(screen.getByText(/submitting will not charge you/i)).toBeVisible()
+})
+test('an ordinary personal payload is invalid even with a company tax ID', () => {
+  expect(
+    invoiceSchema.safeParse({
+      invoice_type: 'ordinary',
+      title_type: 'personal',
+      title: 'Example',
+      email: 'test@example.invalid',
+      tax_id: '123456789012345',
+      category: 'technical_service',
+    }).success
+  ).toBe(false)
 })

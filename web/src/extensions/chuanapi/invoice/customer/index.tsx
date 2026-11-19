@@ -33,6 +33,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { invoiceAPI, invoiceKey, privateRead } from './api'
 import { ApplicationForm } from './application-form'
 import { useInvoiceText } from './copy'
+import { ApplicationDetail } from './detail'
 import { InvoiceHistory } from './history'
 import { EligibleOrders, type OrderSelection } from './orders'
 
@@ -40,6 +41,7 @@ function CustomerInvoiceCenter(props: { owner: number }) {
   const client = useQueryClient()
   const { text, money } = useInvoiceText()
   const [selection, setSelection] = useState<OrderSelection>(() => new Map())
+  const [detailId, setDetailId] = useState<number | null>(null)
   const [historyReset, setHistoryReset] = useState(0)
   const [busy, setBusy] = useState(false)
   const config = useQuery({
@@ -52,6 +54,9 @@ function CustomerInvoiceCenter(props: { owner: number }) {
     queryKey: [...invoiceKey(props.owner), 'summary'],
     queryFn: ({ signal }) => invoiceAPI.totals(signal),
   })
+  const policy = config.isSuccess ? config.data : undefined
+  const accepting =
+    policy?.enabled && (policy.ordinary.enabled || policy.special.enabled)
   const fetching = useIsFetching({ queryKey: invoiceKey(props.owner) }) > 0
   const stats = [
     {
@@ -159,7 +164,7 @@ function CustomerInvoiceCenter(props: { owner: number }) {
               onRetry={() => void config.refetch()}
             />
           )}
-          {config.isSuccess && !config.data.enabled && (
+          {config.isSuccess && !accepting && (
             <p className='bg-muted rounded-lg p-3 text-sm'>
               {text(
                 'New applications are currently closed. You can still view and manage previous applications below.'
@@ -168,13 +173,13 @@ function CustomerInvoiceCenter(props: { owner: number }) {
           )}
           <div
             className={
-              config.data?.enabled
+              accepting
                 ? 'grid items-start gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]'
                 : 'grid gap-4'
             }
           >
             <div className='contents lg:block lg:min-w-0 lg:space-y-4'>
-              {config.data?.enabled && (
+              {accepting && (
                 <EligibleOrders
                   key={`orders-${historyReset}`}
                   owner={props.owner}
@@ -184,15 +189,21 @@ function CustomerInvoiceCenter(props: { owner: number }) {
                 />
               )}
               <div className='order-last min-w-0 lg:order-none'>
-                <InvoiceHistory key={historyReset} owner={props.owner} />
+                <InvoiceHistory
+                  key={historyReset}
+                  owner={props.owner}
+                  onDetail={setDetailId}
+                />
               </div>
             </div>
-            {config.data?.enabled && (
+            {accepting && (
               <ApplicationForm
+                policy={policy}
                 selection={selection}
                 onBusy={setBusy}
                 onConflict={refresh}
-                onSuccess={() => {
+                onSuccess={(paymentId) => {
+                  if (paymentId) setDetailId(paymentId)
                   refresh()
                   setHistoryReset((previous) => previous + 1)
                 }}
@@ -200,6 +211,15 @@ function CustomerInvoiceCenter(props: { owner: number }) {
             )}
           </div>
         </div>
+        {detailId !== null && (
+          <ApplicationDetail
+            key={detailId}
+            owner={props.owner}
+            id={detailId}
+            paymentMethods={policy?.fee_payment_methods ?? []}
+            onClose={() => setDetailId(null)}
+          />
+        )}
       </SectionPageLayout.Content>
     </SectionPageLayout>
   )

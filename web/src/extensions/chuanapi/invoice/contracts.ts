@@ -16,10 +16,40 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { z } from 'zod'
+
 import { api } from '@/lib/api'
 import { createServerError } from '@/lib/server-error-message'
 
-export type InvoiceStatus = 'pending' | 'issued' | 'rejected' | 'cancelled'
+export type InvoiceStatus =
+  | 'awaiting_payment'
+  | 'pending'
+  | 'issued'
+  | 'rejected'
+  | 'cancelled'
+
+const rate = z.int().min(0).max(10_000)
+const typeSettings = z.object({
+  enabled: z.boolean(),
+  fee_enabled: z.boolean(),
+  fee_rate_bps: rate,
+  tax_rate_bps: rate,
+})
+export const invoiceSettingsSchema = z.object({
+  version: z.int().nonnegative(),
+  ordinary: typeSettings,
+  special: typeSettings,
+})
+export type InvoiceSettings = z.infer<typeof invoiceSettingsSchema>
+export type InvoiceTypeSettings = z.infer<typeof typeSettings>
+
+export function formatInvoiceRate(bps: number, locale?: string): string {
+  if (!Number.isInteger(bps) || bps < 0 || bps > 10_000) return '—'
+  return Intl.NumberFormat(locale, {
+    style: 'percent',
+    maximumFractionDigits: 2,
+  }).format(bps / 10_000)
+}
 
 export interface InvoiceOrder {
   id: number
@@ -31,6 +61,23 @@ export interface InvoiceOrder {
 }
 
 export interface InvoiceSummary {
+  settings_version?: number
+  fee_minor?: string
+  fee_rate_bps?: number
+  tax_rate_bps?: number
+  fee_state?:
+    | 'none'
+    | 'unpaid'
+    | 'checkout'
+    | 'paid'
+    | 'refunded'
+    | 'refund_review'
+  fee_rail?: '' | 'wallet' | 'epay'
+  fee_payment_method?: string
+  fee_paid_minor?: string
+  fee_paid_at?: number
+  wallet_fee_quota?: string
+  wallet_quota_per_cent?: number
   id: number
   status: InvoiceStatus
   amount_minor: string

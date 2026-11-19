@@ -23,6 +23,7 @@ import { StaticDataTable } from '@/components/data-table'
 import { Dialog } from '@/components/dialog'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { formatMinorMoney } from '@/features/agent-platform/lib/money'
 import { formatTimestamp } from '@/lib/format'
@@ -37,6 +38,7 @@ import {
 } from './api'
 import { ClaimDialog } from './claim-dialog'
 import { DecisionDialog } from './decision-dialog'
+import { financeFeeCleared, feeFacts } from './fee-review'
 import { useFinanceLabels } from './i18n'
 import { ReviewStatus } from './status'
 
@@ -65,6 +67,7 @@ function InvoiceFacts(props: { detail: AdminDetail; reviewer: number }) {
         ? label('Technical services', '技术服务')
         : label('Software development', '软件开发'),
     ],
+    ...feeFacts(inv, label, locale),
     [label('Email', '邮箱'), inv.email],
     [label('Address', '地址'), inv.address],
     [label('Phone', '电话'), inv.phone],
@@ -96,12 +99,23 @@ function InvoiceFacts(props: { detail: AdminDetail; reviewer: number }) {
         </div>
         <ReviewStatus
           status={inv.status}
+          feeRefundReview={inv.fee_state === 'refund_review'}
           refundReview={inv.requires_reconciliation}
           processing={inv.processing}
           claimant={inv.processing_by}
           reviewer={props.reviewer}
         />
       </div>
+      {inv.fee_state === 'refund_review' && (
+        <Alert>
+          <AlertDescription>
+            {label(
+              'Review the Epay fee with the payment provider. No automatic cash refund has been sent.',
+              '请与支付平台核对易支付手续费的退款情况。系统未自动原路退款。'
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
       <dl className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
         {facts
           .filter(([, v]) => v != null && v !== '')
@@ -185,14 +199,26 @@ export function DetailDialog(props: {
   }
   const pending = inv?.status === 'pending'
   const flaggable = inv?.status === 'issued' && !inv.requires_reconciliation
-  const unclaimed = pending && !inv.processing && !inv.processing_by
+  const feeCleared = inv != null && financeFeeCleared(inv)
+  const unclaimed =
+    pending && feeCleared && !inv.processing && !inv.processing_by
+  const rejectable =
+    unclaimed ||
+    (inv?.status === 'awaiting_payment' &&
+      inv.fee_state === 'unpaid' &&
+      !inv.processing &&
+      !inv.processing_by &&
+      !inv.fee_rail &&
+      inv.fee_paid_minor === '0' &&
+      !inv.fee_paid_at)
   const owned =
     pending && inv.processing === true && inv.processing_by === props.reviewer
+  const corporate = inv?.title_type === 'company'
   const permitted: Record<ReviewDecision['kind'], boolean> = {
-    claim: unclaimed,
-    reject: unclaimed,
+    claim: unclaimed && corporate,
+    reject: rejectable,
     release: owned,
-    record: owned,
+    record: owned && feeCleared && corporate,
     reconciliation: flaggable,
   }
   const canDecide = decision !== null && permitted[decision]
@@ -210,15 +236,15 @@ export function DetailDialog(props: {
             <Button variant='outline' onClick={props.onClose}>
               {label('Close', '关闭')}
             </Button>
-            {unclaimed && (
-              <>
-                <Button variant='outline' onClick={() => setDecision('reject')}>
-                  {label('Reject application', '驳回申请')}
-                </Button>
-                <Button onClick={() => setDecision('claim')}>
-                  {label('Claim for issuance', '开始开票')}
-                </Button>
-              </>
+            {rejectable && (
+              <Button variant='outline' onClick={() => setDecision('reject')}>
+                {label('Reject application', '驳回申请')}
+              </Button>
+            )}
+            {permitted.claim && (
+              <Button onClick={() => setDecision('claim')}>
+                {label('Claim for issuance', '开始开票')}
+              </Button>
             )}
             {owned && (
               <>
@@ -228,9 +254,11 @@ export function DetailDialog(props: {
                 >
                   {label('Release claim', '释放开票占用')}
                 </Button>
-                <Button onClick={() => setDecision('record')}>
-                  {label('Record issued PDF', '登记已开具的 PDF')}
-                </Button>
+                {permitted.record && (
+                  <Button onClick={() => setDecision('record')}>
+                    {label('Record issued PDF', '登记已开具的 PDF')}
+                  </Button>
+                )}
               </>
             )}
             {flaggable && (
@@ -268,6 +296,7 @@ export function DetailDialog(props: {
           <DecisionDialog
             id={props.id}
             kind={decision}
+            paidRail={inv?.fee_state === 'paid' ? inv.fee_rail : undefined}
             onCancel={() => setDecision(null)}
             onSaved={props.onSaved}
           />

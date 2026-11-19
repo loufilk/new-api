@@ -24,32 +24,34 @@ func TestCustomerInvoiceHTTPBrowserWriteGuards(t *testing.T) {
 		{name: "foreign origin", sid: "test-session", bearer: "synthetic", origin: "https://other.invalid", want: http.StatusForbidden},
 		{name: "cross-site", sid: "test-session", bearer: "synthetic", site: "cross-site", want: http.StatusForbidden},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			e := gin.New()
-			e.POST("/", DisableCache(), func(c *gin.Context) {
-				// Simulate what the preceding auth middleware populates. The
-				// routed integration tests also exercise real sessions.
-				c.Set("id", 2)
-				c.Set("auth_version", int64(1))
-				c.Set("session_version", int64(1))
-				c.Set("session_id", tc.sid)
-				c.Set("use_access_token", tc.pat)
-			}, CustomerInvoiceSessionRequired(), func(c *gin.Context) { c.Status(http.StatusNoContent) })
-			r := httptest.NewRequest(http.MethodPost, "http://example.com/", nil)
-			if tc.bearer != "" {
-				r.Header.Set("Authorization", "Bearer "+tc.bearer)
-			}
-			if tc.origin != "" {
-				r.Header.Set("Origin", tc.origin)
-			}
-			if tc.site != "" {
-				r.Header.Set("Sec-Fetch-Site", tc.site)
-			}
-			w := httptest.NewRecorder()
-			e.ServeHTTP(w, r)
-			require.Equal(t, tc.want, w.Code)
-			require.Contains(t, w.Header().Get("Cache-Control"), "no-store")
-		})
+		for _, method := range []string{http.MethodPost, http.MethodPut} {
+			t.Run(tc.name+"/"+method, func(t *testing.T) {
+				e := gin.New()
+				e.Handle(method, "/", DisableCache(), func(c *gin.Context) {
+					// Simulate what the preceding auth middleware populates. The
+					// routed integration tests also exercise real sessions.
+					c.Set("id", 2)
+					c.Set("auth_version", int64(1))
+					c.Set("session_version", int64(1))
+					c.Set("session_id", tc.sid)
+					c.Set("use_access_token", tc.pat)
+				}, CustomerInvoiceSessionRequired(), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+				r := httptest.NewRequest(method, "http://example.com/", nil)
+				if tc.bearer != "" {
+					r.Header.Set("Authorization", "Bearer "+tc.bearer)
+				}
+				if tc.origin != "" {
+					r.Header.Set("Origin", tc.origin)
+				}
+				if tc.site != "" {
+					r.Header.Set("Sec-Fetch-Site", tc.site)
+				}
+				w := httptest.NewRecorder()
+				e.ServeHTTP(w, r)
+				require.Equal(t, tc.want, w.Code)
+				require.Contains(t, w.Header().Get("Cache-Control"), "no-store")
+			})
+		}
 	}
 }
 

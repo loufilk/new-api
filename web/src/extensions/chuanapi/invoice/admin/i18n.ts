@@ -23,6 +23,7 @@ import { toIntlLocale } from '@/i18n/languages'
 import type { InvoiceStatus } from '../contracts'
 
 export const statusNames: Record<InvoiceStatus, readonly [string, string]> = {
+  awaiting_payment: ['Awaiting fee payment', '待支付手续费'],
   pending: ['Pending review', '待审核'],
   issued: ['Issued', '已开票'],
   rejected: ['Rejected', '已驳回'],

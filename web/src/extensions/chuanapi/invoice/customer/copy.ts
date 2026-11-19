@@ -52,6 +52,8 @@ const chinese = {
   'Invoice type': '发票类型',
   'Ordinary invoice': '普通发票',
   'Special VAT invoice': '增值税专用发票',
+  'Only company invoices are available. Enter the registered company name and tax ID.':
+    '仅支持企业开票，请填写企业全称和纳税人识别号。',
   'Title type': '抬头类型',
   Company: '企业',
   Individual: '个人',
@@ -74,7 +76,44 @@ const chinese = {
   'Enter the bank account using digits only.': '银行账号仅支持数字',
   'Special invoices require a company title.': '专用发票仅支持企业抬头。',
   'Selected orders': '已选订单',
+  'Estimated invoice fee': '预计开票手续费',
+  'Configured tax rate (reference only)': '配置的税率（仅供参考）',
+  'Fee at application': '申请时的手续费',
+  'Fee rate at application': '申请时的手续费率',
+  'Configured tax rate at application': '申请时配置的税率',
+  'This application requires a fee. It cannot be submitted until fee payment is available.':
+    '此申请需支付开票手续费。手续费支付尚未开放，暂不能提交。',
+  'This invoice type is currently unavailable': '该发票类型暂不受理',
   'Invoice amount': '开票金额',
+  'Submit and choose payment': '提交并选择付款方式',
+  'Submitting will not charge you. Choose a payment method in the application details.':
+    '提交不会扣款。您可在申请详情中选择手续费支付方式。',
+  'Awaiting fee payment': '待支付手续费',
+  'Fee payment status': '手续费支付状态',
+  Unpaid: '未支付',
+  'Payment in progress': '支付处理中',
+  Paid: '已支付',
+  Refunded: '已退款',
+  'Fee refund review': '手续费退款待核对',
+  'Paid invoice fee': '实付手续费',
+  'Fee paid at': '手续费支付时间',
+  'Fee payment method': '手续费支付方式',
+  'Choose a payment method': '选择支付方式',
+  'Paid wallet balance': '付费余额',
+  'Pay {{fee}} with {{method}}': '使用{{method}}支付 {{fee}}',
+  'Use {{quota}} paid quota units to pay {{fee}}':
+    '使用 {{quota}} 个付费额度单位支付 {{fee}}',
+  'Only paid quota is used, not bonus or reward quota.':
+    '仅使用付费额度，不使用赠金或奖励额度。',
+  'Complete payment with the provider, then refresh the status here.':
+    '请在支付平台完成付款，然后在此刷新支付状态。',
+  'Refresh payment status': '刷新支付状态',
+  'Check the payment status before trying again.': '请先核对支付状态，再重试。',
+  'No payment method is currently available.': '暂无可用的手续费支付方式。',
+  'If cancelled, the fee will be returned to your paid balance.':
+    '撤销后，手续费将退回您的付费余额。',
+  'If cancelled, your fee refund will require manual review.':
+    '撤销后，手续费退款需要人工核对。',
   'Submit application': '提交开票申请',
   'Submitting…': '正在提交…',
   'Application submitted.': '开票申请已提交',
@@ -127,11 +166,13 @@ export function useInvoiceText() {
     })
   return {
     text,
+    locale,
     money: (cents: string) => formatMinorMoney(cents, 'CNY', 2, locale),
   }
 }
 
 export const statusLabels = {
+  awaiting_payment: 'Awaiting fee payment',
   pending: 'Pending review',
   issued: 'Issued',
   rejected: 'Rejected',

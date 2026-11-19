@@ -29,6 +29,8 @@ const REASON_LABEL_KEYS: Record<string, string> = {
   admin_subtract: 'Admin Deducted',
   admin_override: 'Admin Override',
   subscription_purchase: 'Subscription Purchase',
+  invoice_fee: 'Invoice fee',
+  invoice_fee_refund: 'Invoice fee refund',
   billing_pre_consume: 'Billing Pre-consumed',
   billing_reserve: 'Billing Reserve',
   billing_settle: 'Billing Settlement',

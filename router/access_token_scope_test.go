@@ -78,6 +78,10 @@ var accessTokenExemptRoutes = []string{
 	"POST /api/subscription/epay/notify",
 	"GET /api/subscription/epay/return",
 	"POST /api/subscription/epay/return",
+	"GET /api/invoice/fee/epay/notify",
+	"POST /api/invoice/fee/epay/notify",
+	"GET /api/invoice/fee/epay/return",
+	"POST /api/invoice/fee/epay/return",
 
 	// API key authentication (TokenAuthReadOnly).
 	"GET /api/usage/token/",

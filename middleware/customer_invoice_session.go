@@ -19,7 +19,9 @@ func CustomerInvoiceSessionRequired() gin.HandlerFunc {
 			abortWithWebMessage(c, http.StatusForbidden, "AUTH_SESSION_REQUIRED", common.NewMessage(accessTokenSessionRequiredMsg))
 			return
 		}
-		if c.Request.Method == http.MethodPost {
+		switch c.Request.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+		default:
 			if c.GetHeader("Sec-Fetch-Site") == "cross-site" {
 				abortWithWebMessage(c, http.StatusForbidden, "AUTH_ORIGIN_FORBIDDEN", common.NewMessage("request origin is not allowed"))
 				return

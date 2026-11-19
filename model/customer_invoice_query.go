@@ -120,8 +120,8 @@ func SummarizeCustomerInvoices(ctx context.Context, owner int, policy CustomerIn
 		return totals, ErrCustomerInvoiceInvalid
 	}
 	tx := invoiceDB(ctx)
-	history := tx.Model(&CustomerInvoiceApplication{}).Where("user_id = ? AND status IN ?", owner, []string{"pending", "issued"}).
-		Select("status AS bucket, COUNT(*) AS n, SUM(amount_minor) AS total").Group("status")
+	history := tx.Model(&CustomerInvoiceApplication{}).Where("user_id = ? AND status IN ?", owner, []string{"awaiting_payment", "pending", "issued"}).
+		Select("CASE WHEN status = 'awaiting_payment' THEN 'pending' ELSE status END AS bucket, COUNT(*) AS n, SUM(amount_minor) AS total").Group("CASE WHEN status = 'awaiting_payment' THEN 'pending' ELSE status END")
 	query := history
 	if policy.Enabled && validInvoiceMerchant(policy) {
 		available := availableInvoiceReceipts(tx, owner, policy.MerchantScope, common.GetTimestamp()).
@@ -152,7 +152,10 @@ func SummarizeCustomerInvoices(ctx context.Context, owner int, policy CustomerIn
 }
 
 func (a *CustomerInvoiceApplication) summary(admin bool) CustomerInvoiceSummary {
-	s := CustomerInvoiceSummary{ID: a.ID, Status: a.Status, AmountMinor: strconv.FormatInt(a.AmountMinor, 10), Currency: "CNY", OrderCount: a.OrderCount,
+	walletQuote, _ := CustomerInvoiceWalletFeeQuote(a.FeeMinor, a.WalletQuotaPerCent)
+	s := CustomerInvoiceSummary{FeeState: a.FeeState, FeeRail: a.FeeRail, FeePaidMinor: strconv.FormatInt(a.FeePaidMinor, 10), FeePaidAt: a.FeePaidAt,
+		WalletQuotaPerCent: a.WalletQuotaPerCent, WalletFeeQuota: strconv.Itoa(walletQuote), FeePaymentMethod: a.FeePaymentMethod, ID: a.ID, Status: a.Status, AmountMinor: strconv.FormatInt(a.AmountMinor, 10), Currency: "CNY", OrderCount: a.OrderCount,
+		SettingsVersion: a.SettingsVersion, FeeRateBPS: a.FeeRateBPS, TaxRateBPS: a.TaxRateBPS, FeeMinor: strconv.FormatInt(a.FeeMinor, 10),
 		InvoiceType: a.InvoiceType, TitleType: a.TitleType, Category: a.Category, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt, IssuedAt: a.IssuedAt,
 		HasDocument: a.Status == "issued" && a.DocumentSHA256 != "",
 		Processing:  a.Status == "pending" && (a.ProcessingBy != 0 || a.ProcessingAt != 0)}
@@ -182,13 +185,18 @@ func ListCustomerInvoices(ctx context.Context, owner int, admin bool, q Customer
 	}
 	switch q.Status {
 	case "":
-	case "pending", "issued", "rejected", "cancelled":
+	case "awaiting_payment", "pending", "issued", "rejected", "cancelled":
 		query = query.Where("status = ?", q.Status)
 	case "refund_review":
 		if !admin {
 			return nil, 0, ErrCustomerInvoiceInvalid
 		}
 		query = query.Where("status = 'issued' AND reconciliation_at > 0")
+	case "fee_refund_review":
+		if !admin {
+			return nil, 0, ErrCustomerInvoiceInvalid
+		}
+		query = query.Where("fee_state = 'refund_review'")
 	default:
 		return nil, 0, ErrCustomerInvoiceInvalid
 	}
@@ -198,7 +206,7 @@ func ListCustomerInvoices(ctx context.Context, owner int, admin bool, q Customer
 	}
 	var rows []CustomerInvoiceApplication
 	// List operations deliberately do not load private form/finance details.
-	if err := query.Select("id,user_id,status,amount_minor,order_count,invoice_type,title_type,category,created_at,updated_at,issued_at,document_sha256,reconciliation_at,processing_by,processing_at").
+	if err := query.Select("id,user_id,status,amount_minor,fee_state,fee_rail,fee_paid_minor,fee_paid_at,wallet_quota_per_cent,fee_payment_method,settings_version,fee_minor,fee_rate_bps,tax_rate_bps,order_count,invoice_type,title_type,category,created_at,updated_at,issued_at,document_sha256,reconciliation_at,processing_by,processing_at").
 		Order("created_at DESC,id DESC").Offset(offset).Limit(size).Find(&rows).Error; err != nil {
 		return nil, 0, err
 	}
@@ -242,6 +250,16 @@ func invoiceDetail(tx *gorm.DB, a *CustomerInvoiceApplication, admin bool) (*Cus
 	}
 	if admin {
 		d.ReconciliationReason = a.ReconciliationReason
+		if a.FeeRail == "epay" && a.FeeTradeNo != nil {
+			d.FeeTradeNo = *a.FeeTradeNo
+			if a.FeeReceiptID > 0 {
+				var r PaymentReceipt
+				if err := tx.Select("provider_reference").Where("id = ? AND provider = ? AND purpose = 'invoice_fee' AND owner_user_id = ? AND local_order_key = ? AND merchant_scope = ?", a.FeeReceiptID, PaymentProviderEpay, a.UserID, d.FeeTradeNo, a.MerchantScope).Take(&r).Error; err != nil {
+					return nil, err
+				}
+				d.FeeProviderReference = r.ProviderReference
+			}
+		}
 	}
 	return d, nil
 }
