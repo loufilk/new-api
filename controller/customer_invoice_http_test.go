@@ -114,19 +114,26 @@ func TestCustomerInvoiceHTTPErrorNeverLeaksRawText(t *testing.T) {
 }
 
 func TestCustomerInvoiceHTTPReadOnlyWhenDisabled(t *testing.T) {
-	t.Setenv("CUSTOMER_INVOICE_ENABLED", "false")
-	t.Setenv("CUSTOMER_INVOICE_EPAY_MERCHANT_SCOPE", "non-public-test-scope")
-	t.Setenv("CUSTOMER_INVOICE_WALLET_QUOTA_PER_CNY_CENT", "")
-	response := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(response)
-	GetCustomerInvoiceConfig(c)
-	require.JSONEq(t, `{"success":true,"message":"","data":{"enabled":false}}`, response.Body.String())
-	response = httptest.NewRecorder()
-	c, _ = gin.CreateTestContext(response)
-	c.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
-	SubmitCustomerInvoice(c)
-	require.Equal(t, http.StatusForbidden, response.Code)
-	require.NotContains(t, response.Body.String(), "non-public-test-scope")
+	for _, tc := range []struct{ name, flag, merchant string }{
+		{"explicitly disabled", "false", "non-public-test-scope"},
+		{"visible by default without merchant", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CUSTOMER_INVOICE_ENABLED", tc.flag)
+			t.Setenv("CUSTOMER_INVOICE_EPAY_MERCHANT_SCOPE", tc.merchant)
+			t.Setenv("CUSTOMER_INVOICE_WALLET_QUOTA_PER_CNY_CENT", "")
+			response := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(response)
+			GetCustomerInvoiceConfig(c)
+			require.JSONEq(t, `{"success":true,"message":"","data":{"enabled":false}}`, response.Body.String())
+			response = httptest.NewRecorder()
+			c, _ = gin.CreateTestContext(response)
+			c.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
+			SubmitCustomerInvoice(c)
+			require.Equal(t, http.StatusForbidden, response.Code)
+			require.NotContains(t, response.Body.String(), "non-public-test-scope")
+		})
+	}
 }
 
 func TestCustomerInvoiceHTTPWalletCapabilityRequiresMerchantRateAndCurrentCompliance(t *testing.T) {
