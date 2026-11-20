@@ -11,7 +11,6 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
-	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relay/requestplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -96,25 +95,8 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		return newAPIError
 	}
 
-	usageDto := usage.(*dto.Usage)
-	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
-		originModelName := info.OriginModelName
-		originPriceData := info.PriceData
-
-		_, err := helper.ModelPriceHelper(c, info, info.GetEstimatePromptTokens(), &types.TokenCountMeta{})
-		if err != nil {
-			info.OriginModelName = originModelName
-			info.PriceData = originPriceData
-			return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry(), types.ErrOptionWithStatusCode(http.StatusBadRequest))
-		}
-		service.PostTextConsumeQuota(c, info, usageDto, nil)
-
-		info.OriginModelName = originModelName
-		info.PriceData = originPriceData
-		return nil
-	}
-
-	ConsumeResponsesQuota(c, info, usageDto)
+	// Use the price and group authorized before this attempt was sent.
+	ConsumeResponsesQuota(c, info, usage.(*dto.Usage))
 	return nil
 }
 
@@ -153,8 +135,8 @@ func prepareResponsesPassThroughBody(c *gin.Context, info *relaycommon.RelayInfo
 	return body, closer, nil
 }
 
-// ConsumeResponsesQuota applies the same settlement dispatch to HTTP and
-// WebSocket Responses usage. Compact requests keep their separate repricing.
+// ConsumeResponsesQuota applies the admitted price to HTTP and WebSocket
+// Responses usage. Compact always uses text settlement.
 func ConsumeResponsesQuota(c *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage) {
 	if preserveUnmeasuredStreamBilling(c, info, usage) {
 		return
@@ -175,7 +157,7 @@ func ConsumeResponsesQuota(c *gin.Context, info *relaycommon.RelayInfo, usage *d
 			return
 		}
 	}
-	if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
+	if info.RelayMode != relayconstant.RelayModeResponsesCompact && strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
 		service.PostAudioConsumeQuota(c, info, usage, nil)
 		return
 	}
