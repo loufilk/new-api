@@ -111,7 +111,7 @@ func TestVLLMStatusInvalidAndOversizedResponses(t *testing.T) {
 
 func TestParseVLLMMetricsPreservesSeriesAndHistogramTotals(t *testing.T) {
 	metrics, err := parseInferenceMetrics(`# TYPE vllm:num_requests_running gauge
-vllm:num_requests_running{engine="0",model_name="model,a"} 0
+vllm:num_requests_running{engine="0",model_name="model,a",diagnostic="synthetic metadata"} 0
 vllm:num_requests_running{model_name="model,a",engine="1"} 2
 # TYPE vllm:time_to_first_token_seconds histogram
 vllm:time_to_first_token_seconds_bucket{le="+Inf"} 4
@@ -123,6 +123,7 @@ vllm:bad_value +Inf
 # TYPE process_start_time_seconds gauge
 process_start_time_seconds 100
 unrelated_metric 123
+vllm:unrecognized_metric 456
 `, "vllm:")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []inferenceMetric{
@@ -154,7 +155,7 @@ func TestVLLMStatusLive(t *testing.T) {
 	assert.NotEmpty(t, status.Version)
 	assert.NotEmpty(t, status.Models)
 	assert.NotEmpty(t, status.Metrics)
-	assert.NotEmpty(t, status.RawMetrics)
+	assert.Empty(t, status.RawMetrics)
 }
 
 func TestSGLangStatusUsesDocumentedEndpointsAndRedactsServerConfiguration(t *testing.T) {
@@ -180,6 +181,7 @@ func TestSGLangStatusUsesDocumentedEndpointsAndRedactsServerConfiguration(t *tes
 	status, err := fetchInferenceStatus(context.Background(), &model.Channel{Type: constant.ChannelTypeSGLang, BaseURL: &upstream.URL, Key: "test-key"})
 	require.NoError(t, err)
 	assert.Equal(t, "0.5.19", status.Version)
+	assert.Empty(t, status.RawMetrics)
 	require.Len(t, status.Models, 1)
 	assert.Equal(t, "served-model", status.Models[0].ID)
 	assert.ElementsMatch(t, []inferenceMetric{

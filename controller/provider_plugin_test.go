@@ -243,7 +243,10 @@ func TestChannelKeyShowsCredentialSummaries(t *testing.T) {
 
 	response, raw = callChannelAPI(t, ManageMultiKeys, http.MethodPost, "/api/channel/multi_key/manage", fmt.Sprintf(`{"channel_id":%d,"action":"get_key_status"}`, channel.Id))
 	require.True(t, response.Success, raw)
-	assert.Contains(t, raw, `"key_preview":"secret-token@example.com"`)
+	assert.Contains(t, raw, `"key_preview":""`)
+	assert.NotContains(t, raw, "secret-token@example.com")
+	assert.NotContains(t, raw, "acct-secret-token")
+	assert.NotContains(t, raw, "sk-static")
 	assert.NotContains(t, raw, "Bearer secret-token")
 }
 

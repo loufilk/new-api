@@ -69,14 +69,6 @@ func parseStatusFilter(statusParam string) int {
 	}
 }
 
-func clearChannelInfo(channel *model.Channel) {
-	channel.BalanceDetail = channel.GetBalanceDetail()
-	if channel.ChannelInfo.IsMultiKey {
-		channel.ChannelInfo.MultiKeyDisabledReason = nil
-		channel.ChannelInfo.MultiKeyDisabledTime = nil
-	}
-}
-
 func channelIDsFromChannels(channels []*model.Channel) []int {
 	ids := make([]int, 0, len(channels))
 	for _, channel := range channels {
@@ -220,6 +212,7 @@ func GetChannelDefaultBaseURLs(c *gin.Context) {
 }
 
 func GetAllChannels(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	pageInfo := common.GetPageQuery(c)
 	channelData := make([]*model.Channel, 0)
 	idSort, _ := strconv.ParseBool(c.Query("id_sort"))
@@ -287,10 +280,6 @@ func GetAllChannels(c *gin.Context) {
 		}
 	}
 
-	for _, datum := range channelData {
-		clearChannelInfo(datum)
-	}
-
 	countQuery := buildChannelListQuery(groupFilter, statusFilter, -1)
 	var results []struct {
 		Type  int64
@@ -306,7 +295,7 @@ func GetAllChannels(c *gin.Context) {
 		typeCounts[r.Type] = r.Count
 	}
 	common.ApiSuccess(c, gin.H{
-		"items":       channelData,
+		"items":       publicChannels(channelData),
 		"total":       total,
 		"page":        pageInfo.GetPage(),
 		"page_size":   pageInfo.GetPageSize(),
@@ -392,6 +381,7 @@ func FixChannelsAbilities(c *gin.Context) {
 }
 
 func SearchChannels(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	keyword := c.Query("keyword")
 	group := c.Query("group")
 	modelKeyword := c.Query("model")
@@ -482,15 +472,11 @@ func SearchChannels(c *gin.Context) {
 
 	pagedData := channelData[startIdx:endIdx]
 
-	for _, datum := range pagedData {
-		clearChannelInfo(datum)
-	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 		"data": gin.H{
-			"items":       pagedData,
+			"items":       publicChannels(pagedData),
 			"total":       total,
 			"type_counts": typeCounts,
 		},
@@ -499,6 +485,7 @@ func SearchChannels(c *gin.Context) {
 }
 
 func GetChannel(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		common.ApiError(c, err)
@@ -509,13 +496,10 @@ func GetChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if channel != nil {
-		clearChannelInfo(channel)
-	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    channel,
+		"data":    publicChannel(channel),
 	})
 	return
 }
@@ -913,16 +897,14 @@ func AddChannel(c *gin.Context) {
 		if key == "" {
 			continue
 		}
-		localChannel := addChannelRequest.Channel
+		localChannel := *addChannelRequest.Channel
 		localChannel.Key = key
 		if addChannelRequest.BatchAddSetKeyPrefix2Name && len(keys) > 1 {
-			keyPrefix := localChannel.Key
-			if len(localChannel.Key) > 8 {
-				keyPrefix = localChannel.Key[:8]
-			}
-			localChannel.Name = fmt.Sprintf("%s %s", localChannel.Name, keyPrefix)
+			// Keep the legacy field, but use an ordinal instead of copying
+			// part of the credential into a channel name or audit record.
+			localChannel.Name = fmt.Sprintf("%s %d", localChannel.Name, i+1)
 		}
-		channels = append(channels, *localChannel)
+		channels = append(channels, localChannel)
 		if addChannelRequest.Mode == "multi_to_single" {
 			channelInputIndices = append(channelInputIndices, inputIndices)
 		} else {
@@ -1250,16 +1232,17 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 
-	baseURLFromPluginDefault := channel.Type == constant.ChannelTypeTaskPlugin &&
-		(channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "")
-	// 使用统一的校验函数
-	if err := validateChannel(&channel.Channel, false); err != nil {
+	// A projected response omits credential-bearing values. Older clients send
+	// blank values for omitted inputs; they must not erase active credentials.
+	originChannel, err := model.GetChannelById(channel.Id, true)
+	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	// Preserve existing ChannelInfo to ensure multi-key channels keep correct state even if the client does not send ChannelInfo in the request.
-	originChannel, err := model.GetChannelById(channel.Id, true)
-	if err != nil {
+	preserved := preserveChannelReadOnlySecrets(&channel, originChannel, requestData)
+	baseURLFromPluginDefault := channel.Type == constant.ChannelTypeTaskPlugin &&
+		(channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "")
+	if err := validateChannel(&channel.Channel, false); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -1429,6 +1412,9 @@ func UpdateChannel(c *gin.Context) {
 	var keyBefore, keyAfter string
 	var credentialOrigin model.Channel
 	err = channel.UpdateWithKey(func(stored *model.Channel) error {
+		if preserved.conflicts(originChannel, stored) {
+			return errors.New("Channel configuration changed; reload and try again")
+		}
 		// Another editor or login may have committed after originChannel was
 		// read. Authorize the actual changes against the locked row.
 		effectiveType, effectivePluginKey := channel.Type, channel.GetSetting().TaskPluginKey
@@ -1519,12 +1505,11 @@ func UpdateChannel(c *gin.Context) {
 		updateAudit["base_url_source"] = "plugin_default"
 	}
 	recordManageAudit(c, "channel.update", updateAudit)
-	channel.Key = ""
-	clearChannelInfo(&channel.Channel)
+	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    channel,
+		"data":    publicChannel(&channel.Channel),
 	})
 	return
 }
@@ -1948,7 +1933,7 @@ type KeyStatus struct {
 	Status       int    `json:"status"` // 1: enabled, 2: disabled
 	DisabledTime int64  `json:"disabled_time,omitempty"`
 	Reason       string `json:"reason,omitempty"`
-	KeyPreview   string `json:"key_preview"` // first 10 chars of key for identification
+	KeyPreview   string `json:"key_preview"` // compatibility field; always empty
 }
 
 // ManageMultiKeys handles multi-key management operations
@@ -1994,6 +1979,7 @@ func ManageMultiKeys(c *gin.Context) {
 
 	switch request.Action {
 	case "get_key_status":
+		c.Header("Cache-Control", "no-store")
 		keys := channel.GetKeys()
 
 		// Default pagination parameters
@@ -2011,51 +1997,17 @@ func ManageMultiKeys(c *gin.Context) {
 
 		// Build all key status data first
 		var allKeyStatusList []KeyStatus
-		for i, key := range keys {
-			status := 1 // default enabled
-			var disabledTime int64
-			var reason string
-
-			if channel.ChannelInfo.MultiKeyStatusList != nil {
-				if s, exists := channel.ChannelInfo.MultiKeyStatusList[i]; exists {
-					status = s
-				}
-			}
-
-			// Count for statistics (all keys)
-			switch status {
-			case 1:
+		for i := range keys {
+			status := publicChannelKeyStatus(i, channel.ChannelInfo)
+			switch status.Status {
+			case common.ChannelStatusEnabled:
 				enabledCount++
-			case 2:
+			case common.ChannelStatusManuallyDisabled:
 				manualDisabledCount++
-			case 3:
+			case common.ChannelStatusAutoDisabled:
 				autoDisabledCount++
 			}
-
-			if status != 1 {
-				if channel.ChannelInfo.MultiKeyDisabledTime != nil {
-					disabledTime = channel.ChannelInfo.MultiKeyDisabledTime[i]
-				}
-				if channel.ChannelInfo.MultiKeyDisabledReason != nil {
-					reason = channel.ChannelInfo.MultiKeyDisabledReason[i]
-				}
-			}
-
-			// Create key preview (first 10 chars); a plugin credential shows its label.
-			keyPreview := key
-			if preview, ok := service.PluginCredentialPreview(key); ok {
-				keyPreview = preview
-			} else if len(key) > 10 {
-				keyPreview = key[:10] + "..."
-			}
-
-			allKeyStatusList = append(allKeyStatusList, KeyStatus{
-				Index:        i,
-				Status:       status,
-				DisabledTime: disabledTime,
-				Reason:       reason,
-				KeyPreview:   keyPreview,
-			})
+			allKeyStatusList = append(allKeyStatusList, status)
 		}
 
 		// Apply status filter if specified
