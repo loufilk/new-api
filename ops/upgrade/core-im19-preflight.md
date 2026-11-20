@@ -38,3 +38,18 @@ valid im.18 image is therefore not evidence it can preserve im.19 writes.
    Verify that no accepted order is silently recalculated at the old live rate.
    Keep deployment blocked if those checks are absent or fail. Do not
    restore an old database snapshot as a no-loss application rollback.
+
+### Channel egress compatibility
+
+Before promoting the channel-egress candidate, exercise an ordinary request
+and an allowed retry across representative channels in staging. Check the
+selected endpoint, proxy, and provider account together. Include an approved
+custom base URL and a channel with a configured proxy if CORE uses them. For the
+shared HTTP, multipart, and WebSocket senders, configure the intended origin in
+the channel endpoint, not through a different `Host` header. Configure proxy
+authentication on the proxy URL, not as an upstream `Proxy-Authorization`
+header. Use disposable staging credentials and do not log credential values.
+
+The shared sender checks are not a policy for every provider-specific SDK or
+provider-plugin dynamic transport. Validate those integrations separately if
+they are in the promotion set.

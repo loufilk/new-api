@@ -393,63 +393,47 @@ func signUpstreamRequest(adaptor any, c *gin.Context, info *common.RelayInfo, me
 }
 
 func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
-	fullRequestURL, err := a.GetRequestURL(info)
-	if err != nil {
-		return nil, fmt.Errorf("get request url failed: %w", err)
-	}
-	logger.LogDebug(c, "fullRequestURL: %s", common.SanitizeURLForLog(fullRequestURL))
-	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, fullRequestURL, requestBody)
-	if err != nil {
-		return nil, fmt.Errorf("new request failed: %w", err)
-	}
-	ApplyUpstreamBodyMetadata(req, requestBody)
-	headers := req.Header
-	err = a.SetupRequestHeader(c, &headers, info)
-	if err != nil {
-		return nil, fmt.Errorf("setup request header failed: %w", err)
-	}
-	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
-	// 这样可以覆盖默认的 Authorization header 设置
-	if err = ApplyHeaderOverride(info, c, req); err != nil {
-		return nil, err
-	}
-	if err = signUpstreamRequest(a, c, info, req.Method, req.URL, req.Header); err != nil {
-		return nil, err
-	}
-	resp, err := doRequest(c, req, info)
-	if err != nil {
-		return nil, fmt.Errorf("do request failed: %w", err)
-	}
-	return resp, nil
+	return doAdaptorHTTPRequest(a, c, info, requestBody, false)
 }
 
 func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+	return doAdaptorHTTPRequest(a, c, info, requestBody, true)
+}
+
+func doAdaptorHTTPRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader, form bool) (*http.Response, error) {
+	beginChannelDispatch(c)
 	fullRequestURL, err := a.GetRequestURL(info)
 	if err != nil {
 		return nil, fmt.Errorf("get request url failed: %w", err)
 	}
-	logger.LogDebug(c, "fullRequestURL: %s", common.SanitizeURLForLog(fullRequestURL))
 	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, fullRequestURL, requestBody)
 	if err != nil {
-		return nil, fmt.Errorf("new request failed: %w", err)
+		return nil, errors.New("invalid upstream relay request URL or method")
 	}
-	ApplyUpstreamBodyMetadata(req, requestBody)
-	// set form data
-	req.Header.Set("Content-Type", c.Request.Header.Get("Content-Type"))
-	headers := req.Header
-	err = a.SetupRequestHeader(c, &headers, info)
+	origin, client, err := prepareChannelHTTPDispatch(req, info)
 	if err != nil {
+		return nil, err
+	}
+	logger.LogDebug(c, "fullRequestURL: %s", common.SanitizeURLForLog(fullRequestURL))
+	ApplyUpstreamBodyMetadata(req, requestBody)
+	if form {
+		req.Header.Set("Content-Type", c.Request.Header.Get("Content-Type"))
+	}
+	if err = a.SetupRequestHeader(c, &req.Header, info); err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
-	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
-	// 这样可以覆盖默认的 Authorization header 设置
+	// Configured overrides still take precedence over adaptor headers, but
+	// cannot select a different credential recipient.
 	if err = ApplyHeaderOverride(info, c, req); err != nil {
+		return nil, err
+	}
+	if err = origin.check(req.URL, req.Host, req.Header); err != nil {
 		return nil, err
 	}
 	if err = signUpstreamRequest(a, c, info, req.Method, req.URL, req.Header); err != nil {
 		return nil, err
 	}
-	resp, err := doRequest(c, req, info)
+	resp, err := doPreparedChannelHTTPRequest(c, req, info, origin, client)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}
@@ -467,6 +451,18 @@ type WebSocketPreparer interface {
 // request context, and reports a rejected handshake as a *types.NewAPIError
 // carrying the upstream status code (types.NewError preserves it).
 func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*websocket.Conn, error) {
+	beginChannelDispatch(c)
+	dialer := *websocket.DefaultDialer
+	proxyURL, _, err := common2.ParseProxyURLRuntime(info.ChannelSetting.Proxy)
+	if err != nil {
+		return nil, err
+	}
+	if proxyURL != nil {
+		dialer.Proxy = http.ProxyURL(proxyURL)
+	}
+	if info.ChannelSetting.TLSInsecureSkipVerify {
+		dialer.TLSClientConfig = common2.InsecureTLSConfig
+	}
 	if preparer, ok := a.(WebSocketPreparer); ok {
 		if err := preparer.PrepareWebSocket(c, info); err != nil {
 			return nil, err
@@ -476,17 +472,29 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if err != nil {
 		return nil, fmt.Errorf("get request url failed: %w", err)
 	}
-	fullRequestURL = toWebSocketURL(fullRequestURL)
-	if targetURL, parseErr := url.Parse(fullRequestURL); parseErr == nil {
-		common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestOrigin, targetURL.Scheme+"://"+targetURL.Host)
+	target, err := url.Parse(toWebSocketURL(fullRequestURL))
+	if err != nil {
+		return nil, errors.New("invalid upstream WebSocket URL")
+	}
+	origin, err := channelEgressOrigin(target, true)
+	if err != nil {
+		return nil, err
+	}
+	// Use the same HTTP(S) target that Gorilla would pass to its proxy
+	// selector, before adding origin credentials to the handshake headers.
+	if dialer.Proxy != nil {
+		proxyTarget := *target
+		proxyTarget.Scheme = "http" + strings.TrimPrefix(target.Scheme, "ws")
+		selected, proxyErr := dialer.Proxy(&http.Request{Method: http.MethodGet, URL: &proxyTarget, Host: proxyTarget.Host})
+		if proxyErr != nil {
+			return nil, errors.New("invalid upstream WebSocket proxy selection")
+		}
+		dialer.Proxy = http.ProxyURL(selected)
 	}
 	targetHeader := http.Header{}
-	err = a.SetupRequestHeader(c, &targetHeader, info)
-	if err != nil {
+	if err = a.SetupRequestHeader(c, &targetHeader, info); err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
-	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
-	// 这样可以覆盖默认的 Authorization header 设置
 	headerOverride, err := processHeaderOverride(info, c)
 	if err != nil {
 		return nil, err
@@ -495,27 +503,17 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		targetHeader.Set(key, value)
 	}
 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
-	if _, signs := a.(RequestSigner); signs {
-		targetURL, parseErr := url.Parse(fullRequestURL)
-		if parseErr != nil {
-			return nil, fmt.Errorf("get request url failed: %w", parseErr)
-		}
-		if err = signUpstreamRequest(a, c, info, http.MethodGet, targetURL, targetHeader); err != nil {
-			return nil, err
-		}
-		fullRequestURL = targetURL.String()
+	if err = origin.check(target, "", targetHeader); err != nil {
+		return nil, err
 	}
-	dialer := *websocket.DefaultDialer
-	if info.ChannelSetting.Proxy != "" {
-		proxyURL, _, proxyErr := common2.ParseProxyURLRuntime(info.ChannelSetting.Proxy)
-		if proxyErr != nil {
-			return nil, proxyErr
-		}
-		dialer.Proxy = http.ProxyURL(proxyURL)
+	if err = signUpstreamRequest(a, c, info, http.MethodGet, target, targetHeader); err != nil {
+		return nil, err
 	}
-	if info.ChannelSetting.TLSInsecureSkipVerify {
-		dialer.TLSClientConfig = common2.InsecureTLSConfig
+	if err = origin.check(target, "", targetHeader); err != nil {
+		return nil, err
 	}
+	fullRequestURL = target.String()
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestOrigin, target.Scheme+"://"+target.Host)
 	targetConn, resp, err := dialer.DialContext(c.Request.Context(), fullRequestURL, targetHeader)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
@@ -527,6 +525,9 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		}
 		return nil, types.NewErrorWithStatusCode(fmt.Errorf("dial failed to %s: %w", common.SanitizeURLForLog(fullRequestURL), err), types.ErrorCodeDoRequestFailed, statusCode)
 	}
+	// A successful handshake moves ownership to the WS business-message
+	// path. A handshake failure above is definitively unsent for generation.
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, false)
 	return targetConn, nil
 }
 
@@ -553,12 +554,45 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
 	return http.ErrUseLastResponse
 }
 
+func prepareChannelHTTPDispatch(req *http.Request, info *common.RelayInfo) (channelOrigin, *http.Client, error) {
+	if req == nil {
+		return channelOrigin{}, nil, errors.New("missing upstream relay request")
+	}
+	origin, err := channelEgressOrigin(req.URL, false)
+	if err != nil {
+		return channelOrigin{}, nil, err
+	}
+	if err = origin.check(req.URL, req.Host, req.Header); err != nil {
+		return channelOrigin{}, nil, err
+	}
+	client, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
+	if err != nil {
+		return channelOrigin{}, nil, fmt.Errorf("invalid upstream relay proxy configuration: %w", err)
+	}
+	return origin, client, nil
+}
+
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
+	beginChannelDispatch(c)
+	origin, client, err := prepareChannelHTTPDispatch(req, info)
+	if err != nil {
+		return nil, err
+	}
+	return doPreparedChannelHTTPRequest(c, req, info, origin, client)
+}
+
+// beginChannelDispatch clears facts about the previous wire send. It keeps
+// SubmissionPending: a rejected follow-up must not erase an earlier acceptance.
+func beginChannelDispatch(c *gin.Context) {
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestOrigin, "")
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestAttempted, false)
-	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, false)
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, true)
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamResponseDecodeFailed, false)
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamExplicitRejection, false)
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamResponseUsageIncomplete, false)
+}
+
+func doPreparedChannelHTTPRequest(c *gin.Context, req *http.Request, info *common.RelayInfo, origin channelOrigin, client *http.Client) (*http.Response, error) {
 	if stopped := service.RelayRequestCancellation(c); stopped != nil {
 		return nil, stopped
 	}
@@ -567,9 +601,9 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		c.Set("model_test_error_code", "output_budget_changed")
 		return nil, err
 	}
-	client, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
-	if err != nil {
-		return nil, fmt.Errorf("new proxy http client failed: %w", err)
+	if err := origin.check(req.URL, req.Host, req.Header); err != nil {
+		common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, true)
+		return nil, err
 	}
 	// Clients are cached and shared across channels, so override redirect
 	// behavior on a shallow copy instead of mutating the cached client. This
@@ -606,6 +640,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		return nil, apiErr
 	}
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestOrigin, req.URL.Scheme+"://"+req.URL.Host)
+	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, false)
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestAttempted, true)
 	applySingleAttemptTransportPolicy(c, req)
 	resp, err := relayClient.Do(req)
@@ -659,8 +694,7 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	// URL/header construction and cancellation before client.Do cannot submit
 	// work. Reset per-attempt facts so a previous channel cannot taint them.
 	if c != nil {
-		common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestAttempted, false)
-		common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, true)
+		beginChannelDispatch(c)
 		defer func() {
 			if !common2.GetContextKeyBool(c, appconstant.ContextKeyUpstreamRequestAttempted) {
 				common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, true)
@@ -673,7 +707,11 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	}
 	req, err := newTaskAPIRequest(c, fullRequestURL, requestBody)
 	if err != nil {
-		return nil, fmt.Errorf("new request failed: %w", err)
+		return nil, errors.New("invalid upstream task request URL or method")
+	}
+	origin, client, err := prepareChannelHTTPDispatch(req, info)
+	if err != nil {
+		return nil, err
 	}
 	ApplyUpstreamBodyMetadata(req, requestBody)
 	// Do NOT wrap requestBody in a GetBody closure here: returning the same
@@ -692,10 +730,13 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	if err = ApplyHeaderOverride(info, c, req); err != nil {
 		return nil, err
 	}
+	if err = origin.check(req.URL, req.Host, req.Header); err != nil {
+		return nil, err
+	}
 	if err = signUpstreamRequest(a, c, info, req.Method, req.URL, req.Header); err != nil {
 		return nil, err
 	}
-	resp, err := doRequest(c, req, info)
+	resp, err := doPreparedChannelHTTPRequest(c, req, info, origin, client)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}

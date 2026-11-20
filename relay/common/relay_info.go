@@ -180,6 +180,8 @@ type RelayInfo struct {
 	IsChannelTest                         bool // channel test request
 	RetryIndex                            int
 	LastError                             *types.NewAPIError
+	channelEgressAttempt                  uint64
+	channelRequestURLPath                 string
 	RuntimeHeadersOverride                map[string]any
 	UseRuntimeHeadersOverride             bool
 	ParamOverrideAudit                    []string
@@ -302,6 +304,19 @@ func (info *RelayInfo) RequestedImageCount() int {
 }
 
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
+	if attempt, ok := common.GetContextKeyType[uint64](c, constant.ContextKeyChannelEgressAttempt); ok && attempt != info.channelEgressAttempt {
+		// Overrides installed by a prior adaptor/override program may contain
+		// authentication headers. They must not shadow the new channel's
+		// headers. Reinitializing metadata within the same attempt is safe.
+		if info.channelEgressAttempt == 0 {
+			info.channelRequestURLPath = info.RequestURLPath
+		} else {
+			info.RequestURLPath = info.channelRequestURLPath
+		}
+		info.channelEgressAttempt = attempt
+		info.RuntimeHeadersOverride = nil
+		info.UseRuntimeHeadersOverride = false
+	}
 	info.ResponseModel = nil
 	info.FinalRequestRelayFormat = ""
 	info.RequestConversionChain = nil

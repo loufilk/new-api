@@ -144,7 +144,11 @@ func Distribute() func(c *gin.Context) {
 				// Do not relay or reserve funds with a partially initialized channel.
 				// Setup failures may include internal details, never return them verbatim.
 				group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-				logger.LogWarn(c, common.LogText("channel setup rejected before relay: channel_id=%d code=%s", c.GetInt("channel_id"), setupErr.GetErrorCode()))
+				channelID := 0
+				if channel != nil {
+					channelID = channel.Id
+				}
+				logger.LogWarn(c, common.LogText("channel setup rejected before relay: channel_id=%d code=%s", channelID, setupErr.GetErrorCode()))
 				abortWithOpenAiMessage(c, http.StatusServiceUnavailable, noAvailableChannelMessage(c, group, modelRequest.Model), setupErr.GetErrorCode())
 				return
 			}
@@ -635,7 +639,17 @@ func getTaskOriginModelName(c *gin.Context) string {
 	return ""
 }
 
-func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
+// SetupContextForSelectedChannel binds the outgoing transport and its
+// credential together. A failed setup leaves no channel egress context.
+func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) (apiErr *types.NewAPIError) {
+	attempt, _ := common.GetContextKeyType[uint64](c, constant.ContextKeyChannelEgressAttempt)
+	common.SetContextKey(c, constant.ContextKeyChannelEgressAttempt, attempt+1)
+	defer func() {
+		if apiErr != nil {
+			clearChannelEgressContext(c)
+		}
+	}()
+	clearChannelEgressSelectors(c)
 	c.Set("original_model", modelName) // for retry
 	expectedPlugin := c.GetString("expected_task_plugin_key")
 	if channel == nil {
@@ -649,6 +663,12 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 			types.ErrorCodeGetChannelFailed,
 			types.ErrOptionWithSkipRetry(),
 		)
+	}
+	// Select the credential before publishing any settings from this channel.
+	// A failed selection leaves no previous or mixed transport configuration.
+	key, index, newAPIError := channel.GetNextEnabledKey()
+	if newAPIError != nil {
+		return newAPIError
 	}
 	if index, matched := pinnedEndpointCandidateForChannel(c, channel, expectedPlugin); matched {
 		previousPlugin := ""
@@ -693,30 +713,26 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	common.SetContextKey(c, constant.ContextKeyChannelName, channel.Name)
 	common.SetContextKey(c, constant.ContextKeyChannelType, channel.Type)
 	common.SetContextKey(c, constant.ContextKeyChannelCreateTime, channel.CreatedTime)
-	common.SetContextKey(c, constant.ContextKeyChannelSetting, channel.GetSetting())
+	setting := channel.GetSetting()
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, setting)
 	otherSettings := channel.GetOtherSettings()
 	// An ordinary request on a task plugin channel runs on the relay routes of
 	// its plugin, pinned for the request like a task relay pins its plugin.
 	var providerPlugin any
 	if channel.Type == constant.ChannelTypeTaskPlugin && c.GetString("expected_task_plugin_key") == "" {
 		generation := jsplugin.DefaultRegistry.Generation()
-		if plugin, ok := generation.Get(channel.GetSetting().TaskPluginKey); ok && plugin.Meta.HasProviderPart() {
+		if plugin, ok := generation.Get(setting.TaskPluginKey); ok && plugin.Meta.HasProviderPart() {
 			providerPlugin = jsplugin.PinnedPlugin{Generation: generation, Plugin: plugin}
 			otherSettings.AdvancedCustom = plugin.Meta.ChannelRelayConfig(plugin.ChannelConfigFor(otherSettings.PluginConfig))
 		}
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, otherSettings)
 	common.SetContextKey(c, constant.ContextKeyProviderPlugin, providerPlugin)
-	switch channel.Type {
-	case constant.ChannelTypeTaskPlugin:
-		c.Set("task_plugin_key", channel.GetSetting().TaskPluginKey)
-	case constant.ChannelTypeNewAPI:
-		// The bound plugin verified above executes; ordinary requests through
-		// the same gateway channel carry no pinned plugin.
-		if executing := c.GetString("expected_task_plugin_key"); executing != "" {
-			c.Set("task_plugin_key", executing)
-		}
+	pluginKey := c.GetString("expected_task_plugin_key")
+	if channel.Type == constant.ChannelTypeTaskPlugin {
+		pluginKey = setting.TaskPluginKey
 	}
+	c.Set("task_plugin_key", pluginKey)
 	logTaskPluginChannelDecision(c, channel, modelName, "channel_selected", "")
 	paramOverride := channel.GetParamOverride()
 	headerOverride := channel.GetHeaderOverride()
@@ -734,18 +750,9 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, channel.GetModelMapping())
 	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
 
-	key, index, newAPIError := channel.GetNextEnabledKey()
-	if newAPIError != nil {
-		return newAPIError
-	}
-	if channel.ChannelInfo.IsMultiKey {
-		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, true)
-		common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, index)
-	} else {
-		// 必须设置为 false，否则在重试到单个 key 的时候会导致日志显示错误
-		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, false)
-	}
-	// c.Request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", key))
+	common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, channel.ChannelInfo.IsMultiKey)
+	common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, index)
+
 	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
 	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, channel.GetBaseURL())
 
@@ -771,6 +778,28 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 		c.Set("bot_id", channel.Other)
 	}
 	return nil
+}
+
+func clearChannelEgressContext(c *gin.Context) {
+	for _, key := range []constant.ContextKey{
+		constant.ContextKeyChannelId, constant.ContextKeyChannelName, constant.ContextKeyChannelType, constant.ContextKeyChannelCreateTime,
+		constant.ContextKeyChannelSetting, constant.ContextKeyChannelOtherSetting, constant.ContextKeyProviderPlugin,
+		constant.ContextKeyChannelParamOverride, constant.ContextKeyChannelHeaderOverride, constant.ContextKeyChannelOrganization,
+		constant.ContextKeyChannelAutoBan, constant.ContextKeyChannelModelMapping, constant.ContextKeyChannelStatusCodeMapping,
+		constant.ContextKeyChannelIsMultiKey, constant.ContextKeyChannelMultiKeyIndex, constant.ContextKeyChannelKey,
+		constant.ContextKeyChannelBaseUrl, constant.ContextKeySystemPromptOverride,
+	} {
+		common.SetContextKey(c, key, nil)
+	}
+}
+
+func clearChannelEgressSelectors(c *gin.Context) {
+	common.SetContextKey(c, constant.ContextKeyUpstreamRequestOrigin, "")
+	// These optional provider selectors are meaningful only for the attempt
+	// that set them. "platform" describes the request's pinned task route.
+	for _, key := range []string{"api_version", "region", "plugin", "bot_id", "task_plugin_key"} {
+		c.Set(key, "")
+	}
 }
 
 // extractModelNameFromGeminiPath 从 Gemini API URL 路径中提取模型名

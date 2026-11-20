@@ -107,3 +107,109 @@ func TestDistributorAffinityRequiresSuccessfulOutcome(t *testing.T) {
 		})
 	}
 }
+
+func TestChannelEgressRebindUsesOnlyCurrentAttempt(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	first := &model.Channel{
+		Id: 11, Type: constant.ChannelTypeAzure, Other: "fixture-version",
+		BaseURL: new("https://first.invalid"), Setting: new(`{"proxy":"http://first-proxy.invalid:8080","pass_through_body_enabled":true}`),
+		Key: "inactive-fixture\nfirst-fixture", ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true, MultiKeyMode: constant.MultiKeyModeRandom,
+			MultiKeyStatusList: map[int]int{0: common.ChannelStatusManuallyDisabled},
+		},
+	}
+	second := &model.Channel{
+		Id: 12, Type: constant.ChannelTypeOpenAI, Key: "second-fixture",
+		BaseURL: new("https://second.invalid"), Setting: new(`{"proxy":"http://second-proxy.invalid:8080"}`),
+		HeaderOverride: new(`{"X-Route-Marker":"second"}`),
+	}
+	require.Nil(t, SetupContextForSelectedChannel(c, first, "fixture-model"))
+	info := &relaycommon.RelayInfo{RequestURLPath: "/v1/chat/completions"}
+	info.InitChannelMeta(c)
+	require.Equal(t, first.Id, info.ChannelId)
+	require.Equal(t, *first.BaseURL, info.ChannelBaseUrl)
+	require.Equal(t, "http://first-proxy.invalid:8080", info.ChannelSetting.Proxy)
+	require.Equal(t, "first-fixture", info.ApiKey)
+	require.Equal(t, 1, info.ChannelMultiKeyIndex)
+	require.Equal(t, first.Other, info.ApiVersion)
+	require.True(t, info.ChannelSetting.PassThroughBodyEnabled)
+
+	// The first adaptor has applied its own request-local routing and headers.
+	info.RequestURLPath = "/fixture/rewritten"
+	info.RuntimeHeadersOverride = map[string]any{"x-route-marker": "first"}
+	info.UseRuntimeHeadersOverride = true
+	common.SetContextKey(c, constant.ContextKeyUpstreamRequestOrigin, "https://first-resolved.invalid")
+	info.InitChannelMeta(c)
+	require.Equal(t, "/fixture/rewritten", info.RequestURLPath, "same-attempt initialization keeps the request path")
+	require.Equal(t, "first", relaycommon.GetEffectiveHeaderOverride(info)["x-route-marker"], "same-attempt initialization keeps resolved headers")
+
+	require.Nil(t, SetupContextForSelectedChannel(c, second, "fixture-model"))
+	info.InitChannelMeta(c)
+	require.Equal(t, second.Id, info.ChannelId)
+	require.Equal(t, *second.BaseURL, info.ChannelBaseUrl)
+	require.Equal(t, "http://second-proxy.invalid:8080", info.ChannelSetting.Proxy)
+	require.Equal(t, second.Key, info.ApiKey)
+	require.Zero(t, info.ChannelMultiKeyIndex)
+	require.Empty(t, info.ApiVersion)
+	require.False(t, info.ChannelSetting.PassThroughBodyEnabled)
+	require.Empty(t, common.GetContextKeyString(c, constant.ContextKeyUpstreamRequestOrigin))
+	require.Equal(t, "/v1/chat/completions", info.RequestURLPath)
+	require.False(t, info.UseRuntimeHeadersOverride)
+	require.Equal(t, "second", relaycommon.GetEffectiveHeaderOverride(info)["x-route-marker"])
+}
+
+func TestChannelEgressRebindAfterSameChannelKeySelection(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	channel := &model.Channel{
+		Id: 11, Type: constant.ChannelTypeOpenAI, BaseURL: new("https://fixture.invalid"),
+		Key: "first-fixture\nnext-fixture", ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true, MultiKeyMode: constant.MultiKeyModeRandom,
+			MultiKeyStatusList: map[int]int{1: common.ChannelStatusManuallyDisabled},
+		},
+	}
+	require.Nil(t, SetupContextForSelectedChannel(c, channel, "fixture-model"))
+	info := &relaycommon.RelayInfo{}
+	info.InitChannelMeta(c)
+	require.Equal(t, "first-fixture", info.ApiKey)
+	info.RuntimeHeadersOverride = map[string]any{"x-route-marker": "first"}
+	info.UseRuntimeHeadersOverride = true
+
+	next := *channel
+	next.ChannelInfo.MultiKeyStatusList = map[int]int{0: common.ChannelStatusManuallyDisabled}
+	require.Nil(t, SetupContextForSelectedChannel(c, &next, "fixture-model"))
+	info.InitChannelMeta(c)
+	require.Equal(t, channel.Id, info.ChannelId)
+	require.Equal(t, *channel.BaseURL, info.ChannelBaseUrl)
+	require.Equal(t, "next-fixture", info.ApiKey)
+	require.Equal(t, 1, info.ChannelMultiKeyIndex)
+	require.Empty(t, relaycommon.GetEffectiveHeaderOverride(info))
+}
+
+func TestChannelEgressUnboundAfterUnavailableCredential(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	first := &model.Channel{
+		Id: 11, Type: constant.ChannelTypeAzure, Other: "fixture-version", Key: "first-test-value",
+		BaseURL: new("https://first.invalid"), Setting: new(`{"proxy":"http://first-proxy.invalid:8080"}`),
+		HeaderOverride: new(`{"X-Route-Marker":"first"}`),
+	}
+	require.Nil(t, SetupContextForSelectedChannel(c, first, "fixture-model"))
+	info := &relaycommon.RelayInfo{RequestURLPath: "/v1/chat/completions"}
+	info.InitChannelMeta(c)
+	info.RuntimeHeadersOverride = map[string]any{"x-route-marker": "first"}
+	info.UseRuntimeHeadersOverride = true
+
+	unavailable := &model.Channel{Id: 12, Type: constant.ChannelTypeOpenAI, ChannelInfo: model.ChannelInfo{IsMultiKey: true}}
+	setupErr := SetupContextForSelectedChannel(c, unavailable, "fixture-model")
+	require.NotNil(t, setupErr)
+	require.Equal(t, types.ErrorCodeChannelNoAvailableKey, setupErr.GetErrorCode())
+	info.InitChannelMeta(c)
+	require.Zero(t, info.ChannelId)
+	require.Empty(t, info.ChannelBaseUrl)
+	require.Empty(t, info.ChannelSetting.Proxy)
+	require.Empty(t, info.ApiKey)
+	require.Empty(t, info.ApiVersion)
+	require.Empty(t, relaycommon.GetEffectiveHeaderOverride(info))
+}
