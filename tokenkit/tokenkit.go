@@ -9,7 +9,6 @@
 package tokenkit
 
 import (
-	"math"
 	"strconv"
 	"strings"
 	"unicode"
@@ -147,75 +146,10 @@ func Estimate(model, text string) int {
 // EstimateFamily returns the estimated token count of text for a tokenizer
 // family. Unrecognized families use the FamilyUnknown weights.
 func EstimateFamily(family Family, text string) int {
-	w, ok := familyWeights[family]
-	if !ok {
-		w = familyWeights[FamilyUnknown]
-	}
-	var count float64
-
-	type wordType int
-	const (
-		none wordType = iota
-		latin
-		number
-	)
-	current := none
-
-	for _, r := range text {
-		if unicode.IsSpace(r) {
-			current = none
-			if r == '\n' || r == '\t' {
-				count += w.Newline
-			} else {
-				count += w.Space
-			}
-			continue
-		}
-
-		if isCJK(r) {
-			current = none
-			count += w.CJK
-			continue
-		}
-
-		if isEmoji(r) {
-			current = none
-			count += w.Emoji
-			continue
-		}
-
-		// A run of letters or digits counts once; switching between letters
-		// and digits starts a new run.
-		if unicode.IsLetter(r) || unicode.IsNumber(r) {
-			next := latin
-			if unicode.IsNumber(r) {
-				next = number
-			}
-			if current != next {
-				if next == number {
-					count += w.Number
-				} else {
-					count += w.Word
-				}
-				current = next
-			}
-			continue
-		}
-
-		current = none
-		switch {
-		case isMathSymbol(r):
-			count += w.MathSymbol
-		case r == '@':
-			count += w.AtSign
-		case isURLDelim(r):
-			count += w.URLDelim
-		default:
-			count += w.Symbol
-		}
-	}
-
-	return int(math.Ceil(count))
+	estimate := newStreamingEstimate(family)
+	estimate.hasInput = text != ""
+	estimate.writeValidString(text)
+	return estimate.Tokens()
 }
 
 func isCJK(r rune) bool {

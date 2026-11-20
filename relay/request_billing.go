@@ -86,7 +86,9 @@ func RefundFailedRequestBilling(c *gin.Context, info *relaycommon.RelayInfo, api
 	if apiErr == nil {
 		return nil
 	}
-	apiErr = service.NormalizeViolationFeeError(apiErr)
+	if info.ChannelMeta != nil {
+		apiErr = service.NormalizeViolationFeeError(apiErr, info.ChannelType)
+	}
 	apiErr = PreserveFailedRequestBilling(c, info, apiErr)
 	if c.GetBool(requestBillingDeliveryUnknownKey) {
 		return apiErr

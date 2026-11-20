@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -305,4 +306,40 @@ func TestOrdinaryBonusMaintenanceExpiresOnlyAvailableAndKeepsRefundProvenance(t 
 	assert.EqualValues(t, 1, count, "a refund restores its original expiry instead of issuing a fresh source")
 	require.NoError(t, DB.Model(&BonusSourceRestoration{}).Count(&count).Error)
 	assert.EqualValues(t, 1, count)
+}
+
+func TestBonusExpirySweepAdvancesPastAnomalyPostgres(t *testing.T) {
+	if !common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		t.Skip("requires disposable PostgreSQL")
+	}
+	setupLedgerTestState(t)
+	const deletedOwner, healthyOwner = 97621, 97622
+	createLedgerTestUser(t, deletedOwner, 0)
+	createLedgerTestUser(t, healthyOwner, 0)
+	now := common.GetTimestamp()
+	oldClock := bonusSourceNow
+	t.Cleanup(func() { bonusSourceNow = oldClock })
+	bonusSourceNow = func() int64 { return now }
+	for _, owner := range []int{deletedOwner, healthyOwner} {
+		require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+			_, err := CreditQuotaTx(tx, LedgerEntry{UserId: owner, Account: AccountBonus, Delta: 100,
+				Reason: "ordinary_test_grant", IdempotencyKey: fmt.Sprintf("bonus-sweep-%d", owner),
+				bonusGrant: &bonusSourceGrant{ExpiresAt: now + 60}})
+			return err
+		}))
+	}
+	// A soft-deleted owner must not lose its historical money, and an older
+	// unprocessable row cannot block expiry of a later healthy wallet.
+	require.NoError(t, DB.Delete(&User{}, deletedOwner).Error)
+	bonusSourceNow = func() int64 { return now + 120 }
+	first, err := RunBonusSourceMaintenance(t.Context(), 1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, first.Anomalies)
+	second, err := RunBonusSourceMaintenance(t.Context(), 1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, second.ExpiredLots)
+	assert.Zero(t, getUserBalances(t, healthyOwner).QuotaBonus)
+	var archived User
+	require.NoError(t, DB.Unscoped().First(&archived, deletedOwner).Error)
+	assert.Equal(t, 100, archived.QuotaBonus)
 }

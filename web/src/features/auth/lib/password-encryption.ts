@@ -41,10 +41,11 @@ export function clearPasswordEncryptionCache(): void {
 }
 
 export async function encryptPassword(
-  password: string
+  password: string,
+  currentKey?: PasswordEncryptionKey
 ): Promise<EncryptedPassword> {
   try {
-    const key = await getPasswordEncryptionKey()
+    const key = currentKey ?? (await getPasswordEncryptionKey())
     const ciphertext = await rsaOaepEncrypt(password, key.public_key, key.kid)
     return {
       password_encrypted: ciphertext,
@@ -54,6 +55,39 @@ export async function encryptPassword(
     clearPasswordEncryptionCache()
     throw new Error(t('Login failed'), { cause: error })
   }
+}
+
+type LoginPasswordFields = EncryptedPassword | { password: string }
+
+/** Read the current policy before transmitting a password. Branding/status
+ * snapshots can be stale or missing, and must not authorize plaintext JSON. */
+export async function getLoginPasswordFields(
+  password: string
+): Promise<LoginPasswordFields> {
+  const { data } = await api.get<{
+    success: boolean
+    data?: Partial<PasswordEncryptionKey> & { enabled?: boolean }
+  }>('/api/user/login/encryption-key', {
+    skipAuthRefresh: true,
+  })
+  const key = data?.data
+  if (data?.success === true && key?.enabled === false) {
+    return { password }
+  }
+  if (
+    data?.success === true &&
+    key?.enabled === true &&
+    typeof key.kid === 'string' &&
+    key.kid &&
+    typeof key.public_key === 'string' &&
+    key.public_key
+  ) {
+    return encryptPassword(password, {
+      kid: key.kid,
+      public_key: key.public_key,
+    })
+  }
+  throw new Error(t('Login failed'))
 }
 
 async function getPasswordEncryptionKey(): Promise<PasswordEncryptionKey> {

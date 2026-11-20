@@ -187,36 +187,54 @@ export function normalizeImageResponse(params: {
   }
   const now = Date.now()
 
-  return items
-    .map((item, index): GeneratedImage | null => {
-      if (!item || typeof item !== 'object') return null
-      if (typeof item.url === 'string' && item.url.length > 0) {
-        if (!isSafeImageUrl(item.url)) return null
-        const isDataUrl = isDataSchemeUrl(item.url)
-        return {
-          id: `${now}-${index}`,
-          url: item.url,
-          source: isDataUrl ? ('b64' as const) : ('url' as const),
-          prompt: params.prompt,
-          model: params.model,
-          createdAt: now,
-        }
-      }
-      if (typeof item.b64_json === 'string' && item.b64_json) {
-        const normalized = normalizeDataUrl(item.b64_json, item.mime_type)
-        if (!isSafeImageUrl(normalized)) return null
-        return {
-          id: `${now}-${index}`,
-          url: normalized,
-          source: 'b64' as const,
-          prompt: params.prompt,
-          model: params.model,
-          createdAt: now,
-        }
-      }
-      return null
-    })
-    .filter((item): item is GeneratedImage => item !== null)
+  const results: { index: number; image: GeneratedImage }[] = []
+  const urlOnly: typeof results = []
+  const base64Only: typeof results = []
+  const image = (url: string, index: number): GeneratedImage => ({
+    id: `${now}-${index}`,
+    url,
+    source: isDataSchemeUrl(url) ? 'b64' : 'url',
+    prompt: params.prompt,
+    model: params.model,
+    createdAt: now,
+  })
+
+  for (const [index, item] of items.entries()) {
+    if (!item || typeof item !== 'object') continue
+    const url =
+      typeof item.url === 'string' && isSafeImageUrl(item.url) ? item.url : ''
+    const base64 =
+      typeof item.b64_json === 'string' && item.b64_json
+        ? normalizeDataUrl(item.b64_json, item.mime_type)
+        : ''
+    const safeBase64 = isSafeImageUrl(base64) ? base64 : ''
+    if (url && safeBase64) {
+      results.push({ index, image: image(url, index) })
+    } else if (url) {
+      urlOnly.push({ index, image: image(url, index) })
+    } else if (safeBase64) {
+      base64Only.push({ index, image: image(safeBase64, index) })
+    }
+  }
+
+  // Match the relay's OpenAI image count convention: separate URL-only and
+  // base64-only rows can be two representations of the same image.
+  const splitCount = Math.min(urlOnly.length, base64Only.length)
+  for (const [index, entry] of urlOnly.entries()) {
+    const alternate = base64Only[index]
+    results.push(
+      alternate
+        ? {
+            index: Math.min(entry.index, alternate.index),
+            image: alternate.image,
+          }
+        : entry
+    )
+  }
+  results.push(...base64Only.slice(splitCount))
+  return results
+    .sort((left, right) => left.index - right.index)
+    .map((entry) => entry.image)
 }
 
 export function isAbortError(error: unknown): boolean {

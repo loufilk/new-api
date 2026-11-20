@@ -605,6 +605,18 @@ func moderationResult(results ...map[string]bool) string {
 	return string(encoded)
 }
 
+func moderationResultForInput(input gjson.Result, flags map[string]bool) string {
+	count := 1
+	if input.IsArray() && input.Get("0").Type == gjson.String {
+		count = len(input.Array())
+	}
+	items := make([]map[string]bool, count)
+	for i := range items {
+		items[i] = flags
+	}
+	return moderationResult(items...)
+}
+
 func TestContentModerationPlugin(t *testing.T) {
 	const chat = `{"model":"gpt-test","messages":[
 		{"role":"system","content":"Be brief"},
@@ -613,7 +625,7 @@ func TestContentModerationPlugin(t *testing.T) {
 		{"role":"user","content":[{"type":"text","text":"second"},{"type":"image_url","image_url":{"url":"[media:0]"}},{"type":"text","text":"question"}]}
 	]}`
 	clean := moderationResult(map[string]bool{"hate": false, "violence": false})
-	flagged := moderationResult(map[string]bool{"harassment": false, "violence": true, "violence/graphic": true, "hate": true})
+	flagged := moderationResult(map[string]bool{"sexual": false, "harassment": false, "violence": true, "violence/graphic": true, "hate": true})
 	defaults := map[string]any{"apiKey": "sk-test"}
 
 	t.Run("flagged text is rejected", func(t *testing.T) {
@@ -642,7 +654,7 @@ func TestContentModerationPlugin(t *testing.T) {
 	})
 	t.Run("only listed categories block", func(t *testing.T) {
 		config := map[string]any{"categories": []string{"violence", "sexual"}}
-		result, calls, err := runModeration(t, config, "openai", "/v1/chat/completions", chat, http.StatusOK, moderationResult(map[string]bool{"hate": true}))
+		result, calls, err := runModeration(t, config, "openai", "/v1/chat/completions", chat, http.StatusOK, moderationResult(map[string]bool{"hate": true, "violence": false, "sexual": false}))
 		require.NoError(t, err)
 		assert.Equal(t, "continue", result.Action)
 		require.Len(t, calls, 1)
@@ -704,6 +716,8 @@ func TestContentModerationPlugin(t *testing.T) {
 			{http.StatusInternalServerError, `{"error":{"message":"down"}}`, "moderation API returned HTTP 500"},
 			{http.StatusOK, `{"id":"modr-1"}`, "moderation API returned no results"},
 			{http.StatusOK, `not json`, "moderation API returned no results"},
+			{http.StatusOK, `{"results":[]}`, "moderation API returned an unexpected number of results"},
+			{http.StatusOK, `{"results":[{"categories":{}}]}`, "moderation API returned an invalid result"},
 		} {
 			_, calls, err := runModeration(t, defaults, "openai", "/v1/chat/completions", chat, tc.status, tc.reply)
 			var transformErr *jsplugin.TransformError
@@ -853,7 +867,7 @@ func TestContentModerationLongText(t *testing.T) {
 		assert.LessOrEqual(t, len(raw), mib)
 		inputs = append(inputs, gjson.GetBytes(raw, "input"))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(moderationResult(map[string]bool{"violence": len(inputs) == flagCall})))
+		_, _ = w.Write([]byte(moderationResultForInput(inputs[len(inputs)-1], map[string]bool{"violence": len(inputs) == flagCall})))
 	}))
 	t.Cleanup(server.Close)
 	config := map[string]any{"url": server.URL + "/v1/moderations"}
@@ -897,13 +911,12 @@ func TestContentModerationLongText(t *testing.T) {
 	assert.True(t, strings.HasPrefix(result.Rejected.Message, "The request is too long for content moderation"), result.Rejected.Message)
 	assert.Empty(t, inputs)
 
-	// The text takes three requests, so one of the three images is checked.
+	// The contract must never approve a partially checked request.
 	inputs = nil
 	result = dryRunBuiltIn(t, "content-moderation", config, chat(long, tinyImage, tinyImage, tinyImage))
-	assert.Nil(t, result.Rejected)
-	require.Len(t, inputs, 4)
-	assert.Equal(t, "image_url", inputs[3].Get("0.type").Str)
-	assert.Equal(t, long, joined())
+	require.NotNil(t, result.Rejected)
+	assert.Equal(t, "moderation.too_long", result.Rejected.Code)
+	assert.Empty(t, inputs)
 
 	// A reply too.
 	inputs = nil
@@ -1385,7 +1398,7 @@ func TestContentModerationImagesAndDocuments(t *testing.T) {
 		input := gjson.GetBytes(raw, "input")
 		inputs = append(inputs, input.Raw)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(moderationResult(map[string]bool{"violence": flagImages && input.Get("0.type").Str == "image_url"})))
+		_, _ = w.Write([]byte(moderationResultForInput(input, map[string]bool{"violence": flagImages && input.Get("0.type").Str == "image_url"})))
 	}))
 	t.Cleanup(server.Close)
 	url := server.URL + "/v1/moderations"

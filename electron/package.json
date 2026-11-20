@@ -37,6 +37,7 @@
     },
     "files": [
       "main.js",
+      "packaged-startup.js",
       "preload.js",
       "icon.png",
       "tray-iconTemplate.png",

@@ -72,6 +72,7 @@ func snapshotAccessLogPath() gin.HandlerFunc {
 				path = "[unmatched invoice route]"
 			}
 		case strings.HasPrefix(cleanPath, "/api/oauth/"), strings.HasPrefix(cleanPath, "/oauth/"),
+			cleanPath == "/user/reset", cleanPath == "/api/user/reset", cleanPath == "/api/reset_password", cleanPath == "/api/verification",
 			cleanPath == "/api/stripe/webhook", cleanPath == "/api/creem/webhook", cleanPath == "/api/waffo/webhook",
 			strings.HasPrefix(cleanPath, "/api/waffo-pancake/webhook/"), cleanPath == "/api/user/epay/notify",
 			cleanPath == "/api/subscription/epay/notify", cleanPath == "/api/subscription/epay/return":

@@ -180,6 +180,8 @@ export interface UptimeMonitor {
 export interface UptimeGroupResult {
   categoryName: string
   monitors: UptimeMonitor[]
+  state?: 'ready' | 'stale' | 'unavailable'
+  updated_at?: number
 }
 
 // ============================================================================

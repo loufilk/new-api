@@ -23,7 +23,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { api, type RefreshOutcome } from '@/lib/api'
 import type { AuthBundle } from '@/stores/auth-store'
 
-import { executeLogout } from './api'
+import { executeLogout, login } from './api'
 import { useOAuthLogin } from './hooks/use-oauth-login'
 import { consumeOAuthLoginRedirect } from './lib/oauth-callback-mode'
 
@@ -177,5 +177,41 @@ describe('logout coordination', () => {
         refresh: async () => transient,
       })
     ).rejects.toBe(originalError)
+  })
+})
+
+describe('password login encryption policy', () => {
+  test.each([
+    { success: true, data: {} },
+    { success: true, data: { enabled: true } },
+    { success: false, data: { enabled: false } },
+  ])(
+    'does not submit a password when the current policy is invalid: %j',
+    async (policy) => {
+      vi.spyOn(api, 'get').mockResolvedValue({ data: policy })
+      const post = vi.spyOn(api, 'post')
+      await expect(
+        login({ username: 'test', password: 'fixture-only' })
+      ).rejects.toThrow()
+      expect(post).not.toHaveBeenCalled()
+    }
+  )
+
+  test('posts a plain JSON password only if current policy explicitly permits it', async () => {
+    const get = vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: { enabled: false } },
+    })
+    const post = vi
+      .spyOn(api, 'post')
+      .mockResolvedValue({ data: { success: false } })
+    await login({ username: 'test', password: 'fixture-only' })
+    expect(get).toHaveBeenCalledWith('/api/user/login/encryption-key', {
+      skipAuthRefresh: true,
+    })
+    expect(post).toHaveBeenCalledWith(
+      expect.stringContaining('/api/user/login?'),
+      { username: 'test', password: 'fixture-only' },
+      { skipAuthRefresh: true }
+    )
   })
 })

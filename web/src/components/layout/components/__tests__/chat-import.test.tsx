@@ -134,7 +134,10 @@ async function openPreset(collapsed = false, name = 'AionUI', mobile = false) {
   })
   const route = createRoute({ getParentRoute: () => root, path: '/' })
   const router = createRouter({
-    routeTree: root.addChildren([route]),
+    routeTree: root.addChildren([
+      route,
+      createRoute({ getParentRoute: () => root, path: '/chat/$chatId' }),
+    ]),
     history: createMemoryHistory({ initialEntries: ['/'] }),
   })
   await router.load()
@@ -151,7 +154,7 @@ async function openPreset(collapsed = false, name = 'AionUI', mobile = false) {
   }
   await user.click(await screen.findByRole('button', { name: 'Third-party' }))
   await user.click(await screen.findByText(name))
-  return user
+  return Object.assign(user, { router })
 }
 
 it.each([false, true])(
@@ -305,14 +308,12 @@ it('allows retry after metadata loading fails without reading a secret', async (
   expect(api.post).not.toHaveBeenCalled()
 })
 
-it('uses the same explicit key selection for web clients', async () => {
-  await openPreset(false, 'Web Client')
-  expect(
-    await screen.findByRole('dialog', {
-      name: 'Select an API Key for Web Client',
-    })
-  ).toBeVisible()
+it('opens manual setup for a web preset without fetching or transferring an API key', async () => {
+  const { router } = await openPreset(false, 'Web Client')
+  await waitFor(() => expect(router.state.location.pathname).toBe('/chat/2'))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   expect(window.open).not.toHaveBeenCalled()
+  expect(api.get).not.toHaveBeenCalled()
   expect(api.post).not.toHaveBeenCalled()
 })
 

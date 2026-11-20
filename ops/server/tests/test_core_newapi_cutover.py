@@ -23,7 +23,7 @@ if args[:2] == ['image', 'inspect']:
     field, ref = args[3:]
     identities=json.loads(os.environ['IDENTITIES'])
     rev,mode=identities[ref]
-    direction='FROM' if ref==os.environ['CORE_FROM_IMAGE'] else 'TO'
+    direction='FROM' if ref==os.environ['CORE_FROM_IMAGE'] else ('TO' if ref==os.environ['CORE_TO_IMAGE'] else 'STAGED')
     if 'revision' in field: print(os.getenv(direction+'_REVISION_LABEL',rev))
     elif 'release.mode' in field: print(os.getenv(direction+'_MODE',mode))
     elif field == '{{.Id}}': print(ref.split('@')[-1])
@@ -37,6 +37,7 @@ elif args[0] == 'inspect':
     if field == '{{.Image}}': print(os.getenv('LIVE_IMAGE_ID',os.environ['CORE_TO_IMAGE' if switched else 'CORE_FROM_IMAGE'].split('@')[-1]))
     elif field == '{{.State.ExitCode}}': print(os.getenv('STOP_EXIT', '0'))
     elif field == '{{.State.Status}}': print(os.getenv('SOURCE_STATE', 'running'))
+    elif 'SHUTDOWN_TIMEOUT_SECONDS' in field: print(os.getenv('SOURCE_DRAIN', ''))
     else: sys.exit(3)
 elif args[0] == 'compose':
     if 'ps' in args:
@@ -81,7 +82,7 @@ class TestCutover(unittest.TestCase):
         chosen = {'CORE_FROM_IMAGE': source_ref, 'CORE_TO_IMAGE': target_ref, 'CORE_TO_REVISION': target_rev}
         result = subprocess.run(
             ['bash', str(SCRIPT), phase, '-p', 'qa', '-f', str(self.root / 'base.yml')],
-            env={**self.env, **chosen, **env}, text=True, capture_output=True, timeout=12,
+            env={**self.env, **chosen, **env}, text=True, capture_output=True, timeout=45,
         )
         events = [json.loads(line) for line in self.trace.read_text().splitlines()] if self.trace.exists() else []
         return result, [e for e in events if e[0] == 'compose']
@@ -116,6 +117,44 @@ class TestCutover(unittest.TestCase):
         self.assertTrue(all(e[-1] == 'new-api' for e in changes))
         self.assertIn('--no-deps', changes[-1])
         self.assertIn(str(self.pin), changes[-1])
+
+    def test_stock_upgrade_rejects_missing_or_wrong_rollback_image_before_stop(self):
+        found = json.loads(self.env['IDENTITIES'])
+        del found[FALLBACK]
+        for invalid in (
+            {'IDENTITIES': json.dumps(found)},
+            {'STAGED_REVISION_LABEL': 'f' * 40},
+            {'STAGED_MODE': ''},
+            {'STAGED_REPO_DIGESTS': 'wrong/repo@sha256:' + 'd' * 64},
+        ):
+            with self.subTest(invalid=invalid):
+                result, compose = self.run_script('upgrade', source='stock', target='im18', CORE_EXECUTE='yes', **invalid)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('staged schema-preserving rollback image', result.stderr)
+                self.assertEqual(compose, [])
+                self.assertFalse(self.pin.exists())
+
+    def test_stop_timeout_leaves_room_for_application_finalization(self):
+        for drain, grace in (('', 180), ('000300', 360), ('3601', 180), ('-10', 180)):
+            with self.subTest(drain=drain):
+                self.pin.unlink(missing_ok=True)
+                (self.root / 'state').unlink(missing_ok=True)
+                result, compose = self.run_script('rollback', CORE_EXECUTE='yes', SOURCE_DRAIN=drain)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                stop, = [e for e in compose if 'stop' in e]
+                self.assertEqual(stop[stop.index('-t') + 1], str(grace))
+
+    def test_manual_grace_override_cannot_cut_off_configured_drain(self):
+        result, compose = self.run_script('rollback', CORE_EXECUTE='yes',
+                                          SOURCE_DRAIN='300', CORE_STOP_GRACE_SECONDS='359')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('must be from 360 to 3660', result.stderr)
+        self.assertFalse(any('stop' in e for e in compose))
+        result, compose = self.run_script('rollback', CORE_EXECUTE='yes',
+                                          SOURCE_DRAIN='300', CORE_STOP_GRACE_SECONDS='420')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        stop, = [e for e in compose if 'stop' in e]
+        self.assertEqual(stop[stop.index('-t') + 1], '420')
 
     def test_abnormal_drain_stops_before_remove_and_recreate(self):
         result, compose = self.run_script('upgrade', source='stock', target='im18', CORE_EXECUTE='yes', STOP_EXIT='137')

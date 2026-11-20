@@ -571,6 +571,7 @@ func GenRelayInfoResponses(c *gin.Context, request *dto.OpenAIResponsesRequest) 
 
 func GenRelayInfoGemini(c *gin.Context, request dto.Request) *RelayInfo {
 	info := genBaseRelayInfo(c, request)
+	info.RelayMode = relayconstant.RelayModeGemini
 	info.RelayFormat = types.RelayFormatGemini
 	info.ShouldIncludeUsage = false
 

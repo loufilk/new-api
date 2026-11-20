@@ -177,16 +177,44 @@ func StatedLang(c *gin.Context) string {
 	return ParseAcceptLanguage(c.GetHeader("Accept-Language"))
 }
 
-// ParseAcceptLanguage returns the first language of an Accept-Language header,
-// or "" when the header is absent or states no preference ("*").
+// ParseAcceptLanguage chooses the most preferred supported language. A wildcard
+// is not an explicit locale, and a zero quality value excludes a language.
 func ParseAcceptLanguage(header string) string {
-	first, _, _ := strings.Cut(header, ",")
-	first, _, _ = strings.Cut(first, ";")
-	first = strings.TrimSpace(first)
-	if first == "" || first == "*" {
+	// x/text expands "*" to English; keep wildcard-only requests on the
+	// configured server default and let explicit supported tags win.
+	var ranges []string
+	for part := range strings.SplitSeq(header, ",") {
+		tag, _, _ := strings.Cut(part, ";")
+		if strings.TrimSpace(tag) != "*" {
+			ranges = append(ranges, part)
+		}
+	}
+	tags, _, err := language.ParseAcceptLanguage(strings.Join(ranges, ","))
+	if err != nil {
 		return ""
 	}
-	return normalizeLang(first)
+	explicit := false
+	for _, tag := range tags {
+		if tag == language.Und {
+			continue
+		}
+		explicit = true
+		base, _ := tag.Base()
+		switch base.String() {
+		case "en":
+			return LangEn
+		case "zh", "cmn", "yue":
+			id := tag.String()
+			if strings.HasPrefix(id, "yue") {
+				return LangZhTW
+			}
+			return normalizeLang(id)
+		}
+	}
+	if explicit {
+		return DefaultLang
+	}
+	return ""
 }
 
 // normalizeLang normalizes language code to supported format

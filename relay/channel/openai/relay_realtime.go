@@ -3,6 +3,7 @@ package openai
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -25,6 +26,9 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	}
 	info.IsStream = true
 	clientConn, targetConn := info.ClientWs, info.TargetWs
+	clientReadLimit, upstreamReadLimit := helper.WebSocketReadLimits()
+	clientConn.SetReadLimit(clientReadLimit)
+	targetConn.SetReadLimit(upstreamReadLimit)
 	clientClosed, targetClosed := make(chan struct{}), make(chan struct{})
 	stop := make(chan struct{})
 	errChan := make(chan error, 2)
@@ -48,14 +52,22 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	// Plugins may write either socket from either reader. Keep one writer
 	// per connection and preserve client privacy for plugin-generated frames.
 	var clientWriteMu, targetWriteMu sync.Mutex
+	var clientWriteBudget helper.StreamWriteBudget
 	writeClient := func(message []byte) error {
 		clientWriteMu.Lock()
 		defer clientWriteMu.Unlock()
+		deadline := clientWriteBudget.Deadline(time.Now(), len(message))
+		if err := clientConn.SetWriteDeadline(deadline); err != nil {
+			return err
+		}
 		return helper.WssString(c, clientConn, string(privacy.SanitizeClientPayload(c, message)))
 	}
 	writeTarget := func(message []byte) error {
 		targetWriteMu.Lock()
 		defer targetWriteMu.Unlock()
+		if err := targetConn.SetWriteDeadline(time.Now().Add(30 * time.Second)); err != nil {
+			return err
+		}
 		return helper.WssString(c, targetConn, string(message))
 	}
 	plugins := requestplugin.NewRealtime(c, info, func(message []byte) {

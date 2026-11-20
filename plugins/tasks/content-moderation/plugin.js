@@ -236,9 +236,15 @@ function blockingCategories(results, listed) {
   const counts = new Map();
   const add = (name) => counts.set(name, (counts.get(name) || 0) + 1);
   for (const result of results) {
-    if (!result || typeof result !== "object") throw new Error("moderation API returned an invalid result");
+    if (!result || typeof result !== "object" || typeof result.flagged !== "boolean") {
+      throw new Error("moderation API returned an invalid result");
+    }
+    const categories = result.categories;
+    if (!categories || typeof categories !== "object" || Array.isArray(categories) ||
+        listed.some((name) => typeof categories[name] !== "boolean")) {
+      throw new Error("moderation API returned incomplete categories");
+    }
     if (listed.length === 0 && result.flagged !== true) continue;
-    const categories = result.categories && typeof result.categories === "object" ? result.categories : {};
     const names = Object.keys(categories).filter((name) => categories[name] === true && (listed.length === 0 || listed.includes(name)));
     names.forEach(add);
     if (listed.length === 0 && names.length === 0) add("flagged");
@@ -258,6 +264,8 @@ function moderate(config, input) {
   }
   const results = response.body && typeof response.body === "object" ? response.body.results : undefined;
   if (!Array.isArray(results)) throw new Error("moderation API returned no results");
+  const expected = Array.isArray(input) && typeof input[0] === "string" ? input.length : 1;
+  if (results.length !== expected) throw new Error("moderation API returned an unexpected number of results");
 
   return blockingCategories(results, config.categories || []).slice(0, 64);
 }
@@ -319,7 +327,7 @@ function findingsOf(blocking) {
 // each at most MAX_IMAGE_BYTES; an image in the request goes as data, one
 // the request names by URL as that URL. A document goes as text, at most
 // MAX_DOCUMENTS per request and DOCUMENT_CHARS characters each: moderation
-// models read short texts best. Others are left alone.
+// models read short texts best. Reject when selected media cannot be checked.
 const MAX_IMAGES = 3;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_DOCUMENTS = 4;
@@ -343,7 +351,9 @@ export function ingress(ctx, req) {
   if (ctx.path === MODERATION_PATH || !req.body || typeof req.body !== "object") return { action: "continue" };
   const messages = userMessages(ctx.format, req.body);
   if (messages.length === 0) return { action: "continue" };
-  const attachments = utils.attachments().filter((attachment) => sendable(config, attachment));
+  const attachments = utils.attachments().filter((attachment) =>
+    attachment.kind === "document" || (attachment.kind === "image" && config.images !== false)
+  );
   const hasContent = (message) => message.text.trim() !== "" || attachments.some((attachment) => belongsTo(message, attachment));
   let selected = messages.filter(hasContent);
   if (config.scope !== "all_user") selected = selected.slice(-1);
@@ -352,27 +362,30 @@ export function ingress(ctx, req) {
   const texts = selected.map((message) => message.text).filter((text) => text.trim() !== "");
   const images = [];
   let documents = 0;
+  const tooLong = { action: "reject", code: "moderation.too_long", message: "The request is too long for content moderation" };
+  const unsupported = { action: "reject", code: "moderation.unsupported_attachment", message: "An attachment could not be checked by content moderation" };
   for (const attachment of attachments) {
     if (!selected.some((message) => belongsTo(message, attachment))) continue;
+    if (!sendable(config, attachment)) return unsupported;
     if (attachment.kind === "image") {
-      if (images.length < MAX_IMAGES) images.push(attachment.ref !== undefined ? attachment.ref : attachment.url);
-    } else if (documents < MAX_DOCUMENTS) {
+      if (images.length >= MAX_IMAGES) return tooLong;
+      images.push(attachment.ref !== undefined ? attachment.ref : attachment.url);
+    } else {
+      if (documents >= MAX_DOCUMENTS) return tooLong;
       documents++;
       const read = utils.mediaText(attachment.ref, { maxChars: DOCUMENT_CHARS });
-      if (read && typeof read.text === "string" && read.text.trim() !== "") texts.push(read.text);
+      if (!read || typeof read.text !== "string" || read.truncated === true) return unsupported;
+      if (read.text.trim() !== "") texts.push(read.text);
     }
   }
+  // Reserve enough of the shared fetch budget for every selected attachment.
   let blocking = [];
-  let requests = 0;
   if (texts.length > 0) {
-    const inputs = textInputs(config, texts, config.scope !== "all_user" && texts.length === 1, MAX_FETCHES);
-    if (inputs === null) {
-      return { action: "reject", code: "moderation.too_long", message: "The request is too long for content moderation" };
-    }
-    for (; blocking.length === 0 && requests < inputs.length; requests++) blocking = moderate(config, inputs[requests]);
+    const inputs = textInputs(config, texts, config.scope !== "all_user" && texts.length === 1, MAX_FETCHES - images.length);
+    if (inputs === null) return tooLong;
+    for (let i = 0; blocking.length === 0 && i < inputs.length; i++) blocking = moderate(config, inputs[i]);
   }
-  // Images take the requests the text left.
-  for (let i = 0; blocking.length === 0 && i < images.length && requests < MAX_FETCHES; i++, requests++) {
+  for (let i = 0; blocking.length === 0 && i < images.length; i++) {
     blocking = moderate(config, [{ type: "image_url", image_url: { url: images[i] } }]);
   }
   if (blocking.length === 0) return { action: "continue" };

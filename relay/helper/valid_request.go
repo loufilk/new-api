@@ -26,11 +26,12 @@ func GetAndValidateRequest(c *gin.Context, format types.RelayFormat) (request dt
 	case types.RelayFormatOpenAI:
 		request, err = GetAndValidateTextRequest(c, relayMode)
 	case types.RelayFormatGemini:
-		if strings.Contains(c.Request.URL.Path, ":embedContent") {
+		switch relayconstant.GeminiModelAction(c.Request.URL.Path) {
+		case "embedContent":
 			request, err = GetAndValidateGeminiEmbeddingRequest(c)
-		} else if strings.Contains(c.Request.URL.Path, ":batchEmbedContents") {
+		case "batchEmbedContents":
 			request, err = GetAndValidateGeminiBatchEmbeddingRequest(c)
-		} else {
+		default:
 			request, err = GetAndValidateGeminiRequest(c)
 		}
 	case types.RelayFormatClaude:
@@ -446,6 +447,9 @@ func GetAndValidateGeminiEmbeddingRequest(c *gin.Context) (*dto.GeminiEmbeddingR
 	if err != nil {
 		return nil, err
 	}
+	if len(request.Content.Parts) == 0 {
+		return nil, errors.New("content parts are required")
+	}
 	return request, nil
 }
 
@@ -454,6 +458,17 @@ func GetAndValidateGeminiBatchEmbeddingRequest(c *gin.Context) (*dto.GeminiBatch
 	err := common.UnmarshalBodyReusableNoCopy(c, request)
 	if err != nil {
 		return nil, err
+	}
+	if len(request.Requests) == 0 {
+		return nil, errors.New("requests is required")
+	}
+	for _, item := range request.Requests {
+		if item == nil {
+			return nil, errors.New("requests must not contain null entries")
+		}
+		if len(item.Content.Parts) == 0 {
+			return nil, errors.New("content parts are required for each request")
+		}
 	}
 	return request, nil
 }

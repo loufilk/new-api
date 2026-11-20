@@ -26,7 +26,7 @@ func isStripeWebhookConfigured() bool {
 }
 
 func isStripeWebhookEnabled() bool {
-	return isStripeTopUpEnabled()
+	return isPaymentComplianceConfirmed() && isStripeWebhookConfigured()
 }
 
 func isCreemTopUpEnabled() bool {
@@ -122,5 +122,7 @@ func isEpayWebhookConfigured() bool {
 }
 
 func isEpayWebhookEnabled() bool {
-	return isEpayTopUpEnabled()
+	// The configured payment method list controls only new checkout. Existing
+	// orders are still payable and require signature verification and settlement.
+	return isPaymentComplianceConfirmed() && isEpayWebhookConfigured()
 }

@@ -18,6 +18,10 @@ type VerifiedPaymentFacts struct {
 	Currency          string `json:"currency"`
 	CurrencyExponent  int    `json:"currency_exponent"`
 	PaidMinor         int64  `json:"paid_minor,string"`
+	// Signed Stripe Checkout fields, used to match the actual payment to the
+	// frozen subtotal even when the merchant permits a Stripe promotion.
+	CheckoutSubtotalMinor int64 `json:"-"`
+	CheckoutDiscountMinor int64 `json:"-"`
 }
 
 // NewVerifiedPaymentFacts intentionally supports only currencies whose

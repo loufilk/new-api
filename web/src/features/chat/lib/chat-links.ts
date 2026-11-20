@@ -16,8 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { API_KEY_STATUS } from '@/features/keys/constants'
-
 export type ChatLinkType = 'web' | 'custom-protocol' | 'fluent'
 
 export type ChatPreset = {
@@ -38,11 +36,6 @@ export type ResolveChatUrlParams = {
   template: string
   apiKey?: string
   serverAddress: string
-}
-
-export type ActiveApiKey = {
-  key: string
-  status: number
 }
 
 const HTTP_REGEX = /^https?:\/\//i
@@ -158,6 +151,13 @@ export function resolveChatUrl({
   let url = template
   const safeServerAddress = serverAddress || ''
 
+  // A web navigation must never embed the gateway's long-lived credential.
+  if (
+    detectChatLinkType(template.trim()) === 'web' &&
+    chatLinkRequiresApiKey(template)
+  ) {
+    return ''
+  }
   const safeApiKey = normalizeApiKey(apiKey || '')
 
   if (url.includes('{cherryConfig}')) {
@@ -212,9 +212,29 @@ export function resolveChatUrl({
   return url
 }
 
-export function getFirstActiveKey(
-  keys: ActiveApiKey[] | undefined
-): ActiveApiKey | undefined {
-  if (!Array.isArray(keys)) return undefined
-  return keys.find((item) => item.status === API_KEY_STATUS.ENABLED)
+// For presets that used to embed secrets, send users to the app's public
+// landing page for manual configuration. Discard the entire import URL.
+export function resolveWebChatUrl(
+  template: string,
+  serverAddress: string
+): string {
+  const suppliesKey = chatLinkRequiresApiKey(template)
+  try {
+    const url = new URL(
+      suppliesKey ? template : resolveChatUrl({ template, serverAddress })
+    )
+    const isLocal = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+    if (
+      (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLocal)) ||
+      url.username ||
+      url.password ||
+      url.hostname.includes('%') ||
+      url.hostname.includes('{')
+    ) {
+      return ''
+    }
+    return suppliesKey ? url.origin : url.href
+  } catch {
+    return ''
+  }
 }

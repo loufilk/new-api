@@ -427,8 +427,8 @@ func AdminResetPasskey(c *gin.Context) {
 		return
 	}
 
-	user := &model.User{Id: id}
-	if err := user.FillUserById(); err != nil {
+	user, err := model.GetUserById(id, false)
+	if err != nil {
 		writeSecurityOperationError(c, err)
 		return
 	}
@@ -442,7 +442,7 @@ func AdminResetPasskey(c *gin.Context) {
 		return
 	}
 
-	if _, err := model.GetPasskeyByUserID(user.Id); err != nil {
+	if err := model.DeletePasskeyByAdministrator(authorization.AuthSessionIdentity, *user); err != nil {
 		if errors.Is(err, model.ErrPasskeyNotFound) {
 			common.ApiErrorT(c, "No Passkey is registered.")
 			return
@@ -451,10 +451,6 @@ func AdminResetPasskey(c *gin.Context) {
 		return
 	}
 
-	if err := model.DeletePasskeyByUserIDWithAuthVersion(user.Id); err != nil {
-		writeSecurityOperationError(c, err)
-		return
-	}
 	if _, err := model.RevokeAllUserSessions(user.Id, "admin_passkey_reset"); err != nil {
 		writeSecurityOperationError(c, err)
 		return

@@ -300,14 +300,8 @@ func TestGoogleOAuthOnlyAuthoritativeEmailBecomesRecoveryEmail(t *testing.T) {
 				return
 			}
 			assert.Empty(t, user.Email, "Google is not authoritative for a third-party mailbox")
-			// Even possession of a mailbox recovery code must not let its current
-			// owner reset the distinct Google subject's newly created local account.
-			common.RegisterVerificationCodeWithKey(test.email, "synthetic-recovery-code", common.PasswordResetPurpose)
-			t.Cleanup(func() { common.DeleteKey(test.email, common.PasswordResetPurpose) })
-			body, err := common.Marshal(PasswordResetRequest{Email: test.email, Token: "synthetic-recovery-code"})
-			require.NoError(t, err)
-			reset := securityEnrollmentRequest(http.MethodPost, "/api/user/reset", string(body), "", service.AuthIdentity{}, ResetPassword)
-			assert.Contains(t, reset.Body.String(), `"success":false`)
+			_, err = model.IssuePasswordRecovery(t.Context(), test.email, time.Minute)
+			require.ErrorIs(t, err, model.ErrAuthFlowInvalid)
 			stored, err := model.GetUserByGoogleID("email-authority")
 			require.NoError(t, err)
 			assert.Empty(t, stored.Password)

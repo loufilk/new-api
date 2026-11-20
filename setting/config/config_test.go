@@ -94,3 +94,26 @@ func TestUpdateConfigFromMap_ScalarFieldsUnchanged(t *testing.T) {
 		t.Errorf("Modes should be unchanged, got %v", cfg.Modes)
 	}
 }
+
+func TestInvalidConfigBatchPreservesActiveValues(t *testing.T) {
+	type values struct {
+		Enabled bool     `json:"enabled"`
+		Count   int8     `json:"count"`
+		Ports   []string `json:"ports"`
+	}
+	cfg := values{Enabled: true, Count: 7, Ports: []string{"443"}}
+	manager := NewConfigManager()
+	manager.Register("test", &cfg)
+	if _, err := manager.Update("test", map[string]string{"enabled": "false", "count": "256", "ports": `["80"]`}); err == nil {
+		t.Fatal("expected invalid configuration")
+	}
+	if !cfg.Enabled || cfg.Count != 7 || len(cfg.Ports) != 1 || cfg.Ports[0] != "443" {
+		t.Fatalf("invalid batch changed configuration: %+v", cfg)
+	}
+	if err := manager.ValidateValue("test", "ports", `["80",true]`); err == nil {
+		t.Fatal("expected invalid list element")
+	}
+	if _, err := manager.Update("test", map[string]string{"count": "2.000000"}); err != nil || cfg.Count != 2 {
+		t.Fatalf("legacy integral value was not accepted: %v, %d", err, cfg.Count)
+	}
+}

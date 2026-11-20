@@ -134,9 +134,23 @@ export function UptimePanel() {
                   <h4 className='text-muted-foreground text-xs font-semibold tracking-wider uppercase'>
                     {group.categoryName}
                   </h4>
-                  <span className='text-muted-foreground/40 font-mono text-xs tabular-nums'>
-                    {group.monitors?.length || 0}
-                  </span>
+                  {group.state === 'unavailable' && (
+                    <span className='text-muted-foreground text-xs'>
+                      {t('Unavailable')}
+                    </span>
+                  )}
+                  {group.state === 'stale' && !!group.updated_at && (
+                    <span className='text-muted-foreground text-xs'>
+                      {t('Last updated')}:{' '}
+                      {new Date(group.updated_at * 1000).toLocaleString()}
+                    </span>
+                  )}
+                  {group.state !== 'unavailable' &&
+                    !(group.state === 'stale' && group.updated_at) && (
+                      <span className='text-muted-foreground/40 font-mono text-xs tabular-nums'>
+                        {group.monitors?.length || 0}
+                      </span>
+                    )}
                 </div>
               </div>
 

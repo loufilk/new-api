@@ -85,6 +85,31 @@ http://:8081 {
 			respond "Method Not Allowed" 405
 		}
 
+		# Checkout uses a body token, not browser credentials. Never cache a
+		# payment lookup or route an entire anonymous API namespace.
+		@public_agent_payment {
+			method POST
+			path_regexp public_agent_payment ^/public-api/agent-pay/[^/]+$
+		}
+		handle @public_agent_payment {
+			reverse_proxy http://127.0.0.1:3000 {
+				header_up Host {host}
+				header_up X-Forwarded-Host {host}
+				header_up X-Forwarded-Proto https
+				header_up -Cookie
+				header_up -Authorization
+				header_down -Set-Cookie
+				header_down Cache-Control no-store
+			}
+		}
+
+		@public_agent_payment_other path_regexp public_agent_payment_other ^/public-api/agent-pay/[^/]+$
+		handle @public_agent_payment_other {
+			header Allow POST
+			header Cache-Control no-store
+			respond "Method Not Allowed" 405
+		}
+
 		# --- P0-1: New API same-origin proxy (http://127.0.0.1:3000) ---
 		# Matchers sit before the web-home file_server below; public web-home
 		# paths (/, /models*, /about*, /apps*, /docs*, /blog*, /status*,
@@ -116,6 +141,8 @@ http://:8081 {
 			path /sign-in /sign-in/* /sign-up /sign-up/* /forgot-password /forgot-password/* /oauth /oauth/* /otp /otp/* /register /register/* /reset /reset/* /user/reset /user/reset/*
 			path /dashboard /dashboard/* /keys /keys/* /usage-logs /usage-logs/* /wallet /wallet/* /profile /profile/*
 			path /invoice /invoice/* /invoice-management /invoice-management/*
+			path /agent-pay /agent-pay/* /agent-platform /agent-platform/* /agent-redemption /agent-redemption/*
+			path /request-processing /request-processing/*
 			path /pricing /pricing/*
 			path /playground /playground/*
 			path /image /image/*

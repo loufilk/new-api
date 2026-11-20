@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -106,12 +107,12 @@ func TestSupportEmailRegistrationTrustRequiresConsumedVerificationCode(t *testin
 	t.Cleanup(func() {
 		common.RegisterEnabled, common.PasswordRegisterEnabled, common.EmailVerificationEnabled = previousRegister, previousPassword, previousVerify
 		constant.GenerateDefaultToken = previousToken
-		common.DeleteKey("register@example.com", common.EmailVerificationPurpose)
+
 	})
-	forged := `{"username":"register-user","password":"SecureRegistration123","email":"register@example.com","verification_code":"123456","email_verified_address":"register@example.com","email_verification_version":999,"email_verified_at":123}`
+	forged := `{"username":"register-user","password":"SecureRegistration123","email":"register@example.com","verification_code":"12345678","email_verified_address":"register@example.com","email_verification_version":999,"email_verified_at":123}`
 	rejected := securityEnrollmentRequest(http.MethodPost, "/api/user/register", forged, "", service.AuthIdentity{}, Register)
 	assert.Contains(t, rejected.Body.String(), `"success":false`)
-	common.RegisterVerificationCodeWithKey("register@example.com", "123456", common.EmailVerificationPurpose)
+	require.NoError(t, model.CreateRegistrationEmailCode(t.Context(), "register@example.com", "12345678", time.Minute))
 	response := securityEnrollmentRequest(http.MethodPost, "/api/user/register", forged, "", service.AuthIdentity{}, Register)
 	require.Contains(t, response.Body.String(), `"success":true`)
 	var stored model.User
@@ -119,5 +120,6 @@ func TestSupportEmailRegistrationTrustRequiresConsumedVerificationCode(t *testin
 	assert.True(t, model.VerifiedSupportEmail(&stored))
 	assert.EqualValues(t, 1, stored.EmailVerificationVersion, "client cannot set server trust metadata")
 	assert.NotEqualValues(t, 123, stored.EmailVerifiedAt)
-	assert.False(t, common.VerifyCodeWithKey("register@example.com", "123456", common.EmailVerificationPurpose))
+	_, err := model.GetAuthFlow("register:register@example.com:12345678", model.AuthFlowMatch{Purpose: model.AuthFlowPurposeRegistrationEmail})
+	assert.ErrorIs(t, err, model.ErrAuthFlowConsumed)
 }

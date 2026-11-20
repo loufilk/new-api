@@ -198,17 +198,8 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 	if info.ChannelType == constant.ChannelTypeOpenAI && "" != info.Organization {
 		header.Set("OpenAI-Organization", info.Organization)
 	}
-	// 检查 Header Override 是否已设置 Authorization，如果已设置则跳过默认设置
-	// 这样可以避免在 Header Override 应用时被覆盖（虽然 Header Override 会在之后应用，但这里作为额外保护）
-	hasAuthOverride := false
-	if len(info.HeadersOverride) > 0 {
-		for k := range info.HeadersOverride {
-			if strings.EqualFold(k, "Authorization") {
-				hasAuthOverride = true
-				break
-			}
-		}
-	}
+	// Seed adaptor credentials first. An explicit configured override can
+	// replace them later, but an unavailable client-header source cannot.
 	if info.RelayMode == relayconstant.RelayModeRealtime {
 		// OpenAI 已下线 Realtime Beta API,GA 模型收到 beta 标识会以 beta_api_shape_disabled 拒绝;
 		// 仅对遗留 preview 模型保留 beta 标识
@@ -230,14 +221,10 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 			if legacyRealtimeBeta {
 				header.Set("openai-beta", "realtime=v1")
 			}
-			if !hasAuthOverride {
-				header.Set("Authorization", "Bearer "+info.ApiKey)
-			}
-		}
-	} else {
-		if !hasAuthOverride {
 			header.Set("Authorization", "Bearer "+info.ApiKey)
 		}
+	} else {
+		header.Set("Authorization", "Bearer "+info.ApiKey)
 	}
 	if info.ChannelType == constant.ChannelTypeOpenRouter {
 		if header.Get("HTTP-Referer") == "" {

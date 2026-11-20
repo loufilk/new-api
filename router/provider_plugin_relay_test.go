@@ -1152,7 +1152,7 @@ func TestPluginConverterMapsVendorErrors(t *testing.T) {
 		"chat":      {path: "/v1/chat/completions", body: relayTestBody, format: `"code":null`},
 		"responses": {path: "/v1/responses", body: `{"model":"` + relayTestModel + `","input":"hello there"}`, format: `"code":null`},
 		"messages":  {path: "/v1/messages", body: `{"model":"` + relayTestModel + `","max_tokens":32,"messages":[{"role":"user","content":"hello there"}]}`, format: `"type":"error"`},
-		"gemini":    {path: "/v1beta/models/" + relayTestModel + ":generateContent", body: `{"contents":[{"role":"user","parts":[{"text":"hello there"}]}]}`, format: `"code":null`},
+		"gemini":    {path: "/v1beta/models/" + relayTestModel + ":generateContent", body: `{"contents":[{"role":"user","parts":[{"text":"hello there"}]}]}`, format: `"status":"RESOURCE_EXHAUSTED"`},
 	}
 	for name, protocol := range protocols {
 		t.Run("200 with an error code on "+name, func(t *testing.T) {

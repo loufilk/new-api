@@ -319,8 +319,13 @@ func RelayErrorData(c *gin.Context, format types.RelayFormat, apiErr *types.NewA
 		prefix = "event: error\ndata: "
 		data = dto.ClaudeResponse{Type: "error", Error: privacy.ClientClaudeError(c, apiErr)}
 	case types.RelayFormatGemini:
+		data = privacy.ClientGeminiError(c, apiErr)
+	case types.RelayFormatOpenAIResponses:
+		// Before any Responses event was sent there is no response object
+		// that a synthetic response.failed event could correctly reference.
+		prefix = "event: error\ndata: "
 		safe := privacy.ClientOpenAIError(c, apiErr)
-		data = gin.H{"error": gin.H{"code": apiErr.StatusCode, "message": safe.Message, "status": "INTERNAL"}}
+		data = gin.H{"type": "error", "code": safe.Code, "message": safe.Message, "param": safe.Param, "sequence_number": 0}
 	default:
 		return fmt.Errorf("unsupported stream failure format %s", format)
 	}
@@ -328,7 +333,7 @@ func RelayErrorData(c *gin.Context, format types.RelayFormat, apiErr *types.NewA
 	if err != nil {
 		return fmt.Errorf("error marshalling stream error: %w", err)
 	}
-	if !privacy.IsNativeGatewayClientError(apiErr) {
+	if !privacy.IsNativeGatewayClientError(apiErr) && format != types.RelayFormatGemini && format != types.RelayFormatOpenAIResponses {
 		encoded = privacy.SanitizeClientPayload(c, encoded)
 	}
 	return writeEventStreamFrame(c, prefix+string(encoded)+"\n\n")

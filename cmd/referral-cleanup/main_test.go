@@ -1,42 +1,42 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-
 	"github.com/stretchr/testify/require"
 )
 
-// TestOpenDatabaseSkipsStartupMigrations 锁定命令层回归：inspect 默认路径打开
-// 连接时不得执行 master 迁移。openDatabase 必须在连接前关闭 IsMasterNode，
-// 否则 model.InitDB 的 AutoMigrate 会创建/修改表。
-func TestOpenDatabaseSkipsStartupMigrations(t *testing.T) {
-	previousDB := model.DB
-	previousIsMaster := common.IsMasterNode
-	previousSQLitePath := common.SQLitePath
-	previousMainType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
+func TestMaintenanceInspectDoesNotInitializeDatabase(t *testing.T) {
+	previousPath := common.SQLitePath
+	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
 	t.Cleanup(func() {
-		model.DB = previousDB
-		common.IsMasterNode = previousIsMaster
-		common.SQLitePath = previousSQLitePath
-		common.SetDatabaseTypes(previousMainType, previousLogType)
+		common.SQLitePath = previousPath
+		common.SetDatabaseTypes(previousMain, previousLog)
 	})
-
 	t.Setenv("SQL_DSN", "")
 	common.SQLitePath = filepath.Join(t.TempDir(), "referral-inspect.db")
-	common.IsMasterNode = true
 
-	require.NoError(t, openDatabase(), "inspect 打开连接必须成功")
-	require.False(t, common.IsMasterNode, "openDatabase 必须在连接前关闭 master 迁移")
+	_, err := model.OpenPrimaryForMaintenance(true)
+	require.Error(t, err)
+	_, err = os.Stat(common.SQLitePath)
+	require.ErrorIs(t, err, os.ErrNotExist)
 
-	var tables int64
-	require.NoError(t, model.DB.Raw(
-		"SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
-	).Scan(&tables).Error)
-	require.Zero(t, tables, "inspect 打开连接不得创建任何表（尤其不得运行 AutoMigrate）")
+	seed, err := model.OpenPrimaryForMaintenance(false)
+	require.NoError(t, err)
+	require.NoError(t, seed.AutoMigrate(&model.Option{}))
+	closeDatabase(seed)
 
-	closeDatabase()
+	db, err := model.OpenPrimaryForMaintenance(true)
+	require.NoError(t, err)
+	t.Cleanup(func() { closeDatabase(db) })
+	_, err = model.InspectLegacyAffiliateData(db)
+	require.NoError(t, err)
+	var count int64
+	require.NoError(t, db.Model(&model.Option{}).Count(&count).Error)
+	require.Zero(t, count, "inspection must not install options")
+	require.Error(t, db.Create(&model.Option{Key: "fixture", Value: "test"}).Error)
 }

@@ -1,5 +1,10 @@
 .github
 .git
+# Runtime files must not be sent to the build daemon or included in cache.
+**/.env
+**/.env.*
+/data
+/logs
 *.md
 .vscode
 .gitignore

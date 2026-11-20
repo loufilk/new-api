@@ -47,7 +47,7 @@ func (*StripeAdaptor) RequestAmount(c *gin.Context, req *StripePayRequest) {
 		paymentError(c, common.NewMessage("Top-up amount cannot be less than {{min}}", map[string]any{"min": getStripeMinTopup()}))
 		return
 	}
-	if req.Amount > 10000 {
+	if stripeTopupUnits(req.Amount).GreaterThan(decimal.NewFromInt(10000)) {
 		paymentError(c, common.NewMessage("Top-up amount cannot exceed {{max}}", map[string]any{"max": 10000}))
 		return
 	}
@@ -62,18 +62,19 @@ func (*StripeAdaptor) RequestAmount(c *gin.Context, req *StripePayRequest) {
 		paymentError(c, common.NewMessage("Failed to get the user group"))
 		return
 	}
-	if rejectInvalidCreditedQuota(c, id, getStripeCreditedQuota(req.Amount, group)) {
-		return
-	}
-	payMoney := getStripePayMoney(float64(req.Amount), group)
+	terms := stripeTerms(req.Amount, group)
 	if !finishControllerGroupConfigRead(c, guard) {
 		return
 	}
-	if payMoney <= 0.01 {
-		paymentError(c, common.NewMessage("Payment amount is too low"))
+	if rejectInvalidCreditedQuota(c, id, terms.creditedQuota) {
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": strconv.FormatFloat(payMoney, 'f', 2, 64)})
+	quote, err := quoteStripeCheckout(c.Request.Context(), terms)
+	if err != nil {
+		paymentError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": quote.money()})
 }
 
 func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
@@ -85,7 +86,7 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 		common.ApiErrorStatus(c, http.StatusOK, common.NewMessage("Top-up amount cannot be less than {{min}}", map[string]any{"min": getStripeMinTopup()}), gin.H{"data": 10})
 		return
 	}
-	if req.Amount > 10000 {
+	if stripeTopupUnits(req.Amount).GreaterThan(decimal.NewFromInt(10000)) {
 		common.ApiErrorStatus(c, http.StatusOK, common.NewMessage("Top-up amount cannot exceed {{max}}", map[string]any{"max": 10000}), gin.H{"data": 10})
 		return
 	}
@@ -111,35 +112,43 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 		paymentError(c, common.NewMessage("User does not exist"))
 		return
 	}
-	chargedMoney := GetChargedAmount(float64(req.Amount), *user)
+	terms := stripeTerms(req.Amount, user.Group)
 	if !finishControllerGroupConfigRead(c, guard) {
 		return
 	}
-	if rejectInvalidCreditedQuota(c, id,
-		decimal.NewFromFloat(chargedMoney).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
-	) {
+	creditedQuota, err := validateCreditedQuota(terms.creditedQuota)
+	if err == nil {
+		err = model.ValidateTopUpQuotaCapacity(id, creditedQuota)
+	}
+	if err != nil {
+		paymentError(c, err)
+		return
+	}
+	quote, err := quoteStripeCheckout(c.Request.Context(), terms)
+	if err != nil {
+		paymentError(c, err)
 		return
 	}
 
 	reference := fmt.Sprintf("new-api-ref-%d-%d-%s", user.Id, time.Now().UnixMilli(), randstr.String(4))
 	referenceId := "ref_" + common.Sha1([]byte(reference))
 
-	payLink, err := genStripeLink(c.Request.Context(), referenceId, user.StripeCustomer, user.Email, req.Amount, req.SuccessURL, req.CancelURL)
-	if err != nil {
-		logger.LogError(c.Request.Context(), common.LogText("Stripe failed to create Checkout Session user_id=%d trade_no=%s amount=%d error=%q", id, referenceId, req.Amount, err.Error()))
-		paymentError(c, common.NewMessage("Failed to start payment"))
-		return
-	}
-
+	// The order exists before any external checkout session is public.
 	topUp := &model.TopUp{
-		UserId:          id,
-		Amount:          req.Amount,
-		Money:           chargedMoney,
-		TradeNo:         referenceId,
-		PaymentMethod:   model.PaymentMethodStripe,
-		PaymentProvider: model.PaymentProviderStripe,
-		CreateTime:      time.Now().Unix(),
-		Status:          common.TopUpStatusPending,
+		UserId:                       id,
+		Amount:                       req.Amount,
+		Money:                        terms.creditUnits.InexactFloat64(), // legacy credit projection
+		TradeNo:                      referenceId,
+		PaymentMethod:                model.PaymentMethodStripe,
+		PaymentProvider:              model.PaymentProviderStripe,
+		CreateTime:                   time.Now().Unix(),
+		Status:                       common.TopUpStatusPending,
+		QuotedWalletQuota:            creditedQuota,
+		QuotedPaymentMinor:           quote.minor,
+		QuotedPaymentCurrency:        quote.currency,
+		QuotedPaymentEnvironment:     quote.environment,
+		QuotedPaymentScope:           "primary",
+		QuotedStripePromotionAllowed: quote.promotion,
 	}
 	err = topUp.Insert()
 	if err != nil {
@@ -147,7 +156,13 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 		paymentError(c, common.NewMessage("Failed to create order"))
 		return
 	}
-	logger.LogInfo(c.Request.Context(), common.LogText("Stripe top-up order created user_id=%d trade_no=%s amount=%d money=%.2f", id, referenceId, req.Amount, chargedMoney))
+	payLink, err := genStripeLink(c.Request.Context(), referenceId, user.StripeCustomer, user.Email, quote, req.SuccessURL, req.CancelURL)
+	if err != nil {
+		logger.LogError(c.Request.Context(), common.LogText("Stripe failed to create Checkout Session user_id=%d trade_no=%s amount=%d error=%q", id, referenceId, req.Amount, err.Error()))
+		paymentError(c, common.NewMessage("Failed to start payment"))
+		return
+	}
+	logger.LogInfo(c.Request.Context(), common.LogText("Stripe top-up order created user_id=%d trade_no=%s amount=%d money=%s", id, referenceId, req.Amount, quote.money()))
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
 		"data": gin.H{
@@ -168,6 +183,10 @@ func RequestStripeAmount(c *gin.Context) {
 
 func RequestStripePay(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
+		return
+	}
+	if !isStripeTopUpEnabled() {
+		paymentError(c, common.NewMessage("Payment information has not been configured by administrator"))
 		return
 	}
 
@@ -332,6 +351,11 @@ func fulfillOrder(ctx context.Context, event stripe.Event, referenceId string, c
 	}
 	var paymentFacts []model.VerifiedPaymentFacts
 	if fact, ok := model.NewVerifiedPaymentFacts(model.PaymentProviderStripe, event.GetObjectValue("payment_intent"), merchantScope, environment, event.GetObjectValue("currency"), event.GetObjectValue("amount_total"), true); ok {
+		var proof stripe.CheckoutSession
+		if event.Data != nil && common.Unmarshal(event.Data.Raw, &proof) == nil && proof.TotalDetails != nil {
+			fact.CheckoutSubtotalMinor = proof.AmountSubtotal
+			fact.CheckoutDiscountMinor = proof.TotalDetails.AmountDiscount
+		}
 		paymentFacts = append(paymentFacts, fact)
 	}
 	err := model.Recharge(referenceId, customerId, callerIp, paymentFacts...)
@@ -395,11 +419,7 @@ func sessionExpired(ctx context.Context, event stripe.Event) {
 //   - cancelURL: custom URL to redirect when payment is canceled (empty for default)
 //
 // Returns the checkout session URL or an error if the session creation fails.
-func genStripeLink(ctx context.Context, referenceId string, customerId string, email string, amount int64, successURL string, cancelURL string) (string, error) {
-	if !strings.HasPrefix(setting.StripeApiSecret, "sk_") && !strings.HasPrefix(setting.StripeApiSecret, "rk_") {
-		return "", errors.New("invalid Stripe API key")
-	}
-
+func genStripeLink(ctx context.Context, referenceId string, customerId string, email string, quote stripeCheckoutQuote, successURL string, cancelURL string) (string, error) {
 	// Use custom URLs if provided, otherwise use defaults
 	if successURL == "" {
 		successURL = paymentReturnPath("/usage-logs")
@@ -414,12 +434,15 @@ func genStripeLink(ctx context.Context, referenceId string, customerId string, e
 		CancelURL:         stripe.String(cancelURL),
 		LineItems: []*stripe.CheckoutSessionCreateLineItemParams{
 			{
-				Price:    stripe.String(setting.StripePriceId),
-				Quantity: stripe.Int64(amount),
+				PriceData: &stripe.CheckoutSessionCreateLineItemPriceDataParams{
+					Product: stripe.String(quote.product), Currency: stripe.String(strings.ToLower(quote.currency)), UnitAmount: stripe.Int64(quote.minor),
+				},
+				Quantity: stripe.Int64(1),
 			},
 		},
 		Mode:                stripe.String(string(stripe.CheckoutSessionModePayment)),
-		AllowPromotionCodes: stripe.Bool(setting.StripePromotionCodesEnabled),
+		AllowPromotionCodes: stripe.Bool(quote.promotion),
+		AdaptivePricing:     &stripe.CheckoutSessionCreateAdaptivePricingParams{Enabled: stripe.Bool(false)},
 	}
 
 	if "" == customerId {
@@ -432,7 +455,7 @@ func genStripeLink(ctx context.Context, referenceId string, customerId string, e
 		params.Customer = stripe.String(customerId)
 	}
 
-	return createStripeCheckout(ctx, params)
+	return createStripeCheckoutWithClient(ctx, quote.client, params)
 }
 
 // Changing the Go SDK must not silently change the merchant-facing Stripe API
@@ -440,9 +463,12 @@ func genStripeLink(ctx context.Context, referenceId string, customerId string, e
 const stripeCheckoutAPIVersion = "2025-02-24.acacia"
 
 func createStripeCheckout(ctx context.Context, params *stripe.CheckoutSessionCreateParams) (string, error) {
+	return createStripeCheckoutWithClient(ctx, stripe.NewClient(setting.StripeApiSecret), params)
+}
+
+func createStripeCheckoutWithClient(ctx context.Context, client *stripe.Client, params *stripe.CheckoutSessionCreateParams) (string, error) {
 	params.Headers = http.Header{"Stripe-Version": {stripeCheckoutAPIVersion}}
 	params.SetIdempotencyKey(*params.ClientReferenceID)
-	client := stripe.NewClient(setting.StripeApiSecret)
 	result, err := client.V1CheckoutSessions.Create(ctx, params)
 	if err != nil {
 		return "", err
@@ -451,44 +477,80 @@ func createStripeCheckout(ctx context.Context, params *stripe.CheckoutSessionCre
 	return result.URL, nil
 }
 
-func GetChargedAmount(count float64, user model.User) float64 {
-	topUpGroupRatio := common.GetTopupGroupRatio(user.Group)
-	if topUpGroupRatio == 0 {
-		topUpGroupRatio = 1
-	}
-
-	return count * topUpGroupRatio
-}
-
-func getStripeCreditedQuota(amount int64, group string) decimal.Decimal {
-	topUpGroupRatio := common.GetTopupGroupRatio(group)
-	if topUpGroupRatio == 0 {
-		topUpGroupRatio = 1
-	}
-	return decimal.NewFromInt(amount).
-		Mul(decimal.NewFromFloat(topUpGroupRatio)).
-		Mul(decimal.NewFromFloat(common.QuotaPerUnit))
-}
-
-func getStripePayMoney(amount float64, group string) float64 {
-	originalAmount := amount
+func stripeTopupUnits(amount int64) decimal.Decimal {
+	units := decimal.NewFromInt(amount)
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
-		amount = amount / common.QuotaPerUnit
-	}
-	// Using float64 for monetary calculations is acceptable here due to the small amounts involved
-	topupGroupRatio := common.GetTopupGroupRatio(group)
-	if topupGroupRatio == 0 {
-		topupGroupRatio = 1
-	}
-	// apply optional preset discount by the original request amount (if configured), default 1.0
-	discount := 1.0
-	if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(originalAmount)]; ok {
-		if ds > 0 {
-			discount = ds
+		unitQuota := decimal.NewFromFloat(common.QuotaPerUnit)
+		if !unitQuota.IsPositive() {
+			return decimal.Zero
 		}
+		units = units.Div(unitQuota)
 	}
-	payMoney := amount * setting.StripeUnitPrice * topupGroupRatio * discount
-	return payMoney
+	return units
+}
+
+type stripeTopupTerms struct {
+	creditUnits, creditedQuota, cashMajor decimal.Decimal
+}
+
+func stripeTerms(amount int64, group string) stripeTopupTerms {
+	units := stripeTopupUnits(amount)
+	groupRatio := common.GetTopupGroupRatio(group)
+	if groupRatio == 0 {
+		groupRatio = 1
+	}
+	discount := 1.0
+	if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(amount)]; ok && ds > 0 {
+		discount = ds
+	}
+	withGroup := units.Mul(decimal.NewFromFloat(groupRatio))
+	return stripeTopupTerms{
+		creditUnits:   withGroup,
+		creditedQuota: withGroup.Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
+		cashMajor:     withGroup.Mul(decimal.NewFromFloat(setting.StripeUnitPrice)).Mul(decimal.NewFromFloat(discount)),
+	}
+}
+
+type stripeCheckoutQuote struct {
+	client                         *stripe.Client
+	product, currency, environment string
+	exponent                       int
+	minor                          int64
+	promotion                      bool
+}
+
+func (q stripeCheckoutQuote) money() string {
+	return decimal.NewFromInt(q.minor).Shift(-int32(q.exponent)).StringFixed(int32(q.exponent))
+}
+
+func quoteStripeCheckout(ctx context.Context, terms stripeTopupTerms) (stripeCheckoutQuote, error) {
+	secret, priceID, promo := setting.StripeApiSecret, setting.StripePriceId, setting.StripePromotionCodesEnabled
+	if (!strings.HasPrefix(secret, "sk_") && !strings.HasPrefix(secret, "rk_")) || priceID == "" || !terms.cashMajor.IsPositive() {
+		return stripeCheckoutQuote{}, common.NewMessage("Payment information has not been configured by administrator")
+	}
+	client := stripe.NewClient(secret)
+	params := &stripe.PriceRetrieveParams{}
+	params.Headers = http.Header{"Stripe-Version": {stripeCheckoutAPIVersion}}
+	// Preserve the configured merchant product and settlement currency, but
+	// do not let its fixed unit price override the displayed discount/ratio.
+	price, err := client.V1Prices.Retrieve(ctx, priceID, params)
+	if err != nil || price == nil || !price.Active || price.Product == nil || price.Product.ID == "" {
+		return stripeCheckoutQuote{}, common.NewMessage("Payment information has not been configured by administrator")
+	}
+	currency := strings.ToUpper(string(price.Currency))
+	exponent, supported := model.PaymentCurrencyExponent(currency)
+	if !supported {
+		return stripeCheckoutQuote{}, common.NewMessage("Payment information has not been configured by administrator")
+	}
+	amount := terms.cashMajor.Shift(int32(exponent)).Round(0)
+	if !amount.IsPositive() || amount.GreaterThan(decimal.NewFromInt(common.MaxWalletQuota)) {
+		return stripeCheckoutQuote{}, common.NewMessage("Invalid top-up amount")
+	}
+	environment := "test"
+	if price.Livemode {
+		environment = "live"
+	}
+	return stripeCheckoutQuote{client: client, product: price.Product.ID, currency: currency, environment: environment, exponent: exponent, minor: amount.IntPart(), promotion: promo}, nil
 }
 
 func getStripeMinTopup() int64 {

@@ -43,6 +43,15 @@ type StoredEnvelope<T> = {
   data: T
 }
 
+// Previous versions saved unbounded histories. Recover a practical localStorage
+// payload rather than erasing it, while bounding how much JSON we parse.
+const MAX_LEGACY_MESSAGES_BYTES = 8 * MAX_STORED_MESSAGES_BYTES
+const utf8 = new TextEncoder()
+const EMPTY_MESSAGES_ENVELOPE_BYTES = JSON.stringify({
+  version: STORAGE_VERSION,
+  data: [],
+}).length
+
 const TRUNCATED_CONTENT_SUFFIX = '\n\n[...]'
 
 function getUserStorageKey(key: string): string | null {
@@ -63,18 +72,21 @@ function readStoredValue(baseKey: string): unknown | null {
   return JSON.parse(saved) as unknown
 }
 
-function readStoredMessagesValue(): unknown | null {
+function readStoredMessagesValue(): {
+  value: unknown
+  oversized: boolean
+} | null {
   const key = getUserStorageKey(STORAGE_KEYS.MESSAGES)
   if (!key) return null
   const saved = localStorage.getItem(key)
   if (!saved) return null
 
-  if (saved.length > MAX_STORED_MESSAGES_BYTES) {
-    localStorage.removeItem(key)
-    return null
-  }
+  if (saved.length > MAX_LEGACY_MESSAGES_BYTES) return null
 
-  return JSON.parse(saved) as unknown
+  return {
+    value: JSON.parse(saved) as unknown,
+    oversized: utf8.encode(saved).length > MAX_STORED_MESSAGES_BYTES,
+  }
 }
 
 function unwrapStoredValue(value: unknown): unknown {
@@ -130,7 +142,7 @@ function truncateText(text: string, maxLength: number): string {
   return `${text.slice(0, maxLength - TRUNCATED_CONTENT_SUFFIX.length)}${TRUNCATED_CONTENT_SUFFIX}`
 }
 
-function normalizeStoredMessageForLoad(message: Message): Message {
+function boundStoredMessageText(message: Message): Message {
   let changed = false
   const versions = message.versions.map((version) => {
     // Repeated headings (including in user prompts) are not proof of a snapshot.
@@ -161,8 +173,11 @@ function normalizeStoredMessageForLoad(message: Message): Message {
     changed = true
   }
 
-  const normalized = changed ? { ...message, versions, reasoning } : message
+  return changed ? { ...message, versions, reasoning } : message
+}
 
+function normalizeStoredMessageForLoad(message: Message): Message {
+  const normalized = boundStoredMessageText(message)
   if (!isAssistantMessagePending(normalized)) {
     return normalized
   }
@@ -281,7 +296,9 @@ export function loadMessages(): Message[] | null {
     const saved = readStoredMessagesValue()
     if (!saved) return null
 
-    const parsed = messagesSchema.parse(unwrapStoredValue(saved)) as Message[]
+    const parsed = messagesSchema.parse(
+      unwrapStoredValue(saved.value)
+    ) as Message[]
     const normalized = parsed.map(normalizeStoredMessageForLoad)
     const normalizedChanged = normalized.some(
       (message, index) => message !== parsed[index]
@@ -291,6 +308,7 @@ export function loadMessages(): Message[] | null {
     const sanitized = sanitizeMessagesOnLoad(sizeTrimmed)
 
     if (
+      saved.oversized ||
       normalizedChanged ||
       trimmed !== normalized ||
       sizeTrimmed !== trimmed ||
@@ -312,9 +330,24 @@ export function loadMessages(): Message[] | null {
  */
 export function saveMessages(messages: Message[]): void {
   try {
-    const trimmed = trimMessages(messages)
-    const parsed = messagesSchema.parse(trimmed) as Message[]
-    writeStoredValue(STORAGE_KEYS.MESSAGES, parsed)
+    const parsed = messagesSchema.parse(trimMessages(messages)) as Message[]
+    const compacted = trimMessagesByContentSize(
+      parsed.map(boundStoredMessageText)
+    )
+    const stored: Message[] = []
+    let bytes = EMPTY_MESSAGES_ENVELOPE_BYTES
+    for (let index = compacted.length - 1; index >= 0; index--) {
+      const message = compacted[index]
+      const size = utf8.encode(JSON.stringify(message)).length
+      const overhead = stored.length ? 1 : 0
+      if (bytes + overhead + size > MAX_STORED_MESSAGES_BYTES) {
+        if (stored.length) break
+        continue
+      }
+      bytes += overhead + size
+      stored.push(message)
+    }
+    writeStoredValue(STORAGE_KEYS.MESSAGES, stored.reverse())
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('Failed to save messages:', error)

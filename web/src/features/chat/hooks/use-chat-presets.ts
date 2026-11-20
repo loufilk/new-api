@@ -73,8 +73,9 @@ function extractChats(status: SystemStatus | null): RawChatConfig {
 export function useChatPresets(): {
   chatPresets: ChatPreset[]
   serverAddress: string
+  isLoading: boolean
 } {
-  const { status } = useStatus()
+  const { status, loading } = useStatus()
 
   const serverAddress = useMemo(() => extractServerAddress(status), [status])
 
@@ -86,5 +87,6 @@ export function useChatPresets(): {
   return {
     chatPresets,
     serverAddress,
+    isLoading: loading,
   }
 }

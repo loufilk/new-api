@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/joho/godotenv"
+	"gorm.io/gorm"
 )
 
 func main() {
@@ -39,18 +40,18 @@ func run() int {
 	// The command intentionally does not compose the extension registry: it must
 	// not re-create retired or extension-owned tables. It only opens the core
 	// database and operates on the legacy schema that is already present.
-	if err := openDatabase(); err != nil {
+	db, err := model.OpenPrimaryForMaintenance(!*apply)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to initialize database: %v\n", err)
 		return 1
 	}
-	defer closeDatabase()
+	defer closeDatabase(db)
 
 	var report *model.LegacyAffiliateCleanupReport
-	var err error
 	if *apply {
-		report, err = model.CleanupLegacyAffiliateData(model.DB)
+		report, err = model.CleanupLegacyAffiliateData(db)
 	} else {
-		report, err = model.InspectLegacyAffiliateData(model.DB)
+		report, err = model.InspectLegacyAffiliateData(db)
 	}
 	printReport(report, *apply)
 
@@ -65,21 +66,8 @@ func run() int {
 	return 0
 }
 
-// openDatabase opens the core database without running startup migrations:
-// model.InitDB only migrates when common.IsMasterNode is set, so the operator
-// command pins it to false before connecting. Inspection and cleanup must never
-// create or alter tables via AutoMigrate; cleanup performs its own explicit,
-// guarded DDL. The connection string itself is never logged.
-func openDatabase() error {
-	common.IsMasterNode = false
-	return model.InitDB()
-}
-
-func closeDatabase() {
-	if model.DB == nil {
-		return
-	}
-	sqlDB, err := model.DB.DB()
+func closeDatabase(db *gorm.DB) {
+	sqlDB, err := db.DB()
 	if err != nil {
 		return
 	}

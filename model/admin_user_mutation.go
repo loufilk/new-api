@@ -30,7 +30,21 @@ func ValidateAdminUserCreationTx(tx *gorm.DB, identity AuthSessionIdentity, role
 }
 
 func lockAdminUserMutationTx(tx *gorm.DB, actorID int, expected User, identities ...AuthSessionIdentity) (*User, *User, error) {
-	if actorID <= 0 || expected.Id <= 0 || actorID == expected.Id {
+	return lockAuthorizedAdminTargetTx(tx, actorID, expected, false, identities...)
+}
+
+// ValidateAdminUserEditTx preserves the root profile's existing edit rights
+// and locks the group namespace before user rows, like other group writers.
+func ValidateAdminUserEditTx(tx *gorm.DB, identity AuthSessionIdentity, expected User) error {
+	if err := lockGroupNamespace(tx); err != nil {
+		return err
+	}
+	_, _, err := lockAuthorizedAdminTargetTx(tx, identity.UserID, expected, true, identity)
+	return err
+}
+
+func lockAuthorizedAdminTargetTx(tx *gorm.DB, actorID int, expected User, allowRootTarget bool, identities ...AuthSessionIdentity) (*User, *User, error) {
+	if actorID <= 0 || expected.Id <= 0 || (actorID == expected.Id && !allowRootTarget) {
 		return nil, nil, errors.New("Unauthorized, insufficient privileges")
 	}
 	var users []User
@@ -41,12 +55,14 @@ func lockAdminUserMutationTx(tx *gorm.DB, actorID int, expected User, identities
 	for i := range users {
 		if users[i].Id == actorID {
 			actor = &users[i]
-		} else if users[i].Id == expected.Id {
+		}
+		if users[i].Id == expected.Id {
 			target = &users[i]
 		}
 	}
 	if actor == nil || target == nil || actor.Status != common.UserStatusEnabled || actor.Role < common.RoleAdminUser ||
-		target.Role == common.RoleRootUser || (actor.Role != common.RoleRootUser && actor.Role <= target.Role) {
+		(target.Role == common.RoleRootUser && !allowRootTarget) ||
+		(actor.Role != common.RoleRootUser && actor.Role <= target.Role) {
 		return nil, nil, errors.New("Unauthorized, insufficient privileges")
 	}
 	if target.Role != expected.Role || target.Status != expected.Status || target.AuthVersion != expected.AuthVersion {

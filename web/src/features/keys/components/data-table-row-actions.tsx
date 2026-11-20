@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { useNavigate } from '@tanstack/react-router'
 import {
   Trash2,
   Edit,
@@ -48,7 +49,13 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { useChatPresets } from '@/features/chat/hooks/use-chat-presets'
-import { resolveChatUrl, type ChatPreset } from '@/features/chat/lib/chat-links'
+import {
+  chatLinkRequiresApiKey,
+  resolveChatUrl,
+  resolveWebChatUrl,
+  type ChatPreset,
+} from '@/features/chat/lib/chat-links'
+import { isSafeClientLink } from '@/features/chat/lib/client-import'
 import { sendToFluent } from '@/features/chat/lib/send-to-fluent'
 import { API_BASE_URL } from '@/lib/api-url'
 import { encodeChannelConnectionInfo } from '@/lib/channel-connection-info'
@@ -82,6 +89,7 @@ type DataTableRowActionsProps = {
 
 export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const apiKey = row.original
   const {
     setOpen,
@@ -101,6 +109,25 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
   const handleOpenChatPreset = useCallback(
     async (preset: ChatPreset) => {
+      if (preset.type === 'web') {
+        if (chatLinkRequiresApiKey(preset.url)) {
+          await navigate({ to: '/chat/$chatId', params: { chatId: preset.id } })
+        } else {
+          const url = resolveWebChatUrl(preset.url, serverAddress)
+          if (url) {
+            window.open(url, '_blank', 'noopener,noreferrer')
+          } else {
+            toast.error(
+              t('Invalid chat link. Please contact your administrator.')
+            )
+          }
+        }
+        return
+      }
+      if (preset.type !== 'fluent' && !isSafeClientLink(preset.url)) {
+        toast.error(t('Invalid chat link. Please contact your administrator.'))
+        return
+      }
       const realKey = await resolveRealKey(apiKey.id)
       if (!realKey) return
 
@@ -124,7 +151,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         serverAddress,
       })
 
-      if (!resolvedUrl) {
+      if (!isSafeClientLink(resolvedUrl)) {
         toast.error(t('Invalid chat link. Please contact your administrator.'))
         return
       }
@@ -137,7 +164,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         window.location.href = resolvedUrl
       }
     },
-    [resolveRealKey, apiKey.id, serverAddress, t]
+    [resolveRealKey, apiKey.id, serverAddress, navigate, t]
   )
 
   const handleToggleStatus = async (

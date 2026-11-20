@@ -205,7 +205,7 @@ func runApplication() error {
 
 	srv := &http.Server{
 		Addr:              httpListenAddress(port),
-		Handler:           app.gate.Wrap(server),
+		Handler:           app.gate.Wrap(desktopStartupHandler(server, httpBindHost(), os.Getenv("NEW_API_ELECTRON_STARTUP_PROOF"))),
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20,

@@ -25,6 +25,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relay/requestplugin"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -62,9 +63,10 @@ func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIErro
 
 func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	var err *types.NewAPIError
-	if strings.Contains(c.Request.URL.Path, "embed") {
+	switch info.Request.(type) {
+	case *dto.GeminiEmbeddingRequest, *dto.GeminiBatchEmbeddingRequest:
 		err = relay.GeminiEmbeddingHandler(c, info)
-	} else {
+	default:
 		err = relay.GeminiHelper(c, info)
 	}
 	return err
@@ -132,6 +134,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 					"type":  "error",
 					"error": privacy.ClientClaudeError(c, newAPIError),
 				})
+			case types.RelayFormatGemini:
+				c.JSON(newAPIError.StatusCode, privacy.ClientGeminiError(c, newAPIError))
 			default:
 				c.JSON(newAPIError.StatusCode, gin.H{
 					"error": privacy.ClientOpenAIError(c, newAPIError),
@@ -230,6 +234,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		relayInfo.StreamStatus = nil
+		common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, (*relaycommon.StreamStatus)(nil))
 		relayInfo.PerformanceBusinessRejection = false
 		relayInfo.PerformanceOutputTokens = 0
 		relayInfo.RetryIndex = retryParam.GetRetry()
@@ -280,6 +285,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			newAPIError = relayHandler(c, relayInfo)
 		}
 		finishReply()
+		if relayInfo.StreamStatus != nil {
+			common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, relayInfo.StreamStatus)
+		}
 
 		if newAPIError == nil {
 			service.MarkRequestPolicySuccess(c, relayInfo.StreamStatus, relayInfo)
@@ -287,7 +295,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			return
 		}
 
-		newAPIError = service.NormalizeViolationFeeError(newAPIError)
+		newAPIError = service.NormalizeViolationFeeError(newAPIError, channel.Type)
 		newAPIError = relay.PreserveFailedRequestBilling(c, relayInfo, newAPIError)
 		relayInfo.LastError = newAPIError
 
@@ -315,12 +323,13 @@ func writeRelayStreamError(c *gin.Context, format types.RelayFormat, apiError *t
 		common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, status)
 	}
 	status.MarkFailed(string(apiError.GetErrorCode()), string(apiError.GetErrorType()), apiError.StatusCode)
-	if format == types.RelayFormatClaude {
+	switch format {
+	case types.RelayFormatClaude, types.RelayFormatGemini, types.RelayFormatOpenAIResponses:
 		_ = helper.RelayErrorData(c, format, apiError)
-		return
+	default:
+		_ = helper.RelayErrorData(c, types.RelayFormatOpenAI, apiError)
+		helper.Done(c)
 	}
-	_ = helper.RelayErrorData(c, types.RelayFormatOpenAI, apiError)
-	helper.Done(c)
 }
 
 // CountClaudeTokens implements Anthropic's token-counting utility endpoint.

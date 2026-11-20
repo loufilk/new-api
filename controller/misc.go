@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -228,18 +231,24 @@ func GetHomePageContent(c *gin.Context) {
 }
 
 func SendEmailVerification(c *gin.Context) {
+	setAuthNoStore(c)
 	email, err := service.ValidateAccountEmail(c.Query("email"))
 	if err != nil {
 		writeSecurityOperationError(c, err)
 		return
 	}
 
-	if model.IsEmailAlreadyTaken(email) {
-		common.ApiErrorT(c, "Email address is already in use")
+	code := common.GenerateVerificationCode(8)
+	err = model.CreateRegistrationEmailCode(c.Request.Context(), email, code, time.Duration(common.VerificationValidMinutes)*time.Minute)
+	if errors.Is(err, model.ErrEmailAlreadyTaken) {
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
 		return
 	}
-	code := common.GenerateVerificationCode(6)
-	common.RegisterVerificationCodeWithKey(email, code, common.EmailVerificationPurpose)
+	if err != nil {
+		logger.LogWarn(c.Request.Context(), "registration email issuance unavailable")
+		common.ApiErrorT(c, "Please try again later.")
+		return
+	}
 	subject := fmt.Sprintf("【%s】邮箱验证码", common.SystemName)
 	publicHost := system_setting.PublicSiteDisplayHost()
 	plainText, content := renderAuthEmail(authEmailContent{
@@ -253,8 +262,7 @@ func SendEmailVerification(c *gin.Context) {
 	})
 	err = common.SendEmailWithPlainText(subject, email, plainText, content)
 	if err != nil {
-		common.ApiError(c, err)
-		return
+		logger.LogWarn(c.Request.Context(), "registration email delivery unavailable")
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -263,39 +271,48 @@ func SendEmailVerification(c *gin.Context) {
 	return
 }
 
+func passwordRecoveryURL(address, email, token string) (string, error) {
+	base, err := url.Parse(strings.TrimSpace(address))
+	if err != nil || base.Host == "" || (base.Scheme != "https" && base.Scheme != "http") || base.User != nil {
+		return "", model.ErrAuthFlowInvalid
+	}
+	base.Path = strings.TrimRight(base.Path, "/") + "/user/reset"
+	base.RawPath, base.Fragment = "", ""
+	base.RawQuery = url.Values{"email": {email}, "token": {token}}.Encode()
+	return base.String(), nil
+}
+
 func SendPasswordResetEmail(c *gin.Context) {
+	setAuthNoStore(c)
 	email := model.NormalizeEmail(c.Query("email"))
 	if err := common.Validate.Var(email, "required,email"); err != nil {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	if _, err := model.GetUniqueUserByEmail(email); err == nil {
-		code := common.GenerateVerificationCode(0)
-		common.RegisterVerificationCodeWithKey(email, code, common.PasswordResetPurpose)
-		link := fmt.Sprintf("%s/user/reset?email=%s&token=%s", system_setting.ServerAddress, email, code)
-		subject := fmt.Sprintf("【%s】密码重置", common.SystemName)
-		publicHost := system_setting.PublicSiteDisplayHost()
-		plainText, content := renderAuthEmail(authEmailContent{
-			Heading:         "密码重置",
-			Intro:           fmt.Sprintf("您正在进行%s密码重置。", common.SystemName),
-			Link:            link,
-			ActionLabel:     "重置密码",
-			ValidityLabel:   "重置链接",
-			ValidityMinutes: common.VerificationValidMinutes,
-			SystemName:      common.SystemName,
-			PublicHost:      publicHost,
-		})
-		err := common.SendEmailWithPlainText(subject, email, plainText, content)
-		if err != nil {
-			logger.LogError(c.Request.Context(), common.LogText("failed to send password reset email to %s: %s", email, err.Error()))
+	code, err := model.IssuePasswordRecovery(c.Request.Context(), email, time.Duration(common.VerificationValidMinutes)*time.Minute)
+	if err == nil {
+		link, err := passwordRecoveryURL(system_setting.ServerAddress, email, code)
+		if err == nil {
+			subject := fmt.Sprintf("【%s】密码重置", common.SystemName)
+			plainText, content := renderAuthEmail(authEmailContent{
+				Heading:         "密码重置",
+				Intro:           fmt.Sprintf("您正在进行%s密码重置。", common.SystemName),
+				Link:            link,
+				ActionLabel:     "重置密码",
+				ValidityLabel:   "重置链接",
+				ValidityMinutes: common.VerificationValidMinutes,
+				SystemName:      common.SystemName,
+				PublicHost:      system_setting.PublicSiteDisplayHost(),
+			})
+			err = common.SendEmailWithPlainText(subject, email, plainText, content)
 		}
-	} else if err != nil && !errors.Is(err, model.ErrEmailNotFound) {
-		logger.LogWarn(c.Request.Context(), common.LogText("skip password reset email for %s: %s", email, err.Error()))
+		if err != nil {
+			logger.LogWarn(c.Request.Context(), "password recovery email delivery unavailable")
+		}
+	} else if !errors.Is(err, model.ErrAuthFlowInvalid) {
+		logger.LogWarn(c.Request.Context(), "password recovery issuance unavailable")
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
 }
 
 type PasswordResetRequest struct {
@@ -304,10 +321,10 @@ type PasswordResetRequest struct {
 }
 
 func ResetPassword(c *gin.Context) {
+	setAuthNoStore(c)
 	var req PasswordResetRequest
-	err := json.NewDecoder(c.Request.Body).Decode(&req)
-	if err != nil {
-		common.ApiError(c, err)
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 	req.Email = model.NormalizeEmail(req.Email)
@@ -315,25 +332,30 @@ func ResetPassword(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	if !common.VerifyCodeWithKey(req.Email, req.Token, common.PasswordResetPurpose) {
-		common.ApiErrorT(c, "Password reset link is invalid or has expired")
+	password, err := common.GenerateRandomCharsKey(24)
+	if err != nil {
+		writeAuthSessionError(c, err)
 		return
 	}
-	password := common.GenerateVerificationCode(12)
-	err = model.ResetUserPasswordByEmail(req.Email, password)
+	userID, err := model.FinishPasswordRecovery(req.Email, req.Token, password)
 	if err != nil {
-		if errors.Is(err, model.ErrEmailNotFound) || errors.Is(err, model.ErrEmailAmbiguous) {
+		if errors.Is(err, model.ErrAuthFlowInvalid) || errors.Is(err, model.ErrAuthFlowExpired) || errors.Is(err, model.ErrAuthFlowConsumed) {
 			common.ApiErrorT(c, "Password reset link is invalid or has expired")
 			return
 		}
-		common.ApiError(c, err)
+		// Do not log database error text from authentication writes.
+		logger.LogError(c.Request.Context(), "password recovery update unavailable")
+		writeAuthSessionError(c, errors.New("password recovery unavailable"))
 		return
 	}
-	common.DeleteKey(req.Email, common.PasswordResetPurpose)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    password,
-	})
-	return
+	if err := model.PublishUserAuthCache(userID); err != nil {
+		logger.LogWarn(c.Request.Context(), "password recovery cache refresh unavailable")
+	}
+	// The committed auth epoch already rejects old credentials. Do not report
+	// a failed password reset after the new password has been committed.
+	if _, err := model.RevokeAllUserSessions(userID, "password_reset"); err != nil {
+		logger.LogWarn(c.Request.Context(), "password recovery session cleanup unavailable")
+	}
+	recordUserSecurityAudit(c, userID, "user.password_reset", map[string]any{"success": true})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": password})
 }

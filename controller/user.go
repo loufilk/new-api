@@ -240,29 +240,11 @@ func Register(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid input {{error}}", map[string]any{"error": err.Error()})
 		return
 	}
-	if verifyEmail {
-		if user.Email == "" || user.VerificationCode == "" {
-			common.ApiErrorT(c, "Email verification is enabled, please enter email address and verification code")
-			return
-		}
-		if !common.ConsumeVerificationCodeWithKey(user.Email, user.VerificationCode, common.EmailVerificationPurpose) {
-			common.ApiErrorT(c, "Verification code is incorrect or has expired")
-			return
-		}
-		if err := model.EnsureEmailAvailable(user.Email, 0); err != nil {
-			if errors.Is(err, model.ErrEmailAlreadyTaken) {
-				common.ApiErrorT(c, "Email address is already in use")
-				return
-			}
-			common.ApiErrorT(c, "Database error, please contact the administrator")
-			return
-		}
+	if verifyEmail && (user.Email == "" || user.VerificationCode == "") {
+		common.ApiErrorT(c, "Email verification is enabled, please enter email address and verification code")
+		return
 	}
-	emailForExistCheck := ""
-	if verifyEmail {
-		emailForExistCheck = user.Email
-	}
-	exist, err := model.CheckUserExistOrDeleted(user.Username, emailForExistCheck)
+	exist, err := model.CheckUserExistOrDeleted(user.Username, "")
 	if err != nil {
 		common.ApiErrorT(c, "Database error, please contact the administrator")
 		common.SysLog(common.LogText("CheckUserExistOrDeleted error: %v", err))
@@ -290,9 +272,15 @@ func Register(c *gin.Context) {
 	}
 	if verifyEmail {
 		cleanUser.Email = user.Email
-		model.MarkNewUserEmailVerified(&cleanUser)
+		err = cleanUser.InsertWithRegistrationEmail(inviterId, strings.TrimSpace(user.VerificationCode))
+	} else {
+		err = cleanUser.Insert(inviterId)
 	}
-	if err := cleanUser.Insert(inviterId); err != nil {
+	if errors.Is(err, model.ErrAuthFlowInvalid) || errors.Is(err, model.ErrAuthFlowExpired) || errors.Is(err, model.ErrAuthFlowConsumed) {
+		common.ApiErrorT(c, "Verification code is incorrect or has expired")
+		return
+	}
+	if err != nil {
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
 			common.ApiErrorT(c, "Email address is already in use")
 			return
@@ -410,6 +398,7 @@ func GetUser(c *gin.Context) {
 		return
 	}
 	user.AdminPermissions = authz.Capabilities(user.Id, user.Role)
+	user.Setting = "" // admin projections do not include private notification destinations
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -504,11 +493,34 @@ func buildSelfUserDataWithRole(user *model.User, permissionRole int) map[string]
 		"aff_history_quota": user.AffHistoryQuota,
 		"inviter_id":        user.InviterId,
 		"linux_do_id":       user.LinuxDOId,
-		"setting":           user.Setting,
+		"setting":           dashboardUserSettings(userSetting),
 		"stripe_customer":   user.StripeCustomer,
 		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
 		"permissions":       permissions,
 	}
+}
+
+// Dashboard responses (including profile:read tokens) never contain
+// destination URLs with embedded credentials or reusable notification tokens.
+func dashboardUserSettings(setting dto.UserSetting) string {
+	configured := false
+	switch setting.NotifyType {
+	case dto.NotifyTypeWebhook:
+		configured = setting.WebhookUrl != ""
+	case dto.NotifyTypeBark:
+		configured = setting.BarkUrl != ""
+	case dto.NotifyTypeGotify:
+		configured = setting.GotifyUrl != "" && setting.GotifyToken != ""
+	}
+	setting.WebhookUrl, setting.WebhookSecret, setting.BarkUrl, setting.GotifyUrl, setting.GotifyToken = "", "", "", "", ""
+	raw, err := common.Marshal(struct {
+		dto.UserSetting
+		NotificationDestinationConfigured bool `json:"notification_destination_configured,omitempty"`
+	}{UserSetting: setting, NotificationDestinationConfigured: configured})
+	if err != nil {
+		return "{}"
+	}
+	return string(raw)
 }
 
 // 计算用户权限的辅助函数
@@ -685,6 +697,11 @@ func UpdateUser(c *gin.Context) {
 		common.ApiErrorT(c, "No permission to update users of same or higher permission level")
 		return
 	}
+	actor, ok := middleware.GetStepUpIdentity(c)
+	if !ok || actor.UserID != c.GetInt("id") {
+		writeSecurityOperationError(c, service.ErrAuthTokenInvalid)
+		return
+	}
 	updatePassword := updatedUser.Password != ""
 	auditParams := map[string]any{
 		"username": originUser.Username,
@@ -697,12 +714,16 @@ func UpdateUser(c *gin.Context) {
 		if authorization == nil {
 			return
 		}
+		actor = authorization.AuthSessionIdentity
 		auditParams["verification_method"] = authorization.Method
 		auditParams["password_reset"] = updatePassword
 		auditParams["admin_permissions_updated"] = updatedUser.AdminPermissions != nil
 	}
 	authzTouched := false
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := model.ValidateAdminUserEditTx(tx, actor, *originUser); err != nil {
+			return err
+		}
 		if err := updatedUser.EditWithTx(tx, updatePassword); err != nil {
 			return err
 		}
@@ -772,7 +793,7 @@ func AdminClearUserBinding(c *gin.Context) {
 			writeSecurityOperationError(c, err)
 			return
 		}
-	} else if err := user.ClearBinding(bindingType); err != nil {
+	} else if err := model.ClearUserBindingByAdministrator(authorization.AuthSessionIdentity, *user, bindingType); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -1370,6 +1391,7 @@ type UpdateUserSettingRequest struct {
 	QuotaWarningEnabled              *bool                       `json:"quota_warning_enabled,omitempty"`
 	WebhookUrl                       string                      `json:"webhook_url,omitempty"`
 	WebhookSecret                    string                      `json:"webhook_secret,omitempty"`
+	ClearWebhookSecret               bool                        `json:"clear_webhook_secret,omitempty"`
 	NotificationEmail                string                      `json:"notification_email,omitempty"`
 	BarkUrl                          string                      `json:"bark_url,omitempty"`
 	GotifyUrl                        string                      `json:"gotify_url,omitempty"`
@@ -1377,8 +1399,8 @@ type UpdateUserSettingRequest struct {
 	GotifyPriority                   int                         `json:"gotify_priority,omitempty"`
 	UpstreamModelUpdateNotifyEnabled *bool                       `json:"upstream_model_update_notify_enabled,omitempty"`
 	ChannelNotifyEnabled             *bool                       `json:"channel_notify_enabled,omitempty"`
-	AcceptUnsetModelRatioModel       bool                        `json:"accept_unset_model_ratio_model"`
-	RecordIpLog                      bool                        `json:"record_ip_log"`
+	AcceptUnsetModelRatioModel       *bool                       `json:"accept_unset_model_ratio_model"`
+	RecordIpLog                      *bool                       `json:"record_ip_log"`
 }
 
 func UpdateUserSetting(c *gin.Context) {
@@ -1394,126 +1416,126 @@ func UpdateUserSetting(c *gin.Context) {
 		return
 	}
 
-	// 如果是webhook类型,验证webhook地址
-	if req.QuotaWarningType == dto.NotifyTypeWebhook {
-		if req.WebhookUrl == "" {
-			common.ApiErrorT(c, "Webhook URL cannot be empty")
-			return
+	userID := c.GetInt("id")
+	err := model.MutateUserSetting(userID, func(user *model.User, settings *dto.UserSetting) error {
+		// Blank write-only fields retain their current value only for the
+		// selected method. Destination changes never reuse a previous secret
+		// without the caller explicitly supplying it again.
+		if req.QuotaWarningType == settings.NotifyType {
+			switch req.QuotaWarningType {
+			case dto.NotifyTypeWebhook:
+				if req.WebhookUrl == "" {
+					req.WebhookUrl = settings.WebhookUrl
+				}
+				if req.ClearWebhookSecret {
+					req.WebhookSecret = ""
+				} else if req.WebhookUrl == settings.WebhookUrl && req.WebhookSecret == "" {
+					req.WebhookSecret = settings.WebhookSecret
+				}
+			case dto.NotifyTypeBark:
+				if req.BarkUrl == "" {
+					req.BarkUrl = settings.BarkUrl
+				}
+			case dto.NotifyTypeGotify:
+				if req.GotifyUrl == "" {
+					req.GotifyUrl = settings.GotifyUrl
+				}
+				if req.GotifyUrl == settings.GotifyUrl && req.GotifyToken == "" {
+					req.GotifyToken = settings.GotifyToken
+				}
+			}
 		}
-		// 验证URL格式
-		if _, err := url.ParseRequestURI(req.WebhookUrl); err != nil {
-			common.ApiErrorT(c, "Invalid Webhook URL")
-			return
-		}
-	}
 
-	// 如果是邮件类型，验证邮箱地址
-	if req.QuotaWarningType == dto.NotifyTypeEmail && req.NotificationEmail != "" {
-		// 验证邮箱格式
-		if !strings.Contains(req.NotificationEmail, "@") {
-			common.ApiErrorT(c, "Invalid email address")
-			return
+		switch req.QuotaWarningType {
+		case dto.NotifyTypeEmail:
+			if req.NotificationEmail != "" && !strings.Contains(req.NotificationEmail, "@") {
+				return common.NewMessage("Invalid email address")
+			}
+		case dto.NotifyTypeWebhook:
+			if req.WebhookUrl == "" {
+				return common.NewMessage("Webhook URL cannot be empty")
+			}
+			if _, err := url.ParseRequestURI(req.WebhookUrl); err != nil {
+				return common.NewMessage("Invalid Webhook URL")
+			}
+		case dto.NotifyTypeBark:
+			if req.BarkUrl == "" {
+				return common.NewMessage("Bark push URL cannot be empty")
+			}
+			if _, err := url.ParseRequestURI(req.BarkUrl); err != nil {
+				return common.NewMessage("Invalid Bark push URL")
+			}
+			if !strings.HasPrefix(req.BarkUrl, "https://") && !strings.HasPrefix(req.BarkUrl, "http://") {
+				return common.NewMessage("URL must start with http:// or https://")
+			}
+		case dto.NotifyTypeGotify:
+			if req.GotifyUrl == "" {
+				return common.NewMessage("Gotify server URL cannot be empty")
+			}
+			if req.GotifyToken == "" {
+				return common.NewMessage("Gotify token cannot be empty")
+			}
+			if _, err := url.ParseRequestURI(req.GotifyUrl); err != nil {
+				return common.NewMessage("Invalid Gotify server URL")
+			}
+			if !strings.HasPrefix(req.GotifyUrl, "https://") && !strings.HasPrefix(req.GotifyUrl, "http://") {
+				return common.NewMessage("URL must start with http:// or https://")
+			}
 		}
-	}
 
-	// 如果是Bark类型，验证Bark URL
-	if req.QuotaWarningType == dto.NotifyTypeBark {
-		if req.BarkUrl == "" {
-			common.ApiErrorT(c, "Bark push URL cannot be empty")
-			return
+		settings.NotifyType = req.QuotaWarningType
+		if req.QuotaWarningThreshold.present {
+			settings.QuotaWarningThreshold = req.QuotaWarningThreshold.value
 		}
-		// 验证URL格式
-		if _, err := url.ParseRequestURI(req.BarkUrl); err != nil {
-			common.ApiErrorT(c, "Invalid Bark push URL")
-			return
+		if req.AcceptUnsetModelRatioModel != nil {
+			settings.AcceptUnsetRatioModel = *req.AcceptUnsetModelRatioModel
 		}
-		// 检查是否是HTTP或HTTPS
-		if !strings.HasPrefix(req.BarkUrl, "https://") && !strings.HasPrefix(req.BarkUrl, "http://") {
-			common.ApiErrorT(c, "URL must start with http:// or https://")
-			return
+		if req.RecordIpLog != nil {
+			settings.RecordIpLog = *req.RecordIpLog
 		}
-	}
+		if req.QuotaWarningEnabled != nil {
+			settings.QuotaWarningEnabled = req.QuotaWarningEnabled
+		}
+		if user.Role >= common.RoleAdminUser {
+			if req.UpstreamModelUpdateNotifyEnabled != nil {
+				settings.UpstreamModelUpdateNotifyEnabled = *req.UpstreamModelUpdateNotifyEnabled
+			}
+			if req.ChannelNotifyEnabled != nil {
+				settings.ChannelNotifyEnabled = req.ChannelNotifyEnabled
+			}
+		}
 
-	// 如果是Gotify类型，验证Gotify URL和Token
-	if req.QuotaWarningType == dto.NotifyTypeGotify {
-		if req.GotifyUrl == "" {
-			common.ApiErrorT(c, "Gotify server URL cannot be empty")
-			return
-		}
-		if req.GotifyToken == "" {
-			common.ApiErrorT(c, "Gotify token cannot be empty")
-			return
-		}
-		// 验证URL格式
-		if _, err := url.ParseRequestURI(req.GotifyUrl); err != nil {
-			common.ApiErrorT(c, "Invalid Gotify server URL")
-			return
-		}
-		// 检查是否是HTTP或HTTPS
-		if !strings.HasPrefix(req.GotifyUrl, "https://") && !strings.HasPrefix(req.GotifyUrl, "http://") {
-			common.ApiErrorT(c, "URL must start with http:// or https://")
-			return
-		}
-	}
-
-	userId := c.GetInt("id")
-	user, err := model.GetUserById(userId, true)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	// 从已保存的设置出发，语言、侧边栏、扣费策略等不由此表单管理的字段保持不变；
-	// 请求未携带的开关也保持原值
-	settings := user.GetSetting()
-	settings.NotifyType = req.QuotaWarningType
-	// Explicit zero uses the site default; an older partial request preserves
-	// the exact saved value, including finite legacy fractional thresholds.
-	if req.QuotaWarningThreshold.present {
-		settings.QuotaWarningThreshold = req.QuotaWarningThreshold.value
-	}
-	settings.AcceptUnsetRatioModel = req.AcceptUnsetModelRatioModel
-	settings.RecordIpLog = req.RecordIpLog
-	if req.QuotaWarningEnabled != nil {
-		settings.QuotaWarningEnabled = req.QuotaWarningEnabled
-	}
-	if user.Role >= common.RoleAdminUser {
-		if req.UpstreamModelUpdateNotifyEnabled != nil {
-			settings.UpstreamModelUpdateNotifyEnabled = *req.UpstreamModelUpdateNotifyEnabled
-		}
-		if req.ChannelNotifyEnabled != nil {
-			settings.ChannelNotifyEnabled = req.ChannelNotifyEnabled
-		}
-	}
-
-	// 只保留所选通知方式的配置，其他方式的配置清空
-	settings.WebhookUrl, settings.WebhookSecret = "", ""
-	settings.NotificationEmail = ""
-	settings.BarkUrl = ""
-	settings.GotifyUrl, settings.GotifyToken, settings.GotifyPriority = "", "", 0
-	switch req.QuotaWarningType {
-	case dto.NotifyTypeWebhook:
-		settings.WebhookUrl = req.WebhookUrl
-		settings.WebhookSecret = req.WebhookSecret
-	case dto.NotifyTypeEmail:
-		settings.NotificationEmail = req.NotificationEmail
-	case dto.NotifyTypeBark:
-		settings.BarkUrl = req.BarkUrl
-	case dto.NotifyTypeGotify:
-		settings.GotifyUrl = req.GotifyUrl
-		settings.GotifyToken = req.GotifyToken
-		// Gotify优先级范围0-10，超出范围则使用默认值5
-		if req.GotifyPriority < 0 || req.GotifyPriority > 10 {
-			settings.GotifyPriority = 5
-		} else {
+		settings.WebhookUrl, settings.WebhookSecret = "", ""
+		settings.NotificationEmail = ""
+		settings.BarkUrl = ""
+		settings.GotifyUrl, settings.GotifyToken, settings.GotifyPriority = "", "", 0
+		switch req.QuotaWarningType {
+		case dto.NotifyTypeWebhook:
+			settings.WebhookUrl = req.WebhookUrl
+			if !req.ClearWebhookSecret {
+				settings.WebhookSecret = req.WebhookSecret
+			}
+		case dto.NotifyTypeEmail:
+			settings.NotificationEmail = req.NotificationEmail
+		case dto.NotifyTypeBark:
+			settings.BarkUrl = req.BarkUrl
+		case dto.NotifyTypeGotify:
+			settings.GotifyUrl, settings.GotifyToken = req.GotifyUrl, req.GotifyToken
 			settings.GotifyPriority = req.GotifyPriority
+			if req.GotifyPriority < 0 || req.GotifyPriority > 10 {
+				settings.GotifyPriority = 5
+			}
 		}
-	}
-
-	// 更新用户设置
-	if err := model.UpdateUserSetting(user.Id, settings); err != nil {
-		common.ApiErrorT(c, "Update failed")
+		return nil
+	})
+	if err != nil {
+		var msg *common.Message
+		if errors.As(err, &msg) {
+			common.ApiError(c, err)
+		} else {
+			common.ApiErrorT(c, "Update failed")
+		}
 		return
 	}
-
 	common.ApiSuccessT(c, "Settings updated", nil)
 }

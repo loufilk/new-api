@@ -203,7 +203,7 @@ func AdminDisable2FA(c *gin.Context) {
 	}
 
 	// 禁用2FA
-	if err := model.DisableTwoFAWithAuthVersion(userId); err != nil {
+	if err := model.DisableTwoFAByAdministrator(authorization.AuthSessionIdentity, *targetUser); err != nil {
 		if errors.Is(err, model.ErrTwoFANotEnabled) {
 			common.ApiErrorT(c, "Two-factor authentication is not enabled.")
 			return

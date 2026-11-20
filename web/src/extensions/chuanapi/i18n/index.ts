@@ -40,6 +40,19 @@ const chuanapiLocaleLoaders: Record<
   zhTW: () => import('./locales/zh-TW.json'),
 }
 
+const consoleLocaleLoaders: Record<
+  ExtensionLocaleKey,
+  () => Promise<LocaleModule>
+> = {
+  en: () => import('./console-locales/en.json'),
+  zhCN: () => import('./console-locales/zh.json'),
+  fr: () => import('./console-locales/fr.json'),
+  ru: () => import('./console-locales/ru.json'),
+  ja: () => import('./console-locales/ja.json'),
+  vi: () => import('./console-locales/vi.json'),
+  zhTW: () => import('./console-locales/zh-TW.json'),
+}
+
 /**
  * Async single-locale loader so the chuanapi extension no longer pulls all
  * seven locales into the sync entry. Registration-order merge semantics are
@@ -51,7 +64,16 @@ export async function loadChuanapiI18nOverride(
   const loader = chuanapiLocaleLoaders[locale]
   if (!loader) return undefined
   try {
-    return normalizeBundle(await loader())
+    const [base, consoleLabels] = await Promise.all([
+      loader(),
+      consoleLocaleLoaders[locale](),
+    ])
+    return {
+      translation: {
+        ...normalizeBundle(base).translation,
+        ...normalizeBundle(consoleLabels).translation,
+      },
+    }
   } catch {
     return undefined
   }

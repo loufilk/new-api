@@ -87,8 +87,30 @@ func memoryRateLimitHandler(subject string, duration int64, totalMaxCount, succe
 }
 
 func modelRequestSucceeded(c *gin.Context) bool {
+	if c.Writer.Status() >= http.StatusBadRequest {
+		return false
+	}
 	status, _ := common.GetContextKeyType[*relaycommon.StreamStatus](c, constant.ContextKeyResponseStreamStatus)
-	return c.Writer.Status() < 400 && !status.ResponseFailed()
+	if status.APIError() != nil {
+		return false
+	}
+	outcome := status.OutcomeSnapshot()
+	switch outcome.EndReason {
+	case relaycommon.StreamEndReasonClientGone, relaycommon.StreamEndReasonTimeout, relaycommon.StreamEndReasonScannerErr,
+		relaycommon.StreamEndReasonPanic, relaycommon.StreamEndReasonPingFail:
+		return false
+	}
+	switch outcome.Response {
+	case relaycommon.ResponseOutcomeFailed, relaycommon.ResponseOutcomeCancelled:
+		return false
+	case relaycommon.ResponseOutcomeCompleted, relaycommon.ResponseOutcomeIncomplete:
+		return true
+	default:
+		if outcome.EndReason == relaycommon.StreamEndReasonDone {
+			return true
+		}
+		return !outcome.ExpectsTerminal && c.Request.Context().Err() == nil
+	}
 }
 
 // ModelRequestRateLimit 模型请求限流中间件

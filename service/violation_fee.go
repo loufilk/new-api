@@ -2,10 +2,13 @@ package service
 
 import (
 	"fmt"
+	"math"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -18,84 +21,55 @@ import (
 )
 
 const (
-	ViolationFeeCodePrefix     = "violation_fee."
-	CSAMViolationMarker        = "Failed check: SAFETY_CHECK_TYPE"
-	ContentViolatesUsageMarker = "Content violates usage guidelines"
+	ViolationFeeCodePrefix = "violation_fee."
+	CSAMViolationMarker    = "Failed check: SAFETY_CHECK_TYPE_CSAM"
 )
 
 func IsViolationFeeCode(code types.ErrorCode) bool {
 	return strings.HasPrefix(string(code), ViolationFeeCodePrefix)
 }
 
-func HasCSAMViolationMarker(err *types.NewAPIError) bool {
-	if err == nil {
+// A generic policy error is not evidence of a chargeable xAI event. Accept
+// structured provider-specific evidence only after the selected xAI channel
+// supplied a 4xx; keep native public error fields unchanged.
+func shouldChargeViolationFee(err *types.NewAPIError, channelType int) bool {
+	if err == nil || channelType != constant.ChannelTypeXai || err.StatusCode < http.StatusBadRequest || err.StatusCode >= http.StatusInternalServerError {
 		return false
 	}
-	if strings.Contains(err.Error(), CSAMViolationMarker) || strings.Contains(err.Error(), ContentViolatesUsageMarker) {
+	if err.GetErrorType() == types.ErrorTypeNewAPIError && err.GetErrorCode() == types.ErrorCodeViolationFeeGrokCSAM {
 		return true
 	}
-	msg := err.ToOpenAIError().Message
-	return strings.Contains(msg, CSAMViolationMarker) || strings.Contains(err.Error(), ContentViolatesUsageMarker)
-}
-
-func WrapAsViolationFeeGrokCSAM(err *types.NewAPIError) *types.NewAPIError {
-	if err == nil {
-		return nil
+	if err.GetErrorType() != types.ErrorTypeOpenAIError {
+		return false
 	}
 	oai := err.ToOpenAIError()
-	oai.Type = string(types.ErrorCodeViolationFeeGrokCSAM)
-	oai.Code = string(types.ErrorCodeViolationFeeGrokCSAM)
-	return types.WithOpenAIError(oai, err.StatusCode, types.ErrOptionWithSkipRetry())
+	code, _ := oai.Code.(string)
+	switch strings.ToLower(code) {
+	case "csam", "safety_check_type_csam":
+		return true
+	}
+	msg := strings.TrimSpace(oai.Message)
+	return msg == CSAMViolationMarker || strings.HasPrefix(msg, CSAMViolationMarker+":")
 }
 
-// NormalizeViolationFeeError ensures:
-// - if the CSAM marker is present, error.code is set to a stable violation-fee code and skip-retry is enabled.
-// - if error.code already has the violation-fee prefix, skip-retry is enabled.
-//
-// It must be called before retry decision logic.
-func NormalizeViolationFeeError(err *types.NewAPIError) *types.NewAPIError {
-	if err == nil {
-		return nil
+func NormalizeViolationFeeError(err *types.NewAPIError, channelType int) *types.NewAPIError {
+	if shouldChargeViolationFee(err, channelType) {
+		types.ErrOptionWithSkipRetry()(err)
 	}
-
-	if HasCSAMViolationMarker(err) {
-		return WrapAsViolationFeeGrokCSAM(err)
-	}
-
-	if IsViolationFeeCode(err.GetErrorCode()) {
-		oai := err.ToOpenAIError()
-		return types.WithOpenAIError(oai, err.StatusCode, types.ErrOptionWithSkipRetry())
-	}
-
 	return err
 }
 
-func shouldChargeViolationFee(err *types.NewAPIError) bool {
-	if err == nil {
-		return false
+func calcViolationFeeQuota(amount, groupRatio float64) (int, *common.QuotaClamp) {
+	unit := common.QuotaPerUnit
+	if amount <= 0 || groupRatio <= 0 || unit <= 0 ||
+		math.IsNaN(amount) || math.IsInf(amount, 0) || math.IsNaN(groupRatio) || math.IsInf(groupRatio, 0) ||
+		math.IsNaN(unit) || math.IsInf(unit, 0) {
+		return 0, nil
 	}
-	if err.GetErrorCode() == types.ErrorCodeViolationFeeGrokCSAM {
-		return true
-	}
-	// In case some callers didn't normalize, keep a safety net.
-	return HasCSAMViolationMarker(err)
-}
-
-func calcViolationFeeQuota(amount, groupRatio float64) int {
-	if amount <= 0 {
-		return 0
-	}
-	if groupRatio <= 0 {
-		return 0
-	}
-	quota := common.QuotaFromDecimal(decimal.NewFromFloat(amount).
-		Mul(decimal.NewFromFloat(common.QuotaPerUnit)).
+	return common.QuotaFromDecimalChecked(decimal.NewFromFloat(amount).
+		Mul(decimal.NewFromFloat(unit)).
 		Mul(decimal.NewFromFloat(groupRatio)).
 		Round(0))
-	if quota <= 0 {
-		return 0
-	}
-	return quota
 }
 
 // ChargeViolationFeeIfNeeded charges an additional fee after the normal flow finishes (including refund).
@@ -107,7 +81,7 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 	//if relayInfo.IsPlayground {
 	//	return false
 	//}
-	if !shouldChargeViolationFee(apiErr) {
+	if relayInfo.ChannelMeta == nil || !shouldChargeViolationFee(apiErr, relayInfo.ChannelType) {
 		return false
 	}
 
@@ -117,7 +91,8 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 	}
 
 	groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
-	feeQuota := calcViolationFeeQuota(settings.ViolationDeductionAmount, groupRatio)
+	feeQuota, clamp := calcViolationFeeQuota(settings.ViolationDeductionAmount, groupRatio)
+	noteQuotaClamp(relayInfo, clamp)
 	if feeQuota <= 0 {
 		return false
 	}
@@ -149,6 +124,7 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		"violation_fee_marker": CSAMViolationMarker,
 	})
 
+	attachQuotaSaturation(ctx, relayInfo, other)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:      relayInfo.ChannelId,
 		ModelName:      relayInfo.OriginModelName,

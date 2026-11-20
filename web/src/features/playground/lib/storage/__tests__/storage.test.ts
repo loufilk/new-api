@@ -31,6 +31,7 @@ import {
   saveMessages,
   saveParameterEnabled,
 } from '../storage'
+import { MAX_STORED_MESSAGES_BYTES } from '../storage-schema'
 
 const messages: Message[] = [
   {
@@ -114,4 +115,47 @@ test('legitimately repeated Markdown headings survive reloading saved chat', () 
   const content = `Opening paragraph\n${section.repeat(3)}`
   saveMessages([{ ...messages[0], versions: [{ id: 'v1', content }] }])
   expect(loadMessages()?.[0].versions[0].content).toBe(content)
+})
+
+test('oversized owner histories are compacted rather than erased on reload', () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'A', role: 1 })
+  const longResponse: Message = {
+    from: 'assistant',
+    key: 'long-response',
+    versions: [{ id: 'long-version', content: '遇'.repeat(1_100_000) }],
+  }
+  const storageKey = `${STORAGE_KEYS.MESSAGES}:1`
+  localStorage.setItem(
+    storageKey,
+    JSON.stringify({
+      version: 1,
+      data: [...messages, longResponse],
+    })
+  )
+  expect(loadMessages()?.map((message) => message.key)).toEqual([
+    messages[0].key,
+    longResponse.key,
+  ])
+  expect(loadMessages()?.[1].versions[0].content).toMatch(/\[\.\.\.\]$/)
+  expect(
+    new TextEncoder().encode(localStorage.getItem(storageKey) ?? '').length
+  ).toBeLessThan(MAX_STORED_MESSAGES_BYTES)
+})
+
+test('new histories fit the storage byte limit before a reload', () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'A', role: 1 })
+  const longResponse: Message = {
+    from: 'assistant',
+    key: 'long-response',
+    versions: [{ id: 'long-version', content: '😀'.repeat(550_000) }],
+  }
+  saveMessages([...messages, longResponse])
+  const storageKey = `${STORAGE_KEYS.MESSAGES}:1`
+  expect(
+    new TextEncoder().encode(localStorage.getItem(storageKey) ?? '').length
+  ).toBeLessThan(MAX_STORED_MESSAGES_BYTES)
+  expect(loadMessages()?.map((message) => message.key)).toEqual([
+    messages[0].key,
+    longResponse.key,
+  ])
 })

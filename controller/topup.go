@@ -285,7 +285,12 @@ func RequestEpay(c *gin.Context) {
 		return
 	}
 	id := c.GetInt("id")
-	if rejectInvalidTopUpQuota(c, id, req.Amount) {
+	quotedQuota, err := validateTopUpQuota(req.Amount)
+	if err == nil {
+		err = model.ValidateTopUpQuotaCapacity(id, quotedQuota)
+	}
+	if err != nil {
+		paymentError(c, err)
 		return
 	}
 
@@ -305,6 +310,11 @@ func RequestEpay(c *gin.Context) {
 	}
 	if !payMoney.IsPositive() {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
+		return
+	}
+	amountMinor := payMoney.Shift(2)
+	if amountMinor.GreaterThan(decimal.NewFromInt(common.MaxWalletQuota)) {
+		paymentError(c, common.NewMessage("Invalid top-up amount"))
 		return
 	}
 
@@ -352,14 +362,19 @@ func RequestEpay(c *gin.Context) {
 		amount = dAmount.Div(dQuotaPerUnit).IntPart()
 	}
 	topUp := &model.TopUp{
-		UserId:          id,
-		Amount:          amount,
-		Money:           payMoney.InexactFloat64(),
-		TradeNo:         tradeNo,
-		PaymentMethod:   req.PaymentMethod,
-		PaymentProvider: model.PaymentProviderEpay,
-		CreateTime:      time.Now().Unix(),
-		Status:          common.TopUpStatusPending,
+		UserId:                   id,
+		Amount:                   amount,
+		Money:                    payMoney.InexactFloat64(),
+		TradeNo:                  tradeNo,
+		PaymentMethod:            req.PaymentMethod,
+		PaymentProvider:          model.PaymentProviderEpay,
+		CreateTime:               time.Now().Unix(),
+		Status:                   common.TopUpStatusPending,
+		QuotedWalletQuota:        quotedQuota,
+		QuotedPaymentMinor:       amountMinor.IntPart(),
+		QuotedPaymentCurrency:    "CNY",
+		QuotedPaymentScope:       client.Config.PartnerID,
+		QuotedPaymentEnvironment: "live",
 	}
 	err = topUp.Insert()
 	if err != nil {
@@ -434,6 +449,10 @@ func EpayNotify(c *gin.Context) {
 		} else {
 			logger.LogWarn(c.Request.Context(), fmt.Sprintf("易支付 webhook 验签失败 path=%q client_ip=%s verify_status=false", c.Request.URL.Path, c.ClientIP()))
 		}
+		return
+	}
+	if merchant := params["pid"]; merchant != "" && merchant != client.Config.PartnerID {
+		_, _ = c.Writer.Write([]byte("fail"))
 		return
 	}
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 webhook 验签成功 trade_no=%s callback_type=%s trade_status=%s callback_money=%s client_ip=%s", verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.TradeStatus, verifyInfo.Money, c.ClientIP()))

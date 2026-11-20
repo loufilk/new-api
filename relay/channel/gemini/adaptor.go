@@ -169,15 +169,15 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 
 	version := model_setting.GetGeminiVersionSetting(info.UpstreamModelName)
 
-	if strings.HasPrefix(info.UpstreamModelName, "imagen") {
+	if info.RelayFormat != types.RelayFormatGemini && strings.HasPrefix(info.UpstreamModelName, "imagen") {
 		return fmt.Sprintf("%s/%s/models/%s:predict", info.ChannelBaseUrl, version, info.UpstreamModelName), nil
 	}
 
-	if strings.HasPrefix(info.UpstreamModelName, "text-embedding") ||
-		strings.HasPrefix(info.UpstreamModelName, "embedding") ||
-		strings.HasPrefix(info.UpstreamModelName, "gemini-embedding") {
+	_, nativeSingle := info.Request.(*dto.GeminiEmbeddingRequest)
+	_, nativeBatch := info.Request.(*dto.GeminiBatchEmbeddingRequest)
+	if nativeSingle || nativeBatch || info.RelayMode == constant.RelayModeEmbeddings || info.IsGeminiBatchEmbedding {
 		action := "embedContent"
-		if info.IsGeminiBatchEmbedding {
+		if nativeBatch || info.IsGeminiBatchEmbedding {
 			action = "batchEmbedContents"
 		}
 		return fmt.Sprintf("%s/%s/models/%s:%s", info.ChannelBaseUrl, version, info.UpstreamModelName, action), nil
@@ -297,8 +297,8 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	}
 
 	if info.RelayMode == constant.RelayModeGemini {
-		if strings.Contains(info.RequestURLPath, ":embedContent") ||
-			strings.Contains(info.RequestURLPath, ":batchEmbedContents") {
+		switch info.Request.(type) {
+		case *dto.GeminiEmbeddingRequest, *dto.GeminiBatchEmbeddingRequest:
 			return NativeGeminiEmbeddingHandler(c, resp, info)
 		}
 		if info.IsStream {
@@ -313,9 +313,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	}
 
 	// check if the model is an embedding model
-	if strings.HasPrefix(info.UpstreamModelName, "text-embedding") ||
-		strings.HasPrefix(info.UpstreamModelName, "embedding") ||
-		strings.HasPrefix(info.UpstreamModelName, "gemini-embedding") {
+	if info.RelayMode == constant.RelayModeEmbeddings || info.IsGeminiBatchEmbedding {
 		return GeminiEmbeddingHandler(c, info, resp)
 	}
 

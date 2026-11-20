@@ -81,6 +81,30 @@ class DashboardRouteContractTest(unittest.TestCase):
         for overbroad in ("/invoice*", "/invoice-management*"):
             self.assertNotIn(overbroad, matcher_tokens)
 
+    def test_agent_checkout_routes_are_separate_from_cached_public_api(self) -> None:
+        matchers = set(self.ui_matcher.split())
+        for path in ("/agent-pay", "/agent-platform", "/agent-redemption", "/request-processing"):
+            self.assertIn(path, matchers)
+            self.assertIn(f"{path}/*", matchers)
+            self.assertNotIn(f"{path}*", matchers)
+
+        matcher = named_block(self.caddy, "@public_agent_payment {")
+        self.assertIn("method POST", matcher)
+        self.assertIn("^/public-api/agent-pay/[^/]+$", matcher)
+        handler = named_block(self.caddy, "handle @public_agent_payment {")
+        for setting in ("reverse_proxy http://127.0.0.1:3000", "header_up -Cookie",
+                        "header_up -Authorization", "header_down -Set-Cookie",
+                        "header_down Cache-Control no-store"):
+            self.assertIn(setting, handler)
+        other = named_block(self.caddy, "handle @public_agent_payment_other {")
+        self.assertIn("header Allow POST", other)
+        self.assertIn('respond "Method Not Allowed" 405', other)
+        self.assertLess(self.caddy.index("handle @public_agent_payment {"),
+                        self.caddy.index("handle @public_agent_payment_other {"))
+        self.assertLess(self.caddy.index("handle @public_agent_payment_other {"),
+                        self.caddy.index("try_files {path}index.html"))
+        self.assertNotIn("path /public-api/*", self.caddy)
+
     def test_task_plugin_and_error_deep_links_belong_to_new_api(self) -> None:
         matcher_tokens = set(self.ui_matcher.split())
         for path in ("/task-plugins", "/task-plugins/*", "/401", "/403", "/404", "/500", "/503"):

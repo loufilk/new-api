@@ -170,7 +170,7 @@ func (r *GeminiChatRequest) IsStream(c *http.Request) bool {
 	}
 	// Native Gemini API uses URL action to indicate streaming:
 	// /v1beta/models/{model}:streamGenerateContent
-	if strings.Contains(c.URL.Path, "streamGenerateContent") {
+	if strings.HasSuffix(c.URL.Path, ":streamGenerateContent") {
 		return true
 	}
 	return false

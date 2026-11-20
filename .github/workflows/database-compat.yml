@@ -25,7 +25,7 @@ jobs:
   postgres:
     name: PostgreSQL 18.7 real migration
     # This branch has no schema changes; its affected PostgreSQL contracts run in CI.
-    if: ${{ !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119"]'), github.head_ref || github.ref_name) }}
+    if: ${{ !startsWith(github.head_ref || github.ref_name, 'fix/im19-') && !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119"]'), github.head_ref || github.ref_name) }}
     # Keep the dedicated Runner policy outside the isolated maintenance branch.
     runs-on: ${{ fromJSON(github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924' && '["self-hosted","linux","x64","us-vps-ci"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 35

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,17 +41,26 @@ func EnsureDiskCacheDir() error {
 // cacheType: 缓存类型（body/file）
 // 返回文件路径和文件句柄
 func CreateDiskCacheFile(cacheType DiskCacheType) (string, *os.File, error) {
-	if err := EnsureDiskCacheDir(); err != nil {
+	dir := GetDiskCacheDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", nil, fmt.Errorf("failed to create cache directory: %w", err)
 	}
-
-	dir := GetDiskCacheDir()
 	filename := fmt.Sprintf("%s-%s-%d.tmp", cacheType, uuid.New().String()[:8], time.Now().UnixNano())
 	filePath := filepath.Join(dir, filename)
 
 	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_RDWR|os.O_EXCL, 0600)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create cache file: %w", err)
+	}
+
+	leased, err := tryDiskCacheLease(file)
+	if err != nil || !leased {
+		_ = file.Close()
+		_ = os.Remove(filePath)
+		if err == nil {
+			err = fmt.Errorf("cache file already leased")
+		}
+		return "", nil, fmt.Errorf("failed to secure cache file: %w", err)
 	}
 
 	return filePath, file, nil
@@ -103,36 +113,42 @@ func RemoveDiskCacheFile(filePath string) error {
 	return os.Remove(filePath)
 }
 
-// CleanupOldDiskCacheFiles 清理旧的缓存文件
-// maxAge: 文件最大存活时间
-// 注意：此函数只删除文件，不更新统计（因为无法知道每个文件的原始大小）
+// CleanupOldDiskCacheFiles removes old unleased cache files. Active storage
+// owns its live usage counters and decrements them when it closes, not here.
 func CleanupOldDiskCacheFiles(maxAge time.Duration) error {
 	dir := GetDiskCacheDir()
-
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil // 目录不存在，无需清理
+			return nil
 		}
 		return err
 	}
-
-	now := time.Now()
+	cutoff := time.Now().Add(-maxAge)
 	for _, entry := range entries {
-		if entry.IsDir() {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".tmp") ||
+			(!strings.HasPrefix(name, string(DiskCacheTypeBody)+"-") && !strings.HasPrefix(name, string(DiskCacheTypeFile)+"-")) {
 			continue
 		}
 		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() || !info.ModTime().Before(cutoff) {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		file, err := os.OpenFile(path, os.O_RDWR, 0)
 		if err != nil {
 			continue
 		}
-		if now.Sub(info.ModTime()) > maxAge {
-			// 注意：后台清理任务删除文件时，由于无法得知原始 base64Size，
-			// 只能按磁盘文件大小扣减。这在目前 base64 存储模式下是准确的。
-			if err := os.Remove(filepath.Join(dir, entry.Name())); err == nil {
-				DecrementDiskFiles(info.Size())
-			}
+		leased, err := tryDiskCacheLease(file)
+		if err != nil || !leased {
+			_ = file.Close()
+			continue
 		}
+		// Windows requires the handle to be closed before unlinking. Only
+		// creation can make an active lease, and creators use unique filenames.
+		_ = file.Close()
+		_ = os.Remove(path)
 	}
 	return nil
 }

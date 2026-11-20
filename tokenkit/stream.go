@@ -24,6 +24,7 @@ type StreamingEstimate struct {
 	multipliers weights
 	count       float64
 	wordType    streamWordType
+	wordRun     int
 	pending     []byte
 	hasInput    bool
 }
@@ -31,7 +32,11 @@ type StreamingEstimate struct {
 // NewStreamingEstimate creates an incremental estimator for a model.
 // Provider selection mirrors Estimate.
 func NewStreamingEstimate(model string) *StreamingEstimate {
-	w, ok := familyWeights[ModelFamily(model)]
+	return newStreamingEstimate(ModelFamily(model))
+}
+
+func newStreamingEstimate(family Family) *StreamingEstimate {
+	w, ok := familyWeights[family]
 	if !ok {
 		w = familyWeights[FamilyUnknown]
 	}
@@ -142,13 +147,24 @@ func (s *StreamingEstimate) countRune(m weights, r rune) {
 		if isNum {
 			newType = streamWordNumber
 		}
-		if s.wordType == streamWordNone || s.wordType != newType {
+		if s.wordType != newType {
+			s.wordRun = 0
 			if newType == streamWordNumber {
 				s.count += m.Number
 			} else {
 				s.count += m.Word
 			}
 			s.wordType = newType
+		}
+		s.wordRun++
+		// Normal words keep the calibrated one-run weight. Long identifiers,
+		// unbroken strings and digit runs are split by real tokenizers.
+		if newType == streamWordNumber {
+			if s.wordRun > 12 && (s.wordRun-13)%3 == 0 {
+				s.count++
+			}
+		} else if s.wordRun > 24 && (s.wordRun-25)%4 == 0 {
+			s.count++
 		}
 		return
 	}

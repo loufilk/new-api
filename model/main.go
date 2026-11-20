@@ -118,6 +118,10 @@ func normalizeClickHouseDSN(dsn string) string {
 }
 
 func chooseDB(envName string, isLog bool) (*gorm.DB, common.DatabaseType, error) {
+	return chooseDBWithSQLiteDSN(envName, isLog, common.SQLitePath)
+}
+
+func chooseDBWithSQLiteDSN(envName string, isLog bool, sqliteDSN string) (*gorm.DB, common.DatabaseType, error) {
 	dsn := os.Getenv(envName)
 	if dsn != "" {
 		if isClickHouseDSN(dsn) {
@@ -141,7 +145,7 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, common.DatabaseType, error)
 		}
 		if strings.HasPrefix(dsn, "local") {
 			common.SysLog(common.LogText("SQL_DSN not set, using SQLite as database"))
-			db, err := gorm.Open(sqlite.Open(common.SQLitePath), newGormConfig(true))
+			db, err := gorm.Open(sqlite.Open(sqliteDSN), newGormConfig(true))
 			return db, common.DatabaseTypeSQLite, err
 		}
 		// Use MySQL
@@ -159,8 +163,31 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, common.DatabaseType, error)
 	}
 	// Use SQLite
 	common.SysLog(common.LogText("SQL_DSN not set, using SQLite as database"))
-	db, err := gorm.Open(sqlite.Open(common.SQLitePath), newGormConfig(true))
+	db, err := gorm.Open(sqlite.Open(sqliteDSN), newGormConfig(true))
 	return db, common.DatabaseTypeSQLite, err
+}
+
+// OpenPrimaryForMaintenance opens the configured database without application
+// startup hooks. For inspection, SQLite must open an existing file without
+// journal setup or a write-capable handle. The inspection routine supplies
+// its own read-only transaction on PostgreSQL.
+func OpenPrimaryForMaintenance(readOnly bool) (*gorm.DB, error) {
+	dsn := common.SQLitePath
+	sqlDSN := os.Getenv("SQL_DSN")
+	if readOnly && (sqlDSN == "" || strings.HasPrefix(sqlDSN, "local")) {
+		path, _, _ := strings.Cut(dsn, "?")
+		if !strings.HasPrefix(path, "file:") {
+			path = "file:" + (&url.URL{Path: path}).EscapedPath()
+		}
+		dsn = path + "?mode=ro&_pragma=busy_timeout(30000)"
+	}
+	db, dbType, err := chooseDBWithSQLiteDSN("SQL_DSN", false, dsn)
+	if err != nil {
+		return nil, err
+	}
+	common.SetMainDatabaseType(dbType)
+	initCol()
+	return db, nil
 }
 
 func InitDB() (err error) {

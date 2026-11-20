@@ -272,12 +272,21 @@ func DeletePasskeyForSession(identity AuthSessionIdentity) error {
 	return deletePasskeyWithAuthVersion(identity.UserID, &identity)
 }
 
-func deletePasskeyWithAuthVersion(userID int, identity *AuthSessionIdentity) error {
+func DeletePasskeyByAdministrator(identity AuthSessionIdentity, expected User) error {
+	return deletePasskeyWithAuthVersion(expected.Id, nil, AdminUserMutationGuard{Identity: identity, Expected: expected})
+}
+
+func deletePasskeyWithAuthVersion(userID int, identity *AuthSessionIdentity, guards ...AdminUserMutationGuard) error {
 	if userID == 0 {
 		return errors.New("failed to delete the Passkey, please try again")
 	}
 	if err := DB.Transaction(func(tx *gorm.DB) error {
-		if identity != nil {
+		if len(guards) != 0 {
+			guard := guards[0]
+			if _, _, err := lockAuthorizedAdminTargetTx(tx, guard.Identity.UserID, guard.Expected, true, guard.Identity); err != nil {
+				return err
+			}
+		} else if identity != nil {
 			if err := ValidateAuthSessionWithTx(tx, *identity); err != nil {
 				return err
 			}

@@ -148,6 +148,47 @@ func TestProcessHeaderOverride_PassthroughSkipsAcceptEncoding(t *testing.T) {
 	require.False(t, hasAcceptEncoding)
 }
 
+func TestProcessHeaderOverrideFiltersClientCredentialsAndHopHeaders(t *testing.T) {
+	t.Parallel()
+	for _, rule := range []string{"*", "REGEX:.*"} {
+		t.Run(rule, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodGet, "/v1/realtime", nil)
+			c.Request.Header.Set("X-Trace-Id", "trace-123")
+			c.Request.Header.Set("Connection", "X-Relay-Hop")
+			c.Request.Header.Set("X-Relay-Hop", "hop-value")
+			for _, name := range []string{"Authorization", "Cookie", "Mj-Api-Secret", "Sec-WebSocket-Protocol"} {
+				c.Request.Header.Set(name, "gateway-only")
+			}
+			info := &relaycommon.RelayInfo{
+				ChannelMeta: &relaycommon.ChannelMeta{HeadersOverride: map[string]any{
+					rule:            "",
+					"X-Renamed":     "{client_header:Sec-WebSocket-Protocol}",
+					"Authorization": "Bearer upstream-only",
+				}},
+			}
+			headers, err := processHeaderOverride(info, c)
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{"x-trace-id": "trace-123", "authorization": "Bearer upstream-only"}, headers)
+		})
+	}
+}
+
+func TestProcessHeaderOverridePreservesRegexSyntaxAndIgnoresHeaderCase(t *testing.T) {
+	t.Parallel()
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	c.Request.Header.Set("X-Trace-Id", "trace-123")
+	c.Request.Header.Set("X-Trace-1", "numeric")
+	c.Request.Header.Set("X-Other", "other")
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{HeadersOverride: map[string]any{`Re:^X-Trace-\D+$`: ""}},
+	}
+	headers, err := processHeaderOverride(info, c)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"x-trace-id": "trace-123"}, headers)
+}
+
 func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.T) {
 	t.Parallel()
 

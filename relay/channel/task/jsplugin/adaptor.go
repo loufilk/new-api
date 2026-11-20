@@ -106,10 +106,6 @@ type taskResult struct {
 
 var taskArtifactKeyPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$`)
 
-// gatewayCredentialHeaders carry the client's gateway credentials. Driver
-// hooks receive every other request header.
-var gatewayCredentialHeaders = []string{"Authorization", "Proxy-Authorization", "Cookie", "X-Api-Key", "X-Goog-Api-Key", "Mj-Api-Secret"}
-
 // ClientRequestHeaders is the client's request headers as decoders and driver
 // hooks receive them: the first value of each under its canonical name,
 // without the headers that carry gateway credentials, and with Content-Type
@@ -118,7 +114,7 @@ func ClientRequestHeaders(header http.Header) map[string]string {
 	headers := make(map[string]string, len(header)+2)
 	for name, values := range header {
 		name = http.CanonicalHeaderKey(name)
-		if len(values) > 0 && !slices.Contains(gatewayCredentialHeaders, name) {
+		if len(values) > 0 && !relaycommon.IsGatewayCredentialHeader(name) {
 			headers[name] = values[0]
 		}
 	}

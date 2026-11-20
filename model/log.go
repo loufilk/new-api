@@ -363,6 +363,23 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	// Request plugin report hooks read what the request settled, whether or
 	// not consume logs are kept.
 	common.SetContextKey(c, constant.ContextKeyConsumeLog, &params)
+	recordUsageLog(c, userId, params, LogTypeConsume)
+}
+
+// RecordUnsettledUsageLog retains delivered token usage for review without
+// reporting an unconfirmed delta as a finalized wallet charge.
+func RecordUnsettledUsageLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
+	if params.Other == nil {
+		params.Other = NewLogOther()
+	}
+	params.Other.SetPublic("billing_status", "settlement_unconfirmed")
+	params.Other.SetAdmin("billing_calculated_quota", params.Quota)
+	params.Quota = 0
+	params.Content = []*common.Message{common.NewMessage("Usage recorded; billing settlement is unconfirmed")}
+	recordUsageLog(c, userId, params, LogTypeError)
+}
+
+func recordUsageLog(c *gin.Context, userId int, params RecordConsumeLogParams, logType int) {
 	if !common.LogConsumeEnabled {
 		return
 	}
@@ -385,7 +402,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		UserId:           userId,
 		Username:         username,
 		CreatedAt:        createdAt,
-		Type:             LogTypeConsume,
+		Type:             logType,
 		Content:          content,
 		PromptTokens:     params.PromptTokens,
 		CompletionTokens: params.CompletionTokens,
@@ -411,7 +428,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	if err != nil {
 		logger.LogError(c, common.LogText("failed to record log: %s", err.Error()))
 	}
-	if common.DataExportEnabled {
+	if logType == LogTypeConsume && common.DataExportEnabled {
 		var cacheReadTokens, cacheCreationTokens int
 		if other != nil {
 			cacheReadTokens, _ = other.public["cache_tokens"].(int)

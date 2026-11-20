@@ -100,6 +100,13 @@ verify_image() {
 from_id=$(verify_image "$CORE_FROM_IMAGE" "$from_role")
 to_id=$(verify_image "$CORE_TO_IMAGE" "$to_role")
 [[ $from_id != "$to_id" ]] || die 'current and target are the same image'
+if [[ $from_role == stock ]]; then
+  # Once this target migrates, restarting stock is not a safe rollback.
+  fallback_id=$(verify_image "$CORE_APPROVED_ROLLBACK_IMAGE" fallback) ||
+    die 'staged schema-preserving rollback image is missing or invalid'
+  [[ $fallback_id != "$from_id" && $fallback_id != "$to_id" ]] ||
+    die 'staged rollback must resolve to its own image ID'
+fi
 [[ ${CORE_TRAFFIC_FENCED:-} == yes && ${CORE_OTHER_WRITERS_STOPPED:-} == yes ]] ||
     die 'first fence ingress, drain requests and stop all other writers; confirm explicitly'
 [[ ${CORE_BACKUP_VERIFIED:-} == yes ]] || die 'verify the disaster-recovery backup before switching'
@@ -113,12 +120,24 @@ export NEW_API_IMAGE="$CORE_FROM_IMAGE"
 base=(docker compose "$@")
 # Expect the specified project and a single current API instance.
 current=$("${base[@]}" ps -a -q "$svc")
+# Match the running gateway's configured drain, with the application's
+# default for unset or invalid values. Add 10s forced join, 30s finalization
+# and 20s margin for the supervisor.
+stop_grace=180
 [[ $current != *$'\n'* ]] || die 'expected at most one NewAPI container in the chosen project'
 if [[ -n $current ]]; then
   [[ $(docker inspect -f '{{.Image}}' "$current") == "$from_id" ]] || die 'current image differs from CORE_FROM_IMAGE'
   current_state=$(docker inspect -f '{{.State.Status}}' "$current")
   case "$current_state" in
-    running) ;;
+    running)
+      drain=$(docker inspect -f '{{range .Config.Env}}{{if and (gt (len .) (len "SHUTDOWN_TIMEOUT_SECONDS=")) (eq (index (split . "=") 0) "SHUTDOWN_TIMEOUT_SECONDS")}}{{println (slice . (len "SHUTDOWN_TIMEOUT_SECONDS="))}}{{end}}{{end}}' "$current")
+      if [[ $drain =~ ^\+?0*([0-9]{1,4})$ ]]; then
+        seconds=$((10#${BASH_REMATCH[1]}))
+        if (( seconds > 0 && seconds <= 3600 )); then
+          stop_grace=$((seconds + 60))
+        fi
+      fi
+      ;;
     exited|created|dead)
       [[ $phase == rollback && ${CORE_ACCEPT_FAILED_TARGET:-} == yes ]] ||
         die 'source is not running; explicit failed-target recovery is required'
@@ -128,6 +147,13 @@ if [[ -n $current ]]; then
 else
   [[ $phase == rollback && ${CORE_EXPECT_NO_API_CONTAINER:-} == yes ]] ||
     die 'no current container; explicit empty-slot rollback recovery is required'
+fi
+if [[ -n ${CORE_STOP_GRACE_SECONDS:-} ]]; then
+  [[ $CORE_STOP_GRACE_SECONDS =~ ^[1-9][0-9]{1,3}$ ]] ||
+    die 'CORE_STOP_GRACE_SECONDS must be a positive duration in seconds'
+  (( CORE_STOP_GRACE_SECONDS >= stop_grace && CORE_STOP_GRACE_SECONDS <= 3660 )) ||
+    die "CORE_STOP_GRACE_SECONDS must be from $stop_grace to 3660"
+  stop_grace=$CORE_STOP_GRACE_SECONDS
 fi
 overlay=$(mktemp "${CORE_CUTOVER_PIN_FILE}.tmp.XXXXXX")
 trap 'rm -f -- "$overlay"' EXIT
@@ -142,7 +168,7 @@ next=(docker compose "$@" -f "$overlay")
 # Do not leave the old container eligible to restart against the new schema.
 if [[ -n $current ]]; then
   if [[ $current_state == running ]]; then
-    "${base[@]}" stop -t 150 "$svc"
+    "${base[@]}" stop -t "$stop_grace" "$svc"
     if [[ $(docker inspect -f '{{.State.ExitCode}}' "$current") != 0 ]]; then
       die 'old gateway did not exit cleanly; keep ingress fenced, inspect drain/reporting and reconcile before continuing'
     fi

@@ -145,11 +145,8 @@ func ResponsesWebSocketHelper(c *gin.Context, client *websocket.Conn, runner Res
 	if s.requestID == "" {
 		s.requestID = common.NewRequestId()
 	}
-	maxMB := appconstant.MaxRequestBodyMB
-	if maxMB <= 0 {
-		maxMB = 128
-	}
-	client.SetReadLimit(int64(maxMB) << 20)
+	clientLimit, _ := helper.WebSocketReadLimits()
+	client.SetReadLimit(clientLimit)
 	defer func() {
 		// Unless an earlier shutdown ended the read, the client closed or left.
 		// Gorilla already answered a client close frame, so this tells the upstream.
@@ -383,7 +380,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			adaptor.Init(info)
 			target, dialErr := relaychannel.DoWssRequest(adaptor, c, info, nil)
 			if dialErr != nil {
-				apiErr = service.NormalizeViolationFeeError(types.NewError(dialErr, types.ErrorCodeDoRequestFailed))
+				apiErr = types.NewError(dialErr, types.ErrorCodeDoRequestFailed)
 				service.ResetStatusCode(apiErr, c.GetString("status_code_mapping"))
 				info.LastError = apiErr
 				decision := service.DecideRelayRetry(c, apiErr, retryBudget-retry.GetRetry())
@@ -836,10 +833,7 @@ func buildResponsesWSCreatePayload(c *gin.Context, info *relaycommon.RelayInfo, 
 }
 
 func (s *responsesWSSession) startTargetReader(target *websocket.Conn) {
-	limit := int64(helper.DefaultMaxScannerBufferSize)
-	if appconstant.StreamScannerMaxBufferMB > 0 {
-		limit = int64(appconstant.StreamScannerMaxBufferMB) << 20
-	}
+	_, limit := helper.WebSocketReadLimits()
 	target.SetReadLimit(limit)
 	s.workers.Go(func() {
 		for {

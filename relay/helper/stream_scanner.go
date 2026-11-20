@@ -43,6 +43,16 @@ func getScannerBufferSize() int {
 	return DefaultMaxScannerBufferSize
 }
 
+// WebSocketReadLimits applies the HTTP body and stream frame ceilings to
+// upgraded connections too, which net/http's request body limit cannot cover.
+func WebSocketReadLimits() (client, upstream int64) {
+	maxMB := constant.MaxRequestBodyMB
+	if maxMB <= 0 {
+		maxMB = 128
+	}
+	return int64(maxMB) << 20, int64(getScannerBufferSize())
+}
+
 // NewStreamScanner shares relay scanner configuration. Callers buffering bounded
 // task state may additionally cap a line without increasing the configured limit.
 func NewStreamScanner(reader io.Reader, maxBytes ...int) *bufio.Scanner {

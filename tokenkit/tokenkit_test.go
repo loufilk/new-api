@@ -81,3 +81,19 @@ func TestCountCutsOnlyLongRuns(t *testing.T) {
 		assert.InEpsilon(t, exact, Count("gpt-5.6-sol", text), 0.005)
 	}
 }
+
+func TestLongUnbrokenFallbackEstimateMatchesStreaming(t *testing.T) {
+	for _, text := range []string{strings.Repeat("Abc", 70), strings.Repeat("12345", 50)} {
+		got := Estimate("claude", text)
+		if got < 35 {
+			t.Fatalf("long run unexpectedly estimated as %d tokens", got)
+		}
+		stream := NewStreamingEstimate("claude")
+		for start := 0; start < len(text); start += 7 {
+			stream.WriteString(text[start:min(start+7, len(text))])
+		}
+		if stream.Tokens() != got {
+			t.Fatalf("stream = %d tokens, batch = %d", stream.Tokens(), got)
+		}
+	}
+}

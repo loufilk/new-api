@@ -36,7 +36,7 @@ type ssrfProtectedRoundTripper struct {
 }
 
 func currentFetchProtection() (*common.SSRFProtection, bool, error) {
-	fetchSetting := system_setting.GetFetchSetting()
+	fetchSetting := system_setting.SnapshotFetchSetting()
 	if !fetchSetting.EnableSSRFProtection {
 		return nil, false, nil
 	}

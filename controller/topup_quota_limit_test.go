@@ -197,15 +197,15 @@ func TestStripeCreditedQuotaIncludesGroupRatio(t *testing.T) {
 		require.NoError(t, common.UpdateTopupGroupRatioByJSONString(oldTopupGroupRatio))
 	})
 
-	_, err := validateCreditedQuota(getStripeCreditedQuota(2147, "vip"))
+	_, err := validateCreditedQuota(stripeTerms(2147, "vip").creditedQuota)
 	require.NoError(t, err)
-	_, err = validateCreditedQuota(getStripeCreditedQuota(2148, "vip"))
+	_, err = validateCreditedQuota(stripeTerms(2148, "vip").creditedQuota)
 	require.NoError(t, err)
-	_, err = validateCreditedQuota(getStripeCreditedQuota(int64(common.MaxWalletQuota), "vip"))
+	_, err = validateCreditedQuota(stripeTerms(int64(common.MaxWalletQuota), "vip").creditedQuota)
 	require.Error(t, err)
 
 	require.NoError(t, common.UpdateTopupGroupRatioByJSONString(`{"free":0}`))
-	assert.True(t, decimal.NewFromInt(500000).Equal(getStripeCreditedQuota(1, "free")))
+	assert.True(t, decimal.NewFromInt(500000).Equal(stripeTerms(1, "free").creditedQuota))
 }
 
 func TestEpayQuoteUsesOneCanonicalCentAmount(t *testing.T) {

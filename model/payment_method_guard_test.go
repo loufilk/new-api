@@ -429,3 +429,51 @@ func TestRechargeEpayUsesExactHistoricalOrCanonicalCheckoutCents(t *testing.T) {
 	}
 	require.Equal(t, int(4*common.QuotaPerUnit), getUserQuotaForPaymentGuardTest(t, user.Id))
 }
+
+func TestFrozenTopUpTermsPostgres(t *testing.T) {
+	if !common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		t.Skip("requires disposable PostgreSQL")
+	}
+	setupLedgerTestState(t)
+	const owner = 97521
+	createLedgerTestUser(t, owner, 0)
+	oldUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 2_000
+	t.Cleanup(func() { common.QuotaPerUnit = oldUnit })
+
+	order := TopUp{UserId: owner, TradeNo: "frozen-topup-epay", Status: common.TopUpStatusPending, Amount: 10, Money: 10,
+		PaymentProvider: PaymentProviderEpay, PaymentMethod: "alipay", QuotedWalletQuota: 700,
+		QuotedPaymentMinor: 1000, QuotedPaymentCurrency: "CNY", QuotedPaymentScope: "merchant-local", QuotedPaymentEnvironment: "live"}
+	require.NoError(t, order.Insert())
+	fact := VerifiedPaymentFacts{Provider: PaymentProviderEpay, ExternalReference: "receipt-1000", MerchantScope: "merchant-local",
+		Environment: "live", Currency: "CNY", CurrencyExponent: 2, PaidMinor: 1000}
+	wrong := fact
+	wrong.MerchantScope = "another-merchant"
+	_, err := RechargeEpay(order.TradeNo, "alipay", "10.00", "", wrong)
+	require.ErrorIs(t, err, ErrPaymentReceiptConflict)
+	assert.Zero(t, getUserBalances(t, owner).QuotaPaid)
+	done, err := RechargeEpay(order.TradeNo, "alipay", "10.00", "", fact)
+	require.NoError(t, err)
+	assert.False(t, done)
+	assert.Equal(t, 700, getUserBalances(t, owner).QuotaPaid, "settles the frozen quote, not Amount times the current quota unit")
+	done, err = RechargeEpay(order.TradeNo, "alipay", "10.00", "", fact)
+	require.NoError(t, err)
+	assert.True(t, done)
+
+	order = TopUp{UserId: owner, TradeNo: "frozen-topup-stripe", Status: common.TopUpStatusPending, Amount: 7, Money: 7,
+		PaymentProvider: PaymentProviderStripe, PaymentMethod: PaymentMethodStripe, QuotedWalletQuota: 300,
+		QuotedPaymentMinor: 560, QuotedPaymentCurrency: "USD", QuotedPaymentEnvironment: "test", QuotedStripePromotionAllowed: true}
+	require.NoError(t, order.Insert())
+	promo := VerifiedPaymentFacts{Provider: PaymentProviderStripe, ExternalReference: "pi_50", MerchantScope: "primary",
+		Environment: "test", Currency: "USD", CurrencyExponent: 2, PaidMinor: 500, CheckoutSubtotalMinor: 560, CheckoutDiscountMinor: 60}
+	wrong = promo
+	wrong.CheckoutSubtotalMinor = 500
+	require.Error(t, Recharge(order.TradeNo, "", "", wrong))
+	assert.Equal(t, 700, getUserBalances(t, owner).QuotaPaid)
+	require.NoError(t, Recharge(order.TradeNo, "", "", promo))
+	require.NoError(t, Recharge(order.TradeNo, "", "", promo))
+	assert.Equal(t, 1000, getUserBalances(t, owner).QuotaPaid)
+	stored := GetTopUpByTradeNo(order.TradeNo)
+	require.NotNil(t, stored)
+	assert.EqualValues(t, 500, stored.PaidAmountMinor)
+}

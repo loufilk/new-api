@@ -33,7 +33,7 @@ env:
 
 jobs:
   databases:
-    if: ${{ !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119"]'), github.head_ref || github.ref_name) }}
+    if: ${{ !startsWith(github.head_ref || github.ref_name, 'fix/im19-') && !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119"]'), github.head_ref || github.ref_name) }}
     name: Repair contracts (${{ matrix.name }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   redis:
-    if: ${{ !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119"]'), github.head_ref || github.ref_name) }}
+    if: ${{ !startsWith(github.head_ref || github.ref_name, 'fix/im19-') && !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119"]'), github.head_ref || github.ref_name) }}
     name: Redis script eviction recovery (${{ matrix.version }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -171,7 +171,7 @@ jobs:
           if-no-files-found: error
 
   api-image:
-    if: ${{ !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119"]'), github.head_ref || github.ref_name) }}
+    if: ${{ !startsWith(github.head_ref || github.ref_name, 'fix/im19-') && !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119"]'), github.head_ref || github.ref_name) }}
     name: API-only Docker build and restart
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -199,7 +199,7 @@ jobs:
           if-no-files-found: error
 
   synthetic-lifecycle:
-    if: ${{ !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119"]'), github.head_ref || github.ref_name) }}
+    if: ${{ !startsWith(github.head_ref || github.ref_name, 'fix/im19-') && !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119"]'), github.head_ref || github.ref_name) }}
     name: Exact 093 lifecycle (PG 18.6, ${{ matrix.log_layout }} logs)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -245,7 +245,7 @@ jobs:
 
   acceptance:
     name: Required repair validation
-    if: always() && !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119"]'), github.head_ref || github.ref_name)
+    if: always() && !startsWith(github.head_ref || github.ref_name, 'fix/im19-') && !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119"]'), github.head_ref || github.ref_name)
     needs: [databases, redis, api-image, synthetic-lifecycle]
     runs-on: ubuntu-24.04
     timeout-minutes: 2

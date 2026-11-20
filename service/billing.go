@@ -119,3 +119,13 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 	}
 	return nil
 }
+
+// Make the post-settlement projection truthful even when the client has already
+// received its response and the durable intent awaits review.
+func recordSettlementUsage(ctx *gin.Context, userID int, settleErr error, params model.RecordConsumeLogParams) {
+	if settleErr != nil {
+		model.RecordUnsettledUsageLog(ctx, userID, params)
+		return
+	}
+	model.RecordConsumeLog(ctx, userID, params)
+}

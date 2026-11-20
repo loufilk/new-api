@@ -31,6 +31,33 @@ func ClientClaudeError(c *gin.Context, apiErr *types.NewAPIError) types.ClaudeEr
 	return SanitizeClientClaudeError(c, apiErr.StatusCode, source)
 }
 
+// ClientGeminiError returns the native Google JSON error envelope and shares
+// the same privacy projection of the human-readable diagnostic.
+func ClientGeminiError(c *gin.Context, apiErr *types.NewAPIError) gin.H {
+	status := "INTERNAL"
+	switch apiErr.StatusCode {
+	case http.StatusBadRequest:
+		status = "INVALID_ARGUMENT"
+	case http.StatusUnauthorized:
+		status = "UNAUTHENTICATED"
+	case http.StatusForbidden:
+		status = "PERMISSION_DENIED"
+	case http.StatusNotFound:
+		status = "NOT_FOUND"
+	case http.StatusConflict:
+		status = "ABORTED"
+	case http.StatusTooManyRequests, http.StatusRequestEntityTooLarge:
+		status = "RESOURCE_EXHAUSTED"
+	case http.StatusNotImplemented:
+		status = "UNIMPLEMENTED"
+	case http.StatusBadGateway, http.StatusServiceUnavailable:
+		status = "UNAVAILABLE"
+	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
+		status = "DEADLINE_EXCEEDED"
+	}
+	return gin.H{"error": gin.H{"code": apiErr.StatusCode, "message": ClientOpenAIError(c, apiErr).Message, "status": status}}
+}
+
 func clientErrorUpstreamAddresses(c *gin.Context) []string {
 	if c == nil {
 		return nil

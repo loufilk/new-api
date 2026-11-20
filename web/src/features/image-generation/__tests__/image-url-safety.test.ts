@@ -230,3 +230,23 @@ describe('image URL protocol allowlist', () => {
     expect(createdAnchors[0].download).toBe('upper-blob.png')
   })
 })
+
+test('one image split across URL and base64 rows is shown once, consistent with billing', () => {
+  const images = normalizeImageResponse({
+    data: {
+      data: [
+        { url: 'https://upstream.example/render.png' },
+        { revised_prompt: 'payload-less metadata' },
+        { b64_json: 'aW1hZ2U=' },
+        { b64_json: 'YmluYXJ5', url: 'https://upstream.example/another.png' },
+      ],
+    },
+    prompt: 'test',
+    model: 'test',
+    size: 'auto',
+  })
+  expect(images.map((image) => image.url)).toEqual([
+    'data:image/png;base64,aW1hZ2U=',
+    'https://upstream.example/another.png',
+  ])
+})

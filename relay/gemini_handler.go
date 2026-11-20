@@ -170,39 +170,20 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
 
-	isBatch := strings.HasSuffix(c.Request.URL.Path, "batchEmbedContents")
-	info.IsGeminiBatchEmbedding = isBatch
-
 	var req dto.Request
 	var err error
-	var inputTexts []string
-
-	if isBatch {
-		batchRequest := &dto.GeminiBatchEmbeddingRequest{}
-		err = common.UnmarshalBodyReusable(c, batchRequest)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
-		}
-		req = batchRequest
-		for _, r := range batchRequest.Requests {
-			for _, part := range r.Content.Parts {
-				if part.Text != "" {
-					inputTexts = append(inputTexts, part.Text)
-				}
-			}
-		}
-	} else {
-		singleRequest := &dto.GeminiEmbeddingRequest{}
-		err = common.UnmarshalBodyReusable(c, singleRequest)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
-		}
-		req = singleRequest
-		for _, part := range singleRequest.Content.Parts {
-			if part.Text != "" {
-				inputTexts = append(inputTexts, part.Text)
-			}
-		}
+	info.IsGeminiBatchEmbedding = false
+	switch request := info.Request.(type) {
+	case *dto.GeminiBatchEmbeddingRequest:
+		info.IsGeminiBatchEmbedding = true
+		req, err = common.DeepCopy(request)
+	case *dto.GeminiEmbeddingRequest:
+		req, err = common.DeepCopy(request)
+	default:
+		err = fmt.Errorf("invalid Gemini embedding request type: %T", info.Request)
+	}
+	if err != nil {
+		return types.NewError(err, types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
 
 	err = helper.ModelMappedHelper(c, info, req)

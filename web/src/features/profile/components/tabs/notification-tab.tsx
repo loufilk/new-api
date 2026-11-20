@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Bell, Loader2, Mail, Server, Webhook } from 'lucide-react'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -43,6 +43,7 @@ import { ROLE } from '@/lib/roles'
 
 import { updateUserSettings } from '../../api'
 import { NOTIFICATION_METHODS } from '../../constants'
+import { parseUserSettings } from '../../lib/format'
 import { normalizeUserSettings } from '../../lib/user-settings'
 import type { UserProfile, NotifyType } from '../../types'
 
@@ -75,7 +76,17 @@ interface NotificationTabProps {
   quotaRemindThreshold: number
 }
 
-export function NotificationTab({
+export function NotificationTab(props: NotificationTabProps) {
+  const { profile } = props
+  return (
+    <NotificationForm
+      key={`${profile?.id ?? 0}:${profile?.setting ?? ''}`}
+      {...props}
+    />
+  )
+}
+
+function NotificationForm({
   profile,
   onUpdate,
   quotaRemindEnabled,
@@ -85,8 +96,14 @@ export function NotificationTab({
   const role = profile?.role ?? 0
   const isAdmin = role >= ROLE.ADMIN
   const [loading, setLoading] = useState(false)
-  const [settings, setSettings] = useState(() => normalizeUserSettings())
-  const [thresholdInput, setThresholdInput] = useState('')
+  const [settings, setSettings] = useState(() =>
+    normalizeUserSettings(profile?.setting)
+  )
+  const [thresholdInput, setThresholdInput] = useState(() =>
+    settings.quota_warning_threshold
+      ? String(quotaUnitsToDollars(settings.quota_warning_threshold))
+      : ''
+  )
   const thresholdInvalid =
     parseReminderThresholdInput(thresholdInput) === undefined ||
     // Preserve valid legacy float64 thresholds on unrelated/untouched saves.
@@ -105,19 +122,6 @@ export function NotificationTab({
     []
   )
 
-  useEffect(() => {
-    if (profile?.setting) {
-      const next = normalizeUserSettings(profile.setting)
-      setSettings(next)
-      // 0 means the site default and shows as an empty input.
-      setThresholdInput(
-        next.quota_warning_threshold
-          ? String(quotaUnitsToDollars(next.quota_warning_threshold))
-          : ''
-      )
-    }
-  }, [profile])
-
   const handleSave = async () => {
     if (thresholdInvalid) return
     try {
@@ -126,6 +130,15 @@ export function NotificationTab({
       const response = await updateUserSettings(notificationSettings)
 
       if (response.success) {
+        setSettings((prev) => ({
+          ...prev,
+          webhook_url: '',
+          webhook_secret: '',
+          clear_webhook_secret: false,
+          bark_url: '',
+          gotify_url: '',
+          gotify_token: '',
+        }))
         toast.success(t('Settings updated successfully'))
         onUpdate()
       } else {
@@ -139,6 +152,10 @@ export function NotificationTab({
   }
 
   const notifyType = settings.notify_type
+  const savedSettings = parseUserSettings(profile?.setting)
+  const destinationConfigured =
+    savedSettings.notify_type === notifyType &&
+    savedSettings.notification_destination_configured === true
   // Switches the user never chose: reminders stay on, and root alone gets
   // channel notifications.
   const quotaWarningEnabled = settings.quota_warning_enabled ?? true
@@ -224,7 +241,11 @@ export function NotificationTab({
                   className='h-9'
                   value={settings.webhook_url}
                   onChange={(e) => updateField('webhook_url', e.target.value)}
-                  placeholder={t('https://example.com/webhook')}
+                  placeholder={
+                    destinationConfigured
+                      ? t('Configured')
+                      : t('https://example.com/webhook')
+                  }
                 />
               </div>
               <div className='space-y-1.5'>
@@ -235,8 +256,21 @@ export function NotificationTab({
                   onChange={(e) =>
                     updateField('webhook_secret', e.target.value)
                   }
+                  disabled={settings.clear_webhook_secret}
                   placeholder={t('Enter secret key')}
                 />
+                {destinationConfigured && (
+                  <label className='flex items-center gap-2 text-sm'>
+                    <input
+                      type='checkbox'
+                      checked={settings.clear_webhook_secret ?? false}
+                      onChange={(e) =>
+                        updateField('clear_webhook_secret', e.target.checked)
+                      }
+                    />
+                    {t('Clear')} {t('Webhook Secret')}
+                  </label>
+                )}
               </div>
             </>
           )}
@@ -251,9 +285,11 @@ export function NotificationTab({
                 className='h-9'
                 value={settings.bark_url}
                 onChange={(e) => updateField('bark_url', e.target.value)}
-                placeholder={t(
-                  'https://api.day.app/yourkey/{{title}}/{{content}}'
-                )}
+                placeholder={
+                  destinationConfigured
+                    ? t('Configured')
+                    : t('https://api.day.app/yourkey/{{title}}/{{content}}')
+                }
               />
               <p className='text-muted-foreground text-xs'>
                 {t('Template variables:')} {'{{title}}'}, {'{{content}}'}
@@ -272,7 +308,11 @@ export function NotificationTab({
                   className='h-9'
                   value={settings.gotify_url}
                   onChange={(e) => updateField('gotify_url', e.target.value)}
-                  placeholder={t('https://gotify.example.com')}
+                  placeholder={
+                    destinationConfigured
+                      ? t('Configured')
+                      : t('https://gotify.example.com')
+                  }
                 />
                 <p className='text-muted-foreground text-xs'>
                   {t('Enter the full URL of your Gotify server')}
@@ -286,7 +326,11 @@ export function NotificationTab({
                   id='gotifyToken'
                   value={settings.gotify_token}
                   onChange={(e) => updateField('gotify_token', e.target.value)}
-                  placeholder={t('Enter application token')}
+                  placeholder={
+                    destinationConfigured
+                      ? t('Configured')
+                      : t('Enter application token')
+                  }
                 />
                 <p className='text-muted-foreground text-xs'>
                   {t('Token obtained from your Gotify application')}

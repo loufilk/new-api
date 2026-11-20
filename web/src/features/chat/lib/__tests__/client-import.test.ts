@@ -20,6 +20,7 @@ import { describe, expect, it } from 'vitest'
 
 import { buildValidatedCCSwitchURL } from '@/features/keys/components/dialogs/cc-switch-utils'
 
+import { resolveChatUrl, resolveWebChatUrl } from '../chat-links'
 import { clientApiBase, isSafeClientLink } from '../client-import'
 
 describe('client import endpoints', () => {
@@ -61,4 +62,44 @@ describe('client import endpoints', () => {
   ])('rejects executable or invalid links: %s', (url) =>
     expect(isSafeClientLink(url)).toBe(false)
   )
+})
+
+describe('credential-free web chat', () => {
+  it.each([
+    'https://chat.example/app?key={key}',
+    'https://chat.example/app#token={key}',
+    'https://chat.example/app/{cherryConfig}',
+  ])(
+    'never expands the key and opens only the public landing page: %s',
+    (template) => {
+      const serverAddress = 'https://api.example'
+      expect(
+        resolveChatUrl({
+          template,
+          serverAddress,
+          apiKey: 'synthetic-test-value',
+        })
+      ).toBe('')
+      expect(resolveWebChatUrl(template, serverAddress)).toBe(
+        'https://chat.example'
+      )
+    }
+  )
+
+  it('preserves a safe keyless web path and encoded API address', () => {
+    const url = resolveWebChatUrl(
+      'https://chat.example/app?server={address}',
+      'https://api.example'
+    )
+    expect(new URL(url).searchParams.get('server')).toBe('https://api.example')
+    expect(new URL(url).pathname).toBe('/app')
+  })
+
+  it.each([
+    'https://alice:secret@chat.example',
+    'http://chat.example/app?key={key}',
+    'javascript:alert(1)',
+  ])('rejects unsafe web navigation: %s', (template) => {
+    expect(resolveWebChatUrl(template, 'https://api.example')).toBe('')
+  })
 })

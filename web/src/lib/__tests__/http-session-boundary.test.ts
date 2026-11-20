@@ -356,3 +356,34 @@ test('GET dedup does not reuse a previous login request even when the SID is reu
   await oldRejected
   expect(adapter).toHaveBeenCalledTimes(2)
 })
+
+test('cancelling a GET does not cancel another consumer of the same URL', async () => {
+  const first = new AbortController()
+  const second = new AbortController()
+  const started = deferred<void>()
+  const adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+    if (config.signal === first.signal) {
+      started.resolve()
+      await new Promise<void>((resolve) =>
+        first.signal.addEventListener('abort', () => resolve(), { once: true })
+      )
+    }
+    return success(config, {
+      caller: config.signal === second.signal ? 'second' : 'first',
+    })
+  })
+  api.defaults.adapter = adapter
+  const firstRequest = api
+    .get('/api/test-cancel-isolation', { signal: first.signal })
+    .catch((error: unknown) => error)
+  await started.promise
+  first.abort()
+  const secondRequest = api.get('/api/test-cancel-isolation', {
+    signal: second.signal,
+  })
+  await expect(firstRequest).resolves.toMatchObject({ code: 'ERR_CANCELED' })
+  await expect(secondRequest).resolves.toMatchObject({
+    data: { caller: 'second' },
+  })
+  expect(adapter).toHaveBeenCalledTimes(2)
+})

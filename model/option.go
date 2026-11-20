@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/request_plugin_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Option struct {
@@ -363,6 +364,18 @@ func validateOptionValue(key string, value string) error {
 		_, err := setting.NormalizeWaffoPancakeEnvironment(value)
 		return err
 	}
+	if key == "fetch_setting.allowed_ports" {
+		var ports []string
+		if err := common.UnmarshalJsonStr(value, &ports); err != nil {
+			return errors.New("invalid fetch port list")
+		}
+		if _, err := common.NewSSRFProtectionFromFetchSetting(false, false, false, nil, nil, ports, true); err != nil {
+			return errors.New("invalid fetch port list")
+		}
+	}
+	if name, field, ok := strings.Cut(key, "."); ok {
+		return config.GlobalConfig.ValidateValue(name, field, value)
+	}
 	return nil
 }
 
@@ -396,20 +409,17 @@ func UpdateOption(key string, value string) error {
 	if err := validateOptionValue(key, value); err != nil {
 		return err
 	}
-	// Save to database first
-	option := Option{
-		Key: key,
+	if err := DB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "key"}},
+		DoUpdates: clause.AssignmentColumns([]string{"value"}),
+	}).Create(&Option{Key: key, Value: value}).Error; err != nil {
+		return err
 	}
-	// https://gorm.io/docs/update.html#Save-All-Fields
-	DB.FirstOrCreate(&option, Option{Key: key})
-	option.Value = value
-	// Save is a combination function.
-	// If save value does not contain primary key, it will execute Create,
-	// otherwise it will execute Update (with all fields).
-	DB.Save(&option)
+	if err := updateOptionMap(key, value); err != nil {
+		return err
+	}
 	BumpSyncTopic(SyncTopicOptions)
-	// Update OptionMap
-	return updateOptionMap(key, value)
+	return nil
 }
 
 // UpdateOptionsBulk persists multiple key/value pairs in a single database
@@ -539,12 +549,13 @@ func updateOptionMap(key string, value string) (err error) {
 	if common.OptionMap == nil {
 		common.OptionMap = make(map[string]string)
 	}
-	common.OptionMap[key] = value
-
-	// 检查是否是模型配置 - 使用更规范的方式处理
-	if handleConfigUpdate(key, value) {
-		return nil // 已由配置系统处理
+	if handled, err := handleConfigUpdate(key, value); handled || err != nil {
+		if err == nil {
+			common.OptionMap[key] = value
+		}
+		return err
 	}
+	common.OptionMap[key] = value
 
 	// 处理传统配置项...
 	if strings.HasSuffix(key, "Permission") {
@@ -602,9 +613,7 @@ func updateOptionMap(key string, value string) (err error) {
 			if !boolValue {
 				newVal = "TOKENS"
 			}
-			if cfg := config.GlobalConfig.Get("general_setting"); cfg != nil {
-				_ = config.UpdateConfigFromMap(cfg, map[string]string{"quota_display_type": newVal})
-			}
+			_, _ = config.GlobalConfig.Update("general_setting", map[string]string{"quota_display_type": newVal})
 		case "DisplayTokenStatEnabled":
 			common.DisplayTokenStatEnabled = boolValue
 		case "DrawingEnabled":
@@ -880,32 +889,20 @@ func updateOptionMap(key string, value string) (err error) {
 }
 
 // handleConfigUpdate 处理分层配置更新，返回是否已处理
-func handleConfigUpdate(key, value string) bool {
+func handleConfigUpdate(key, value string) (bool, error) {
 	if key == operation_setting.ToolPriceOptionKey {
 		operation_setting.LoadToolPricesFromJSONString(value)
-		return true
+		return true, nil
 	}
 
-	parts := strings.SplitN(key, ".", 2)
-	if len(parts) != 2 {
-		return false // 不是分层配置
+	configName, configKey, ok := strings.Cut(key, ".")
+	if !ok {
+		return false, nil
 	}
-
-	configName := parts[0]
-	configKey := parts[1]
-
-	// 获取配置对象
-	cfg := config.GlobalConfig.Get(configName)
-	if cfg == nil {
-		return false // 未注册的配置
+	handled, err := config.GlobalConfig.Update(configName, map[string]string{configKey: value})
+	if !handled || err != nil {
+		return handled, err
 	}
-
-	// 更新配置
-	configMap := map[string]string{
-		configKey: value,
-	}
-	config.UpdateConfigFromMap(cfg, configMap)
-
 	// 特定配置的后处理
 	if configName == "performance_setting" {
 		performance_setting.UpdateAndSync()
@@ -914,5 +911,5 @@ func handleConfigUpdate(key, value string) bool {
 		ratio_setting.InvalidateExposedDataCache()
 	}
 
-	return true // 已处理
+	return true, nil // 已处理
 }

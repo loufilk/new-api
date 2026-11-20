@@ -229,6 +229,29 @@ func UpdateUserSetting(userId int, setting dto.UserSetting) error {
 	return PublishUserAuthCache(userId)
 }
 
+// MutateUserSetting merges settings against a locked row so a partially
+// submitted notification form cannot clobber a newer settings snapshot.
+func MutateUserSetting(userID int, mutate func(*User, *dto.UserSetting) error) error {
+	if err := DB.Session(&gorm.Session{Logger: gormlogger.Discard}).Transaction(func(tx *gorm.DB) error {
+		var user User
+		if err := lockForUpdate(tx).Select("id", "role", "setting").First(&user, userID).Error; err != nil {
+			return err
+		}
+		settings := user.GetSetting()
+		if err := mutate(&user, &settings); err != nil {
+			return err
+		}
+		body, err := common.Marshal(settings)
+		if err != nil {
+			return err
+		}
+		return tx.Model(&user).Update("setting", string(body)).Error
+	}); err != nil {
+		return err
+	}
+	return PublishUserAuthCache(userID)
+}
+
 // userBindColumns 允许通过 UpdateUserBindColumn 更新的第三方账号绑定列白名单。
 // 列名只可能来自代码内部的 provider 实现，白名单是防御纵深，不依赖调用方自律。
 var userBindColumns = map[string]bool{
@@ -469,7 +492,7 @@ func GetAllUsers(pageInfo *common.PageInfo, sortOptions ...UserSortOptions) (use
 
 	// Get paginated users within same transaction
 	order := resolveUserSortOptions(sortOptions)
-	err = order.Apply(tx.Unscoped()).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("password", "access_token").Find(&users).Error
+	err = order.Apply(tx.Unscoped()).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("password", "access_token", "setting").Find(&users).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -538,7 +561,7 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 
 	// 获取分页数据
 	order := resolveUserSortOptions(sortOptions)
-	err = order.Apply(query.Omit("password", "access_token")).Limit(num).Offset(startIdx).Find(&users).Error
+	err = order.Apply(query.Omit("password", "access_token", "setting")).Limit(num).Offset(startIdx).Find(&users).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -973,50 +996,80 @@ func (user *User) ClearBinding(bindingType string) error {
 	if user.Id == 0 {
 		return errors.New("user id is empty")
 	}
-
-	bindingColumnMap := map[string]string{
-		"email":    "email",
-		"github":   "github_id",
-		"discord":  "discord_id",
-		"oidc":     "oidc_id",
-		"google":   "google_id",
-		"wechat":   "wechat_id",
-		"telegram": "telegram_id",
-		"linuxdo":  "linux_do_id",
-	}
-
-	column, ok := bindingColumnMap[bindingType]
-	if !ok {
-		return errors.New("invalid binding type")
-	}
-
 	if err := DB.Transaction(func(tx *gorm.DB) error {
-		if bindingType == ExternalIdentityProviderGoogle {
-			return UpdateGoogleBindingWithTx(tx, user.Id, "")
-		}
-		if bindingType == "email" {
-			if err := invalidateVerifiedEmailWithTx(tx, user.Id); err != nil {
-				return err
-			}
-		}
-		if err := tx.Model(&User{}).Where("id = ?", user.Id).Update(column, "").Error; err != nil {
-			return err
-		}
-		if bindingType == ExternalIdentityProviderTelegram || bindingType == ExternalIdentityProviderGitHub || bindingType == ExternalIdentityProviderLinuxDO {
-			return ReleaseExternalIdentityWithTx(tx, bindingType, user.Id)
-		}
-		return nil
+		return clearUserBindingTx(tx, user.Id, bindingType)
 	}); err != nil {
 		return err
 	}
-
 	if err := DB.Where("id = ?", user.Id).First(user).Error; err != nil {
 		return err
 	}
-	if bindingType == ExternalIdentityProviderGoogle {
-		return PublishUserAuthCache(user.Id)
+	return PublishUserAuthCache(user.Id)
+}
+
+func ClearUserBindingByAdministrator(identity AuthSessionIdentity, expected User, bindingType string) error {
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		_, user, err := lockAuthorizedAdminTargetTx(tx, identity.UserID, expected, true, identity)
+		if err != nil {
+			return err
+		}
+		if currentBindingValue(*user, bindingType) != currentBindingValue(expected, bindingType) {
+			return ErrAccountBindingChanged
+		}
+		return clearUserBindingTx(tx, user.Id, bindingType)
+	}); err != nil {
+		return err
 	}
-	return updateUserCache(*user)
+	return PublishUserAuthCache(expected.Id)
+}
+
+func currentBindingValue(user User, kind string) string {
+	switch kind {
+	case "email":
+		return user.Email
+	case "github":
+		return user.GitHubId
+	case "discord":
+		return user.DiscordId
+	case "oidc":
+		return user.OidcId
+	case "google":
+		return user.GoogleId
+	case "wechat":
+		return user.WeChatId
+	case "telegram":
+		return user.TelegramId
+	case "linuxdo":
+		return user.LinuxDOId
+	default:
+		return ""
+	}
+}
+
+func clearUserBindingTx(tx *gorm.DB, userID int, bindingType string) error {
+	columns := map[string]string{
+		"email": "email", "github": "github_id", "discord": "discord_id", "oidc": "oidc_id",
+		"google": "google_id", "wechat": "wechat_id", "telegram": "telegram_id", "linuxdo": "linux_do_id",
+	}
+	column, ok := columns[bindingType]
+	if !ok {
+		return errors.New("invalid binding type")
+	}
+	if bindingType == ExternalIdentityProviderGoogle {
+		return UpdateGoogleBindingWithTx(tx, userID, "")
+	}
+	if bindingType == "email" {
+		if err := invalidateVerifiedEmailWithTx(tx, userID); err != nil {
+			return err
+		}
+	}
+	if err := tx.Model(&User{}).Where("id = ?", userID).Update(column, "").Error; err != nil {
+		return err
+	}
+	if bindingType == ExternalIdentityProviderTelegram || bindingType == ExternalIdentityProviderGitHub || bindingType == ExternalIdentityProviderLinuxDO {
+		return ReleaseExternalIdentityWithTx(tx, bindingType, userID)
+	}
+	return nil
 }
 
 func (user *User) Delete() (int64, error) {

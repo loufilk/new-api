@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useNavigate } from '@tanstack/react-router'
 import { ExternalLink, ChevronRight } from 'lucide-react'
 import { lazy, Suspense, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -45,6 +46,7 @@ import { useChatPresets } from '@/features/chat/hooks/use-chat-presets'
 import {
   chatLinkRequiresApiKey,
   resolveChatUrl,
+  resolveWebChatUrl,
   type ChatPreset,
 } from '@/features/chat/lib/chat-links'
 import {
@@ -75,11 +77,17 @@ export function ChatPresetsItem(props: { item: NavChatPresets }) {
 
 function ChatPresetsSession(props: { item: NavChatPresets; userId?: number }) {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const { chatPresets, serverAddress } = useChatPresets()
   const { state, isMobile, setOpenMobile } = useSidebar()
   const [preset, setPreset] = useState<ChatPreset | null>(null)
   const visiblePresets = chatPresets.filter((item) => item.type !== 'fluent')
   const openClient = (selected: ChatPreset) => {
+    if (selected.type === 'web' && chatLinkRequiresApiKey(selected.url)) {
+      void navigate({ to: '/chat/$chatId', params: { chatId: selected.id } })
+      setOpenMobile(false)
+      return
+    }
     if (
       chatLinkRequiresApiKey(selected.url) ||
       isCCSwitchPreset(selected.url)
@@ -87,8 +95,11 @@ function ChatPresetsSession(props: { item: NavChatPresets; userId?: number }) {
       if (props.userId) setPreset(selected)
       return
     }
-    const url = resolveChatUrl({ template: selected.url, serverAddress })
-    if (!isSafeClientLink(url)) {
+    const url =
+      selected.type === 'web'
+        ? resolveWebChatUrl(selected.url, serverAddress)
+        : resolveChatUrl({ template: selected.url, serverAddress })
+    if (!url || (selected.type !== 'web' && !isSafeClientLink(url))) {
       toast.error(t('Invalid chat link. Please contact the administrator.'))
       return
     }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/moneyport"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -267,7 +268,7 @@ func TestPolicyPreservingRefundIndependentViolationFee(t *testing.T) {
 			s := currentRefundSession(t, "refund-independent-fee", 100)
 			s.relayInfo.Billing = s
 			s.relayInfo.BillingSource = BillingSourceWallet
-			s.relayInfo.ChannelMeta = &relaycommon.ChannelMeta{}
+			s.relayInfo.ChannelMeta = &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeXai}
 			s.relayInfo.StartTime = time.Now()
 			s.relayInfo.UserQuota = 1000
 			s.relayInfo.UserSetting.QuotaWarningThreshold = -1

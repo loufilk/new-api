@@ -1740,3 +1740,46 @@ func TestPostTextConsumeQuotaLogsMissingUsageAsStructuredContent(t *testing.T) {
 		map[string]any{"key": "Upstream returned no usage, so nothing was charged (possibly an upstream timeout)"},
 	}, other["content_parts"])
 }
+
+func TestDeliveredUsageDoesNotReportUnsettledChargePostgres(t *testing.T) {
+	openTaskPollingSQLFixture(t, "postgres")
+	require.NoError(t, model.DB.AutoMigrate(&model.BillingFinalization{}, &model.Model{}, &model.Vendor{}, &model.SubscriptionPlan{}))
+	const id = 97523
+	seedUser(t, id, 100)
+	seedToken(t, id, id, "settlement-display-token", 100)
+	seedChannel(t, id)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	const requestID = "unconfirmed-settlement-display"
+	ctx.Set(common.RequestIdKey, requestID)
+	info := &relaycommon.RelayInfo{
+		UserId: id, TokenId: id, TokenKey: "settlement-display-token", RequestId: requestID,
+		ForcePreConsume: true, OriginModelName: "settlement-display-model", UserGroup: "default", UsingGroup: "default",
+		UserSetting: dto.UserSetting{BillingPreference: "wallet_only", QuotaWarningEnabled: boolPtr(false)},
+		RelayFormat: types.RelayFormatOpenAI, StartTime: time.Now(),
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelId: id},
+		PriceData:   hosttypes.PriceData{ModelRatio: 1, CompletionRatio: 1, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}},
+	}
+	require.Nil(t, PreConsumeBilling(ctx, 10, info))
+	PostTextConsumeQuota(ctx, info, &dto.Usage{PromptTokens: 150, CompletionTokens: 15, TotalTokens: 165}, nil)
+	assert.Equal(t, 90, getUserQuota(t, id), "ambiguous delivery retains only its original hold")
+	var final model.BillingFinalization
+	require.NoError(t, model.DB.Where("request_id = ?", requestID).Take(&final).Error)
+	assert.Equal(t, model.BillingSettlementReview, final.State)
+	assert.Equal(t, 165, final.ActualQuota)
+	var user model.User
+	require.NoError(t, model.DB.First(&user, id).Error)
+	assert.Zero(t, user.UsedQuota)
+	assert.Zero(t, user.RequestCount)
+	var channel model.Channel
+	require.NoError(t, model.DB.First(&channel, id).Error)
+	assert.Zero(t, channel.UsedQuota)
+	var logs []model.Log
+	require.NoError(t, model.LOG_DB.Where("request_id = ?", requestID).Find(&logs).Error)
+	require.Len(t, logs, 1)
+	assert.Equal(t, model.LogTypeError, logs[0].Type)
+	assert.Zero(t, logs[0].Quota)
+	assert.Equal(t, 150, logs[0].PromptTokens)
+	assert.Equal(t, 15, logs[0].CompletionTokens)
+	assert.Contains(t, logs[0].Content, "settlement is unconfirmed")
+}

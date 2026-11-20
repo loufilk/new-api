@@ -538,7 +538,7 @@ func validateTaskMediaURL(rawURL, proxy string) error {
 	if proxy == "" {
 		return service.ValidateSSRFProtectedFetchURL(rawURL)
 	}
-	fetchSetting := system_setting.GetFetchSetting()
+	fetchSetting := system_setting.SnapshotFetchSetting()
 	return common.ValidateURLWithFetchSetting(
 		rawURL,
 		fetchSetting.EnableSSRFProtection,

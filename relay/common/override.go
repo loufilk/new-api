@@ -559,6 +559,11 @@ func sanitizeHeaderOverrideMap(source map[string]any) map[string]any {
 		if normalizedKey == "" {
 			continue
 		}
+		// Preserve the regexp text verbatim; only actual header names are
+		// normalized. Lowercasing a pattern also changes escapes like \D.
+		if isHeaderPassthroughRuleKeyForOverride(normalizedKey) {
+			normalizedKey = strings.TrimSpace(key)
+		}
 		normalizedValue := strings.TrimSpace(fmt.Sprintf("%v", value))
 		if normalizedValue == "" {
 			if isHeaderPassthroughRuleKeyForOverride(normalizedKey) {
@@ -1687,7 +1692,7 @@ func buildRequestHeadersContext(headers map[string]string) map[string]any {
 	normalizedEntries := lo.FilterMap(entries, func(item lo.Entry[string, string], _ int) (lo.Entry[string, string], bool) {
 		normalized := normalizeHeaderContextKey(item.Key)
 		value := strings.TrimSpace(item.Value)
-		if normalized == "" || value == "" {
+		if normalized == "" || value == "" || IsGatewayCredentialHeader(normalized) {
 			return lo.Entry[string, string]{}, false
 		}
 		return lo.Entry[string, string]{Key: normalized, Value: value}, true
