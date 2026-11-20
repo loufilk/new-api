@@ -126,7 +126,7 @@ func TestNativeResponsesFailureFixedAccountingDatabaseMatrix(t *testing.T) {
 					{"encrypted reasoning failure", []string{`{"type":"response.failed","response":{"output":[{"type":"reasoning","summary":[],"encrypted_content":"opaque-generated-reasoning"}]}}`}, 5000, false},
 					{"terminal refusal failure", []string{`{"type":"response.failed","response":{"output":[{"type":"message","content":[{"type":"refusal","refusal":"I cannot answer"}]}]}}`}, 5000, false},
 					{"done only message failure", []string{`{"type":"response.output_item.done","item":{"type":"message","content":[{"type":"output_text","text":"partial answer"}]}}`, `{"type":"response.failed"}`}, 5000, false},
-					{"successful missing usage", []string{`{"type":"response.completed","response":{"status":"completed"}}`}, 5000, false},
+					{"successful missing usage", []string{`{"type":"response.completed","response":{"id":"resp_ok","object":"response","status":"completed","output":[]}}`}, 5000, false},
 					{"created only disconnect", []string{`{"type":"response.created","response":{"status":"in_progress"}}`}, 5000, true},
 					{"successful nil usage dispatch", nil, 5000, false},
 				} {

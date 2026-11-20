@@ -36,6 +36,12 @@ func NewResponsesUsageAccumulator(info *relaycommon.RelayInfo) *ResponsesUsageAc
 // Observe feeds one decoded stream event. raw is the same event's wire bytes;
 // the vendor tool-usage reader runs on it once, at the terminal event.
 func (a *ResponsesUsageAccumulator) Observe(event *dto.ResponsesStreamResponse, raw []byte) relaycommon.ResponseOutcome {
+	return a.ObserveWithOutcome(event, raw, responsesOutcome(event))
+}
+
+// ObserveWithOutcome records native usage and delivery-independent output with the
+// protocol outcome already validated by the caller. Other transports use Observe.
+func (a *ResponsesUsageAccumulator) ObserveWithOutcome(event *dto.ResponsesStreamResponse, raw []byte, outcome relaycommon.ResponseOutcome) relaycommon.ResponseOutcome {
 	if a == nil || event == nil || a.finished {
 		return relaycommon.ResponseOutcomeUnknown
 	}
@@ -47,7 +53,7 @@ func (a *ResponsesUsageAccumulator) Observe(event *dto.ResponsesStreamResponse, 
 		ApplyResponsesUsage(a.usage, event.Response.Usage)
 	}
 	a.started = true
-	outcome := ObserveResponsesOutcome(a.info, event)
+	recordResponsesOutcome(a.info, event, outcome)
 	a.terminal = a.terminal || outcome != relaycommon.ResponseOutcomeUnknown
 	a.failed = a.failed || outcome == relaycommon.ResponseOutcomeFailed
 	a.cancelled = a.cancelled || outcome == relaycommon.ResponseOutcomeCancelled
@@ -159,6 +165,12 @@ func responsesUsageUnpriced(usage *dto.Usage) bool {
 // on the stream status for health classification. Only codes and types are
 // kept; messages never leave the event.
 func ObserveResponsesOutcome(info *relaycommon.RelayInfo, event *dto.ResponsesStreamResponse) relaycommon.ResponseOutcome {
+	outcome := responsesOutcome(event)
+	recordResponsesOutcome(info, event, outcome)
+	return outcome
+}
+
+func responsesOutcome(event *dto.ResponsesStreamResponse) relaycommon.ResponseOutcome {
 	if event == nil {
 		return relaycommon.ResponseOutcomeUnknown
 	}
@@ -177,8 +189,12 @@ func ObserveResponsesOutcome(info *relaycommon.RelayInfo, event *dto.ResponsesSt
 	case event.Type == "response.completed" || event.Type == "response.done" || responseStatus == "completed":
 		outcome = relaycommon.ResponseOutcomeCompleted
 	}
+	return outcome
+}
+
+func recordResponsesOutcome(info *relaycommon.RelayInfo, event *dto.ResponsesStreamResponse, outcome relaycommon.ResponseOutcome) {
 	if info == nil || info.StreamStatus == nil {
-		return outcome
+		return
 	}
 	switch outcome {
 	case relaycommon.ResponseOutcomeFailed:
@@ -203,7 +219,6 @@ func ObserveResponsesOutcome(info *relaycommon.RelayInfo, event *dto.ResponsesSt
 	case relaycommon.ResponseOutcomeCompleted:
 		info.StreamStatus.MarkCompleted()
 	}
-	return outcome
 }
 
 // Whole output items can arrive without deltas or token usage. Inspect the

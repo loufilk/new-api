@@ -18,9 +18,9 @@ import (
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/MoeForge/moego/ojson"
+	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
-	"github.com/gin-gonic/gin"
 )
 
 func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
@@ -37,19 +37,30 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		common.SetContextKey(c, constant.ContextKeyUpstreamResponseDecodeFailed, true)
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
-	event := dto.ResponsesStreamResponse{Type: "response.completed", Response: &responsesResponse}
-	outcome := service.ObserveResponsesOutcome(info, &event)
-	if outcome == relaycommon.ResponseOutcomeFailed || outcome == relaycommon.ResponseOutcomeCancelled || responsesResponse.GetOpenAIError() != nil {
+	event := dto.ResponsesStreamResponse{Response: &responsesResponse}
+	outcome, outcomeErr := validateNativeResponsesOutcome(&event)
+	if outcomeErr != nil {
+		common.SetContextKey(c, constant.ContextKeyUpstreamResponseDecodeFailed, true)
+		if info.StreamStatus == nil {
+			info.StreamStatus = relaycommon.NewStreamStatus()
+		}
+		info.StreamStatus.RequireTerminal()
+		usage := &dto.Usage{}
+		service.ApplyResponsesUsage(usage, responsesResponse.Usage)
+		if !dto.HasOpenAIUsageTokens(usage) {
+			usage = nil
+		}
+		common.SetContextKey(c, constant.ContextKeyResponsesPartialUsage, usage != nil)
+		return usage, types.NewErrorWithStatusCode(outcomeErr, types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+	}
+	if outcome == relaycommon.ResponseOutcomeFailed || outcome == relaycommon.ResponseOutcomeCancelled {
 		common.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, true)
 		if info.StreamStatus == nil {
 			info.StreamStatus = relaycommon.NewStreamStatus()
 		}
-		event.Type = "response.failed"
-		if outcome == relaycommon.ResponseOutcomeCancelled {
-			event.Type = "response.cancelled"
-		}
+		event.Type = "response." + string(outcome)
 		accumulator := service.NewResponsesUsageAccumulator(info)
-		accumulator.Observe(&event, responseBody)
+		accumulator.ObserveWithOutcome(&event, responseBody, outcome)
 		usage := accumulator.Finish()
 		common.SetContextKey(c, constant.ContextKeyResponsesPartialUsage, usage != nil)
 		return usage, newResponsesFailureError(&event)
@@ -90,6 +101,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	terminalSeen := false
 	writeFailed := false
 	sequenceNumber := 0
+	responseID := ""
 	failureResponse := dto.OpenAIResponsesResponse{
 		ID: "resp_" + common.GetUUID(), Object: "response",
 		CreatedAt: dto.IntValue(time.Now().Unix()), Model: info.OriginModelName,
@@ -117,9 +129,28 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		if sequenceNumber < math.MaxInt {
 			sequenceNumber++
 		}
-		if response := streamResponse.Response; response != nil {
+		response := streamResponse.Response
+		if response != nil && response.ID != "" && responseID != "" && response.ID != responseID {
+			err := fmt.Errorf("upstream Responses stream changed response ID")
+			streamErr = types.NewErrorWithStatusCode(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+			sr.Stop(err) // A local protocol error, not a terminal failure from this response.
+			return
+		}
+		outcome, outcomeErr := validateNativeResponsesOutcome(&streamResponse)
+		if outcomeErr != nil {
+			// Keep reported usage, but not output or tools asserted only by an
+			// invalid terminal. Usage from a conflicting response ID was excluded above.
+			if response != nil && response.Usage != nil {
+				accumulator.ObserveWithOutcome(&dto.ResponsesStreamResponse{Response: &dto.OpenAIResponsesResponse{Usage: response.Usage}}, nil, relaycommon.ResponseOutcomeUnknown)
+			}
+			streamErr = types.NewErrorWithStatusCode(outcomeErr, types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+			sr.Stop(outcomeErr) // Keep the provider outcome unknown even though delivery failed.
+			return
+		}
+		if response != nil {
 			info.ObserveResponseModel(response.Model)
 			if response.ID != "" {
+				responseID = response.ID
 				failureResponse.ID = response.ID
 			}
 			if response.CreatedAt != 0 {
@@ -138,27 +169,29 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		}
 		// The provider has already generated this frame even if downstream
 		// delivery fails, so retain its output and native usage before writing.
-		outcome := accumulator.Observe(&streamResponse, []byte(data))
+		accumulator.ObserveWithOutcome(&streamResponse, []byte(data), outcome)
 		failed := outcome == relaycommon.ResponseOutcomeFailed || outcome == relaycommon.ResponseOutcomeCancelled
 		if failed {
 			common.SetContextKey(c, constant.ContextKeyUpstreamExplicitRejection, true)
 		}
-		if failed && (streamResponse.Type == "response.completed" || streamResponse.Type == "response.done") {
-			// Compatible providers sometimes use a successful event name for a
-			// failed response. Emit its real terminal outcome exactly once.
-			streamResponse.Type = "response.failed"
-			if outcome == relaycommon.ResponseOutcomeCancelled {
-				streamResponse.Type = "response.cancelled"
-			}
-			var rewriteErr error
-			data, rewriteErr = sjson.Set(data, "type", streamResponse.Type)
-			if rewriteErr == nil {
-				data, rewriteErr = sjson.Set(data, "response.status", strings.TrimPrefix(streamResponse.Type, "response."))
-			}
-			if rewriteErr != nil {
-				streamErr = types.NewErrorWithStatusCode(rewriteErr, types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
-				sr.Stop(streamErr)
-				return
+		if outcome != relaycommon.ResponseOutcomeUnknown && streamResponse.Type != "error" && streamResponse.Type != "response.error" {
+			// Keep valid aliases but normalize an event carrying a different
+			// terminal outcome, including an error on a nonterminal label.
+			terminalType := "response." + string(outcome)
+			validAlias := streamResponse.Type == "response.done" && outcome == relaycommon.ResponseOutcomeCompleted ||
+				streamResponse.Type == "response.canceled" && outcome == relaycommon.ResponseOutcomeCancelled
+			if streamResponse.Type != terminalType && !validAlias {
+				streamResponse.Type = terminalType
+				var rewriteErr error
+				data, rewriteErr = sjson.Set(data, "type", terminalType)
+				if rewriteErr == nil {
+					data, rewriteErr = sjson.Set(data, "response.status", string(outcome))
+				}
+				if rewriteErr != nil {
+					streamErr = types.NewErrorWithStatusCode(rewriteErr, types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+					sr.Stop(streamErr)
+					return
+				}
 			}
 		}
 		if err := helper.ResponseChunkData(c, streamResponse, data); err != nil {
@@ -168,11 +201,17 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			return
 		}
 		if failed {
-			// A native failed/incomplete event is a terminal response. Bare error
+			// A native failed/cancelled event is a terminal response. Bare error
 			// events still need a Responses terminal synthesized below.
 			terminalSeen = streamResponse.Type != "error" && streamResponse.Type != "response.error"
 			streamErr = newResponsesFailureError(&streamResponse)
-			sr.Stop(streamErr)
+			if outcome == relaycommon.ResponseOutcomeCancelled {
+				// Transport reached the terminal. Keep cancellation distinct from
+				// a reported provider failure while still returning an API error.
+				sr.Done()
+			} else {
+				sr.Stop(streamErr)
+			}
 			return
 		}
 		switch streamResponse.Type {
@@ -242,6 +281,68 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	return accumulator.Finish(), nil
+}
+
+// validateNativeResponsesOutcome is scoped to direct Responses HTTP. A terminal
+// label alone does not prove a result; do not apply this policy to other bridges.
+func validateNativeResponsesOutcome(event *dto.ResponsesStreamResponse) (relaycommon.ResponseOutcome, error) {
+	response := event.Response
+	var status string
+	var statusErr error
+	if response != nil && len(response.Status) > 0 {
+		statusErr = common.Unmarshal(response.Status, &status)
+	}
+	switch status {
+	case "failed", "error":
+		return relaycommon.ResponseOutcomeFailed, nil
+	case "cancelled", "canceled":
+		return relaycommon.ResponseOutcomeCancelled, nil
+	}
+	switch event.Type {
+	case "error", "response.error", "response.failed":
+		return relaycommon.ResponseOutcomeFailed, nil
+	case "response.cancelled", "response.canceled":
+		return relaycommon.ResponseOutcomeCancelled, nil
+	}
+	if response != nil && response.Error != nil {
+		switch value := response.Error.(type) {
+		case map[string]any:
+			if err := response.GetOpenAIError(); err.Type != "" || err.Code != nil || err.Message != "" {
+				return relaycommon.ResponseOutcomeFailed, nil
+			}
+		case string:
+			if strings.TrimSpace(value) != "" {
+				return relaycommon.ResponseOutcomeFailed, nil
+			}
+		}
+		return relaycommon.ResponseOutcomeUnknown, fmt.Errorf("upstream Responses result has an invalid error object")
+	}
+	switch event.Type {
+	case "", "response.completed", "response.done", "response.incomplete":
+	default:
+		return relaycommon.ResponseOutcomeUnknown, nil
+	}
+	if response == nil || statusErr != nil || response.Object != "" && response.Object != "response" {
+		return relaycommon.ResponseOutcomeUnknown, fmt.Errorf("upstream Responses terminal has an invalid response object")
+	}
+	if status != "" && status != "completed" && status != "incomplete" || event.Type == "response.incomplete" && status == "completed" {
+		return relaycommon.ResponseOutcomeUnknown, fmt.Errorf("upstream Responses result has no consistent terminal status")
+	}
+	if response.Output == nil && (event.Type == "" || status == "" || !dto.HasOpenAIUsageTokens(response.Usage)) {
+		return relaycommon.ResponseOutcomeUnknown, fmt.Errorf("upstream Responses result has no output array or usable terminal usage")
+	}
+	for _, item := range response.Output {
+		if item.Type == "" {
+			return relaycommon.ResponseOutcomeUnknown, fmt.Errorf("upstream Responses result has an invalid output item")
+		}
+	}
+	if status == "" && len(response.Output) == 0 {
+		return relaycommon.ResponseOutcomeUnknown, fmt.Errorf("upstream Responses result is missing terminal status")
+	}
+	if status == "incomplete" || event.Type == "response.incomplete" {
+		return relaycommon.ResponseOutcomeIncomplete, nil
+	}
+	return relaycommon.ResponseOutcomeCompleted, nil
 }
 
 func newResponsesFailureError(event *dto.ResponsesStreamResponse) *types.NewAPIError {

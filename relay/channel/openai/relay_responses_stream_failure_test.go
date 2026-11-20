@@ -73,6 +73,7 @@ func TestOaiResponsesStreamHandlerReportsUpstreamFailure(t *testing.T) {
 			assert.Equal(t, types.ErrorCode(tc.code), apiErr.GetErrorCode())
 			assert.True(t, types.IsSkipRetryError(apiErr))
 			assert.True(t, common.GetContextKeyBool(c, constant.ContextKeyResponsesStreamErrorHandled))
+			assert.True(t, common.GetContextKeyBool(c, constant.ContextKeyUpstreamExplicitRejection))
 			require.NotNil(t, info.StreamStatus)
 			assert.True(t, info.StreamStatus.HasErrors())
 			assert.Nil(t, usage, "an explicit failure without output must remain refundable even under fixed request pricing")
@@ -92,6 +93,7 @@ func TestOaiResponsesStreamHandlerReportsUpstreamFailure(t *testing.T) {
 				assert.Equal(t, tc.clientMessage, last.Response.GetOpenAIError().Message)
 			} else if tc.clientMessage == "" {
 				assert.Equal(t, "response.cancelled", events[0].Type)
+				assert.Equal(t, relaycommon.ResponseOutcomeCancelled, info.StreamStatus.OutcomeSnapshot().Response)
 			} else {
 				assert.Equal(t, "response.failed", events[0].Type)
 			}
@@ -133,7 +135,8 @@ func TestOaiResponsesStreamHandlerPreservesNativeMissingUsagePolicy(t *testing.T
 		name, body string
 		wantError  bool
 	}{
-		{"successful terminal without usage", `data: {"type":"response.completed","response":{"status":"completed"}}`, false},
+		{"successful terminal without usage", `data: {"type":"response.completed","response":{"id":"resp_ok","object":"response","status":"completed","output":[]}}`, false},
+		{"terminal without response object", `data: {"type":"response.completed"}`, true},
 		{"created only then disconnect", `data: {"type":"response.created","response":{"status":"in_progress"}}`, true},
 		{"created then bare Chat DONE", `data: {"type":"response.created","response":{"status":"in_progress"}}` + "\n\ndata: [DONE]", true},
 	} {
@@ -144,6 +147,8 @@ func TestOaiResponsesStreamHandlerPreservesNativeMissingUsagePolicy(t *testing.T
 			assert.Equal(t, tc.wantError, apiErr != nil)
 			if tc.wantError {
 				assert.Nil(t, usage, "a prelude without a native terminal must retain unknown usage, not an estimated prompt charge")
+				assert.Equal(t, relaycommon.ResponseOutcomeUnknown, info.StreamStatus.OutcomeSnapshot().Response)
+				assert.False(t, common.GetContextKeyBool(c, constant.ContextKeyUpstreamExplicitRejection))
 				return
 			}
 			require.NotNil(t, usage, "a genuine successful terminal retains the existing missing-usage estimation policy")
@@ -151,6 +156,61 @@ func TestOaiResponsesStreamHandlerPreservesNativeMissingUsagePolicy(t *testing.T
 			assert.Zero(t, usage.CompletionTokens)
 		})
 	}
+}
+
+func TestOaiResponsesHandlerDistinguishesTerminalFromPending(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		wantError  bool
+		wantTotal  int
+	}{
+		{"completed", `{"id":"resp_ok","status":"completed","output":[]}`, false, 0},
+		{"incomplete", `{"id":"resp_partial","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[],"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}`, false, 5},
+		{"pending", `{"id":"resp_pending","status":"in_progress","output":[]}`, true, 0},
+		{"pending with observed usage", `{"id":"resp_pending","status":"in_progress","output":[],"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}`, true, 5},
+		{"missing response object", `{}`, true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, w, info, resp := responsesStreamFixture(t, strings.NewReader(tc.body))
+			info.IsStream = false
+			info.SetEstimatePromptTokens(8)
+			usage, apiErr := OaiResponsesHandler(c, info, resp)
+			if tc.wantError {
+				require.NotNil(t, apiErr)
+				assert.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+				assert.True(t, types.IsSkipRetryError(apiErr))
+				assert.False(t, common.GetContextKeyBool(c, constant.ContextKeyUpstreamExplicitRejection))
+				assert.Equal(t, relaycommon.ResponseOutcomeUnknown, info.StreamStatus.OutcomeSnapshot().Response)
+				assert.Empty(t, w.Body.String())
+				assert.Equal(t, tc.wantTotal != 0, common.GetContextKeyBool(c, constant.ContextKeyResponsesPartialUsage))
+				if tc.wantTotal == 0 {
+					assert.Nil(t, usage)
+					return
+				}
+			} else {
+				require.Nil(t, apiErr)
+				assert.JSONEq(t, tc.body, w.Body.String())
+			}
+			require.NotNil(t, usage)
+			assert.Equal(t, tc.wantTotal, usage.TotalTokens)
+		})
+	}
+}
+
+func TestOaiResponsesStreamHandlerPreservesMeasuredIncompleteOutcome(t *testing.T) {
+	// Compatible relays may call the terminal "done" for both incomplete
+	// and completed work. The nested native outcome remains authoritative.
+	body := `data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress","output":[]}}` + "\n\n" +
+		`data: {"type":"response.done","response":{"id":"resp_1","status":"incomplete","output":[],"incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}}` + "\n\n"
+	c, w, info, resp := responsesStreamFixture(t, strings.NewReader(body))
+	usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	assert.Equal(t, 5, usage.TotalTokens)
+	assert.Equal(t, relaycommon.ResponseOutcomeIncomplete, info.StreamStatus.OutcomeSnapshot().Response)
+	events := responsesStreamEvents(t, w.Body.String())
+	require.Len(t, events, 2)
+	assert.Equal(t, "response.incomplete", events[1].Type)
 }
 
 func TestOaiResponsesHandlerRejectsNativeFailure(t *testing.T) {
@@ -290,7 +350,7 @@ func (w *responsesBrokenWriter) Write([]byte) (int, error) {
 
 func TestOaiResponsesStreamHandlerPropagatesClientWriteFailure(t *testing.T) {
 	for _, writeErr := range []error{errors.New("client write failed"), nil} {
-		c, _, info, resp := responsesStreamFixture(t, strings.NewReader("data: {\"type\":\"response.completed\"}\n\n"))
+		c, _, info, resp := responsesStreamFixture(t, strings.NewReader(`data: {"type":"response.completed","response":{"id":"resp_ok","status":"completed","output":[]}}`+"\n\n"))
 		broken := &responsesBrokenWriter{header: make(http.Header), err: writeErr}
 		writerContext, _ := gin.CreateTestContext(broken)
 		c.Writer = writerContext.Writer
@@ -314,7 +374,7 @@ type responsesFlushErrorWriter struct {
 func (w *responsesFlushErrorWriter) FlushError() error { return w.err }
 
 func TestOaiResponsesStreamHandlerPropagatesClientFlushFailure(t *testing.T) {
-	c, _, info, resp := responsesStreamFixture(t, strings.NewReader("data: {\"type\":\"response.completed\"}\n\n"))
+	c, _, info, resp := responsesStreamFixture(t, strings.NewReader(`data: {"type":"response.completed","response":{"id":"resp_ok","status":"completed","output":[]}}`+"\n\n"))
 	broken := &responsesFlushErrorWriter{ResponseRecorder: httptest.NewRecorder(), err: errors.New("socket flush failed")}
 	writerContext, _ := gin.CreateTestContext(broken)
 	c.Writer = writerContext.Writer

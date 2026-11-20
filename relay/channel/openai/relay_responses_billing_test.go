@@ -450,7 +450,7 @@ func TestOaiResponsesStreamHandlerCountsImageOutputOnIncomplete(t *testing.T) {
 	info := runResponsesImageBillingStream(
 		t,
 		`{"type":"response.output_item.done","output_index":0,"item":{"type":"image_generation_call","id":"img_1","status":"completed","result":"base64-a"}}`,
-		`{"type":"response.incomplete","response":{"status":"incomplete"}}`,
+		`{"type":"response.incomplete","response":{"status":"incomplete","output":[]}}`,
 	)
 
 	assert.Equal(t, 1, info.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolImageGeneration].CallCount)
