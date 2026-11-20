@@ -345,26 +345,32 @@ func UpdateOption(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
+	// Validate the wire shape without replacing live ratios. UpdateOption
+	// validates and stores pricing transactionally, then publishes it.
 	case "ImageRatio":
-		err = ratio_setting.UpdateImageRatioByJSONString(option.Value.(string))
+		var ratios map[string]float64
+		err = common.UnmarshalJsonStr(option.Value.(string), &ratios)
 		if err != nil {
 			common.ApiErrorT(c, "Failed to set the image ratio: {{error}}", map[string]any{"error": err.Error()})
 			return
 		}
 	case "AudioRatio":
-		err = ratio_setting.UpdateAudioRatioByJSONString(option.Value.(string))
+		var ratios map[string]float64
+		err = common.UnmarshalJsonStr(option.Value.(string), &ratios)
 		if err != nil {
 			common.ApiErrorT(c, "Failed to set the audio ratio: {{error}}", map[string]any{"error": err.Error()})
 			return
 		}
 	case "AudioCompletionRatio":
-		err = ratio_setting.UpdateAudioCompletionRatioByJSONString(option.Value.(string))
+		var ratios map[string]float64
+		err = common.UnmarshalJsonStr(option.Value.(string), &ratios)
 		if err != nil {
 			common.ApiErrorT(c, "Failed to set the audio completion ratio: {{error}}", map[string]any{"error": err.Error()})
 			return
 		}
 	case "CreateCacheRatio":
-		err = ratio_setting.UpdateCreateCacheRatioByJSONString(option.Value.(string))
+		var ratios map[string]float64
+		err = common.UnmarshalJsonStr(option.Value.(string), &ratios)
 		if err != nil {
 			common.ApiErrorT(c, "Failed to set the cache creation ratio: {{error}}", map[string]any{"error": err.Error()})
 			return
