@@ -23,28 +23,41 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	gormlogger "gorm.io/gorm/logger"
+	"gorm.io/gorm/schema"
 )
 
+// ChannelGroupList stores the entire comma-separated membership list, unlike
+// an Ability's Group, which stores one name. MySQL needs a VARCHAR to retain
+// the literal default on servers that do not support TEXT defaults.
+type ChannelGroupList string
+
+func (ChannelGroupList) GormDBDataType(db *gorm.DB, _ *schema.Field) string {
+	if db.Dialector.Name() == string(common.DatabaseTypeMySQL) {
+		return "varchar(8192)"
+	}
+	return "text"
+}
+
 type Channel struct {
-	Id                 int     `json:"id"`
-	Type               int     `json:"type" gorm:"default:0"`
-	Key                string  `json:"key" gorm:"not null"`
-	OpenAIOrganization *string `json:"openai_organization"`
-	TestModel          *string `json:"test_model"`
-	Status             int     `json:"status" gorm:"default:1"`
-	Name               string  `json:"name" gorm:"index"`
-	Weight             *uint   `json:"weight" gorm:"default:0"`
-	CreatedTime        int64   `json:"created_time" gorm:"bigint"`
-	TestTime           int64   `json:"test_time" gorm:"bigint"`
-	ResponseTime       int     `json:"response_time"` // in milliseconds
-	BaseURL            *string `json:"base_url" gorm:"column:base_url;default:''"`
-	Other              string  `json:"other"`
-	Balance            float64 `json:"balance"` // in USD
-	BalanceUpdatedTime int64   `json:"balance_updated_time" gorm:"bigint"`
-	Models             string  `json:"models"`
-	Group              string  `json:"group" gorm:"type:varchar(64);default:'default'"`
-	UsedQuota          int64   `json:"used_quota" gorm:"bigint;default:0"`
-	ModelMapping       *string `json:"model_mapping" gorm:"type:text"`
+	Id                 int              `json:"id"`
+	Type               int              `json:"type" gorm:"default:0"`
+	Key                string           `json:"key" gorm:"not null"`
+	OpenAIOrganization *string          `json:"openai_organization"`
+	TestModel          *string          `json:"test_model"`
+	Status             int              `json:"status" gorm:"default:1"`
+	Name               string           `json:"name" gorm:"index"`
+	Weight             *uint            `json:"weight" gorm:"default:0"`
+	CreatedTime        int64            `json:"created_time" gorm:"bigint"`
+	TestTime           int64            `json:"test_time" gorm:"bigint"`
+	ResponseTime       int              `json:"response_time"` // in milliseconds
+	BaseURL            *string          `json:"base_url" gorm:"column:base_url;default:''"`
+	Other              string           `json:"other"`
+	Balance            float64          `json:"balance"` // in USD
+	BalanceUpdatedTime int64            `json:"balance_updated_time" gorm:"bigint"`
+	Models             string           `json:"models"`
+	Group              ChannelGroupList `json:"group" gorm:"default:'default'"`
+	UsedQuota          int64            `json:"used_quota" gorm:"bigint;default:0"`
+	ModelMapping       *string          `json:"model_mapping" gorm:"type:text"`
 	//MaxInputTokens     *int    `json:"max_input_tokens" gorm:"default:0"`
 	StatusCodeMapping *string `json:"status_code_mapping" gorm:"type:varchar(1024);default:''"`
 	Priority          *int64  `json:"priority" gorm:"bigint;default:0"`
@@ -325,7 +338,7 @@ func (channel *Channel) GetGroups() []string {
 	if channel.Group == "" {
 		return []string{}
 	}
-	groups := strings.Split(strings.Trim(channel.Group, ","), ",")
+	groups := strings.Split(strings.Trim(string(channel.Group), ","), ",")
 	for i, group := range groups {
 		groups[i] = strings.TrimSpace(group)
 	}
@@ -523,7 +536,7 @@ func BatchInsertChannels(channels []Channel) error {
 		return err
 	}
 	for i := range channels {
-		if err := validateJoinedGroupsForWriteTx(tx, channels[i].Group); err != nil {
+		if err := validateJoinedGroupsForWriteTx(tx, string(channels[i].Group)); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -628,7 +641,7 @@ func (channel *Channel) Insert() error {
 		if err := lockGroupNamespace(tx); err != nil {
 			return err
 		}
-		if err := validateJoinedGroupsForWriteTx(tx, channel.Group); err != nil {
+		if err := validateJoinedGroupsForWriteTx(tx, string(channel.Group)); err != nil {
 			return err
 		}
 		if err := tx.Create(channel).Error; err != nil {
@@ -665,7 +678,7 @@ func (channel *Channel) UpdateWithKey(updateKey func(stored *Channel) error) err
 		if err := lockGroupNamespace(tx); err != nil {
 			return err
 		}
-		if err := validateJoinedGroupsForWriteTx(tx, channel.Group); err != nil {
+		if err := validateJoinedGroupsForWriteTx(tx, string(channel.Group)); err != nil {
 			return err
 		}
 		var stored Channel
@@ -1095,7 +1108,7 @@ func EditChannelByTag(tag string, newTag *string, modelMapping *string, models *
 	}
 	if group != nil && *group != "" {
 		shouldReCreateAbilities = true
-		updateData.Group = *group
+		updateData.Group = ChannelGroupList(*group)
 	}
 	if priority != nil {
 		updateData.Priority = priority

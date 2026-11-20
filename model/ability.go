@@ -272,11 +272,11 @@ func (channel *Channel) AddAbilities(tx *gorm.DB) error {
 	if err := lockGroupNamespace(tx); err != nil {
 		return err
 	}
-	if err := validateJoinedGroupsForWriteTx(tx, channel.Group); err != nil {
+	if err := validateJoinedGroupsForWriteTx(tx, string(channel.Group)); err != nil {
 		return err
 	}
 	models_ := strings.Split(channel.Models, ",")
-	groups_ := strings.Split(channel.Group, ",")
+	groups_ := strings.Split(string(channel.Group), ",")
 	abilitySet := make(map[string]struct{})
 	abilities := make([]Ability, 0, len(models_))
 	for _, model := range models_ {
@@ -338,7 +338,7 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 		}
 		return err
 	}
-	if err := validateJoinedGroupsForWriteTx(tx, channel.Group); err != nil {
+	if err := validateJoinedGroupsForWriteTx(tx, string(channel.Group)); err != nil {
 		if isNewTx {
 			tx.Rollback()
 		}
@@ -356,7 +356,7 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 
 	// Then add new abilities
 	models_ := channel.GetModels()
-	groups_ := strings.Split(channel.Group, ",")
+	groups_ := strings.Split(string(channel.Group), ",")
 	abilitySet := make(map[string]struct{})
 	abilities := make([]Ability, 0, len(models_))
 	for _, model := range models_ {

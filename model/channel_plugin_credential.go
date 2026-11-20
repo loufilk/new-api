@@ -316,7 +316,7 @@ func UpdateScheduledChannelLocked(ctx context.Context, channelID int, update fun
 				if group2model2channels == nil {
 					group2model2channels = make(map[string]map[string][]int)
 				}
-				for group := range strings.SplitSeq(cached.Group, ",") {
+				for group := range strings.SplitSeq(string(cached.Group), ",") {
 					if group2model2channels[group] == nil {
 						group2model2channels[group] = make(map[string][]int)
 					}

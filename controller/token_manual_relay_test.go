@@ -96,7 +96,7 @@ func TestManualTokenRelayScopeOrderAndFinalGroupChargePostgres(t *testing.T) {
 				if tc.onlyB && entry.group == "default" {
 					models = "other-synthetic-model"
 				}
-				ch := model.Channel{Name: entry.label, Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Key: "synthetic-provider-key", BaseURL: common.GetPointer(upstream.URL + "/" + entry.label), Models: models, Group: entry.group, Priority: common.GetPointer(entry.priority)}
+				ch := model.Channel{Name: entry.label, Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Key: "synthetic-provider-key", BaseURL: common.GetPointer(upstream.URL + "/" + entry.label), Models: models, Group: model.ChannelGroupList(entry.group), Priority: common.GetPointer(entry.priority)}
 				require.NoError(t, f.db.Create(&ch).Error)
 				require.NoError(t, f.db.Create(&model.Ability{Group: entry.group, Model: models, ChannelId: ch.Id, Enabled: true, Priority: common.GetPointer(entry.priority)}).Error)
 				if entry.label == "b" {

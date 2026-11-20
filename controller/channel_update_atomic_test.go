@@ -27,7 +27,7 @@ func TestChannelEditFailurePreservesCredentialAndConfiguration(t *testing.T) {
 			require.NoError(t, channel.Insert())
 			group := "old-group"
 			if failure == "ability write" {
-				group = channel.Group
+				group = string(channel.Group)
 				require.NoError(t, model.DB.Callback().Create().Before("gorm:create").Register("channel_edit_ability_failure", func(tx *gorm.DB) {
 					if tx.Statement.Schema != nil && tx.Statement.Schema.Name == "Ability" {
 						tx.AddError(errors.New("ability write failed"))

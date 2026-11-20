@@ -152,7 +152,7 @@ func TestGroupRenameMigratesEveryGroupSurface(t *testing.T) {
 
 	var storedChannel Channel
 	require.NoError(t, DB.First(&storedChannel, channel.Id).Error)
-	assert.Equal(t, "new,keep", storedChannel.Group)
+	assert.Equal(t, "new,keep", string(storedChannel.Group))
 
 	abilities := make([]Ability, 0)
 	require.NoError(t, DB.Find(&abilities).Error)
@@ -312,7 +312,7 @@ func TestGroupRenameRollsBackAllWritesOnFailure(t *testing.T) {
 	assert.Equal(t, "old", storedUser.Group)
 	var storedChannel Channel
 	require.NoError(t, DB.First(&storedChannel, channel.Id).Error)
-	assert.Equal(t, "old", storedChannel.Group)
+	assert.Equal(t, "old", string(storedChannel.Group))
 	var storedToken Token
 	require.NoError(t, DB.First(&storedToken, token.Id).Error)
 	assert.Equal(t, "old", storedToken.Group)
@@ -666,7 +666,7 @@ func TestGroupRenameConcurrentDuplicateSubmissionsPostgres(t *testing.T) {
 	seedGroupRenameOption(t, "GroupRatio", fmt.Sprintf(`{"%s":1}`, oldGroup))
 	user := User{Username: username, Password: "hash", Group: oldGroup, Status: common.UserStatusEnabled}
 	require.NoError(t, db.Create(&user).Error)
-	channel := Channel{Key: "sk-concurrent", Name: "channel", Status: common.ChannelStatusEnabled, Group: oldGroup, Models: "m1"}
+	channel := Channel{Key: "sk-concurrent", Name: "channel", Status: common.ChannelStatusEnabled, Group: ChannelGroupList(oldGroup), Models: "m1"}
 	require.NoError(t, db.Create(&channel).Error)
 	require.NoError(t, db.Create(&Ability{Group: oldGroup, Model: "m1", ChannelId: channel.Id, Enabled: true}).Error)
 	require.NoError(t, db.Create(&Token{UserId: user.Id, Key: "token-concurrent", Name: "t", Status: common.TokenStatusEnabled, Group: oldGroup, AutoGroups: fmt.Sprintf(`["%s"]`, oldGroup)}).Error)
@@ -704,7 +704,7 @@ func TestGroupRenameConcurrentDuplicateSubmissionsPostgres(t *testing.T) {
 	var storedAbility Ability
 	require.NoError(t, db.Where(map[string]any{"group": newGroup}).First(&storedAbility).Error)
 	assert.Equal(t, newGroup, storedUser.Group)
-	assert.Equal(t, newGroup, storedChannel.Group)
+	assert.Equal(t, newGroup, string(storedChannel.Group))
 	assert.Equal(t, newGroup, storedToken.Group)
 	assert.Equal(t, fmt.Sprintf(`["%s"]`, newGroup), storedToken.AutoGroups)
 	assert.Equal(t, newGroup, storedAbility.Group)

@@ -52,7 +52,7 @@ func TestFingerprintSitePostgresRoutesGroupModelAcrossProviders(t *testing.T) {
 			priority := int64(100)
 			require.NoError(t, db.Model(&model.Ability{}).Where("channel_id = ?", selectedID).Update("priority", priority).Error)
 			lowerPriority := int64(0)
-			fallback := model.Channel{Name: "not-selected", Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Models: target.Model, Group: target.Group, Key: "unused-synthetic-key", BaseURL: common.GetPointer("https://must-not-be-called.invalid")}
+			fallback := model.Channel{Name: "not-selected", Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Models: target.Model, Group: model.ChannelGroupList(target.Group), Key: "unused-synthetic-key", BaseURL: common.GetPointer("https://must-not-be-called.invalid")}
 			require.NoError(t, db.Create(&fallback).Error)
 			require.NoError(t, db.Create(&model.Ability{ChannelId: fallback.Id, Group: target.Group, Model: target.Model, Enabled: true, Priority: &lowerPriority}).Error)
 			var calls atomic.Int32

@@ -53,3 +53,17 @@ header. Use disposable staging credentials and do not log credential values.
 The shared sender checks are not a policy for every provider-specific SDK or
 provider-plugin dynamic transport. Validate those integrations separately if
 they are in the promotion set.
+
+### Channel group-list migration
+
+Start the new migration-capable master before admitting channel configuration
+writes. PostgreSQL widens only `channels."group"` to `text`; it retains the
+default and full comma-separated list. The per-group `abilities."group"`
+routing key does not change. If the migration times out waiting for a lock,
+leave the candidate out of rotation, confirm the lock holder, and retry startup
+during the maintenance window.
+
+Do not start an older master with automatic migrations against the widened
+schema. Its old model can cast the list back to `varchar(64)` and silently
+truncate it. Any fallback must retain the widened model or run without
+automatic schema migrations under a separately validated rollback plan.

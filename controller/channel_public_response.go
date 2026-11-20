@@ -70,7 +70,7 @@ func publicChannel(channel *model.Channel) *channelPublicResponse {
 		TestModel: channel.TestModel, Status: channel.Status, Name: channel.Name, Weight: channel.Weight,
 		CreatedTime: channel.CreatedTime, TestTime: channel.TestTime, ResponseTime: channel.ResponseTime,
 		BaseURL: baseURL, Other: channel.Other, Balance: channel.Balance,
-		BalanceUpdatedTime: channel.BalanceUpdatedTime, Models: channel.Models, Group: channel.Group,
+		BalanceUpdatedTime: channel.BalanceUpdatedTime, Models: channel.Models, Group: string(channel.Group),
 		UsedQuota: channel.UsedQuota, ModelMapping: channel.ModelMapping, StatusCodeMapping: channel.StatusCodeMapping,
 		Priority: channel.Priority, AutoBan: channel.AutoBan, OtherInfo: publicChannelOtherInfo(channel),
 		Tag: channel.Tag, Setting: setting, Remark: channel.Remark, ChannelInfo: info,

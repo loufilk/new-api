@@ -85,7 +85,7 @@ func seedTokenModelsAbility(t *testing.T, db *gorm.DB, group, modelName string, 
 		Status: common.ChannelStatusEnabled,
 		Name:   fmt.Sprintf("%s-%s-%d", group, modelName, channelType),
 		Models: modelName,
-		Group:  group,
+		Group:  model.ChannelGroupList(group),
 	}
 	require.NoError(t, db.Create(channel).Error)
 	priority := int64(0)

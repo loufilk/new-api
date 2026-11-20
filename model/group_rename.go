@@ -1260,7 +1260,7 @@ func renameGroupChannelReferences(tx *gorm.DB, plan *groupRenamePlan, result *Gr
 		return err
 	}
 	for i := range channels {
-		groups := strings.Split(channels[i].Group, ",")
+		groups := strings.Split(string(channels[i].Group), ",")
 		changed := false
 		for j := range groups {
 			if target, ok := plan.sources[groups[j]]; ok {

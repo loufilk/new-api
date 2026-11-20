@@ -155,7 +155,7 @@ func TestChannelAffinityRetryPriorities(t *testing.T) {
 			}{{24, 4, "default"}, {27, 3, "default"}, {30, 2, "default"}, {34, 4, "vip"}, {37, 3, "vip"}} {
 				channel := model.Channel{
 					Id: spec.id, Name: fmt.Sprintf("channel-%d", spec.id), Type: constant.ChannelTypeOpenAI,
-					Key: "test-only", Status: common.ChannelStatusEnabled, Models: modelName, Group: spec.group,
+					Key: "test-only", Status: common.ChannelStatusEnabled, Models: modelName, Group: model.ChannelGroupList(spec.group),
 					Priority: common.GetPointer(spec.priority), Weight: common.GetPointer(uint(1)),
 				}
 				require.NoError(t, db.Create(&channel).Error)

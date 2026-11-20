@@ -56,7 +56,7 @@ func testGroupNamespaceConcurrentWriters(t *testing.T) {
 				return stale.Update, func(t *testing.T) {
 					var stored Channel
 					require.NoError(t, DB.First(&stored, channel.Id).Error)
-					assert.Equal(t, "new", stored.Group)
+					assert.Equal(t, "new", string(stored.Group))
 				}
 			},
 		},

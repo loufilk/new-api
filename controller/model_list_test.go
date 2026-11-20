@@ -549,7 +549,7 @@ func TestListModelsPublicOwnerOverridesWithoutLeakingOtherChannels(t *testing.T)
 	} {
 		require.NoError(t, db.Create(&ch).Error)
 		priority := int64(ch.Id)
-		require.NoError(t, db.Create(&model.Ability{Group: ch.Group, Model: ch.Models, ChannelId: ch.Id, Enabled: true, Priority: &priority}).Error)
+		require.NoError(t, db.Create(&model.Ability{Group: string(ch.Group), Model: ch.Models, ChannelId: ch.Id, Enabled: true, Priority: &priority}).Error)
 	}
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)

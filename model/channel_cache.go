@@ -126,7 +126,7 @@ func RefreshChannelCache(ctx context.Context) (err error) {
 		if len(models) == 0 {
 			continue
 		}
-		groups := strings.SplitSeq(channel.Group, ",")
+		groups := strings.SplitSeq(string(channel.Group), ",")
 		for group := range groups {
 			if _, ok := newGroup2model2channels[group]; !ok {
 				return fmt.Errorf("channel %d references a group absent from abilities", channel.Id)

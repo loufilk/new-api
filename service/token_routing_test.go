@@ -65,7 +65,7 @@ func tokenRoutingContext(smart, once bool) *gin.Context {
 func tokenRoutingChannel(t *testing.T, id int, group string, priority int64) *model.Channel {
 	t.Helper()
 	weight := uint(1)
-	ch := &model.Channel{Id: id, Type: constant.ChannelTypeOpenAI, Name: "synthetic-routing", Key: "synthetic-not-a-real-key", Status: common.ChannelStatusEnabled, Group: group, Models: "routing-fixture", Priority: &priority, Weight: &weight}
+	ch := &model.Channel{Id: id, Type: constant.ChannelTypeOpenAI, Name: "synthetic-routing", Key: "synthetic-not-a-real-key", Status: common.ChannelStatusEnabled, Group: model.ChannelGroupList(group), Models: "routing-fixture", Priority: &priority, Weight: &weight}
 	require.NoError(t, model.DB.Create(ch).Error)
 	require.NoError(t, model.DB.Create(&model.Ability{Group: group, Model: "routing-fixture", ChannelId: id, Enabled: true, Priority: &priority, Weight: weight}).Error)
 	return ch
