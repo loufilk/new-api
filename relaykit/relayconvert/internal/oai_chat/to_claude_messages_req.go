@@ -307,7 +307,7 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 					inputObj := make(map[string]any)
 					if args := toolCall.Function.Arguments; args != "" {
 						if err := kitutil.Unmarshal([]byte(args), &inputObj); err != nil {
-							kitutil.LogInfo("tool call function arguments is not a map[string]any: " + fmt.Sprintf("%v", toolCall.Function.Arguments))
+							kitutil.LogInfo("Chat-to-Claude tool call arguments could not be decoded as an object")
 						}
 					}
 					claudeMediaMessages = append(claudeMediaMessages, dto.ClaudeMediaMessage{
