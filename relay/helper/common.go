@@ -307,6 +307,33 @@ func ObjectData(c *gin.Context, object any) error {
 	return StringData(c, string(jsonData))
 }
 
+// RelayErrorData writes a projected, gateway-generated error without applying
+// the raw upstream-frame sanitizer a second time.
+func RelayErrorData(c *gin.Context, format types.RelayFormat, apiErr *types.NewAPIError) error {
+	var data any
+	prefix := "data: "
+	switch format {
+	case types.RelayFormatOpenAI:
+		data = gin.H{"error": privacy.ClientOpenAIError(c, apiErr)}
+	case types.RelayFormatClaude:
+		prefix = "event: error\ndata: "
+		data = dto.ClaudeResponse{Type: "error", Error: privacy.ClientClaudeError(c, apiErr)}
+	case types.RelayFormatGemini:
+		safe := privacy.ClientOpenAIError(c, apiErr)
+		data = gin.H{"error": gin.H{"code": apiErr.StatusCode, "message": safe.Message, "status": "INTERNAL"}}
+	default:
+		return fmt.Errorf("unsupported stream failure format %s", format)
+	}
+	encoded, err := common.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("error marshalling stream error: %w", err)
+	}
+	if !privacy.IsNativeGatewayClientError(apiErr) {
+		encoded = privacy.SanitizeClientPayload(c, encoded)
+	}
+	return writeEventStreamFrame(c, prefix+string(encoded)+"\n\n")
+}
+
 func Done(c *gin.Context) {
 	_ = StringData(c, "[DONE]")
 }
@@ -338,13 +365,20 @@ func WssError(c *gin.Context, ws *websocket.Conn, apiErr *types.NewAPIError) {
 	if ws == nil || apiErr == nil {
 		return
 	}
-	openaiError := privacy.SanitizeClientOpenAIError(c, apiErr.StatusCode, apiErr.ToOpenAIError(common.UpstreamAddresses(c)...))
+	openaiError := privacy.ClientOpenAIError(c, apiErr)
 	errorObj := &dto.RealtimeEvent{
 		Type:    "error",
 		EventId: GetLocalRealtimeID(c),
 		Error:   &openaiError,
 	}
-	_ = WssObject(c, ws, errorObj)
+	// Only a recognized, typed gateway error skips the legacy raw-frame pass.
+	if !privacy.IsNativeGatewayClientError(apiErr) {
+		_ = WssObject(c, ws, errorObj)
+		return
+	}
+	if encoded, err := common.Marshal(errorObj); err == nil {
+		_ = ws.WriteMessage(websocket.TextMessage, encoded)
+	}
 }
 
 func GetResponseID(c *gin.Context) string {

@@ -25,7 +25,6 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relay/requestplugin"
-	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -117,7 +116,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				common.GetContextKeyBool(c, constant.ContextKeyStreamErrorHandled) {
 				return
 			}
-			upstreamURLs := common.UpstreamAddresses(c)
 			if relayFormat != types.RelayFormatOpenAIRealtime && c.Writer.Written() &&
 				strings.HasPrefix(c.Writer.Header().Get("Content-Type"), "text/event-stream") {
 				writeRelayStreamError(c, relayFormat, newAPIError)
@@ -132,11 +130,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			case types.RelayFormatClaude:
 				c.JSON(newAPIError.StatusCode, gin.H{
 					"type":  "error",
-					"error": privacy.SanitizeClientClaudeError(c, newAPIError.StatusCode, newAPIError.ToClaudeError(upstreamURLs...)),
+					"error": privacy.ClientClaudeError(c, newAPIError),
 				})
 			default:
 				c.JSON(newAPIError.StatusCode, gin.H{
-					"error": privacy.SanitizeClientOpenAIError(c, newAPIError.StatusCode, newAPIError.ToOpenAIError(upstreamURLs...)),
+					"error": privacy.ClientOpenAIError(c, newAPIError),
 				})
 			}
 		}
@@ -317,17 +315,11 @@ func writeRelayStreamError(c *gin.Context, format types.RelayFormat, apiError *t
 		common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, status)
 	}
 	status.MarkFailed(string(apiError.GetErrorCode()), string(apiError.GetErrorType()), apiError.StatusCode)
-	upstreamURLs := common.UpstreamAddresses(c)
 	if format == types.RelayFormatClaude {
-		_ = helper.ClaudeData(c, dto.ClaudeResponse{
-			Type:  "error",
-			Error: privacy.SanitizeClientClaudeError(c, apiError.StatusCode, apiError.ToClaudeError(upstreamURLs...)),
-		})
+		_ = helper.RelayErrorData(c, format, apiError)
 		return
 	}
-	_ = helper.ObjectData(c, gin.H{
-		"error": privacy.SanitizeClientOpenAIError(c, apiError.StatusCode, apiError.ToOpenAIError(upstreamURLs...)),
-	})
+	_ = helper.RelayErrorData(c, types.RelayFormatOpenAI, apiError)
 	helper.Done(c)
 }
 

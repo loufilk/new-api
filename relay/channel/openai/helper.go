@@ -7,7 +7,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
-	"github.com/QuantumNous/new-api/pkg/privacy"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -42,26 +41,7 @@ func HandleStreamFailure(c *gin.Context, info *relaycommon.RelayInfo, apiErr *ty
 	if c == nil || info == nil || apiErr == nil {
 		return fmt.Errorf("invalid stream failure")
 	}
-	upstreamURLs := common.UpstreamAddresses(c)
-	switch info.RelayFormat {
-	case types.RelayFormatOpenAI:
-		safe := privacy.SanitizeClientOpenAIError(c, apiErr.StatusCode, apiErr.ToOpenAIError(upstreamURLs...))
-		return helper.ObjectData(c, map[string]any{"error": safe})
-	case types.RelayFormatClaude:
-		safe := privacy.SanitizeClientClaudeError(c, apiErr.StatusCode, apiErr.ToClaudeError(upstreamURLs...))
-		return helper.ClaudeData(c, dto.ClaudeResponse{Type: "error", Error: safe})
-	case types.RelayFormatGemini:
-		safe := privacy.SanitizeClientOpenAIError(c, apiErr.StatusCode, apiErr.ToOpenAIError(upstreamURLs...))
-		return helper.ObjectData(c, map[string]any{
-			"error": map[string]any{
-				"code":    apiErr.StatusCode,
-				"message": safe.Message,
-				"status":  "INTERNAL",
-			},
-		})
-	default:
-		return fmt.Errorf("unsupported stream failure format %s", info.RelayFormat)
-	}
+	return helper.RelayErrorData(c, info.RelayFormat, apiErr)
 }
 
 // NewStreamResponseError keeps downstream delivery failures separate from

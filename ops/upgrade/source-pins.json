@@ -22,7 +22,13 @@
     "pinned_at": "2026-10-31T09:09:00Z",
     "verified_at": "2026-10-31T09:47:00Z"
   },
-  "version": "v1.0.0-rc.51.chuanapi.im.18",
+  "version": "v1.0.0-rc.51.chuanapi.im.19",
+  "im19_alignment": {
+    "branch": "fix/im19-upstream-native-errors-20261120",
+    "im18_source": "a396886013659439d4caa57b7373a167ea945126",
+    "official_main": "3a407cc9b064fe79a4ffac4146b2690c465dc929",
+    "official_main_already_ancestor": true
+  },
   "customer_invoice_feature": {
     "branch": "feat/customer-invoice-center-20261119",
     "base_commit": "5c370275b838d37d0ea4480810a2ebc2d7dd49ca",
