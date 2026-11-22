@@ -19,9 +19,13 @@ For commercial licensing, please contact support@quantumnous.com
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, test, vi } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 
+import { useSidebarData } from '@/hooks/use-sidebar-data'
 import { api } from '@/lib/api'
+import { ROLE } from '@/lib/roles'
+import { STATUS_QUERY_KEY } from '@/lib/status-query'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { SettingsDialog } from '../settings-dialog'
 
@@ -40,6 +44,18 @@ const settings = {
 }
 const result = (data: unknown) => ({ data: { success: true, data } })
 
+function InvoiceNavigation() {
+  const item = useSidebarData()
+    .navGroups.flatMap((group) => group.items)
+    .find((entry) => 'url' in entry && entry.url === '/invoice')
+  if (!item || !('url' in item)) return null
+  return <a href={item.url}>{item.title}</a>
+}
+
+afterEach(() => {
+  useAuthStore.getState().auth.reset()
+})
+
 function setup(initial: unknown = settings) {
   const read = vi.spyOn(api, 'get').mockResolvedValue(result(initial))
   const put = vi
@@ -53,6 +69,70 @@ function setup(initial: unknown = settings) {
   )
   return { user: userEvent.setup(), put, read, close, view }
 }
+
+test.each([
+  [true, false, false],
+  [false, true, true],
+  [false, true, false],
+] as const)(
+  'after saving center %s to %s, navigation follows the server visibility %s',
+  async (before, persisted, visible) => {
+    const client = new QueryClient()
+    client.setQueryData(STATUS_QUERY_KEY, {
+      customer_invoice_center_visible: before,
+      customer_invoice_enabled: false,
+    })
+    vi.spyOn(api, 'get').mockImplementation(async (url) => {
+      if (url === path) return result({ ...settings, center_enabled: before })
+      expect(url).toBe('/api/status')
+      return result({
+        customer_invoice_center_visible: visible,
+        customer_invoice_enabled: false,
+      })
+    })
+    const put = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue(
+        result({ ...settings, center_enabled: persisted, version: 6 })
+      )
+    const close = vi.fn()
+    useAuthStore.getState().auth.setUser({
+      id: 99,
+      role: ROLE.SUPER_ADMIN,
+      username: 'reviewer',
+    })
+    const view = render(
+      <QueryClientProvider client={client}>
+        <InvoiceNavigation />
+        <SettingsDialog reviewer={99} onClose={close} />
+      </QueryClientProvider>
+    )
+    const user = userEvent.setup()
+    await user.click(
+      await screen.findByRole('switch', { name: 'Enable invoice center' })
+    )
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(close).toHaveBeenCalledOnce())
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <InvoiceNavigation />
+      </QueryClientProvider>
+    )
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith('/api/status'))
+    expect(put).toHaveBeenCalledOnce()
+    if (visible) {
+      expect(
+        await screen.findByRole('link', { name: 'Invoice center' })
+      ).toHaveAttribute('href', '/invoice')
+    } else {
+      await waitFor(() =>
+        expect(
+          screen.queryByRole('link', { name: 'Invoice center' })
+        ).not.toBeInTheDocument()
+      )
+    }
+  }
+)
 
 test('root changes the center and invoice policies independently without submitting capabilities', async () => {
   const { user, put, close } = setup({

@@ -32,9 +32,10 @@ function getInitialStatus(): SystemStatus | undefined {
  * Every caller reads the same cache entry, so mounting this hook in several
  * components costs one request. See `statusQueryOptions` for cache lifetimes.
  */
-export function useStatus() {
+export function useStatus(refreshOnFocus = false) {
   const { data, isLoading, error } = useQuery({
     ...statusQueryOptions,
+    ...(refreshOnFocus && { refetchOnWindowFocus: 'always' }),
     // Use localStorage data as initial data
     placeholderData: getInitialStatus(),
   })

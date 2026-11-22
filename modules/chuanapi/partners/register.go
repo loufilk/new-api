@@ -61,10 +61,10 @@ func registerRoutes(engine *gin.Engine) error {
 
 	admin := engine.Group("/api/admin/partner-applications")
 	admin.Use(middleware.DisableCache(), middleware.RouteTag("api"), middleware.GlobalAPIRateLimit(), middleware.AdminAuth())
-	admin.GET("/settings", middleware.RequirePermission(authz.PartnerSettingsRead), controller.GetAdminPartnerApplicationSettings)
-	admin.PUT("/settings", middleware.RequirePermission(authz.PartnerSettingsUpdate), middleware.UserCriticalRateLimit("partner-settings-update"), controller.UpdatePartnerApplicationSettings)
-	admin.GET("", middleware.RequirePermission(authz.PartnerApplicationRead), middleware.SearchRateLimit(), controller.ListAdminPartnerApplications)
-	admin.GET("/:id", middleware.RequirePermission(authz.PartnerApplicationRead), controller.GetAdminPartnerApplication)
-	admin.POST("/:id/review", middleware.RequirePermission(authz.PartnerApplicationReview), middleware.UserCriticalRateLimit("partner-application-review"), controller.ReviewPartnerApplication)
+	admin.GET("/settings", controller.RequirePartnerPermission(authz.PartnerSettingsRead), controller.GetAdminPartnerApplicationSettings)
+	admin.PUT("/settings", middleware.UserCriticalRateLimit("partner-settings-update"), controller.UpdatePartnerApplicationSettings)
+	admin.GET("", controller.RequirePartnerPermission(authz.PartnerApplicationRead), middleware.SearchRateLimit(), controller.ListAdminPartnerApplications)
+	admin.GET("/:id", controller.RequirePartnerPermission(authz.PartnerApplicationRead), controller.GetAdminPartnerApplication)
+	admin.POST("/:id/review", middleware.UserCriticalRateLimit("partner-application-review"), controller.ReviewPartnerApplication)
 	return nil
 }

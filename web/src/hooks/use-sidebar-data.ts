@@ -57,8 +57,9 @@ import { useAuthStore } from '@/stores/auth-store'
  */
 export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
   const { t } = useTranslation()
-  const { status } = useStatus()
   const user = useAuthStore((state) => state.auth.user)
+  // A different session may change navigation while this tab is in the background.
+  const { status } = useStatus(Boolean(user))
   const invoiceVisibility = status?.customer_invoice_center_visible
   const showInvoiceCenter =
     invoiceVisibility === undefined
@@ -187,7 +188,7 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
           ...(user && showInvoiceCenter
             ? [
                 {
-                  title: t('Invoice Center', { defaultValue: '开票中心' }),
+                  title: t('Invoice center'),
                   url: '/invoice',
                   icon: Receipt,
                 },

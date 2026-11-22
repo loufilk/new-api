@@ -33,6 +33,7 @@ import {
   getServerErrorMessage,
   getServerErrorSources,
 } from '@/lib/server-error-message'
+import { STATUS_QUERY_KEY } from '@/lib/status-query'
 
 import { invoiceKey } from '../customer/api'
 import { useFinanceLabels } from './i18n'
@@ -92,6 +93,13 @@ export function SettingsDialog(props: SettingsDialogProps) {
     networkMode: 'always',
     onSuccess: (settings) => {
       client.setQueryData(settingsKey(props.reviewer), settings)
+      if (settings.center_enabled !== loaded?.center_enabled) {
+        // Public status combines the saved switch with the environment override.
+        void client.invalidateQueries({
+          queryKey: STATUS_QUERY_KEY,
+          exact: true,
+        })
+      }
       void client.invalidateQueries({
         queryKey: [...invoiceKey(props.reviewer), 'config'],
       })

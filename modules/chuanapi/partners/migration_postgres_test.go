@@ -3,15 +3,21 @@ package partners
 import (
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/extension"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/assert"
@@ -51,12 +57,15 @@ func partnerMigrationPostgres(t *testing.T, dsnEnv, expectedVersion string) *gor
 	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
 	require.NoError(t, err)
 
-	oldDB := model.DB
+	oldDB, oldLogDB := model.DB, model.LOG_DB
 	oldMain, oldLog := common.MainDatabaseType(), common.LogDatabaseType()
-	model.DB = db
+	oldRedis := common.RedisEnabled
+	model.DB, model.LOG_DB = db, db
+	common.RedisEnabled = false
 	common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
 	t.Cleanup(func() {
-		model.DB = oldDB
+		model.DB, model.LOG_DB = oldDB, oldLogDB
+		common.RedisEnabled = oldRedis
 		common.SetDatabaseTypes(oldMain, oldLog)
 		require.NoError(t, sqlDB.Close())
 		require.NoError(t, admin.Exec(fmt.Sprintf("DROP SCHEMA %q CASCADE", schema)).Error)
@@ -98,7 +107,7 @@ func testPartnerApplicationMigrationAndReview(t *testing.T, db *gorm.DB) {
 		Role:     common.RoleAdminUser,
 		Status:   common.UserStatusEnabled,
 	}
-	require.NoError(t, db.AutoMigrate(&model.User{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.AuditLog{}))
 	require.NoError(t, db.Create(&fixtureUser).Error)
 	require.NoError(t, db.Create(&adminUser).Error)
 
@@ -140,32 +149,11 @@ func testPartnerApplicationMigrationAndReview(t *testing.T, db *gorm.DB) {
 	)
 	require.ErrorIs(t, err, model.ErrPartnerApplicationConflict, "one user may have only one active application")
 
-	allowReview := func(_ *gorm.DB, _ *model.User) error { return nil }
-	reviewing, err := model.ReviewPartnerApplication(
-		t.Context(), adminUser.Id, created.ID, true,
-		model.PartnerApplicationReview{
-			ExpectedRevision: created.Revision,
-			Action:           "review",
-		},
-		allowReview,
-	)
-	require.NoError(t, err)
-	assert.Equal(t, model.PartnerApplicationReviewing, reviewing.Status)
-
-	approved, err := model.ReviewPartnerApplication(
-		t.Context(), adminUser.Id, created.ID, true,
-		model.PartnerApplicationReview{
-			ExpectedRevision: reviewing.Revision,
-			Action:           "approve",
-			Note:             "Verified supplier terms.",
-		},
-		allowReview,
-	)
-	require.NoError(t, err)
-	assert.Equal(t, model.PartnerApplicationApproved, approved.Status)
+	testPartnerAdminPermissions(t, db, adminUser.Id, created.ID)
 
 	customerView, err := model.GetPartnerApplication(t.Context(), fixtureUser.Id, created.ID, false)
 	require.NoError(t, err)
+	assert.Equal(t, model.PartnerApplicationApproved, customerView.Status)
 	assert.Empty(t, customerView.ReviewNote)
 	for _, event := range customerView.Events {
 		assert.Empty(t, event.Note, "customer history must not expose internal review notes")
@@ -177,4 +165,70 @@ func testPartnerApplicationMigrationAndReview(t *testing.T, db *gorm.DB) {
 		[]int{fixtureUser.Quota, fixtureUser.QuotaPaid},
 		[]int{preserved.Quota, preserved.QuotaPaid},
 	)
+}
+
+func testPartnerAdminPermissions(t *testing.T, db *gorm.DB, adminID int, applicationID int64) {
+	t.Helper()
+	oldMaster := common.IsMasterNode
+	common.IsMasterNode = true
+	t.Cleanup(func() { common.IsMasterNode = oldMaster })
+	require.NoError(t, authz.Init(db))
+
+	// Inject the synthetic admin identity to exercise the partner handlers;
+	// AdminAuth itself is covered by the host's authentication tests.
+	app := gin.New()
+	app.Use(func(c *gin.Context) {
+		c.Set("id", adminID)
+		c.Set("role", common.RoleAdminUser)
+	})
+	app.GET("/applications/:id", controller.RequirePartnerPermission(authz.PartnerApplicationRead), controller.GetAdminPartnerApplication)
+	app.POST("/applications/:id/review", controller.ReviewPartnerApplication)
+	app.PUT("/settings", controller.UpdatePartnerApplicationSettings)
+	request := func(method, path, body string) *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		app.ServeHTTP(response, req)
+		return response
+	}
+	path := fmt.Sprintf("/applications/%d", applicationID)
+	require.Equal(t, http.StatusOK, request(http.MethodGet, path, "").Code, "ordinary administrators can view applications by default")
+
+	t.Run("explicit read deny blocks the review state change", func(t *testing.T) {
+		require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+			return authz.SetUserPermissionsInTx(tx, adminID, authz.PermissionsMap{
+				authz.PartnerApplicationRead.Resource: {authz.PartnerApplicationRead.Action: false},
+			})
+		}))
+		assert.Equal(t, http.StatusForbidden, request(http.MethodGet, path, "").Code)
+		assert.Equal(t, http.StatusForbidden, request(http.MethodPost, path+"/review", `{"expected_revision":1,"action":"review","note":"Internal checks"}`).Code)
+		row, err := model.GetPartnerApplication(t.Context(), adminID, applicationID, true)
+		require.NoError(t, err)
+		assert.Equal(t, model.PartnerApplicationSubmitted, row.Status)
+		require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+			return authz.ClearUserPermissionsInTx(tx, adminID)
+		}))
+	})
+	require.Equal(t, http.StatusOK, request(http.MethodPost, path+"/review", `{"expected_revision":1,"action":"review","note":"Internal checks"}`).Code, "ordinary administrators can review by default")
+	reviewing, err := model.GetPartnerApplication(t.Context(), adminID, applicationID, true)
+	require.NoError(t, err)
+	assert.Equal(t, model.PartnerApplicationReviewing, reviewing.Status)
+	require.Equal(t, http.StatusOK, request(http.MethodPost, path+"/review", `{"expected_revision":2,"action":"approve","note":"Verified supplier terms."}`).Code)
+
+	t.Run("intake changes leave a redacted audit trail", func(t *testing.T) {
+		require.Equal(t, http.StatusOK, request(http.MethodPut, "/settings", `{"revision":0,"partner_enabled":false,"partner_instructions":"Review procedures"}`).Code)
+		require.Equal(t, http.StatusOK, request(http.MethodPut, "/settings", `{"revision":1,"partner_enabled":true,"partner_instructions":""}`).Code)
+		var logs []model.AuditLog
+		require.NoError(t, db.Where("action = ?", "partner.settings.update").Order("id").Find(&logs).Error)
+		require.Len(t, logs, 2)
+		for _, log := range logs {
+			assert.Equal(t, adminID, log.UserId)
+			assert.NotContains(t, log.Content, "Review procedures")
+			require.NotNil(t, log.Other.Op)
+			assert.NotContains(t, log.Other.Op.Params, "partner_instructions")
+		}
+		var states []string
+		require.NoError(t, db.Raw("SELECT other->'op'->'params'->>'enabled' FROM audit_logs WHERE action = ? ORDER BY id", "partner.settings.update").Scan(&states).Error)
+		assert.Equal(t, []string{"false", "true"}, states)
+	})
 }

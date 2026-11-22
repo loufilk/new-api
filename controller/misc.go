@@ -47,8 +47,11 @@ func GetStatus(c *gin.Context) {
 	accountPoolEnabled, _ := model.AccountPoolEnabled(c.Request.Context())
 	modelTestEnabled, modelTestSettingsErr := model.ModelTestEnabled(c.Request.Context())
 	invoicePolicy := model.GetCustomerInvoicePolicy()
-	invoiceSettings, invoiceSettingsErr := model.GetCustomerInvoiceSettings(c.Request.Context())
-	invoiceCenterVisible := invoiceSettingsErr == nil && invoiceSettings.CenterEnabled && invoicePolicy.CenterVisible
+	invoiceCenterVisible := false
+	if invoicePolicy.CenterVisible {
+		invoiceSettings, err := model.GetCustomerInvoiceSettings(c.Request.Context())
+		invoiceCenterVisible = err == nil && invoiceSettings.CenterEnabled
+	}
 
 	cs := console_setting.GetConsoleSetting()
 	passkeySetting := system_setting.PasskeySettingsSnapshot()

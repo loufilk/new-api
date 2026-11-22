@@ -17,6 +17,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { SimpleRecordPager } from '@/features/agent-platform/components/simple-record-pager'
+import { hasPermission } from '@/lib/admin-permissions'
 import { formatTimestamp } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { useAuthStore } from '@/stores/auth-store'
@@ -66,7 +67,7 @@ function PartnerSettings(props: { settings: PartnerApplicationSettings }) {
       })
       toast.success(t('Partner settings saved.'))
     },
-    onError: handleServerError,
+    onError: (error) => handleServerError(error),
     meta: { errorToast: false },
   })
 
@@ -154,7 +155,7 @@ function statusTitle(
   }
 }
 
-function ReviewQueue(props: { reviewer: number }) {
+function ReviewQueue(props: { reviewer: number; canReview: boolean }) {
   const { t } = useTranslation()
   const [page, setPage] = useState(1)
   const [status, setStatus] = useState<PartnerApplicationStatus | ''>(
@@ -216,7 +217,7 @@ function ReviewQueue(props: { reviewer: number }) {
           onRetry={() => void query.refetch()}
         />
       )}
-      {query.data && (
+      {query.data && !query.isError && (
         <>
           {query.data.items.length ? (
             <StaticDataTable
@@ -286,6 +287,8 @@ function ReviewQueue(props: { reviewer: number }) {
       <PartnerApplicationDetailDialog
         key={selected ?? 'closed'}
         id={selected}
+        reviewer={props.reviewer}
+        canReview={props.canReview}
         onClose={() => setSelected(null)}
       />
     </section>
@@ -294,7 +297,9 @@ function ReviewQueue(props: { reviewer: number }) {
 
 export default function PartnerApplicationManagementPage() {
   const { t } = useTranslation()
-  const reviewer = useAuthStore((state) => state.auth.user?.id ?? 0)
+  const user = useAuthStore((state) => state.auth.user)
+  const reviewer = user?.id ?? 0
+  const canReview = hasPermission(user, 'partner_applications', 'review')
   const settings = useQuery({
     ...privateRead,
     queryKey: [...partnerKey, 'admin', 'settings'],
@@ -327,7 +332,11 @@ export default function PartnerApplicationManagementPage() {
               <CardTitle>{t('Application review')}</CardTitle>
             </CardHeader>
             <CardContent>
-              <ReviewQueue reviewer={reviewer} />
+              <ReviewQueue
+                key={reviewer}
+                reviewer={reviewer}
+                canReview={canReview}
+              />
             </CardContent>
           </Card>
         </div>

@@ -339,21 +339,23 @@ func TestCustomerInvoiceHTTPAdminCenterSwitchAndLegacyClientPostgres(t *testing.
 	require.True(t, centerEnabled)
 	_, _, intakeEnabled := readSettings(GetCustomerInvoiceConfig, customerPath)
 	require.True(t, intakeEnabled)
-	write := func(v int64, center string) *httptest.ResponseRecorder {
-		return invoke(UpdateAdminCustomerInvoiceSettings, http.MethodPut, adminPath, fmt.Sprintf(`{"version":%d,%s%s}`, v, rateFields, center))
+	write := func(v int64, rates, center string) *httptest.ResponseRecorder {
+		return invoke(UpdateAdminCustomerInvoiceSettings, http.MethodPut, adminPath, fmt.Sprintf(`{"version":%d,%s%s}`, v, rates, center))
 	}
-	w := write(version, `,"center_enabled":false`)
+	w := write(version, rateFields, `,"center_enabled":false`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	version, centerEnabled, _ = readSettings(GetAdminCustomerInvoiceSettings, adminPath)
 	require.False(t, centerEnabled)
 	_, _, intakeEnabled = readSettings(GetCustomerInvoiceConfig, customerPath)
 	require.False(t, intakeEnabled)
 
-	w = write(version, "")
+	previous := version
+	w = write(version, strings.Replace(rateFields, `"tax_rate_bps":0`, `"tax_rate_bps":600`, 1), "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	version, centerEnabled, _ = readSettings(GetAdminCustomerInvoiceSettings, adminPath)
+	require.Equal(t, previous+1, version, "the legacy client must actually append a revision without reopening intake")
 	require.False(t, centerEnabled)
-	w = write(version, `,"center_enabled":true`)
+	w = write(version, rateFields, `,"center_enabled":true`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	_, centerEnabled, _ = readSettings(GetAdminCustomerInvoiceSettings, adminPath)
 	require.True(t, centerEnabled)

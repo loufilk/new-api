@@ -81,6 +81,14 @@ class DashboardRouteContractTest(unittest.TestCase):
         for overbroad in ("/invoice*", "/invoice-management*"):
             self.assertNotIn(overbroad, matcher_tokens)
 
+    def test_customer_and_admin_partner_application_deep_links_belong_to_new_api(self) -> None:
+        matcher_tokens = set(self.ui_matcher.split())
+        for path in ("/partner-applications", "/partner-application-management"):
+            with self.subTest(path=path):
+                self.assertIn(path, matcher_tokens)
+                self.assertIn(f"{path}/*", matcher_tokens)
+                self.assertNotIn(f"{path}*", matcher_tokens)
+
     def test_agent_checkout_routes_are_separate_from_cached_public_api(self) -> None:
         matchers = set(self.ui_matcher.split())
         for path in ("/agent-pay", "/agent-platform", "/agent-redemption", "/request-processing"):

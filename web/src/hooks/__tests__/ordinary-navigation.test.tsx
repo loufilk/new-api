@@ -16,16 +16,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  focusManager,
+  QueryClient,
+  QueryClientProvider,
+} from '@tanstack/react-query'
 import {
   createMemoryHistory,
   createRootRoute,
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, expect, it } from 'vitest'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, expect, it, vi } from 'vitest'
 
+import { api } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -51,6 +56,7 @@ function Navigation() {
 
 afterEach(() => {
   cleanup()
+  focusManager.setFocused(undefined)
   useAuthStore.getState().auth.reset()
 })
 
@@ -171,20 +177,46 @@ it.each([1, 5, 10, 100])(
 it('shows the invoice center by default with the new visibility status flag', async () => {
   await renderNavigation(ROLE.USER, false, false, true, false)
   expect(
-    await screen.findByRole('link', { name: 'Invoice Center' })
+    await screen.findByRole('link', { name: 'Invoice center' })
   ).toHaveAttribute('href', '/invoice')
 })
 
 it('uses the intake status as the visibility fallback for older servers', async () => {
   await renderNavigation(ROLE.USER, false, false, undefined, true)
   expect(
-    await screen.findByRole('link', { name: 'Invoice Center' })
+    await screen.findByRole('link', { name: 'Invoice center' })
   ).toHaveAttribute('href', '/invoice')
 })
 
 it('respects an explicit invoice center visibility disablement', async () => {
   await renderNavigation(ROLE.USER, false, false, false, true)
-  expect(screen.queryByRole('link', { name: 'Invoice Center' })).toBeNull()
+  expect(screen.queryByRole('link', { name: 'Invoice center' })).toBeNull()
+})
+
+it('refreshes fresh cached invoice visibility when the ordinary customer returns to the tab', async () => {
+  const status = vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        customer_invoice_center_visible: false,
+        customer_invoice_enabled: false,
+      },
+    },
+  })
+  await renderNavigation(ROLE.USER, false, false, true, false)
+  expect(
+    await screen.findByRole('link', { name: 'Invoice center' })
+  ).toBeInTheDocument()
+  expect(status).not.toHaveBeenCalled()
+
+  act(() => focusManager.setFocused(false))
+  act(() => focusManager.setFocused(true))
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('link', { name: 'Invoice center' })
+    ).not.toBeInTheDocument()
+  )
+  expect(status).toHaveBeenCalledExactlyOnceWith('/api/status')
 })
 
 it.each([1, 5, 10, 100])(

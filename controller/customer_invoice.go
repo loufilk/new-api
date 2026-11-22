@@ -222,16 +222,22 @@ func UpdateAdminCustomerInvoiceSettings(c *gin.Context) {
 		customerInvoiceError(c, model.ErrCustomerInvoiceInvalid)
 		return
 	}
-	current, err := model.GetCustomerInvoiceSettings(c.Request.Context())
-	if err != nil {
-		respondAdminInvoiceSettings(c, model.CustomerInvoiceSettings{}, err)
-		return
-	}
-	centerEnabled := current.CenterEnabled
+	proposed := model.CustomerInvoiceSettings{Version: *input.Version, Ordinary: ordinary, Special: special, Categories: input.Categories}
 	if input.CenterEnabled != nil {
-		centerEnabled = *input.CenterEnabled
+		proposed.CenterEnabled = *input.CenterEnabled
+	} else {
+		current, err := model.GetCustomerInvoiceSettings(c.Request.Context())
+		if err != nil {
+			respondAdminInvoiceSettings(c, model.CustomerInvoiceSettings{}, err)
+			return
+		}
+		// Inherit from the same revision checked again inside the write transaction.
+		if current.Version != proposed.Version {
+			respondAdminInvoiceSettings(c, model.CustomerInvoiceSettings{}, model.ErrCustomerInvoiceSettingsConflict)
+			return
+		}
+		proposed.CenterEnabled = current.CenterEnabled
 	}
-	proposed := model.CustomerInvoiceSettings{CenterEnabled: centerEnabled, Version: *input.Version, Ordinary: ordinary, Special: special, Categories: input.Categories}
 	settings, err := model.UpdateCustomerInvoiceSettings(c.Request.Context(), c.GetInt("id"), proposed)
 	respondAdminInvoiceSettings(c, settings, err)
 }

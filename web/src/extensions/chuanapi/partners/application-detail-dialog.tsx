@@ -82,6 +82,8 @@ function platformTitle(platform: string, t: (key: string) => string) {
 
 export function PartnerApplicationDetailDialog(props: {
   id: number | null
+  reviewer: number
+  canReview: boolean
   onClose: () => void
 }) {
   const { t } = useTranslation()
@@ -89,7 +91,7 @@ export function PartnerApplicationDetailDialog(props: {
   const [note, setNote] = useState('')
   const query = useQuery({
     ...privateRead,
-    queryKey: [...partnerKey, 'admin', 'detail', props.id],
+    queryKey: [...partnerKey, 'admin', props.reviewer, 'detail', props.id],
     queryFn: ({ signal }) =>
       getPartnerApplication(true, props.id as number, signal),
     enabled: props.id !== null,
@@ -114,10 +116,10 @@ export function PartnerApplicationDetailDialog(props: {
       )
       props.onClose()
     },
-    onError: handleServerError,
+    onError: (error) => handleServerError(error),
     meta: { errorToast: false },
   })
-  const application = query.data
+  const application = query.isError ? undefined : query.data
 
   return (
     <Dialog
@@ -260,49 +262,52 @@ export function PartnerApplicationDetailDialog(props: {
               </ol>
             </section>
           ) : null}
-          {(application.status === 'submitted' ||
-            application.status === 'reviewing') && (
-            <section className='flex flex-col gap-3 border-t pt-4'>
-              <div className='flex flex-col gap-1.5'>
-                <Label htmlFor='partner-review-note'>{t('Review note')}</Label>
-                <Textarea
-                  id='partner-review-note'
-                  value={note}
-                  onChange={(event) => setNote(event.target.value)}
-                  maxLength={1000}
-                  rows={3}
-                  disabled={review.isPending}
-                />
-              </div>
-              <div className='flex flex-wrap justify-end gap-2'>
-                {application.status === 'submitted' ? (
-                  <Button
-                    variant='outline'
+          {props.canReview &&
+            (application.status === 'submitted' ||
+              application.status === 'reviewing') && (
+              <section className='flex flex-col gap-3 border-t pt-4'>
+                <div className='flex flex-col gap-1.5'>
+                  <Label htmlFor='partner-review-note'>
+                    {t('Review note')}
+                  </Label>
+                  <Textarea
+                    id='partner-review-note'
+                    value={note}
+                    onChange={(event) => setNote(event.target.value)}
+                    maxLength={1000}
+                    rows={3}
                     disabled={review.isPending}
-                    onClick={() => review.mutate('review')}
-                  >
-                    {t('Start review')}
-                  </Button>
-                ) : (
-                  <>
+                  />
+                </div>
+                <div className='flex flex-wrap justify-end gap-2'>
+                  {application.status === 'submitted' ? (
                     <Button
                       variant='outline'
-                      disabled={review.isPending || !note.trim()}
-                      onClick={() => review.mutate('reject')}
+                      disabled={review.isPending}
+                      onClick={() => review.mutate('review')}
                     >
-                      {t('Reject application')}
+                      {t('Start review')}
                     </Button>
-                    <Button
-                      disabled={review.isPending || !note.trim()}
-                      onClick={() => review.mutate('approve')}
-                    >
-                      {t('Approve application')}
-                    </Button>
-                  </>
-                )}
-              </div>
-            </section>
-          )}
+                  ) : (
+                    <>
+                      <Button
+                        variant='outline'
+                        disabled={review.isPending || !note.trim()}
+                        onClick={() => review.mutate('reject')}
+                      >
+                        {t('Reject application')}
+                      </Button>
+                      <Button
+                        disabled={review.isPending || !note.trim()}
+                        onClick={() => review.mutate('approve')}
+                      >
+                        {t('Approve application')}
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </section>
+            )}
         </div>
       )}
     </Dialog>

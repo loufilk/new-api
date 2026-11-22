@@ -75,11 +75,19 @@ func currentCustomerInvoiceSettings(tx *gorm.DB) (CustomerInvoiceSettings, error
 	if !r.valid() {
 		return CustomerInvoiceSettings{}, ErrCustomerInvoiceInvalid
 	}
-	if r.CenterEnabledValue == nil {
-		r.CenterEnabled = true
-	} else {
-		r.CenterEnabled = *r.CenterEnabledValue
+	if r.CenterEnabledValue == nil && r.Version > 0 {
+		// Older binaries omit this column when saving a new revision. Keep their
+		// latest rates and categories, but inherit the most recent explicit
+		// switch at or before the revision we read. Do not rewrite audit rows.
+		var earlier CustomerInvoiceSettingsRevision
+		err := tx.Select("center_enabled").Where("version < ? AND center_enabled IS NOT NULL", r.Version).
+			Order("version DESC").Take(&earlier).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return CustomerInvoiceSettings{}, err
+		}
+		r.CenterEnabledValue = earlier.CenterEnabledValue
 	}
+	r.CenterEnabled = r.CenterEnabledValue == nil || *r.CenterEnabledValue
 	if r.Categories == nil {
 		// Prior revisions have SQL NULL. An explicitly saved empty array never
 		// receives defaults and continues to block all new applications.

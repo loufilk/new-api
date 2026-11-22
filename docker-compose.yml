@@ -48,6 +48,10 @@ services:
       - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:?SESSION_COOKIE_SECURE is required}
       - SESSION_COOKIE_TRUSTED_URL=${SESSION_COOKIE_TRUSTED_URL:?SESSION_COOKIE_TRUSTED_URL is required}
       - TRUSTED_PROXIES=${TRUSTED_PROXIES:?TRUSTED_PROXIES is required}
+      # Optional invoice controls; unset values keep the application's defaults.
+      - CUSTOMER_INVOICE_ENABLED
+      - CUSTOMER_INVOICE_EPAY_MERCHANT_SCOPE
+      - CUSTOMER_INVOICE_WALLET_QUOTA_PER_CNY_CENT
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
       - SHUTDOWN_TIMEOUT_SECONDS # Optional pass-through; application default is 120s

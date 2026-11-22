@@ -73,7 +73,7 @@ func TestGetStatusHidesInvoiceCenterWhenSettingsDatabaseIsUnavailable(t *testing
 func TestGetStatusReflectsPersistedInvoiceCenterSwitchPostgres(t *testing.T) {
 	db := setupNewUserBenefitControllerPostgres(t)
 	require.NoError(t, db.AutoMigrate(model.CustomerInvoiceModels()...))
-	t.Setenv("CUSTOMER_INVOICE_ENABLED", "true")
+	t.Setenv("CUSTOMER_INVOICE_ENABLED", "")
 	t.Setenv("CUSTOMER_INVOICE_EPAY_MERCHANT_SCOPE", "")
 	root := createNewUserBenefitControllerUser(t, db, "invoice-center-root", false)
 	require.NoError(t, db.Model(&root).Update("role", common.RoleRootUser).Error)
@@ -92,14 +92,22 @@ func TestGetStatusReflectsPersistedInvoiceCenterSwitchPostgres(t *testing.T) {
 	}
 	settings, err := model.GetCustomerInvoiceSettings(t.Context())
 	require.NoError(t, err)
-	assert.Equal(t, true, readStatus()["customer_invoice_center_visible"])
+	status := readStatus()
+	assert.Equal(t, true, status["customer_invoice_center_visible"], "no merchant or payment rail is needed for the default navigation entry")
+	assert.Equal(t, false, status["customer_invoice_enabled"], "unconfigured merchant must keep intake disabled")
+	t.Setenv("CUSTOMER_INVOICE_EPAY_MERCHANT_SCOPE", "invoice-status-fixture")
+	assert.Equal(t, true, readStatus()["customer_invoice_enabled"])
 	settings.CenterEnabled = false
 	settings, err = model.UpdateCustomerInvoiceSettings(t.Context(), root.Id, settings)
 	require.NoError(t, err)
-	assert.Equal(t, false, readStatus()["customer_invoice_center_visible"])
+	status = readStatus()
+	assert.Equal(t, false, status["customer_invoice_center_visible"])
+	assert.Equal(t, false, status["customer_invoice_enabled"])
 	settings.CenterEnabled = true
 	_, err = model.UpdateCustomerInvoiceSettings(t.Context(), root.Id, settings)
 	require.NoError(t, err)
 	t.Setenv("CUSTOMER_INVOICE_ENABLED", "false")
-	assert.Equal(t, false, readStatus()["customer_invoice_center_visible"], "the environment override remains a hard shutdown")
+	status = readStatus()
+	assert.Equal(t, false, status["customer_invoice_center_visible"], "the environment override remains a hard shutdown")
+	assert.Equal(t, false, status["customer_invoice_enabled"])
 }

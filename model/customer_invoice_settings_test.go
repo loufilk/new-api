@@ -125,6 +125,42 @@ func TestCustomerInvoiceSettingsLegacyCenterDefaultsEnabledAndMigrationPreserves
 	assert.Equal(t, saved.Version, revision.Version)
 }
 
+func TestCustomerInvoiceSettingsLegacySavePreservesLatestExplicitCenterSwitchPostgres(t *testing.T) {
+	db := setupCustomerInvoicePG(t)
+	ctx := t.Context()
+	root := customerInvoiceTestUser(t, common.RoleRootUser)
+	settings := defaultCustomerInvoiceSettings()
+	settings.CenterEnabled = false
+	settings, err := UpdateCustomerInvoiceSettings(ctx, root, settings)
+	require.NoError(t, err)
+
+	// Simulate an older binary appending a complete settings revision without
+	// the new column, after the newer binary has already closed intake.
+	legacy := settings
+	legacy.Version++
+	legacy.Special.TaxRateBPS = 600
+	legacy.Categories = CustomerInvoiceCategories{}
+	require.NoError(t, db.Omit("CenterEnabledValue").Create(&CustomerInvoiceSettingsRevision{CustomerInvoiceSettings: legacy, ActorID: root}).Error)
+	current, err := GetCustomerInvoiceSettings(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, legacy, current, "inherit only the switch; honor the latest tax rate and explicit empty category list")
+
+	current.CenterEnabled = true
+	current, err = UpdateCustomerInvoiceSettings(ctx, root, current)
+	require.NoError(t, err)
+	legacy = current
+	legacy.Version++
+	legacy.Ordinary.TaxRateBPS = 300
+	require.NoError(t, db.Omit("CenterEnabledValue").Create(&CustomerInvoiceSettingsRevision{CustomerInvoiceSettings: legacy, ActorID: root}).Error)
+	current, err = GetCustomerInvoiceSettings(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, legacy, current, "an explicit reopen must supersede the previous disable")
+
+	var revision CustomerInvoiceSettingsRevision
+	require.NoError(t, db.Where("version = ?", legacy.Version).Take(&revision).Error)
+	assert.Nil(t, revision.CenterEnabledValue, "reading legacy settings must not rewrite immutable revision data")
+}
+
 func TestCustomerInvoiceFeeAdmissionAndSnapshotPostgres(t *testing.T) {
 	db := setupCustomerInvoicePG(t)
 	t.Setenv("CUSTOMER_INVOICE_WALLET_QUOTA_PER_CNY_CENT", "2") // rate alone is not payment compliance authorization
@@ -234,6 +270,9 @@ func TestCustomerInvoiceCenterSwitchBlocksOnlyNewApplicationsPostgres(t *testing
 	settings.CenterEnabled = false
 	_, err = UpdateCustomerInvoiceSettings(ctx, root, settings)
 	require.NoError(t, err)
+	replay, err := SubmitCustomerInvoice(ctx, owner, policy, input)
+	require.NoError(t, err, "closing intake must not break an idempotent retry of an accepted application")
+	assert.Equal(t, application.ID, replay.ID)
 	stored, err := GetCustomerInvoice(ctx, owner, false, application.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "pending", stored.Status)

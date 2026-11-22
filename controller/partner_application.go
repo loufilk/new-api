@@ -72,12 +72,33 @@ func partnerApplicationID(c *gin.Context) (int64, bool) {
 	return id, true
 }
 
-func partnerPermission(permission authz.Permission) model.PartnerAdminPermissionCheck {
-	return func(_ *gorm.DB, actor *model.User) error {
-		if !authz.Can(actor.Id, actor.Role, permission) {
-			return model.ErrPartnerApplicationForbidden
+func checkPartnerPermission(db *gorm.DB, actorID, role int, permission authz.Permission) error {
+	allowed, err := authz.CanInTx(db, actorID, role, permission)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return model.ErrPartnerApplicationForbidden
+	}
+	return nil
+}
+
+// RequirePartnerPermission is used after AdminAuth on read endpoints.
+// Mutations also revalidate the actor's permissions under the actor-row lock.
+func RequirePartnerPermission(permission authz.Permission) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if err := checkPartnerPermission(model.DB.WithContext(c.Request.Context()), c.GetInt("id"), c.GetInt("role"), permission); err != nil {
+			partnerApplicationError(c, err)
+			c.Abort()
+			return
 		}
-		return nil
+		c.Next()
+	}
+}
+
+func partnerPermission(permission authz.Permission) model.PartnerAdminPermissionCheck {
+	return func(tx *gorm.DB, actor *model.User) error {
+		return checkPartnerPermission(tx, actor.Id, actor.Role, permission)
 	}
 }
 
@@ -102,16 +123,32 @@ func GetAdminPartnerApplicationSettings(c *gin.Context) {
 }
 
 func UpdatePartnerApplicationSettings(c *gin.Context) {
-	var input model.PartnerApplicationSettings
+	var input struct {
+		Revision     *int64  `json:"revision"`
+		Enabled      *bool   `json:"partner_enabled"`
+		Instructions *string `json:"partner_instructions"`
+	}
 	if !partnerApplicationBody(c, &input) {
 		return
 	}
-	settings, err := model.SavePartnerApplicationSettings(c.Request.Context(), c.GetInt("id"), input, partnerPermission(authz.PartnerSettingsUpdate))
+	if input.Revision == nil || input.Enabled == nil || input.Instructions == nil {
+		partnerApplicationError(c, model.ErrPartnerApplicationInvalid)
+		return
+	}
+	next := model.PartnerApplicationSettings{
+		Revision:     *input.Revision,
+		Enabled:      *input.Enabled,
+		Instructions: *input.Instructions,
+	}
+	settings, err := model.SavePartnerApplicationSettings(c.Request.Context(), c.GetInt("id"), next, partnerPermission(authz.PartnerSettingsUpdate))
 	if err != nil {
 		partnerApplicationError(c, err)
 		return
 	}
-	markAuditLogged(c)
+	recordManageAudit(c, "partner.settings.update", map[string]any{
+		"revision": settings.Revision,
+		"enabled":  settings.Enabled,
+	})
 	common.ApiSuccess(c, settings)
 }
 
@@ -177,7 +214,8 @@ func reviewPartnerApplication(c *gin.Context, admin bool) {
 	}
 	var checks []model.PartnerAdminPermissionCheck
 	if admin {
-		checks = append(checks, partnerPermission(authz.PartnerApplicationReview))
+		// The reviewer receives private application detail in the result.
+		checks = append(checks, partnerPermission(authz.PartnerApplicationRead), partnerPermission(authz.PartnerApplicationReview))
 	}
 	application, err := model.ReviewPartnerApplication(c.Request.Context(), c.GetInt("id"), id, admin, input, checks...)
 	if err != nil {
@@ -185,6 +223,7 @@ func reviewPartnerApplication(c *gin.Context, admin bool) {
 		return
 	}
 	if admin {
+		// Review transitions have their own transactional per-application audit.
 		markAuditLogged(c)
 	}
 	common.ApiSuccess(c, application)
