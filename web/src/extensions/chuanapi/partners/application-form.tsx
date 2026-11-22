@@ -1,14 +1,13 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useFieldArray, useForm } from 'react-hook-form'
-import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Field,
-  FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
@@ -19,7 +18,7 @@ import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 import { useRequestId } from '@/features/agent-platform/hooks/use-request-id'
-import { handleServerError } from '@/lib/server-error-message'
+import { handleServerError } from '@/lib/handle-server-error'
 
 import { partnerKey, submitPartnerApplication } from './api'
 import { QuoteFields } from './quote-fields'
@@ -70,7 +69,7 @@ export function PartnerApplicationForm(props: {
       })
       toast.success(t('Partner application submitted.'))
     },
-    onError: handleServerError,
+    onError: (error) => handleServerError(error),
     meta: { errorToast: false },
   })
   const disabled = props.disabled || mutation.isPending
@@ -145,11 +144,19 @@ export function PartnerApplicationForm(props: {
                   {...form.register('contact_type')}
                   required
                 >
-                  <NativeSelectOption value='wechat'>{t('WeChat')}</NativeSelectOption>
+                  <NativeSelectOption value='wechat'>
+                    {t('WeChat')}
+                  </NativeSelectOption>
                   <NativeSelectOption value='qq'>{t('QQ')}</NativeSelectOption>
-                  <NativeSelectOption value='email'>{t('Email')}</NativeSelectOption>
-                  <NativeSelectOption value='phone'>{t('Phone')}</NativeSelectOption>
-                  <NativeSelectOption value='other'>{t('Other')}</NativeSelectOption>
+                  <NativeSelectOption value='email'>
+                    {t('Email')}
+                  </NativeSelectOption>
+                  <NativeSelectOption value='phone'>
+                    {t('Phone')}
+                  </NativeSelectOption>
+                  <NativeSelectOption value='other'>
+                    {t('Other')}
+                  </NativeSelectOption>
                 </NativeSelect>
               </Field>
               <Field data-invalid={Boolean(errors.contact)}>
@@ -230,7 +237,9 @@ export function PartnerApplicationForm(props: {
               </Button>
             </FieldSet>
             <p className='text-muted-foreground text-xs'>
-              {t('Do not include API keys. Submitted applications cannot be edited.')}
+              {t(
+                'Do not include API keys. Submitted applications cannot be edited.'
+              )}
             </p>
             <div className='flex justify-end'>
               <Button type='submit' disabled={disabled}>

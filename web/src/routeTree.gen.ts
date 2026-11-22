@@ -55,6 +55,8 @@ import { Route as AuthenticatedInvoiceIndexRouteImport } from './routes/_authent
 import { Route as AuthenticatedKeysIndexRouteImport } from './routes/_authenticated/keys/index'
 import { Route as AuthenticatedModelManagementIndexRouteImport } from './routes/_authenticated/model-management/index'
 import { Route as AuthenticatedModelManagementSectionRouteImport } from './routes/_authenticated/model-management/$section'
+import { Route as AuthenticatedPartnerApplicationManagementIndexRouteImport } from './routes/_authenticated/partner-application-management/index'
+import { Route as AuthenticatedPartnerApplicationsIndexRouteImport } from './routes/_authenticated/partner-applications/index'
 import { Route as AuthenticatedPlaygroundIndexRouteImport } from './routes/_authenticated/playground/index'
 import { Route as AuthenticatedProfileIndexRouteImport } from './routes/_authenticated/profile/index'
 import { Route as AuthenticatedRedemptionCodesIndexRouteImport } from './routes/_authenticated/redemption-codes/index'
@@ -335,6 +337,18 @@ const AuthenticatedModelManagementSectionRoute =
     path: '/model-management/$section',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedPartnerApplicationManagementIndexRoute =
+  AuthenticatedPartnerApplicationManagementIndexRouteImport.update({
+    id: '/partner-application-management/',
+    path: '/partner-application-management/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedPartnerApplicationsIndexRoute =
+  AuthenticatedPartnerApplicationsIndexRouteImport.update({
+    id: '/partner-applications/',
+    path: '/partner-applications/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedPlaygroundIndexRoute =
   AuthenticatedPlaygroundIndexRouteImport.update({
     id: '/playground/',
@@ -590,6 +604,8 @@ export interface FileRoutesByFullPath {
   '/invoice/': typeof AuthenticatedInvoiceIndexRoute
   '/keys/': typeof AuthenticatedKeysIndexRoute
   '/model-management/': typeof AuthenticatedModelManagementIndexRoute
+  '/partner-application-management/': typeof AuthenticatedPartnerApplicationManagementIndexRoute
+  '/partner-applications/': typeof AuthenticatedPartnerApplicationsIndexRoute
   '/playground/': typeof AuthenticatedPlaygroundIndexRoute
   '/profile/': typeof AuthenticatedProfileIndexRoute
   '/redemption-codes/': typeof AuthenticatedRedemptionCodesIndexRoute
@@ -670,6 +686,8 @@ export interface FileRoutesByTo {
   '/invoice': typeof AuthenticatedInvoiceIndexRoute
   '/keys': typeof AuthenticatedKeysIndexRoute
   '/model-management': typeof AuthenticatedModelManagementIndexRoute
+  '/partner-application-management': typeof AuthenticatedPartnerApplicationManagementIndexRoute
+  '/partner-applications': typeof AuthenticatedPartnerApplicationsIndexRoute
   '/playground': typeof AuthenticatedPlaygroundIndexRoute
   '/profile': typeof AuthenticatedProfileIndexRoute
   '/redemption-codes': typeof AuthenticatedRedemptionCodesIndexRoute
@@ -754,6 +772,8 @@ export interface FileRoutesById {
   '/_authenticated/invoice/': typeof AuthenticatedInvoiceIndexRoute
   '/_authenticated/keys/': typeof AuthenticatedKeysIndexRoute
   '/_authenticated/model-management/': typeof AuthenticatedModelManagementIndexRoute
+  '/_authenticated/partner-application-management/': typeof AuthenticatedPartnerApplicationManagementIndexRoute
+  '/_authenticated/partner-applications/': typeof AuthenticatedPartnerApplicationsIndexRoute
   '/_authenticated/playground/': typeof AuthenticatedPlaygroundIndexRoute
   '/_authenticated/profile/': typeof AuthenticatedProfileIndexRoute
   '/_authenticated/redemption-codes/': typeof AuthenticatedRedemptionCodesIndexRoute
@@ -837,6 +857,8 @@ export interface FileRouteTypes {
     | '/invoice/'
     | '/keys/'
     | '/model-management/'
+    | '/partner-application-management/'
+    | '/partner-applications/'
     | '/playground/'
     | '/profile/'
     | '/redemption-codes/'
@@ -917,6 +939,8 @@ export interface FileRouteTypes {
     | '/invoice'
     | '/keys'
     | '/model-management'
+    | '/partner-application-management'
+    | '/partner-applications'
     | '/playground'
     | '/profile'
     | '/redemption-codes'
@@ -1000,6 +1024,8 @@ export interface FileRouteTypes {
     | '/_authenticated/invoice/'
     | '/_authenticated/keys/'
     | '/_authenticated/model-management/'
+    | '/_authenticated/partner-application-management/'
+    | '/_authenticated/partner-applications/'
     | '/_authenticated/playground/'
     | '/_authenticated/profile/'
     | '/_authenticated/redemption-codes/'
@@ -1382,6 +1408,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedModelManagementSectionRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/partner-application-management/': {
+      id: '/_authenticated/partner-application-management/'
+      path: '/partner-application-management'
+      fullPath: '/partner-application-management/'
+      preLoaderRoute: typeof AuthenticatedPartnerApplicationManagementIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/partner-applications/': {
+      id: '/_authenticated/partner-applications/'
+      path: '/partner-applications'
+      fullPath: '/partner-applications/'
+      preLoaderRoute: typeof AuthenticatedPartnerApplicationsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/playground/': {
       id: '/_authenticated/playground/'
       path: '/playground'
@@ -1742,6 +1782,8 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedInvoiceIndexRoute: typeof AuthenticatedInvoiceIndexRoute
   AuthenticatedKeysIndexRoute: typeof AuthenticatedKeysIndexRoute
   AuthenticatedModelManagementIndexRoute: typeof AuthenticatedModelManagementIndexRoute
+  AuthenticatedPartnerApplicationManagementIndexRoute: typeof AuthenticatedPartnerApplicationManagementIndexRoute
+  AuthenticatedPartnerApplicationsIndexRoute: typeof AuthenticatedPartnerApplicationsIndexRoute
   AuthenticatedPlaygroundIndexRoute: typeof AuthenticatedPlaygroundIndexRoute
   AuthenticatedProfileIndexRoute: typeof AuthenticatedProfileIndexRoute
   AuthenticatedRedemptionCodesIndexRoute: typeof AuthenticatedRedemptionCodesIndexRoute
@@ -1786,6 +1828,10 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedKeysIndexRoute: AuthenticatedKeysIndexRoute,
   AuthenticatedModelManagementIndexRoute:
     AuthenticatedModelManagementIndexRoute,
+  AuthenticatedPartnerApplicationManagementIndexRoute:
+    AuthenticatedPartnerApplicationManagementIndexRoute,
+  AuthenticatedPartnerApplicationsIndexRoute:
+    AuthenticatedPartnerApplicationsIndexRoute,
   AuthenticatedPlaygroundIndexRoute: AuthenticatedPlaygroundIndexRoute,
   AuthenticatedProfileIndexRoute: AuthenticatedProfileIndexRoute,
   AuthenticatedRedemptionCodesIndexRoute:

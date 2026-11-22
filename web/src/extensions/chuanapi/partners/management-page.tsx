@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { RotateCw } from 'lucide-react'
 import { useState } from 'react'
-import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { StaticDataTable } from '@/components/data-table'
 import { EmptyState } from '@/components/empty-state'
@@ -12,17 +12,13 @@ import { LoadingState } from '@/components/loading-state'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import {
-  Field,
-  FieldGroup,
-  FieldLabel,
-} from '@/components/ui/field'
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { SimpleRecordPager } from '@/features/agent-platform/components/simple-record-pager'
 import { formatTimestamp } from '@/lib/format'
-import { handleServerError } from '@/lib/server-error-message'
+import { handleServerError } from '@/lib/handle-server-error'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
@@ -40,17 +36,16 @@ import type {
   PartnerApplicationSettings,
 } from './types'
 
-const statuses: Array<{ value: PartnerApplicationStatus | ''; label: string }> = [
-  { value: 'submitted', label: 'Submitted' },
-  { value: 'reviewing', label: 'Reviewing' },
-  { value: 'approved', label: 'Approved' },
-  { value: 'rejected', label: 'Rejected' },
-  { value: 'cancelled', label: 'Cancelled' },
-]
+const statuses: Array<{ value: PartnerApplicationStatus | ''; label: string }> =
+  [
+    { value: 'submitted', label: 'Submitted' },
+    { value: 'reviewing', label: 'Reviewing' },
+    { value: 'approved', label: 'Approved' },
+    { value: 'rejected', label: 'Rejected' },
+    { value: 'cancelled', label: 'Cancelled' },
+  ]
 
-function PartnerSettings(props: {
-  settings: PartnerApplicationSettings
-}) {
+function PartnerSettings(props: { settings: PartnerApplicationSettings }) {
   const { t } = useTranslation()
   const client = useQueryClient()
   const [enabled, setEnabled] = useState(props.settings.partner_enabled)
@@ -66,7 +61,9 @@ function PartnerSettings(props: {
         partner_instructions: instructions,
       }),
     onSuccess: () => {
-      void client.invalidateQueries({ queryKey: [...partnerKey, 'admin', 'settings'] })
+      void client.invalidateQueries({
+        queryKey: [...partnerKey, 'admin', 'settings'],
+      })
       toast.success(t('Partner settings saved.'))
     },
     onError: handleServerError,
@@ -80,7 +77,10 @@ function PartnerSettings(props: {
       </CardHeader>
       <CardContent>
         <FieldGroup className='gap-4'>
-          <Field orientation='horizontal' className='items-center justify-between'>
+          <Field
+            orientation='horizontal'
+            className='items-center justify-between'
+          >
             <FieldLabel htmlFor='partner-intake-enabled'>
               {t('Accept partner applications')}
             </FieldLabel>
@@ -106,7 +106,9 @@ function PartnerSettings(props: {
           </Field>
           <div className='flex flex-wrap items-center justify-between gap-3'>
             <p className='text-muted-foreground text-xs'>
-              {t('Changes apply to new submissions. Existing applications keep their status.')}
+              {t(
+                'Changes apply to new submissions. Existing applications keep their status.'
+              )}
             </p>
             <Button
               disabled={
@@ -155,7 +157,9 @@ function statusTitle(
 function ReviewQueue(props: { reviewer: number }) {
   const { t } = useTranslation()
   const [page, setPage] = useState(1)
-  const [status, setStatus] = useState<PartnerApplicationStatus | ''>('submitted')
+  const [status, setStatus] = useState<PartnerApplicationStatus | ''>(
+    'submitted'
+  )
   const [selected, setSelected] = useState<number | null>(null)
   const query = useQuery({
     ...privateRead,
@@ -180,7 +184,9 @@ function ReviewQueue(props: { reviewer: number }) {
               setStatus(event.target.value as PartnerApplicationStatus | '')
             }}
           >
-            <NativeSelectOption value=''>{t('All statuses')}</NativeSelectOption>
+            <NativeSelectOption value=''>
+              {t('All statuses')}
+            </NativeSelectOption>
             {statuses.map((item) => (
               <NativeSelectOption key={item.value} value={item.value}>
                 {t(item.label)}
@@ -297,7 +303,9 @@ export default function PartnerApplicationManagementPage() {
 
   return (
     <SectionPageLayout>
-      <SectionPageLayout.Title>{t('Partner applications')}</SectionPageLayout.Title>
+      <SectionPageLayout.Title>
+        {t('Partner applications')}
+      </SectionPageLayout.Title>
       <SectionPageLayout.Content>
         <div className='flex flex-col gap-6'>
           {settings.isPending && <LoadingState className='min-h-24' />}

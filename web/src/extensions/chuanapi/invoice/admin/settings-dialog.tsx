@@ -18,8 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
-import { FormProvider, useForm } from 'react-hook-form'
+import { useState } from 'react'
+import { Controller, FormProvider, useForm } from 'react-hook-form'
 import { toast } from 'sonner'
 
 import { Dialog } from '@/components/dialog'
@@ -27,6 +27,7 @@ import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { SettingsSwitchField } from '@/features/system-settings/components/settings-form-layout'
 import { markServerErrorHandled } from '@/lib/handle-server-error'
 import {
   getServerErrorMessage,
@@ -35,11 +36,7 @@ import {
 
 import { invoiceKey } from '../customer/api'
 import { useFinanceLabels } from './i18n'
-import {
-  getSettings,
-  putSettings,
-  type AdminInvoiceSettings,
-} from './settings-api'
+import { getSettings, putSettings } from './settings-api'
 import { InvoiceCategoryFields } from './settings-category-fields'
 import {
   editSettings,
@@ -66,14 +63,14 @@ export function SettingsDialog(props: SettingsDialogProps) {
     retry: false,
     meta: { redirectOnInternalServerError: false, errorToast: false },
   })
-  const [loaded, setLoaded] = useState<AdminInvoiceSettings | null>(null)
+  const loaded = query.data ?? null
   const client = useQueryClient()
-  const locked = useRef(false)
   const [reloading, setReloading] = useState(false)
   const [stale, setStale] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const form = useForm<SettingsFormValues>({
     mode: 'onChange',
+    values: loaded ? editSettings(loaded) : undefined,
     resolver: zodResolver(
       settingsFormSchema(
         label(
@@ -84,13 +81,10 @@ export function SettingsDialog(props: SettingsDialogProps) {
     ),
   })
   const { reset } = form
-  useEffect(() => {
-    if (!loaded && query.data) {
-      reset(editSettings(query.data))
-      setLoaded(query.data)
-    }
-  }, [loaded, query.data, reset])
-  const { isDirty, isValid } = form.formState
+  const formReady =
+    form.getValues('ordinary') !== undefined &&
+    form.getValues('special') !== undefined
+  const { isDirty, isSubmitting, isValid } = form.formState
   const save = useMutation({
     mutationFn: putSettings,
     retry: false,
@@ -112,21 +106,16 @@ export function SettingsDialog(props: SettingsDialogProps) {
       setStale(conflict)
       setError(conflict ? null : err)
     },
-    onSettled: () => {
-      locked.current = false
-    },
   })
-  const busy = save.isPending || reloading
+  const busy = save.isPending || isSubmitting || reloading
   const submit = form.handleSubmit((draft) => {
     const body = settingsPayload(draft, loaded?.categories !== undefined)
-    if (locked.current || stale || !body) return
-    locked.current = true
+    if (busy || stale || !body) return
     setError(null)
     save.mutate(body)
   })
   async function reload() {
-    if (locked.current) return
-    locked.current = true
+    if (busy) return
     setReloading(true)
     try {
       const { data: latest, error: readError } = await query.refetch({
@@ -135,7 +124,6 @@ export function SettingsDialog(props: SettingsDialogProps) {
       if (!latest) throw readError
       // Advance the expected version only together with the newly loaded fields.
       reset(editSettings(latest))
-      setLoaded(latest)
       setError(null)
       setStale(false)
     } catch (err) {
@@ -143,19 +131,18 @@ export function SettingsDialog(props: SettingsDialogProps) {
       setError(err)
     } finally {
       setReloading(false)
-      locked.current = false
     }
   }
   return (
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open && !locked.current) props.onClose()
+        if (!open && !busy) props.onClose()
       }}
       title={label('Invoice settings', '开票设置')}
       description={label(
-        'Changes apply only to new applications. The configured tax rate is for reference and is not a fee.',
-        '修改仅影响新申请。配置税率仅供参考，不作为手续费收取。'
+        'The center switch controls customer navigation and new applications. Rate and category changes affect new applications only. The configured tax rate is not a fee.',
+        '总开关控制客户入口和新申请；费率及类目修改仅影响新申请。配置税率不作为手续费收取。'
       )}
       showCloseButton={!busy}
       contentClassName='max-h-[90dvh]'
@@ -188,7 +175,8 @@ export function SettingsDialog(props: SettingsDialogProps) {
           onRetry={() => void query.refetch()}
         />
       )}
-      {loaded && (
+      {loaded && !formReady && <LoadingState />}
+      {loaded && formReady && (
         <FormProvider {...form}>
           <form
             id='invoice-settings-form'
@@ -196,6 +184,25 @@ export function SettingsDialog(props: SettingsDialogProps) {
             onSubmit={submit}
             noValidate
           >
+            {loaded.center_enabled !== undefined && (
+              <Controller
+                control={form.control}
+                name='center_enabled'
+                render={({ field }) => (
+                  <SettingsSwitchField
+                    controlId='invoice-center-enabled'
+                    label={label('Enable invoice center', '启用开票中心')}
+                    description={label(
+                      'Controls customer navigation and new applications. Existing applications remain available to customers and finance.',
+                      '控制客户入口和新申请；已有申请仍可由客户查看并由财务处理。'
+                    )}
+                    checked={field.value ?? loaded.center_enabled === true}
+                    disabled={busy}
+                    onCheckedChange={field.onChange}
+                  />
+                )}
+              />
+            )}
             <InvoiceTypeFields
               kind='ordinary'
               disabled={busy}

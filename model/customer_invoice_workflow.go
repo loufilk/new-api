@@ -95,6 +95,9 @@ func SubmitCustomerInvoice(ctx context.Context, owner int, policy CustomerInvoic
 		if err != nil {
 			return err
 		}
+		if !settings.CenterEnabled {
+			return ErrCustomerInvoiceDisabled
+		}
 		var expected int64
 		if input.SettingsVersion != nil {
 			expected = *input.SettingsVersion

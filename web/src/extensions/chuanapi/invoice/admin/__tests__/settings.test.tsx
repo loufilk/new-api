@@ -32,7 +32,12 @@ const defaults = {
   fee_rate_bps: 0,
   tax_rate_bps: 0,
 }
-const settings = { version: 5, ordinary: defaults, special: defaults }
+const settings = {
+  version: 5,
+  center_enabled: true,
+  ordinary: defaults,
+  special: defaults,
+}
 const result = (data: unknown) => ({ data: { success: true, data } })
 
 function setup(initial: unknown = settings) {
@@ -49,7 +54,7 @@ function setup(initial: unknown = settings) {
   return { user: userEvent.setup(), put, read, close, view }
 }
 
-test('root changes the two policies independently and saves exact percentage points without submitting capabilities', async () => {
+test('root changes the center and invoice policies independently without submitting capabilities', async () => {
   const { user, put, close } = setup({
     ...settings,
     fee_payment_available: false,
@@ -59,6 +64,9 @@ test('root changes the two policies independently and saves exact percentage poi
   )
   const special = within(
     screen.getByRole('group', { name: 'Special VAT invoice' })
+  )
+  await user.click(
+    screen.getByRole('switch', { name: 'Enable invoice center' })
   )
   await user.click(
     ordinary.getByRole('switch', { name: 'Accept applications' })
@@ -82,6 +90,7 @@ test('root changes the two policies independently and saves exact percentage poi
     path,
     {
       version: 5,
+      center_enabled: false,
       ordinary: { ...defaults, enabled: false },
       special: {
         ...defaults,
@@ -89,6 +98,36 @@ test('root changes the two policies independently and saves exact percentage poi
         fee_rate_bps: 201,
         tax_rate_bps: 1300,
       },
+    },
+    { singleUseAuthorization: true }
+  )
+})
+
+test('a legacy server without the center setting keeps the old form and omits the unsupported field', async () => {
+  const legacySettings = {
+    version: 5,
+    ordinary: defaults,
+    special: defaults,
+  }
+  const { user, put, close } = setup(legacySettings)
+  put.mockResolvedValueOnce(result({ ...legacySettings, version: 6 }))
+  const ordinary = within(
+    await screen.findByRole('group', { name: 'Ordinary invoice' })
+  )
+  await user.click(
+    ordinary.getByRole('switch', { name: 'Accept applications' })
+  )
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(close).toHaveBeenCalledOnce())
+  expect(
+    screen.queryByRole('switch', { name: 'Enable invoice center' })
+  ).not.toBeInTheDocument()
+  expect(put).toHaveBeenCalledExactlyOnceWith(
+    path,
+    {
+      version: 5,
+      ordinary: { ...defaults, enabled: false },
+      special: defaults,
     },
     { singleUseAuthorization: true }
   )
@@ -148,6 +187,7 @@ test('a conflict holds the old draft and disables saving until the administrator
     path,
     {
       version: 7,
+      center_enabled: true,
       ordinary: defaults,
       special: { ...defaults, enabled: false, tax_rate_bps: 246 },
     },

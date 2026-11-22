@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,7 +51,7 @@ func TestGetStatusKeepsProductBonusAndAuthFieldsOut(t *testing.T) {
 	assert.Contains(t, payload.Data, "quota_per_unit")
 }
 
-func TestGetStatusShowsInvoiceCenterWithoutEnablingIntake(t *testing.T) {
+func TestGetStatusHidesInvoiceCenterWhenSettingsDatabaseIsUnavailable(t *testing.T) {
 	t.Setenv("CUSTOMER_INVOICE_ENABLED", "")
 	t.Setenv("CUSTOMER_INVOICE_EPAY_MERCHANT_SCOPE", "")
 
@@ -65,6 +66,40 @@ func TestGetStatusShowsInvoiceCenterWithoutEnablingIntake(t *testing.T) {
 		Data map[string]any `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
-	assert.Equal(t, true, payload.Data["customer_invoice_center_visible"])
+	assert.Equal(t, false, payload.Data["customer_invoice_center_visible"], "status must fail closed when invoice settings cannot be read")
 	assert.Equal(t, false, payload.Data["customer_invoice_enabled"])
+}
+
+func TestGetStatusReflectsPersistedInvoiceCenterSwitchPostgres(t *testing.T) {
+	db := setupNewUserBenefitControllerPostgres(t)
+	require.NoError(t, db.AutoMigrate(model.CustomerInvoiceModels()...))
+	t.Setenv("CUSTOMER_INVOICE_ENABLED", "true")
+	t.Setenv("CUSTOMER_INVOICE_EPAY_MERCHANT_SCOPE", "")
+	root := createNewUserBenefitControllerUser(t, db, "invoice-center-root", false)
+	require.NoError(t, db.Model(&root).Update("role", common.RoleRootUser).Error)
+
+	readStatus := func() map[string]any {
+		recorder := httptest.NewRecorder()
+		context, _ := gin.CreateTestContext(recorder)
+		context.Request = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+		GetStatus(context)
+		require.Equal(t, http.StatusOK, recorder.Code)
+		var payload struct {
+			Data map[string]any `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+		return payload.Data
+	}
+	settings, err := model.GetCustomerInvoiceSettings(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, true, readStatus()["customer_invoice_center_visible"])
+	settings.CenterEnabled = false
+	settings, err = model.UpdateCustomerInvoiceSettings(t.Context(), root.Id, settings)
+	require.NoError(t, err)
+	assert.Equal(t, false, readStatus()["customer_invoice_center_visible"])
+	settings.CenterEnabled = true
+	_, err = model.UpdateCustomerInvoiceSettings(t.Context(), root.Id, settings)
+	require.NoError(t, err)
+	t.Setenv("CUSTOMER_INVOICE_ENABLED", "false")
+	assert.Equal(t, false, readStatus()["customer_invoice_center_visible"], "the environment override remains a hard shutdown")
 }

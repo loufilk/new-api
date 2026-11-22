@@ -132,13 +132,17 @@ func GetCustomerInvoiceConfig(c *gin.Context) {
 		return
 	}
 	settings, err := model.GetCustomerInvoiceSettings(c.Request.Context())
+	if err != nil {
+		respondCustomerInvoice(c, nil, err)
+		return
+	}
 	settings.Categories = settings.Categories.EnabledOnly()
 	respondCustomerInvoice(c, struct {
 		Enabled bool `json:"enabled"`
 		model.CustomerInvoiceSettings
 		FeePaymentMethods  []customerInvoiceFeeMethod `json:"fee_payment_methods"`
 		WalletQuotaPerCent int64                      `json:"wallet_quota_per_cent"`
-	}{true, settings, methods, walletRate}, err)
+	}{settings.CenterEnabled, settings, methods, walletRate}, nil)
 }
 
 type customerInvoiceFeeMethod struct {
@@ -203,10 +207,11 @@ func (input invoiceTypeSettingsInput) toSettings() (model.CustomerInvoiceTypeSet
 
 func UpdateAdminCustomerInvoiceSettings(c *gin.Context) {
 	var input struct {
-		Categories model.CustomerInvoiceCategories `json:"categories"`
-		Version    *int64                          `json:"version"`
-		Ordinary   invoiceTypeSettingsInput        `json:"ordinary"`
-		Special    invoiceTypeSettingsInput        `json:"special"`
+		CenterEnabled *bool                           `json:"center_enabled"`
+		Categories    model.CustomerInvoiceCategories `json:"categories"`
+		Version       *int64                          `json:"version"`
+		Ordinary      invoiceTypeSettingsInput        `json:"ordinary"`
+		Special       invoiceTypeSettingsInput        `json:"special"`
 	}
 	if !readCustomerInvoiceJSON(c, &input) {
 		return
@@ -217,7 +222,16 @@ func UpdateAdminCustomerInvoiceSettings(c *gin.Context) {
 		customerInvoiceError(c, model.ErrCustomerInvoiceInvalid)
 		return
 	}
-	proposed := model.CustomerInvoiceSettings{Version: *input.Version, Ordinary: ordinary, Special: special, Categories: input.Categories}
+	current, err := model.GetCustomerInvoiceSettings(c.Request.Context())
+	if err != nil {
+		respondAdminInvoiceSettings(c, model.CustomerInvoiceSettings{}, err)
+		return
+	}
+	centerEnabled := current.CenterEnabled
+	if input.CenterEnabled != nil {
+		centerEnabled = *input.CenterEnabled
+	}
+	proposed := model.CustomerInvoiceSettings{CenterEnabled: centerEnabled, Version: *input.Version, Ordinary: ordinary, Special: special, Categories: input.Categories}
 	settings, err := model.UpdateCustomerInvoiceSettings(c.Request.Context(), c.GetInt("id"), proposed)
 	respondAdminInvoiceSettings(c, settings, err)
 }

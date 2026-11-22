@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { Dialog } from '@/components/dialog'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { formatTimestamp } from '@/lib/format'
-import { handleServerError } from '@/lib/server-error-message'
+import { handleServerError } from '@/lib/handle-server-error'
 
 import {
   getPartnerApplication,
@@ -20,7 +20,10 @@ import {
 } from './api'
 import type { PartnerApplicationStatus } from './types'
 
-function statusTitle(status: PartnerApplicationStatus, t: (key: string) => string) {
+function statusTitle(
+  status: PartnerApplicationStatus,
+  t: (key: string) => string
+) {
   switch (status) {
     case 'submitted':
       return t('Submitted')
@@ -130,7 +133,9 @@ export function PartnerApplicationDetailDialog(props: {
       description={application ? application.site_name : undefined}
       contentClassName='sm:max-w-3xl'
     >
-      {query.isPending && <p className='text-muted-foreground'>{t('Loading...')}</p>}
+      {query.isPending && (
+        <p className='text-muted-foreground'>{t('Loading...')}</p>
+      )}
       {query.isError && (
         <Alert variant='destructive'>
           <AlertDescription className='flex flex-wrap items-center gap-2'>
@@ -148,7 +153,11 @@ export function PartnerApplicationDetailDialog(props: {
       {application && (
         <div className='flex flex-col gap-5'>
           <div className='flex flex-wrap items-center justify-between gap-2'>
-            <Badge variant={application.status === 'approved' ? 'default' : 'warning'}>
+            <Badge
+              variant={
+                application.status === 'approved' ? 'default' : 'warning'
+              }
+            >
               {statusTitle(application.status, t)}
             </Badge>
             <span className='text-muted-foreground text-sm'>
@@ -158,8 +167,10 @@ export function PartnerApplicationDetailDialog(props: {
           </div>
           <dl className='grid gap-x-4 gap-y-3 sm:grid-cols-2'>
             <div className='min-w-0'>
-              <dt className='text-muted-foreground text-xs'>{t('Site address')}</dt>
-              <dd className='break-all text-sm'>
+              <dt className='text-muted-foreground text-xs'>
+                {t('Site address')}
+              </dt>
+              <dd className='text-sm break-all'>
                 {application.site_url ? (
                   <a
                     className='text-primary underline underline-offset-2'
@@ -175,14 +186,17 @@ export function PartnerApplicationDetailDialog(props: {
               </dd>
             </div>
             <div className='min-w-0'>
-              <dt className='text-muted-foreground text-xs'>{t('Contact method')}</dt>
-              <dd className='break-words text-sm'>
-                {contactTitle(application.contact_type, t)}: {application.contact}
+              <dt className='text-muted-foreground text-xs'>
+                {t('Contact method')}
+              </dt>
+              <dd className='text-sm break-words'>
+                {contactTitle(application.contact_type, t)}:{' '}
+                {application.contact}
               </dd>
             </div>
             <div className='min-w-0 sm:col-span-2'>
               <dt className='text-muted-foreground text-xs'>{t('Notes')}</dt>
-              <dd className='whitespace-pre-wrap text-sm'>
+              <dd className='text-sm whitespace-pre-wrap'>
                 {application.description || t('Not provided')}
               </dd>
             </div>
@@ -196,16 +210,16 @@ export function PartnerApplicationDetailDialog(props: {
                   className='grid min-w-0 gap-1 py-3 sm:grid-cols-[minmax(0,1fr)_auto]'
                 >
                   <div className='min-w-0'>
-                    <p className='break-words text-sm font-medium'>
+                    <p className='text-sm font-medium break-words'>
                       {platformTitle(quote.platform, t)} / {quote.group}
                     </p>
                     {quote.models && (
-                      <p className='text-muted-foreground break-words text-xs'>
+                      <p className='text-muted-foreground text-xs break-words'>
                         {t('Main models')}: {quote.models}
                       </p>
                     )}
                     {quote.description && (
-                      <p className='text-muted-foreground whitespace-pre-wrap text-xs'>
+                      <p className='text-muted-foreground text-xs whitespace-pre-wrap'>
                         {quote.description}
                       </p>
                     )}
@@ -225,19 +239,19 @@ export function PartnerApplicationDetailDialog(props: {
           )}
           {application.events?.length ? (
             <section className='flex flex-col gap-2'>
-              <h3 className='text-sm font-medium'>{t('Application history')}</h3>
+              <h3 className='text-sm font-medium'>
+                {t('Application history')}
+              </h3>
               <ol className='flex flex-col gap-2'>
                 {application.events.map((event) => (
                   <li key={event.id} className='border-s-2 ps-3 text-sm'>
-                    <span>
-                      {statusTitle(event.to_status, t)}
-                    </span>
+                    <span>{statusTitle(event.to_status, t)}</span>
                     <span className='text-muted-foreground ms-2 text-xs'>
                       {formatTimestamp(event.created_at)} · {t('User ID')}{' '}
                       {event.actor_id}
                     </span>
                     {event.note && (
-                      <p className='text-muted-foreground whitespace-pre-wrap text-xs'>
+                      <p className='text-muted-foreground text-xs whitespace-pre-wrap'>
                         {event.note}
                       </p>
                     )}
@@ -250,9 +264,7 @@ export function PartnerApplicationDetailDialog(props: {
             application.status === 'reviewing') && (
             <section className='flex flex-col gap-3 border-t pt-4'>
               <div className='flex flex-col gap-1.5'>
-                <Label htmlFor='partner-review-note'>
-                  {t('Review note')}
-                </Label>
+                <Label htmlFor='partner-review-note'>{t('Review note')}</Label>
                 <Textarea
                   id='partner-review-note'
                   value={note}

@@ -73,12 +73,8 @@ func partnerApplicationID(c *gin.Context) (int64, bool) {
 }
 
 func partnerPermission(permission authz.Permission) model.PartnerAdminPermissionCheck {
-	return func(tx *gorm.DB, actor *model.User) error {
-		allowed, err := authz.CanInTx(tx, actor.Id, actor.Role, permission)
-		if err != nil {
-			return err
-		}
-		if !allowed {
+	return func(_ *gorm.DB, actor *model.User) error {
+		if !authz.Can(actor.Id, actor.Role, permission) {
 			return model.ErrPartnerApplicationForbidden
 		}
 		return nil

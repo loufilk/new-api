@@ -301,3 +301,60 @@ func TestCustomerInvoiceHTTPAdminAndCustomerCategoriesPostgres(t *testing.T) {
 	require.Greater(t, publicVersion, version)
 	require.Empty(t, public)
 }
+
+func TestCustomerInvoiceHTTPAdminCenterSwitchAndLegacyClientPostgres(t *testing.T) {
+	db := setupNewUserBenefitControllerPostgres(t)
+	require.NoError(t, db.AutoMigrate(model.CustomerInvoiceModels()...))
+	t.Setenv("CUSTOMER_INVOICE_ENABLED", "true")
+	t.Setenv("CUSTOMER_INVOICE_EPAY_MERCHANT_SCOPE", "invoice-center-fixture")
+	t.Setenv("CUSTOMER_INVOICE_WALLET_QUOTA_PER_CNY_CENT", "")
+	root := createNewUserBenefitControllerUser(t, db, "invoice-center-settings", false)
+	require.NoError(t, db.Model(&root).Update("role", common.RoleRootUser).Error)
+	invoke := func(handler gin.HandlerFunc, method, path, input string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Set("id", root.Id)
+		c.Request = httptest.NewRequest(method, path, strings.NewReader(input))
+		c.Request.Header.Set("Content-Type", "application/json")
+		handler(c)
+		return w
+	}
+	const adminPath = "/api/admin/invoice/settings"
+	const customerPath = "/api/invoice/config"
+	const rateFields = `"ordinary":{"enabled":true,"fee_enabled":false,"fee_rate_bps":0,"tax_rate_bps":0},"special":{"enabled":true,"fee_enabled":false,"fee_rate_bps":0,"tax_rate_bps":0}`
+	readSettings := func(handler gin.HandlerFunc, path string) (int64, bool, bool) {
+		w := invoke(handler, http.MethodGet, path, "")
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var response struct {
+			Data struct {
+				Version       int64 `json:"version"`
+				CenterEnabled bool  `json:"center_enabled"`
+				Enabled       bool  `json:"enabled"`
+			} `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(w.Body.Bytes(), &response))
+		return response.Data.Version, response.Data.CenterEnabled, response.Data.Enabled
+	}
+	version, centerEnabled, _ := readSettings(GetAdminCustomerInvoiceSettings, adminPath)
+	require.True(t, centerEnabled)
+	_, _, intakeEnabled := readSettings(GetCustomerInvoiceConfig, customerPath)
+	require.True(t, intakeEnabled)
+	write := func(v int64, center string) *httptest.ResponseRecorder {
+		return invoke(UpdateAdminCustomerInvoiceSettings, http.MethodPut, adminPath, fmt.Sprintf(`{"version":%d,%s%s}`, v, rateFields, center))
+	}
+	w := write(version, `,"center_enabled":false`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	version, centerEnabled, _ = readSettings(GetAdminCustomerInvoiceSettings, adminPath)
+	require.False(t, centerEnabled)
+	_, _, intakeEnabled = readSettings(GetCustomerInvoiceConfig, customerPath)
+	require.False(t, intakeEnabled)
+
+	w = write(version, "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	version, centerEnabled, _ = readSettings(GetAdminCustomerInvoiceSettings, adminPath)
+	require.False(t, centerEnabled)
+	w = write(version, `,"center_enabled":true`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	_, centerEnabled, _ = readSettings(GetAdminCustomerInvoiceSettings, adminPath)
+	require.True(t, centerEnabled)
+}

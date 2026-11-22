@@ -87,9 +87,42 @@ func TestCustomerInvoiceSettingsCASPostgres(t *testing.T) {
 	require.NoError(t, db.Where("version = ?", 1).Take(&log).Error)
 	assert.Equal(t, a.actor, log.ActorID)
 	assert.Positive(t, log.CreatedAt)
-	assert.Equal(t, observed, log.CustomerInvoiceSettings)
+	logged := log.CustomerInvoiceSettings
+	require.NotNil(t, log.CenterEnabledValue)
+	logged.CenterEnabled = *log.CenterEnabledValue
+	assert.Equal(t, observed, logged)
 	require.ErrorIs(t, db.Model(&log).Update("actor_id", regular).Error, ErrLedgerImmutable)
 	require.ErrorIs(t, db.Delete(&log).Error, ErrLedgerImmutable)
+}
+
+func TestCustomerInvoiceSettingsLegacyCenterDefaultsEnabledAndMigrationPreservesRevisionPostgres(t *testing.T) {
+	db := setupCustomerInvoicePG(t)
+	ctx := t.Context()
+	root := customerInvoiceTestUser(t, common.RoleRootUser)
+	settings := defaultCustomerInvoiceSettings()
+	settings.Special.TaxRateBPS = 600
+	saved, err := UpdateCustomerInvoiceSettings(ctx, root, settings)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, saved.Version)
+
+	require.NoError(t, db.Migrator().DropColumn(&CustomerInvoiceSettingsRevision{}, "center_enabled"))
+	require.NoError(t, db.AutoMigrate(&CustomerInvoiceSettingsRevision{}))
+	require.NoError(t, db.AutoMigrate(&CustomerInvoiceSettingsRevision{}))
+
+	var legacyRevision struct {
+		CenterEnabled *bool `gorm:"column:center_enabled"`
+	}
+	require.NoError(t, db.Model(&CustomerInvoiceSettingsRevision{}).Select("center_enabled").Where("version = ?", saved.Version).Take(&legacyRevision).Error)
+	assert.Nil(t, legacyRevision.CenterEnabled, "upgrade must not rewrite historical revision data")
+	current, err := GetCustomerInvoiceSettings(ctx)
+	require.NoError(t, err)
+	assert.True(t, current.CenterEnabled)
+	assert.Equal(t, saved.Version, current.Version)
+	assert.Equal(t, saved.Special, current.Special)
+	var revision CustomerInvoiceSettingsRevision
+	require.NoError(t, db.Where("version = ?", saved.Version).Take(&revision).Error)
+	assert.Equal(t, root, revision.ActorID)
+	assert.Equal(t, saved.Version, revision.Version)
 }
 
 func TestCustomerInvoiceFeeAdmissionAndSnapshotPostgres(t *testing.T) {
@@ -168,6 +201,45 @@ func TestCustomerInvoiceFeeAdmissionAndSnapshotPostgres(t *testing.T) {
 	saved, err := GetCustomerInvoice(ctx, owner, false, app.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "pending", saved.Status)
+}
+
+func TestCustomerInvoiceCenterSwitchBlocksOnlyNewApplicationsPostgres(t *testing.T) {
+	db := setupCustomerInvoicePG(t)
+	ctx := t.Context()
+	root, owner := customerInvoiceTestUser(t, common.RoleRootUser), customerInvoiceTestUser(t, common.RoleCommonUser)
+	policy := CustomerInvoicePolicy{Enabled: true, MerchantScope: invoiceTestMerchant}
+	order := customerInvoiceTestOrder(t, owner, "center-off", 1500, nil)
+
+	settings, err := GetCustomerInvoiceSettings(ctx)
+	require.NoError(t, err)
+	settings.CenterEnabled = false
+	settings, err = UpdateCustomerInvoiceSettings(ctx, root, settings)
+	require.NoError(t, err)
+	blocked, err := SubmitCustomerInvoice(ctx, owner, policy, customerInvoiceTestInput("center-off-blocked", order.Id))
+	require.ErrorIs(t, err, ErrCustomerInvoiceDisabled)
+	assert.Nil(t, blocked)
+	var applications int64
+	require.NoError(t, db.Model(&CustomerInvoiceApplication{}).Count(&applications).Error)
+	assert.Zero(t, applications)
+
+	settings.CenterEnabled = true
+	settings, err = UpdateCustomerInvoiceSettings(ctx, root, settings)
+	require.NoError(t, err)
+	input := customerInvoiceTestInput("center-off-accepted", order.Id)
+	version := settings.Version
+	input.SettingsVersion = &version
+	application, err := SubmitCustomerInvoice(ctx, owner, policy, input)
+	require.NoError(t, err)
+
+	settings.CenterEnabled = false
+	_, err = UpdateCustomerInvoiceSettings(ctx, root, settings)
+	require.NoError(t, err)
+	stored, err := GetCustomerInvoice(ctx, owner, false, application.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "pending", stored.Status)
+	claimed, err := ClaimCustomerInvoice(ctx, root, policy, application.ID)
+	require.NoError(t, err, "closing intake must not block finance processing")
+	assert.True(t, claimed.Processing)
 }
 
 func TestCustomerInvoiceSettingsIM14UpgradePostgres(t *testing.T) {

@@ -27,10 +27,11 @@ type CustomerInvoiceTypeSettings struct {
 }
 
 type CustomerInvoiceSettings struct {
-	Categories CustomerInvoiceCategories   `json:"categories" gorm:"type:text"`
-	Version    int64                       `json:"version" gorm:"primaryKey;autoIncrement:false"`
-	Ordinary   CustomerInvoiceTypeSettings `json:"ordinary" gorm:"embedded;embeddedPrefix:ordinary_"`
-	Special    CustomerInvoiceTypeSettings `json:"special" gorm:"embedded;embeddedPrefix:special_"`
+	CenterEnabled bool                        `json:"center_enabled" gorm:"-"`
+	Categories    CustomerInvoiceCategories   `json:"categories" gorm:"type:text"`
+	Version       int64                       `json:"version" gorm:"primaryKey;autoIncrement:false"`
+	Ordinary      CustomerInvoiceTypeSettings `json:"ordinary" gorm:"embedded;embeddedPrefix:ordinary_"`
+	Special       CustomerInvoiceTypeSettings `json:"special" gorm:"embedded;embeddedPrefix:special_"`
 }
 
 // Each settings write appends an immutable audit record. Revision zero is the
@@ -38,6 +39,7 @@ type CustomerInvoiceSettings struct {
 // and editor saves, including the first edit on a fresh or upgraded database.
 type CustomerInvoiceSettingsRevision struct {
 	CustomerInvoiceSettings `json:"-" gorm:"embedded"`
+	CenterEnabledValue      *bool `json:"-" gorm:"column:center_enabled"`
 	ActorID                 int   `json:"-" gorm:"not null"`
 	CreatedAt               int64 `json:"-" gorm:"autoCreateTime;not null"`
 }
@@ -46,7 +48,7 @@ func (*CustomerInvoiceSettingsRevision) BeforeUpdate(*gorm.DB) error { return Er
 func (*CustomerInvoiceSettingsRevision) BeforeDelete(*gorm.DB) error { return ErrLedgerImmutable }
 
 func defaultCustomerInvoiceSettings() CustomerInvoiceSettings {
-	return CustomerInvoiceSettings{Categories: defaultCustomerInvoiceCategories(), Ordinary: CustomerInvoiceTypeSettings{Enabled: true}, Special: CustomerInvoiceTypeSettings{Enabled: true}}
+	return CustomerInvoiceSettings{CenterEnabled: true, Categories: defaultCustomerInvoiceCategories(), Ordinary: CustomerInvoiceTypeSettings{Enabled: true}, Special: CustomerInvoiceTypeSettings{Enabled: true}}
 }
 
 func (s CustomerInvoiceSettings) valid() bool {
@@ -73,6 +75,11 @@ func currentCustomerInvoiceSettings(tx *gorm.DB) (CustomerInvoiceSettings, error
 	if !r.valid() {
 		return CustomerInvoiceSettings{}, ErrCustomerInvoiceInvalid
 	}
+	if r.CenterEnabledValue == nil {
+		r.CenterEnabled = true
+	} else {
+		r.CenterEnabled = *r.CenterEnabledValue
+	}
 	if r.Categories == nil {
 		// Prior revisions have SQL NULL. An explicitly saved empty array never
 		// receives defaults and continues to block all new applications.
@@ -84,11 +91,15 @@ func currentCustomerInvoiceSettings(tx *gorm.DB) (CustomerInvoiceSettings, error
 }
 
 func GetCustomerInvoiceSettings(ctx context.Context) (CustomerInvoiceSettings, error) {
+	if DB == nil {
+		return CustomerInvoiceSettings{}, gorm.ErrInvalidDB
+	}
 	return currentCustomerInvoiceSettings(invoiceDB(ctx))
 }
 
 func lockCustomerInvoiceSettings(tx *gorm.DB, edit bool) (CustomerInvoiceSettings, error) {
-	gate := CustomerInvoiceSettingsRevision{CustomerInvoiceSettings: defaultCustomerInvoiceSettings()}
+	centerEnabled := true
+	gate := CustomerInvoiceSettingsRevision{CustomerInvoiceSettings: defaultCustomerInvoiceSettings(), CenterEnabledValue: &centerEnabled}
 	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&gate).Error; err != nil {
 		return CustomerInvoiceSettings{}, err
 	}
@@ -128,14 +139,15 @@ func UpdateCustomerInvoiceSettings(ctx context.Context, actor int, next Customer
 		if next.Categories == nil {
 			next.Categories = current.Categories
 		}
-		if current.Ordinary == next.Ordinary && current.Special == next.Special && slices.Equal(current.Categories, next.Categories) {
+		if current.CenterEnabled == next.CenterEnabled && current.Ordinary == next.Ordinary && current.Special == next.Special && slices.Equal(current.Categories, next.Categories) {
 			return nil
 		}
 		if next.Version == invoiceMaxSettingsVersion {
 			return ErrCustomerInvoiceInvalid
 		}
 		next.Version++
-		return tx.Create(&CustomerInvoiceSettingsRevision{CustomerInvoiceSettings: next, ActorID: actor}).Error
+		centerEnabled := next.CenterEnabled
+		return tx.Create(&CustomerInvoiceSettingsRevision{CustomerInvoiceSettings: next, CenterEnabledValue: &centerEnabled, ActorID: actor}).Error
 	})
 	if err != nil {
 		return CustomerInvoiceSettings{}, err

@@ -49,6 +49,7 @@ const typeSettings = z.object({
 })
 export const invoiceSettingsSchema = z.object({
   version: z.int().nonnegative(),
+  center_enabled: z.boolean().optional(),
   categories: invoiceCategoriesSchema.optional(),
   ordinary: typeSettings,
   special: typeSettings,

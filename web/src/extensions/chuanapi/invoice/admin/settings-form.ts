@@ -45,6 +45,7 @@ export function settingsFormSchema(rateError: string) {
   })
   return z.object({
     version: z.number().int(),
+    center_enabled: z.boolean().optional(),
     ordinary: policy,
     special: policy,
     categories: invoiceCategoriesSchema,
@@ -61,6 +62,7 @@ export function editSettings(settings: InvoiceSettings): SettingsFormValues {
   })
   return {
     version: settings.version,
+    center_enabled: settings.center_enabled,
     ordinary: toFields(settings.ordinary),
     special: toFields(settings.special),
     categories:
@@ -91,6 +93,9 @@ export function settingsPayload(
   return ordinary && special
     ? {
         version: draft.version,
+        ...(draft.center_enabled !== undefined && {
+          center_enabled: draft.center_enabled,
+        }),
         ordinary,
         special,
         ...(supportsCategories && { categories: draft.categories }),

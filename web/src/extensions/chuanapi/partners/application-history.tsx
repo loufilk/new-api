@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { EmptyState } from '@/components/empty-state'
@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { SimpleRecordPager } from '@/features/agent-platform/components/simple-record-pager'
 import { formatTimestamp } from '@/lib/format'
-import { handleServerError } from '@/lib/server-error-message'
+import { handleServerError } from '@/lib/handle-server-error'
 
 import {
   cancelPartnerApplication,
@@ -105,7 +105,7 @@ function ApplicationRow(props: {
     <article className='flex flex-col gap-3 border-b py-4 last:border-b-0'>
       <div className='flex flex-wrap items-start justify-between gap-3'>
         <div className='flex min-w-0 flex-col gap-1'>
-          <h3 className='break-words font-medium'>{application.site_name}</h3>
+          <h3 className='font-medium break-words'>{application.site_name}</h3>
           <p className='text-muted-foreground text-xs'>
             {t('Submitted {{time}}', {
               time: formatTimestamp(application.created_at),
@@ -153,7 +153,7 @@ function ApplicationRow(props: {
         </div>
       </dl>
       {application.description && (
-        <p className='text-muted-foreground whitespace-pre-wrap text-sm'>
+        <p className='text-muted-foreground text-sm whitespace-pre-wrap'>
           {application.description}
         </p>
       )}
@@ -166,15 +166,12 @@ function ApplicationRow(props: {
             <span className='min-w-0 break-words'>
               {platformTitle(quote.platform, t)} / {quote.group}
               {quote.models && (
-                <span className='text-muted-foreground'>
-                  {' '}
-                  · {quote.models}
-                </span>
+                <span className='text-muted-foreground'> · {quote.models}</span>
               )}
             </span>
             <span className='shrink-0 tabular-nums'>×{quote.rate}</span>
             {quote.description && (
-              <span className='text-muted-foreground w-full whitespace-pre-wrap text-xs'>
+              <span className='text-muted-foreground w-full text-xs whitespace-pre-wrap'>
                 {quote.description}
               </span>
             )}
@@ -212,7 +209,7 @@ export function ApplicationHistory(props: { owner: number }) {
       void client.invalidateQueries({ queryKey: partnerKey })
       toast.success(t('Partner application cancelled.'))
     },
-    onError: handleServerError,
+    onError: (error) => handleServerError(error),
     meta: { errorToast: false },
   })
 
@@ -265,7 +262,9 @@ export function ApplicationHistory(props: { owner: number }) {
           if (!open && !cancel.isPending) setCancelTarget(null)
         }}
         title={t('Cancel this partner application?')}
-        desc={t('This submission will be marked cancelled. You can submit a corrected application afterward.')}
+        desc={t(
+          'This submission will be marked cancelled. You can submit a corrected application afterward.'
+        )}
         confirmText={t('Cancel partner application')}
         cancelBtnText={t('Keep application')}
         destructive
