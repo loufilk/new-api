@@ -3,6 +3,7 @@ package middleware
 import (
 	"bytes"
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -147,6 +148,15 @@ func finishAdminAudit(c *gin.Context, writer *auditResponseWriter) {
 
 	routeParams := map[string]string{}
 	for _, p := range c.Params {
+		if strings.HasPrefix(route, "/api/admin/invoice/") {
+			// An invalid path can contain a taxpayer number or other private text.
+			// Only keep the canonical record ID of a successful finance action.
+			id, err := strconv.ParseInt(p.Value, 10, 64)
+			if success && p.Key == "id" && err == nil && id > 0 {
+				routeParams[p.Key] = strconv.FormatInt(id, 10)
+			}
+			continue
+		}
 		routeParams[p.Key] = p.Value
 	}
 

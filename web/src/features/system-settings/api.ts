@@ -21,6 +21,8 @@ import { api } from '@/lib/api'
 import type {
   ConfirmPaymentComplianceResponse,
   FetchUpstreamRatiosRequest,
+  GroupRenameRequest,
+  GroupRenameResponse,
   LogCleanupTask,
   SystemOptionsResponse,
   SystemTaskListResponse,
@@ -34,13 +36,24 @@ import type {
   UpstreamRatiosResponse,
 } from './types'
 
-export async function getSystemOptions() {
-  const res = await api.get<SystemOptionsResponse>('/api/option/')
+export async function getSystemOptions(options?: { fresh?: boolean }) {
+  const res = await api.get<SystemOptionsResponse>(
+    '/api/option/',
+    options?.fresh ? { disableDuplicate: true } : undefined
+  )
   return res.data
 }
 
 export async function updateSystemOption(request: UpdateOptionRequest) {
   const res = await api.put<UpdateOptionResponse>('/api/option/', request)
+  return res.data
+}
+
+export async function renameSystemGroups(request: GroupRenameRequest) {
+  const res = await api.post<GroupRenameResponse>(
+    '/api/option/group-rename',
+    request
+  )
   return res.data
 }
 

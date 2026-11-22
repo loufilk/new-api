@@ -46,3 +46,20 @@ func TestSetupContextForTokenMalformedAutoGroupsFailsClosed(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, []string{}, value)
 }
+
+func TestSetupContextForSmartTokenKeepsModelLimitsAndManualDraft(t *testing.T) {
+	ctx := newTokenAutoGroupsContext()
+	token := &model.Token{
+		Id: 1, UserId: 2, Group: "old-group", AutoGroups: `["old-group"]`,
+		SmartRouting: true, RoutingStrategy: "price", NoRetryWithinGroup: true,
+		ModelLimitsEnabled: true, ModelLimits: "permitted-model",
+	}
+	require.NoError(t, SetupContextForToken(ctx, token))
+	assert.Equal(t, "auto", common.GetContextKeyString(ctx, constant.ContextKeyTokenGroup))
+	assert.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyTokenSmartRouting))
+	assert.Equal(t, "price", common.GetContextKeyString(ctx, constant.ContextKeyTokenRoutingStrategy))
+	assert.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyTokenNoRetryWithinGroup))
+	assert.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyTokenModelLimitEnabled))
+	assert.Equal(t, "old-group", token.Group, "internal virtual dispatch must not rewrite the stored draft")
+	assert.Equal(t, `["old-group"]`, token.AutoGroups)
+}

@@ -83,33 +83,44 @@ func UnbindUserOAuthForSession(identity AuthSessionIdentity, providerID int, ena
 			}
 			return err
 		}
-		hasLogin := enabled.Password && current.Password != "" || enabled.WeChat && current.WeChatId != ""
-		columns := map[string]string{
-			"github_id": current.GitHubId, "discord_id": current.DiscordId,
-			"oidc_id": current.OidcId, "linux_do_id": current.LinuxDOId, "telegram_id": current.TelegramId,
-		}
-		for _, column := range enabled.OAuthColumns {
-			hasLogin = hasLogin || columns[column] != ""
-		}
-		if !hasLogin && enabled.Passkey {
-			var count int64
-			if err := tx.Model(&PasskeyCredential{}).Where("user_id = ?", identity.UserID).Count(&count).Error; err != nil {
-				return err
-			}
-			hasLogin = count > 0
-		}
-		if !hasLogin && len(enabled.CustomProviderIDs) > 0 {
-			var count int64
-			if err := tx.Model(&UserOAuthBinding{}).Where("user_id = ? AND provider_id <> ? AND provider_id IN ?", identity.UserID, providerID, enabled.CustomProviderIDs).Count(&count).Error; err != nil {
-				return err
-			}
-			hasLogin = count > 0
+		hasLogin, err := hasAccountLoginMethodWithTx(tx, current, enabled, providerID)
+		if err != nil {
+			return err
 		}
 		if !hasLogin {
 			return ErrLastLoginMethod
 		}
 		return tx.Delete(&binding).Error
 	})
+}
+
+// hasAccountLoginMethodWithTx checks current enrollment against enabled methods.
+// An excluded custom provider cannot count as its own unlink fallback.
+func hasAccountLoginMethodWithTx(tx *gorm.DB, current User, enabled AccountLoginMethods, excludedCustomProviderID int) (bool, error) {
+	hasLogin := enabled.Password && current.Password != "" || enabled.WeChat && current.WeChatId != ""
+	columns := map[string]string{
+		"github_id": current.GitHubId, "discord_id": current.DiscordId,
+		"oidc_id": current.OidcId, "google_id": current.GoogleId,
+		"linux_do_id": current.LinuxDOId, "telegram_id": current.TelegramId,
+	}
+	for _, column := range enabled.OAuthColumns {
+		hasLogin = hasLogin || columns[column] != ""
+	}
+	if !hasLogin && enabled.Passkey {
+		var count int64
+		if err := tx.Model(&PasskeyCredential{}).Where("user_id = ?", current.Id).Count(&count).Error; err != nil {
+			return false, err
+		}
+		hasLogin = count > 0
+	}
+	if !hasLogin && len(enabled.CustomProviderIDs) > 0 {
+		var count int64
+		if err := tx.Model(&UserOAuthBinding{}).Where("user_id = ? AND provider_id <> ? AND provider_id IN ?", current.Id, excludedCustomProviderID, enabled.CustomProviderIDs).Count(&count).Error; err != nil {
+			return false, err
+		}
+		hasLogin = count > 0
+	}
+	return hasLogin, nil
 }
 
 func UpdateUserBindColumnForSessionWithTx(tx *gorm.DB, identity AuthSessionIdentity, column, value string) error {
@@ -121,6 +132,15 @@ func UpdateUserBindColumnForSessionWithTx(tx *gorm.DB, identity AuthSessionIdent
 	}
 	// Preserve the existing ownership check within the transaction and update
 	// only the chosen binding column, never a complete user snapshot.
+	if column == "google_id" {
+		return UpdateGoogleBindingWithTx(tx, identity.UserID, value)
+	}
+	if column == "github_id" {
+		return UpdateGitHubBindingWithTx(tx, identity.UserID, value)
+	}
+	if column == "linux_do_id" {
+		return UpdateLinuxDOBindingWithTx(tx, identity.UserID, value)
+	}
 	var count int64
 	if err := tx.Model(&User{}).Where(column+" = ? AND id <> ?", value, identity.UserID).Count(&count).Error; err != nil {
 		return err
@@ -154,20 +174,23 @@ func UpdateUserOAuthBindingForSessionWithTx(tx *gorm.DB, identity AuthSessionIde
 // numeric account ID once the login flow has confirmed the account. It reports
 // whether the row was rewritten; a row whose binding changed since it was read
 // is left untouched.
-func MigrateLegacyGitHubBindingWithTx(tx *gorm.DB, userID int, legacyID, gitHubID string) (bool, error) {
+func MigrateLegacyGitHubBindingWithTx(tx *gorm.DB, userID int, legacyID, gitHubID string, emailEvidence *User) (bool, error) {
 	if userID <= 0 || legacyID == "" || gitHubID == "" {
 		return false, ErrAccountBindingChanged
 	}
-	var count int64
-	if err := tx.Model(&User{}).Where("github_id = ? AND id <> ?", gitHubID, userID).Count(&count).Error; err != nil {
+	var current User
+	if err := lockForUpdate(tx).First(&current, userID).Error; err != nil {
 		return false, err
 	}
-	if count != 0 {
-		return false, ErrExternalIdentityAlreadyClaimed
+	if emailEvidence != nil && (current.AuthVersion != emailEvidence.AuthVersion || current.Status != common.UserStatusEnabled ||
+		NormalizeEmail(current.Email) == "" || NormalizeEmail(current.Email) != NormalizeEmail(emailEvidence.Email)) {
+		return false, ErrAccountBindingChanged
 	}
-	result := tx.Model(&User{}).Where("id = ? AND github_id = ?", userID, legacyID).Update("github_id", gitHubID)
-	if result.Error != nil {
-		return false, result.Error
+	if current.GitHubId != legacyID {
+		return false, nil
 	}
-	return result.RowsAffected == 1, nil
+	if err := UpdateGitHubBindingWithTx(tx, userID, gitHubID); err != nil {
+		return false, err
+	}
+	return true, nil
 }

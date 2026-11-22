@@ -126,7 +126,7 @@ func TestClearChannelReadOnlyFields(t *testing.T) {
 	assert.Zero(t, channel.BalanceUpdatedTime)
 	assert.Zero(t, channel.UsedQuota)
 	assert.Equal(t, "gpt-4o", channel.Models)
-	assert.Equal(t, "default", channel.Group)
+	assert.Equal(t, "default", string(channel.Group))
 }
 
 func TestUpdateChannelRejectsStatusField(t *testing.T) {

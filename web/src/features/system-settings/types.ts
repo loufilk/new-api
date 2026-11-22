@@ -39,6 +39,39 @@ export type UpdateOptionResponse = {
   message: string
 }
 
+export type GroupRenameMapping = {
+  from: string
+  to: string
+}
+
+export type GroupRenameResult = {
+  request_id?: string
+  replayed?: boolean
+  renames: GroupRenameMapping[]
+  options: number
+  channels: number
+  abilities: number
+  users: number
+  tokens: number
+  subscription_plans: number
+  user_subscriptions: number
+  applied_options?: Record<string, string>
+}
+
+export type GroupRenameRequest = {
+  request_id?: string
+  renames: GroupRenameMapping[]
+  options?: Record<string, string>
+  expected?: Record<string, string>
+}
+
+export type GroupRenameResponse = {
+  success: boolean
+  message: string
+  code?: string
+  data?: GroupRenameResult
+}
+
 export interface PasskeyDomainChange {
   rp_id: string
   legacy_rp_ids: string
@@ -179,6 +212,10 @@ export type AuthSettings = {
   'oidc.authorization_endpoint': string
   'oidc.token_endpoint': string
   'oidc.user_info_endpoint': string
+  GoogleOAuthEnabled: boolean
+  'google.client_id': string
+  'google.client_secret': string
+  'google.client_secret_configured': boolean
   TelegramOAuthEnabled: boolean
   'telegram.client_id': string
   'telegram.client_secret': string
@@ -227,6 +264,7 @@ export type ContentSettings = {
 }
 
 export type ModelSettings = {
+  PublicModelOwnedBy: string
   'global.pass_through_request_enabled': boolean
   'global.thinking_model_blacklist': string
   'global.chat_completions_to_responses_policy': string
@@ -272,8 +310,10 @@ export type ModelSettings = {
 
 export type BillingSettings = {
   QuotaForNewUser: number
-  QuotaForInviter: number
-  QuotaForInvitee: number
+  SignupBonusEnabled: boolean
+  QuotaForSignupBonus: number
+  AffiliateRewardEnabled: boolean
+  AffiliateRewardRate: number
   TopUpLink: string
   'quota_setting.enable_free_model_pre_consume': boolean
   'quota_setting.trust_quota_usd': number
@@ -315,6 +355,9 @@ export type BillingSettings = {
   PayMethods: string
   'payment_setting.amount_options': string
   'payment_setting.amount_discount': string
+  'payment_setting.epay_sign_type': string
+  'payment_setting.epay_merchant_private_key': string
+  'payment_setting.epay_platform_public_key': string
   'payment_setting.compliance_confirmed': boolean
   'payment_setting.compliance_terms_version': string
   'payment_setting.compliance_confirmed_at': number
@@ -347,6 +390,7 @@ export type BillingSettings = {
   WaffoPayMethods: string
   WaffoPancakeMerchantID: string
   WaffoPancakePrivateKey: string
+  WaffoPancakeEnvironment: 'test' | 'prod'
   WaffoPancakeReturnURL: string
   // Bound by the operator through the catalog flow in the admin Pancake
   // section (saved via /api/option/waffo-pancake/save).
@@ -382,6 +426,7 @@ export type OperationsSettings = {
   LogConsumeEnabled: boolean
   'log_setting.user_export_enabled': boolean
   'log_setting.max_range_days': number
+  'system_task_setting.retention_days': number
   'performance_setting.disk_cache_enabled': boolean
   'performance_setting.disk_cache_threshold_mb': number
   'performance_setting.disk_cache_max_size_mb': number
@@ -397,14 +442,14 @@ export type OperationsSettings = {
 }
 
 export type SecuritySettings = {
+  CheckSensitiveEnabled: boolean
+  CheckSensitiveOnPromptEnabled: boolean
+  SensitiveWords: string
   ModelRequestRateLimitEnabled: boolean
   ModelRequestRateLimitCount: number
   ModelRequestRateLimitSuccessCount: number
   ModelRequestRateLimitDurationMinutes: number
   ModelRequestRateLimitGroup: string
-  CheckSensitiveEnabled: boolean
-  CheckSensitiveOnPromptEnabled: boolean
-  SensitiveWords: string
   'fetch_setting.enable_ssrf_protection': boolean
   'fetch_setting.allow_private_ip': boolean
   'fetch_setting.domain_filter_mode': boolean

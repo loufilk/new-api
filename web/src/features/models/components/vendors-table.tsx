@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
-import type { ColumnDef } from '@tanstack/react-table'
 import { MoreHorizontal } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -38,6 +37,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
+import type { ColumnDef } from '@/lib/console-table'
 import { formatTimestampToDate } from '@/lib/format'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { createServerError } from '@/lib/server-error-message'
@@ -49,7 +49,7 @@ import { vendorErrorMessage, type VendorOperation } from '../vendor-api'
 import { VendorOperationDialog } from './dialogs/vendor-operation-dialog'
 import { useModels } from './models-provider'
 
-const route = getRouteApi('/_authenticated/models/$section')
+const route = getRouteApi('/_authenticated/model-management/$section')
 
 export function VendorsTable() {
   const { t } = useTranslation()
@@ -99,7 +99,10 @@ export function VendorsTable() {
       header: ({ table }) => (
         <Checkbox
           checked={table.getIsAllPageRowsSelected()}
-          indeterminate={table.getIsSomePageRowsSelected()}
+          indeterminate={
+            table.getIsSomePageRowsSelected() &&
+            !table.getIsAllPageRowsSelected()
+          }
           onCheckedChange={(checked) =>
             table.toggleAllPageRowsSelected(Boolean(checked))
           }
@@ -162,7 +165,7 @@ export function VendorsTable() {
           className='h-auto p-0 tabular-nums'
           onClick={() =>
             void navigate({
-              to: '/models/$section',
+              to: '/model-management/$section',
               params: { section: 'metadata' },
               search: { vendor: [String(row.original.id)], page: 1 },
             })

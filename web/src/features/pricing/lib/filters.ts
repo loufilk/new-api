@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   SORT_OPTIONS,
+  normalizeSortOption,
   FILTER_ALL,
   QUOTA_TYPES,
   QUOTA_TYPE_VALUES,
@@ -34,7 +35,9 @@ import {
   hasTaskUsageSchema,
   isUnconfiguredTaskUsageModel,
 } from './dynamic-price'
+import { filterByCategory, type ModelCategory } from './model-categories'
 import { isTokenBasedModel } from './model-helpers'
+import { withBasePricing } from './plugin-pricing'
 import { calculateTokenPrice } from './price'
 
 // ----------------------------------------------------------------------------
@@ -84,8 +87,9 @@ export function filterByGroup(
 
 /** Pricing category of the active configuration, shared by filters and counts. */
 export function getModelQuotaType(
-  model: PricingModel
+  listedModel: PricingModel
 ): Exclude<QuotaTypeOption, 'all'> | undefined {
+  const model = withBasePricing(listedModel)
   // Task-usage models retain their own category.
   if (hasTaskUsageSchema(model)) return QUOTA_TYPES.TASK
 
@@ -158,9 +162,10 @@ const PRICE_SORTS: Partial<
  * model has no price of that kind.
  */
 function getSortPrice(
-  model: PricingModel,
+  listedModel: PricingModel,
   kind: SortPriceKind
 ): number | undefined {
+  const model = withBasePricing(listedModel)
   if (kind === 'request') {
     const example = getCardExamplePrice(model, { tokenUnit: 'M' })
     if (example) return example.total
@@ -183,7 +188,17 @@ function getSortPrice(
   if (!isTokenBasedModel(model) || isUnconfiguredTaskUsageModel(model)) {
     return undefined
   }
+  if (
+    !isValidSortPrice(model.model_ratio) ||
+    (kind === 'output' && !isValidSortPrice(model.completion_ratio))
+  ) {
+    return undefined
+  }
   return calculateTokenPrice(model, kind, 1)
+}
+
+function isValidSortPrice(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
 }
 
 /**
@@ -195,11 +210,15 @@ export function sortModels(
 ): PricingModel[] {
   const sorted = [...models]
 
-  const priceSort = PRICE_SORTS[sortBy as SortOption]
+  const normalizedSort = normalizeSortOption(sortBy)
+  const priceSort = PRICE_SORTS[normalizedSort]
   if (priceSort) {
     // Extracting the price parses the billing expression, so compute once
     const price = new Map(
-      sorted.map((m) => [m, getSortPrice(m, priceSort.kind)])
+      sorted.map((m) => {
+        const value = getSortPrice(m, priceSort.kind)
+        return [m, isValidSortPrice(value) ? value : undefined] as const
+      })
     )
     // Models without this kind of price stay last in both directions
     sorted.sort((a, b) => {
@@ -213,7 +232,7 @@ export function sortModels(
     return sorted
   }
 
-  switch (sortBy) {
+  switch (normalizedSort) {
     case SORT_OPTIONS.NAME:
       sorted.sort((a, b) =>
         (a.model_name || '').localeCompare(b.model_name || '')
@@ -237,6 +256,7 @@ export function filterAndSortModels(
     endpointType: string
     tag: string
     sortBy: string
+    category?: ModelCategory
   }
 ): PricingModel[] {
   let result = filterBySearch(models, filters.search)
@@ -245,6 +265,7 @@ export function filterAndSortModels(
   result = filterByQuotaType(result, filters.quotaType)
   result = filterByEndpointType(result, filters.endpointType)
   result = filterByTag(result, filters.tag)
+  result = filterByCategory(result, filters.category ?? 'all')
   result = sortModels(result, filters.sortBy)
 
   return result

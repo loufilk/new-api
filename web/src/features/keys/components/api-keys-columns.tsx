@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import type { ColumnDef } from '@tanstack/react-table'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -26,8 +25,10 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { useMediaQuery } from '@/hooks'
 import { toIntlLocale } from '@/i18n/languages'
 import { getUserGroups } from '@/lib/api'
+import type { ColumnDef } from '@/lib/console-table'
 import { getCurrencyDisplay } from '@/lib/currency'
 import { requireServerSuccess } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { API_KEY_STATUSES } from '../constants'
@@ -48,8 +49,9 @@ import { DataTableRowActions } from './data-table-row-actions'
 const EMPTY_GROUP_RATIOS: Record<string, number | string> = {}
 
 function useGroupRatios(): Record<string, number | string> {
+  const userId = useAuthStore((state) => state.auth.user?.id ?? null)
   const { data } = useQuery({
-    queryKey: ['user-groups'],
+    queryKey: ['user-groups', userId],
     queryFn: async () => requireServerSuccess(await getUserGroups()),
     staleTime: 0,
     select: (res) => {
@@ -83,7 +85,10 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
         header: ({ table }) => (
           <Checkbox
             checked={table.getIsAllPageRowsSelected()}
-            indeterminate={table.getIsSomePageRowsSelected()}
+            indeterminate={
+              table.getIsSomePageRowsSelected() &&
+              !table.getIsAllPageRowsSelected()
+            }
             onCheckedChange={(value) =>
               table.toggleAllPageRowsSelected(!!value)
             }
@@ -117,7 +122,9 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
         header: t('Status'),
         cell: ({ row }) => {
           const statusConfig =
-            API_KEY_STATUSES[row.getValue('status') as number]
+            API_KEY_STATUSES[
+              row.original.effective_status ?? row.original.status
+            ]
           if (!statusConfig) return null
           return (
             <StatusBadge
@@ -159,6 +166,8 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
               group={group}
               ratio={groupRatios[group]}
               crossGroupRetry={apiKey.cross_group_retry}
+              smartRouting={apiKey.smart_routing}
+              routingStrategy={apiKey.routing_strategy}
               shouldReduceMotion={shouldReduceMotion}
             />
           )

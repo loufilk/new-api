@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import type { Row } from '@tanstack/react-table'
 import {
   render,
   screen,
@@ -32,6 +31,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { pricingOptions } from '@/features/model-pricing/pricing'
 import { api } from '@/lib/api'
+import type { Row } from '@/lib/console-table'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { DataTableRowActions } from '../components/data-table-row-actions'
@@ -150,6 +150,18 @@ describe('model pricing entry', () => {
   })
 
   it('opens pricing directly, keeps it selected after metadata loads, and reopens Edit on metadata', async () => {
+    const post = vi.spyOn(api, 'post').mockImplementation(async (url, body) => {
+      if (url !== '/api/option/model_pricing/preview') {
+        throw new Error('Unexpected POST in metadata pricing entry test')
+      }
+      const request = body as { pricing: Record<string, unknown> }
+      return {
+        data: {
+          success: true,
+          data: { effective: request.pricing, cache_write_mode: 'none' },
+        },
+      }
+    })
     let resolveDetail!: (value: Awaited<ReturnType<typeof api.get>>) => void
     const detail = new Promise<Awaited<ReturnType<typeof api.get>>>(
       (resolve) => {
@@ -196,6 +208,17 @@ describe('model pricing entry', () => {
     expect(
       await screen.findByRole('textbox', { name: 'Input price' })
     ).toHaveValue('6.5')
+    // Keep the real editor mounted through its debounced preview response;
+    // the tab and layout assertions below must hold after that async render.
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith(
+        '/api/option/model_pricing/preview',
+        expect.objectContaining({
+          model_name: model.model_name,
+          pricing: expect.objectContaining({ ModelRatio: 3.25 }),
+        })
+      )
+    )
     expect(
       screen.queryByRole('heading', { name: 'Edit model pricing' })
     ).not.toBeInTheDocument()

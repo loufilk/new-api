@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relay/requestplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -94,6 +95,9 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
+		if newAPIError = requestplugin.PassThrough(c, info, storage); newAPIError != nil {
+			return newAPIError
+		}
 		requestBody = common.NewReplayableBodyReader(storage)
 	} else {
 		// 使用 ConvertGeminiRequest 转换请求格式
@@ -107,12 +111,18 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 
+		if jsonData, newAPIError = requestplugin.Outbound(c, info, jsonData); newAPIError != nil {
+			return newAPIError
+		}
 		// apply param override
 		if len(info.ParamOverride) > 0 {
 			jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
 			if err != nil {
 				return newAPIErrorFromParamOverride(err)
 			}
+		}
+		if newAPIError = requestplugin.Egress(c, info, jsonData); newAPIError != nil {
+			return newAPIError
 		}
 
 		logger.LogDebug(c, "Gemini request body: %s", jsonData)
@@ -148,6 +158,7 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 	usage, openaiErr := adaptor.DoResponse(c, resp.(*http.Response), info)
 	if openaiErr != nil {
+		consumePartialTextStreamQuota(c, info, usage)
 		service.ResetStatusCode(openaiErr, statusCodeMappingStr)
 		return openaiErr
 	}
@@ -159,39 +170,20 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
 
-	isBatch := strings.HasSuffix(c.Request.URL.Path, "batchEmbedContents")
-	info.IsGeminiBatchEmbedding = isBatch
-
 	var req dto.Request
 	var err error
-	var inputTexts []string
-
-	if isBatch {
-		batchRequest := &dto.GeminiBatchEmbeddingRequest{}
-		err = common.UnmarshalBodyReusable(c, batchRequest)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
-		}
-		req = batchRequest
-		for _, r := range batchRequest.Requests {
-			for _, part := range r.Content.Parts {
-				if part.Text != "" {
-					inputTexts = append(inputTexts, part.Text)
-				}
-			}
-		}
-	} else {
-		singleRequest := &dto.GeminiEmbeddingRequest{}
-		err = common.UnmarshalBodyReusable(c, singleRequest)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
-		}
-		req = singleRequest
-		for _, part := range singleRequest.Content.Parts {
-			if part.Text != "" {
-				inputTexts = append(inputTexts, part.Text)
-			}
-		}
+	info.IsGeminiBatchEmbedding = false
+	switch request := info.Request.(type) {
+	case *dto.GeminiBatchEmbeddingRequest:
+		info.IsGeminiBatchEmbedding = true
+		req, err = common.DeepCopy(request)
+	case *dto.GeminiEmbeddingRequest:
+		req, err = common.DeepCopy(request)
+	default:
+		err = fmt.Errorf("invalid Gemini embedding request type: %T", info.Request)
+	}
+	if err != nil {
+		return types.NewError(err, types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
 
 	err = helper.ModelMappedHelper(c, info, req)
@@ -216,12 +208,18 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPI
 		return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
 
+	if jsonData, newAPIError = requestplugin.Outbound(c, info, jsonData); newAPIError != nil {
+		return newAPIError
+	}
 	// apply param override
 	if len(info.ParamOverride) > 0 {
 		jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
 		if err != nil {
 			return newAPIErrorFromParamOverride(err)
 		}
+	}
+	if newAPIError = requestplugin.Egress(c, info, jsonData); newAPIError != nil {
+		return newAPIError
 	}
 	logger.LogDebug(c, "Gemini embedding request body: %s", jsonData)
 	body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)

@@ -1,0 +1,23 @@
+key,value,notes
+candidate_head,5afacf7da479dcf23b450a0535fbfcd67f4a39fb,approved modularization candidate baseline
+official_base,bdef117505247769268b209665fb3ad7554c3da7,official NewAPI comparison baseline
+diff_files,620,git diff official_base...candidate_head
+insertions,44958,git diff --shortstat
+deletions,3986,git diff --shortstat
+frontend_core_concrete_chuanapi_imports,3,help index guide and api routes; may shrink but not grow during Batch A
+frontend_concrete_import_1,web/src/routes/help/index.tsx,temporary Phase 2 migration target
+frontend_concrete_import_2,web/src/routes/help/guides/$slug.tsx,temporary Phase 2 migration target
+frontend_concrete_import_3,web/src/routes/help/api/index.tsx,temporary Phase 2 migration target
+core_brand_literal_files,3,production string literals only; comments tests docs ops and ChuanAPI modules excluded
+core_brand_literal_1,controller/misc.go,mail footer
+core_brand_literal_2,middleware/turnstile-check.go,Turnstile expected hostname
+core_brand_literal_3,web/src/lib/public-site.ts,marketing and quickstart URLs
+extension_external_dependency_count,2,gin and gorm only; whitelist remains frozen in Batch A
+manifest_upstream_core,448,initial rule-based review bucket; not a permanence decision
+manifest_chuanapi_module,67,clear ChuanAPI extraction candidates
+manifest_generic_module,56,primarily image-generation extraction candidates
+manifest_generic_core_enhancement,17,generic enhancements retained or upstream candidates
+manifest_generic_extension_kernel,15,extension and runtime port infrastructure
+manifest_composition_root,6,current backend/frontend composition surface including chuanapi adapter files
+manifest_ops_deployment,9,ops CI and migration tooling
+manifest_test_compat,2,non-runtime review/documentation bucket

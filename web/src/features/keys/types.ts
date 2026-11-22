@@ -26,6 +26,8 @@ export const apiKeySchema = z.object({
   id: z.number(),
   name: z.string(),
   key: z.string(),
+  settings_version: z.number().int().positive().optional(),
+  effective_status: z.number().int().optional(),
   status: z.number(), // 1: enabled, 2: disabled, 3: expired, 4: exhausted
   remain_quota: z.number(),
   used_quota: z.number(),
@@ -33,6 +35,16 @@ export const apiKeySchema = z.object({
   expired_time: z.number(), // -1 for never expires
   created_time: z.number(),
   accessed_time: z.number(),
+  smart_routing: z.boolean().optional(),
+  routing_strategy: z
+    .preprocess(
+      // Legacy Go tokens use the empty string for the default strategy.
+      (value) => (value === '' ? 'auto' : value),
+      z.enum(['auto', 'success_rate', 'price', 'speed'])
+    )
+    .optional(),
+  no_retry_within_group: z.boolean().optional(),
+  project_label: z.string().nullish(),
   group: z.string().nullish().default(''),
   auto_groups: z.array(z.string()).nullish().default(null),
   cross_group_retry: z
@@ -64,6 +76,7 @@ export interface ApiResponse<T = unknown> {
 export interface GetApiKeysParams {
   p?: number
   size?: number
+  status?: number[]
 }
 
 export interface GetApiKeysResponse {
@@ -82,9 +95,14 @@ export interface SearchApiKeysParams {
   token?: string
   p?: number
   size?: number
+  status?: number[]
 }
 
 export interface ApiKeyFormData {
+  smart_routing: boolean
+  routing_strategy: 'auto' | 'success_rate' | 'price' | 'speed'
+  no_retry_within_group: boolean
+  project_label: string
   name: string
   remain_quota: number
   expired_time: number
@@ -98,10 +116,32 @@ export interface ApiKeyFormData {
   cross_group_retry: boolean
 }
 
+export type ApiKeyUpdateData = Omit<ApiKeyFormData, 'remain_quota'> & {
+  id: number
+  remain_quota?: number
+  expected_version?: number
+}
+
+export interface TokenGroupDetail {
+  name: string
+  ratio: number
+  success_rate: number | null
+  available: boolean
+  history: Array<number | null>
+}
+
 export interface TokenAutoGroupsConfig {
   groups: string[]
   max_count: number
+  selectable_groups?: string[]
+  group_details?: TokenGroupDetail[]
+  metrics_available?: boolean
+  window_start?: number
+  window_end?: number
+  history_bucket_seconds?: number
 }
+
+export type CCSwitchApp = 'claude' | 'codex' | 'gemini'
 
 // ============================================================================
 // Dialog Types

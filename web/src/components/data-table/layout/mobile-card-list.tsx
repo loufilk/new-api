@@ -16,8 +16,20 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { Row, Table } from '@tanstack/react-table'
+
 import { Database } from 'lucide-react'
+import * as React from 'react'
+import { useTranslation } from 'react-i18next'
+
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import { Skeleton } from '@/components/ui/skeleton'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -36,24 +48,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import * as React from 'react'
-import { useTranslation } from 'react-i18next'
-
-import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@/components/ui/empty'
-import { Skeleton } from '@/components/ui/skeleton'
+import type { Row, Table } from '@/lib/console-table'
 import { cn } from '@/lib/utils'
 
 import { tableHasCompactMeta } from './card-cell-utils'
 import { CardRowContent } from './card-row-content'
 
-interface MobileCardListProps<TData> {
+interface MobileCardListProps<TData extends object> {
   table: Table<TData>
   enableRowSelection?: boolean
   isLoading?: boolean
@@ -115,7 +116,9 @@ function FallbackListSkeleton() {
  * {@link CardRowContent}; see `card-row-content.tsx` for the column-meta
  * extensions (`mobileTitle`, `mobileBadge`, `mobileHidden`).
  */
-export function MobileCardList<TData>(props: MobileCardListProps<TData>) {
+export function MobileCardList<TData extends object>(
+  props: MobileCardListProps<TData>
+) {
   const {
     table,
     enableRowSelection = false,
@@ -165,7 +168,10 @@ export function MobileCardList<TData>(props: MobileCardListProps<TData>) {
         <label className='flex items-center gap-2 px-3 py-2 text-xs'>
           <Checkbox
             checked={table.getIsAllPageRowsSelected()}
-            indeterminate={table.getIsSomePageRowsSelected()}
+            indeterminate={
+              table.getIsSomePageRowsSelected() &&
+              !table.getIsAllPageRowsSelected()
+            }
             onCheckedChange={(value) =>
               table.toggleAllPageRowsSelected(Boolean(value))
             }

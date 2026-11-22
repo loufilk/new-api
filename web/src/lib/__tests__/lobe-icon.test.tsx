@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { runInNewContext } from 'node:vm'
 
@@ -25,9 +26,12 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { getLobeIcon, getLobeIconNames } from '../lobe-icon'
 
-vi.mock('@lobehub/icons/es/Mistral/components/Color.js', () => {
-  throw new Error('Icon chunk unavailable')
-})
+vi.mock(
+  '../../../node_modules/@lobehub/icons/es/Mistral/components/Color.mjs',
+  () => {
+    throw new Error('Icon chunk unavailable')
+  }
+)
 
 describe('Lobe icons', () => {
   it.each([
@@ -49,16 +53,29 @@ describe('Lobe icons', () => {
       }
     ) as { webpackInclude: RegExp }
     const separator = root.includes('\\') ? '\\' : '/'
+    // Resolve the actual files shipped by the installed icon package: template
+    // requests can still work in Vitest while a stale extension filters all
+    // production chunks out of Rspack's filesystem context.
+    const require = createRequire(import.meta.url)
     const files = [
-      'OpenAI/components/Mono.js',
-      'Claude/components/Color.js',
-      'Gemini/components/Color.js',
-      'Gemma/components/Simple.js',
-      'LobeHub/components/Morden.js',
-      'OpenAI/index.js',
-      'OpenAI/components/Mono.d.ts',
-      'OpenAI/components/Unknown.js',
-    ]
+      'OpenAI/components/Mono',
+      'Claude/components/Color',
+      'Gemini/components/Color',
+      'Gemma/components/Simple',
+      'LobeHub/components/Morden',
+    ].map(
+      (variant) =>
+        require
+          .resolve(`@lobehub/icons/es/${variant}.js`)
+          .replaceAll('\\', '/')
+          .split('/es/')
+          .pop() ?? ''
+    )
+    files.push(
+      'OpenAI/index.mjs',
+      'OpenAI/components/Mono.d.mts',
+      'OpenAI/components/Unknown.mjs'
+    )
     const included = files.filter((file) =>
       webpackInclude.test(root + file.replaceAll('/', separator))
     )

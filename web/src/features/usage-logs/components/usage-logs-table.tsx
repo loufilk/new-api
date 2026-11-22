@@ -16,9 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { hashKey, useQuery, useQueryClient } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
-import type { ColumnDef } from '@tanstack/react-table'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -33,6 +32,7 @@ import {
 } from '@/features/subscriptions/api'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
+import type { ColumnDef } from '@/lib/console-table'
 import { createServerError } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
@@ -45,7 +45,7 @@ import {
 import { shouldShowBillingSource } from '../lib/billing-source'
 import { useColumnsByCategory } from '../lib/columns'
 import { parseLogOther } from '../lib/format'
-import { fetchLogsByCategory } from '../lib/utils'
+import { fetchLogsByCategory, logFilterScope } from '../lib/utils'
 import type { LogCategory } from '../types'
 import { CommonLogsFilterBar } from './common-logs-filter-bar'
 import { TaskLogsFilterBar } from './task-logs-filter-bar'
@@ -97,6 +97,8 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   } = useLogsViewScope()
   const isMobile = useMediaQuery('(max-width: 640px)')
   const searchParams = route.useSearch()
+  const queryClient = useQueryClient()
+  const role = useAuthStore((state) => state.auth.user?.role)
   const userId = useAuthStore((state) => state.auth.user?.id)
   const { data: showBillingSource = false } = useQuery({
     queryKey: ['usage-log-billing-source', isAdmin, userId],
@@ -160,26 +162,29 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     ],
   })
 
+  const scope = hashKey([
+    logCategory,
+    viewAccess,
+    userId,
+    role,
+    logFilterScope(searchParams),
+    columnFilters,
+  ])
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: [
-      'logs',
-      logCategory,
-      viewAccess,
-      pagination.pageIndex + 1,
-      pagination.pageSize,
-      columnFilters,
-      searchParams,
-      t,
-    ],
+    queryKey: ['logs', scope, pagination.pageIndex, pagination.pageSize],
+    enabled: userId != null,
     queryFn: async () => {
-      const result = await fetchLogsByCategory({
-        logCategory,
-        isAdmin,
-        page: pagination.pageIndex + 1,
-        pageSize: pagination.pageSize,
-        searchParams,
-        columnFilters,
-      })
+      const result = await fetchLogsByCategory(
+        {
+          logCategory,
+          isAdmin,
+          page: pagination.pageIndex + 1,
+          pageSize: pagination.pageSize,
+          searchParams,
+          columnFilters,
+        },
+        { client: queryClient, scope }
+      )
 
       if (!result?.success) {
         throw createServerError(result, t('Failed to load logs'))
@@ -187,15 +192,8 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
 
       return result.data || DEFAULT_LOGS_DATA
     },
-    placeholderData: (previousData, previousQuery) => {
-      if (
-        previousQuery?.queryKey[1] === logCategory &&
-        previousQuery.queryKey[2] === viewAccess
-      ) {
-        return previousData
-      }
-      return undefined
-    },
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[1] === scope ? previousData : undefined,
   })
 
   const logs = data?.items || []

@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/model_setting"
@@ -39,11 +40,21 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	if err := helper.ValidateImageModelRequest(&request, true); err != nil {
+		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
 	xaiRequest := ImageRequest{
 		Model:          request.Model,
 		Prompt:         request.Prompt,
 		N:              int(lo.FromPtrOr(request.N, uint(1))),
 		ResponseFormat: request.ResponseFormat,
+		AspectRatio:    request.AspectRatio,
+		Resolution:     request.Resolution,
+		Image:          request.Image,
+		Images:         request.Images,
+	}
+	if request.Quality != "" {
+		xaiRequest.Quality = lo.ToPtr(request.Quality)
 	}
 	return xaiRequest, nil
 }
@@ -106,6 +117,9 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
+	if info != nil {
+		info.VendorToolUsage = xaiResponsesToolUsage
+	}
 	if request.Model == "" && info != nil {
 		request.Model = info.UpstreamModelName
 	}

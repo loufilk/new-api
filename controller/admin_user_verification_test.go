@@ -53,6 +53,8 @@ func adminUserRequest(method, path, body, proof string, identity service.AuthIde
 func TestAdminUserRiskOperationsRequireProofBeforeMutation(t *testing.T) {
 	for _, test := range []struct {
 		name, method, path string
+		expectedStatus     int
+		expectedCode       string
 		body               func(target *model.User) string
 		params             func(target *model.User) gin.Params
 		handler            gin.HandlerFunc
@@ -112,6 +114,16 @@ func TestAdminUserRiskOperationsRequireProofBeforeMutation(t *testing.T) {
 				stored, err := model.GetUserById(target.Id, false)
 				require.NoError(t, err)
 				assert.Equal(t, "", stored.DisplayName)
+			},
+		},
+		{
+			name: "reject legacy agent role creation", method: http.MethodPost, path: "/api/user/", handler: CreateUser,
+			expectedStatus: http.StatusBadRequest, expectedCode: "INVALID_USER_ROLE",
+			body: func(*model.User) string { return `{"username":"new-agent","password":"agent-password-1","role":5}` },
+			unchanged: func(t *testing.T, _ *model.User) {
+				var count int64
+				require.NoError(t, model.DB.Model(&model.User{}).Where("username = ?", "new-agent").Count(&count).Error)
+				assert.Zero(t, count)
 			},
 		},
 		{
@@ -179,8 +191,12 @@ func TestAdminUserRiskOperationsRequireProofBeforeMutation(t *testing.T) {
 			response := adminUserRequest(test.method, test.path, body, "", identity, common.RoleRootUser, params, test.handler)
 			var result securityEnrollmentResponse
 			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
-			assert.Equal(t, http.StatusForbidden, response.Code)
-			assert.Equal(t, "SECURITY_PROOF_REQUIRED", result.Code)
+			expectedStatus, expectedCode := test.expectedStatus, test.expectedCode
+			if expectedStatus == 0 {
+				expectedStatus, expectedCode = http.StatusForbidden, "SECURITY_PROOF_REQUIRED"
+			}
+			assert.Equal(t, expectedStatus, response.Code)
+			assert.Equal(t, expectedCode, result.Code)
 			test.unchanged(t, target)
 			var flows int64
 			require.NoError(t, model.DB.Model(&model.AuthFlow{}).Count(&flows).Error)
@@ -217,7 +233,7 @@ func TestCreateUserRejectsNonStandardRole(t *testing.T) {
 		role         int
 		operatorRole int
 	}{
-		{"between common and admin", 5, common.RoleAdminUser},
+		{"unassigned role below agent", 4, common.RoleAdminUser},
 		{"negative", -1, common.RoleAdminUser},
 		{"between admin and root", 99, common.RoleRootUser},
 	} {

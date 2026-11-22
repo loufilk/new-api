@@ -60,7 +60,6 @@ func TestStreamResponseGeminiChat2OpenAIAttachesUsageMetadata(t *testing.T) {
 }
 
 func TestGeminiChatStreamHandlerClaudeFirstFrameUsesUpstreamUsage(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
@@ -146,7 +145,6 @@ func TestGeminiChatStreamHandlerClaudeFirstFrameUsesUpstreamUsage(t *testing.T) 
 func TestGeminiChatHandlerCompletionTokensExcludeToolUsePromptTokens(t *testing.T) {
 	t.Parallel()
 
-	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
@@ -195,7 +193,6 @@ func TestGeminiChatHandlerCompletionTokensExcludeToolUsePromptTokens(t *testing.
 }
 
 func TestGeminiStreamHandlerCompletionTokensExcludeToolUsePromptTokens(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
@@ -254,7 +251,6 @@ func TestGeminiStreamHandlerCompletionTokensExcludeToolUsePromptTokens(t *testin
 func TestGeminiTextGenerationHandlerPromptTokensIncludeToolUsePromptTokens(t *testing.T) {
 	t.Parallel()
 
-	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-3-flash-preview:generateContent", nil)
 
@@ -304,7 +300,6 @@ func TestGeminiTextGenerationHandlerPromptTokensIncludeToolUsePromptTokens(t *te
 func TestGeminiChatHandlerUsesEstimatedPromptTokensWhenUsagePromptMissing(t *testing.T) {
 	t.Parallel()
 
-	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
@@ -353,7 +348,6 @@ func TestGeminiChatHandlerUsesEstimatedPromptTokensWhenUsagePromptMissing(t *tes
 }
 
 func TestGeminiStreamHandlerUsesEstimatedPromptTokensWhenUsagePromptMissing(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
@@ -412,7 +406,6 @@ func TestGeminiStreamHandlerUsesEstimatedPromptTokensWhenUsagePromptMissing(t *t
 func TestGeminiTextGenerationHandlerUsesEstimatedPromptTokensWhenUsagePromptMissing(t *testing.T) {
 	t.Parallel()
 
-	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-3-flash-preview:generateContent", nil)
 
@@ -462,7 +455,6 @@ func TestGeminiTextGenerationHandlerUsesEstimatedPromptTokensWhenUsagePromptMiss
 func TestGeminiChatHandlerMissingUsageMetadataBuildsEstimatedBillingUsage(t *testing.T) {
 	t.Parallel()
 
-	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
@@ -569,7 +561,6 @@ func TestGeminiStreamHandlerPromptOnlyUsageMetadataEstimatesCompletionTokens(t *
 func TestGeminiChatHandlerPromptOnlyUsageMetadataEstimatesCompletionTokens(t *testing.T) {
 	t.Parallel()
 
-	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
@@ -616,7 +607,6 @@ func TestGeminiChatHandlerPromptOnlyUsageMetadataEstimatesCompletionTokens(t *te
 }
 
 func TestGeminiStreamHandlerEmptyUsageMetadataBuildsEstimatedBillingUsage(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
@@ -652,6 +642,73 @@ func TestGeminiStreamHandlerEmptyUsageMetadataBuildsEstimatedBillingUsage(t *tes
 	require.Equal(t, usage.PromptTokens, usage.BillingUsage.GeminiUsageMetadata.PromptTokenCount)
 	require.Equal(t, usage.CompletionTokens, usage.BillingUsage.GeminiUsageMetadata.CandidatesTokenCount)
 	require.True(t, common.GetContextKeyBool(c, constant.ContextKeyLocalCountTokens))
+}
+
+func TestGeminiTextGenerationHandlerRewritesNativeModelVersionForClient(t *testing.T) {
+	t.Parallel()
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/public-model:generateContent", nil)
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, "public-model")
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "public-model",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "private-provider-model",
+		},
+	}
+
+	body := []byte(`{"modelVersion":"private-provider-model","candidates":[{"content":{"role":"model","parts":[{"text":"hello"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":3,"totalTokenCount":5}}`)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}
+
+	usage, newAPIError := GeminiTextGenerationHandler(c, info, resp)
+	require.Nil(t, newAPIError)
+	require.NotNil(t, usage)
+	require.Equal(t, 5, usage.TotalTokens)
+	require.Equal(t, "private-provider-model", info.GetUpstreamModelName(), "the billing/routing identity keeps the upstream model")
+	require.NotNil(t, info.ResponseModel)
+	require.Equal(t, "private-provider-model", info.ResponseModel.ReturnedModel)
+	require.Contains(t, recorder.Body.String(), `"modelVersion":"public-model"`)
+	require.NotContains(t, recorder.Body.String(), "private-provider-model")
+	require.Contains(t, recorder.Body.String(), `"text":"hello"`)
+}
+
+func TestGeminiTextGenerationStreamHandlerRewritesNativeModelVersionForClient(t *testing.T) {
+	oldStreamingTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldStreamingTimeout })
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/public-model:streamGenerateContent", nil)
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, "public-model")
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "public-model",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "private-provider-model",
+		},
+	}
+
+	streamBody := "data: {\"modelVersion\":\"private-provider-model\",\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"hello\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":2,\"candidatesTokenCount\":3,\"totalTokenCount\":5}}\n\ndata: [DONE]\n\n"
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(streamBody)),
+	}
+
+	usage, newAPIError := GeminiTextGenerationStreamHandler(c, info, resp)
+	require.Nil(t, newAPIError)
+	require.NotNil(t, usage)
+	require.Equal(t, 5, usage.TotalTokens)
+	require.Contains(t, recorder.Body.String(), `"modelVersion":"public-model"`)
+	require.NotContains(t, recorder.Body.String(), "private-provider-model")
+	require.Equal(t, "private-provider-model", info.GetUpstreamModelName())
 }
 
 // Google Search grounding records the unique trimmed non-empty queries
@@ -752,5 +809,58 @@ func TestGeminiHandlersCountGroundingQueries(t *testing.T) {
 			}
 			assert.Equal(t, tt.want, counts)
 		})
+	}
+}
+
+func TestGeminiEmbeddingHandlersPreferReportedUsageAndPreserveFallback(t *testing.T) {
+	for _, mode := range []string{"openai", "native_single", "native_batch"} {
+		for _, tc := range []struct {
+			name       string
+			metadata   string
+			wantPrompt int
+		}{
+			{name: "reported", metadata: `,"usageMetadata":{"promptTokenCount":37}`, wantPrompt: 37},
+			{name: "missing", wantPrompt: 123},
+			{name: "zero", metadata: `,"usageMetadata":{"promptTokenCount":0}`, wantPrompt: 123},
+			{name: "negative", metadata: `,"usageMetadata":{"promptTokenCount":-1}`, wantPrompt: 123},
+		} {
+			t.Run(mode+"/"+tc.name, func(t *testing.T) {
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/embeddings", nil)
+				info := &relaycommon.RelayInfo{
+					OriginModelName:        "public-embedding-alias",
+					IsGeminiBatchEmbedding: mode == "native_batch",
+					ChannelMeta:            &relaycommon.ChannelMeta{UpstreamModelName: "gemini-embedding-001"},
+				}
+				info.SetEstimatePromptTokens(123)
+				body := `{"embeddings":[{"values":[0.1,0.2]}]` + tc.metadata + `}`
+				if mode == "native_single" {
+					body = `{"embedding":{"values":[0.1,0.2]}` + tc.metadata + `}`
+				}
+				response := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}
+				var usage *dto.Usage
+				var apiErr *types.NewAPIError
+				if mode == "openai" {
+					usage, apiErr = GeminiEmbeddingHandler(c, info, response)
+				} else {
+					usage, apiErr = NativeGeminiEmbeddingHandler(c, response, info)
+				}
+				require.Nil(t, apiErr)
+				require.NotNil(t, usage)
+				assert.Equal(t, tc.wantPrompt, usage.PromptTokens)
+				assert.Equal(t, tc.wantPrompt, usage.TotalTokens)
+				assert.Zero(t, usage.CompletionTokens)
+				if mode == "openai" {
+					var converted dto.OpenAIEmbeddingResponse
+					require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &converted))
+					assert.Equal(t, "public-embedding-alias", converted.Model)
+					assert.Equal(t, tc.wantPrompt, converted.Usage.PromptTokens)
+					require.Len(t, converted.Data, 1)
+				} else {
+					assert.JSONEq(t, body, recorder.Body.String())
+				}
+			})
+		}
 	}
 }

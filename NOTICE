@@ -36,6 +36,38 @@ frontend bundles, and Electron desktop installers distributed to users.
 
 ==== Apache-2.0 Notices ====
 
+Apache Casbin (Incubating)
+Copyright 2026 The Apache Software Foundation
+
+This product includes software developed at
+The Apache Software Foundation (https://www.apache.org/).
+
+Portions of this software were originally developed by the Casbin project.
+Copyright 2017-2026 The casbin Authors.
+
+go-yaml
+The following files were ported to Go from C files of libyaml, and thus are
+still covered by their original MIT license, with the additional copyright
+starting in 2011 when the project was ported over:
+
+- internal/libyaml/api.go
+- internal/libyaml/emitter.go
+- internal/libyaml/parser.go
+- internal/libyaml/reader.go
+- internal/libyaml/scanner.go
+- internal/libyaml/writer.go
+- internal/libyaml/yaml.go
+- internal/libyaml/yamlprivate.go
+
+Copyright 2006-2010 Kirill Simonov
+https://opensource.org/license/mit
+
+All the remaining project files are covered by the Apache license:
+
+Copyright 2011-2019 Canonical Ltd
+Copyright 2025 The go-yaml Project Contributors
+http://www.apache.org/licenses/LICENSE-2.0
+
 AWS SDK for Go
 Copyright 2015 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 Copyright 2014-2015 Stripe, Inc.

@@ -33,7 +33,6 @@ import type {
   Message,
   PlaygroundConfig,
   ParameterEnabled,
-  ModelOption,
   GroupOption,
 } from '../types'
 
@@ -58,7 +57,6 @@ export function usePlaygroundState() {
   const latestMessagesRef = useRef<Message[]>(messages)
   const hasLoadedMessagesRef = useRef(false)
 
-  const [models, setModels] = useState<ModelOption[]>([])
   const [groups, setGroups] = useState<GroupOption[]>([])
 
   const persistMessages = useCallback((messagesToSave: Message[]) => {
@@ -163,11 +161,9 @@ export function usePlaygroundState() {
     parameterEnabled,
     messages,
     isLoadingMessages,
-    models,
     groups,
 
     // Setters
-    setModels,
     setGroups,
 
     // Actions

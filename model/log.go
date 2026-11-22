@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/privacy"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -114,9 +116,30 @@ func assignDisplayLogIds(logs []*Log, startIdx int) {
 func formatUserLogs(logs []*Log, startIdx int) {
 	for i := range logs {
 		logs[i].ChannelName = ""
+		logs[i].ChannelId = 0
+		logs[i].UpstreamRequestId = ""
+		logs[i].Content = formatUserLogContent(logs[i])
 		logs[i].Other = formatLogOtherJSON(logs[i].Other, logOtherVisibilityUser)
 	}
 	assignDisplayLogIds(logs, startIdx)
+}
+
+// formatUserLogContent replaces stored error diagnostics with the generic
+// client-facing category. Consume/topup content is local billing data and is
+// preserved; only error logs can embed upstream messages or identities.
+func formatUserLogContent(log *Log) string {
+	if log == nil {
+		return ""
+	}
+	if log.Type != LogTypeError {
+		return log.Content
+	}
+	var stored struct {
+		StatusCode int    `json:"status_code"`
+		ErrorType  string `json:"error_type"`
+	}
+	_ = common.UnmarshalJsonStr(log.Other, &stored)
+	return privacy.SafeErrorText(stored.StatusCode, stored.ErrorType)
 }
 
 // FormatAdminLogs removes root-only diagnostics while retaining operational
@@ -337,6 +360,26 @@ type RecordConsumeLogParams struct {
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
+	// Request plugin report hooks read what the request settled, whether or
+	// not consume logs are kept.
+	common.SetContextKey(c, constant.ContextKeyConsumeLog, &params)
+	recordUsageLog(c, userId, params, LogTypeConsume)
+}
+
+// RecordUnsettledUsageLog retains delivered token usage for review without
+// reporting an unconfirmed delta as a finalized wallet charge.
+func RecordUnsettledUsageLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
+	if params.Other == nil {
+		params.Other = NewLogOther()
+	}
+	params.Other.SetPublic("billing_status", "settlement_unconfirmed")
+	params.Other.SetAdmin("billing_calculated_quota", params.Quota)
+	params.Quota = 0
+	params.Content = []*common.Message{common.NewMessage("Usage recorded; billing settlement is unconfirmed")}
+	recordUsageLog(c, userId, params, LogTypeError)
+}
+
+func recordUsageLog(c *gin.Context, userId int, params RecordConsumeLogParams, logType int) {
 	if !common.LogConsumeEnabled {
 		return
 	}
@@ -359,7 +402,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		UserId:           userId,
 		Username:         username,
 		CreatedAt:        createdAt,
-		Type:             LogTypeConsume,
+		Type:             logType,
 		Content:          content,
 		PromptTokens:     params.PromptTokens,
 		CompletionTokens: params.CompletionTokens,
@@ -385,7 +428,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	if err != nil {
 		logger.LogError(c, common.LogText("failed to record log: %s", err.Error()))
 	}
-	if common.DataExportEnabled {
+	if logType == LogTypeConsume && common.DataExportEnabled {
 		var cacheReadTokens, cacheCreationTokens int
 		if other != nil {
 			cacheReadTokens, _ = other.public["cache_tokens"].(int)
@@ -411,16 +454,24 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 }
 
 type RecordTaskBillingLogParams struct {
-	UserId    int
-	LogType   int
-	Content   []*common.Message
-	ChannelId int
-	ModelName string
-	Quota     int
-	TokenId   int
-	Group     string
-	Other     *LogOther
-	NodeName  string // 任务发起节点；为空时回退当前节点
+	TokenName         string
+	RequestID         string
+	UpstreamRequestID string
+	IP                string
+
+	// OperationID links this non-authoritative display log to a committed
+	// financial receipt. It never authorizes or replays a money operation.
+	OperationID string
+	UserId      int
+	LogType     int
+	Content     []*common.Message
+	ChannelId   int
+	ModelName   string
+	Quota       int
+	TokenId     int
+	Group       string
+	Other       *LogOther
+	NodeName    string // 任务发起节点；为空时回退当前节点
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
@@ -428,14 +479,20 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		return
 	}
 	username, _ := GetUsernameById(params.UserId, false)
-	tokenName := ""
-	if params.TokenId > 0 {
+	tokenName := params.TokenName
+	if tokenName == "" && params.TokenId > 0 {
 		if token, err := GetTokenById(params.TokenId); err == nil {
 			tokenName = token.Name
 		}
 	}
 	createdAt := common.GetTimestamp()
 	other := params.Other
+	if other == nil {
+		other = NewLogOther()
+	}
+	if params.OperationID != "" {
+		other.SetAdmin("financial_operation_id", params.OperationID)
+	}
 	log := &Log{
 		UserId:    params.UserId,
 		Username:  username,
@@ -450,6 +507,12 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		Group:     params.Group,
 		Other:     other.JSONString(),
 	}
+	if params.RequestID != "" {
+		log.RequestId = params.RequestID
+	} else if params.OperationID != "" {
+		log.RequestId = BillingTokenFingerprint(params.OperationID)
+	}
+	log.UpstreamRequestId, log.Ip = params.UpstreamRequestID, params.IP
 	err := createLog(log)
 	if err != nil {
 		common.SysLog(common.LogText("failed to record task billing log: %s", err.Error()))
@@ -473,13 +536,17 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
-// LogFilter is the usage-log search shared by the log list and the log export.
-// Username and Channel are administrator filters.
+// LogFilter is the usage-log search shared by lists, exports and statistics.
+// UserId is an exact ID filter, independent of Username (both intersect).
+// Self endpoints bind UserId from authentication and omit Username/Channel.
 type LogFilter struct {
+	// Only list requests may opt out of an exact count (total = -1).
+	SkipTotal         bool
 	Type              int
 	StartTimestamp    int64
 	EndTimestamp      int64
 	ModelName         string
+	UserId            int
 	Username          string
 	TokenName         string
 	Channel           int
@@ -490,6 +557,9 @@ type LogFilter struct {
 
 func (f LogFilter) apply(tx *gorm.DB) (*gorm.DB, error) {
 	var err error
+	if f.UserId != 0 {
+		tx = tx.Where("logs.user_id = ?", f.UserId)
+	}
 	if f.Type != LogTypeUnknown {
 		tx = tx.Where("logs.type = ?", f.Type)
 	}
@@ -523,12 +593,21 @@ func (f LogFilter) apply(tx *gorm.DB) (*gorm.DB, error) {
 	return tx, nil
 }
 
+func logPageTotal(tx *gorm.DB, skipTotal bool) (int64, error) {
+	if skipTotal {
+		return -1, nil
+	}
+	var total int64
+	err := tx.Session(&gorm.Session{}).Model(&Log{}).Count(&total).Error
+	return total, err
+}
+
 func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int64, err error) {
 	tx, err := filter.apply(LOG_DB)
 	if err != nil {
 		return nil, 0, err
 	}
-	err = tx.Model(&Log{}).Count(&total).Error
+	total, err = logPageTotal(tx, filter.SkipTotal)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -587,14 +666,12 @@ func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int
 	return logs, total, err
 }
 
-const logSearchCountLimit = 10000
-
 func GetUserLogs(userId int, filter LogFilter, startIdx int, num int) (logs []*Log, total int64, err error) {
 	tx, err := filter.apply(LOG_DB.Where("logs.user_id = ?", userId))
 	if err != nil {
 		return nil, 0, err
 	}
-	err = tx.Model(&Log{}).Limit(logSearchCountLimit).Count(&total).Error
+	total, err = logPageTotal(tx, filter.SkipTotal)
 	if err != nil {
 		common.SysError(common.LogText("failed to count user logs: %s", err.Error()))
 		return nil, 0, common.NewMessage("Failed to query logs")
@@ -651,10 +728,8 @@ func StreamUserLogs(ctx context.Context, userId int, filter LogFilter, fn func(*
 	}
 	count := 0
 	return streamLogs(tx, "logs.id desc", func(log *Log) error {
+		formatUserLogs([]*Log{log}, count)
 		count++
-		log.Id = count
-		log.ChannelName = ""
-		log.Other = formatLogOtherJSON(log.Other, logOtherVisibilityUser)
 		return fn(log)
 	})
 }
@@ -686,48 +761,24 @@ type Stat struct {
 	Tpm   int `json:"tpm"`
 }
 
-func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {
-	tx := LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota")
-
-	// 为rpm和tpm创建单独的查询
-	rpmTpmQuery := LOG_DB.Table("logs").Select("count(*) rpm, COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) tpm")
-
-	if tx, err = applyExplicitLogTextFilter(tx, "username", username); err != nil {
+func SumUsedQuota(filter LogFilter) (stat Stat, err error) {
+	// Preserve the existing usage-stat contract: consume rows only, irrespective
+	// of the displayed log type. All identity and request filters still apply.
+	filter.Type = LogTypeConsume
+	tx, err := filter.apply(LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota"))
+	if err != nil {
 		return stat, err
 	}
-	if rpmTpmQuery, err = applyExplicitLogTextFilter(rpmTpmQuery, "username", username); err != nil {
-		return stat, err
-	}
-	if tokenName != "" {
-		tx = tx.Where("token_name = ?", tokenName)
-		rpmTpmQuery = rpmTpmQuery.Where("token_name = ?", tokenName)
-	}
-	if startTimestamp != 0 {
-		tx = tx.Where("created_at >= ?", startTimestamp)
-	}
-	if endTimestamp != 0 {
-		tx = tx.Where("created_at <= ?", endTimestamp)
-	}
-	if tx, err = applyExplicitLogTextFilter(tx, "model_name", modelName); err != nil {
-		return stat, err
-	}
-	if rpmTpmQuery, err = applyExplicitLogTextFilter(rpmTpmQuery, "model_name", modelName); err != nil {
-		return stat, err
-	}
-	if channel != 0 {
-		tx = tx.Where("channel_id = ?", channel)
-		rpmTpmQuery = rpmTpmQuery.Where("channel_id = ?", channel)
-	}
-	if group != "" {
-		tx = tx.Where(logGroupCol+" = ?", group)
-		rpmTpmQuery = rpmTpmQuery.Where(logGroupCol+" = ?", group)
-	}
 
-	tx = tx.Where("type = ?", LogTypeConsume)
-	rpmTpmQuery = rpmTpmQuery.Where("type = ?", LogTypeConsume)
-
-	// 只统计最近60秒的rpm和tpm
-	rpmTpmQuery = rpmTpmQuery.Where("created_at >= ?", time.Now().Add(-60*time.Second).Unix())
+	// RPM/TPM describe the rolling last minute, not the selected historical
+	// time range. Reuse the same identity/request filters for both queries.
+	rateFilter := filter
+	rateFilter.StartTimestamp = time.Now().Add(-60 * time.Second).Unix()
+	rateFilter.EndTimestamp = 0
+	rpmTpmQuery, err := rateFilter.apply(LOG_DB.Table("logs").Select("count(*) rpm, COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) tpm"))
+	if err != nil {
+		return stat, err
+	}
 
 	// 执行查询
 	if err := tx.Scan(&stat).Error; err != nil {

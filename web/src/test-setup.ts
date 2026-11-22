@@ -20,7 +20,41 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup, configure } from '@testing-library/react'
 import i18next from 'i18next'
 import { initReactI18next } from 'react-i18next'
+import { toast } from 'sonner'
 import { afterEach, beforeAll } from 'vitest'
+
+function createMemoryStorage(): Storage {
+  const values = new Map<string, string>()
+
+  return {
+    get length() {
+      return values.size
+    },
+    clear() {
+      values.clear()
+    },
+    getItem(key) {
+      return values.get(key) ?? null
+    },
+    key(index) {
+      return [...values.keys()][index] ?? null
+    },
+    removeItem(key) {
+      values.delete(key)
+    },
+    setItem(key, value) {
+      values.set(key, String(value))
+    },
+  }
+}
+
+// Bun exposes a partial Node localStorage object when Vitest starts without a
+// valid --localstorage-file. Tests and persisted Zustand stores require the
+// browser Storage contract, so install a deterministic in-memory implementation.
+Object.defineProperty(globalThis, 'localStorage', {
+  configurable: true,
+  value: createMemoryStorage(),
+})
 
 // The testing-library default of 1000ms for findBy*/waitFor is too tight for
 // this suite on contended CI runners, where a first-in-file test also pays the
@@ -42,6 +76,9 @@ beforeAll(async () => {
 
 afterEach(() => {
   cleanup()
+  // Sonner replays active toasts to each new Toaster. Unmounting the previous
+  // test's React tree alone leaves its notifications in the shared store.
+  toast.dismiss?.()
 })
 
 // Prefer reduced motion in tests: entrance animations write inline
@@ -65,6 +102,14 @@ Object.defineProperty(window, 'matchMedia', {
     dispatchEvent: () => false,
   }),
 })
+
+// jsdom computes Vaul's CSS keyframe names but does not run the animations.
+// In this reduced-motion test environment, let Radix unmount closed drawers
+// without waiting for an animationend event that the DOM cannot deliver.
+const drawerMotion = document.createElement('style')
+drawerMotion.textContent =
+  '[data-vaul-drawer][data-state], [data-vaul-overlay][data-state] { animation-name: none !important; }'
+document.head.append(drawerMotion)
 
 // jsdom does not implement Range geometry. CodeMirror measures text through
 // these browser APIs; actual wrapping and scrolling are checked in browser QA.

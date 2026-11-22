@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
@@ -18,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/request_plugin_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
@@ -36,15 +38,6 @@ var completionRatioMetaOptionKeys = []string{
 
 func isPaymentComplianceOptionKey(key string) bool {
 	return strings.HasPrefix(key, "payment_setting.compliance_")
-}
-
-func isPositiveOptionValue(value string) bool {
-	intValue, err := strconv.Atoi(strings.TrimSpace(value))
-	if err == nil {
-		return intValue > 0
-	}
-	floatValue, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-	return err == nil && floatValue > 0
 }
 
 func collectModelNamesFromOptionValue(raw string, modelNames map[string]struct{}) {
@@ -85,7 +78,7 @@ func GetOptions(c *gin.Context) {
 	optionValues := make(map[string]string)
 	common.OptionMapRWMutex.Lock()
 	for k, v := range common.OptionMap {
-		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" {
+		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" || k == "google.client_secret_configured" {
 			continue
 		}
 		value := common.Interface2String(v)
@@ -93,7 +86,8 @@ func GetOptions(c *gin.Context) {
 			strings.HasSuffix(k, "Secret") ||
 			strings.HasSuffix(k, "Key") ||
 			strings.HasSuffix(k, "secret") ||
-			strings.HasSuffix(k, "api_key")
+			strings.HasSuffix(k, "api_key") ||
+			strings.HasSuffix(k, "private_key")
 		if isSensitiveKey {
 			continue
 		}
@@ -108,12 +102,14 @@ func GetOptions(c *gin.Context) {
 	options = append(options, &model.Option{
 		Key: "ResendKeyConfigured", Value: strconv.FormatBool(strings.TrimSpace(common.OptionMap["ResendApiKey"]) != ""),
 	})
+	options = append(options, &model.Option{Key: "google.client_secret_configured", Value: strconv.FormatBool(strings.TrimSpace(common.OptionMap["google.client_secret"]) != "")})
+	effectiveModes := billing_setting.GetBillingModeCopy()
+	effectiveExpressions := billing_setting.GetBillingExprCopy()
 	common.OptionMapRWMutex.Unlock()
-	// Display the same effective expressions used by pricing and settlement,
-	// including built-in defaults absent from persisted administrator options.
+	// Snapshot effective defaults and administrator overrides under the same lock.
 	for key, values := range map[string]map[string]string{
-		"billing_setting.billing_mode": billing_setting.GetBillingModeCopy(),
-		"billing_setting.billing_expr": billing_setting.GetBillingExprCopy(),
+		"billing_setting.billing_mode": effectiveModes,
+		"billing_setting.billing_expr": effectiveExpressions,
 	} {
 		encoded, err := common.Marshal(values)
 		if err != nil {
@@ -189,6 +185,19 @@ func UpdateOption(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
 		return
 	}
+	if strings.EqualFold(strings.TrimSpace(option.Key), model.ModelTestEnabledKey) {
+		// The general option API also accepts management PATs. This opt-in
+		// capability is controlled only from a live root dashboard session.
+		if _, ok := requireBrowserSession(c); !ok {
+			return
+		}
+		// Reject aliases instead of normalizing every option key. This also
+		// prevents accidental collisions on case-insensitive SQL collations.
+		if option.Key != model.ModelTestEnabledKey {
+			common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+			return
+		}
+	}
 	switch option.Value.(type) {
 	case bool:
 		option.Value = common.Interface2String(option.Value.(bool))
@@ -200,14 +209,14 @@ func UpdateOption(c *gin.Context) {
 		option.Value = fmt.Sprintf("%v", option.Value)
 	}
 	switch option.Key {
-	case "QuotaForInviter", "QuotaForInvitee":
-		if isPositiveOptionValue(option.Value.(string)) && !operation_setting.IsPaymentComplianceConfirmed() {
-			common.ApiErrorT(c, "Payment, redemption, subscription, and invitation reward features are disabled. The administrator must confirm compliance terms before enabling them.")
-			return
-		}
 	default:
 		if isPaymentComplianceOptionKey(option.Key) {
 			common.ApiErrorT(c, "Compliance confirmation fields cannot be changed through the general settings API")
+			return
+		}
+		// The request plugin API validates each instance config.
+		if option.Key == request_plugin_setting.InstancesOption {
+			common.ApiErrorT(c, "Request plugin instances cannot be changed through the general settings API")
 			return
 		}
 	}
@@ -218,6 +227,46 @@ func UpdateOption(c *gin.Context) {
 		}
 	}
 	switch option.Key {
+	case "google.client_secret_configured":
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	case "google.client_secret":
+		option.Value = strings.TrimSpace(option.Value.(string))
+		// Empty means keep, not clear. Disable Google sign-in before rotating credentials.
+		if option.Value == "" {
+			common.ApiSuccess(c, nil)
+			return
+		}
+		if len(option.Value.(string)) > 4096 {
+			common.ApiErrorT(c, "Invalid parameters")
+			return
+		}
+	case "google.client_id":
+		option.Value = strings.TrimSpace(option.Value.(string))
+		if len(option.Value.(string)) > 255 {
+			common.ApiErrorT(c, "Invalid parameters")
+			return
+		}
+	case "GoogleOAuthEnabled":
+		if option.Value != "true" && option.Value != "false" {
+			common.ApiErrorT(c, "Invalid parameters")
+			return
+		}
+		if option.Value == "true" {
+			config := system_setting.GoogleSettingsSnapshot()
+			if configErr := oauth.ValidateGoogleConfiguration(config); configErr != nil {
+				writeSecurityOperationError(c, configErr)
+				return
+			}
+			if _, err := oauth.GoogleRedirectURI(config.ServerAddress); err != nil {
+				common.ApiErrorT(c, "Google sign-in requires a secure site address. Use HTTPS, or HTTP only for localhost development.")
+				return
+			}
+			if oauth.HasCustomProviderConflict("google") {
+				writeSecurityOperationError(c, oauth.ErrGoogleOAuthConflict)
+				return
+			}
+		}
 	case "GitHubOAuthEnabled":
 		if option.Value == "true" && common.GitHubClientId == "" {
 			common.ApiErrorT(c, "Cannot enable {{provider}}. Enter the {{provider}} Client ID and Client Secret first.", map[string]any{"provider": "GitHub OAuth"})
@@ -267,6 +316,11 @@ func UpdateOption(c *gin.Context) {
 			common.ApiErrorT(c, "The Classic frontend has been removed. The theme can only be set to default")
 			return
 		}
+	case "group_ratio_setting.group_special_usable_group":
+		if err := ratio_setting.ValidateGroupSpecialUsableGroupJSON(option.Value.(string)); err != nil {
+			common.ApiErrorStatus(c, http.StatusBadRequest, err)
+			return
+		}
 	case "GroupRatio":
 		err = ratio_setting.CheckGroupRatio(option.Value.(string))
 		if err != nil {
@@ -291,26 +345,32 @@ func UpdateOption(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
+	// Validate the wire shape without replacing live ratios. UpdateOption
+	// validates and stores pricing transactionally, then publishes it.
 	case "ImageRatio":
-		err = ratio_setting.UpdateImageRatioByJSONString(option.Value.(string))
+		var ratios map[string]float64
+		err = common.UnmarshalJsonStr(option.Value.(string), &ratios)
 		if err != nil {
 			common.ApiErrorT(c, "Failed to set the image ratio: {{error}}", map[string]any{"error": err.Error()})
 			return
 		}
 	case "AudioRatio":
-		err = ratio_setting.UpdateAudioRatioByJSONString(option.Value.(string))
+		var ratios map[string]float64
+		err = common.UnmarshalJsonStr(option.Value.(string), &ratios)
 		if err != nil {
 			common.ApiErrorT(c, "Failed to set the audio ratio: {{error}}", map[string]any{"error": err.Error()})
 			return
 		}
 	case "AudioCompletionRatio":
-		err = ratio_setting.UpdateAudioCompletionRatioByJSONString(option.Value.(string))
+		var ratios map[string]float64
+		err = common.UnmarshalJsonStr(option.Value.(string), &ratios)
 		if err != nil {
 			common.ApiErrorT(c, "Failed to set the audio completion ratio: {{error}}", map[string]any{"error": err.Error()})
 			return
 		}
 	case "CreateCacheRatio":
-		err = ratio_setting.UpdateCreateCacheRatioByJSONString(option.Value.(string))
+		var ratios map[string]float64
+		err = common.UnmarshalJsonStr(option.Value.(string), &ratios)
 		if err != nil {
 			common.ApiErrorT(c, "Failed to set the cache creation ratio: {{error}}", map[string]any{"error": err.Error()})
 			return

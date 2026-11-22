@@ -29,7 +29,7 @@ func setupOriginTaskDB(t *testing.T) {
 	previousType := common.MainDatabaseType()
 	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, database.AutoMigrate(&model.Task{}, &model.Channel{}))
+	require.NoError(t, database.AutoMigrate(&model.Task{}, &model.Channel{}, &model.Ability{}))
 	model.DB = database
 	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
 	t.Cleanup(func() {
@@ -364,6 +364,9 @@ func TestDistributeHonorsOriginTaskChannelPin(t *testing.T) {
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/vendor/jobs", strings.NewReader(`{}`))
 	c.Request.Header.Set("Content-Type", "application/json")
+	common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(c, constant.ContextKeyTokenGroup, "default")
+	require.NoError(t, model.DB.Create(&model.Ability{Group: "default", Model: "resolved-model", ChannelId: channel.Id, Enabled: true}).Error)
 	c.Set("resolved_task_model", "resolved-model")
 	service.GetChannelConstraints(c).AddPin(dto.ChannelPin{
 		ChannelId: channel.Id,

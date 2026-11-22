@@ -16,8 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { SettingsPage } from '../components/settings-page'
+import { useParams } from '@tanstack/react-router'
+import { useTranslation } from 'react-i18next'
+
+import { SettingsPage, SettingsPageFrame } from '../components/settings-page'
 import type { ContentSettings, SystemOption } from '../types'
+import { ModelTestSection } from './model-test-section'
 import {
   CONTENT_DEFAULT_SECTION,
   getContentSectionContent,
@@ -83,6 +87,18 @@ function resolveContentSettings(
 }
 
 export function ContentSettings() {
+  const { section } = useParams({
+    from: '/_authenticated/system-settings/content/$section',
+  })
+  const { t } = useTranslation()
+  // This admin-only API must never fetch the general Root option collection.
+  if (section === 'model-tests') {
+    return (
+      <SettingsPageFrame title={t('intelligence.title')}>
+        <ModelTestSection />
+      </SettingsPageFrame>
+    )
+  }
   return (
     <SettingsPage
       routePath='/_authenticated/system-settings/content/$section'

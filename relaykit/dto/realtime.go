@@ -38,11 +38,14 @@ type RealtimeResponse struct {
 }
 
 type RealtimeUsage struct {
-	TotalTokens        int                `json:"total_tokens"`
-	InputTokens        int                `json:"input_tokens"`
-	OutputTokens       int                `json:"output_tokens"`
-	InputTokenDetails  InputTokenDetails  `json:"input_token_details"`
-	OutputTokenDetails OutputTokenDetails `json:"output_token_details"`
+	cacheCreationTotal      int
+	cacheDetailsUnknown     uint8
+	cacheCreationNormalized bool
+	TotalTokens             int                `json:"total_tokens"`
+	InputTokens             int                `json:"input_tokens"`
+	OutputTokens            int                `json:"output_tokens"`
+	InputTokenDetails       InputTokenDetails  `json:"input_token_details"`
+	OutputTokenDetails      OutputTokenDetails `json:"output_token_details"`
 }
 
 type RealtimeSession struct {

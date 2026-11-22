@@ -17,7 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { type FormEvent, useEffect, useState } from 'react'
+import { useMutation } from '@tanstack/react-query'
+import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -63,8 +64,8 @@ import {
 import { handleServerError } from '@/lib/handle-server-error'
 import { addTimeToDate } from '@/lib/time'
 
-import { createRedemption, updateRedemption, getRedemption } from '../api'
-import { SUCCESS_MESSAGES } from '../constants'
+import { createRedemption, getRedemption, updateRedemption } from '../api'
+import { REDEMPTION_STATUS, SUCCESS_MESSAGES } from '../constants'
 import {
   getRedemptionFormSchema,
   type RedemptionFormValues,
@@ -72,7 +73,7 @@ import {
   transformFormDataToPayload,
   transformRedemptionToFormDefaults,
 } from '../lib'
-import type { Redemption } from '../types'
+import type { Redemption, RedemptionFormData } from '../types'
 import {
   RedemptionsExportDialog,
   type RedemptionExportData,
@@ -91,10 +92,11 @@ export function RedemptionsMutateDrawer({
   currentRow,
 }: RedemptionsMutateDrawerProps) {
   const { t } = useTranslation()
+  const submitting = useRef(false)
+  const creationRequest = useRef<RedemptionFormData | null>(null)
   const isUpdate = !!currentRow
   const redemptionId = currentRow?.id
   const { triggerRefresh } = useRedemptions()
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const [createdCodes, setCreatedCodes] = useState<RedemptionExportData | null>(
     null
   )
@@ -104,6 +106,47 @@ export function RedemptionsMutateDrawer({
   const [loadedRedemption, setLoadedRedemption] = useState<Redemption | null>(
     null
   )
+
+  const saveMutation = useMutation({
+    mutationFn: async (payload: RedemptionFormData) => {
+      if (payload.id !== undefined) {
+        await updateRedemption(payload)
+        return null
+      }
+      return createRedemption(payload)
+    },
+    retry: false,
+    onSuccess: (codes, payload) => {
+      if (codes) {
+        creationRequest.current = null
+        toast.success(
+          codes.length > 1
+            ? t('Successfully created {{count}} redemption codes', {
+                count: codes.length,
+              })
+            : t(SUCCESS_MESSAGES.REDEMPTION_CREATED)
+        )
+        if (codes.length) {
+          setCreatedCodes({
+            keys: codes,
+            name: payload.name,
+            quota: formatQuotaWithCurrency(payload.quota, {
+              abbreviate: false,
+            }),
+          })
+        }
+      } else {
+        toast.success(t(SUCCESS_MESSAGES.REDEMPTION_UPDATED))
+      }
+      onOpenChange(false)
+      triggerRefresh()
+    },
+    onError: (error) => handleServerError(error),
+    onSettled: () => {
+      submitting.current = false
+    },
+  })
+  const isSubmitting = saveMutation.isPending
 
   const form = useForm<RedemptionFormValues>({
     resolver: zodResolver(getRedemptionFormSchema(t)),
@@ -164,66 +207,62 @@ export function RedemptionsMutateDrawer({
 
   const isUpdateReady =
     !isUpdate ||
-    (redemptionLoadState === 'ready' && loadedRedemption?.id === redemptionId)
+    (redemptionLoadState === 'ready' &&
+      loadedRedemption !== null &&
+      loadedRedemption?.id === redemptionId &&
+      loadedRedemption?.status !== REDEMPTION_STATUS.USED)
   const isLoadingRedemption = redemptionLoadState === 'loading'
 
-  const onSubmit = async (data: RedemptionFormValues) => {
+  const onSubmit = (data: RedemptionFormValues) => {
+    if (submitting.current) return
     if (isUpdate && (!currentRow || !loadedRedemption || !isUpdateReady)) {
       return
     }
 
-    setIsSubmitting(true)
-    try {
-      const basePayload = transformFormDataToPayload(data)
-
-      if (isUpdate && currentRow && loadedRedemption) {
-        const quota = form.getFieldState('quota_dollars').isDirty
-          ? basePayload.quota
-          : loadedRedemption.quota
-        const result = await updateRedemption({
-          ...basePayload,
-          quota,
-          id: currentRow.id,
-        })
-        if (result.success) {
-          toast.success(t(SUCCESS_MESSAGES.REDEMPTION_UPDATED))
-          onOpenChange(false)
-          triggerRefresh()
-        } else {
-          handleServerError(result)
-        }
-      } else {
-        // Create mode
-        const result = await createRedemption(basePayload)
-        if (result.success) {
-          const count = result.data?.length || 0
-          toast.success(
-            count > 1
-              ? t('Successfully created {{count}} redemption codes', {
-                  count,
-                })
-              : t(SUCCESS_MESSAGES.REDEMPTION_CREATED)
-          )
-          if (result.data?.length) {
-            setCreatedCodes({
-              keys: result.data,
-              name: basePayload.name,
-              quota: formatQuotaWithCurrency(basePayload.quota, {
-                abbreviate: false,
-              }),
-            })
-          }
-          onOpenChange(false)
-          triggerRefresh()
-        } else {
-          handleServerError(result)
-        }
-      }
-    } catch (error) {
-      handleServerError(error)
-    } finally {
-      setIsSubmitting(false)
+    const basePayload = transformFormDataToPayload(data)
+    if (
+      isUpdate &&
+      loadedRedemption &&
+      !form.getFieldState('quota_dollars').isDirty
+    ) {
+      basePayload.quota = loadedRedemption.quota
     }
+    if (!Number.isSafeInteger(basePayload.quota) || basePayload.quota <= 0) {
+      form.setError('quota_dollars', { message: t('Invalid quota amount') })
+      return
+    }
+    if (
+      !isUpdate &&
+      !Number.isSafeInteger(basePayload.quota * (basePayload.count ?? 1))
+    ) {
+      form.setError('quota_dollars', { message: t('Invalid quota amount') })
+      return
+    }
+    let payload: RedemptionFormData
+    if (isUpdate && loadedRedemption) {
+      payload = {
+        id: loadedRedemption.id,
+        name: basePayload.name,
+        quota: basePayload.quota,
+        expired_time: basePayload.expired_time,
+      }
+    } else {
+      const previous = creationRequest.current
+      if (
+        previous &&
+        previous.name === basePayload.name &&
+        previous.quota === basePayload.quota &&
+        previous.count === basePayload.count &&
+        previous.expired_time === basePayload.expired_time
+      ) {
+        payload = previous
+      } else {
+        payload = { ...basePayload, request_id: crypto.randomUUID() }
+        creationRequest.current = payload
+      }
+    }
+    submitting.current = true
+    saveMutation.mutate(payload)
   }
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -260,7 +299,12 @@ export function RedemptionsMutateDrawer({
 
   return (
     <>
-      <Sheet open={open} onOpenChange={onOpenChange}>
+      <Sheet
+        open={open}
+        onOpenChange={(nextOpen) => {
+          if (!isSubmitting) onOpenChange(nextOpen)
+        }}
+      >
         <SheetContent
           className={sideDrawerContentClassName('sm:max-w-[600px]')}
         >
@@ -279,6 +323,11 @@ export function RedemptionsMutateDrawer({
               {t('Click save when you&apos;re done.')}
             </SheetDescription>
           </SheetHeader>
+          {loadedRedemption?.status === REDEMPTION_STATUS.USED && (
+            <p role='status' className='text-muted-foreground px-6 text-sm'>
+              {t('Used redemption codes cannot be changed or re-enabled')}
+            </p>
+          )}
           <Form {...form}>
             <form
               id='redemption-form'
@@ -412,7 +461,9 @@ export function RedemptionsMutateDrawer({
                               placeholder={t('Number of codes to create')}
                               onChange={(e) =>
                                 field.onChange(
-                                  Number.parseInt(e.target.value, 10) || 1
+                                  e.target.value === ''
+                                    ? Number.NaN
+                                    : Number(e.target.value)
                                 )
                               }
                             />
@@ -432,7 +483,9 @@ export function RedemptionsMutateDrawer({
             </form>
           </Form>
           <SheetFooter className={sideDrawerFooterClassName()}>
-            <SheetClose render={<Button variant='outline' />}>
+            <SheetClose
+              render={<Button variant='outline' disabled={isSubmitting} />}
+            >
               {t('Close')}
             </SheetClose>
             <Button

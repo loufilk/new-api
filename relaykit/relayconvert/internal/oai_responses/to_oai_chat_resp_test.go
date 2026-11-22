@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -587,4 +588,90 @@ func mustStreamChunks(t *testing.T, state *ResponsesToChatStreamState, event *dt
 	chunks, err := ResponsesStreamEventToChatChunks(event, state)
 	require.NoError(t, err)
 	return chunks
+}
+
+func TestResponsesCustomToolSnapshotsPreserveInput(t *testing.T) {
+	for _, input := range []string{"echo hi", `{"command":"echo hi"}`, ""} {
+		t.Run(input, func(t *testing.T) {
+			raw, err := kitutil.Marshal(input)
+			require.NoError(t, err)
+			item := dto.ResponsesOutput{Type: "custom_tool_call", ID: "item_1", CallId: "call_1", Name: "exec", Input: raw}
+			response := &dto.OpenAIResponsesResponse{Status: []byte(`"completed"`), Output: []dto.ResponsesOutput{item}}
+			chat, _, err := ResponsesResponseToChatCompletionsResponse(response, "chat_1")
+			require.NoError(t, err)
+			calls := chat.Choices[0].Message.ParseToolCalls()
+			require.Len(t, calls, 1)
+			assert.Equal(t, input, calls[0].Function.Arguments)
+			claude, _, err := ResponsesResponseToClaudeMessagesResponse(response)
+			require.NoError(t, err)
+			require.Len(t, claude.Content, 1)
+			assert.Equal(t, responsesArgumentsToClaudeInput(input), claude.Content[0].Input)
+		})
+	}
+}
+
+func TestResponsesCustomToolStreamSnapshotsPreserveInputOnce(t *testing.T) {
+	for _, input := range []string{`{"command":"echo hi"}`, "echo hi", `"string"`, `["array"]`, ""} {
+		t.Run(input, func(t *testing.T) {
+			raw, err := kitutil.Marshal(input)
+			require.NoError(t, err)
+			item := dto.ResponsesOutput{Type: "custom_tool_call", ID: "item_1", CallId: "call_1", Name: "exec", Input: raw}
+			shell := item
+			shell.Input = []byte(`""`)
+			index := 0
+			for _, form := range []string{"item_done", "input_done", "terminal", "delta_then_snapshots"} {
+				t.Run(form, func(t *testing.T) {
+					events := []*dto.ResponsesStreamResponse{{Type: responsesEventOutputItemAdded, OutputIndex: &index, Item: &shell}}
+					if form == "delta_then_snapshots" {
+						events = append(events, &dto.ResponsesStreamResponse{Type: responsesEventCustomToolInputDelta, OutputIndex: &index, Delta: input})
+					}
+					if form == "input_done" || form == "delta_then_snapshots" {
+						events = append(events, &dto.ResponsesStreamResponse{Type: responsesEventCustomToolInputDone, OutputIndex: &index, Input: kitutil.GetPointer(input)})
+					}
+					if form == "item_done" || form == "delta_then_snapshots" {
+						events = append(events, &dto.ResponsesStreamResponse{Type: responsesEventOutputItemDone, OutputIndex: &index, Item: &item})
+					}
+					final := &dto.OpenAIResponsesResponse{Status: []byte(`"completed"`)}
+					if form == "terminal" || form == "delta_then_snapshots" {
+						final.Output = []dto.ResponsesOutput{item}
+					}
+					events = append(events, &dto.ResponsesStreamResponse{Type: responsesEventCompleted, Response: final})
+					chatState := newTestResponsesStreamState()
+					claudeState := NewResponsesToClaudeStreamState("resp_1", "model")
+					buffered := NewResponsesBufferedAccumulator()
+					var chatInput strings.Builder
+					var claudeOutput []*dto.ClaudeResponse
+					for _, event := range events {
+						chunks, err := ResponsesStreamEventToChatChunks(event, chatState)
+						require.NoError(t, err)
+						for _, chunk := range chunks {
+							for _, choice := range chunk.Choices {
+								for _, call := range choice.Delta.ToolCalls {
+									chatInput.WriteString(call.Function.Arguments)
+								}
+							}
+						}
+						chunksClaude, _, err := claudeState.ConvertChunk(event, 1)
+						require.NoError(t, err)
+						claudeOutput = append(claudeOutput, chunksClaude...)
+						buffered.ProcessEvent(event)
+					}
+					assert.Equal(t, input, chatInput.String(), "chat must retain snapshots without repeating earlier deltas")
+					expected, err := kitutil.Marshal(responsesArgumentsToClaudeInput(input))
+					require.NoError(t, err)
+					assert.JSONEq(t, string(expected), joinedClaudeDeltas(claudeOutput, "input_json_delta"))
+					if form != "terminal" {
+						output := buffered.BuildOutput()
+						require.Len(t, output, 1)
+						assert.Equal(t, input, output[0].ArgumentsString())
+						encoded, err := kitutil.Marshal(output[0])
+						require.NoError(t, err)
+						var wire map[string]any
+						require.NoError(t, kitutil.Unmarshal(encoded, &wire))
+						assert.Equal(t, input, wire["input"], "buffered custom tools must survive JSON serialization")
+					}
+				})
+			}
+		})
+	}
 }

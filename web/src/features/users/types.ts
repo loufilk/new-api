@@ -28,7 +28,7 @@ import type { AdminPermissionMatrix } from '@/lib/admin-permissions'
 export const userStatusSchema = z.number()
 export type UserStatus = z.infer<typeof userStatusSchema>
 
-/** User role: 1 = common user, 10 = admin, 100 = root */
+/** User role: 1 = common user, 5 = legacy common user, 10 = admin, 100 = root */
 export const userRoleSchema = z.number()
 export type UserRole = z.infer<typeof userRoleSchema>
 
@@ -40,6 +40,7 @@ export const userSchema = z.object({
   github_id: z.string().optional(),
   oidc_id: z.string().optional(),
   wechat_id: z.string().optional(),
+  google_id: z.string().optional(),
   telegram_id: z.string().optional(),
   email: z.string().optional(),
   quota: z.number(),
@@ -143,6 +144,7 @@ export interface ManageUserQuotaPayload {
   action: 'add_quota'
   mode: QuotaAdjustMode
   value: number
+  request_id: string
 }
 
 // ============================================================================

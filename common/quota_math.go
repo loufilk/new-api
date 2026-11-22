@@ -56,6 +56,48 @@ func (c *QuotaClamp) Error() string {
 	return fmt.Sprintf("quota conversion (%s) %s: original=%g, clamped=%d", c.Op, c.Kind, c.Original, c.Clamped)
 }
 
+// MarshalJSON keeps pathological input auditable and persistable. JSON has
+// no NaN/Infinity numbers; sentinel strings preserve those exact values while
+// ordinary finite quota values retain their existing numeric representation.
+func (c QuotaClamp) MarshalJSON() ([]byte, error) {
+	return Marshal(c.AuditMap())
+}
+
+func (c *QuotaClamp) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Op       string         `json:"op"`
+		Kind     QuotaClampKind `json:"kind"`
+		Original RawMessage     `json:"original"`
+		Clamped  int            `json:"clamped"`
+	}
+	if err := Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	var original float64
+	if len(wire.Original) > 0 && wire.Original[0] == '"' {
+		var sentinel string
+		if err := Unmarshal(wire.Original, &sentinel); err != nil {
+			return err
+		}
+		switch sentinel {
+		case "+Inf":
+			original = math.Inf(1)
+		case "-Inf":
+			original = math.Inf(-1)
+		case "NaN":
+			original = math.NaN()
+		default:
+			return fmt.Errorf("invalid quota clamp original %q", sentinel)
+		}
+	} else if len(wire.Original) > 0 {
+		if err := Unmarshal(wire.Original, &original); err != nil {
+			return err
+		}
+	}
+	*c = QuotaClamp{Op: wire.Op, Kind: wire.Kind, Original: original, Clamped: wire.Clamped}
+	return nil
+}
+
 // AuditMap renders the clamp as the marker stored under a log's
 // admin_info.quota_saturation. Centralized here so every billing path (consume
 // logs, task billing logs, task compensation logs) records the same shape.
@@ -63,10 +105,14 @@ func (c *QuotaClamp) AuditMap() map[string]any {
 	if c == nil {
 		return nil
 	}
+	var original any = c.Original
+	if math.IsNaN(c.Original) || math.IsInf(c.Original, 0) {
+		original = fmt.Sprintf("%g", c.Original)
+	}
 	return map[string]any{
 		"op":       c.Op,
 		"kind":     c.Kind,
-		"original": c.Original,
+		"original": original,
 		"clamped":  c.Clamped,
 	}
 }

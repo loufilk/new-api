@@ -134,6 +134,15 @@ func DeleteUserOAuthBinding(userId, providerId int) error {
 	return DB.Where("user_id = ? AND provider_id = ?", userId, providerId).Delete(&UserOAuthBinding{}).Error
 }
 
+func DeleteUserOAuthBindingByAdministrator(identity AuthSessionIdentity, expected User, providerID int) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if _, _, err := lockAuthorizedAdminTargetTx(tx, identity.UserID, expected, true, identity); err != nil {
+			return err
+		}
+		return tx.Where("user_id = ? AND provider_id = ?", expected.Id, providerID).Delete(&UserOAuthBinding{}).Error
+	})
+}
+
 func deleteUserOAuthBindingsByUserId(tx *gorm.DB, userId int) error {
 	return tx.Where("user_id = ?", userId).Delete(&UserOAuthBinding{}).Error
 }

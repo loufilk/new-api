@@ -27,6 +27,7 @@ var (
 		"wanx2.1-t2i-plus",
 		"wanx2.0-t2i-turbo",
 		"prefix:imagen-",
+		"prefix:grok-imagine-image",
 		"flux-",
 		"flux.1-",
 	}

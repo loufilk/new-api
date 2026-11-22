@@ -54,6 +54,13 @@ func GetEndpointTypesByChannelType(channelType int, modelName string) []constant
 			constant.EndpointTypeOpenAIResponseCompact,
 			constant.EndpointTypeOpenAIAlphaSearch,
 		}
+	case constant.ChannelTypeCline:
+		// Cline serves chat completions upstream; the Responses API is bridged
+		// through that endpoint rather than a native /v1/responses route.
+		endpointTypes = []constant.EndpointType{
+			constant.EndpointTypeOpenAI,
+			constant.EndpointTypeOpenAIResponse,
+		}
 	default:
 		if IsOpenAIResponseOnlyModel(modelName) {
 			endpointTypes = []constant.EndpointType{constant.EndpointTypeOpenAIResponse}

@@ -20,8 +20,21 @@ import type { QueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { t } from 'i18next'
 
+import i18n from '@/i18n/config'
+import { toBackendLanguage } from '@/i18n/languages'
+import { API_BASE_URL } from '@/lib/api-url'
+import {
+  AuthRefreshUnavailable,
+  getRefreshRetryAt,
+  refreshRetryDeadline,
+  setRefreshRetryAt,
+} from '@/lib/auth-refresh-backoff'
 import { publishAuthSessionEvent } from '@/lib/auth-session-sync'
-import { hasSessionHint } from '@/lib/session-hint'
+import {
+  clearSessionHint,
+  hasSessionHint,
+  markSessionHint,
+} from '@/lib/session-hint'
 import {
   useAuthStore,
   type AuthBootstrapState,
@@ -39,7 +52,7 @@ export type RefreshOutcome =
 export interface AuthRefreshHTTPResponse {
   status: number
   data?: unknown
-  error?: unknown
+  retryAfter?: unknown
 }
 
 export interface AuthRefreshRuntime {
@@ -48,7 +61,7 @@ export interface AuthRefreshRuntime {
   parseBundle: (value: unknown) => AuthBundle | null
   acceptBundle: (bundle: AuthBundle) => void
   clear: (synchronizeTabs: boolean, bootstrapState?: AuthBootstrapState) => void
-  markTransient: () => void
+  markTransient: (retryAt: number) => void
   wait: (delay: number) => Promise<void>
   isCurrent?: () => boolean
 }
@@ -68,7 +81,7 @@ export class AuthRotationError extends Error {
 }
 
 const authClient = axios.create({
-  baseURL: '',
+  baseURL: API_BASE_URL,
   withCredentials: true,
   headers: {
     // no-store forbids storage; no-cache also revalidates any older cached response.
@@ -79,6 +92,24 @@ const authClient = axios.create({
 const refreshRaceDelays = [80, 200, 500] as const
 let refreshPromise: Promise<RefreshOutcome> | null = null
 let authEpoch = 0
+let authSessionEpoch = 0
+
+// Token refresh/rotation keeps an owner's in-flight requests valid. Identity
+// changes do not: a logout followed by a login must invalidate them even when
+// a session identifier is reused. Observe the store so every auth entry point
+// (including setUser/reset) participates in this boundary.
+useAuthStore.subscribe((state, previousState) => {
+  if (
+    state.auth.user?.id !== previousState.auth.user?.id ||
+    state.auth.session?.sid !== previousState.auth.session?.sid
+  ) {
+    authSessionEpoch += 1
+  }
+})
+
+export function getAuthSessionEpoch(): number {
+  return authSessionEpoch
+}
 
 class AuthRefreshSupersededError extends Error {
   constructor() {
@@ -153,7 +184,12 @@ export function applyAuthBundle(
 ): void {
   const previousSID = useAuthStore.getState().auth.session?.sid
   authEpoch += 1
+  setRefreshRetryAt(0)
   useAuthStore.getState().auth.setBundle(bundle)
+  // Keep the frontend host's non-credential hint in sync with the successful
+  // authentication result and the server session's own expiry; the API host's
+  // hint is unreadable when the console is hosted on a different origin.
+  markSessionHint(bundle.session.expires_at)
   if (synchronizeTabs && previousSID !== bundle.session.sid) {
     publishAuthSessionEvent('authenticated', bundle.session.sid)
   }
@@ -190,7 +226,11 @@ export function clearAuthentication(
 ): void {
   const sid = useAuthStore.getState().auth.session?.sid
   authEpoch += 1
+  setRefreshRetryAt(0)
   useAuthStore.getState().auth.reset(bootstrapState)
+  // Explicit sign-out and server-side invalidation both land here, so the
+  // frontend host's hint is cleared in lockstep with the session.
+  clearSessionHint()
   if (synchronizeTabs && sid) {
     publishAuthSessionEvent('signed_out', sid)
   }
@@ -226,7 +266,7 @@ export function createRefreshRunner(
     const code =
       typeof responseData?.code === 'string' ? responseData.code : undefined
     const bundle = runtime.parseBundle(responseData?.data)
-    if (responseData?.success === true && bundle) {
+    if (response.status === 200 && responseData?.success === true && bundle) {
       runtime.acceptBundle(bundle)
       return { kind: 'authenticated', bundle }
     }
@@ -255,11 +295,17 @@ export function createRefreshRunner(
       return { kind: 'anonymous' }
     }
 
-    if (!response.status || response.status >= 500 || response.status === 429) {
-      runtime.markTransient()
+    if (
+      !response.status ||
+      response.status >= 500 ||
+      response.status === 429 ||
+      response.status === 408
+    ) {
+      const retryAt = refreshRetryDeadline(response.status, response.retryAfter)
+      runtime.markTransient(retryAt)
       return {
         kind: 'transient_error',
-        error: response.error ?? response.data,
+        error: new AuthRefreshUnavailable(retryAt),
       }
     }
 
@@ -281,16 +327,21 @@ async function requestRefresh(
       '/api/user/auth/refresh',
       undefined,
       {
-        headers: expectedSID ? { 'X-Auth-Session': expectedSID } : undefined,
+        headers: {
+          'Accept-Language': toBackendLanguage(
+            i18n.resolvedLanguage || i18n.language
+          ),
+          ...(expectedSID ? { 'X-Auth-Session': expectedSID } : {}),
+        },
       }
     )
     return { status: response.status, data: response.data }
   } catch (error: unknown) {
-    if (!axios.isAxiosError(error)) return { status: 0, error }
+    if (!axios.isAxiosError(error)) return { status: 0 }
     return {
       status: error.response?.status ?? 0,
       data: error.response?.data,
-      error,
+      retryAfter: error.response?.headers['retry-after'],
     }
   }
 }
@@ -308,7 +359,10 @@ function runRefresh(refreshEpoch: number): Promise<RefreshOutcome> {
       }
       clearAuthentication(synchronizeTabs, bootstrapState)
     },
-    markTransient: () => useAuthStore.getState().auth.setBootstrapState('idle'),
+    markTransient: (retryAt) => {
+      setRefreshRetryAt(retryAt)
+      useAuthStore.getState().auth.setBootstrapState('idle')
+    },
     wait: waitForRefreshRace,
     isCurrent: () => authEpoch === refreshEpoch,
   })()
@@ -319,20 +373,39 @@ async function performRefreshWithBrowserLock(
 ): Promise<RefreshOutcome> {
   try {
     if (typeof navigator === 'undefined' || !navigator.locks) {
-      return runRefresh(refreshEpoch)
+      return await runRefresh(refreshEpoch)
     }
-    return navigator.locks.request(
+    return await navigator.locks.request(
       'new-api:auth-refresh',
       { mode: 'exclusive' },
       () => runRefresh(refreshEpoch)
     )
-  } catch (error: unknown) {
+  } catch {
+    if (refreshEpoch !== authEpoch) {
+      return {
+        kind: 'transient_error',
+        error: new AuthRefreshSupersededError(),
+      }
+    }
+    const retryAt = refreshRetryDeadline(0)
+    setRefreshRetryAt(retryAt)
     useAuthStore.getState().auth.setBootstrapState('idle')
-    return { kind: 'transient_error', error }
+    return {
+      kind: 'transient_error',
+      error: new AuthRefreshUnavailable(retryAt),
+    }
   }
 }
 
 export function refreshAuthentication(): Promise<RefreshOutcome> {
+  const retryAt = getRefreshRetryAt()
+  if (retryAt) {
+    useAuthStore.getState().auth.setBootstrapState('idle')
+    return Promise.resolve({
+      kind: 'transient_error',
+      error: new AuthRefreshUnavailable(retryAt),
+    })
+  }
   if (!refreshPromise) {
     const refreshEpoch = authEpoch
     refreshPromise = performRefreshWithBrowserLock(refreshEpoch).finally(() => {
@@ -384,7 +457,20 @@ export async function resolveAuthentication(): Promise<RefreshOutcome> {
   }
 
   auth.setBootstrapState('checking')
-  return refreshAuthentication()
+  const outcome = await refreshAuthentication()
+  if (
+    outcome.kind === 'transient_error' &&
+    outcome.error instanceof AuthRefreshSupersededError
+  ) {
+    // A newer login or explicit sign-out won the race with this check.
+    const current = currentValidAuthBundle()
+    if (current) return { kind: 'authenticated', bundle: current }
+    const latest = useAuthStore.getState().auth
+    if (!latest.user && latest.bootstrapState === 'complete') {
+      return { kind: 'anonymous' }
+    }
+  }
+  return outcome
 }
 
 /**
@@ -410,6 +496,9 @@ export async function bootstrapAuthentication(): Promise<RefreshOutcome> {
 export function getCommonHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'Accept-Language': toBackendLanguage(
+      i18n.resolvedLanguage || i18n.language
+    ),
   }
   const accessToken = useAuthStore.getState().auth.accessToken
   if (accessToken) {

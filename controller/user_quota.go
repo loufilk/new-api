@@ -2,7 +2,10 @@ package controller
 
 import (
 	"errors"
+	"fmt"
+	"github.com/QuantumNous/new-api/i18n"
 	"net/http"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -43,7 +46,23 @@ func manageUserQuota(c *gin.Context, req ManageRequest) {
 		markAuditLogged(c)
 	}()
 
-	adjustment, err := model.AdjustUserQuota(req.Id, c.GetInt("role"), req.Mode, req.Value)
+	requestID := strings.TrimSpace(req.RequestId)
+	if requestID == "" {
+		requestID = strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	}
+	if requestID == "" {
+		requestID = model.NewAutoLedgerKey("admin_quota_request")
+	}
+	if len(requestID) > 128 {
+		params["failure_reason"] = "invalid_parameters"
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	adjustment, err := model.AdjustUserQuota(req.Id, c.GetInt("role"), req.Mode, req.Value, model.LedgerEntry{
+		OperatorId: c.GetInt("id"), ReferenceType: "admin_quota", ReferenceId: requestID,
+		RequestId:      c.GetString(common.RequestIdKey),
+		IdempotencyKey: fmt.Sprintf("admin_quota:%d:%s", c.GetInt("id"), requestID),
+	})
 	if err != nil {
 		switch {
 		case errors.Is(err, model.ErrInvalidUserQuotaAdjustment):
@@ -62,6 +81,12 @@ func manageUserQuota(c *gin.Context, req ManageRequest) {
 		case errors.Is(err, model.ErrWalletQuotaLimitExceeded):
 			params["failure_reason"] = "quota_limit_exceeded"
 			common.ApiError(c, err)
+		case errors.Is(err, model.ErrLedgerInsufficientBalance):
+			params["failure_reason"] = "insufficient_balance"
+			common.ApiError(c, err)
+		case errors.Is(err, model.ErrLedgerIdempotencyConflict):
+			params["failure_reason"] = "idempotency_conflict"
+			common.ApiError(c, err)
 		default:
 			params["failure_reason"] = "database_error"
 			common.ApiError(c, err)
@@ -76,6 +101,11 @@ func manageUserQuota(c *gin.Context, req ManageRequest) {
 		params["quota"] = req.Value
 	}
 	success = true
+	if adjustment.Replayed {
+		params["replayed"] = true
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
+		return
+	}
 	operation := model.AuditOperation{Action: action, Params: params}
 	model.RecordLogWithAdminInfo(adjustment.UserID, model.LogTypeTopup,
 		auditContentEN(action, params), auditOperatorInfo(c), &operation, c)

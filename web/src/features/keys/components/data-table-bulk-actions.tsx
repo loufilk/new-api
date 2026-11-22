@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type Table } from '@tanstack/react-table'
+
 import { Copy, Trash2, Loader2 } from 'lucide-react'
 import { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -29,22 +29,25 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import type { Table } from '@/lib/console-table'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
 
-import { type ApiKey } from '../types'
+import type { ApiKey } from '../types'
 import { ApiKeysMultiDeleteDialog } from './api-keys-multi-delete-dialog'
 import { useApiKeys } from './api-keys-provider'
 
-type DataTableBulkActionsProps<TData> = {
+type DataTableBulkActionsProps<TData extends object> = {
   table: Table<TData>
 }
 
-export function DataTableBulkActions<TData>({
+export function DataTableBulkActions<TData extends object>({
   table,
 }: DataTableBulkActionsProps<TData>) {
   const { t } = useTranslation()
   const { resolveRealKeysBatch } = useApiKeys()
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleteTargets, setDeleteTargets] = useState<
+    Pick<ApiKey, 'id' | 'name'>[]
+  >([])
   const [isCopying, setIsCopying] = useState(false)
   const selectedRows = table.getFilteredSelectedRowModel().rows
 
@@ -113,7 +116,14 @@ export function DataTableBulkActions<TData>({
               <Button
                 variant='destructive'
                 size='icon'
-                onClick={() => setShowDeleteConfirm(true)}
+                onClick={() =>
+                  setDeleteTargets(
+                    selectedRows.map(({ original }) => {
+                      const { id, name } = original as ApiKey
+                      return { id, name }
+                    })
+                  )
+                }
                 className='size-8'
                 aria-label={t('Delete selected API keys')}
               />
@@ -129,8 +139,11 @@ export function DataTableBulkActions<TData>({
       </BulkActionsToolbar>
 
       <ApiKeysMultiDeleteDialog
-        open={showDeleteConfirm}
-        onOpenChange={setShowDeleteConfirm}
+        open={deleteTargets.length > 0}
+        targets={deleteTargets}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTargets([])
+        }}
         table={table}
       />
     </>

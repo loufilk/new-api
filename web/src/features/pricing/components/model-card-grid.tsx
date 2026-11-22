@@ -26,6 +26,7 @@ import { getPerfMetricsSummary } from '@/features/performance-metrics/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { DEFAULT_PRICING_PAGE_SIZE, DEFAULT_TOKEN_UNIT } from '../constants'
+import type { ModelEndpointMap } from '../lib/model-endpoints'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelCard } from './model-card'
 import type { ModelPerfBadgeData } from './model-perf-badge'
@@ -38,6 +39,7 @@ export interface ModelCardGridProps {
   tokenUnit?: TokenUnit
   showRechargePrice?: boolean
   selectedGroup?: string
+  endpointMap?: ModelEndpointMap
 }
 
 export const ModelCardGrid = memo(function ModelCardGrid(
@@ -98,6 +100,7 @@ export const ModelCardGrid = memo(function ModelCardGrid(
           <ModelCard
             key={model.id ?? model.model_name}
             model={model}
+            endpointMap={props.endpointMap}
             tokenUnit={tokenUnit}
             priceRate={props.priceRate}
             usdExchangeRate={props.usdExchangeRate}

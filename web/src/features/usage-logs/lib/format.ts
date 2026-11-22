@@ -24,6 +24,11 @@ import {
   splitBillingExprAndRequestRules,
   type ParsedTier,
 } from '@/features/pricing/lib/billing-expr'
+import {
+  getCachePriceLabels,
+  getTierCachePricingMode,
+} from '@/features/pricing/lib/cache-pricing'
+import type { TranslateText } from '@/i18n/translate'
 import { translateServerText } from '@/lib/server-error-message'
 
 import type { UsageLog } from '../data/schema'
@@ -236,24 +241,28 @@ export function getResponseTimeColor(
 /**
  * Format model name with mapping indicator
  */
-export function formatModelName(log: UsageLog): {
+export function formatModelName(
+  log: UsageLog,
+  isAdmin = false
+): {
   name: string
   isMapped: boolean
   actualModel?: string
   responseModel?: LogOtherData['response_model']
 } {
   const other = parseLogOther(log.other)
-  const isMapped = !!(
-    other?.is_model_mapped &&
-    other?.upstream_model_name &&
-    other.upstream_model_name !== ''
-  )
+  const upstreamModel = isAdmin
+    ? (other?.admin_info?.upstream_model_name ?? other?.upstream_model_name)
+    : undefined
+  const isMapped = !!(other?.is_model_mapped && upstreamModel)
 
   return {
     name: log.model_name,
     isMapped,
-    actualModel: isMapped ? other.upstream_model_name : undefined,
-    responseModel: other?.response_model,
+    actualModel: isMapped ? upstreamModel : undefined,
+    responseModel: isAdmin
+      ? (other?.admin_info?.response_model ?? other?.response_model)
+      : undefined,
   }
 }
 
@@ -343,7 +352,8 @@ export function hasAnyCacheTokens(
 }
 
 export function getTieredBillingSummary(
-  other: LogOtherData | null
+  other: LogOtherData | null,
+  modelName?: string
 ): TieredBillingSummary | null {
   if (!other || other.billing_mode !== 'tiered_expr') return null
   const exprStr = decodeBillingExprB64(other.expr_b64)
@@ -402,6 +412,7 @@ export function getTieredBillingSummary(
   }
 
   const cacheTokensPresent = hasAnyCacheTokens(other)
+  const cacheMode = getTierCachePricingMode(tiers, modelName)
 
   const priceEntries: TieredBillingSummary['priceEntries'] = []
   for (const v of BILLING_PRICING_VARS) {
@@ -412,7 +423,7 @@ export function getTieredBillingSummary(
     if (Number.isFinite(price) && price >= 0) {
       priceEntries.push({
         field: v.field,
-        shortLabel: v.shortLabel,
+        shortLabel: getCachePriceLabels(v, cacheMode).shortLabel,
         price,
       })
     }
@@ -575,11 +586,13 @@ const AUDIT_TEMPLATES: Record<string, string> = {
  */
 export function renderLogContent(
   other: LogOtherData | null | undefined,
-  t: (key: string, opts?: Record<string, unknown>) => string
+  t: TranslateText
 ): string | null {
   const parts = other?.content_parts
   if (!Array.isArray(parts) || parts.length === 0) return null
-  return parts.map((part) => t(part.key, part.params)).join(', ')
+  return parts
+    .map((part) => (part.params ? t(part.key, part.params) : t(part.key)))
+    .join(', ')
 }
 
 /**
@@ -588,7 +601,7 @@ export function renderLogContent(
  */
 export function logTokenName(
   log: Pick<UsageLog, 'token_id' | 'token_name'>,
-  t: (key: string, opts?: Record<string, unknown>) => string
+  t: TranslateText
 ): string {
   return log.token_id === 0
     ? translateServerText(t, log.token_name)
@@ -602,7 +615,7 @@ export function logTokenName(
  */
 export function renderAuditContent(
   other: LogOtherData | null | undefined,
-  t: (key: string, opts?: Record<string, unknown>) => string
+  t: TranslateText
 ): string | null {
   const op = other?.op
   if (!op?.action) return null

@@ -2,10 +2,13 @@ const { app, BrowserWindow, dialog, Tray, Menu, shell } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const http = require('http');
+const { randomBytes } = require('node:crypto');
+const { waitForPackagedBackend } = require('./packaged-startup');
 const fs = require('fs');
 
 let mainWindow;
 let serverProcess;
+let serverReady = false;
 let tray = null;
 let serverErrorLogs = [];
 const PORT = 3000;
@@ -83,7 +86,7 @@ function analyzeError(errorLogs) {
       type: '数据文件被占用',
       title: '无法访问数据文件',
       message: '应用的数据文件正被其他程序占用',
-      solution: '可能的解决方案：\n\n1. 检查是否已经打开了另一个 New API 窗口\n   - 查看任务栏/Dock 中是否有其他 New API 图标\n   - 查看系统托盘（Windows）或菜单栏（Mac）中是否有 New API 图标\n\n2. 如果刚刚关闭过应用，请等待 10 秒后再试\n\n3. 重启电脑以释放被占用的文件\n\n4. 如果问题持续，可以尝试：\n   - 退出所有 New API 实例\n   - 删除数据目录中的临时文件（.db-shm 和 .db-wal）\n   - 重新启动应用'
+      solution: '可能的解决方案：\n\n1. 检查是否已经打开了另一个 New API 窗口\n   - 查看任务栏/Dock 中是否有其他 New API 图标\n   - 查看系统托盘（Windows）或菜单栏（Mac）中是否有 New API 图标\n\n2. 如果刚刚关闭过应用，请等待 10 秒后再试\n\n3. 重启电脑以释放被占用的文件\n\n4. 如果问题持续，可以尝试：\n   - 退出所有 New API 实例\n   - 备份整个数据目录（包括 .db-wal 和 .db-shm），不要删除这些文件\n   - 如仍无法启动，请保留备份并联系支持'
     };
   }
   
@@ -243,6 +246,7 @@ function startServer() {
       checkServerAvailability(DEV_FRONTEND_PORT)
         .then(() => {
           console.log('✓ Frontend dev server is accessible on port 5173');
+          serverReady = true;
           resolve();
         })
         .catch((err) => {
@@ -255,7 +259,13 @@ function startServer() {
     }
 
     // 生产模式：启动二进制服务器
-    const env = { ...process.env, PORT: PORT.toString() };
+    const proof = randomBytes(24).toString('hex');
+    const env = {
+      ...process.env,
+      PORT: PORT.toString(),
+      HTTP_BIND_ADDRESS: '127.0.0.1',
+      NEW_API_ELECTRON_STARTUP_PROOF: proof
+    };
 
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
@@ -266,7 +276,7 @@ function startServer() {
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('📁 您的数据存储位置：');
     console.log('   ' + dataDir);
-    console.log('   💡 备份提示：复制此目录即可备份所有数据');
+    console.log('   💡 备份提示：先退出应用，再完整复制此目录，不要单独删除数据库附属文件');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     const binaryPath = getBinaryPath();
@@ -299,9 +309,15 @@ function startServer() {
     });
 
     serverProcess.on('close', (code) => {
+      const wasReady = serverReady;
+      serverReady = false;
+      serverProcess = null;
       console.log(`Server process exited with code ${code}`);
       
-      // 如果退出代码不是0，说明服务器异常退出
+      // Startup failures are reported by the existing startup error handler.
+      if (!wasReady || app.isQuitting) return;
+      // Do not keep the desktop window open on a port we no longer own.
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
       if (code !== 0 && code !== null) {
         const errorDetails = serverErrorLogs.length > 0 
           ? serverErrorLogs.slice(-20).join('\n') 
@@ -365,17 +381,13 @@ function startServer() {
             app.quit();
           }
         });
-      } else {
-        // 正常退出（code为0或null），直接关闭窗口
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.close();
-        }
       }
     });
 
-    checkServerAvailability(PORT)
+    waitForPackagedBackend(PORT, proof, serverProcess)
       .then(() => {
-        console.log('✓ Backend server is accessible on port 3000');
+        serverReady = true;
+        console.log('✓ Packaged backend readiness verified on port 3000');
         resolve();
       })
       .catch((err) => {
@@ -386,6 +398,7 @@ function startServer() {
 }
 
 function createWindow() {
+  if (!serverReady) return;
   const isDev = process.env.NODE_ENV === 'development';
   const loadPort = isDev ? DEV_FRONTEND_PORT : PORT;
   

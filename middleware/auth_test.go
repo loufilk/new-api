@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +24,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -33,7 +37,8 @@ func setupDashboardAuthMiddlewareTest(t *testing.T) {
 	previousSecret := common.SessionSecret
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuditLog{}, &model.UserAccessToken{}, &model.Option{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuditLog{}, &model.UserAccessToken{}, &model.Option{},
+		&model.Token{}, &model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{}, &model.AgentInvitation{}))
 	model.DB = db
 	model.LOG_DB = db
 	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
@@ -154,6 +159,87 @@ func TestUserAuthNeverFallsBackForRecognizedInvalidInternalJWT(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, response.Code)
 	assert.Contains(t, response.Body.String(), "AUTH_UNAUTHORIZED")
+}
+
+func TestDashboardAuthRejectsRedisRoleTampering(t *testing.T) {
+	for _, role := range []int{common.RoleCommonUser, common.RoleAdminUser, common.RoleRootUser} {
+		t.Run(fmt.Sprintf("role_%d", role), func(t *testing.T) {
+			setupDashboardAuthMiddlewareTest(t)
+			gin.SetMode(gin.TestMode)
+			_, redisClient := useRateLimitMiniRedis(t)
+			legacy := "cache-integrity-legacy"
+			user := createMiddlewarePATUser(t, "cache-integrity", legacy)
+			require.NoError(t, model.DB.Model(user).Update("role", role).Error)
+			bundle, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "cache-integrity-test")
+			require.NoError(t, err)
+			pat, _ := createMiddlewareScopedToken(t, user.Id, 0, "profile:read", "user:read")
+
+			router := gin.New()
+			router.GET("/api/perf-metrics", RootAuth(), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+			router.GET("/api/user/", AdminAuth(), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+			showIdentity := func(c *gin.Context) {
+				c.JSON(http.StatusOK, gin.H{"id": c.GetInt("id"), "role": c.GetInt("role")})
+			}
+			router.GET("/api/user/self", UserAuth(), showIdentity)
+			router.GET("/api/pricing", TryUserAuth(), showIdentity)
+			rootStatus, adminStatus := http.StatusForbidden, http.StatusForbidden
+			if role == common.RoleRootUser {
+				rootStatus = http.StatusNoContent
+			}
+			if role >= common.RoleAdminUser {
+				adminStatus = http.StatusNoContent
+			}
+			for _, credential := range []struct{ name, raw string }{
+				{name: "login JWT", raw: bundle.AccessToken},
+				{name: "scoped PAT", raw: pat},
+				{name: "legacy token", raw: legacy},
+			} {
+				t.Run(credential.name, func(t *testing.T) {
+					cacheKey := fmt.Sprintf("user:%d", user.Id)
+					require.NoError(t, redisClient.HSet(t.Context(), cacheKey, "Role", role).Err())
+					response := middlewareBearerRequest(router, "/api/perf-metrics", credential.raw)
+					require.Equal(t, rootStatus, response.Code, response.Body.String())
+					response = middlewareBearerRequest(router, "/api/user/", credential.raw)
+					require.Equal(t, adminStatus, response.Code, response.Body.String())
+
+					require.NoError(t, redisClient.HSet(t.Context(), cacheKey, "Role", common.RoleRootUser).Err())
+					response = middlewareBearerRequest(router, "/api/perf-metrics", credential.raw)
+					assert.Equal(t, rootStatus, response.Code, response.Body.String())
+					response = middlewareBearerRequest(router, "/api/user/", credential.raw)
+					assert.Equal(t, adminStatus, response.Code, response.Body.String())
+					for _, path := range []string{"/api/user/self", "/api/pricing"} {
+						response = middlewareBearerRequest(router, path, credential.raw)
+						require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+						var body struct {
+							ID   int `json:"id"`
+							Role int `json:"role"`
+						}
+						require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
+						assert.Equal(t, user.Id, body.ID, path)
+						assert.Equal(t, role, body.Role, path)
+					}
+				})
+			}
+			stored, err := model.GetUserById(user.Id, false)
+			require.NoError(t, err)
+			assert.Equal(t, role, stored.Role)
+			if role == common.RoleCommonUser {
+				const callbackName = "test:dashboard-auth-user-read-failure"
+				require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+					if tx.Statement.Table == "users" {
+						tx.AddError(errors.New("forced user database read failure"))
+					}
+				}))
+				t.Cleanup(func() { model.DB.Callback().Query().Remove(callbackName) })
+				response := middlewareBearerRequest(router, "/api/user/self", bundle.AccessToken)
+				assert.Equal(t, http.StatusOK, response.Code, "a valid cache hit must not query the user table")
+				require.NoError(t, redisClient.HSet(t.Context(), fmt.Sprintf("user:%d", user.Id), "CacheMAC", "tampered", "Role", common.RoleRootUser).Err())
+				response = middlewareBearerRequest(router, "/api/perf-metrics", bundle.AccessToken)
+				assert.Equal(t, http.StatusInternalServerError, response.Code, response.Body.String())
+				assert.Contains(t, response.Body.String(), "AUTH_INTERNAL_ERROR")
+			}
+		})
+	}
 }
 
 func TestTryUserAuthCredentialClassification(t *testing.T) {
@@ -285,6 +371,107 @@ func TestTryUserAuthCredentialClassification(t *testing.T) {
 	assert.Contains(t, databaseFailureResponse.Body.String(), "AUTH_INTERNAL_ERROR")
 }
 
+// Use a dedicated PostgreSQL schema for the production-aligned audit; retain
+// the ordinary in-memory fixture for contributors running the default suite.
+func setupDeletedAPIKeyAuthTest(t *testing.T) {
+	t.Helper()
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if dsn == "" && os.Getenv("NO_AGENT_FIXTURE_OWNED") != "1" {
+		setupDashboardAuthMiddlewareTest(t)
+		return
+	}
+	require.Equal(t, "1", os.Getenv("NO_AGENT_FIXTURE_OWNED"))
+	parsed, err := url.Parse(dsn)
+	require.NoError(t, err)
+	require.Equal(t, "postgres", parsed.Scheme)
+	require.Equal(t, "127.0.0.1", parsed.Hostname())
+	admin, err := gorm.Open(postgres.Open(parsed.String()), &gorm.Config{})
+	require.NoError(t, err)
+	adminSQL, err := admin.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, adminSQL.Close()) })
+	var version string
+	require.NoError(t, admin.Raw("SHOW server_version_num").Scan(&version).Error)
+	require.Contains(t, []string{"180006", "180007"}, version)
+	schema := "deleted_api_key_auth_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	require.NoError(t, admin.Exec("CREATE SCHEMA "+schema).Error)
+	t.Cleanup(func() { assert.NoError(t, admin.Exec("DROP SCHEMA "+schema+" CASCADE").Error) })
+	query := parsed.Query()
+	query.Set("search_path", schema)
+	parsed.RawQuery = query.Encode()
+	db, err := gorm.Open(postgres.Open(parsed.String()), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, sqlDB.Close()) })
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuditLog{},
+		&model.UserAccessToken{}, &model.Option{}, &model.Token{}, &model.Channel{},
+		&model.Ability{}, &model.SubscriptionPlan{}, &model.AgentInvitation{}))
+	previousDB, previousLog := model.DB, model.LOG_DB
+	previousMainType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
+	previousRedis, previousMemory, previousSecret := common.RedisEnabled, common.MemoryCacheEnabled, common.SessionSecret
+	model.DB, model.LOG_DB = db, db
+	common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
+	common.RedisEnabled, common.MemoryCacheEnabled = false, false
+	common.SessionSecret = "synthetic-deleted-api-key-auth-test"
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = previousDB, previousLog
+		common.SetDatabaseTypes(previousMainType, previousLogType)
+		common.RedisEnabled, common.MemoryCacheEnabled, common.SessionSecret = previousRedis, previousMemory, previousSecret
+	})
+	require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(time.Now().Unix()))
+}
+
+// Self-deleting an account soft-deletes the user but leaves its API keys in
+// place; those keys must be rejected as invalid, not as a database failure,
+// including when Redis still held the owner from an earlier request.
+func TestTokenAuthRejectsKeysOfDeletedUser(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/v1/chat/completions", TokenAuth(), func(c *gin.Context) { c.Status(http.StatusOK) })
+	router.GET("/api/usage/token", TokenAuthReadOnly(), func(c *gin.Context) { c.Status(http.StatusOK) })
+	request := func(path, key string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer sk-"+key)
+		req.Header.Set("Accept-Language", "zh-CN")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		return response
+	}
+
+	for _, redisEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("redis=%t", redisEnabled), func(t *testing.T) {
+			setupDeletedAPIKeyAuthTest(t)
+			if redisEnabled {
+				useRateLimitMiniRedis(t)
+			}
+			require.NoError(t, model.DB.AutoMigrate(&model.UserCallInterception{}))
+			t.Setenv("LOG_SQL_DSN", "")
+			// Shares the main database and initializes its quoted column names,
+			// which the API key lookup needs.
+			require.NoError(t, model.InitLogDB())
+			user := createMiddlewarePATUser(t, "deleted-key-owner", "deleted-key-owner-pat")
+			key := "deletedownerkey0123456789abcdefghijklmnopqrstuvwx"
+			require.NoError(t, model.DB.Create(&model.Token{
+				UserId: user.Id, Key: key, Name: "owner key", Status: common.TokenStatusEnabled,
+				ExpiredTime: -1, UnlimitedQuota: true,
+			}).Error)
+
+			for _, path := range []string{"/v1/chat/completions", "/api/usage/token"} {
+				assert.Equal(t, http.StatusOK, request(path, key).Code, path)
+			}
+			_, err := model.DeleteUserById(user.Id)
+			require.NoError(t, err)
+			for _, path := range []string{"/v1/chat/completions", "/api/usage/token"} {
+				response := request(path, key)
+				assert.Equal(t, http.StatusUnauthorized, response.Code, path)
+				assert.Contains(t, response.Body.String(), `"message":"无效的令牌`, path)
+			}
+		})
+	}
+}
+
 func createMiddlewareScopedToken(t *testing.T, userID int, expiresAt int64, scopes ...string) (string, *model.UserAccessToken) {
 	t.Helper()
 	suffix, err := common.GenerateRandomCharsKey(43)
@@ -319,12 +506,15 @@ func TestUserAuthAppliesAccessTokenRouteRules(t *testing.T) {
 	admin := createMiddlewarePATUser(t, "route-rule-admin", legacy)
 	require.NoError(t, model.DB.Model(admin).Update("role", common.RoleAdminUser).Error)
 	profile, _ := createMiddlewareScopedToken(t, admin.Id, 0, "profile:read")
+	keysRead, _ := createMiddlewareScopedToken(t, admin.Id, 0, "api_key:read")
+	expiredKeysRead, _ := createMiddlewareScopedToken(t, admin.Id, time.Now().Unix()-1, "api_key:read")
 	channel, _ := createMiddlewareScopedToken(t, admin.Id, time.Now().Unix()+3600, "channel:read")
 	expired, _ := createMiddlewareScopedToken(t, admin.Id, time.Now().Unix()-1, "profile:read")
 
 	ok := func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"id": c.GetInt("id")}) }
 	router := gin.New()
 	router.GET("/api/user/self", UserAuth(), ok)
+	router.GET("/api/token/:id/models", UserAuth(), ok)
 	router.GET("/api/user/access_tokens", UserAuth(), ok)
 	router.GET("/api/undeclared", UserAuth(), ok)
 	router.GET("/api/channel/", AdminAuth(), RequirePermission(authz.ChannelRead), ok)
@@ -335,6 +525,9 @@ func TestUserAuthAppliesAccessTokenRouteRules(t *testing.T) {
 		status                          int
 	}{
 		{name: "granted scope on a never expiring token", path: "/api/user/self", token: profile, status: http.StatusOK},
+		{name: "owned token models read scope", path: "/api/token/7/models", token: keysRead, status: http.StatusOK},
+		{name: "owned token models missing scope", path: "/api/token/7/models", token: profile, status: http.StatusForbidden, code: "ACCESS_TOKEN_SCOPE_DENIED", reason: "scope_denied"},
+		{name: "owned token models expired token", path: "/api/token/7/models", token: expiredKeysRead, status: http.StatusUnauthorized, code: "ACCESS_TOKEN_EXPIRED", reason: "expired"},
 		{name: "missing scope", path: "/api/user/self", token: channel, status: http.StatusForbidden, code: "ACCESS_TOKEN_SCOPE_DENIED", reason: "scope_denied"},
 		{name: "undeclared route", path: "/api/undeclared", token: profile, status: http.StatusForbidden, code: "ACCESS_TOKEN_ROUTE_UNDECLARED", reason: "route_undeclared"},
 		{name: "session route", path: "/api/user/access_tokens", token: profile, status: http.StatusForbidden, code: "AUTH_SESSION_REQUIRED", reason: "session_required"},
@@ -392,6 +585,49 @@ func TestUserAuthAppliesAccessTokenRouteRules(t *testing.T) {
 	assert.Equal(t, http.StatusOK, middlewareBearerRequest(router, "/api/user/self", profile).Code, "the deadline only retires legacy tokens")
 }
 
+func TestFinancialAndFingerprintRoutesRequireBrowserSessions(t *testing.T) {
+	setupDashboardAuthMiddlewareTest(t)
+	gin.SetMode(gin.TestMode)
+	legacy := "session-only-legacy-token"
+	user := createMiddlewarePATUser(t, "session-only-admin", legacy)
+	require.NoError(t, model.DB.Model(user).Update("role", common.RoleRootUser).Error)
+	scoped, _ := createMiddlewareScopedToken(t, user.Id, 0, "wallet:write", "profile:read", "option:read", "option:write")
+	bundle, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "session-route-test")
+	require.NoError(t, err)
+
+	for _, route := range []struct{ method, path string }{
+		{http.MethodPost, "/api/agent-platform/simple/wallet-transfer"},
+		{http.MethodGet, "/api/model-tests/settings"},
+		{http.MethodPut, "/api/model-tests/settings"},
+		{http.MethodGet, "/api/user/model-tests/site"},
+	} {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			handled := 0
+			router := gin.New()
+			router.Handle(route.method, route.path, UserAuth(), func(c *gin.Context) {
+				handled++
+				c.Status(http.StatusNoContent)
+			})
+			for _, token := range []string{legacy, scoped} {
+				request := httptest.NewRequest(route.method, route.path, strings.NewReader(`{}`))
+				request.Header.Set("Authorization", "Bearer "+token)
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, request)
+				assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+				assert.Contains(t, response.Body.String(), `"code":"AUTH_SESSION_REQUIRED"`)
+			}
+			assert.Zero(t, handled, "neither legacy nor scoped PATs may reach the handler")
+
+			request := httptest.NewRequest(route.method, route.path, strings.NewReader(`{}`))
+			request.Header.Set("Authorization", "Bearer "+bundle.AccessToken)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			assert.Equal(t, http.StatusNoContent, response.Code, response.Body.String())
+			assert.Equal(t, 1, handled, "a current browser session must retain route access")
+		})
+	}
+}
+
 func TestAccessTokenIdentityAndSingleLookup(t *testing.T) {
 	setupDashboardAuthMiddlewareTest(t)
 	gin.SetMode(gin.TestMode)
@@ -406,6 +642,9 @@ func TestAccessTokenIdentityAndSingleLookup(t *testing.T) {
 		identity, stepUp := GetStepUpIdentity(c)
 		c.JSON(http.StatusOK, gin.H{"session": session, "step_up": stepUp, "identity": identity})
 	})
+	guard, err := model.BeginGroupConfigRead(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, guard.Finish())
 
 	var queries []string
 	const callbackName = "test:access-token-lookup-count"
@@ -447,9 +686,9 @@ func TestAccessTokenIdentityAndSingleLookup(t *testing.T) {
 			if test.stepUp {
 				assert.Equal(t, service.AuthIdentity{UserID: user.Id, SessionID: model.AccessTokenSessionID(token.Id), UserAuthVersion: user.AuthVersion, SessionVersion: model.AccessTokenSessionVersion}, body.Identity)
 			}
-			// The access audit and authentication share one lookup: the
-			// credential query plus the owner's user row.
-			assert.Len(t, queries, 2)
+			// The access audit and authentication share one credential query
+			// and one owner lookup. Group-version fences read options separately.
+			assert.Equal(t, 2, countQueries("users", "")+countQueries("user_access_tokens", ""))
 			assert.Equal(t, test.tokenTable, countQueries("user_access_tokens", "token_hash"))
 			assert.Equal(t, test.legacyQuery, countQueries("users", "access_token = "))
 		})

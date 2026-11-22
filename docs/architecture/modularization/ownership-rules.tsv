@@ -1,0 +1,80 @@
+match_type	pattern	ownership	module	disposition	note
+exact	main.go	COMPOSITION_ROOT	backend-composition	RETAIN	Only production host entrypoint allowed to import chuanapi composition adapter
+prefix	modules/chuanapi/wallet/	CHUANAPI_MODULE	wallet	RETAIN	Wallet runtime, commercial policy, admin surface and migration contribution
+prefix	modules/chuanapi/affiliate/	CHUANAPI_MODULE	affiliate	RETAIN	Affiliate reward policy and schema contribution
+prefix	modules/chuanapi/payment/	CHUANAPI_MODULE	payment-waffo	RETAIN	ChuanAPI Waffo and Waffo-Pancake provider implementation
+prefix	modules/chuanapi/console/	CHUANAPI_MODULE	console	RETAIN	ChuanAPI public console/help backend routes
+prefix	modules/imagegen/	GENERIC_MODULE	imagegen	RETAIN	Generic asynchronous image generation backend module
+prefix	chuanapi/	COMPOSITION_ROOT	backend-composition	SPLIT	Current adapter; implementation details must migrate into individual modules
+exact	web/src/extensions/bootstrap.ts	COMPOSITION_ROOT	frontend-composition	RETAIN	Single frontend concrete extension wiring root loaded by main.tsx
+prefix	web/src/extensions/chuanapi/	CHUANAPI_MODULE	console	RETAIN	Concrete ChuanAPI frontend implementation
+prefix	web/src/extensions/	GENERIC_EXTENSION_KERNEL	frontend-extension	RETAIN	Generic frontend extension contracts
+prefix	extension/	GENERIC_EXTENSION_KERNEL	backend-extension	RETAIN	Startup model migration and route contribution registry
+prefix	pkg/moneyport/	GENERIC_EXTENSION_KERNEL	money-port	RETAIN	Runtime funding capability leaf package
+prefix	pkg/affiliateport/	GENERIC_EXTENSION_KERNEL	affiliate-port	RETAIN	Runtime affiliate policy capability leaf package
+prefix	pkg/walletport/	GENERIC_EXTENSION_KERNEL	wallet-port	RETAIN	Runtime wallet commercial policy capability leaf package
+prefix	pkg/paymentport/	GENERIC_EXTENSION_KERNEL	payment-port	RETAIN	Provider-agnostic payment catalogue capability leaf package
+prefix	pkg/paymentcore/	GENERIC_CORE_ENHANCEMENT	payment-core	RETAIN	Provider-neutral payment compliance, quota, callback and idempotency helpers
+prefix	pkg/billingexpr/	GENERIC_CORE_ENHANCEMENT	billing-expression	UPSTREAM_CANDIDATE	Generic pricing expression capability
+prefix	architecture/	TEST_COMPAT	architecture-tests	RETAIN	Executable dependency and ownership gates
+prefix	cmd/archmanifest/	TEST_COMPAT	architecture-tooling	RETAIN	Deterministic fork ownership manifest generator
+prefix	model/balance_ledger	DATA_COMPATIBILITY	wallet-data	DEFERRED_MIGRATION	Ledger schema and transaction engine still atomically update root users.quota* columns
+prefix	model/model_bonus_eligible	DATA_COMPATIBILITY	wallet-data	DEFERRED_MIGRATION	Bonus eligibility persistence and audit schema remain host model compatibility until dedicated data migration
+prefix	model/affiliate	DATA_COMPATIBILITY	affiliate-data	DEFERRED_MIGRATION	Affiliate reward/reconcile persistence remains host model compatibility until dedicated data migration
+exact	service/affiliate_reward.go	GENERIC_CORE_ENHANCEMENT	affiliate-wallet-bridge	RETAIN	Generic wallet cost accounting plus affiliateport bridge; no concrete reward policy
+exact	service/affiliate_reward_test.go	TEST_COMPAT	affiliate-wallet-bridge	RETAIN	Cross-boundary accounting/reward integration tests
+exact	service/affiliate_reward_maintenance_system_task_test.go	TEST_COMPAT	affiliate-integration	RETAIN	Host system-task registry integration test for module MaintenanceHandler
+exact	service/bonus_eligible.go	GENERIC_CORE_ENHANCEMENT	wallet-accounting	RETAIN	Generic wallet account-order adapter and ledger share/refund accounting
+exact	service/bonus_eligible_test.go	TEST_COMPAT	wallet-accounting	RETAIN	Wallet accounting/adapter integration tests
+exact	service/funding_source.go	GENERIC_CORE_ENHANCEMENT	subscription-funding	RETAIN	SubscriptionFunding is the host implementation behind moneyport; WalletFunding has been extracted
+exact	service/billing_session.go	GENERIC_CORE_ENHANCEMENT	billing-orchestration	RETAIN	Generic request billing orchestrator; Wallet implementation must be injected
+prefix	controller/topup_waffo	CHUANAPI_MODULE	payment-waffo	EXTRACT	ChuanAPI Waffo topup integration
+prefix	controller/subscription_payment_waffo	CHUANAPI_MODULE	payment-waffo	EXTRACT	ChuanAPI Waffo subscription integration
+prefix	setting/payment_waffo	DATA_COMPATIBILITY	payment-config	DEFERRED_MIGRATION	Persisted OptionMap binding still targets host setting variables; runtime provider implementation is module-owned
+prefix	service/waffo	TEST_COMPAT	payment-legacy-path	REVIEW	Legacy service path should remain absent after provider extraction; matching test artifacts are compatibility evidence
+prefix	constant/waffo	DATA_COMPATIBILITY	payment-config	DEFERRED_MIGRATION	Serialized Waffo payment-method shape remains host option compatibility data
+exact	model/option.go	DATA_COMPATIBILITY	shared-option-store	DEFERRED_MIGRATION	Shared option bootstrap and persistence still enumerate provider configuration keys
+exact	model/topup.go	DATA_COMPATIBILITY	payment-persistence	DEFERRED_MIGRATION	Shared TopUp persistence and settlement rows retain provider identifiers for backward-compatible data
+exact	model/subscription.go	DATA_COMPATIBILITY	subscription-persistence	DEFERRED_MIGRATION	Shared subscription schema retains provider-specific product/order compatibility fields
+exact	web/src/features/system-settings/types.ts	DATA_COMPATIBILITY	frontend-payment-config	DEFERRED_MIGRATION	Host option DTO retains persisted provider fields while concrete settings UI is extension-owned
+exact	web/src/features/system-settings/billing/index.tsx	DATA_COMPATIBILITY	frontend-payment-config	DEFERRED_MIGRATION	Host default option snapshot retains provider defaults while concrete settings UI is extension-owned
+prefix	web/src/features/image-generation/	GENERIC_MODULE	imagegen	EXTRACT	Generic image-generation frontend module
+prefix	web/src/routes/_authenticated/image/	GENERIC_MODULE	imagegen	EXTRACT	Image-generation route shell
+contains	image_async	GENERIC_MODULE	imagegen	EXTRACT	Async image-generation backend surface
+exact	relay/image_handler.go	GENERIC_MODULE	imagegen	EXTRACT	Image relay entrypoint
+exact	relay/image_handler_test.go	GENERIC_MODULE	imagegen	EXTRACT	Image relay regression tests
+contains	responses_handler	GENERIC_CORE_ENHANCEMENT	responses	UPSTREAM_CANDIDATE	Generic Responses API relay enhancement
+contains	relay_responses	GENERIC_CORE_ENHANCEMENT	responses	UPSTREAM_CANDIDATE	Generic Responses API provider enhancement
+contains	chat_via_responses	GENERIC_CORE_ENHANCEMENT	responses	UPSTREAM_CANDIDATE	Generic Responses API chat bridge
+contains	auth_session	GENERIC_CORE_ENHANCEMENT	security	UPSTREAM_CANDIDATE	Generic session hardening
+contains	secure_verification	GENERIC_CORE_ENHANCEMENT	security	UPSTREAM_CANDIDATE	Generic verification hardening
+prefix	ops/	OPS_DEPLOYMENT	ops	RETAIN	Deployment and operations assets
+prefix	.github/	OPS_DEPLOYMENT	ci	REVIEW	CI and repository operations
+prefix	bin/	OPS_DEPLOYMENT	migration-tooling	REVIEW	Operational migration and helper scripts
+prefix	docs/	TEST_COMPAT	documentation	REVIEW	Non-runtime documentation and review evidence
+suffix	_test.go	TEST_COMPAT	go-tests	RETAIN	Host regression and compatibility tests remain alongside their generic owner
+suffix	.test.ts	TEST_COMPAT	frontend-tests	RETAIN	Frontend regression tests
+suffix	.test.tsx	TEST_COMPAT	frontend-tests	RETAIN	Frontend regression tests
+suffix	.spec.ts	TEST_COMPAT	frontend-tests	RETAIN	Frontend regression tests
+suffix	.spec.tsx	TEST_COMPAT	frontend-tests	RETAIN	Frontend regression tests
+exact	AGENTS.md	TEST_COMPAT	repository-guidance	RETAIN	Repository contribution guidance
+exact	.dockerignore	OPS_DEPLOYMENT	build-config	RETAIN	Container build configuration
+exact	.env.example	OPS_DEPLOYMENT	build-config	RETAIN	Deployment configuration template
+exact	.gitattributes	OPS_DEPLOYMENT	repository-config	RETAIN	Repository configuration
+exact	.gitignore	OPS_DEPLOYMENT	repository-config	RETAIN	Repository configuration
+exact	Dockerfile	OPS_DEPLOYMENT	build-config	RETAIN	Container build configuration
+exact	docker-compose.yml	OPS_DEPLOYMENT	build-config	RETAIN	Container deployment configuration
+exact	VERSION	OPS_DEPLOYMENT	release-config	RETAIN	Product release metadata
+prefix	web/	PRODUCT_CORE_CUSTOMIZATION	frontend-core	RETAIN_REVIEW	Intentional host UI/product customization; remains upstream-owned conflict surface and must not be counted as module isolation
+prefix	common/	GENERIC_CORE_ENHANCEMENT	core-common	UPSTREAM_REVIEW	Generic host hardening/behavior changes; candidate for upstream-style patch cleanup
+prefix	constant/	GENERIC_CORE_ENHANCEMENT	core-constant	UPSTREAM_REVIEW	Generic host constants/context changes
+prefix	controller/	GENERIC_CORE_ENHANCEMENT	core-controller	UPSTREAM_REVIEW	Generic host HTTP behavior changes after concrete ChuanAPI handlers are extracted
+prefix	logger/	GENERIC_CORE_ENHANCEMENT	core-logging	UPSTREAM_REVIEW	Generic logging hardening
+prefix	middleware/	GENERIC_CORE_ENHANCEMENT	core-middleware	UPSTREAM_REVIEW	Generic authentication/rate-limit/security hardening
+prefix	model/	GENERIC_CORE_ENHANCEMENT	core-model	UPSTREAM_REVIEW	Generic host persistence changes not classified as deferred module data compatibility
+prefix	pkg/	GENERIC_CORE_ENHANCEMENT	core-package	UPSTREAM_REVIEW	Generic reusable package changes not covered by a narrower port/module rule
+prefix	relay/	GENERIC_CORE_ENHANCEMENT	core-relay	UPSTREAM_REVIEW	Generic relay/billing/protocol behavior changes
+prefix	relaykit/	GENERIC_CORE_ENHANCEMENT	core-relaykit	UPSTREAM_REVIEW	Generic protocol conversion changes
+prefix	router/	GENERIC_CORE_ENHANCEMENT	core-router	UPSTREAM_REVIEW	Generic host route changes after module routes are extracted
+prefix	service/	GENERIC_CORE_ENHANCEMENT	core-service	UPSTREAM_REVIEW	Generic orchestration/accounting/task changes after module policy extraction
+prefix	setting/	GENERIC_CORE_ENHANCEMENT	core-setting	UPSTREAM_REVIEW	Generic host settings changes not classified as deferred provider data compatibility

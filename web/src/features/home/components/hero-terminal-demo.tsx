@@ -36,6 +36,23 @@ interface ApiDemoConfig {
   accent: AccentTone
 }
 
+type KeyedLine = {
+  content: string
+  key: string
+}
+
+function buildKeyedLines(lines: string[], prefix: string): KeyedLine[] {
+  const keyCounter = new Map<string, number>()
+  return lines.map((content) => {
+    const count = keyCounter.get(content) ?? 0
+    keyCounter.set(content, count + 1)
+    return {
+      content,
+      key: `${prefix}-${count}-${content}`,
+    }
+  })
+}
+
 const ACCENT_CLASSES: Record<
   AccentTone,
   {
@@ -161,6 +178,17 @@ const API_DEMOS: ApiDemoConfig[] = [
   },
 ]
 
+// Pre-build keyed lines for each demo to ensure stable keys even with duplicate content
+const KEYED_HEADERS = new Map<string, KeyedLine[]>()
+const KEYED_REQUESTS = new Map<string, KeyedLine[]>()
+const KEYED_RESPONSES = new Map<string, KeyedLine[]>()
+
+API_DEMOS.forEach((demo) => {
+  KEYED_HEADERS.set(demo.id, buildKeyedLines(demo.headers, `${demo.id}-hdr`))
+  KEYED_REQUESTS.set(demo.id, buildKeyedLines(demo.request, `${demo.id}-req`))
+  KEYED_RESPONSES.set(demo.id, buildKeyedLines(demo.response, `${demo.id}-res`))
+})
+
 const CYCLE_INTERVAL = 4500
 const TRANSITION_MS = 220
 
@@ -228,6 +256,7 @@ export function HeroTerminalDemo(props: HeroTerminalDemoProps) {
             return (
               <button
                 key={item.id}
+                type='button'
                 onClick={() => handleSelect(index)}
                 className={cn(
                   'relative -mb-px flex items-center gap-1.5 border-b-2 px-2.5 py-2.5 text-[11px] font-medium tracking-wide transition-colors sm:px-3 sm:text-xs',
@@ -318,6 +347,8 @@ export function HeroTerminalDemo(props: HeroTerminalDemoProps) {
 
 function RequestBlock(props: { demo: ApiDemoConfig; transitioning: boolean }) {
   const { demo, transitioning } = props
+  const keyedHeaders = KEYED_HEADERS.get(demo.id) ?? []
+  const keyedRequest = KEYED_REQUESTS.get(demo.id) ?? []
 
   return (
     <div className='relative px-5 py-4'>
@@ -333,18 +364,18 @@ function RequestBlock(props: { demo: ApiDemoConfig; transitioning: boolean }) {
           <StringText>&quot;{demo.endpoint}&quot;</StringText>{' '}
           <Muted>{'\\'}</Muted>
         </CodeLine>
-        {demo.headers.map((header) => (
-          <CodeLine key={header} indent={2}>
-            <Flag>-H</Flag> <StringText>{header}</StringText>{' '}
+        {keyedHeaders.map((header) => (
+          <CodeLine key={header.key} indent={2}>
+            <Flag>-H</Flag> <StringText>{header.content}</StringText>{' '}
             <Muted>{'\\'}</Muted>
           </CodeLine>
         ))}
         <CodeLine indent={2}>
           <Flag>-d</Flag> <StringText>&apos;{'{'}</StringText>
         </CodeLine>
-        {demo.request.map((line, i) => (
-          <CodeLine key={i} indent={4}>
-            {renderJsonLine(line)}
+        {keyedRequest.map((line) => (
+          <CodeLine key={line.key} indent={4}>
+            {renderJsonLine(line.content)}
           </CodeLine>
         ))}
         <CodeLine indent={2}>
@@ -357,6 +388,7 @@ function RequestBlock(props: { demo: ApiDemoConfig; transitioning: boolean }) {
 
 function ResponseBlock(props: { demo: ApiDemoConfig; transitioning: boolean }) {
   const { demo, transitioning } = props
+  const keyedResponse = KEYED_RESPONSES.get(demo.id) ?? []
 
   return (
     <div
@@ -372,8 +404,10 @@ function ResponseBlock(props: { demo: ApiDemoConfig; transitioning: boolean }) {
           transitioning ? 'opacity-0' : 'opacity-100'
         )}
       >
-        {demo.response.map((line, i) => (
-          <CodeLine key={i}>{renderResponseLine(line, demo)}</CodeLine>
+        {keyedResponse.map((line) => (
+          <CodeLine key={line.key}>
+            {renderResponseLine(line.content, demo)}
+          </CodeLine>
         ))}
       </div>
     </div>
@@ -405,36 +439,41 @@ function renderResponseLine(line: string, demo: ApiDemoConfig): ReactNode {
 
   if (matches.length === 0) return tokenize(line)
 
-  matches.forEach((match, idx) => {
+  matches.forEach((match) => {
     const start = match.index ?? 0
+    const placeholder = match[0]
+    const segmentKey = `seg-${start}-${placeholder}`
     if (start > cursor) {
       segments.push(
-        <span key={`pre-${idx}`}>{tokenize(line.slice(cursor, start))}</span>
+        <span key={`pre-${segmentKey}`}>
+          {tokenize(line.slice(cursor, start))}
+        </span>
       )
     }
-    const placeholder = match[0]
     if (placeholder === '<text>') {
       segments.push(
-        <Accent key={`ph-${idx}`} accent={demo.accent}>
+        <Accent key={`ph-${segmentKey}`} accent={demo.accent}>
           {`"${truncateResponse(demo)}"`}
         </Accent>
       )
     } else if (placeholder === '<tokens>') {
-      segments.push(<NumberText key={`ph-${idx}`}>{demo.tokens}</NumberText>)
+      segments.push(
+        <NumberText key={`ph-${segmentKey}`}>{demo.tokens}</NumberText>
+      )
     } else if (placeholder === '<in>') {
       segments.push(
-        <NumberText key={`ph-${idx}`}>
+        <NumberText key={`ph-${segmentKey}`}>
           {Math.floor(demo.tokens * 0.4)}
         </NumberText>
       )
     } else if (placeholder === '<out>') {
       segments.push(
-        <NumberText key={`ph-${idx}`}>
+        <NumberText key={`ph-${segmentKey}`}>
           {Math.ceil(demo.tokens * 0.6)}
         </NumberText>
       )
     } else {
-      segments.push(<Muted key={`ph-${idx}`}>{placeholder}</Muted>)
+      segments.push(<Muted key={`ph-${segmentKey}`}>{placeholder}</Muted>)
     }
     cursor = start + placeholder.length
   })
@@ -462,20 +501,21 @@ function tokenize(input: string): ReactNode {
   let cursor = 0
   const matches = [...input.matchAll(STRING_RE)]
 
-  matches.forEach((match, idx) => {
+  matches.forEach((match) => {
     const start = match.index ?? 0
+    const text = match[0]
+    const tokenKey = `tok-${start}-${text}`
     if (start > cursor) {
       segments.push(
-        <Muted key={`m-${idx}`}>{input.slice(cursor, start)}</Muted>
+        <Muted key={`m-${tokenKey}`}>{input.slice(cursor, start)}</Muted>
       )
     }
-    const text = match[0]
     const after = input.slice(start + text.length).trimStart()
     const isKey = after.startsWith(':')
     if (isKey) {
-      segments.push(<Key key={`k-${idx}`}>{text}</Key>)
+      segments.push(<Key key={`k-${tokenKey}`}>{text}</Key>)
     } else {
-      segments.push(<StringText key={`s-${idx}`}>{text}</StringText>)
+      segments.push(<StringText key={`s-${tokenKey}`}>{text}</StringText>)
     }
     cursor = start + text.length
   })

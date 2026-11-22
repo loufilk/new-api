@@ -22,10 +22,16 @@ import * as katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { Marked, Renderer, type MarkedExtension, type Tokens } from 'marked'
 import { useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 
+import {
+  announcementImageFallback,
+  hardenAnnouncementImages,
+} from '@/lib/announcement-images'
 import { cn } from '@/lib/utils'
 
 interface MarkdownProps {
+  imagePolicy?: 'announcement'
   /** Resolve relative document links against their source, never the dashboard URL. */
   baseUrl?: string
   breaks?: boolean
@@ -751,21 +757,70 @@ function addExternalLinkAttributes(html: string, baseUrl?: string): string {
 function renderMarkdown(
   markdown: string,
   breaks = false,
-  baseUrl?: string
+  baseUrl?: string,
+  imagePolicy?: 'announcement',
+  imageUnavailable = ''
 ): string {
   const parsedHtml = markdownParser.parse(markdown, {
     ...markdownOptions,
     breaks,
   })
-  const html = DOMPurify.sanitize(parsedHtml, sanitizeOptions)
+  const html = DOMPurify.sanitize(
+    parsedHtml,
+    imagePolicy === 'announcement'
+      ? {
+          ...sanitizeOptions,
+          // Keep ordinary legacy HTML formatting, never enable active/alternate media.
+          FORBID_TAGS: [
+            'svg',
+            'mglyph',
+            'picture',
+            'source',
+            'video',
+            'audio',
+            'iframe',
+            'object',
+            'embed',
+            'style',
+            'form',
+            'input',
+            'button',
+            'textarea',
+            'select',
+            'option',
+          ],
+          FORBID_ATTR: ['srcset', 'style', 'background'],
+        }
+      : sanitizeOptions
+  )
 
-  return addExternalLinkAttributes(html, baseUrl)
+  return addExternalLinkAttributes(
+    imagePolicy === 'announcement'
+      ? hardenAnnouncementImages(html, imageUnavailable)
+      : html,
+    baseUrl
+  )
 }
 
 export function Markdown(props: MarkdownProps) {
+  const { t } = useTranslation()
+  const imageUnavailable = t('Image unavailable')
   const html = useMemo(
-    () => renderMarkdown(props.children, props.breaks, props.baseUrl),
-    [props.breaks, props.children, props.baseUrl]
+    () =>
+      renderMarkdown(
+        props.children,
+        props.breaks,
+        props.baseUrl,
+        props.imagePolicy,
+        imageUnavailable
+      ),
+    [
+      props.breaks,
+      props.children,
+      props.baseUrl,
+      props.imagePolicy,
+      imageUnavailable,
+    ]
   )
 
   return (
@@ -801,6 +856,17 @@ export function Markdown(props: MarkdownProps) {
         '[overflow-wrap:anywhere]',
         props.className
       )}
+      onErrorCapture={
+        props.imagePolicy === 'announcement'
+          ? (event) => {
+              if (event.target instanceof HTMLImageElement) {
+                event.target.replaceWith(
+                  announcementImageFallback(event.target.alt, imageUnavailable)
+                )
+              }
+            }
+          : undefined
+      }
       dangerouslySetInnerHTML={{ __html: html }}
     />
   )

@@ -1,18 +1,28 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
+	"github.com/QuantumNous/new-api/relay"
+	relayhelper "github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/perf_metrics_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -34,14 +44,80 @@ func (input *tokenAutoGroupsInput) UnmarshalJSON(data []byte) error {
 
 type tokenRequest struct {
 	model.Token
-	AutoGroups tokenAutoGroupsInput `json:"auto_groups"`
+	ExpectedVersion    *int64               `json:"expected_version"`
+	Name               *string              `json:"name"`
+	ExpiredTime        *int64               `json:"expired_time"`
+	UnlimitedQuota     *bool                `json:"unlimited_quota"`
+	ModelLimitsEnabled *bool                `json:"model_limits_enabled"`
+	ModelLimits        *string              `json:"model_limits"`
+	AllowIps           *string              `json:"allow_ips"`
+	AutoGroups         tokenAutoGroupsInput `json:"auto_groups"`
+	Group              *string              `json:"group"`
+	CrossGroupRetry    *bool                `json:"cross_group_retry"`
+	SmartRouting       *bool                `json:"smart_routing"`
+	RoutingStrategy    *string              `json:"routing_strategy"`
+	NoRetryWithinGroup *bool                `json:"no_retry_within_group"`
+	ProjectLabel       *string              `json:"project_label"`
+	RemainQuota        *int                 `json:"remain_quota"`
 	// 指针区分“未传”和显式 false：新建时未传即开启，更新时未传则保留原值。
 	AllowUserQuotaQuery *bool `json:"allow_user_quota_query"`
 }
 
+// Omitted PUT fields are not permission changes. Explicit false/empty values
+// still let clients disable a setting or clear a restriction deliberately.
+func (request *tokenRequest) applyEditableFields(token *model.Token) {
+	if request.Name != nil {
+		token.Name = *request.Name
+	}
+	if request.ExpiredTime != nil {
+		token.ExpiredTime = *request.ExpiredTime
+	}
+	if request.UnlimitedQuota != nil {
+		token.UnlimitedQuota = *request.UnlimitedQuota
+	}
+	if request.ModelLimitsEnabled != nil {
+		token.ModelLimitsEnabled = *request.ModelLimitsEnabled
+	}
+	if request.ModelLimits != nil {
+		token.ModelLimits = *request.ModelLimits
+	}
+	if request.AllowIps != nil {
+		token.AllowIps = request.AllowIps
+	}
+	if request.RemainQuota != nil {
+		token.RemainQuota = *request.RemainQuota
+	}
+}
+
+func (request *tokenRequest) applyRoutingSettings(token *model.Token) error {
+	if request.Group != nil {
+		token.Group = *request.Group
+	}
+	if request.CrossGroupRetry != nil {
+		token.CrossGroupRetry = *request.CrossGroupRetry
+	}
+	if request.SmartRouting != nil {
+		token.SmartRouting = *request.SmartRouting
+	}
+	if request.RoutingStrategy != nil {
+		token.RoutingStrategy = *request.RoutingStrategy
+	}
+	if request.NoRetryWithinGroup != nil {
+		token.NoRetryWithinGroup = *request.NoRetryWithinGroup
+	}
+	if request.ProjectLabel != nil {
+		token.ProjectLabel = strings.TrimSpace(*request.ProjectLabel)
+	}
+	// Persist the existing default semantics for legacy clients, without enabling smart routing.
+	token.RoutingStrategy = token.GetRoutingStrategy()
+	return token.ValidateRoutingSettings()
+}
+
 type tokenResponse struct {
 	*model.Token
-	AutoGroups []string `json:"auto_groups"`
+	SettingsVersion int64    `json:"settings_version"`
+	EffectiveStatus int      `json:"effective_status"`
+	AutoGroups      []string `json:"auto_groups"`
 }
 
 func maxTokenQuota() int {
@@ -60,6 +136,7 @@ func buildMaskedTokenResponse(token *model.Token) *tokenResponse {
 	}
 	maskedToken := *token
 	maskedToken.Key = token.GetMaskedKey()
+	maskedToken.RoutingStrategy = token.GetRoutingStrategy()
 	autoGroups, err := token.GetAutoGroups()
 	if err != nil {
 		common.SysError(common.LogText("failed to parse auto groups for token %d: %v", token.Id, err))
@@ -68,7 +145,7 @@ func buildMaskedTokenResponse(token *model.Token) *tokenResponse {
 	if len(autoGroups) == 0 {
 		autoGroups = nil
 	}
-	return &tokenResponse{Token: &maskedToken, AutoGroups: autoGroups}
+	return &tokenResponse{Token: &maskedToken, AutoGroups: autoGroups, SettingsVersion: token.CacheRevision, EffectiveStatus: token.EffectiveStatus(common.GetTimestamp())}
 }
 
 func buildMaskedTokenResponses(tokens []*model.Token) []*tokenResponse {
@@ -87,6 +164,27 @@ func getTokenRequestUserGroup(c *gin.Context) (string, error) {
 		return userGroup, nil
 	}
 	return model.GetUserGroup(c.GetInt("id"), false)
+}
+
+func validateTokenRequestRoutingScope(c *gin.Context, token *model.Token) bool {
+	tokenGroup := token.Group
+	if tokenGroup == "" {
+		return true
+	}
+	userGroup, err := getTokenRequestUserGroup(c)
+	if err != nil {
+		common.ApiError(c, err)
+		return false
+	}
+	if err := service.ValidateTokenRoutingScope(userGroup, token); err != nil {
+		message := i18n.MsgAuthTokenGroupForbidden
+		if errors.Is(err, service.ErrTokenGroupDeprecated) {
+			message = i18n.MsgAuthTokenGroupDeprecated
+		}
+		common.ApiErrorI18n(c, message, map[string]any{"Group": tokenGroup})
+		return false
+	}
+	return true
 }
 
 func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) bool {
@@ -129,15 +227,47 @@ func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) boo
 	return true
 }
 
+func tokenListStatuses(c *gin.Context) ([]int, error) {
+	filter := c.Query("status")
+	if filter == "" {
+		return nil, nil
+	}
+	statuses := make([]int, 0, 4)
+	for value := range strings.SplitSeq(filter, ",") {
+		status, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil {
+			return nil, common.NewMessage("Invalid token status")
+		}
+		switch status {
+		case common.TokenStatusEnabled, common.TokenStatusDisabled, common.TokenStatusExpired, common.TokenStatusExhausted:
+			if !slices.Contains(statuses, status) {
+				statuses = append(statuses, status)
+			}
+		default:
+			return nil, common.NewMessage("Invalid token status")
+		}
+	}
+	return statuses, nil
+}
+
 func GetAllTokens(c *gin.Context) {
 	userId := c.GetInt("id")
-	pageInfo := common.GetPageQuery(c)
-	tokens, err := model.GetAllUserTokens(userId, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	statuses, err := tokenListStatuses(c)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	total, _ := model.CountUserTokens(userId)
+	pageInfo := common.GetPageQuery(c)
+	tokens, err := model.GetAllUserTokens(userId, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), statuses...)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	total, err := model.CountUserTokens(userId, statuses...)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
 	common.ApiSuccess(c, pageInfo)
@@ -145,12 +275,29 @@ func GetAllTokens(c *gin.Context) {
 
 func SearchTokens(c *gin.Context) {
 	userId := c.GetInt("id")
-	keyword := c.Query("keyword")
-	token := c.Query("token")
+	statuses, err := tokenListStatuses(c)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	var keyword, token string
+	if c.Request.Method == http.MethodPost {
+		var request struct {
+			Keyword string `json:"keyword"`
+			Token   string `json:"token"`
+		}
+		if err := c.ShouldBindJSON(&request); err != nil {
+			common.ApiErrorT(c, "Invalid parameters")
+			return
+		}
+		keyword, token = request.Keyword, request.Token
+	} else {
+		keyword, token = c.Query("keyword"), c.Query("token")
+	}
 
 	pageInfo := common.GetPageQuery(c)
 
-	tokens, total, err := model.SearchUserTokens(userId, keyword, token, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	tokens, total, err := model.SearchUserTokens(userId, keyword, token, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), statuses...)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -176,15 +323,262 @@ func GetToken(c *gin.Context) {
 }
 
 func GetTokenAutoGroups(c *gin.Context) {
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
+
 	userGroup, err := getTokenRequestUserGroup(c)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	groups := service.GetUserAutoGroup(userGroup)
+	selectable := service.GetUserSelectableGroups(userGroup)
+	abilities, err := model.GetEnabledAbilitiesWithChannelsForGroups(selectable)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	available := make(map[string]bool, len(selectable))
+	for _, ability := range abilities {
+		available[ability.Group] = true
+	}
+	metricsAvailable := perf_metrics_setting.GetSetting().Enabled
+	now := time.Now()
+	windowEnd := now.Unix()
+	windowStart := windowEnd - windowEnd%3600 - 23*3600
+	histories := map[string]perfmetrics.TokenGroupHistory{}
+	if metricsAvailable {
+		histories, windowStart, windowEnd, err = perfmetrics.QueryTokenGroupHistory(c.Request.Context(), selectable, now)
+		if err != nil {
+			common.SysError(common.LogText("failed to query token group performance: %v", err))
+			metricsAvailable = false
+		}
+	}
+	type groupDetail struct {
+		Name        string     `json:"name"`
+		Ratio       float64    `json:"ratio"`
+		SuccessRate *float64   `json:"success_rate"`
+		Available   bool       `json:"available"`
+		History     []*float64 `json:"history"`
+	}
+	details := make([]groupDetail, 0, len(selectable))
+	for _, group := range selectable {
+		history, ok := histories[group]
+		if !ok {
+			history.History = make([]*float64, perfmetrics.TokenGroupHistoryBuckets)
+		}
+		details = append(details, groupDetail{
+			Name: group, Ratio: service.GetUserGroupRatio(userGroup, group),
+			SuccessRate: history.SuccessRate, Available: available[group], History: history.History,
+		})
+	}
+	maxCount := setting.GetMaxTokenAutoGroups()
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
 	common.ApiSuccess(c, gin.H{
-		"groups":    service.GetUserAutoGroup(userGroup),
-		"max_count": setting.GetMaxTokenAutoGroups(),
+		"groups":                 groups,
+		"max_count":              maxCount,
+		"selectable_groups":      selectable,
+		"group_details":          details,
+		"metrics_available":      metricsAvailable,
+		"window_start":           windowStart,
+		"window_end":             windowEnd,
+		"history_bucket_seconds": perfmetrics.TokenGroupHistoryBucketSeconds,
 	})
+}
+
+type tokenModelScopeRequest struct {
+	Group          string   `json:"group"`
+	SmartRouting   bool     `json:"smart_routing"`
+	AutoGroupsMode string   `json:"auto_groups_mode"`
+	AutoGroups     []string `json:"auto_groups"`
+}
+
+func getRoutableModelsForGroups(user *model.UserBase, groups []string, allow func(*model.Channel, string) bool) ([]string, error) {
+	abilities, err := model.GetEnabledAbilitiesWithChannelsForGroups(groups)
+	if err != nil {
+		return nil, err
+	}
+	if len(abilities) == 0 {
+		return []string{}, nil
+	}
+
+	channelIDs := make([]int, 0, len(abilities))
+	seenChannelIDs := make(map[int]struct{}, len(abilities))
+	for _, ability := range abilities {
+		if _, exists := seenChannelIDs[ability.ChannelId]; exists {
+			continue
+		}
+		seenChannelIDs[ability.ChannelId] = struct{}{}
+		channelIDs = append(channelIDs, ability.ChannelId)
+	}
+	channels, err := model.GetChannelsByIds(channelIDs)
+	if err != nil {
+		return nil, err
+	}
+	channelByID := make(map[int]*model.Channel, len(channels))
+	for _, channel := range channels {
+		if channel != nil && channel.Status == common.ChannelStatusEnabled {
+			channelByID[channel.Id] = channel
+		}
+	}
+
+	acceptUnsetPricing := user.GetSetting().AcceptUnsetRatioModel
+	modelSet := make(map[string]struct{})
+	for _, ability := range abilities {
+		modelName := strings.TrimSpace(ability.Model)
+		if modelName == "" {
+			continue
+		}
+		if !acceptUnsetPricing && !relayhelper.HasModelBillingConfig(modelName) {
+			continue
+		}
+		channel := channelByID[ability.ChannelId]
+		if channel == nil {
+			continue
+		}
+		if allow != nil && !allow(channel, modelName) {
+			continue
+		}
+		modelSet[modelName] = struct{}{}
+	}
+
+	models := make([]string, 0, len(modelSet))
+	for modelName := range modelSet {
+		models = append(models, modelName)
+	}
+	sort.Strings(models)
+	return models, nil
+}
+
+// PreviewTokenModels returns models routable by the API key routing scope being
+// edited. It intentionally ignores model_limits so the selector can add any
+// model that is valid for the selected group(s). Existing whitelist selections
+// remain unchanged; the frontend marks unavailable selections for explicit review.
+func PreviewTokenModels(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	request := tokenModelScopeRequest{}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
+
+	userID := c.GetInt("id")
+	user, err := model.GetUserCache(userID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	token := &model.Token{Group: request.Group, SmartRouting: request.SmartRouting}
+	var groups []string
+	if !token.SmartRouting && token.Group == "auto" && request.AutoGroupsMode == "custom" {
+		groups = service.FilterUserTokenAutoGroups(user.Group, request.AutoGroups)
+	} else {
+		if token.Group == "auto" && len(request.AutoGroups) > 0 {
+			if err := token.SetAutoGroups(request.AutoGroups); err != nil {
+				common.ApiError(c, err)
+				return
+			}
+		}
+		groups, err = service.GetTokenEffectiveGroups(user.Group, token)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	models, err := getRoutableModelsForGroups(user, groups, nil)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
+	common.ApiSuccess(c, models)
+}
+
+func GetTokenModels(c *gin.Context) {
+	app, ok := relay.NormalizeCCSwitchApp(c.Query("app"))
+	if !ok {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	respondWithTokenModels(c, func(channel *model.Channel, modelName string) bool {
+		return relay.SupportsCCSwitchModel(channel, app, modelName)
+	})
+}
+
+// GetTokenRoutableModels exposes the owned token's effective model scope for
+// console tools such as image generation, without a CLI-specific protocol filter.
+func GetTokenRoutableModels(c *gin.Context) {
+	respondWithTokenModels(c, nil)
+}
+
+func respondWithTokenModels(c *gin.Context, allow func(*model.Channel, string) bool) {
+	guard, guardOK := beginControllerGroupConfigRead(c)
+	if !guardOK {
+		return
+	}
+	defer guard.Close()
+
+	c.Header("Cache-Control", "no-store")
+	tokenID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || tokenID <= 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	userID := c.GetInt("id")
+	token, err := model.GetTokenByIds(tokenID, userID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if allow == nil && c.Query("endpoint") == "image-generation" {
+		if token.EffectiveStatus(common.GetTimestamp()) != common.TokenStatusEnabled {
+			if finishControllerGroupConfigRead(c, guard) {
+				common.ApiSuccess(c, []string{})
+			}
+			return
+		}
+		allow = model.NewPlaygroundChannelFilter(constant.EndpointTypeImageGeneration)
+	}
+	user, err := model.GetUserCache(userID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	groups, err := service.GetTokenEffectiveGroups(user.Group, token)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	modelLimit := token.GetModelLimitsMap()
+	models, err := getRoutableModelsForGroups(user, groups, func(channel *model.Channel, modelName string) bool {
+		if token.ModelLimitsEnabled && !middleware.TokenModelLimitAllows(modelLimit, modelName) {
+			return false
+		}
+		return allow == nil || allow(channel, modelName)
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
+	common.ApiSuccess(c, models)
 }
 
 func GetTokenKey(c *gin.Context) {
@@ -303,13 +697,32 @@ func AddToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	guard, ok := beginControllerGroupConfigRead(c)
+	if !ok {
+		return
+	}
+	defer guard.Close()
 	token := request.Token
-	if len(token.Name) > 50 {
+	token.ExpiredTime = -1
+	request.applyEditableFields(&token)
+	if token.ExpiredTime != -1 && token.ExpiredTime <= 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	if err := request.applyRoutingSettings(&token); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if utf8.RuneCountInString(token.Name) > 50 {
 		common.ApiErrorT(c, "Token name is too long")
 		return
 	}
 	params := tokenAuditParams(c)
 	params["name"] = token.Name
+	if request.Group == nil || strings.TrimSpace(*request.Group) == "" {
+		common.ApiErrorT(c, "Please select a group")
+		return
+	}
 	// 非无限额度时，检查额度值是否超出有效范围
 	if !token.UnlimitedQuota {
 		if token.RemainQuota < 0 {
@@ -333,13 +746,16 @@ func AddToken(c *gin.Context) {
 		common.ApiErrorT(c, "Maximum number of tokens reached ({{max}})", map[string]any{"max": maxTokens})
 		return
 	}
-	if token.Group == "auto" {
+	if token.Group == "auto" || token.SmartRouting {
 		if !setTokenAutoGroups(c, &token, request.AutoGroups.Groups) {
 			return
 		}
 	} else {
 		token.CrossGroupRetry = false
 		_ = token.SetAutoGroups(nil)
+	}
+	if !validateTokenRequestRoutingScope(c, &token) {
+		return
 	}
 	key, err := common.GenerateKey()
 	if err != nil {
@@ -362,9 +778,20 @@ func AddToken(c *gin.Context) {
 		Group:              token.Group,
 		CrossGroupRetry:    token.CrossGroupRetry,
 		AutoGroups:         token.AutoGroups,
+		SmartRouting:       token.SmartRouting,
+		RoutingStrategy:    token.RoutingStrategy,
+		NoRetryWithinGroup: token.NoRetryWithinGroup,
+		ProjectLabel:       token.ProjectLabel,
 	}
 	cleanToken.AllowUserQuotaQuery = request.AllowUserQuotaQuery == nil || *request.AllowUserQuotaQuery
-	err = cleanToken.Insert()
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
+	err = cleanToken.InsertAtGroupConfigVersion(c.GetInt64("auth_version"), guard.Version)
+	if errors.Is(err, model.ErrGroupConfigChanged) {
+		groupConfigReadFailure(c)
+		return
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -387,7 +814,7 @@ func DeleteToken(c *gin.Context) {
 	}
 	params := tokenAuditParams(c)
 	params["id"], params["name"] = token.Id, token.Name
-	err = token.Delete()
+	err = token.DeleteForOwner(c.GetInt64("auth_version"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -408,25 +835,25 @@ func UpdateToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	// The explicit revocation-only transport never admits an enable/full edit.
+	if c.Query("disable_only") == "true" && (statusOnly == "" || request.Token.Status != common.TokenStatusDisabled) {
+		common.ApiErrorT(c, "Invalid token status")
+		return
+	}
+	guard, ok := beginControllerGroupConfigRead(c)
+	if !ok {
+		return
+	}
+	defer guard.Close()
 	token := request.Token
+	request.applyEditableFields(&token)
 	params := tokenAuditParams(c)
 	if token.Id > 0 {
 		params["id"] = token.Id
 	}
-	if len(token.Name) > 50 {
+	if statusOnly == "" && utf8.RuneCountInString(token.Name) > 50 {
 		common.ApiErrorT(c, "Token name is too long")
 		return
-	}
-	if !token.UnlimitedQuota {
-		if token.RemainQuota < 0 {
-			common.ApiErrorT(c, "Quota value cannot be negative")
-			return
-		}
-		maxQuotaValue := maxTokenQuota()
-		if token.RemainQuota > maxQuotaValue {
-			common.ApiErrorT(c, "Quota value exceeds valid range, maximum is {{max}}", map[string]any{"max": logger.FormatQuota(maxQuotaValue)})
-			return
-		}
 	}
 	cleanToken, err := model.GetTokenByIds(token.Id, userId)
 	if err != nil {
@@ -434,43 +861,116 @@ func UpdateToken(c *gin.Context) {
 		return
 	}
 	params["name"] = cleanToken.Name
+	if statusOnly != "" && token.Status != common.TokenStatusEnabled && token.Status != common.TokenStatusDisabled {
+		common.ApiErrorT(c, "Invalid token status")
+		return
+	}
 	previous := *cleanToken
-	if token.Status == common.TokenStatusEnabled {
-		if cleanToken.Status == common.TokenStatusExpired && cleanToken.ExpiredTime <= common.GetTimestamp() && cleanToken.ExpiredTime != -1 {
-			common.ApiErrorT(c, "Token has expired and cannot be enabled. Please modify the expiration time or set it to never expire")
-			return
-		}
-		if cleanToken.Status == common.TokenStatusExhausted && cleanToken.RemainQuota <= 0 && !cleanToken.UnlimitedQuota {
-			common.ApiErrorT(c, "Token quota is exhausted and cannot be enabled. Please modify the remaining quota or set it to unlimited")
-			return
-		}
+	if statusOnly == "" && request.ExpectedVersion != nil && *request.ExpectedVersion != previous.CacheRevision {
+		common.ApiErrorStatus(c, http.StatusConflict, model.ErrTokenSettingsChanged)
+		return
 	}
 	if statusOnly != "" {
 		cleanToken.Status = token.Status
 	} else {
-		// If you add more fields, please also update token.Update()
-		cleanToken.Name = token.Name
-		cleanToken.ExpiredTime = token.ExpiredTime
-		cleanToken.RemainQuota = token.RemainQuota
-		cleanToken.UnlimitedQuota = token.UnlimitedQuota
-		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
-		cleanToken.ModelLimits = token.ModelLimits
-		cleanToken.AllowIps = token.AllowIps
-		if request.AllowUserQuotaQuery != nil {
-			cleanToken.AllowUserQuotaQuery = *request.AllowUserQuotaQuery
+		// Existing empty selections still inherit their owner's group. An
+		// explicit named selection cannot be cleared into that legacy mode.
+		if request.Group != nil && strings.TrimSpace(*request.Group) == "" &&
+			(*request.Group != "" || cleanToken.Group != "") {
+			common.ApiErrorT(c, "Please select a group")
+			return
 		}
-		cleanToken.Group = token.Group
-		cleanToken.CrossGroupRetry = token.CrossGroupRetry
-		if token.Group != "auto" {
-			cleanToken.CrossGroupRetry = false
-			_ = cleanToken.SetAutoGroups(nil)
-		} else if request.AutoGroups.Set {
-			if !setTokenAutoGroups(c, cleanToken, request.AutoGroups.Groups) {
+		if err := request.applyRoutingSettings(cleanToken); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		// An unchanged manual draft has no authority while smart routing is on.
+		// New named selections still require permission; virtual Auto is only
+		// an internal dispatch mode for smart routing, never a new group grant.
+		validateManualGroup := !cleanToken.SmartRouting ||
+			(cleanToken.Group != "auto" && cleanToken.Group != previous.Group)
+		// If you add more fields, please also update token.Update()
+		request.applyEditableFields(cleanToken)
+		if request.ExpiredTime != nil && cleanToken.ExpiredTime != -1 && cleanToken.ExpiredTime <= 0 {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		if !cleanToken.UnlimitedQuota && (request.RemainQuota != nil || previous.UnlimitedQuota) {
+			if cleanToken.RemainQuota < 0 {
+				common.ApiErrorT(c, "Quota value cannot be negative")
+				return
+			}
+			if cleanToken.RemainQuota > maxTokenQuota() {
+				common.ApiErrorT(c, "Quota value exceeds valid range, maximum is {{max}}", map[string]any{"max": logger.FormatQuota(maxTokenQuota())})
 				return
 			}
 		}
+		if request.AllowUserQuotaQuery != nil {
+			cleanToken.AllowUserQuotaQuery = *request.AllowUserQuotaQuery
+		}
+		if cleanToken.Group != "auto" && !cleanToken.SmartRouting {
+			cleanToken.CrossGroupRetry = false
+			_ = cleanToken.SetAutoGroups(nil)
+		} else if request.AutoGroups.Set {
+			previousGroups, parseErr := previous.GetAutoGroups()
+			retainedDraft := cleanToken.SmartRouting && parseErr == nil && slices.Equal(previousGroups, request.AutoGroups.Groups)
+			if !retainedDraft && !setTokenAutoGroups(c, cleanToken, request.AutoGroups.Groups) {
+				return
+			}
+		} else if !cleanToken.SmartRouting && cleanToken.Group == "auto" {
+			groups, err := cleanToken.GetAutoGroups()
+			if err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			if !setTokenAutoGroups(c, cleanToken, groups) {
+				return
+			}
+		}
+		if validateManualGroup && !validateTokenRequestRoutingScope(c, cleanToken) {
+			return
+		}
 	}
-	err = cleanToken.Update()
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
+	if statusOnly != "" && token.Status == common.TokenStatusDisabled {
+		previous.Status, err = cleanToken.DisableForOwner(c.GetInt64("auth_version"))
+	} else if statusOnly != "" {
+		userGroup, groupErr := getTokenRequestUserGroup(c)
+		if groupErr != nil {
+			common.ApiError(c, groupErr)
+			return
+		}
+		previous.Status, err = cleanToken.UpdateStatusAtGroupConfigVersion(c.GetInt64("auth_version"), guard.Version, func(current *model.Token) error {
+			if current.SmartRouting {
+				return nil
+			}
+			if scopeErr := service.ValidateTokenRoutingScope(userGroup, current); scopeErr != nil {
+				message := i18n.MsgAuthTokenGroupForbidden
+				if errors.Is(scopeErr, service.ErrTokenGroupDeprecated) {
+					message = i18n.MsgAuthTokenGroupDeprecated
+				}
+				return errors.New(i18n.T(c, message, map[string]any{"Group": current.Group}))
+			}
+			return nil
+		})
+	} else {
+		var finiteEditMaximum *int
+		if !cleanToken.UnlimitedQuota && (request.RemainQuota != nil || previous.UnlimitedQuota) {
+			maximum := maxTokenQuota()
+			finiteEditMaximum = &maximum
+		}
+		err = cleanToken.UpdateFromSnapshotAtGroupConfigVersion(previous, c.GetInt64("auth_version"), guard.Version, finiteEditMaximum)
+	}
+	if errors.Is(err, model.ErrTokenSettingsChanged) {
+		common.ApiErrorStatus(c, http.StatusConflict, err)
+		return
+	}
+	if errors.Is(err, model.ErrGroupConfigChanged) {
+		groupConfigReadFailure(c)
+		return
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -486,7 +986,7 @@ func UpdateToken(c *gin.Context) {
 		}{
 			{"name", previous.Name != cleanToken.Name},
 			{"expired_time", previous.ExpiredTime != cleanToken.ExpiredTime},
-			{"remain_quota", previous.RemainQuota != cleanToken.RemainQuota},
+			{"remain_quota", request.RemainQuota != nil && previous.RemainQuota != token.RemainQuota},
 			{"unlimited_quota", previous.UnlimitedQuota != cleanToken.UnlimitedQuota},
 			{"model_limits_enabled", previous.ModelLimitsEnabled != cleanToken.ModelLimitsEnabled},
 			{"model_limits", previous.ModelLimits != cleanToken.ModelLimits},
@@ -496,6 +996,10 @@ func UpdateToken(c *gin.Context) {
 			{"group", previous.Group != cleanToken.Group},
 			{"cross_group_retry", previous.CrossGroupRetry != cleanToken.CrossGroupRetry},
 			{"auto_groups", previous.AutoGroups != cleanToken.AutoGroups},
+			{"smart_routing", previous.SmartRouting != cleanToken.SmartRouting},
+			{"routing_strategy", previous.RoutingStrategy != cleanToken.RoutingStrategy},
+			{"no_retry_within_group", previous.NoRetryWithinGroup != cleanToken.NoRetryWithinGroup},
+			{"project_label", previous.ProjectLabel != cleanToken.ProjectLabel},
 		} {
 			if field.changed {
 				changedFields = append(changedFields, field.name)
@@ -527,7 +1031,7 @@ func DeleteTokenBatch(c *gin.Context) {
 		return
 	}
 	userId := c.GetInt("id")
-	count, err := model.BatchDeleteTokens(tokenBatch.Ids, userId)
+	count, err := model.BatchDeleteTokens(tokenBatch.Ids, userId, c.GetInt64("auth_version"))
 	if err != nil {
 		common.ApiError(c, err)
 		return

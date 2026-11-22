@@ -18,8 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import type { ColumnDef } from '@tanstack/react-table'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -30,6 +29,7 @@ import {
 import { ErrorState } from '@/components/error-state'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import type { ColumnDef } from '@/lib/console-table'
 import { createServerError } from '@/lib/server-error-message'
 
 import { searchModels } from '../api'
@@ -69,59 +69,69 @@ export function VendorLinkedModels({
       return response.data
     },
   })
-  const rules = getNameRuleConfig(t)
-  const columns: ColumnDef<Model>[] = [
-    {
-      id: 'select',
-      enableSorting: false,
-      enableHiding: false,
-      size: 40,
-      header: ({ table }) => (
-        <Checkbox
-          checked={table.getIsAllPageRowsSelected()}
-          indeterminate={table.getIsSomePageRowsSelected()}
-          onCheckedChange={(checked) =>
-            table.toggleAllPageRowsSelected(Boolean(checked))
-          }
-          aria-label={t('Select all')}
-        />
-      ),
-      cell: ({ row }) => (
-        <Checkbox
-          checked={row.getIsSelected()}
-          onCheckedChange={(checked) => row.toggleSelected(Boolean(checked))}
-          aria-label={t('Select {{name}}', { name: row.original.model_name })}
-        />
-      ),
-    },
-    {
-      accessorKey: 'model_name',
-      header: t('Model'),
-      enableHiding: false,
-      meta: { mobileTitle: true },
-      cell: ({ row }) => (
-        <Button
-          variant='link'
-          className='text-foreground h-auto max-w-72 min-w-0 justify-start p-0 font-mono'
-          title={row.original.model_name}
-          onClick={() => setModel(row.original)}
-        >
-          <span className='truncate'>{row.original.model_name}</span>
-        </Button>
-      ),
-    },
-    {
-      accessorKey: 'name_rule',
-      header: t('Name Matching Rule'),
-      cell: ({ row }) => rules[row.original.name_rule as 0 | 1 | 2 | 3]?.label,
-    },
-    {
-      accessorKey: 'matched_count',
-      header: t('Matched models'),
-      cell: ({ row }) =>
-        row.original.name_rule === 0 ? '—' : (row.original.matched_count ?? 0),
-    },
-  ]
+  // Cell renderers are component types. Recreating them during a table state
+  // update remounts the model link and loses keyboard focus.
+  const columns = useMemo<ColumnDef<Model>[]>(() => {
+    const rules = getNameRuleConfig(t)
+    return [
+      {
+        id: 'select',
+        enableSorting: false,
+        enableHiding: false,
+        size: 40,
+        header: ({ table }) => (
+          <Checkbox
+            checked={table.getIsAllPageRowsSelected()}
+            indeterminate={
+              table.getIsSomePageRowsSelected() &&
+              !table.getIsAllPageRowsSelected()
+            }
+            onCheckedChange={(checked) =>
+              table.toggleAllPageRowsSelected(Boolean(checked))
+            }
+            aria-label={t('Select all')}
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(checked) => row.toggleSelected(Boolean(checked))}
+            aria-label={t('Select {{name}}', { name: row.original.model_name })}
+          />
+        ),
+      },
+      {
+        accessorKey: 'model_name',
+        header: t('Model'),
+        enableHiding: false,
+        meta: { mobileTitle: true },
+        cell: ({ row }) => (
+          <Button
+            variant='link'
+            className='text-foreground h-auto max-w-72 min-w-0 justify-start p-0 font-mono'
+            title={row.original.model_name}
+            onClick={() => setModel(row.original)}
+          >
+            <span className='truncate'>{row.original.model_name}</span>
+          </Button>
+        ),
+      },
+      {
+        accessorKey: 'name_rule',
+        header: t('Name Matching Rule'),
+        cell: ({ row }) =>
+          rules[row.original.name_rule as 0 | 1 | 2 | 3]?.label,
+      },
+      {
+        accessorKey: 'matched_count',
+        header: t('Matched models'),
+        cell: ({ row }) =>
+          row.original.name_rule === 0
+            ? '—'
+            : (row.original.matched_count ?? 0),
+      },
+    ]
+  }, [t])
   const { table } = useDataTable({
     data: query.data?.items ?? [],
     columns,
@@ -169,7 +179,7 @@ export function VendorLinkedModels({
           onClick={() => {
             onNavigate(() => {
               void navigate({
-                to: '/models/$section',
+                to: '/model-management/$section',
                 params: { section: 'metadata' },
                 search: { vendor: [String(vendor.id)], page: 1 },
               })

@@ -17,7 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api, isAuthBundle } from '@/lib/api'
-import { buildOAuthAuthorizationUrl } from '@/lib/oauth'
+import {
+  buildOAuthAuthorizationUrl,
+  isOAuthAvailableOnOrigin,
+} from '@/lib/oauth'
 import { isPasskeySupported } from '@/lib/passkey'
 import {
   AuthOperationError,
@@ -322,6 +325,11 @@ async function verifyOAuth(
           })
         ),
       ])
+      if (!isOAuthAvailableOnOrigin(status.server_address)) {
+        throw new AuthOperationError(
+          'This verification method is not allowed for this action.'
+        )
+      }
       return {
         state: authorization.state,
         url:

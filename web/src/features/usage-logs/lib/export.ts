@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { TranslateText } from '@/i18n/translate'
 import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
 
 import type { UsageLog } from '../data/schema'
@@ -26,13 +27,11 @@ import {
   isTimingLogType,
 } from './utils'
 
-type Translate = (key: string, options?: Record<string, unknown>) => string
-
 /**
  * Column titles of the exported log file. User and channel columns are only
  * in the administrator view, matching the log table.
  */
-export function getLogCsvHeader(isAdmin: boolean, t: Translate): string[] {
+export function getLogCsvHeader(isAdmin: boolean, t: TranslateText): string[] {
   return [
     t('Time'),
     t('Type'),
@@ -58,7 +57,7 @@ export function getLogCsvHeader(isAdmin: boolean, t: Translate): string[] {
 export function getLogCsvRow(
   log: UsageLog,
   isAdmin: boolean,
-  t: Translate
+  t: TranslateText
 ): string[] {
   const other = parseLogOther(log.other ?? '')
   const usage = isDisplayableLogType(log.type)

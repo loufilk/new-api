@@ -56,6 +56,16 @@ func TestLogOtherRejectsSensitivePublicFields(t *testing.T) {
 		"channel_name",
 		"channel_type",
 		"reject_reason",
+		"upstream_model_name",
+		"po",
+		"request_conversion",
+		"response_model",
+		"billing_model",
+		"conversion_diagnostics",
+		"conversion_diagnostics_truncated",
+		"request_policy",
+		"stream_diagnostics",
+		"stream_status",
 	} {
 		assert.False(t, other.SetPublic(key, "must-not-leak"), key)
 	}
@@ -81,4 +91,16 @@ func TestLogOtherJSONStringDoesNotMutateReceiver(t *testing.T) {
 
 	require.Equal(t, before, after)
 	require.Equal(t, first, second)
+}
+
+func TestLegacyUpstreamDiagnosticsAreOnlyVisibleToAdministrators(t *testing.T) {
+	legacy := `{"upstream_model_name":"private-model","po":[{"value":"private-provider"}],"request_conversion":"private-route","response_model":{"returned_model":"private-model"},"conversion_diagnostics":["private-detail"],"request_policy":["private-channel"],"stream_diagnostics":{"error":"private-failure"},"stream_status":{"error":"private-failure"},"request_path":"/v1/responses","cache_tokens":9007199254740993,"admin_info":{"upstream_model_name":"scoped-model"},"root_info":{"secret":"root-only"}}`
+
+	assert.JSONEq(t, `{"request_path":"/v1/responses","cache_tokens":9007199254740993}`, formatLogOtherJSON(legacy, logOtherVisibilityUser))
+	admin := formatLogOtherJSON(legacy, logOtherVisibilityAdmin)
+	assert.JSONEq(t, `{"request_path":"/v1/responses","cache_tokens":9007199254740993,"admin_info":{"upstream_model_name":"scoped-model","po":[{"value":"private-provider"}],"request_conversion":"private-route","response_model":{"returned_model":"private-model"},"conversion_diagnostics":["private-detail"],"request_policy":["private-channel"],"stream_diagnostics":{"error":"private-failure"},"stream_status":{"error":"private-failure"}}}`, admin)
+	assert.Equal(t, admin, formatLogOtherJSON(admin, logOtherVisibilityAdmin))
+	root := formatLogOtherJSON(legacy, logOtherVisibilityRoot)
+	assert.Contains(t, root, `"root_info":{"secret":"root-only"}`)
+	assert.JSONEq(t, `{"request_path":"/v1/responses","cache_tokens":9007199254740993}`, formatLogOtherJSON(root, logOtherVisibilityUser))
 }

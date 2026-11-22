@@ -34,7 +34,17 @@ func modelPriceNotConfiguredError(c *gin.Context, modelName string, userId int) 
 }
 
 // HandleGroupRatio checks for "auto_group" in the context and updates the group ratio and relayInfo.UsingGroup if present
-func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) hosttypes.GroupRatioInfo {
+func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) (ratio hosttypes.GroupRatioInfo, err error) {
+	groupRead, err := model.BeginRequestGroupConfigRead(ctx)
+	if err != nil {
+		return ratio, model.ErrGroupConfigChanged
+	}
+	defer func() {
+		if checkErr := groupRead.Finish(); checkErr != nil {
+			ratio, err = hosttypes.GroupRatioInfo{}, model.ErrGroupConfigChanged
+		}
+	}()
+
 	groupRatioInfo := hosttypes.GroupRatioInfo{
 		GroupRatio:        1.0, // default ratio
 		GroupSpecialRatio: -1,
@@ -59,7 +69,7 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) hostty
 		groupRatioInfo.GroupRatio = ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
 	}
 
-	return groupRatioInfo
+	return groupRatioInfo, nil
 }
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (hosttypes.PriceData, error) {
@@ -71,7 +81,10 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	billingModelName := info.GetBillingModelName()
 	modelPrice, usePrice := ratio_setting.GetModelPrice(billingModelName, false)
 
-	groupRatioInfo := HandleGroupRatio(c, info)
+	groupRatioInfo, err := HandleGroupRatio(c, info)
+	if err != nil {
+		return hosttypes.PriceData{}, err
+	}
 
 	// Check if this model uses tiered_expr billing
 	if billing_setting.GetBillingMode(billingModelName) == billing_setting.BillingModeTieredExpr {
@@ -79,6 +92,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	}
 
 	var preConsumedQuota int
+	var quotaBeforeGroup float64
 	var modelRatio float64
 	var completionRatio float64
 	var cacheRatio float64
@@ -118,8 +132,8 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		imageRatio, _ = ratio_setting.GetImageRatio(billingModelName)
 		audioRatio = ratio_setting.GetAudioRatio(billingModelName)
 		audioCompletionRatio = ratio_setting.GetAudioCompletionRatio(billingModelName)
-		ratio := modelRatio * groupRatioInfo.GroupRatio
-		quota, err := common.QuotaFromFloatStrict(preConsumedTokens * ratio)
+		quotaBeforeGroup = preConsumedTokens * modelRatio
+		quota, err := common.QuotaFromFloatStrict(quotaBeforeGroup * groupRatioInfo.GroupRatio)
 		if err != nil {
 			return hosttypes.PriceData{}, err
 		}
@@ -194,7 +208,8 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		}
 	}
 	if usePrice {
-		quotaToPreConsume := priceData.ApplyOtherRatiosToFloat(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
+		quotaBeforeGroup = priceData.ApplyOtherRatiosToFloat(modelPrice * common.QuotaPerUnit)
+		quotaToPreConsume := quotaBeforeGroup * groupRatioInfo.GroupRatio
 		quota, err := common.QuotaFromFloatStrict(quotaToPreConsume)
 		if err != nil {
 			return hosttypes.PriceData{}, err
@@ -202,6 +217,10 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		priceData.QuotaToPreConsume = quota
 	}
 
+	if _, image := info.Request.(*dto.ImageRequest); !image {
+		info.LegacyQuotaBeforeGroup = &quotaBeforeGroup
+		info.LegacyReservedGroupRatio = groupRatioInfo.GroupRatio
+	}
 	if common.DebugEnabled {
 		logger.LogDebug(c, "model_price_helper result: %s", priceData.ToSetting())
 	}
@@ -209,23 +228,30 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	return priceData, nil
 }
 
-// ModelPriceHelperPerCall 按次/按量计费的 PriceHelper (MJ、Task)
+// ModelPriceHelperPerCall 按次/按量计费的 PriceHelper (MJ、Task)。
+// 价格/倍率一律取计费身份 GetBillingModelName()，与提交时持久化的
+// TaskBillingContext.BillingModelName、赠金资格保持同一资金口径；
+// 未显式设置 BillingModelName 时回退 OriginModelName，行为不变。
 func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hosttypes.PriceData, error) {
-	groupRatioInfo := HandleGroupRatio(c, info)
+	groupRatioInfo, err := HandleGroupRatio(c, info)
+	if err != nil {
+		return hosttypes.PriceData{}, err
+	}
 
-	modelPrice, success := ratio_setting.GetModelPrice(info.OriginModelName, true)
+	billingModelName := info.GetBillingModelName()
+	modelPrice, success := ratio_setting.GetModelPrice(billingModelName, true)
 	usePrice := success
 	var modelRatio float64
 
 	if !success {
-		defaultPrice, ok := ratio_setting.GetDefaultModelPriceMap()[info.OriginModelName]
+		defaultPrice, ok := ratio_setting.GetDefaultModelPriceMap()[billingModelName]
 		if ok {
 			modelPrice = defaultPrice
 			usePrice = true
 		} else {
 			var ratioSuccess bool
 			var matchName string
-			modelRatio, ratioSuccess, matchName = ratio_setting.GetModelRatio(info.OriginModelName)
+			modelRatio, ratioSuccess, matchName = ratio_setting.GetModelRatio(billingModelName)
 			acceptUnsetRatio := false
 			if info.UserSetting.AcceptUnsetRatioModel {
 				acceptUnsetRatio = true
@@ -306,6 +332,12 @@ func HasPriceOrRatioEntry(name string) bool {
 	return billing_setting.GetBillingMode(formatted) == billing_setting.BillingModeTieredExpr
 }
 
+// ResolveBillingModelName shares the relay's canonical pricing lookup with
+// explicit cost confirmations. It does not use the mapped upstream model.
+func ResolveBillingModelName(origin string) string {
+	return resolveBillingModelName(origin)
+}
+
 func resolveBillingModelName(origin string) string {
 	var candidates []string
 	if !reasoning.ParseModelModifiers(origin).HasModifiers() {
@@ -382,11 +414,11 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, billing
 		return hosttypes.PriceData{}, err
 	}
 
-	requestInput, err := ResolveIncomingBillingExprRequestInput(c, info)
+	requestInput, err := ResolveIncomingBillingExprRequestInput(c, info, usedVars["param"])
 	if err != nil {
 		return hosttypes.PriceData{}, err
 	}
-	if usedVars["image_count"] {
+	if _, isImage := info.Request.(*dto.ImageRequest); isImage {
 		requestInput, err = ResolveImageBillingRequestInput(c, info, requestInput)
 		if err != nil {
 			return hosttypes.PriceData{}, err

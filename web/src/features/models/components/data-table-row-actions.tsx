@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
-import type { Row } from '@tanstack/react-table'
 import { Eye, EyeOff, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -29,6 +28,7 @@ import {
   DropdownMenuShortcut,
 } from '@/components/ui/dropdown-menu'
 import { useCanEditModelPricing } from '@/features/model-pricing/api'
+import type { Row } from '@/lib/console-table'
 
 import { handleToggleModelStatus, isModelEnabled } from '../lib'
 import type { Model } from '../types'

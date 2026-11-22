@@ -84,6 +84,10 @@ func TestAuditLogSortIndexDatabaseMatrix(t *testing.T) {
 					require.NoError(t, db.Create(&entries).Error)
 					originalIndexes, err := db.Migrator().GetIndexes(&AuditLog{})
 					require.NoError(t, err)
+					originalColumns := make(map[string][]string, len(originalIndexes))
+					for _, index := range originalIndexes {
+						originalColumns[index.Name()] = auditLogIndexColumns(t, db, dialect, index)
+					}
 					for range 2 {
 						require.NoError(t, MigrateAuditLogs())
 					}
@@ -95,26 +99,11 @@ func TestAuditLogSortIndexDatabaseMatrix(t *testing.T) {
 					}
 					index, ok := byName["idx_audit_time_event"]
 					require.True(t, ok, "migration must create the audit ordering index")
-					var columns []string
-					if dialect == "postgres" {
-						// GORM's PostgreSQL GetIndexes does not preserve index key order.
-						require.NoError(t, db.Raw(`
-SELECT attribute.attname
-FROM pg_catalog.pg_index AS index_meta
-CROSS JOIN LATERAL unnest(index_meta.indkey) WITH ORDINALITY AS index_column(attnum, ordinal_position)
-JOIN pg_catalog.pg_attribute AS attribute
-  ON attribute.attrelid = index_meta.indrelid AND attribute.attnum = index_column.attnum
-WHERE index_meta.indexrelid = to_regclass(?)
-ORDER BY index_column.ordinal_position
-`, index.Name()).Scan(&columns).Error)
-					} else {
-						columns = index.Columns()
-					}
-					assert.Equal(t, []string{"created_at", "event_id"}, columns)
+					assert.Equal(t, []string{"created_at", "event_id"}, auditLogIndexColumns(t, db, dialect, index))
 					for _, original := range originalIndexes {
 						preserved, ok := byName[original.Name()]
 						require.True(t, ok, "existing index %s must remain", original.Name())
-						assert.Equal(t, original.Columns(), preserved.Columns(), original.Name())
+						assert.Equal(t, originalColumns[original.Name()], auditLogIndexColumns(t, db, dialect, preserved), original.Name())
 						originalUnique, originalKnown := original.Unique()
 						preservedUnique, preservedKnown := preserved.Unique()
 						assert.Equal(t, originalKnown, preservedKnown, original.Name())
@@ -138,4 +127,23 @@ ORDER BY index_column.ordinal_position
 			}
 		})
 	}
+}
+
+func auditLogIndexColumns(t *testing.T, db *gorm.DB, dialect string, index gorm.Index) []string {
+	t.Helper()
+	if dialect != "postgres" {
+		return index.Columns()
+	}
+	// The PostgreSQL driver's GetIndexes query does not preserve indkey order.
+	// Read the physical key positions for both pre- and post-migration snapshots.
+	var columns []string
+	require.NoError(t, db.Raw(`
+		SELECT a.attname
+		FROM pg_index i
+		CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, position)
+		JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+		WHERE i.indexrelid = to_regclass(?)
+		ORDER BY k.position`, index.Name()).Scan(&columns).Error)
+	require.NotEmpty(t, columns, "index %s must expose its ordered keys", index.Name())
+	return columns
 }

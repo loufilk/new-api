@@ -88,6 +88,9 @@ export interface ApiResponse<T = unknown> {
 // ============================================================================
 
 export interface SystemStatus {
+  account_pool_enabled?: boolean
+  customer_invoice_center_visible?: boolean
+  customer_invoice_enabled?: boolean
   success?: boolean
   message?: string
   data?: {
@@ -104,6 +107,8 @@ export interface SystemStatus {
     oidc_display_name?: string
     linuxdo_oauth?: boolean
     linuxdo_client_id?: string
+    google_oauth?: boolean
+    google_oauth_configured?: boolean
     telegram_oauth?: boolean
     telegram_oauth_configured?: boolean
     telegram_bot_name?: string
@@ -122,6 +127,10 @@ export interface SystemStatus {
     display_in_currency?: boolean
     display_token_stat_enabled?: boolean
     quota_per_unit?: number
+    signup_bonus_enabled?: boolean
+    signup_bonus_quota?: number
+    referral_bonus_enabled?: boolean
+    referral_bonus_rate?: number
     quota_display_type?: string
     usd_exchange_rate?: number
     custom_currency_symbol?: string
@@ -134,6 +143,7 @@ export interface SystemStatus {
     password_login_enabled?: boolean
     password_login_encryption_enabled?: boolean
     password_register_enabled?: boolean
+    server_address?: string
     custom_oauth_providers?: CustomOAuthProviderInfo[]
     [key: string]: unknown
   }
@@ -151,6 +161,8 @@ export interface SystemStatus {
   oidc_display_name?: string
   linuxdo_oauth?: boolean
   linuxdo_client_id?: string
+  google_oauth?: boolean
+  google_oauth_configured?: boolean
   telegram_oauth?: boolean
   telegram_oauth_configured?: boolean
   telegram_bot_name?: string
@@ -169,6 +181,10 @@ export interface SystemStatus {
   display_in_currency?: boolean
   display_token_stat_enabled?: boolean
   quota_per_unit?: number
+  signup_bonus_enabled?: boolean
+  signup_bonus_quota?: number
+  referral_bonus_enabled?: boolean
+  referral_bonus_rate?: number
   quota_display_type?: string
   usd_exchange_rate?: number
   custom_currency_symbol?: string
@@ -181,6 +197,7 @@ export interface SystemStatus {
   password_login_enabled?: boolean
   password_login_encryption_enabled?: boolean
   password_register_enabled?: boolean
+  server_address?: string
   custom_oauth_providers?: CustomOAuthProviderInfo[]
   log_export_enabled?: boolean
   log_max_range_days?: number
@@ -196,7 +213,14 @@ export interface SystemStatus {
 
 export interface OAuthProvider {
   name: string
-  type: 'github' | 'discord' | 'oidc' | 'linuxdo' | 'telegram' | 'wechat'
+  type:
+    | 'google'
+    | 'github'
+    | 'discord'
+    | 'oidc'
+    | 'linuxdo'
+    | 'telegram'
+    | 'wechat'
   enabled: boolean
   clientId?: string
   authEndpoint?: string

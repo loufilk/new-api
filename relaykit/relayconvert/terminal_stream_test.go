@@ -49,6 +49,7 @@ func TestGeminiToOpenAIStatefulStreamTerminal(t *testing.T) {
 			info := &convmeta.Values{
 				ChannelMetaAttached: true,
 				UpstreamModelName:   "upstream-model",
+				OriginModelName:     "client-model",
 			}
 			state, err := NewResponseStreamState(
 				types.RelayFormatGemini,
@@ -86,7 +87,7 @@ func TestGeminiToOpenAIStatefulStreamTerminal(t *testing.T) {
 			assert.Equal(t, tt.wantFinishReason, *finish.Choices[0].FinishReason)
 			assert.Equal(t, "chatcmpl-fixed", finish.Id)
 			assert.Equal(t, int64(1700000000), finish.Created)
-			assert.Equal(t, "upstream-model", finish.Model)
+			assert.Equal(t, "client-model", finish.Model)
 			require.NotNil(t, finish.Usage)
 			assert.Equal(t, 4, finish.Usage.PromptTokens)
 			assert.Equal(t, 2, finish.Usage.CompletionTokens)
@@ -174,6 +175,7 @@ func TestClaudeTargetStatefulStreamTerminalTail(t *testing.T) {
 			info := &convmeta.Values{
 				ChannelMetaAttached: true,
 				UpstreamModelName:   "upstream-model",
+				OriginModelName:     "client-model",
 				ClaudeConvertInfo: &convmeta.ClaudeConvertInfo{
 					LastMessagesType: convmeta.LastMessageTypeNone,
 				},
@@ -261,6 +263,7 @@ func TestConvertStreamResponseKeepsStatelessCompatibility(t *testing.T) {
 		info := &convmeta.Values{
 			ChannelMetaAttached: true,
 			UpstreamModelName:   "upstream-model",
+			OriginModelName:     "client-model",
 		}
 		result, err := ConvertStreamResponse(
 			nil,
@@ -276,7 +279,7 @@ func TestConvertStreamResponseKeepsStatelessCompatibility(t *testing.T) {
 		require.NotNil(t, response.Choices[0].Delta.Content)
 		assert.Equal(t, "Hello", *response.Choices[0].Delta.Content)
 		assert.Nil(t, response.Choices[0].FinishReason)
-		assert.Equal(t, "upstream-model", response.Model)
+		assert.Equal(t, "client-model", response.Model)
 		require.NotNil(t, response.Usage)
 		assert.Equal(t, 4, response.Usage.PromptTokens)
 		assert.Equal(t, 2, response.Usage.CompletionTokens)

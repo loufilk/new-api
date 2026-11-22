@@ -73,7 +73,7 @@ test('parses a 12-hour cache write price and regenerates the expression unchange
   expect(generateExprFromVisualConfig(config)).toBe(source)
 })
 
-test('estimates long-lived cache writes at their own price, at the cc price fallback, or free when cc is unpriced', () => {
+test('estimates long-lived cache writes at their own price, at the cc price fallback, or at the prompt price fallback when cc is omitted', () => {
   const source =
     'len <= 2000 ? tier("short", p * 10 + c * 40 + cr * 1 + cc * 12.5 + cc12h * 25) : tier("long", p * 20 + c * 80 + cr * 2 + cc * 25 + cc12h * 50)'
   const tokens = {
@@ -125,7 +125,28 @@ test('estimates long-lived cache writes at their own price, at the cc price fall
       ...oneHour,
       cacheCreate12hTokens: 1000,
     }).cost
-  ).toBe(15000)
+  ).toBe(53000)
+  const omittedWrites = 'tier("base", p * 10 + c * 50 + cr * 1)'
+  expect(
+    buildEstimatorTokens(1000, 100, twelveHours, omittedWrites)
+  ).toMatchObject({
+    p: 3200,
+    len: 2300,
+  })
+  expect(evalExprLocally(omittedWrites, 1000, 100, twelveHours).cost).toBe(
+    37100
+  )
+  const freeLongWrite = omittedWrites.replace('cr * 1)', 'cr * 1 + cc12h * 0)')
+  expect(
+    buildEstimatorTokens(1000, 100, twelveHours, freeLongWrite)
+  ).toMatchObject({
+    p: 1200,
+    len: 2300,
+    cc12h: 1000,
+  })
+  expect(evalExprLocally(freeLongWrite, 1000, 100, twelveHours).cost).toBe(
+    17100
+  )
 })
 
 test('evaluates and round-trips separate image cache prices including an explicit zero', () => {

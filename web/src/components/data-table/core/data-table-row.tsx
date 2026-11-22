@@ -16,29 +16,31 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+
+import * as React from 'react'
+
+import { TableCell, TableRow } from '@/components/ui/table'
 import {
   flexRender,
   type Cell,
   type Row,
   type Table as TanstackTable,
-} from '@tanstack/react-table'
-import * as React from 'react'
-
-import { TableCell, TableRow } from '@/components/ui/table'
+} from '@/lib/console-table'
 import { cn } from '@/lib/utils'
 
 import { TruncatedCell } from './truncated-cell'
 import type { DataTableColumnClassName } from './types'
 
-type DataTableRowProps<TData> = {
+type DataTableRowProps<TData extends object> = {
   row: Row<TData>
   className?: string
   getColumnClassName?: DataTableColumnClassName
   cellRenderColumns?: TanstackTable<TData>['options']['columns']
 } & Omit<React.ComponentProps<typeof TableRow>, 'children'>
 
-type DataTableRowInnerProps<TData> = DataTableRowProps<TData> & {
+type DataTableRowInnerProps<TData extends object> = DataTableRowProps<TData> & {
   isSelected: boolean
+  isExpanded: boolean
   /**
    * Stable signature of currently visible leaf columns for this row.
    * Captured outside the memo comparator so visibility toggles re-render
@@ -47,9 +49,10 @@ type DataTableRowInnerProps<TData> = DataTableRowProps<TData> & {
   visibleColumnIds: string
 }
 
-function DataTableRowInner<TData>({
+function DataTableRowInner<TData extends object>({
   row,
   isSelected,
+  isExpanded,
   className,
   getColumnClassName,
   cellRenderColumns,
@@ -58,6 +61,7 @@ function DataTableRowInner<TData>({
 }: DataTableRowInnerProps<TData>) {
   // Destructured only to keep them out of `rowProps` (not valid DOM attrs)
   // and to feed the memo comparator below; intentionally unused here.
+  void isExpanded
   void cellRenderColumns
   void visibleColumnIds
 
@@ -90,10 +94,10 @@ function DataTableRowInner<TData>({
 }
 
 const MemoizedDataTableRow = React.memo(DataTableRowInner, (prev, next) => {
-  // Do not read row.getIsSelected() / row.getVisibleCells() inside the
+  // Do not read selection, expansion or visible cells from the row inside the
   // comparator: TanStack row objects keep a stable reference while selection
-  // and columnVisibility mutate on the table instance. Reading them here would
-  // compare identical live values and miss those updates. Both are lifted to
+  // and other state change on the table instance. Reading them here would
+  // compare identical live values and miss those updates. They are lifted to
   // explicit props, captured per render in DataTableRow.
   //
   // Column cell renderers (and getColumnClassName) can close over external
@@ -103,13 +107,16 @@ const MemoizedDataTableRow = React.memo(DataTableRowInner, (prev, next) => {
     prev.row === next.row &&
     prev.className === next.className &&
     prev.isSelected === next.isSelected &&
+    prev.isExpanded === next.isExpanded &&
     prev.visibleColumnIds === next.visibleColumnIds &&
     prev.getColumnClassName === next.getColumnClassName &&
     prev.cellRenderColumns === next.cellRenderColumns
   )
 }) as typeof DataTableRowInner
 
-export function DataTableRow<TData>(props: DataTableRowProps<TData>) {
+export function DataTableRow<TData extends object>(
+  props: DataTableRowProps<TData>
+) {
   const visibleColumnIds = props.row
     .getVisibleCells()
     .map((cell) => cell.column.id)
@@ -119,12 +126,13 @@ export function DataTableRow<TData>(props: DataTableRowProps<TData>) {
     <MemoizedDataTableRow
       {...props}
       isSelected={props.row.getIsSelected()}
+      isExpanded={props.row.getIsExpanded()}
       visibleColumnIds={visibleColumnIds}
     />
   )
 }
 
-function renderCellContent<TData>(cell: Cell<TData, unknown>) {
+function renderCellContent<TData extends object>(cell: Cell<TData, unknown>) {
   const content = flexRender(cell.column.columnDef.cell, cell.getContext())
   const textContent = getPrimitiveTextContent(content)
 

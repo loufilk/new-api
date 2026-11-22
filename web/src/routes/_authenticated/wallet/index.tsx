@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { createFileRoute } from '@tanstack/react-router'
 import { z } from 'zod'
 
-import { Wallet } from '@/features/wallet'
+import { extensionWalletPage } from '@/extensions'
 
 const walletSearchSchema = z.object({
   show_history: z.boolean().optional(),
@@ -32,5 +32,21 @@ export const Route = createFileRoute('/_authenticated/wallet/')({
 
 function RouteComponent() {
   const { show_history } = Route.useSearch()
-  return <Wallet initialShowHistory={show_history} />
+  const navigate = Route.useNavigate()
+  const WalletPage = extensionWalletPage().page
+  return (
+    <WalletPage
+      initialShowHistory={show_history}
+      onHistoryOpenChange={(open) => {
+        void navigate({
+          search: (previous) => ({
+            ...previous,
+            show_history: open || undefined,
+          }),
+          replace: true,
+          resetScroll: false,
+        })
+      }}
+    />
+  )
 }

@@ -75,6 +75,7 @@ export interface RedemptionFormData {
   name: string
   quota: number
   expired_time: number
+  request_id?: string
   count?: number // Only for create
   status?: number // Only for status update
 }

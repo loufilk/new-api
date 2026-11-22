@@ -37,6 +37,8 @@ const ROLE_LABEL_KEYS: Record<RoleValue, string> = {
 }
 
 export function getRoleLabelKey(role?: number): string {
+  // Read-only compatibility for legacy role values; no elevated permissions.
+  if (role === 5) return ROLE_LABEL_KEYS[ROLE.USER]
   return ROLE_LABEL_KEYS[role as RoleValue] ?? ROLE_LABEL_KEYS[DEFAULT_ROLE]
 }
 

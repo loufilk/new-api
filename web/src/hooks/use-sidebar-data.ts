@@ -23,12 +23,14 @@ import {
   CreditCard,
   FileText,
   FlaskConical,
+  Image as ImageIcon,
   Key,
   LayoutDashboard,
+  LifeBuoy,
   ListTodo,
-  MessageSquare,
   PlugZap,
   Radio,
+  Receipt,
   ServerCog,
   Settings,
   ShieldCheck,
@@ -36,11 +38,16 @@ import {
   User,
   Users,
   Wallet,
+  Workflow,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import type { SidebarData } from '@/components/layout/types'
+import type { SidebarBadges, SidebarData } from '@/components/layout/types'
+import { applySidebarNavigationExtensions } from '@/extensions'
+import { useStatus } from '@/hooks/use-status'
+import { isAgentWorkspaceUser } from '@/lib/agent-permissions'
 import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 /**
  * Root navigation groups for the application sidebar.
@@ -48,23 +55,62 @@ import { ROLE } from '@/lib/roles'
  * These are shown when the URL does not match any nested sidebar view
  * registered in `layout/lib/sidebar-view-registry.ts`.
  */
-export function useSidebarData(): SidebarData {
+export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
   const { t } = useTranslation()
+  const user = useAuthStore((state) => state.auth.user)
+  // A different session may change navigation while this tab is in the background.
+  const { status } = useStatus(Boolean(user))
+  const invoiceVisibility = status?.customer_invoice_center_visible
+  const showInvoiceCenter =
+    invoiceVisibility === undefined
+      ? status?.customer_invoice_enabled === true
+      : invoiceVisibility === true
+  const agentGroups: SidebarData['navGroups'] = isAgentWorkspaceUser(user)
+    ? [
+        {
+          id: 'agent',
+          title: t('Agent'),
+          items: [
+            {
+              title: t('Agent Overview'),
+              url: '/agent-platform',
+              icon: Users,
+            },
+            {
+              title: t('Redemption Code Center'),
+              url: '/redemption-codes?view=center',
+              icon: Ticket,
+            },
+            {
+              title: t('Redemption Code Records'),
+              url: '/redemption-codes?view=records',
+              icon: ClipboardList,
+            },
+          ],
+        },
+      ]
+    : []
 
-  return {
+  const sidebar: SidebarData = {
     navGroups: [
+      ...agentGroups,
       {
         id: 'chat',
         title: t('Chat'),
         items: [
           {
-            title: t('Playground'),
+            title: t('Text Generation'),
             url: '/playground',
             icon: FlaskConical,
           },
           {
-            title: t('Chat'),
-            icon: MessageSquare,
+            title: t('Image Generation'),
+            url: '/image',
+            icon: ImageIcon,
+          },
+          {
+            title: t('Third-party'),
+            icon: PlugZap,
             type: 'chat-presets',
           },
         ],
@@ -116,6 +162,43 @@ export function useSidebarData(): SidebarData {
             url: '/wallet',
             icon: Wallet,
           },
+          ...(status?.account_pool_enabled === true
+            ? [
+                {
+                  title: t('pool.title'),
+                  url: '/account-pool',
+                  icon: ServerCog,
+                },
+              ]
+            : []),
+          ...(user
+            ? [
+                {
+                  title: t('intelligence.title'),
+                  url: '/intelligence',
+                  icon: FlaskConical,
+                },
+              ]
+            : []),
+          {
+            title: t('Invitation Rewards'),
+            url: '/affiliate',
+            icon: Users,
+          },
+          ...(user && showInvoiceCenter
+            ? [
+                {
+                  title: t('Invoice center'),
+                  url: '/invoice',
+                  icon: Receipt,
+                },
+              ]
+            : []),
+          {
+            title: t('Support Center'),
+            url: '/support',
+            icon: LifeBuoy,
+          },
           {
             title: t('Profile'),
             url: '/profile',
@@ -139,7 +222,7 @@ export function useSidebarData(): SidebarData {
           },
           {
             title: t('Models'),
-            url: '/models/metadata',
+            url: '/model-management/metadata',
             icon: Box,
           },
           {
@@ -153,6 +236,18 @@ export function useSidebarData(): SidebarData {
             icon: Ticket,
           },
           {
+            title: t('Agent management'),
+            url: '/agent-platform/finance',
+            icon: Users,
+            requiredRole: ROLE.SUPER_ADMIN,
+          },
+          {
+            title: t('Invoice Management', { defaultValue: '开票管理' }),
+            url: '/invoice-management',
+            icon: Receipt,
+            requiredRole: ROLE.SUPER_ADMIN,
+          },
+          {
             title: t('Subscriptions'),
             url: '/subscriptions',
             icon: CreditCard,
@@ -164,9 +259,15 @@ export function useSidebarData(): SidebarData {
             requiredRole: ROLE.SUPER_ADMIN,
           },
           {
-            title: t('Task Plugins'),
+            title: t('Plugins'),
             url: '/task-plugins',
             icon: PlugZap,
+            requiredRole: ROLE.SUPER_ADMIN,
+          },
+          {
+            title: t('Request processing'),
+            url: '/request-processing',
+            icon: Workflow,
             requiredRole: ROLE.SUPER_ADMIN,
           },
           {
@@ -175,9 +276,16 @@ export function useSidebarData(): SidebarData {
             activeUrls: ['/system-settings'],
             icon: Settings,
             requiredRole: ROLE.SUPER_ADMIN,
+            // Model pricing lives in System Settings.
+            badge: badges.modelPricing,
           },
         ],
       },
     ],
   }
+
+  return applySidebarNavigationExtensions(sidebar, {
+    isAuthenticated: Boolean(user),
+    role: user?.role,
+  })
 }

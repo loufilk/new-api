@@ -21,6 +21,8 @@ import { RouterProvider, createRouter } from '@tanstack/react-router'
 import { StrictMode } from 'react'
 import ReactDOM from 'react-dom/client'
 
+import './extensions/bootstrap'
+import { setupStatusQueryOptions } from '@/features/setup/api'
 import { installBuildMetadata } from '@/lib/build-metadata'
 import { applyFaviconToDom } from '@/lib/dom-utils'
 import '@/lib/dayjs'
@@ -31,7 +33,7 @@ import { readCachedStatus, statusQueryOptions } from '@/lib/status-query'
 import { DirectionProvider } from './context/direction-provider'
 import { FontProvider } from './context/font-provider'
 import { ThemeProvider } from './context/theme-provider'
-import './i18n/config'
+import { initI18n } from './i18n/config'
 // Generated Routes
 import { routeTree } from './routeTree.gen'
 
@@ -46,6 +48,12 @@ installBuildMetadata()
 const queryClient = createAppQueryClient(() => {
   void router.navigate({ to: '/500' })
 })
+
+// Start this public read alongside the locale chunks, rather than adding a
+// network round trip after they finish. The root guard consumes the result.
+if (!window.location.pathname.startsWith('/setup')) {
+  void queryClient.prefetchQuery(setupStatusQueryOptions)
+}
 
 // Create a new router instance
 const router = createRouter({
@@ -102,17 +110,19 @@ if (!rootElement) {
 })()
 if (!rootElement.innerHTML) {
   const root = ReactDOM.createRoot(rootElement)
-  root.render(
-    <StrictMode>
-      <QueryClientProvider client={queryClient}>
-        <ThemeProvider>
-          <FontProvider>
-            <DirectionProvider>
-              <RouterProvider router={router} />
-            </DirectionProvider>
-          </FontProvider>
-        </ThemeProvider>
-      </QueryClientProvider>
-    </StrictMode>
-  )
+  void initI18n().then(() => {
+    root.render(
+      <StrictMode>
+        <QueryClientProvider client={queryClient}>
+          <ThemeProvider>
+            <FontProvider>
+              <DirectionProvider>
+                <RouterProvider router={router} />
+              </DirectionProvider>
+            </FontProvider>
+          </ThemeProvider>
+        </QueryClientProvider>
+      </StrictMode>
+    )
+  })
 }

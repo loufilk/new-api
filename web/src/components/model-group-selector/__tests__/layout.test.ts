@@ -24,12 +24,16 @@ import {
 } from '../layout'
 
 describe('model group selector layout', () => {
-  test('keeps group options at a fixed height and aligned to the top', () => {
+  test('bounds the desktop row while allowing long group labels to grow', () => {
     const groupScrollClasses =
       modelGroupSelectorLayoutClasses.groupScroll.split(' ')
 
-    expect(groupScrollClasses.includes('auto-rows-[2rem]')).toBeTruthy()
+    expect(groupScrollClasses.includes('auto-rows-min')).toBeTruthy()
     expect(groupScrollClasses.includes('content-start')).toBeTruthy()
+    expect(groupScrollClasses.includes('overflow-y-auto')).toBeTruthy()
+    expect(modelGroupSelectorLayoutClasses.desktopContent).toContain(
+      'grid-rows-[minmax(0,1fr)]'
+    )
   })
 
   test('centers the selected group inside its own scroll container', () => {
@@ -37,11 +41,13 @@ describe('model group selector layout', () => {
     const selectedOption = {
       offsetHeight: 32,
       offsetTop: 160,
+      getBoundingClientRect: () => ({ top: 240, height: 32 }),
       scrollIntoView() {},
     }
     const scrollContainer = {
       clientHeight: 200,
-      scrollTop: 0,
+      scrollTop: 60,
+      getBoundingClientRect: () => ({ top: 80, height: 200 }),
       scrollTo(options: ScrollToOptions) {
         scrollCalls.push(options)
       },
@@ -49,7 +55,9 @@ describe('model group selector layout', () => {
 
     scrollSelectedOptionIntoView(selectedOption, scrollContainer)
 
-    expect(scrollCalls).toEqual([{ top: 76, behavior: 'auto' }])
+    // The option's offset parent need not be its scroll container (for
+    // example, the popover positioner). Use their relative viewport positions.
+    expect(scrollCalls).toEqual([{ top: 136, behavior: 'auto' }])
   })
 
   test('falls back to scrollIntoView when no group container is provided', () => {

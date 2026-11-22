@@ -1,14 +1,48 @@
 package common
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestManagedSystemMonitorClearsDisabledStatusAndStopsOnDrain(t *testing.T) {
+	previousConfig, previousStatus := GetPerformanceMonitorConfig(), GetSystemStatus()
+	t.Cleanup(func() {
+		SetPerformanceMonitorConfig(previousConfig)
+		latestSystemStatus.Store(previousStatus)
+	})
+	SetPerformanceMonitorConfig(PerformanceMonitorConfig{})
+	synctest.Test(t, func(t *testing.T) {
+		latestSystemStatus.Store(SystemStatus{CPUUsage: 100, CPUOverloaded: true, SampledAt: time.Now()})
+		schedule, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			RunSystemMonitor(schedule, context.Background())
+		}()
+		synctest.Wait()
+		status := GetSystemStatus()
+		assert.False(t, status.CPUOverloaded, "disabled monitoring must not retain an old overload")
+		assert.Zero(t, status.CPUUsage)
+		assert.Equal(t, time.Now(), status.SampledAt)
+		cancel()
+		synctest.Wait()
+		select {
+		case <-done:
+		default:
+			t.Fatal("the managed monitor must stop when scheduling is drained")
+		}
+	})
+}
 
 // newTestContainerUsage 在临时目录中构造 cgroup 文件，避免依赖运行环境的真实 cgroup。
 func newTestContainerUsage(t *testing.T, schedulableCPUs float64, files map[string]string) *containerUsage {
@@ -186,6 +220,28 @@ func TestContainerMemoryUsageFallsBackWhenUnavailable(t *testing.T) {
 			assert.False(t, ok, "拿不到可信工作集时交由调用方回退宿主机口径")
 		})
 	}
+}
+
+func TestLinuxHostMemoryFallbackPreservesOverloadThreshold(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("uses Linux procfs data")
+	}
+	proc := t.TempDir()
+	t.Setenv("HOST_PROC", proc)
+	// Without cgroup data, the original host threshold excludes reclaimable cache.
+	// MemAvailable alone would report 95% and trip this administrator's 90% threshold.
+	require.NoError(t, os.WriteFile(filepath.Join(proc, "meminfo"), []byte(
+		"MemTotal: 1000 kB\nMemFree: 80 kB\nBuffers: 20 kB\nCached: 170 kB\nSReclaimable: 30 kB\nMemAvailable: 50 kB\n",
+	), 0600))
+	status := collectSystemStatus(newTestContainerUsage(t, 4, nil))
+	require.InDelta(t, 70, status.MemoryUsage, 0.001)
+
+	config := PerformanceMonitorConfig{Enabled: true, MemoryThreshold: 90}
+	var detector overloadDetector
+	for range overloadConsecutiveSamples {
+		detector.mark(&status, config)
+	}
+	assert.Nil(t, CheckSystemOverload(status, config, status.SampledAt))
 }
 
 func TestSystemOverloadRequiresConsecutiveSamples(t *testing.T) {

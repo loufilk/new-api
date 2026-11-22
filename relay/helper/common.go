@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/privacy"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 
@@ -60,6 +62,13 @@ func (writer *streamKeepAliveWriter) Flush() {
 	writer.ResponseWriter.Flush()
 }
 
+func (writer *streamKeepAliveWriter) FlushError() error {
+	writer.stop()
+	// Use the existing flush path with the original writer, so wrapping Gin
+	// for keepalive does not hide downstream delivery errors.
+	return FlushWriter(writer.pingContext)
+}
+
 func (writer *streamKeepAliveWriter) Status() int {
 	writer.mutex.Lock()
 	defer writer.mutex.Unlock()
@@ -87,10 +96,12 @@ func (writer *streamKeepAliveWriter) ping() error {
 // StartStreamKeepAlive 按 interval 发送心跳，覆盖请求准备和重试；业务写入开始后交给流处理器。
 // 内层请求复用外层的保活，内层清理不会提前结束它。
 func StartStreamKeepAlive(c *gin.Context, interval time.Duration) func() {
-	if previous, ok := c.Writer.(*streamKeepAliveWriter); ok {
+	if previous := keepAliveWriter(c); previous != nil {
 		select {
 		case <-previous.done:
-			c.Writer = previous.ResponseWriter
+			if c.Writer == gin.ResponseWriter(previous) {
+				c.Writer = previous.ResponseWriter
+			}
 		default:
 			return func() {}
 		}
@@ -110,6 +121,22 @@ func StartStreamKeepAlive(c *gin.Context, interval time.Duration) func() {
 	c.Writer = writer
 	go writer.keepAlive(ctx, interval)
 	return writer.stop
+}
+
+// keepAliveWriter 返回 c.Writer 链上的请求保活，包括被其他 writer（如请求插件的回复检查）包裹的情况。
+func keepAliveWriter(c *gin.Context) *streamKeepAliveWriter {
+	var writer http.ResponseWriter = c.Writer
+	for writer != nil {
+		if keepAlive, ok := writer.(*streamKeepAliveWriter); ok {
+			return keepAlive
+		}
+		unwrapper, ok := writer.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return nil
+		}
+		writer = unwrapper.Unwrap()
+	}
+	return nil
 }
 
 func (writer *streamKeepAliveWriter) keepAlive(ctx context.Context, interval time.Duration) {
@@ -148,28 +175,20 @@ func FlushWriter(c *gin.Context) (err error) {
 	if requestContextDone(c) {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
+	// Preserve Gin's Flush header/commit bookkeeping while observing the
+	// underlying FlushError. A header-only flush has started the response too.
+	c.Writer.WriteHeaderNow()
 
-	flusher, ok := c.Writer.(http.Flusher)
-	if !ok {
-		return errors.New("streaming error: flusher not found")
+	if flusher, ok := c.Writer.(interface{ FlushError() error }); ok {
+		return flusher.FlushError()
 	}
-
-	flusher.Flush()
-	// Gin's http.Flusher wrapper discards the underlying FlushError result.
-	// Flush wrappers first so their buffers are preserved, then surface any
-	// stored write error from an error-aware writer underneath them.
-	var writer http.ResponseWriter = c.Writer
-	for {
-		if flusher, ok := writer.(interface{ FlushError() error }); ok {
-			return flusher.FlushError()
-		}
-		unwrapper, ok := writer.(interface{ Unwrap() http.ResponseWriter })
-		if !ok {
-			break
-		}
+	// Gin's Flush discards FlushError from the underlying socket. Unwrap Gin
+	// once so buffered delivery failures remain observable to stream owners.
+	writer := http.ResponseWriter(c.Writer)
+	if unwrapper, ok := c.Writer.(interface{ Unwrap() http.ResponseWriter }); ok {
 		writer = unwrapper.Unwrap()
 	}
-	return nil
+	return http.NewResponseController(writer).Flush()
 }
 
 func requestContextDone(c *gin.Context) bool {
@@ -194,58 +213,67 @@ func SetEventStreamHeaders(c *gin.Context) {
 }
 
 func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
-	if requestContextDone(c) {
-		return nil
-	}
-
 	jsonData, err := common.Marshal(resp)
 	if err != nil {
-		common.SysError(common.LogText("error marshalling stream response: %s", err.Error()))
-	} else {
-		c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
-		c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonData)})
+		return fmt.Errorf("error marshalling stream response: %w", err)
 	}
-	_ = FlushWriter(c)
-	return nil
+	jsonData = privacy.SanitizeClientPayload(c, jsonData)
+	return writeEventStreamFrame(c, fmt.Sprintf("event: %s\ndata: %s\n\n", resp.Type, jsonData))
 }
 
-func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
-	if requestContextDone(c) {
-		return
-	}
-
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s\n", data)})
-	_ = FlushWriter(c)
+func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) error {
+	data = string(privacy.SanitizeClientPayload(c, []byte(data)))
+	return writeEventStreamFrame(c, fmt.Sprintf("event: %s\ndata: %s\n\n", resp.Type, data))
 }
 
 func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) error {
+	data = string(privacy.SanitizeClientPayload(c, []byte(data)))
+	return writeEventStreamFrame(c, fmt.Sprintf("event: %s\ndata: %s\n\n", resp.Type, data))
+}
+
+// writeEventStreamFrame preserves the actual write and flush result. Stream
+// owners use it to stop upstream generation and avoid a false normal terminal.
+type streamWriteError struct{ cause error }
+
+func (e *streamWriteError) Error() string { return e.cause.Error() }
+func (e *streamWriteError) Unwrap() error { return e.cause }
+
+// IsStreamWriteError separates downstream delivery failures from JSON or
+// protocol conversion errors returned by the same stream formatting helpers.
+func IsStreamWriteError(err error) bool {
+	var writeErr *streamWriteError
+	return errors.As(err, &writeErr)
+}
+
+func writeEventStreamFrame(c *gin.Context, frame string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("stream write panic: %v", r)
+		}
+		if err != nil {
+			err = &streamWriteError{cause: err}
+		}
+	}()
+	if c == nil || c.Writer == nil {
+		return errors.New("context or writer is nil")
+	}
 	if requestContextDone(c) {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
-
-	event := common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)}
-	if err := event.Render(c.Writer); err != nil {
+	SetEventStreamHeaders(c)
+	n, err := c.Writer.WriteString(frame)
+	if err != nil {
 		return err
 	}
-	event.Data = fmt.Sprintf("data: %s", data)
-	if err := event.Render(c.Writer); err != nil {
-		return err
+	if n != len(frame) {
+		return io.ErrShortWrite
 	}
 	return FlushWriter(c)
 }
 
 func StringData(c *gin.Context, str string) error {
-	if c == nil || c.Writer == nil {
-		return errors.New("context or writer is nil")
-	}
-
-	if requestContextDone(c) {
-		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
-	}
-
-	c.Render(-1, common.CustomEvent{Data: "data: " + str})
-	return FlushWriter(c)
+	str = string(privacy.SanitizeClientPayload(c, []byte(str)))
+	return writeEventStreamFrame(c, "data: "+str+"\n\n")
 }
 
 func PingData(c *gin.Context) error {
@@ -257,8 +285,13 @@ func PingData(c *gin.Context) error {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
-	if _, err := c.Writer.Write([]byte(": PING\n\n")); err != nil {
+	const ping = ": PING\n\n"
+	n, err := c.Writer.Write([]byte(ping))
+	if err != nil {
 		return fmt.Errorf("write ping data failed: %w", err)
+	}
+	if n != len(ping) {
+		return io.ErrShortWrite
 	}
 	return FlushWriter(c)
 }
@@ -272,6 +305,38 @@ func ObjectData(c *gin.Context, object any) error {
 		return fmt.Errorf("error marshalling object: %w", err)
 	}
 	return StringData(c, string(jsonData))
+}
+
+// RelayErrorData writes a projected, gateway-generated error without applying
+// the raw upstream-frame sanitizer a second time.
+func RelayErrorData(c *gin.Context, format types.RelayFormat, apiErr *types.NewAPIError) error {
+	var data any
+	prefix := "data: "
+	switch format {
+	case types.RelayFormatOpenAI:
+		data = gin.H{"error": privacy.ClientOpenAIError(c, apiErr)}
+	case types.RelayFormatClaude:
+		prefix = "event: error\ndata: "
+		data = dto.ClaudeResponse{Type: "error", Error: privacy.ClientClaudeError(c, apiErr)}
+	case types.RelayFormatGemini:
+		data = privacy.ClientGeminiError(c, apiErr)
+	case types.RelayFormatOpenAIResponses:
+		// Before any Responses event was sent there is no response object
+		// that a synthetic response.failed event could correctly reference.
+		prefix = "event: error\ndata: "
+		safe := privacy.ClientOpenAIError(c, apiErr)
+		data = gin.H{"type": "error", "code": safe.Code, "message": safe.Message, "param": safe.Param, "sequence_number": 0}
+	default:
+		return fmt.Errorf("unsupported stream failure format %s", format)
+	}
+	encoded, err := common.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("error marshalling stream error: %w", err)
+	}
+	if !privacy.IsNativeGatewayClientError(apiErr) && format != types.RelayFormatGemini && format != types.RelayFormatOpenAIResponses {
+		encoded = privacy.SanitizeClientPayload(c, encoded)
+	}
+	return writeEventStreamFrame(c, prefix+string(encoded)+"\n\n")
 }
 
 func Done(c *gin.Context) {
@@ -292,6 +357,7 @@ func WssObject(c *gin.Context, ws *websocket.Conn, object any) error {
 	if err != nil {
 		return fmt.Errorf("error marshalling object: %w", err)
 	}
+	jsonData = privacy.SanitizeClientPayload(c, jsonData)
 	if ws == nil {
 		logger.LogError(c, common.LogText("websocket connection is nil"))
 		return errors.New("websocket connection is nil")
@@ -300,16 +366,24 @@ func WssObject(c *gin.Context, ws *websocket.Conn, object any) error {
 	return ws.WriteMessage(1, jsonData)
 }
 
-func WssError(c *gin.Context, ws *websocket.Conn, openaiError types.OpenAIError) {
-	if ws == nil {
+func WssError(c *gin.Context, ws *websocket.Conn, apiErr *types.NewAPIError) {
+	if ws == nil || apiErr == nil {
 		return
 	}
+	openaiError := privacy.ClientOpenAIError(c, apiErr)
 	errorObj := &dto.RealtimeEvent{
 		Type:    "error",
 		EventId: GetLocalRealtimeID(c),
 		Error:   &openaiError,
 	}
-	_ = WssObject(c, ws, errorObj)
+	// Only a recognized, typed gateway error skips the legacy raw-frame pass.
+	if !privacy.IsNativeGatewayClientError(apiErr) {
+		_ = WssObject(c, ws, errorObj)
+		return
+	}
+	if encoded, err := common.Marshal(errorObj); err == nil {
+		_ = ws.WriteMessage(websocket.TextMessage, encoded)
+	}
 }
 
 func GetResponseID(c *gin.Context) string {

@@ -2,11 +2,31 @@ package common
 
 import (
 	"runtime"
+	"sync"
 
 	"github.com/grafana/pyroscope-go"
 )
 
+var pyroMu sync.Mutex
+var activeProfiler *pyroscope.Profiler
+
+func StopPyroScope() error {
+	pyroMu.Lock()
+	profiler := activeProfiler
+	activeProfiler = nil
+	pyroMu.Unlock()
+	if profiler != nil {
+		return profiler.Stop()
+	}
+	return nil
+}
+
 func StartPyroScope() error {
+	pyroMu.Lock()
+	defer pyroMu.Unlock()
+	if activeProfiler != nil {
+		return nil
+	}
 
 	pyroscopeUrl := GetEnvOrDefaultString("PYROSCOPE_URL", "")
 	if pyroscopeUrl == "" {
@@ -24,7 +44,7 @@ func StartPyroScope() error {
 	runtime.SetMutexProfileFraction(mutexRate)
 	runtime.SetBlockProfileRate(blockRate)
 
-	_, err := pyroscope.Start(pyroscope.Config{
+	profiler, err := pyroscope.Start(pyroscope.Config{
 		ApplicationName: pyroscopeAppName,
 
 		ServerAddress:     pyroscopeUrl,
@@ -52,5 +72,6 @@ func StartPyroScope() error {
 	if err != nil {
 		return err
 	}
+	activeProfiler = profiler
 	return nil
 }

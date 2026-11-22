@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/requestpatch"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
@@ -19,9 +20,9 @@ import (
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/tidwall/gjson"
 )
 
 type ThinkingContentInfo struct {
@@ -55,6 +56,13 @@ type ResponsesUsageInfo struct {
 	BuiltInTools map[string]*BuildInToolInfo
 }
 
+// WalletDebitShare 描述钱包计费预扣在单个账户的实际扣减（与 model.LedgerShare
+// 同构；relay/common 不依赖 model 包，故独立定义，由 service 层转换）。
+type WalletDebitShare struct {
+	Account string `json:"account"`
+	Amount  int    `json:"amount"`
+}
+
 type ChannelMeta struct {
 	ChannelType          int
 	ChannelId            int
@@ -81,16 +89,17 @@ type TokenCountMeta struct {
 }
 
 type RelayInfo struct {
-	TokenId           int
-	TokenKey          string
-	TokenGroup        string
-	UserId            int
-	UsingGroup        string // 使用的分组，当auto跨分组重试时，会变动
-	UserGroup         string // 用户所在分组
-	TokenUnlimited    bool
-	StartTime         time.Time
-	FirstResponseTime time.Time
-	isFirstResponse   bool
+	TokenId                    int
+	TokenKey                   string
+	TokenGroup                 string
+	UserId                     int
+	UsingGroup                 string // 使用的分组，当auto跨分组重试时，会变动
+	UserGroup                  string // 用户所在分组
+	TokenUnlimited             bool
+	StartTime                  time.Time
+	FirstResponseTime          time.Time // legacy: first upstream event, not first downstream content
+	FirstDownstreamContentTime time.Time // first successful native Chat output flush
+	isFirstResponse            bool
 	//SendLastReasoningResponse bool
 	IsStream               bool
 	IsGeminiBatchEmbedding bool
@@ -144,6 +153,8 @@ type RelayInfo struct {
 	BillingSource string
 	// SubscriptionId is the user_subscriptions.id used when BillingSource == "subscription"
 	SubscriptionId int
+	// SubscriptionQuotaPeriod binds task adjustments to the original allowance.
+	SubscriptionQuotaPeriod int64
 	// SubscriptionPreConsumed is the amount pre-consumed on subscription item (quota units or 1)
 	SubscriptionPreConsumed int64
 	// SubscriptionPostDelta is the post-consume delta applied to amount_used (quota units; can be negative).
@@ -153,16 +164,39 @@ type RelayInfo struct {
 	SubscriptionPlanTitle string
 	// RequestId is used for idempotent pre-consume/refund
 	RequestId string
+	// WssPostConsumeSequence gives each realtime incremental settlement a stable
+	// operation identity even when consecutive segments happen to cost the same.
+	// It advances only after the segment's accounting transaction commits.
+	WssPostConsumeSequence uint64
+	// WalletDebitShares 记录钱包计费预扣在各账户的实际扣减（旧 PostConsumeQuota
+	// 回退路径专用），供结算退款按原账户精确退回。Account 为账本账户标识
+	// （paid/bonus/affiliate）。
+	WalletDebitShares []WalletDebitShare
 	// SubscriptionAmountTotal / SubscriptionAmountUsedAfterPreConsume are used to compute remaining in logs.
+	SubscriptionSnapshotUnknown           bool // Never derive old-period remaining quota from a new period.
 	SubscriptionAmountTotal               int64
 	SubscriptionAmountUsedAfterPreConsume int64
 	IsClaudeBetaQuery                     bool // /v1/messages?beta=true
 	IsChannelTest                         bool // channel test request
 	RetryIndex                            int
 	LastError                             *types.NewAPIError
+	channelEgressAttempt                  uint64
+	channelRequestURLPath                 string
 	RuntimeHeadersOverride                map[string]any
 	UseRuntimeHeadersOverride             bool
 	ParamOverrideAudit                    []string
+	// RequestPluginSteps is the audit of the request plugin runs, every
+	// stage and attempt in order.
+	RequestPluginSteps []RequestPluginStep
+	// RequestPluginHeaders are the header.patch effects of the current
+	// attempt's outbound stage; ApplyHeaderOverride applies them last.
+	RequestPluginHeaders []requestpatch.Effect
+	// RequestPluginRecord is the public record of the request plugin changes:
+	// the request's ingress, then the current attempt's stages.
+	RequestPluginRecord []RequestPluginRecord
+	// requestPluginIngressRecord counts the ingress entries of
+	// RequestPluginRecord, which every attempt keeps.
+	requestPluginIngressRecord int
 
 	PriceData hosttypes.PriceData
 
@@ -181,6 +215,10 @@ type RelayInfo struct {
 	// ImageQuotaBeforeGroup is the frozen legacy estimate before request ratios.
 	ImageRequestCount     int
 	ImageQuotaBeforeGroup float64
+	// Non-image legacy synchronous pricing: nil for other pricing paths. Keep
+	// the unrounded base even when the first group or prompt estimate is zero.
+	LegacyQuotaBeforeGroup   *float64
+	LegacyReservedGroupRatio float64
 
 	Request dto.Request
 
@@ -266,6 +304,19 @@ func (info *RelayInfo) RequestedImageCount() int {
 }
 
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
+	if attempt, ok := common.GetContextKeyType[uint64](c, constant.ContextKeyChannelEgressAttempt); ok && attempt != info.channelEgressAttempt {
+		// Overrides installed by a prior adaptor/override program may contain
+		// authentication headers. They must not shadow the new channel's
+		// headers. Reinitializing metadata within the same attempt is safe.
+		if info.channelEgressAttempt == 0 {
+			info.channelRequestURLPath = info.RequestURLPath
+		} else {
+			info.RequestURLPath = info.channelRequestURLPath
+		}
+		info.channelEgressAttempt = attempt
+		info.RuntimeHeadersOverride = nil
+		info.UseRuntimeHeadersOverride = false
+	}
 	info.ResponseModel = nil
 	info.FinalRequestRelayFormat = ""
 	info.RequestConversionChain = nil
@@ -275,10 +326,17 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	info.SendResponseCount = 0
 	info.ClaudeToChatStreamState = nil
 	info.ChatToGeminiStreamState = nil
+	info.RequestPluginHeaders = nil
+	info.RequestPluginRecord = info.RequestPluginRecord[:min(info.requestPluginIngressRecord, len(info.RequestPluginRecord))]
 	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
 	paramOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelParamOverride)
 	headerOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelHeaderOverride)
 	apiType, _ := common.ChannelType2APIType(channelType)
+	pinnedProvider, _ := common.GetContextKey(c, constant.ContextKeyProviderPlugin)
+	providerPlugin := pinnedProvider != nil && channelType == constant.ChannelTypeTaskPlugin
+	if providerPlugin {
+		apiType = constant.APITypeProviderPlugin
+	}
 	channelMeta := &ChannelMeta{
 		ChannelType:          channelType,
 		ChannelId:            common.GetContextKeyInt(c, constant.ContextKeyChannelId),
@@ -314,7 +372,7 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 		channelMeta.ChannelOtherSettings = channelOtherSettings
 	}
 
-	if channelType == constant.ChannelTypeAdvancedCustom &&
+	if (channelType == constant.ChannelTypeAdvancedCustom || providerPlugin) &&
 		!channelMeta.ChannelSetting.PassThroughBodyEnabled &&
 		c.Request != nil && c.Request.URL != nil {
 		route, matched := channelMeta.ChannelOtherSettings.AdvancedCustom.MatchPathForModel(c.Request.URL.Path, info.OriginModelName)
@@ -323,7 +381,7 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 		}
 	}
 
-	if streamSupportedChannels[channelMeta.ChannelType] {
+	if streamSupportedChannels[channelMeta.ChannelType] || providerPlugin {
 		channelMeta.SupportStreamOptions = true
 	}
 
@@ -458,6 +516,7 @@ var streamSupportedChannels = map[int]bool{
 	constant.ChannelTypeNewAPI:         true,
 	constant.ChannelTypeVLLM:           true,
 	constant.ChannelTypeSGLang:         true,
+	constant.ChannelTypeCline:          true,
 	constant.ChannelTypeTencent:        true,
 }
 
@@ -527,6 +586,7 @@ func GenRelayInfoResponses(c *gin.Context, request *dto.OpenAIResponsesRequest) 
 
 func GenRelayInfoGemini(c *gin.Context, request dto.Request) *RelayInfo {
 	info := genBaseRelayInfo(c, request)
+	info.RelayMode = relayconstant.RelayModeGemini
 	info.RelayFormat = types.RelayFormatGemini
 	info.ShouldIncludeUsage = false
 
@@ -554,8 +614,8 @@ func reasoningEffortFromRequest(request dto.Request) string {
 		}
 		effort = req.ReasoningEffort
 		if strings.TrimSpace(effort) == "" && len(req.Reasoning) > 0 {
-			value := gjson.GetBytes(req.Reasoning, "effort")
-			if value.Type == gjson.String {
+			value := ojson.GetBytes(req.Reasoning, "effort")
+			if value.Type == ojson.String {
 				effort = value.String()
 			}
 		}
@@ -654,10 +714,15 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		info.RelayMode = c.GetInt("relay_mode")
 	}
 
-	if strings.HasPrefix(c.Request.URL.Path, "/pg") {
+	if relayconstant.IsPlaygroundChatPath(c.Request.URL.Path) {
 		info.IsPlayground = true
-		info.RequestURLPath = strings.TrimPrefix(info.RequestURLPath, "/pg")
-		info.RequestURLPath = "/v1" + info.RequestURLPath
+		if strings.HasPrefix(c.Request.URL.Path, "/pg") {
+			info.RequestURLPath = strings.TrimPrefix(info.RequestURLPath, "/pg")
+			info.RequestURLPath = "/v1" + info.RequestURLPath
+		} else {
+			info.RequestURLPath = strings.TrimPrefix(info.RequestURLPath, "/api/user/playground/chat")
+			info.RequestURLPath = "/v1/chat/completions" + info.RequestURLPath
+		}
 	}
 
 	userSetting, ok := common.GetContextKeyType[dto.UserSetting](c, constant.ContextKeyUserSetting)
@@ -1138,6 +1203,50 @@ func FailTaskInfo(reason string) *TaskInfo {
 	}
 }
 
+// DeleteJSONMember removes every copy of the member at path. A client body
+// may repeat a key, and most upstream parsers read the last copy, so a
+// surviving copy could reach the upstream after the gateway removed or
+// replaced the first one.
+func DeleteJSONMember(doc *ojson.Doc, path string) error {
+	for doc.Get(path).Exists() {
+		size := doc.Len()
+		if err := doc.Delete(path); err != nil {
+			return err
+		}
+		if doc.Len() == size {
+			return fmt.Errorf("delete %s: member was not removed", path)
+		}
+	}
+	return nil
+}
+
+// SetJSONMember sets member key of the object at parent ("" for the root) to
+// value and leaves one copy. A key that appears once is replaced where it
+// stands, so the object keeps its member order; a repeated key is removed
+// everywhere, for the reason given on DeleteJSONMember, and written once at
+// the end.
+func SetJSONMember(doc *ojson.Doc, parent, key string, value any) error {
+	path := ojson.Escape(key)
+	object := doc.Get("@this")
+	if parent != "" {
+		path = parent + "." + path
+		object = doc.Get(parent)
+	}
+	copies := 0
+	object.ForEach(func(member, _ ojson.Result) bool {
+		if member.Str == key {
+			copies++
+		}
+		return copies < 2
+	})
+	if copies > 1 {
+		if err := DeleteJSONMember(doc, path); err != nil {
+			return err
+		}
+	}
+	return doc.Set(path, value)
+}
+
 // RemoveDisabledFields 从请求 JSON 数据中移除渠道设置中禁用的字段
 // service_tier: 服务层级字段，可能导致额外计费（OpenAI、Claude、Responses API 支持）
 // inference_geo: Claude 数据驻留推理区域字段（仅 Claude 支持，默认过滤）
@@ -1153,77 +1262,61 @@ func RemoveDisabledFields(jsonData []byte, channelOtherSettings dto.ChannelOther
 		return jsonData, nil
 	}
 
-	// Only top-level members are decoded: nested values keep the client's
+	// Only the removed members change: everything else keeps the client's
 	// bytes and key order, which upstreams follow when they fill a schema.
-	var data map[string]json.RawMessage
-	if err := common.Unmarshal(jsonData, &data); err != nil {
-		common.SysError(common.LogText("RemoveDisabledFields Unmarshal error :%s", err.Error()))
+	if !ojson.ValidBytes(jsonData) {
+		common.SysError(common.LogText("RemoveDisabledFields Unmarshal error :%s", "invalid JSON"))
 		return jsonData, nil
 	}
 
+	var disabled []string
 	// 默认移除 service_tier，除非明确允许（避免额外计费风险）
 	if !channelOtherSettings.AllowServiceTier {
-		if _, exists := data["service_tier"]; exists {
-			delete(data, "service_tier")
-		}
+		disabled = append(disabled, "service_tier")
 	}
 
 	// 默认移除 inference_geo，除非明确允许（避免在未授权情况下透传数据驻留区域）
 	if !channelOtherSettings.AllowInferenceGeo {
-		if _, exists := data["inference_geo"]; exists {
-			delete(data, "inference_geo")
-		}
+		disabled = append(disabled, "inference_geo")
 	}
 
 	// 默认移除 speed，除非明确允许（避免意外切换 Claude 推理速度模式）
 	if !channelOtherSettings.AllowSpeed {
-		if _, exists := data["speed"]; exists {
-			delete(data, "speed")
-		}
+		disabled = append(disabled, "speed")
 	}
 
 	// 默认允许 store 透传，除非明确禁用（禁用可能影响 Codex 使用）
 	if channelOtherSettings.DisableStore {
-		if _, exists := data["store"]; exists {
-			delete(data, "store")
-		}
+		disabled = append(disabled, "store")
 	}
 
 	// 默认移除 safety_identifier，除非明确允许（保护用户隐私，避免向 OpenAI 报告用户信息）
 	if !channelOtherSettings.AllowSafetyIdentifier {
-		if _, exists := data["safety_identifier"]; exists {
-			delete(data, "safety_identifier")
-		}
+		disabled = append(disabled, "safety_identifier")
 	}
 
 	// 默认移除 stream_options.include_obfuscation，除非明确允许（避免关闭响应流混淆保护）
-	if !channelOtherSettings.AllowIncludeObfuscation {
-		var streamOptions map[string]json.RawMessage
-		if err := common.Unmarshal(data["stream_options"], &streamOptions); err == nil && streamOptions != nil {
-			delete(streamOptions, "include_obfuscation")
-			if len(streamOptions) == 0 {
-				delete(data, "stream_options")
-			} else {
-				encoded, err := common.Marshal(streamOptions)
-				if err != nil {
-					common.SysError(common.LogText("RemoveDisabledFields Marshal error :%s", err.Error()))
-					return jsonData, nil
-				}
-				data["stream_options"] = encoded
-			}
-		}
+	removeObfuscation := !channelOtherSettings.AllowIncludeObfuscation && ojson.GetBytesNoCopy(jsonData, "stream_options").IsObject()
+	if removeObfuscation {
+		disabled = append(disabled, "stream_options.include_obfuscation")
 	}
 
-	jsonDataAfter, err := common.Marshal(data)
-	if err != nil {
-		common.SysError(common.LogText("RemoveDisabledFields Marshal error :%s", err.Error()))
-		return jsonData, nil
+	doc := ojson.NewDoc(jsonData)
+	for _, path := range disabled {
+		if err := DeleteJSONMember(doc, path); err != nil {
+			return nil, err
+		}
 	}
-	return jsonDataAfter, nil
+	if removeObfuscation && len(doc.Get("stream_options").Map()) == 0 {
+		if err := DeleteJSONMember(doc, "stream_options"); err != nil {
+			return nil, err
+		}
+	}
+	return doc.Bytes(), nil
 }
 
 func hasRemovableDisabledField(jsonData []byte, channelOtherSettings dto.ChannelOtherSettings) bool {
-	values := gjson.GetManyBytes(
+	values := ojson.GetManyBytes(
 		jsonData,
 		"service_tier",
 		"inference_geo",
@@ -1248,39 +1341,34 @@ func RemoveGeminiDisabledFields(jsonData []byte) ([]byte, error) {
 		return jsonData, nil
 	}
 
-	var data map[string]any
-	if err := common.Unmarshal(jsonData, &data); err != nil {
-		common.SysError(common.LogText("RemoveGeminiDisabledFields Unmarshal error: %s", err.Error()))
+	if !ojson.ValidBytes(jsonData) {
+		common.SysError(common.LogText("RemoveGeminiDisabledFields Unmarshal error: %s", "invalid JSON"))
 		return jsonData, nil
 	}
 
-	// Process contents array
+	// Process contents array; only the removed ids change, so inline data
+	// is never decoded or re-encoded.
 	// Handle both camelCase (functionResponse) and snake_case (function_response)
-	if contents, ok := data["contents"].([]any); ok {
-		for _, content := range contents {
-			if contentMap, ok := content.(map[string]any); ok {
-				if parts, ok := contentMap["parts"].([]any); ok {
-					for _, part := range parts {
-						if partMap, ok := part.(map[string]any); ok {
-							// Check functionResponse (camelCase)
-							if funcResp, ok := partMap["functionResponse"].(map[string]any); ok {
-								delete(funcResp, "id")
-							}
-							// Check function_response (snake_case)
-							if funcResp, ok := partMap["function_response"].(map[string]any); ok {
-								delete(funcResp, "id")
-							}
-						}
-					}
+	contents := ojson.GetBytesNoCopy(jsonData, "contents")
+	if !contents.IsArray() {
+		return jsonData, nil
+	}
+	doc := ojson.NewDoc(jsonData)
+	for i, content := range contents.Array() {
+		parts := content.Get("parts")
+		if !parts.IsArray() {
+			continue
+		}
+		for j, part := range parts.Array() {
+			for _, field := range []string{"functionResponse", "function_response"} {
+				if !part.Get(field + ".id").Exists() {
+					continue
+				}
+				if err := DeleteJSONMember(doc, fmt.Sprintf("contents.%d.parts.%d.%s.id", i, j, field)); err != nil {
+					return nil, err
 				}
 			}
 		}
 	}
-
-	jsonDataAfter, err := common.Marshal(data)
-	if err != nil {
-		common.SysError(common.LogText("RemoveGeminiDisabledFields Marshal error: %s", err.Error()))
-		return jsonData, nil
-	}
-	return jsonDataAfter, nil
+	return doc.Bytes(), nil
 }

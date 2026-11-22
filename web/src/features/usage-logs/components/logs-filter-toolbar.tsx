@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { Table } from '@tanstack/react-table'
+
 import { ChevronDown, Loader2 } from 'lucide-react'
 import { useState, type ComponentProps, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -38,9 +38,10 @@ import {
 } from '@/components/ui/drawer'
 import { Input } from '@/components/ui/input'
 import { useMediaQuery } from '@/hooks'
+import type { Table } from '@/lib/console-table'
 import { cn } from '@/lib/utils'
 
-interface LogsFilterToolbarProps<TData> {
+interface LogsFilterToolbarProps<TData extends object> {
   table: Table<TData>
   primaryFilters: ReactNode
   advancedFilters?: ReactNode
@@ -56,7 +57,7 @@ interface LogsFilterToolbarProps<TData> {
   advancedFilterCount?: number
   searchLoading?: boolean
   onReset: () => void
-  onSearch: () => void
+  onSearch: () => void | boolean
   className?: string
 }
 
@@ -90,7 +91,9 @@ export function LogsFilterInput(props: ComponentProps<typeof Input>) {
   )
 }
 
-export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
+export function LogsFilterToolbar<TData extends object>(
+  props: LogsFilterToolbarProps<TData>
+) {
   const { t } = useTranslation()
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false)
@@ -107,7 +110,7 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
   }
 
   const handleMobileSearch = () => {
-    props.onSearch()
+    if (props.onSearch() === false) return
     setMobileFiltersOpen(false)
   }
 
@@ -202,7 +205,19 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
           )}
         </DataTableMobileFilterPanel>
 
-        <DrawerContent className='max-h-[85dvh] p-0'>
+        <DrawerContent
+          className='max-h-[85dvh] p-0'
+          onEscapeKeyDown={(event) => {
+            // Vaul handles Escape in document capture before nested comboboxes.
+            // Let an open field dismiss its own list before closing the drawer.
+            if (
+              event.target instanceof Element &&
+              event.target.closest('[role="combobox"][aria-expanded="true"]')
+            ) {
+              event.preventDefault()
+            }
+          }}
+        >
           <div className='mx-auto flex w-full max-w-md flex-1 flex-col overflow-hidden'>
             <DrawerHeader className='border-border/70 border-b px-4 py-3 text-left'>
               <DrawerTitle>{t('Filter')}</DrawerTitle>

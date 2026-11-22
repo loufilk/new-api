@@ -39,6 +39,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
+import { handleServerError } from '@/lib/handle-server-error'
 
 import {
   SettingsForm,
@@ -48,6 +49,7 @@ import {
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { publicModelOwnerSchema } from '../utils/public-policy-fields'
 
 const thinkingBlacklistExample = JSON.stringify(
   ['moonshotai/kimi-k2-thinking', 'kimi-k2-thinking', 're:.*@sha256:.*'],
@@ -88,6 +90,7 @@ const jsonString = z.string().refine((value) => {
 }, 'Invalid JSON format')
 
 const schema = z.object({
+  PublicModelOwnedBy: publicModelOwnerSchema,
   global: z.object({
     pass_through_request_enabled: z.boolean(),
     thinking_model_blacklist: jsonString,
@@ -103,6 +106,7 @@ type GlobalModelSettingsFormValues = z.output<typeof schema>
 type GlobalModelSettingsFormInput = z.input<typeof schema>
 
 type FlatGlobalModelSettings = {
+  PublicModelOwnedBy: string
   'global.pass_through_request_enabled': boolean
   'global.thinking_model_blacklist': string
   'global.chat_completions_to_responses_policy': string
@@ -113,6 +117,7 @@ type FlatGlobalModelSettings = {
 const flattenGlobalValues = (
   values: GlobalModelSettingsFormValues
 ): FlatGlobalModelSettings => ({
+  PublicModelOwnedBy: values.PublicModelOwnedBy.trim() || 'chuanapi',
   'global.pass_through_request_enabled':
     values.global.pass_through_request_enabled,
   'global.thinking_model_blacklist': normalizeJsonText(
@@ -170,11 +175,12 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
       return
     }
 
-    for (const [key, value] of updates) {
-      await updateOption.mutateAsync({
-        key,
-        value,
-      })
+    try {
+      for (const [key, value] of updates) {
+        await updateOption.mutateAsync({ key, value })
+      }
+    } catch (error) {
+      handleServerError(error)
     }
   }
 
@@ -184,8 +190,27 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
         <SettingsForm onSubmit={form.handleSubmit(onSubmit)}>
           <SettingsPageFormActions
             onSave={form.handleSubmit(onSubmit)}
-            isSaving={updateOption.isPending}
+            isSaving={form.formState.isSubmitting || updateOption.isPending}
           />
+          <FormField
+            control={form.control}
+            name='PublicModelOwnedBy'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Public model owner')}</FormLabel>
+                <FormControl>
+                  <Input placeholder='chuanapi' {...field} />
+                </FormControl>
+                <FormDescription>
+                  {t(
+                    'Shown as owned_by in OpenAI model lists and details. Overrides channel labels; blank or invalid stored values use chuanapi. Anthropic and Gemini formats are unchanged.'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
           <FormField
             control={form.control}
             name='global.pass_through_request_enabled'

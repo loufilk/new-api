@@ -1,0 +1,148 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import { t } from 'i18next'
+import { ClipboardCheck, Handshake } from 'lucide-react'
+
+import { ROLE } from '@/lib/roles'
+
+import type { NavigationExtension } from '../navigation'
+import type { SidebarNavigationExtension } from '../sidebar-navigation'
+
+export const CHUANAPI_PUBLIC_HOME = 'https://chuanapi.com/'
+
+/** Web-home quickstart URL that used to be the Docs destination. */
+export const CHUANAPI_LEGACY_QUICKSTART_DOCS =
+  'https://chuanapi.com/docs/quickstart/'
+
+const LEGACY_QUICKSTART_URLS = new Set([
+  CHUANAPI_LEGACY_QUICKSTART_DOCS,
+  'https://chuanapi.com/docs/quickstart',
+  'https://chuanapi.com/#quickstart',
+  'https://chuanapi.com#quickstart',
+])
+
+export const chuanapiToolsNavigationExtension: NavigationExtension = {
+  id: 'chuanapi/tools-navigation',
+  apply(links, context) {
+    const enabled = context.status?.account_pool_enabled === true
+    const canViewTests = context.isAuthenticated
+    const result = links.filter(
+      (link) =>
+        link.href !== '/model-monitor' &&
+        (enabled || link.href !== '/account-pool') &&
+        (canViewTests || link.href !== '/intelligence')
+    )
+    const additions = [
+      { title: t('pool.title'), href: '/account-pool' },
+      { title: t('intelligence.title'), href: '/intelligence' },
+      { title: t('Invitation Rewards'), href: '/affiliate' },
+    ].filter(
+      (link) =>
+        (enabled || link.href !== '/account-pool') &&
+        (canViewTests || link.href !== '/intelligence') &&
+        !result.some((existing) => existing.href === link.href)
+    )
+    const docsIndex = result.findIndex((link) => link.href === '/help')
+    result.splice(docsIndex < 0 ? result.length : docsIndex, 0, ...additions)
+    return result
+  },
+}
+
+export const chuanapiSidebarNavigationExtension: SidebarNavigationExtension = {
+  id: 'chuanapi/sidebar-navigation',
+  apply(sidebar, context) {
+    if (!context.isAuthenticated) return sidebar
+
+    return {
+      ...sidebar,
+      navGroups: sidebar.navGroups.map((group) => {
+        if (group.id === 'personal') {
+          const hasPartnerApplication = group.items.some(
+            (item) => 'url' in item && item.url === '/partner-applications'
+          )
+          return hasPartnerApplication
+            ? group
+            : {
+                ...group,
+                items: [
+                  ...group.items,
+                  {
+                    title: t('Partner application'),
+                    url: '/partner-applications',
+                    icon: Handshake,
+                  },
+                ],
+              }
+        }
+
+        if (group.id === 'admin' && (context.role ?? 0) >= ROLE.ADMIN) {
+          const hasPartnerManagement = group.items.some(
+            (item) =>
+              'url' in item && item.url === '/partner-application-management'
+          )
+          return hasPartnerManagement
+            ? group
+            : {
+                ...group,
+                items: [
+                  ...group.items,
+                  {
+                    title: t('Partner applications'),
+                    url: '/partner-application-management',
+                    icon: ClipboardCheck,
+                    requiredRole: ROLE.ADMIN,
+                  },
+                ],
+              }
+        }
+
+        return group
+      }),
+    }
+  },
+}
+
+export const chuanapiNavigationExtension: NavigationExtension = {
+  id: 'chuanapi/navigation',
+  publicHomeUrl: CHUANAPI_PUBLIC_HOME,
+  apply(links) {
+    return links.map((link) => {
+      if (link.href === '/') {
+        return {
+          ...link,
+          href: CHUANAPI_PUBLIC_HOME,
+          documentNavigation: true,
+        }
+      }
+
+      // The New API documentation lives inside the SPA: keep /help internal
+      // and treat every legacy marketing quickstart entry as the same page.
+      if (link.href === '/help' || LEGACY_QUICKSTART_URLS.has(link.href)) {
+        return {
+          ...link,
+          href: '/help',
+          documentNavigation: false,
+          external: false,
+        }
+      }
+
+      return { ...link }
+    })
+  },
+}

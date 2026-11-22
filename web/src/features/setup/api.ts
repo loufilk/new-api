@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { queryOptions } from '@tanstack/react-query'
+
 import { api } from '@/lib/api'
 
 import type { SetupFormValues, SetupResponse } from './types'
@@ -29,6 +31,15 @@ export async function getSetupStatus(): Promise<SetupResponse> {
   })
   return res.data
 }
+
+// Only bridge startup and the first root guard; the guard consumes this cache.
+export const setupStatusQueryOptions = queryOptions({
+  queryKey: ['setup-status'],
+  queryFn: getSetupStatus,
+  staleTime: Infinity,
+  retry: false,
+  meta: { errorToast: false, redirectOnInternalServerError: false },
+})
 
 export async function submitSetup(
   payload: Record<string, unknown>

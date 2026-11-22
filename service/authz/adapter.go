@@ -5,8 +5,8 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-	casbinmodel "github.com/casbin/casbin/v2/model"
-	"github.com/casbin/casbin/v2/persist"
+	casbinmodel "github.com/casbin/casbin/v3/model"
+	"github.com/casbin/casbin/v3/persist"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -32,18 +32,11 @@ func (a *gormAdapter) LoadPolicy(m casbinmodel.Model) error {
 		if rule.V0 == "" || rule.V1 == "" || rule.V2 == "" {
 			return fmt.Errorf("authorization policy %d is missing a subject, resource or action", rule.Id)
 		}
-		effect := rule.V3
-		if effect == "" {
-			effect = EffectAllow
+		effect, unsupportedScope, err := storedPolicyEffect(rule)
+		if err != nil {
+			return err
 		}
-		if effect != EffectAllow && effect != EffectDeny {
-			return fmt.Errorf("authorization policy %d has an invalid effect", rule.Id)
-		}
-		if rule.V5 != "" || (rule.V4 != "" && rule.V4 != "all") {
-			// The current model cannot enforce legacy own/other scopes. Keep
-			// the stored rule for review and deny this permission in memory.
-			// Skipping a per-user rule would expose the admin role baseline.
-			effect = EffectDeny
+		if unsupportedScope {
 			common.SysLog(common.LogText("authorization policy %d has an unsupported legacy scope; loaded as deny; review the stored policy before granting access", rule.Id))
 		}
 		if err := persist.LoadPolicyArray([]string{rule.Ptype, rule.V0, rule.V1, rule.V2, effect}, m); err != nil {
@@ -51,6 +44,22 @@ func (a *gormAdapter) LoadPolicy(m casbinmodel.Model) error {
 		}
 	}
 	return nil
+}
+
+func storedPolicyEffect(rule model.CasbinRule) (effect string, unsupportedScope bool, err error) {
+	effect = rule.V3
+	if effect == "" {
+		effect = EffectAllow
+	}
+	if effect != EffectAllow && effect != EffectDeny {
+		return "", false, fmt.Errorf("authorization policy %d has an invalid effect", rule.Id)
+	}
+	if rule.V5 != "" || (rule.V4 != "" && rule.V4 != "all") {
+		// The current model cannot enforce own/other scopes. Skipping a
+		// restricted per-user rule would expose the baseline grant.
+		return EffectDeny, true, nil
+	}
+	return effect, false, nil
 }
 
 func (a *gormAdapter) SavePolicy(m casbinmodel.Model) error {

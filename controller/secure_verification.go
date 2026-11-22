@@ -56,7 +56,7 @@ func writeSecurityOperationError(c *gin.Context, err error) {
 	case errors.Is(err, model.ErrEmailBindingResendWait):
 		status = http.StatusTooManyRequests
 		code, message = "EMAIL_BINDING_RESEND_WAIT", err.Error()
-	case errors.Is(err, common.ErrAccountPasswordLength), errors.Is(err, common.ErrAccountPasswordSame), errors.Is(err, common.ErrPasswordLegacyLimit):
+	case errors.Is(err, common.ErrAccountPasswordLength), errors.Is(err, common.ErrAccountPasswordSame), errors.Is(err, common.ErrPasswordLegacyLimit), errors.Is(err, common.ErrAccountPasswordCommon):
 		code, message = "PASSWORD_POLICY_REJECTED", err.Error()
 	case errors.Is(err, model.ErrCurrentPasswordInvalid):
 		code, message = "CURRENT_PASSWORD_INVALID", err.Error()
@@ -65,6 +65,16 @@ func writeSecurityOperationError(c *gin.Context, err error) {
 		code, message = "ACCOUNT_SECURITY_STATE_CHANGED", err.Error()
 	case errors.Is(err, model.ErrLastLoginMethod):
 		code, message = "LAST_LOGIN_METHOD", err.Error()
+	case errors.Is(err, oauth.ErrGoogleSecureCookiesRequired):
+		code, message = "GOOGLE_SECURE_COOKIES_REQUIRED", oauth.ErrGoogleSecureCookiesRequired.Error()
+	case errors.Is(err, oauth.ErrGoogleOAuthNotConfigured):
+		code, message = "GOOGLE_OAUTH_NOT_CONFIGURED", oauth.ErrGoogleOAuthNotConfigured.Error()
+	case errors.Is(err, oauth.ErrGoogleOAuthConflict):
+		code, message = "GOOGLE_OAUTH_CONFLICT", oauth.ErrGoogleOAuthConflict.Error()
+	case errors.Is(err, oauth.ErrGoogleReauthenticationRequired):
+		code, message = "GOOGLE_REAUTHENTICATION_REQUIRED", oauth.ErrGoogleReauthenticationRequired.Error()
+	case errors.Is(err, oauth.ErrGoogleOAuthFailed):
+		code, message = "GOOGLE_OAUTH_FAILED", oauth.ErrGoogleOAuthFailed.Error()
 	case errors.Is(err, oauth.ErrTelegramOAuthNotConfigured):
 		code, message = "TELEGRAM_OAUTH_NOT_CONFIGURED", oauth.ErrTelegramOAuthNotConfigured.Error()
 	case errors.Is(err, oauth.ErrTelegramOAuthConflict):

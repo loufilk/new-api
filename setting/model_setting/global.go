@@ -1,11 +1,11 @@
 package model_setting
 
 import (
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
 
+	"github.com/MoeForge/moego/regexp"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/config"
 )
@@ -33,6 +33,38 @@ func (p ChatCompletionsToResponsesPolicy) IsChannelEnabled(channelID int, channe
 		return true
 	}
 	return false
+}
+
+var chatResponsesRegexCache sync.Map // map[string]*regexp.Regexp
+
+func matchAnyModelPattern(patterns []string, model string) bool {
+	if len(patterns) == 0 || model == "" {
+		return false
+	}
+	for _, pattern := range patterns {
+		if pattern == "" {
+			continue
+		}
+		re, ok := chatResponsesRegexCache.Load(pattern)
+		if !ok {
+			compiled, err := regexp.Compile(pattern)
+			if err != nil {
+				// Treat invalid patterns as non-matching to avoid breaking runtime traffic.
+				continue
+			}
+			re = compiled
+			chatResponsesRegexCache.Store(pattern, re)
+		}
+		if re.(*regexp.Regexp).MatchString(model) {
+			return true
+		}
+	}
+	return false
+}
+
+// Matches is shared by ingress protocol compatibility and the actual relay.
+func (p ChatCompletionsToResponsesPolicy) Matches(channelID, channelType int, model string) bool {
+	return p.IsChannelEnabled(channelID, channelType) && matchAnyModelPattern(p.ModelPatterns, model)
 }
 
 type GlobalSettings struct {

@@ -18,6 +18,17 @@ For commercial licensing, please contact support@quantumnous.com
 */
 /// <reference types="@rsbuild/core/types" />
 
+interface ImportMetaEnv {
+  /** Release version stamped into the compiled frontend by CI. */
+  readonly VITE_REACT_APP_VERSION?: string
+  /**
+   * Optional API origin for deployments that host the console separately from
+   * the API. Empty or absent keeps all app-owned requests on the frontend
+   * origin (same-origin dev proxy included).
+   */
+  readonly VITE_API_BASE_URL?: string
+}
+
 declare module '@visactor/react-vchart' {
   export const VChart: React.ComponentType<Record<string, unknown>>
 }

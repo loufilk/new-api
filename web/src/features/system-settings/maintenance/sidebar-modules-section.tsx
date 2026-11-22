@@ -67,7 +67,7 @@ export function SidebarModulesSection({
   const sectionMeta: Record<string, { title: string; description: string }> = {
     chat: {
       title: t('Chat area'),
-      description: t('Playground experiments and live conversations.'),
+      description: t('Text Generation and chat functions'),
     },
     console: {
       title: t('Console area'),
@@ -89,8 +89,12 @@ export function SidebarModulesSection({
   > = {
     chat: {
       playground: {
-        title: t('Playground'),
+        title: t('Text Generation'),
         description: t('Experiment with prompts and models in real time.'),
+      },
+      image: {
+        title: t('Image Generation'),
+        description: t('Create images from text prompts and reference images.'),
       },
       chat: {
         title: t('Chat'),

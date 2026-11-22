@@ -17,13 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 export const modelGroupSelectorLayoutClasses = {
-  desktopPanel: 'max-h-[min(50vh,28rem)] overflow-hidden',
+  desktopPanel:
+    'max-h-[min(70dvh,28rem,var(--available-height,70dvh))] overflow-hidden',
   desktopContent:
-    'grid h-[min(50vh,28rem)] max-h-[min(50vh,28rem)] min-h-0 gap-3 p-2 md:grid-cols-[9.5rem_minmax(0,1fr)]',
-  groupColumn: 'flex h-full min-h-0 min-w-0 flex-col overflow-hidden',
+    'grid h-[min(70dvh,28rem,var(--available-height,70dvh))] min-h-0 grid-rows-[minmax(0,1fr)] gap-3 p-2 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]',
+  groupColumn: 'flex min-h-0 min-w-0 flex-col overflow-hidden',
   groupScroll:
-    'mt-2 grid min-h-0 flex-1 auto-rows-[2rem] content-start gap-1 overflow-y-auto pr-1',
-  modelColumn: 'flex h-full min-h-0 min-w-0 overflow-hidden rounded-lg border',
+    'mt-2 grid min-h-0 flex-1 auto-rows-min content-start gap-1 overflow-y-auto overscroll-contain pr-1',
+  modelColumn: 'flex min-h-0 min-w-0 overflow-hidden rounded-lg border',
   modelCommand: 'min-h-0 flex-1 rounded-lg border-0 bg-transparent p-1',
   modelList:
     'min-h-0 flex-1 max-h-none [scrollbar-color:var(--border)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:block [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-track]:bg-transparent',
@@ -38,13 +39,13 @@ export const modelGroupSelectorLayoutClasses = {
 } as const
 
 type ScrollableOption = {
-  offsetHeight?: number
-  offsetTop?: number
+  getBoundingClientRect?: () => Pick<DOMRect, 'top' | 'height'>
   scrollIntoView: (options?: ScrollIntoViewOptions) => void
 }
 
 type ScrollableOptionContainer = {
   clientHeight: number
+  getBoundingClientRect: () => Pick<DOMRect, 'top'>
   scrollTo?: (options: ScrollToOptions) => void
   scrollTop: number
 }
@@ -53,15 +54,15 @@ export function scrollSelectedOptionIntoView(
   selectedOption: ScrollableOption | null,
   scrollContainer?: ScrollableOptionContainer | null
 ): void {
-  if (
-    scrollContainer &&
-    selectedOption?.offsetTop !== undefined &&
-    selectedOption.offsetHeight !== undefined
-  ) {
+  if (scrollContainer && selectedOption?.getBoundingClientRect) {
+    const optionRect = selectedOption.getBoundingClientRect()
+    const containerRect = scrollContainer.getBoundingClientRect()
     const scrollTop = Math.max(
       0,
-      selectedOption.offsetTop -
-        (scrollContainer.clientHeight - selectedOption.offsetHeight) / 2
+      scrollContainer.scrollTop +
+        optionRect.top -
+        containerRect.top -
+        (scrollContainer.clientHeight - optionRect.height) / 2
     )
     if (scrollContainer.scrollTo) {
       scrollContainer.scrollTo({ top: scrollTop, behavior: 'auto' })

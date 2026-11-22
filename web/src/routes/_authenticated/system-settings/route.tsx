@@ -23,10 +23,16 @@ import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 export const Route = createFileRoute('/_authenticated/system-settings')({
-  beforeLoad: () => {
+  beforeLoad: ({ location }) => {
     const { auth } = useAuthStore.getState()
 
-    if (auth.user?.role !== ROLE.SUPER_ADMIN) {
+    const fingerprintSettings =
+      location.pathname === '/system-settings/content/model-tests'
+    const isAdmin = (auth.user?.role ?? 0) >= ROLE.ADMIN
+    if (
+      auth.user?.role !== ROLE.SUPER_ADMIN &&
+      !(fingerprintSettings && isAdmin)
+    ) {
       throw redirect({
         to: '/403',
       })

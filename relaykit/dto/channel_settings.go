@@ -1,17 +1,22 @@
 package dto
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 
+	"github.com/MoeForge/moego/regexp"
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
 type ChannelSettings struct {
+	// ModelOwnedBy is an explicitly public label for model discovery, not a routing hint.
+	ModelOwnedBy              string `json:"model_owned_by,omitempty"`
 	TaskPluginKey             string `json:"task_plugin_key,omitempty"`
 	ForceFormat               bool   `json:"force_format,omitempty"`
 	ThinkingToContent         bool   `json:"thinking_to_content,omitempty"`
@@ -35,6 +40,18 @@ type ChannelSettings struct {
 	// TLSInsecureSkipVerify accepts upstream certificates that fail
 	// verification, such as self-signed ones, for this channel only.
 	TLSInsecureSkipVerify bool `json:"tls_insecure_skip_verify,omitempty"`
+	// RequestPlugins lists the request plugin instances the channel binds,
+	// by instance id, in run order.
+	RequestPlugins []string `json:"request_plugins,omitempty"`
+}
+
+// ValidateModelOwnedBy bounds public display metadata independently of transport settings.
+func (s ChannelSettings) ValidateModelOwnedBy() error {
+	if !utf8.ValidString(s.ModelOwnedBy) || utf8.RuneCountInString(strings.TrimSpace(s.ModelOwnedBy)) > 64 ||
+		strings.ContainsFunc(s.ModelOwnedBy, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }) {
+		return fmt.Errorf("model_owned_by must contain at most 64 characters without control or formatting characters")
+	}
+	return nil
 }
 
 // BindsTaskPlugin reports whether the channel is bound to the task plugin,
@@ -111,8 +128,9 @@ const (
 
 type ChannelOtherSettings struct {
 	AzureResponsesVersion                 string                `json:"azure_responses_version,omitempty"`
-	VertexKeyType                         VertexKeyType         `json:"vertex_key_type,omitempty"`   // "json" or "api_key"
-	VertexProjectID                       string                `json:"vertex_project_id,omitempty"` // 仅当 vertex_key_type=api_key 时使用；JSON 模式下从 service account 解析
+	VertexKeyType                         VertexKeyType         `json:"vertex_key_type,omitempty"`    // "json" or "api_key"
+	VertexProjectID                       string                `json:"vertex_project_id,omitempty"`  // 仅当 vertex_key_type=api_key 时使用；JSON 模式下从 service account 解析
+	VertexAPIVersion                      string                `json:"vertex_api_version,omitempty"` // Google 模型（Gemini、Imagen）请求路径版本："v1"（默认）或 "v1beta1"
 	OpenRouterEnterprise                  *bool                 `json:"openrouter_enterprise,omitempty"`
 	ClaudeBetaQuery                       bool                  `json:"claude_beta_query,omitempty"`          // Claude 渠道是否强制追加 ?beta=true
 	AllowServiceTier                      bool                  `json:"allow_service_tier,omitempty"`         // 是否允许 service_tier 透传（默认过滤以避免额外计费）
@@ -139,6 +157,9 @@ type ChannelOtherSettings struct {
 	// rejection. Empty follows the default allow policy. Accepted values:
 	// "", "allow", "safe", "strict".
 	ToolLossPolicy string `json:"tool_loss_policy,omitempty"`
+	// PluginConfig is the config a type-61 channel gives its plugin, checked
+	// against the plugin's meta.channelConfig when the channel is saved.
+	PluginConfig json.RawMessage `json:"plugin_config,omitempty"`
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {
@@ -238,6 +259,12 @@ const (
 	AdvancedCustomBalancePath = "/v1/dashboard/billing/credit_grants"
 )
 
+// AcceptsModel reports whether the route's Models list admits model, as
+// MatchPathForModel matches it; an empty list admits every model.
+func (r AdvancedCustomRoute) AcceptsModel(model string) bool {
+	return matchAdvancedCustomRouteModel(r.Models, strings.TrimSpace(model))
+}
+
 // IsNative reports whether the route forwards requests without protocol
 // conversion. Validate normalizes an empty converter to none, but callers may
 // see configurations that were never saved.
@@ -268,6 +295,19 @@ func (c *AdvancedCustomConfig) MatchPathForModel(requestPath string, model strin
 		return AdvancedCustomRoute{}, false
 	}
 	model = strings.TrimSpace(model)
+	if route, ok := c.matchPathForModel(requestPath, model); ok {
+		return route, true
+	}
+	// An explicit legacy alias takes precedence. Only the two actual host
+	// Playground routes may fall back to the canonical Chat Completions path.
+	switch requestPath {
+	case "/pg/chat/completions", "/api/user/playground/chat":
+		return c.matchPathForModel(advancedCustomEndpointPathOpenAIChat, model)
+	}
+	return AdvancedCustomRoute{}, false
+}
+
+func (c *AdvancedCustomConfig) matchPathForModel(requestPath, model string) (AdvancedCustomRoute, bool) {
 	for _, route := range c.Routes {
 		if matchAdvancedCustomIncomingPath(strings.TrimSpace(route.IncomingPath), requestPath) &&
 			matchAdvancedCustomRouteModel(route.Models, model) {

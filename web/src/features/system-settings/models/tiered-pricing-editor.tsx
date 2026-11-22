@@ -82,17 +82,22 @@ import {
   type TimeCondition,
   type TimeFunc,
 } from '@/features/pricing/lib/billing-expr'
+import { compileBillingExpression } from '@/features/pricing/lib/billing-expression/parser'
 import {
   parseVisualBillingDocument,
   serializeVisualBillingDocument,
   type VisualBillingDocument,
 } from '@/features/pricing/lib/billing-expression/visual'
 import {
+  CACHE_PRICING_MODES,
+  getCachePriceLabels,
+  getCachePricingMode,
+} from '@/features/pricing/lib/cache-pricing'
+import {
   type ExtraTokenValues,
   createDefaultVisualConfig,
   evalExprLocally,
   buildEstimatorTokens,
-  exprUsesExtraVars,
   generateExprFromVisualConfig,
 } from '@/features/pricing/lib/tier-expr'
 import { cn } from '@/lib/utils'
@@ -103,6 +108,7 @@ import {
 } from './billing-time-fields'
 import { DraftNumberInput } from './draft-number-input'
 import { RequestSimulation } from './request-simulation'
+import { carryStableUiKey, getStableUiKey } from './tiered-pricing-ui-key'
 import { VisualBillingDocumentEditor } from './visual-billing-document-editor'
 
 type Preset = {
@@ -299,6 +305,7 @@ const PRESET_GROUPS: PresetGroup[] = [
   },
 ]
 
+// ---------------------------------------------------------------------------
 // Raw expression editor
 // ---------------------------------------------------------------------------
 
@@ -561,18 +568,23 @@ function RuleGroupCard({
   onRemove,
 }: RuleGroupCardProps) {
   const { t } = useTranslation()
+  const emitGroupChange = (next: RequestRuleGroup) =>
+    onChange(carryStableUiKey(group, next))
 
   const handleConditionChange = (
     conditionIndex: number,
     next: RequestCondition
   ) => {
     const conditions = [...group.conditions]
-    conditions[conditionIndex] = next
-    onChange({ ...group, conditions })
+    conditions[conditionIndex] = carryStableUiKey(
+      conditions[conditionIndex],
+      next
+    )
+    emitGroupChange({ ...group, conditions })
   }
 
   const handleAddCondition = (timeMode: boolean) => {
-    onChange({
+    emitGroupChange({
       ...group,
       conditions: [
         ...group.conditions,
@@ -600,12 +612,11 @@ function RuleGroupCard({
       <div className='space-y-2'>
         {group.conditions.map((condition, conditionIndex) => (
           <RuleConditionRow
-            // eslint-disable-next-line react/no-array-index-key -- Parsed editor rows have no IDs; preserve input identity while their editable labels and values change.
-            key={conditionIndex}
+            key={getStableUiKey(condition)}
             condition={condition}
             onChange={(next) => handleConditionChange(conditionIndex, next)}
             onRemove={() =>
-              onChange({
+              emitGroupChange({
                 ...group,
                 conditions: group.conditions.filter(
                   (_, i) => i !== conditionIndex
@@ -641,7 +652,7 @@ function RuleGroupCard({
           step={0.000001}
           value={group.multiplier}
           onValueChange={(value) =>
-            onChange({ ...group, multiplier: String(value) })
+            emitGroupChange({ ...group, multiplier: String(value) })
           }
           className='w-32'
           placeholder='1.0'
@@ -715,12 +726,18 @@ function PresetSection({ applyPreset }: PresetSectionProps) {
 // ---------------------------------------------------------------------------
 
 type EstimatorProps = {
+  modelName?: string
   currency: PricingCurrency
   effectiveExpr: string
   fullExpr: string
 }
 
-function CostEstimator({ effectiveExpr, fullExpr, currency }: EstimatorProps) {
+function CostEstimator({
+  modelName,
+  effectiveExpr,
+  fullExpr,
+  currency,
+}: EstimatorProps) {
   const { t } = useTranslation()
   const inputId = useId()
   const outputId = useId()
@@ -741,29 +758,70 @@ function CostEstimator({ effectiveExpr, fullExpr, currency }: EstimatorProps) {
     audioOutputTokens: 0,
   })
 
-  const usesExtras = useMemo(
-    () => exprUsesExtraVars(effectiveExpr),
+  const compiled = useMemo(
+    () => compileBillingExpression(effectiveExpr),
     [effectiveExpr]
   )
+  const usedVariables: ReadonlySet<string> =
+    compiled.status === 'ready' ? compiled.variables : new Set()
+  const usesExtras = BILLING_EXTRA_VARS.some((variable) =>
+    usedVariables.has(variable.key)
+  )
+  const cacheMode = getCachePricingMode(usedVariables, modelName)
+  const activeExtras = useMemo(() => {
+    const values = { ...extras }
+    for (const variable of BILLING_EXTRA_VARS) {
+      if (
+        variable.field &&
+        (!usesExtras ||
+          (CACHE_PRICING_MODES.custom.variables.includes(variable.key) &&
+            !CACHE_PRICING_MODES[cacheMode].variables.includes(variable.key)))
+      ) {
+        values[
+          variable.field.replace('Price', 'Tokens') as keyof ExtraTokenValues
+        ] = 0
+      }
+    }
+    return values
+  }, [extras, cacheMode, usesExtras])
 
   const tokens = useMemo(() => {
     const values = buildEstimatorTokens(
       promptTokens,
       completionTokens,
-      extras,
+      activeExtras,
       effectiveExpr
     )
     if (lengthOverride.trim()) values.len = Number(lengthOverride)
     return values
-  }, [promptTokens, completionTokens, extras, lengthOverride, effectiveExpr])
+  }, [
+    promptTokens,
+    completionTokens,
+    activeExtras,
+    lengthOverride,
+    effectiveExpr,
+  ])
 
   const result = useMemo(
     () =>
-      evalExprLocally(effectiveExpr, promptTokens, completionTokens, extras, {
-        tokens,
-        now: billingTime === undefined ? undefined : new Date(billingTime),
-      }),
-    [effectiveExpr, promptTokens, completionTokens, extras, tokens, billingTime]
+      evalExprLocally(
+        effectiveExpr,
+        promptTokens,
+        completionTokens,
+        activeExtras,
+        {
+          tokens,
+          now: billingTime === undefined ? undefined : new Date(billingTime),
+        }
+      ),
+    [
+      effectiveExpr,
+      promptTokens,
+      completionTokens,
+      activeExtras,
+      tokens,
+      billingTime,
+    ]
   )
 
   if (result.error === 'task usage') {
@@ -779,7 +837,11 @@ function CostEstimator({ effectiveExpr, fullExpr, currency }: EstimatorProps) {
   }
 
   return (
-    <div className='bg-muted/30 space-y-3 rounded-md border p-3'>
+    <div
+      role='group'
+      aria-label={t('Token estimator')}
+      className='bg-muted/30 space-y-3 rounded-md border p-3'
+    >
       <div className='space-y-1'>
         <h4 className='text-sm font-medium'>{t('Token estimator')}</h4>
         <p className='text-muted-foreground text-xs'>
@@ -832,14 +894,26 @@ function CostEstimator({ effectiveExpr, fullExpr, currency }: EstimatorProps) {
             // guaranteed to have a non-null `field` (the `len` condition-only
             // variable is filtered out). Narrow the type here for safety.
             if (!variable.field) return null
+            if (
+              CACHE_PRICING_MODES.custom.variables.includes(variable.key) &&
+              !CACHE_PRICING_MODES[cacheMode].variables.includes(variable.key)
+            ) {
+              return null
+            }
             const stateKey = variable.field.replace(
               'Price',
               'Tokens'
             ) as keyof ExtraTokenValues
             return (
               <div key={variable.key} className='space-y-1'>
-                <Label className='text-xs'>{t(variable.shortLabel)}</Label>
+                <Label
+                  htmlFor={`${inputId}-${variable.key}`}
+                  className='text-xs'
+                >
+                  {t(getCachePriceLabels(variable, cacheMode).shortLabel)}
+                </Label>
                 <DraftNumberInput
+                  id={`${inputId}-${variable.key}`}
                   min={0}
                   value={extras[stateKey]}
                   onValueChange={(value) =>
@@ -1232,6 +1306,8 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
       <div className='bg-muted/30 space-y-3 rounded-md border p-3'>
         {editorMode === 'visual' && visualDocument && (
           <VisualBillingDocumentEditor
+            key={`${modelName ?? ''}:${visualDocument.source}`}
+            modelName={modelName}
             document={visualDocument}
             currency={currency}
             issues={serialized && !serialized.ok ? serialized.issues : []}
@@ -1274,13 +1350,12 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
               <>
                 {requestRuleGroups.map((group, groupIndex) => (
                   <RuleGroupCard
-                    // eslint-disable-next-line react/no-array-index-key -- Parsed editor rows have no IDs; preserve input identity while their editable labels and values change.
-                    key={groupIndex}
+                    key={getStableUiKey(group)}
                     group={group}
                     index={groupIndex}
                     onChange={(next) => {
                       const updated = [...requestRuleGroups]
-                      updated[groupIndex] = next
+                      updated[groupIndex] = carryStableUiKey(group, next)
                       handleRuleGroupsChange(updated)
                     }}
                     onRemove={() =>
@@ -1311,6 +1386,7 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
       </div>
 
       <CostEstimator
+        modelName={modelName}
         effectiveExpr={effectiveExpr}
         fullExpr={
           editorMode === 'raw'

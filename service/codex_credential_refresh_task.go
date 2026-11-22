@@ -52,21 +52,24 @@ func StartCodexCredentialAutoRefreshTask() {
 }
 
 func runCodexCredentialAutoRefreshOnce() {
+	runCodexCredentialAutoRefreshOnceContext(context.Background())
+}
+
+func runCodexCredentialAutoRefreshOnceContext(ctx context.Context) {
 	if !codexCredentialRefreshRunning.CompareAndSwap(false, true) {
 		return
 	}
 	defer codexCredentialRefreshRunning.Store(false)
 
-	ctx := context.Background()
 	now := time.Now()
 
 	var refreshed int
 	var scanned int
 
 	offset := 0
-	for {
+	for ctx.Err() == nil {
 		var channels []*model.Channel
-		err := model.DB.
+		err := model.DB.WithContext(ctx).
 			Select("id", "name", "key", "status", "channel_info").
 			Where("type = ? AND (status = ? OR status = ?)",
 				constant.ChannelTypeCodex,
@@ -87,6 +90,9 @@ func runCodexCredentialAutoRefreshOnce() {
 		offset += codexCredentialRefreshBatchSize
 
 		for _, ch := range channels {
+			if ctx.Err() != nil {
+				return
+			}
 			if ch == nil {
 				continue
 			}

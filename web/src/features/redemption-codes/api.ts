@@ -17,21 +17,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
+import { createServerError } from '@/lib/server-error-message'
 
 import type {
   Redemption,
+  RedemptionFormData,
   ApiResponse,
   GetRedemptionsParams,
   GetRedemptionsResponse,
   SearchRedemptionsParams,
-  RedemptionFormData,
 } from './types'
 
-// ============================================================================
-// Redemption Code Management
-// ============================================================================
-
-// Get paginated redemption codes list
 export async function getRedemptions(
   params: GetRedemptionsParams = {}
 ): Promise<GetRedemptionsResponse> {
@@ -40,21 +36,20 @@ export async function getRedemptions(
   return res.data
 }
 
-// Search redemption codes by keyword
 export async function searchRedemptions(
   params: SearchRedemptionsParams
 ): Promise<GetRedemptionsResponse> {
   const { keyword = '', status = '', p = 1, page_size = 10 } = params
-  const queryParams = new URLSearchParams()
-  queryParams.set('keyword', keyword)
+  const queryParams = new URLSearchParams({
+    keyword,
+    p: String(p),
+    page_size: String(page_size),
+  })
   if (status) queryParams.set('status', status)
-  queryParams.set('p', String(p))
-  queryParams.set('page_size', String(page_size))
   const res = await api.get(`/api/redemption/search?${queryParams.toString()}`)
   return res.data
 }
 
-// Get single redemption code by ID
 export async function getRedemption(
   id: number
 ): Promise<ApiResponse<Redemption>> {
@@ -62,46 +57,65 @@ export async function getRedemption(
   return res.data
 }
 
-// Create redemption code(s)
 export async function createRedemption(
-  data: RedemptionFormData
-): Promise<ApiResponse<string[]>> {
-  const res = await api.post('/api/redemption/', data)
-  return res.data
+  payload: RedemptionFormData
+): Promise<string[]> {
+  const { data } = await api.post<ApiResponse<string[]>>(
+    '/api/redemption/',
+    payload
+  )
+  if (!data.success) {
+    throw createServerError(data, 'Failed to create redemption code')
+  }
+  return data.data ?? []
 }
 
-// Update redemption code
 export async function updateRedemption(
-  data: RedemptionFormData & { id: number }
-): Promise<ApiResponse<Redemption>> {
-  const res = await api.put('/api/redemption/', data)
-  return res.data
+  payload: RedemptionFormData
+): Promise<void> {
+  const { data } = await api.put<ApiResponse>('/api/redemption/', payload)
+  if (!data.success) {
+    throw createServerError(data, 'Failed to update redemption code')
+  }
 }
 
-// Update redemption code status (enable/disable)
-export async function updateRedemptionStatus(
-  id: number,
+export async function updateRedemptionStatus(payload: {
+  id: number
   status: number
-): Promise<ApiResponse<Redemption>> {
-  const res = await api.put('/api/redemption/?status_only=true', { id, status })
-  return res.data
+}): Promise<void> {
+  const { data } = await api.put<ApiResponse>(
+    '/api/redemption/?status_only=true',
+    payload
+  )
+  if (!data.success) {
+    throw createServerError(data, 'Failed to update redemption code status')
+  }
 }
 
-// Delete a single redemption code
-export async function deleteRedemption(id: number): Promise<ApiResponse> {
-  const res = await api.delete(`/api/redemption/${id}/`)
-  return res.data
+export async function deleteRedemption(id: number): Promise<void> {
+  const { data } = await api.delete<ApiResponse>(`/api/redemption/${id}`)
+  if (!data.success) {
+    throw createServerError(data, 'Failed to delete redemption code')
+  }
 }
 
-// Delete invalid redemption codes (used, disabled, expired)
-export async function deleteInvalidRedemptions(): Promise<ApiResponse<number>> {
-  const res = await api.delete('/api/redemption/invalid')
-  return res.data
+export async function deleteRedemptions(ids: number[]): Promise<number> {
+  const { data } = await api.post<ApiResponse<number>>(
+    '/api/redemption/batch',
+    { ids }
+  )
+  if (!data.success) {
+    throw createServerError(data, 'Failed to delete redemption code')
+  }
+  return data.data ?? 0
 }
 
-export async function batchDeleteRedemptions(
-  ids: number[]
-): Promise<ApiResponse<number>> {
-  const res = await api.post('/api/redemption/batch', { ids })
-  return res.data
+export async function deleteInvalidRedemptions(): Promise<number> {
+  const { data } = await api.delete<ApiResponse<number>>(
+    '/api/redemption/invalid'
+  )
+  if (!data.success) {
+    throw createServerError(data, 'Failed to delete invalid redemption codes')
+  }
+  return data.data ?? 0
 }

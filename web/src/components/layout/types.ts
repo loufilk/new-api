@@ -16,8 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type LinkProps } from '@tanstack/react-router'
-import { type TFunction } from 'i18next'
+import type { LinkProps } from '@tanstack/react-router'
+import type { TFunction } from 'i18next'
 
 /**
  * Base navigation item type
@@ -26,6 +26,7 @@ type BaseNavItem = {
   title: string
   badge?: string
   icon?: React.ElementType
+  external?: boolean
   activeUrls?: (LinkProps['to'] | (string & {}))[]
   configUrls?: (LinkProps['to'] | (string & {}))[]
   /**
@@ -97,6 +98,8 @@ export type TopNavLink = {
   disabled?: boolean
   requiresAuth?: boolean
   external?: boolean
+  /** Force a same-tab document request instead of the New API SPA router. */
+  documentNavigation?: boolean
 }
 
 /**
@@ -107,6 +110,14 @@ export type SidebarViewParent = {
   to: LinkProps['to'] | (string & {})
   /** Visible label, e.g. "Back to Dashboard" — already localized */
   label: string
+}
+
+/**
+ * Counts shown next to sidebar entries, already formatted for display
+ */
+export type SidebarBadges = {
+  /** Task models whose price needs attention, on the entries leading to model pricing */
+  modelPricing?: string
 }
 
 /**
@@ -124,8 +135,8 @@ export type SidebarView = {
   pathPattern: RegExp
   /** Back-navigation descriptor; required for nested views */
   parent: SidebarViewParent
-  /** Nav group builder, called per render with the active translator */
-  getNavGroups: (t: TFunction) => NavGroup[]
+  /** Nav group builder, called per render with the active translator and badges */
+  getNavGroups: (t: TFunction, badges: SidebarBadges) => NavGroup[]
 }
 
 /**

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import i18next from 'i18next'
 import { afterEach, beforeAll, describe, expect, test } from 'vitest'
 
@@ -64,14 +64,18 @@ function makeLog(other: LogOtherData): UsageLog {
   }
 }
 
-function renderDetails(other: LogOtherData, promptTokens = 0): QueryClient {
+function renderDetails(
+  other: LogOtherData,
+  promptTokens = 0,
+  isAdmin = false
+): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   const freshAt = Date.now() + 60_000
   queryClient.setQueryData(['status'], {}, { updatedAt: freshAt })
   queryClient.setQueryData(
-    ['pricing'],
+    ['pricing', 'public'],
     { data: [], vendors: [] },
     { updatedAt: freshAt }
   )
@@ -80,7 +84,7 @@ function renderDetails(other: LogOtherData, promptTokens = 0): QueryClient {
     <QueryClientProvider client={queryClient}>
       <DetailsDialog
         log={{ ...makeLog(other), prompt_tokens: promptTokens }}
-        isAdmin={false}
+        isAdmin={isAdmin}
         isRoot={false}
         open
         onOpenChange={() => undefined}
@@ -94,18 +98,44 @@ function rowValue(label: string): string | null {
   return screen.getByText(label).nextElementSibling?.textContent ?? null
 }
 
-test('shows the recorded request and response models in log details', () => {
-  const queryClient = renderDetails({
-    response_model: {
-      requested_model: 'requested-model',
-      upstream_model: 'mapped-model',
-      returned_model: 'unexpected-model',
+test('shows recorded upstream model observations to administrators', () => {
+  const queryClient = renderDetails(
+    {
+      admin_info: {
+        response_model: {
+          requested_model: 'requested-model',
+          upstream_model: 'mapped-model',
+          returned_model: 'unexpected-model',
+        },
+      },
     },
-  })
+    0,
+    true
+  )
   expect(screen.getByText('Response model: unexpected-model')).toBeVisible()
   expect(rowValue('Request Model')).toBe('requested-model')
   expect(rowValue('Upstream Model')).toBe('mapped-model')
   expect(screen.getByText('unexpected-model')).toBeVisible()
+  cleanup()
+  queryClient.clear()
+})
+
+test('does not disclose legacy or admin-only upstream model observations to users', () => {
+  const observation = {
+    requested_model: 'requested-model',
+    upstream_model: 'mapped-model',
+    returned_model: 'unexpected-model',
+  }
+  const queryClient = renderDetails({
+    response_model: observation,
+    admin_info: { response_model: observation },
+  })
+  expect(
+    screen.queryByText('Response model: unexpected-model')
+  ).not.toBeInTheDocument()
+  expect(screen.queryByText('mapped-model')).not.toBeInTheDocument()
+  expect(screen.queryByText('unexpected-model')).not.toBeInTheDocument()
+  cleanup()
   queryClient.clear()
 })
 
@@ -124,11 +154,19 @@ test('splits OpenAI cache writes into 30-minute and 12-hour rows with their pric
     },
     4000
   )
-  expect(rowValue('Cache Write (30m)')).toBe('500')
-  expect(rowValue('Cache Write (12h)')).toBe('1,000')
+  expect(screen.getByText('500').previousElementSibling).toHaveTextContent(
+    'Cache Write (30m)'
+  )
+  expect(screen.getByText('1,000').previousElementSibling).toHaveTextContent(
+    'Cache Write (12h)'
+  )
   expect(screen.queryByText('Cache Write')).toBeNull()
-  expect(rowValue('Cache Creation (30m)')).toBe('$12.5/M')
-  expect(rowValue('Cache Creation (12h)')).toBe('$25/M')
+  expect(screen.getByText('$12.5/M').previousElementSibling).toHaveTextContent(
+    'Cache Write (30m)'
+  )
+  expect(screen.getByText('$25/M').previousElementSibling).toHaveTextContent(
+    'Cache Write (12h)'
+  )
   queryClient.clear()
 })
 
@@ -152,6 +190,67 @@ test('keeps one cache write row and no cache prices for OpenAI logs without 12-h
   queryClient.clear()
 })
 
+test('shows matching GPT cache duration labels in billing details and the tier table', () => {
+  const queryClient = renderDetails(
+    {
+      billing_mode: 'tiered_expr',
+      expr_b64: btoa(
+        'tier("base", p * 4 + c * 20 + cr * 0.4 + cc * 5 + cc12h * 10)'
+      ),
+      matched_tier: 'base',
+      cache_tokens: 1418,
+      cache_creation_tokens: 2133,
+      billing_tokens: { p: 3, c: 972, cr: 1418, cc: 2133, cc12h: 0 },
+      group_ratio: 1,
+    },
+    3554
+  )
+  expect(
+    screen.getByRole('columnheader', { name: 'Cache Write (30m)' })
+  ).toBeVisible()
+  expect(
+    screen.getByRole('columnheader', { name: 'Cache Write (12h)' })
+  ).toBeVisible()
+  expect(screen.getByText('$5/M').previousElementSibling).toHaveTextContent(
+    'Cache Write (30m)'
+  )
+  expect(screen.getByText('$10/M').previousElementSibling).toHaveTextContent(
+    'Cache Write (12h)'
+  )
+  const billable = within(
+    screen.getByRole('group', { name: 'Billable token breakdown' })
+  )
+  expect(
+    billable.getByText('Cache Write (30m)').nextElementSibling
+  ).toHaveTextContent('2,133')
+  expect(billable.queryByText('Cache Write')).not.toBeInTheDocument()
+  queryClient.clear()
+})
+
+test('shows explicitly free cache writes as zero in the tier table', () => {
+  const queryClient = renderDetails(
+    {
+      billing_mode: 'tiered_expr',
+      expr_b64: btoa('tier("base", p * 4 + c * 20 + cc * 0 + cc12h * 0)'),
+      matched_tier: 'base',
+      cache_creation_tokens: 100,
+    },
+    200
+  )
+  const table = within(screen.getByRole('table'))
+  expect(
+    table.getByRole('columnheader', { name: 'Cache Write (30m)' })
+  ).toBeVisible()
+  expect(
+    table.getByRole('columnheader', { name: 'Cache Write (12h)' })
+  ).toBeVisible()
+  expect(table.getAllByRole('cell').slice(-2)).toEqual([
+    expect.objectContaining({ textContent: '$0.0000' }),
+    expect.objectContaining({ textContent: '$0.0000' }),
+  ])
+  queryClient.clear()
+})
+
 describe('usage facts billing details', () => {
   test('shows the settled image count and a per-image price', () => {
     const queryClient = renderDetails({
@@ -166,6 +265,7 @@ describe('usage facts billing details', () => {
       screen.getByText('Billable image count').parentElement
     ).toHaveTextContent('2')
     expect(screen.getAllByText(/\/image/).length).toBeGreaterThan(0)
+    cleanup()
     queryClient.clear()
   })
   const queryClients: QueryClient[] = []
@@ -213,6 +313,7 @@ describe('usage facts billing details', () => {
   })
 
   afterEach(() => {
+    cleanup()
     for (const queryClient of queryClients) {
       queryClient.clear()
     }

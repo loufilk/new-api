@@ -41,9 +41,8 @@ function Fixture() {
       <SettingsPageProvider actionsContainer={container}>
         <QuotaSettingsSection
           defaultValues={{
-            QuotaForNewUser: 0,
-            QuotaForInviter: 0,
-            QuotaForInvitee: 0,
+            AffiliateRewardEnabled: false,
+            AffiliateRewardRate: 0,
             TopUpLink: '',
             quota_setting: {
               enable_free_model_pre_consume: true,
@@ -145,3 +144,21 @@ test.each(['', '-1'])(
     expect(api.put).not.toHaveBeenCalled()
   }
 )
+
+test('shows the LinuxDO-only three-dollar policy without obsolete global signup controls', async () => {
+  await renderSettings()
+  expect(
+    screen.getByText(
+      'Only new accounts created through LinuxDO receive a one-time $3 signup bonus. Repeat logins and linking existing accounts do not qualify.'
+    )
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('switch', { name: 'Signup Bonus' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('spinbutton', { name: 'New User Quota' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('spinbutton', { name: 'Signup Bonus Quota' })
+  ).not.toBeInTheDocument()
+})

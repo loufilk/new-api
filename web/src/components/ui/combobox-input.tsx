@@ -16,12 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Popover as PopoverPrimitive } from '@base-ui/react/popover'
 import { Check, ChevronsUpDown } from 'lucide-react'
 import * as React from 'react'
-import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
 import { Input } from '@/components/ui/input'
+import { usePortalContainer } from '@/components/ui/portal-container'
 import { cn } from '@/lib/utils'
 
 export type ComboboxInputOption = {
@@ -76,16 +77,9 @@ export function ComboboxInput({
   const containerRef = React.useRef<HTMLDivElement>(null)
   const inputRef = React.useRef<HTMLInputElement>(null)
   const listRef = React.useRef<HTMLUListElement>(null)
-  const dropdownRef = React.useRef<HTMLDivElement>(null)
-  // The dropdown is portaled so scrolling ancestors cannot clip it. It goes
-  // into the enclosing dialog when there is one, which keeps a modal parent
-  // from treating option clicks as outside presses.
-  const [dropdown, setDropdown] = React.useState<{
-    container: HTMLElement
-    top: number
-    left: number
-    width: number
-  } | null>(null)
+  const portalContainer = usePortalContainer()
+  const [dialogContainer, setDialogContainer] =
+    React.useState<HTMLElement | null>(null)
   const pointerFocusRef = React.useRef(false)
   const selectedOption = React.useMemo(
     () => options.find((option) => option.value === value),
@@ -108,55 +102,20 @@ export function ComboboxInput({
     setHighlightedIndex(-1)
   }, [filteredOptions])
 
-  // Handle click outside to close
   React.useEffect(() => {
-    if (!open) return
-
-    const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as Node
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(target) &&
-        !dropdownRef.current?.contains(target)
-      ) {
-        setOpen(false)
-        setSearchValue('')
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [open])
-
-  // Position the portaled dropdown under the input and follow scroll/resize.
-  React.useEffect(() => {
-    if (!open) {
-      setDropdown(null)
-      return
-    }
-    const input = inputRef.current
-    if (!input) return
-    const container =
-      input.closest<HTMLElement>('[role="dialog"]') ?? document.body
-    const measure = () => {
-      const rect = input.getBoundingClientRect()
-      setDropdown({
-        container,
-        top: rect.bottom + 4,
-        left: rect.left,
-        width: rect.width,
-      })
-    }
-    measure()
-    window.addEventListener('scroll', measure, true)
-    window.addEventListener('resize', measure)
-    return () => {
-      window.removeEventListener('scroll', measure, true)
-      window.removeEventListener('resize', measure)
+    if (open) {
+      setDialogContainer(
+        inputRef.current?.closest<HTMLElement>('[role="dialog"]') ?? null
+      )
     }
   }, [open])
 
   const handleSelect = (selectedValue: string) => {
+    if (
+      disabled ||
+      options.find((option) => option.value === selectedValue)?.disabled
+    )
+      return
     onValueChange(selectedValue)
     setOpen(false)
     setSearchValue('')
@@ -177,15 +136,25 @@ export function ComboboxInput({
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault()
-        setHighlightedIndex((prev) =>
-          prev < filteredOptions.length - 1 ? prev + 1 : 0
-        )
+        setHighlightedIndex((prev) => {
+          for (let offset = 1; offset <= filteredOptions.length; offset++) {
+            const next = (prev + offset) % filteredOptions.length
+            if (!filteredOptions[next].disabled) return next
+          }
+          return -1
+        })
         break
       case 'ArrowUp':
         e.preventDefault()
-        setHighlightedIndex((prev) =>
-          prev > 0 ? prev - 1 : filteredOptions.length - 1
-        )
+        setHighlightedIndex((prev) => {
+          const start = prev < 0 ? 0 : prev
+          for (let offset = 1; offset <= filteredOptions.length; offset++) {
+            const next =
+              (start - offset + filteredOptions.length) % filteredOptions.length
+            if (!filteredOptions[next].disabled) return next
+          }
+          return -1
+        })
         break
       case 'Enter':
         if (highlightedIndex >= 0 && filteredOptions[highlightedIndex]) {
@@ -223,135 +192,163 @@ export function ComboboxInput({
     (filteredOptions.length > 0 || (allowCustomValue && searchValue.trim()))
 
   return (
-    <div ref={containerRef} className='relative'>
-      <Input
-        ref={inputRef}
-        id={id}
-        type='text'
-        role='combobox'
-        disabled={disabled}
-        aria-label={ariaLabel}
-        aria-labelledby={ariaLabelledBy}
-        aria-invalid={ariaInvalid}
-        aria-expanded={!!showDropdown}
-        aria-controls={
-          showDropdown && filteredOptions.length > 0 ? listId : undefined
+    <PopoverPrimitive.Root
+      open={!!showDropdown}
+      onOpenChange={(nextOpen, details) => {
+        // The input owns opening; pressing it is not an outside dismissal.
+        if (
+          !nextOpen &&
+          containerRef.current?.contains(details.event.target as Node)
+        ) {
+          details.cancel()
+          return
         }
-        aria-activedescendant={
-          showDropdown && highlightedIndex >= 0
-            ? `${listId}-${highlightedIndex}`
-            : undefined
-        }
-        aria-haspopup='listbox'
-        aria-autocomplete='list'
-        autoComplete='off'
-        placeholder={placeholder}
-        value={displayValue}
-        onChange={(e) => {
-          const nextValue = e.target.value
-          setSearchValue(nextValue)
-          setSearchChanged(true)
-          if (allowCustomValue) {
-            onValueChange(nextValue)
+        setOpen(nextOpen)
+        if (!nextOpen) setSearchValue('')
+      }}
+    >
+      <div ref={containerRef} className='relative'>
+        <Input
+          ref={inputRef}
+          id={id}
+          type='text'
+          role='combobox'
+          disabled={disabled}
+          aria-label={ariaLabel}
+          aria-labelledby={ariaLabelledBy}
+          aria-invalid={ariaInvalid}
+          aria-expanded={!!showDropdown}
+          aria-controls={
+            showDropdown && filteredOptions.length > 0 ? listId : undefined
           }
-          if (!open) setOpen(true)
-        }}
-        onPointerDown={() => {
-          pointerFocusRef.current = true
-          if (document.activeElement === inputRef.current && !open) {
+          aria-activedescendant={
+            showDropdown && highlightedIndex >= 0
+              ? `${listId}-${highlightedIndex}`
+              : undefined
+          }
+          aria-haspopup='listbox'
+          aria-autocomplete='list'
+          autoComplete='off'
+          placeholder={placeholder}
+          value={displayValue}
+          onChange={(e) => {
+            const nextValue = e.target.value
+            setSearchValue(nextValue)
+            setSearchChanged(true)
+            if (allowCustomValue) {
+              onValueChange(nextValue)
+            }
+            if (!open) setOpen(true)
+          }}
+          onPointerDown={() => {
+            pointerFocusRef.current = true
+            if (document.activeElement === inputRef.current && !open) {
+              setSearchValue(allowCustomValue ? value : '')
+              setSearchChanged(false)
+              setOpen(true)
+            }
+          }}
+          onFocus={() => {
             setSearchValue(allowCustomValue ? value : '')
             setSearchChanged(false)
-            setOpen(true)
-          }
-        }}
-        onFocus={() => {
-          setSearchValue(allowCustomValue ? value : '')
-          setSearchChanged(false)
-          if (openOnFocus || pointerFocusRef.current) {
-            setOpen(true)
-          }
-          pointerFocusRef.current = false
-        }}
-        onBlur={() => {
-          setOpen(false)
-          setSearchValue('')
-        }}
-        onKeyDown={(event) => {
-          handleKeyDown(event)
-          if (!event.defaultPrevented) onKeyDown?.(event)
-        }}
-        className={cn('pr-9', className)}
-      />
-      <ChevronsUpDown className='pointer-events-none absolute top-1/2 right-3 size-4 shrink-0 -translate-y-1/2 opacity-50' />
+            if (openOnFocus || pointerFocusRef.current) {
+              setOpen(true)
+            }
+            pointerFocusRef.current = false
+          }}
+          onBlur={() => {
+            setOpen(false)
+            setSearchValue('')
+          }}
+          onKeyDown={(event) => {
+            handleKeyDown(event)
+            if (!event.defaultPrevented) onKeyDown?.(event)
+          }}
+          className={cn('pr-9', className)}
+        />
+        <ChevronsUpDown className='pointer-events-none absolute top-1/2 right-3 size-4 shrink-0 -translate-y-1/2 opacity-50' />
 
-      {showDropdown &&
-        dropdown &&
-        createPortal(
-          <div
-            ref={dropdownRef}
-            style={{
-              position: 'fixed',
-              top: dropdown.top,
-              left: dropdown.left,
-              width: dropdown.width,
-            }}
-            className={cn(
-              'bg-popover text-popover-foreground z-100 rounded-md border shadow-md',
-              popupClassName
-            )}
+        <PopoverPrimitive.Portal
+          container={portalContainer ?? dialogContainer ?? undefined}
+        >
+          {/* Position against the actual containing block, including transformed
+              drawers, and keep the list within the available viewport. */}
+          <PopoverPrimitive.Positioner
+            anchor={inputRef}
+            sideOffset={4}
+            align='start'
+            collisionPadding={8}
+            className='isolate z-100'
           >
-            {filteredOptions.length > 0 ? (
-              <ul
-                ref={listRef}
-                id={listId}
-                role='listbox'
-                className='max-h-[200px] overflow-y-auto p-1'
-              >
-                {filteredOptions.map((option, index) => (
-                  <li
-                    key={option.value}
-                    id={`${listId}-${index}`}
-                    role='option'
-                    aria-selected={value === option.value}
-                    data-highlighted={index === highlightedIndex}
-                    className={cn(
-                      'relative flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm select-none',
-                      index === highlightedIndex &&
-                        'bg-accent text-accent-foreground',
-                      value === option.value && 'font-medium'
-                    )}
-                    onMouseEnter={() => setHighlightedIndex(index)}
-                    onMouseDown={(e) => {
-                      e.preventDefault() // Prevent blur
-                      handleSelect(option.value)
-                    }}
-                  >
-                    <Check
+            <PopoverPrimitive.Popup
+              role='presentation'
+              initialFocus={false}
+              finalFocus={false}
+              data-slot='combobox-input-popup'
+              data-vaul-no-drag
+              onPointerDown={(event) => event.stopPropagation()}
+              className={cn(
+                'bg-popover text-popover-foreground max-h-(--available-height) w-(--anchor-width) max-w-(--available-width) overflow-hidden rounded-md border shadow-md',
+                popupClassName
+              )}
+            >
+              {filteredOptions.length > 0 ? (
+                <ul
+                  ref={listRef}
+                  id={listId}
+                  role='listbox'
+                  className='max-h-[min(200px,var(--available-height))] overflow-y-auto overscroll-contain p-1'
+                >
+                  {filteredOptions.map((option, index) => (
+                    <li
+                      key={option.value}
+                      id={`${listId}-${index}`}
+                      role='option'
+                      aria-selected={value === option.value}
+                      aria-disabled={option.disabled || undefined}
+                      data-highlighted={index === highlightedIndex}
                       className={cn(
-                        'size-4 shrink-0',
-                        value === option.value ? 'opacity-100' : 'opacity-0'
+                        'relative flex min-h-9 cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm select-none aria-disabled:pointer-events-none aria-disabled:opacity-50',
+                        index === highlightedIndex &&
+                          'bg-accent text-accent-foreground',
+                        value === option.value && 'font-medium'
                       )}
-                    />
-                    {option.icon && <span aria-hidden>{option.icon}</span>}
-                    <span className='truncate'>{option.label}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <div className='px-2 py-6 text-center text-sm'>
-                {t(emptyText)}
-                {allowCustomValue && searchValue.trim() && (
-                  <div className='text-muted-foreground mt-1 text-xs'>
-                    {t('Press Enter to use "{{value}}"', {
-                      value: searchValue.trim(),
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>,
-          dropdown.container
-        )}
-    </div>
+                      onMouseEnter={() => {
+                        if (!option.disabled) setHighlightedIndex(index)
+                      }}
+                      onPointerDown={(e) => e.preventDefault()}
+                      onMouseDown={(e) => {
+                        e.preventDefault() // Prevent blur
+                      }}
+                      onClick={() => handleSelect(option.value)}
+                    >
+                      <Check
+                        className={cn(
+                          'size-4 shrink-0',
+                          value === option.value ? 'opacity-100' : 'opacity-0'
+                        )}
+                      />
+                      {option.icon && <span aria-hidden>{option.icon}</span>}
+                      <span className='min-w-0 break-all'>{option.label}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className='px-2 py-6 text-center text-sm'>
+                  {t(emptyText)}
+                  {allowCustomValue && searchValue.trim() && (
+                    <div className='text-muted-foreground mt-1 text-xs'>
+                      {t('Press Enter to use "{{value}}"', {
+                        value: searchValue.trim(),
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </PopoverPrimitive.Popup>
+          </PopoverPrimitive.Positioner>
+        </PopoverPrimitive.Portal>
+      </div>
+    </PopoverPrimitive.Root>
   )
 }

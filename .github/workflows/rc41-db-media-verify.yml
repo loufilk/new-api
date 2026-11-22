@@ -1,0 +1,360 @@
+name: RC41 database media candidate
+
+on:
+  push:
+    branches: [codex/rc41-db-media-stability-20261002]
+    paths:
+      - .github/workflows/rc41-db-media-verify.yml
+      - ops/upgrade/rc41_finish_20261002.patch.b64
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rc41-db-media-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  GOWORK: 'off'
+  GOTOOLCHAIN: local
+  GOFLAGS: -mod=readonly
+  CGO_ENABLED: '1'
+  SQL_DSN: ''
+  LOG_SQL_DSN: ''
+  REDIS_CONN_STRING: ''
+  TEST_MYSQL_DSN: ''
+  TEST_POSTGRES_DSN: ''
+
+jobs:
+  assemble:
+    if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/rc41-db-media-stability-20261002'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      tree: ${{ steps.source.outputs.tree }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with: {ref: '${{ github.sha }}', fetch-depth: 0, persist-credentials: false}
+      - name: Assemble only the reviewed upstream and incident changes
+        id: source
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/rc41-source"
+          mkdir -p "$out"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          base=27a20d391044bc169b18bd1e0a8b6adc9668b30d
+          database=62d951fab129f4df1a921735835e5e9c7b8db031
+          maintenance=ec13ba777f9a0a521a815722525b55929a361996
+          rc41=2035a82aeb5414253a728bd937d4b8f97aa99b9b
+          upstream=1a4166d8e8ba9802d2ca56fe8ecf0ed5404e80d5
+          for ancestor in "$base" "$database" "$rc41"; do git merge-base --is-ancestor "$ancestor" HEAD; done
+          git diff --exit-code "$database" "$maintenance" -- go.mod go.sum model/ common/redis.go common/redis_options.go > "$out/database-maintenance-diff.txt"
+          python3 - <<'PY'
+          import base64, gzip, hashlib, pathlib
+          path = pathlib.Path('ops/upgrade/rc41_finish_20261002.patch.b64')
+          encoded = ''.join(path.read_text().split())
+          # Canonicalize the known transport-copy truncation; the digest below
+          # pins the full reviewed plaintext and rejects any other corruption.
+          marker = 'X4XuXUlBAA7nmmfxhTyrdd9tflFu'
+          if marker in encoded:
+              assert encoded.count(marker) == 1
+              encoded = encoded.replace(marker, 'X4XuXUlBAA7nmmfxhTyrvdd9tflFu')
+          patch = gzip.decompress(base64.b64decode(encoded, validate=True))
+          digest = hashlib.sha256(patch).hexdigest()
+          assert digest == '2896c374976d1789bf898d5e56a1a190ab81b40c7e74f75fe4e9525aae9acd62', digest
+          path.write_text(encoded + '\n')
+          import os
+          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'rc41-source'
+          (out / 'reviewed.patch').write_bytes(patch)
+          (out / 'patch.sha256').write_text(digest + '\n')
+          PY
+          git fetch --no-tags https://github.com/QuantumNous/new-api.git "$upstream"
+          if git merge-base --is-ancestor "$upstream" HEAD; then
+            echo 'This one-shot upgrade has already been assembled.'
+            exit 1
+          fi
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' merge --no-commit --no-ff "$upstream" 2>&1 | tee "$out/merge.log"
+          git apply --check "$out/reviewed.patch"
+          git apply "$out/reviewed.patch"
+          git diff --exit-code "$base" -- go.mod go.sum model/ common/redis.go common/redis_options.go extension/ modules/chuanapi/wallet/ > "$out/database-foundation-diff.txt"
+          test "$(cat VERSION)" = 'v1.0.0-rc.41.chuanapi.20261002.db-media'
+          git add -A
+          git diff --cached --check
+          git diff --cached --name-only > "$out/changed-files.txt"
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'merge: rc41 tool fixes and cancellation audit on the upgraded database foundation' -m 'Integrate upstream 1a4166d; preserve DB foundation 62d951f and tested cancellation fixes 27a20d3. Keep video rejection explicit, suppress only local client-disconnect error rows, and stamp source version plus revision. AI-assisted. No production deployment.'
+          test "$(git rev-parse HEAD^1)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^2)" = "$upstream"
+          sha=$(git rev-parse HEAD)
+          tree=$(git rev-parse HEAD^{tree})
+          printf 'sha=%s\ntree=%s\n' "$sha" "$tree" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$sha" > "$out/revision.txt"
+          printf '%s\n' "$tree" > "$out/tree.txt"
+          printf 'database=%s\nmaintenance=%s\nbase=%s\nrc41=%s\nupstream=%s\nversion=%s\n' "$database" "$maintenance" "$base" "$rc41" "$upstream" "$(cat VERSION)" > "$out/provenance.txt"
+          git bundle create "$out/candidate.bundle" HEAD "^$base"
+          git archive --format=tar.gz -o "$out/source.tar.gz" HEAD
+          (cd "$out" && sha256sum candidate.bundle source.tar.gz > SHA256SUMS)
+          git diff --exit-code
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: rc41-source-${{ github.sha }}
+          path: ${{ runner.temp }}/rc41-source/
+          retention-days: 7
+          if-no-files-found: error
+
+  backend:
+    needs: assemble
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with: {ref: '27a20d391044bc169b18bd1e0a8b6adc9668b30d', fetch-depth: 0, persist-credentials: false}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {name: 'rc41-source-${{ github.sha }}', path: '${{ runner.temp }}/rc41-source'}
+      - name: Check out the immutable candidate, not the recipe commit
+        env: {SOURCE_SHA: '${{ needs.assemble.outputs.sha }}', SOURCE_TREE: '${{ needs.assemble.outputs.tree }}'}
+        run: |
+          set -euo pipefail
+          (cd "$RUNNER_TEMP/rc41-source" && sha256sum -c SHA256SUMS)
+          git fetch "$RUNNER_TEMP/rc41-source/candidate.bundle" HEAD
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$SOURCE_TREE"
+          mkdir -p "$RUNNER_TEMP/rc41-backend" web/dist
+          touch web/dist/index.html
+          printf 'OUT=%s\n' "$RUNNER_TEMP/rc41-backend" >> "$GITHUB_ENV"
+          printf '%s\n' "$SOURCE_SHA" > "$RUNNER_TEMP/rc41-backend/revision.txt"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+      - name: Build, vet and verify source and binary version identity
+        run: |
+          set -euo pipefail
+          go version | tee "$OUT/go-version.txt"
+          go mod verify | tee "$OUT/modules.txt"
+          go build -p 2 ./... 2>&1 | tee "$OUT/build.log"
+          go vet -p 2 ./... 2>&1 | tee "$OUT/vet.log"
+          python3 -m unittest discover -s ops/ci/tests -p 'test_*.py' -v 2>&1 | tee "$OUT/ci-contracts.log"
+          python3 -m unittest discover -s ops/server/tests -p 'test_release_gate.py' -v 2>&1 | tee "$OUT/release-gate.log"
+          sha=$(git rev-parse HEAD)
+          version="$(cat VERSION)+g${sha:0:12}"
+          go build -p 2 -ldflags "-X github.com/QuantumNous/new-api/common.Version=$version" -o "$RUNNER_TEMP/new-api-version-check" .
+          env -u VERSION "$RUNNER_TEMP/new-api-version-check" --version > "$OUT/binary-version.txt"
+          grep -Fx "$version" "$OUT/binary-version.txt"
+          sha256sum "$RUNNER_TEMP/new-api-version-check" > "$OUT/binary.sha256"
+      - name: Complete root tests and required incident contracts
+        run: |
+          set -euo pipefail
+          go test -p 2 ./... -count=1 -timeout=15m -json > "$OUT/root-tests.jsonl" 2> "$OUT/root-tests.stderr.log"
+          python3 - <<'PY'
+          import json, os, pathlib
+          path = pathlib.Path(os.environ['OUT']) / 'root-tests.jsonl'
+          rows = [json.loads(line) for line in path.read_text().splitlines()]
+          assert not [r for r in rows if r.get('Action') in ('fail', 'build-fail')]
+          passed = {r['Test'] for r in rows if r.get('Action') == 'pass' and 'Test' in r}
+          required = {'TestClientGoneNeverCreatesChannelErrorRows', 'TestClineCancellationDuringResponsePeekIsNot500', 'TestClineResponsesDoneThenCancellationNeverFallsBack', 'TestClineResponsesDeliveryFailureAndLateCleanup', 'TestClineCancelledRequestDoesNotReadBodyOrDial', 'TestClineCancellationInterruptsInFlightUpstream', 'TestClinePlainTextWireRemainsByteIdentical', 'TestClineMediaAcrossEntryProtocolsAndStreamModes', 'TestClineFinalWireValidationRunsAfterParameterOverrides', 'TestRelayCancellationPrecedesChannelErrorsAndRetryBudget', 'TestRelayCancellationDoesNotDisableHealthyPool', 'TestRelayRetriesStillWorkForLiveRequestUpstreamFailures', 'TestRelayCancelledBeforeDispatchDoesNotSelectOrWrite', 'TestDownstreamWriteFailureIsNotUpstreamHealthFailure', 'TestStreamFailurePartialUsageSettlesOnceAndNeverRefunds', 'TestStreamFailureWithoutUsageRefundsReservationOnce', 'TestConvertOpenAIResponsesRequestToGeminiKeepsCustomToolCalls'}
+          assert required <= passed, sorted(required - passed)
+          print('Required contracts passed:', len(required))
+          PY
+      - name: Complete root race tests
+        run: |
+          set -euo pipefail
+          go test -race -p 2 ./... -count=1 -timeout=15m -json > "$OUT/root-race.jsonl" 2> "$OUT/root-race.stderr.log"
+          git diff --exit-code
+      - name: Summarize evidence and any failures
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import collections, json, os, pathlib
+          root = pathlib.Path(os.environ.get('OUT', os.environ['RUNNER_TEMP'] + '/rc41-backend'))
+          root.mkdir(exist_ok=True)
+          summary = {}
+          for path in root.glob('*.jsonl'):
+              rows = []
+              for line in path.read_text().splitlines():
+                  try: rows.append(json.loads(line))
+                  except json.JSONDecodeError: print('Incomplete JSON:', path.name)
+              summary[path.name] = dict(collections.Counter(r['Action'] for r in rows if r.get('Test') and r.get('Action') in ('pass', 'fail', 'skip')))
+              for row in rows:
+                  if row.get('Action') in ('fail', 'build-fail'): print(row)
+          (root / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+          print(json.dumps(summary, indent=2))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with: {name: 'rc41-backend-${{ github.sha }}', path: '${{ runner.temp }}/rc41-backend/', retention-days: 7, if-no-files-found: error}
+
+  relaykit:
+    needs: assemble
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with: {ref: '27a20d391044bc169b18bd1e0a8b6adc9668b30d', fetch-depth: 0, persist-credentials: false}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {name: 'rc41-source-${{ github.sha }}', path: '${{ runner.temp }}/rc41-source'}
+      - name: Check out the immutable candidate
+        env: {SOURCE_SHA: '${{ needs.assemble.outputs.sha }}', SOURCE_TREE: '${{ needs.assemble.outputs.tree }}'}
+        run: |
+          set -euo pipefail
+          (cd "$RUNNER_TEMP/rc41-source" && sha256sum -c SHA256SUMS)
+          git fetch "$RUNNER_TEMP/rc41-source/candidate.bundle" HEAD
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$SOURCE_TREE"
+          mkdir -p "$RUNNER_TEMP/rc41-relaykit"
+          printf 'OUT=%s\n' "$RUNNER_TEMP/rc41-relaykit" >> "$GITHUB_ENV"
+          printf '%s\n' "$SOURCE_SHA" > "$RUNNER_TEMP/rc41-relaykit/revision.txt"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with: {go-version-file: relaykit/go.mod, cache-dependency-path: relaykit/go.sum}
+      - name: Independent module build, vet and complete race tests
+        working-directory: relaykit
+        run: |
+          set -euo pipefail
+          go mod verify | tee "$OUT/modules.txt"
+          go build -p 2 ./... 2>&1 | tee "$OUT/build.log"
+          go vet -p 2 ./... 2>&1 | tee "$OUT/vet.log"
+          go test -race -p 2 ./... -count=1 -timeout=10m -json > "$OUT/relaykit-race.jsonl" 2> "$OUT/relaykit-race.stderr.log"
+          python3 - <<'PY'
+          import json, os, pathlib
+          rows = [json.loads(line) for line in (pathlib.Path(os.environ['OUT']) / 'relaykit-race.jsonl').read_text().splitlines()]
+          passed = {r['Test'] for r in rows if r.get('Action') == 'pass' and 'Test' in r}
+          required = {'TestChatCompletionsResponseToResponsesDropsEmptyNameToolCalls', 'TestChatCompletionsStreamToResponsesHoldsNamelessToolUntilNameArrives'}
+          assert required <= passed, sorted(required - passed)
+          assert not [r for r in rows if r.get('Action') in ('fail', 'build-fail')]
+          PY
+          git diff --exit-code
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with: {name: 'rc41-relaykit-${{ github.sha }}', path: '${{ runner.temp }}/rc41-relaykit/', retention-days: 7, if-no-files-found: error}
+
+  databases:
+    needs: assemble
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - {name: sqlite, kind: database, dialect: sqlite, mysql: '', postgres: '', redis: '', clickhouse: ''}
+          - {name: mysql57, kind: database, dialect: mysql, mysql: 'mysql:5.7.44', postgres: '', redis: '', clickhouse: ''}
+          - {name: postgres96, kind: database, dialect: postgres, mysql: '', postgres: 'postgres:9.6.24-alpine', redis: '', clickhouse: ''}
+          - {name: postgres18, kind: database, dialect: postgres, mysql: '', postgres: 'postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2', redis: 'redis:7.2-alpine', clickhouse: ''}
+          - {name: redis, kind: redis, dialect: '', mysql: '', postgres: '', redis: 'redis:7.2-alpine', clickhouse: ''}
+          - {name: clickhouse, kind: clickhouse, dialect: '', mysql: '', postgres: '', redis: '', clickhouse: 'clickhouse/clickhouse-server:25.8'}
+    services:
+      mysql:
+        image: ${{ matrix.mysql }}
+        env: {MYSQL_ROOT_PASSWORD: compat, MYSQL_ROOT_HOST: '%', MYSQL_DATABASE: runtime_compat}
+        ports: ['127.0.0.1::3306']
+        options: --health-cmd="mysqladmin ping -h 127.0.0.1 -pcompat --silent" --health-interval=10s --health-timeout=5s --health-retries=12
+      postgres:
+        image: ${{ matrix.postgres }}
+        env: {POSTGRES_PASSWORD: compat, POSTGRES_DB: runtime_compat}
+        ports: ['127.0.0.1::5432']
+        options: --health-cmd="pg_isready -U postgres -d runtime_compat" --health-interval=5s --health-timeout=5s --health-retries=12
+      redis:
+        image: ${{ matrix.redis }}
+        ports: ['127.0.0.1::6379']
+        options: --health-cmd="redis-cli ping" --health-interval=5s --health-timeout=3s --health-retries=12
+      clickhouse:
+        image: ${{ matrix.clickhouse }}
+        env: {CLICKHOUSE_DB: runtime_compat, CLICKHOUSE_USER: compat, CLICKHOUSE_PASSWORD: compat, CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: '1'}
+        ports: ['127.0.0.1::9000']
+        options: >-
+          --health-cmd="clickhouse-client --user compat --password compat --query 'SELECT 1'"
+          --health-interval=5s --health-timeout=5s --health-retries=24 --ulimit nofile=262144:262144
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with: {ref: '27a20d391044bc169b18bd1e0a8b6adc9668b30d', fetch-depth: 0, persist-credentials: false}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {name: 'rc41-source-${{ github.sha }}', path: '${{ runner.temp }}/rc41-source'}
+      - name: Check out the immutable database candidate
+        env: {SOURCE_SHA: '${{ needs.assemble.outputs.sha }}', SOURCE_TREE: '${{ needs.assemble.outputs.tree }}'}
+        run: |
+          set -euo pipefail
+          (cd "$RUNNER_TEMP/rc41-source" && sha256sum -c SHA256SUMS)
+          git fetch "$RUNNER_TEMP/rc41-source/candidate.bundle" HEAD
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$SOURCE_TREE"
+          out="$RUNNER_TEMP/rc41-db-${{ matrix.name }}"
+          mkdir -p "$out" web/dist
+          touch web/dist/index.html
+          printf 'OUT=%s\n' "$out" >> "$GITHUB_ENV"
+          printf '%s\n' "$SOURCE_SHA" > "$out/revision.txt"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+      - name: Real migration, wallet, audit, cache and accounting contracts
+        env:
+          KIND: ${{ matrix.kind }}
+          LABEL: ${{ matrix.name }}
+          DIALECT: ${{ matrix.dialect }}
+          MYSQL_ID: ${{ job.services.mysql.id }}
+          PG_ID: ${{ job.services.postgres.id }}
+          REDIS_ID: ${{ job.services.redis.id }}
+          CH_ID: ${{ job.services.clickhouse.id }}
+          MYSQL_PORT: ${{ job.services.mysql.ports['3306'] }}
+          PG_PORT: ${{ job.services.postgres.ports['5432'] }}
+          REDIS_PORT: ${{ job.services.redis.ports['6379'] }}
+          CH_PORT: ${{ job.services.clickhouse.ports['9000'] }}
+        run: |
+          set -euo pipefail
+          for id in "$MYSQL_ID" "$PG_ID" "$REDIS_ID" "$CH_ID"; do
+            if [ -n "$id" ]; then docker inspect --format '{{.Config.Image}} {{.Image}}' "$id" >> "$OUT/images.txt"; fi
+          done
+          bash ops/ci/verify_candidate_services.sh
+          git diff --exit-code
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with: {name: 'rc41-db-${{ matrix.name }}-${{ github.sha }}', path: '${{ runner.temp }}/rc41-db-${{ matrix.name }}/', retention-days: 7, if-no-files-found: error}
+
+  publish:
+    needs: [assemble, backend, relaykit, databases]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with: {ref: '27a20d391044bc169b18bd1e0a8b6adc9668b30d', fetch-depth: 0, persist-credentials: false}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {name: 'rc41-source-${{ github.sha }}', path: '${{ runner.temp }}/rc41-source'}
+      - name: Publish only the already verified immutable candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.assemble.outputs.sha }}
+          SOURCE_TREE: ${{ needs.assemble.outputs.tree }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = '1057300248/wanchuan-new-api'
+          test "$GITHUB_REF" = 'refs/heads/codex/rc41-db-media-stability-20261002'
+          (cd "$RUNNER_TEMP/rc41-source" && sha256sum -c SHA256SUMS)
+          git fetch "$RUNNER_TEMP/rc41-source/candidate.bundle" HEAD
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$SOURCE_TREE"
+          test "$(git rev-parse HEAD^1)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor 62d951fab129f4df1a921735835e5e9c7b8db031 HEAD
+          git merge-base --is-ancestor 1a4166d8e8ba9802d2ca56fe8ecf0ed5404e80d5 HEAD
+          git diff --exit-code
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:$GITHUB_REF"
+          mkdir -p "$RUNNER_TEMP/rc41-acceptance"
+          printf 'commit=%s\ntree=%s\nversion=%s\nbackend=success\nrelaykit=success\ndatabases=success\ndeployed=false\n' "$SOURCE_SHA" "$SOURCE_TREE" "$(cat VERSION)" | tee "$RUNNER_TEMP/rc41-acceptance/result.txt" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: {name: 'rc41-acceptance-${{ github.sha }}', path: '${{ runner.temp }}/rc41-acceptance/', retention-days: 7, if-no-files-found: error}

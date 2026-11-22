@@ -17,10 +17,45 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useRef } from 'react'
-import type { DefaultValues, FieldValues, UseFormReturn } from 'react-hook-form'
+import type {
+  DefaultValues,
+  FieldPath,
+  FieldPathValue,
+  FieldValues,
+  UseFormReturn,
+} from 'react-hook-form'
+
+/** Refresh saved defaults without clearing edits, errors or a pending submit. */
+export function syncSettingsFormDefaults<T extends FieldValues>(
+  form: UseFormReturn<T>,
+  values: DefaultValues<T>
+) {
+  const pendingFields: [string, unknown][] = Object.entries(values)
+  for (const [name, value] of pendingFields) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const children = Object.entries(value)
+      if (children.length > 0) {
+        pendingFields.push(
+          ...children.map(([key, child]): [string, unknown] => [
+            `${name}.${key}`,
+            child,
+          ])
+        )
+        continue
+      }
+    }
+    const field = name as FieldPath<T>
+    if (!form.getFieldState(field, form.formState).isDirty) {
+      form.setValue(field, value as FieldPathValue<T, FieldPath<T>>)
+    }
+  }
+  // Unlike reset(), this retains isSubmitting and recomputes which edits have
+  // actually been acknowledged by the server (including partial saves).
+  form.resetDefaultValues(values)
+}
 
 /**
- * Reset a react-hook-form instance whenever the provided default values change.
+ * Refresh a react-hook-form instance whenever the saved defaults change.
  * Guards against naively resetting on every render by tracking the last
  * serialized snapshot of the defaults.
  */
@@ -38,7 +73,7 @@ export function useResetForm<TFieldValues extends FieldValues>(
       return
     }
 
-    form.reset(values)
+    syncSettingsFormDefaults<TFieldValues>(form, values)
     lastSerializedDefaults.current = serializedDefaults
   }, [values, form])
 }

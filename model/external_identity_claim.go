@@ -11,6 +11,8 @@ import (
 )
 
 const ExternalIdentityProviderTelegram = "telegram"
+const ExternalIdentityProviderGitHub = "github"
+const ExternalIdentityProviderLinuxDO = "linuxdo"
 
 var ErrExternalIdentityAlreadyClaimed = errors.New("external identity is already claimed")
 
@@ -76,6 +78,65 @@ func ReleaseExternalIdentityWithTx(tx *gorm.DB, provider string, userId int) err
 		Delete(&ExternalIdentityClaim{}).Error
 }
 
+// UpdateGitHubBindingWithTx reserves the unique subject before writing the
+// legacy users column. The caller owns the transaction, including rollback.
+func UpdateGitHubBindingWithTx(tx *gorm.DB, userID int, subject string) error {
+	var user User
+	if err := lockForUpdate(tx).Select("id", "github_id").First(&user, userID).Error; err != nil {
+		return err
+	}
+	if subject != "" {
+		var count int64
+		if err := tx.Unscoped().Model(&User{}).Where("github_id = ? AND id <> ?", subject, userID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count != 0 {
+			return ErrExternalIdentityAlreadyClaimed
+		}
+	}
+	if user.GitHubId != subject {
+		if err := ReleaseExternalIdentityWithTx(tx, ExternalIdentityProviderGitHub, userID); err != nil {
+			return err
+		}
+	}
+	if subject != "" {
+		if err := ClaimExternalIdentityWithTx(tx, ExternalIdentityProviderGitHub, subject, userID); err != nil {
+			return err
+		}
+	}
+	return tx.Model(&User{}).Where("id = ?", userID).Update("github_id", subject).Error
+}
+
+// UpdateLinuxDOBindingWithTx serializes registration and account linking through
+// the existing unique provider-subject claim. Legacy bindings are checked before
+// claiming, so an account created before this policy cannot become a new signup.
+func UpdateLinuxDOBindingWithTx(tx *gorm.DB, userID int, subject string) error {
+	var user User
+	if err := lockForUpdate(tx).Select("id", "linux_do_id").First(&user, userID).Error; err != nil {
+		return err
+	}
+	if subject != "" {
+		var count int64
+		if err := tx.Unscoped().Model(&User{}).Where("linux_do_id = ? AND id <> ?", subject, userID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count != 0 {
+			return ErrExternalIdentityAlreadyClaimed
+		}
+	}
+	if user.LinuxDOId != subject {
+		if err := ReleaseExternalIdentityWithTx(tx, ExternalIdentityProviderLinuxDO, userID); err != nil {
+			return err
+		}
+	}
+	if subject != "" {
+		if err := ClaimExternalIdentityWithTx(tx, ExternalIdentityProviderLinuxDO, subject, userID); err != nil {
+			return err
+		}
+	}
+	return tx.Model(&User{}).Where("id = ?", userID).Update("linux_do_id", subject).Error
+}
+
 func GetUserByTelegramID(telegramID string) (*User, error) {
 	var user User
 	err := DB.Where("telegram_id = ?", telegramID).First(&user).Error
@@ -115,7 +176,7 @@ func releaseAllExternalIdentitiesWithTx(tx *gorm.DB, userId int) error {
 	return tx.Where("user_id = ?", userId).Delete(&ExternalIdentityClaim{}).Error
 }
 
-// InitializeExternalIdentityClaims imports legacy Telegram bindings after the
+// InitializeExternalIdentityClaims imports legacy built-in bindings after the
 // claim table is migrated. Existing duplicate ownership fails migration rather
 // than preserving an ambiguous login identity.
 func InitializeExternalIdentityClaims() error {
@@ -130,6 +191,6 @@ func InitializeExternalIdentityClaims() error {
 				return fmt.Errorf("backfill Telegram identity for user %d: %w", user.Id, err)
 			}
 		}
-		return nil
+		return initializeGoogleIdentityClaims(tx)
 	})
 }

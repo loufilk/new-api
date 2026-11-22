@@ -16,15 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { TOptions } from 'i18next'
-
 import { toIntlLocale } from '@/i18n/languages'
+import type { TranslateText, TextTranslationOptions } from '@/i18n/translate'
 
 import { flattenBinary } from './display'
 import { compileBillingExpression } from './parser'
 import { TIME_FUNCTIONS, type ExpressionNode, type TimeFunction } from './types'
 
-type Translate = (key: string, options?: TOptions) => string
 type Description = {
   text: string
   kind: 'calendar' | 'clock' | 'combined'
@@ -69,7 +67,7 @@ function timeComparison(node: ExpressionNode): TimeComparison | null {
 
 function describeTimeRange(
   comparisons: TimeComparison[],
-  t: Translate,
+  t: TranslateText,
   locale: string
 ): Description | null {
   const first = comparisons[0]
@@ -132,7 +130,7 @@ function describeTimeRange(
 
 function describeBillingCondition(
   node: ExpressionNode,
-  t: Translate,
+  t: TranslateText,
   locale: string
 ): Description | null {
   if (node.kind === 'unary' && node.operator === '!') {
@@ -242,14 +240,14 @@ function describeBillingCondition(
 /** Presentation only. Unknown conditions retain their source; this never changes tier selection. */
 export function formatBillingCondition(
   source: string,
-  t: Translate,
+  t: TranslateText,
   locale = 'en'
 ): string | null {
   const compiled = compileBillingExpression(source)
   if (compiled.status !== 'ready') return null
   try {
     // The returned value is rendered as React text, never as HTML.
-    const translate: Translate = (key, options) =>
+    const translate = (key: string, options: TextTranslationOptions = {}) =>
       t(key, { ...options, interpolation: { escapeValue: false } })
     const description = describeBillingCondition(
       compiled.ast,

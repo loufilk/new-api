@@ -1,0 +1,109 @@
+{
+  "source_pin_policy": "Requirements only, not runtime results. Every execution must seal its actual immutable commit/tree and source hashes.",
+  "evidence_gate": {
+    "require_run": true,
+    "run_count": 1,
+    "pass_count": 1,
+    "reject_skipped_descendants": true
+  },
+  "fixture_manifest_sha256": "aef3fb7ac131d571bde383fb81cfbeb839d1344410648d22cffd95b7a2fa37ac",
+  "required_leaves_sha256": "d582f273361dabe65af7902ce9e762d77ee3473d5841307f12dbbad30e59cd3d",
+  "test_source_sha256": "797d6b8a67b079240ee17656d083174e29b56d5ebbbac8219c7d776b11c4217f",
+  "database_suite": {
+    "label": "bonus-audit-race",
+    "package": "model",
+    "top": "TestModelBonusEligibleAuditDatabaseMatrix",
+    "dsn_env": {
+      "mysql": "TEST_BONUS_AUDIT_MYSQL_DSN",
+      "postgres": "TEST_BONUS_AUDIT_POSTGRES_DSN"
+    },
+    "owned_database": "repair_bonus_audit",
+    "required_leaf_counts": {
+      "sqlite": 13,
+      "mysql": 24,
+      "postgres": 16
+    },
+    "required_tests": {
+      "sqlite": [
+        "TestModelBonusEligibleAuditDatabaseMatrix",
+        "TestModelBonusEligibleAuditDatabaseMatrix/sqlite",
+        "TestModelBonusEligibleAuditDatabaseMatrix/sqlite/no_op_and_missing_model_remain_unclaimed",
+        "TestModelBonusEligibleAuditDatabaseMatrix/sqlite/mixed_replay_applies_every_unclaimed_item",
+        "TestModelBonusEligibleAuditDatabaseMatrix/sqlite/audit_model_identity_must_match",
+        "TestModelBonusEligibleAuditDatabaseMatrix/sqlite/later_conflict_rolls_back_prior_item_even_if_current_matches",
+        "TestModelBonusEligibleAuditDatabaseMatrix/sqlite/later_audit_insert_rolls_back_entire_batch",
+        "TestModelBonusEligibleAuditDatabaseMatrix/sqlite/later_actual_duplicate_rolls_back_entire_batch",
+        "TestModelBonusEligibleAuditDatabaseMatrix/sqlite/later_model_update_rolls_back_entire_batch",
+        "TestModelBonusEligibleAuditDatabaseMatrix/sqlite/real_commit_lost_ack_preserves_audit_and_invalidates",
+        "TestModelBonusEligibleAuditDatabaseMatrix/sqlite/Default",
+        "TestModelBonusEligibleAuditDatabaseMatrix/sqlite/Default/false_then_true_conflict",
+        "TestModelBonusEligibleAuditDatabaseMatrix/sqlite/Default/true_then_false_conflict",
+        "TestModelBonusEligibleAuditDatabaseMatrix/sqlite/Default/true_then_null_conflict",
+        "TestModelBonusEligibleAuditDatabaseMatrix/sqlite/Default/same_target_replay",
+        "TestModelBonusEligibleAuditDatabaseMatrix/sqlite/Default/different_keys_preserve_actual_before"
+      ],
+      "mysql": [
+        "TestModelBonusEligibleAuditDatabaseMatrix",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/no_op_and_missing_model_remain_unclaimed",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/mixed_replay_applies_every_unclaimed_item",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/audit_model_identity_must_match",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/later_conflict_rolls_back_prior_item_even_if_current_matches",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/later_audit_insert_rolls_back_entire_batch",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/later_actual_duplicate_rolls_back_entire_batch",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/later_model_update_rolls_back_entire_batch",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/real_commit_lost_ack_preserves_audit_and_invalidates",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/Read_Committed",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/Read_Committed/false_then_true_conflict",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/Read_Committed/true_then_false_conflict",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/Read_Committed/true_then_null_conflict",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/Read_Committed/same_target_replay",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/Read_Committed/overlapping_batch_replay_applies_unclaimed_item",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/Read_Committed/overlapping_batch_conflict_rolls_back_unclaimed_item",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/Read_Committed/different_keys_preserve_actual_before",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/Read_Committed/reverse_input_batches",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/Repeatable_Read",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/Repeatable_Read/false_then_true_conflict",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/Repeatable_Read/true_then_false_conflict",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/Repeatable_Read/true_then_null_conflict",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/Repeatable_Read/same_target_replay",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/Repeatable_Read/overlapping_batch_replay_applies_unclaimed_item",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/Repeatable_Read/overlapping_batch_conflict_rolls_back_unclaimed_item",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/Repeatable_Read/different_keys_preserve_actual_before",
+        "TestModelBonusEligibleAuditDatabaseMatrix/mysql/Repeatable_Read/reverse_input_batches"
+      ],
+      "postgres": [
+        "TestModelBonusEligibleAuditDatabaseMatrix",
+        "TestModelBonusEligibleAuditDatabaseMatrix/postgres",
+        "TestModelBonusEligibleAuditDatabaseMatrix/postgres/no_op_and_missing_model_remain_unclaimed",
+        "TestModelBonusEligibleAuditDatabaseMatrix/postgres/mixed_replay_applies_every_unclaimed_item",
+        "TestModelBonusEligibleAuditDatabaseMatrix/postgres/audit_model_identity_must_match",
+        "TestModelBonusEligibleAuditDatabaseMatrix/postgres/later_conflict_rolls_back_prior_item_even_if_current_matches",
+        "TestModelBonusEligibleAuditDatabaseMatrix/postgres/later_audit_insert_rolls_back_entire_batch",
+        "TestModelBonusEligibleAuditDatabaseMatrix/postgres/later_actual_duplicate_rolls_back_entire_batch",
+        "TestModelBonusEligibleAuditDatabaseMatrix/postgres/later_model_update_rolls_back_entire_batch",
+        "TestModelBonusEligibleAuditDatabaseMatrix/postgres/real_commit_lost_ack_preserves_audit_and_invalidates",
+        "TestModelBonusEligibleAuditDatabaseMatrix/postgres/Read_Committed",
+        "TestModelBonusEligibleAuditDatabaseMatrix/postgres/Read_Committed/false_then_true_conflict",
+        "TestModelBonusEligibleAuditDatabaseMatrix/postgres/Read_Committed/true_then_false_conflict",
+        "TestModelBonusEligibleAuditDatabaseMatrix/postgres/Read_Committed/true_then_null_conflict",
+        "TestModelBonusEligibleAuditDatabaseMatrix/postgres/Read_Committed/same_target_replay",
+        "TestModelBonusEligibleAuditDatabaseMatrix/postgres/Read_Committed/overlapping_batch_replay_applies_unclaimed_item",
+        "TestModelBonusEligibleAuditDatabaseMatrix/postgres/Read_Committed/overlapping_batch_conflict_rolls_back_unclaimed_item",
+        "TestModelBonusEligibleAuditDatabaseMatrix/postgres/Read_Committed/different_keys_preserve_actual_before",
+        "TestModelBonusEligibleAuditDatabaseMatrix/postgres/Read_Committed/reverse_input_batches"
+      ]
+    },
+    "retained_sqlite_required_tests": [
+      "TestBatchUpdateModelBonusEligibleWithAudit"
+    ],
+    "fixture_isolation": "The fixed audit TableName requires a new empty disposable database, never repair_compat. Creation failure aborts before any suite, without IF NOT EXISTS or dropping existing databases. Only this report receives its DSN; service teardown removes it.",
+    "scope": "53 new leaves: SQLite 13 deferred snapshot/busy contracts, MySQL 24 across observed active RC/RR, PostgreSQL 16 RC. Native assertions require actual server-visible lock wait and use the synthetic service account, never production permission changes."
+  },
+  "retained_cache_suite": {
+    "label": "financial-bonus-cache",
+    "inventory": "financial_consistency_required_cases.json",
+    "require_run": true,
+    "scope": "All original cache/commit cases retained, plus both real ancestor nodes; no duplicated case execution in the new race report."
+  }
+}

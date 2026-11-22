@@ -24,10 +24,15 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { formatLogQuota } from '@/lib/format'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { getLogStats, getUserLogStats } from '../api'
 import { DEFAULT_LOG_STATS } from '../constants'
-import { buildApiParams } from '../lib/utils'
+import {
+  buildApiParams,
+  logFilterScope,
+  LOG_SUMMARY_FRESH_MS,
+} from '../lib/utils'
 import { useLogsViewScope, useUsageLogsContext } from './usage-logs-provider'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
@@ -50,12 +55,22 @@ function StatBadge(props: {
 
 export function CommonLogsStats() {
   const { t } = useTranslation()
-  const { isAdminView: isAdmin } = useLogsViewScope()
+  const { isAdminView: isAdmin, viewAccess } = useLogsViewScope()
+  const userId = useAuthStore((state) => state.auth.user?.id)
+  const role = useAuthStore((state) => state.auth.user?.role)
   const searchParams = route.useSearch()
   const { sensitiveVisible } = useUsageLogsContext()
 
   const { data: stats, isLoading } = useQuery({
-    queryKey: ['usage-logs-stats', isAdmin, searchParams],
+    queryKey: [
+      'usage-logs-stats',
+      viewAccess,
+      userId,
+      role,
+      logFilterScope(searchParams),
+    ],
+    enabled: userId != null,
+    staleTime: LOG_SUMMARY_FRESH_MS,
     queryFn: async () => {
       const params = buildApiParams({
         page: 1,
@@ -73,7 +88,6 @@ export function CommonLogsStats() {
         ? result.data || DEFAULT_LOG_STATS
         : DEFAULT_LOG_STATS
     },
-    placeholderData: (previousData) => previousData,
   })
 
   if (isLoading) {

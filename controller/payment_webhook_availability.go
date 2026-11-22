@@ -3,6 +3,7 @@ package controller
 import (
 	"strings"
 
+	"github.com/QuantumNous/new-api/pkg/paymentcore"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
@@ -25,7 +26,7 @@ func isStripeWebhookConfigured() bool {
 }
 
 func isStripeWebhookEnabled() bool {
-	return isStripeTopUpEnabled()
+	return isPaymentComplianceConfirmed() && isStripeWebhookConfigured()
 }
 
 func isCreemTopUpEnabled() bool {
@@ -77,10 +78,15 @@ func isWaffoPancakeTopUpEnabled() bool {
 	if !isPaymentComplianceConfirmed() {
 		return false
 	}
-	// Presence-of-credentials = enabled. Webhook public keys ship inside
-	// the SDK; mode (test/prod) is read from each event.
+	// Presence-of-credentials = enabled, plus the trusted environment and
+	// store id that webhook settlement pins into the order binding. Webhook
+	// public keys ship inside the SDK; mode is read from each event.
+	if _, err := paymentcore.ConfiguredWaffoPancakeEnvironment(); err != nil {
+		return false
+	}
 	return strings.TrimSpace(setting.WaffoPancakeMerchantID) != "" &&
 		strings.TrimSpace(setting.WaffoPancakePrivateKey) != "" &&
+		strings.TrimSpace(setting.WaffoPancakeStoreID) != "" &&
 		strings.TrimSpace(setting.WaffoPancakeProductID) != ""
 }
 
@@ -100,11 +106,23 @@ func isEpayTopUpEnabled() bool {
 }
 
 func isEpayWebhookConfigured() bool {
-	return strings.TrimSpace(operation_setting.PayAddress) != "" &&
-		strings.TrimSpace(operation_setting.EpayId) != "" &&
-		strings.TrimSpace(operation_setting.EpayKey) != ""
+	if strings.TrimSpace(operation_setting.PayAddress) == "" || strings.TrimSpace(operation_setting.EpayId) == "" {
+		return false
+	}
+	paymentSetting := operation_setting.GetPaymentSetting()
+	switch paymentSetting.EpaySignType {
+	case operation_setting.EpaySignTypeRSA:
+		return strings.TrimSpace(paymentSetting.EpayMerchantPrivateKey) != "" &&
+			strings.TrimSpace(paymentSetting.EpayPlatformPublicKey) != ""
+	case "", operation_setting.EpaySignTypeMD5:
+		return strings.TrimSpace(operation_setting.EpayKey) != ""
+	default:
+		return false
+	}
 }
 
 func isEpayWebhookEnabled() bool {
-	return isEpayTopUpEnabled()
+	// The configured payment method list controls only new checkout. Existing
+	// orders are still payable and require signature verification and settlement.
+	return isPaymentComplianceConfirmed() && isEpayWebhookConfigured()
 }

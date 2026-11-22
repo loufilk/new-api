@@ -4,13 +4,17 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/extension"
 	"github.com/QuantumNous/new-api/middleware"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
@@ -33,6 +37,15 @@ var accessTokenExemptRoutes = []string{
 	"GET /api/home_page_content",
 	"GET /api/ratio_config",
 	"GET /api/user/groups",
+
+	// Public health/configuration and the refresh-cookie-authenticated probe.
+	"GET /api/healthz",
+	"HEAD /api/healthz",
+	"GET /api/readyz",
+	"HEAD /api/readyz",
+	"GET /api/chuanapi/public-config",
+	"HEAD /api/chuanapi/public-config",
+	"GET /api/user/auth/session",
 
 	// Anonymous account entry points.
 	"GET /api/verification",
@@ -66,6 +79,10 @@ var accessTokenExemptRoutes = []string{
 	"POST /api/subscription/epay/notify",
 	"GET /api/subscription/epay/return",
 	"POST /api/subscription/epay/return",
+	"GET /api/invoice/fee/epay/notify",
+	"POST /api/invoice/fee/epay/notify",
+	"GET /api/invoice/fee/epay/return",
+	"POST /api/invoice/fee/epay/return",
 
 	// API key authentication (TokenAuthReadOnly).
 	"GET /api/usage/token/",
@@ -75,8 +92,12 @@ var accessTokenExemptRoutes = []string{
 // accessTokenHelperRoutes are declared through handlePermissionRoute outside
 // channelPermissionRoutes.
 var accessTokenHelperRoutes = map[string]authz.Permission{
-	"GET /api/task_plugin_options": authz.TaskPluginBind,
-	"GET /api/audit":               authz.AuditRead,
+	"GET /api/user/:id/call-interception":        authz.UserCallInterceptionRead,
+	"PUT /api/user/:id/call-interception":        authz.UserCallInterceptionUpdate,
+	"GET /api/user/:id/call-interception/hits":   authz.UserCallInterceptionRead,
+	"GET /api/user/:id/call-interception/audits": authz.UserCallInterceptionRead,
+	"GET /api/task_plugin_options":               authz.TaskPluginBind,
+	"GET /api/audit":                             authz.AuditRead,
 }
 
 func newAccessTokenScopeTestEngine(t *testing.T) *gin.Engine {
@@ -85,12 +106,17 @@ func newAccessTokenScopeTestEngine(t *testing.T) *gin.Engine {
 	engine := gin.New()
 	// A permission route that is also in the static table panics here.
 	require.NotPanics(t, func() {
-		SetApiRouter(engine)
+		scopes := SetApiRouter(engine)
 		SetDashboardRouter(engine)
 		SetRelayRouter(engine)
 		SetTaskPluginProtocolRouter(engine)
 		SetVideoRouter(engine)
 		SetTaskRouter(engine)
+		// Use production composition, including deferred payment, wallet,
+		// support and console routes. Do not remove their permission rules.
+		reg := newChuanRouteRegistry(t)
+		require.NoError(t, reg.ApplyRoutesWithScopes(scopes, extension.PriorityBeforePlugin))
+		require.NoError(t, reg.ApplyRoutesWithScopes(scopes, extension.PriorityAfterPlugin))
 	})
 	return engine
 }
@@ -143,6 +169,41 @@ func TestAccessTokenRouteRulesCoverEveryDashboardRoute(t *testing.T) {
 	}
 }
 
+func TestDashboardPerfMetricsRequiresAdminReadAccess(t *testing.T) {
+	setupRelayRouterTestDB(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.UserAccessToken{}, &model.AuditLog{}, &model.PerfMetric{}))
+	engine := gin.New()
+	SetApiRouter(engine)
+	for _, tc := range []struct {
+		name, scope string
+		role, want  int
+	}{
+		{"guest", "", 0, http.StatusUnauthorized},
+		{"member", "log:read", common.RoleCommonUser, http.StatusForbidden},
+		{"admin-profile", "profile:read", common.RoleAdminUser, http.StatusForbidden},
+		{"admin-log", "log:read", common.RoleAdminUser, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/data/perf-metrics/summary", nil)
+			if tc.role != 0 {
+				user := model.User{Username: tc.name, AffCode: tc.name, Role: tc.role, Group: "default", Status: common.UserStatusEnabled}
+				require.NoError(t, model.DB.Create(&user).Error)
+				suffix, err := common.GenerateRandomCharsKey(43)
+				require.NoError(t, err)
+				raw := model.AccessTokenPrefix + suffix
+				token := model.UserAccessToken{Name: tc.name, TokenHash: model.AccessTokenFingerprint(raw), TokenHint: model.AccessTokenHint(raw)}
+				require.NoError(t, token.SetScopes([]string{tc.scope}))
+				require.NoError(t, model.CreateUserAccessToken(user.Id, &token, service.AccessTokenMaxPerUser))
+				req.Header.Set("Authorization", "Bearer "+raw)
+			}
+			recorder := httptest.NewRecorder()
+			engine.ServeHTTP(recorder, req)
+			assert.Equal(t, tc.want, recorder.Code)
+			assert.Contains(t, recorder.Header().Get("Cache-Control"), "no-store")
+		})
+	}
+}
+
 func TestAccessTokenCatalogCoversEveryPermission(t *testing.T) {
 	catalog := service.AccessTokenCatalog(1, common.RoleRootUser)
 	scopes := map[string]bool{}
@@ -161,6 +222,24 @@ func TestAccessTokenCatalogCoversEveryPermission(t *testing.T) {
 	for resource, count := range resources {
 		assert.Equal(t, 1, count, "resource %s appears in more than one catalog entry", resource)
 	}
+}
+
+func TestA07BuildDoesNotRegisterRetiredBusinessRoutes(t *testing.T) {
+	engine := newAccessTokenScopeTestEngine(t)
+	for _, route := range engine.Routes() {
+		if strings.HasPrefix(route.Path, "/api/agent-platform") {
+			assert.True(t, route.Path == "/api/agent-platform/self" || strings.HasPrefix(route.Path, "/api/agent-platform/simple/"), route.Path)
+		}
+		assert.False(t, strings.HasPrefix(route.Path, "/api/agent-redemption"), route.Path)
+	}
+	for _, path := range []string{"/api/agent-platform", "/api/agent-platform/me", "/api/agent-platform/purchases", "/api/agent-redemption/", "/api/agent-redemption/batches"} {
+		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete} {
+			recorder := httptest.NewRecorder()
+			engine.ServeHTTP(recorder, httptest.NewRequest(method, path, nil))
+			assert.Equal(t, http.StatusNotFound, recorder.Code, method+" "+path)
+		}
+	}
+
 }
 
 func TestAccessTokenVerificationScopesAreAllListed(t *testing.T) {
@@ -198,5 +277,27 @@ func TestAccessTokenVerificationScopesAreAllListed(t *testing.T) {
 	for _, scope := range scopes {
 		_, listed := service.AccessTokenVerificationScope(scope)
 		assert.True(t, listed, "verification scope %s has no access token rule", scope)
+	}
+}
+
+func TestAccessTokenGoogleUnbindRequiresInteractiveSession(t *testing.T) {
+	rule, ok := middleware.AccessTokenRouteRule("DELETE /api/user/bindings/google")
+	require.True(t, ok)
+	assert.Equal(t, "session", rule.Kind(), "Google unlink must reject both legacy and scoped personal access tokens")
+	assert.Empty(t, rule.Scope())
+}
+
+func TestAccessTokenSupportEmailRoutesRequireSession(t *testing.T) {
+	for _, key := range []string{
+		"GET /api/support-email/preferences", "PUT /api/support-email/preferences",
+		"GET /api/support-email/settings", "PUT /api/support-email/settings",
+		"GET /api/support-email/outbox", "POST /api/support-email/outbox/:id/retry",
+		"POST /api/support-email/outbox/:id/cancel",
+	} {
+		t.Run(key, func(t *testing.T) {
+			rule, ok := middleware.AccessTokenRouteRule(key)
+			require.True(t, ok)
+			assert.Equal(t, "session", rule.Kind(), "reject scoped and legacy PATs before any support mail handler")
+		})
 	}
 }

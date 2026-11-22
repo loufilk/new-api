@@ -1,0 +1,141 @@
+name: Review Fix Validation
+
+on:
+  push:
+    branches:
+      - codex/fix-new-api-review-20260919
+      - codex/subscription-group-write-fix-20260920
+      - codex/fix-ccswitch-token-scoped-models-20260920
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: 'off'
+
+concurrency:
+  group: review-fix-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Go, PostgreSQL 18.6, Redis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_PASSWORD: review
+          POSTGRES_DB: newapi_review
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d newapi_review"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Create frontend embed placeholder
+        run: |
+          mkdir -p web/dist
+          touch web/dist/index.html
+
+      - name: Record database and cache versions
+        run: |
+          docker exec "${{ job.services.postgres.id }}" psql -U postgres -d newapi_review -Atc 'SHOW server_version;'
+          docker exec "${{ job.services.redis.id }}" redis-server --version
+
+      - name: Diff whitespace check
+        run: git diff --check 72838cef3f2c5bba599fb5981dde56838b3c475d..HEAD
+
+      - name: Cline focused tests
+        run: go test ./relay/channel/cline -count=1 -v
+
+      - name: OpenAI relay and Responses tests
+        run: |
+          go test ./relay/channel/openai -count=1
+          go test ./relay -count=1
+
+      - name: Stream failure policy and billing tests
+        run: |
+          go test ./controller -run 'Handled(Chat|Responses)Stream|ShouldRetryNeverReplaysHandled' -count=1 -v
+          go test ./service -run '^TestStreamFailure' -count=1 -v
+
+      - name: Group rename unit tests
+        run: go test ./model -run '^(TestGroupRename|TestGroupNamespace)' -count=1 -v
+
+      - name: Subscription plan HTTP update regressions
+        run: go test ./controller -run '^TestAdminUpdateSubscriptionPlan' -count=1 -v
+
+      - name: API key token-scoped model regressions
+        run: go test ./controller -run '^(TestGetTokenModels|TestPreviewTokenModels)' -count=1 -v
+
+      - name: CC Switch protocol capability regressions
+        run: go test ./relay -run '^TestSupportsCCSwitchModel' -count=1 -v
+
+      - name: PostgreSQL 18.6 and Redis group concurrency
+        env:
+          TEST_GROUP_RENAME_POSTGRES_DSN: postgres://postgres:review@127.0.0.1:5432/newapi_review?sslmode=disable
+          TEST_REDIS_ADDR: 127.0.0.1:6379
+        run: go test ./model -run '^TestGroupRenamePostgresRedis$' -count=1 -v
+
+      - name: Vet root module
+        run: go vet ./...
+
+      - name: Relaykit independent build and test
+        working-directory: relaykit
+        run: |
+          GOWORK=off go build ./...
+          GOWORK=off go test ./...
+
+  frontend:
+    name: Frontend typecheck and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: API key model scope frontend regressions
+        run: |
+          bun run test -- src/features/keys/components/dialogs/cc-switch-dialog.test.tsx
+          bun run test -- src/features/keys/components/__tests__/api-key-model-scope.test.tsx
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Build
+        run: bun run build

@@ -31,7 +31,7 @@ import {
   CommandList,
   CommandSeparator,
 } from '@/components/ui/command'
-import { useSearch } from '@/context/search-provider'
+import { useSearch } from '@/context/search-context'
 import { useTheme } from '@/context/theme-provider'
 import { useSidebarView } from '@/hooks/use-sidebar-view'
 

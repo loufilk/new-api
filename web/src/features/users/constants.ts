@@ -78,6 +78,12 @@ export const USER_ROLES = {
     value: USER_ROLE.USER,
     icon: User,
   },
+  // Legacy role values are presented as ordinary users, never as a new role.
+  5: {
+    labelKey: 'User',
+    value: USER_ROLE.USER,
+    icon: User,
+  },
   [USER_ROLE.ADMIN]: {
     labelKey: 'Admin',
     value: USER_ROLE.ADMIN,
@@ -112,6 +118,7 @@ export const BINDING_FIELDS = [
   { key: 'oidc_id', label: 'OIDC ID' },
   { key: 'wechat_id', label: 'WeChat ID' },
   { key: 'email', label: 'Email' },
+  { key: 'google_id', label: 'Google ID' },
   { key: 'telegram_id', label: 'Telegram ID' },
 ] as const
 

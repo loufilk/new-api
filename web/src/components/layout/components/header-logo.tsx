@@ -16,13 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { extensionBrandLogo, extensionBrandLogoClassName } from '@/extensions'
 import { cn } from '@/lib/utils'
 
 interface HeaderLogoProps {
-  src: string
+  src?: string
   alt?: string
-  loading: boolean
-  logoLoaded: boolean
+  loading?: boolean
+  logoLoaded?: boolean
   className?: string
 }
 
@@ -33,16 +34,17 @@ interface HeaderLogoProps {
 export function HeaderLogo({
   src,
   alt = 'logo',
-  loading,
-  logoLoaded,
+  loading = false,
+  logoLoaded = true,
   className,
 }: HeaderLogoProps) {
   return (
     <img
-      src={src}
+      src={extensionBrandLogo(src)}
       alt={alt}
       className={cn(
-        'h-6 w-6 rounded-full transition-opacity duration-200',
+        'size-6 shrink-0 object-contain transition-opacity duration-200',
+        extensionBrandLogoClassName(),
         !loading && logoLoaded ? 'opacity-100' : 'opacity-0',
         className
       )}

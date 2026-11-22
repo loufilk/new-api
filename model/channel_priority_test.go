@@ -85,13 +85,13 @@ func TestChannelPriorityDatabaseMatrix(t *testing.T) {
 			common.SetMainDatabaseType(common.DatabaseType(dialect))
 			initCol()
 			t.Cleanup(func() {
-				require.NoError(t, db.Migrator().DropTable(&Ability{}, &Channel{}))
+				require.NoError(t, db.Migrator().DropTable(&Ability{}, &Channel{}, &Option{}))
 				DB = previousDB
 				common.SetMainDatabaseType(previousType)
 				initCol()
 				require.NoError(t, sqlDB.Close())
 			})
-			require.NoError(t, db.AutoMigrate(&Channel{}, &Ability{}))
+			require.NoError(t, db.AutoMigrate(&Channel{}, &Ability{}, &Option{}))
 			var version string
 			query := "SELECT version()"
 			if dialect == "sqlite" {

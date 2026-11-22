@@ -1,19 +1,20 @@
 package router
 
 import (
+	"net/http"
 	"strings"
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/relay"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/types"
 
 	"github.com/gin-gonic/gin"
 )
 
 func SetRelayRouter(router *gin.Engine) {
-	router.Use(middleware.CORS())
 	router.Use(middleware.DecompressRequestMiddleware())
 	router.Use(middleware.BodyStorageCleanup()) // 清理请求体存储
 	router.Use(middleware.StatsMiddleware())
@@ -64,11 +65,16 @@ func SetRelayRouter(router *gin.Engine) {
 	playgroundRouter := router.Group("/pg")
 	playgroundRouter.Use(middleware.RouteTag("relay"))
 	playgroundRouter.Use(middleware.SystemPerformanceCheck())
-	playgroundRouter.Use(middleware.UserAuth(), middleware.Distribute())
+	playgroundRouter.Use(middleware.UserAuth(), middleware.UserCallInterception(), middleware.Distribute())
 	{
 		playgroundRouter.POST("/chat/completions", controller.Playground)
 	}
 	relayV1Router := router.Group("/v1")
+	relayV1Router.Use(func(c *gin.Context) {
+		if c.Request.Method == http.MethodPost && strings.HasPrefix(c.Request.URL.Path, "/v1/models/") {
+			requireGeminiRelayAction(c)
+		}
+	})
 	relayV1Router.Use(middleware.RouteTag("relay"))
 	relayV1Router.Use(middleware.SystemPerformanceCheck())
 	relayV1Router.Use(middleware.TokenAuth())
@@ -170,7 +176,6 @@ func SetRelayRouter(router *gin.Engine) {
 		httpRouter.GET("/files", controller.RelayNotImplemented)
 		httpRouter.POST("/files", controller.RelayNotImplemented)
 		httpRouter.DELETE("/files/:id", controller.RelayNotImplemented)
-		httpRouter.GET("/files/:id", controller.RelayNotImplemented)
 		httpRouter.GET("/files/:id/content", controller.RelayNotImplemented)
 		httpRouter.POST("/fine-tunes", controller.RelayNotImplemented)
 		httpRouter.GET("/fine-tunes", controller.RelayNotImplemented)
@@ -192,15 +197,16 @@ func SetRelayRouter(router *gin.Engine) {
 	//relayMjRouter.Use()
 
 	relayGeminiRouter := router.Group("/v1beta")
-	// :countTokens is not implemented. Answer it like an unregistered route
-	// before auth/channel selection instead of silently relaying it as
-	// generateContent (#7283).
+	// Veo's :predictLongRunning goes to the plugin route that declares it (the
+	// google plugin's POST /v1beta/models/:model) before this group's auth,
+	// rate limit and channel selection. Never reinterpret an unclaimed plugin
+	// action as billable generateContent.
 	relayGeminiRouter.Use(func(c *gin.Context) {
-		if strings.HasSuffix(c.Request.URL.Path, ":countTokens") {
-			controller.RelayNotFound(c)
-			c.Abort()
+		if strings.HasSuffix(c.Request.URL.Path, ":predictLongRunning") {
+			defaultPluginDispatcher.dispatch(c)
 		}
 	})
+	relayGeminiRouter.Use(requireGeminiRelayAction)
 	relayGeminiRouter.Use(middleware.RouteTag("relay"))
 	relayGeminiRouter.Use(middleware.SystemPerformanceCheck())
 	relayGeminiRouter.Use(middleware.TokenAuth())
@@ -211,6 +217,16 @@ func SetRelayRouter(router *gin.Engine) {
 		relayGeminiRouter.POST("/models/*path", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatGemini)
 		})
+	}
+}
+
+func requireGeminiRelayAction(c *gin.Context) {
+	switch relayconstant.GeminiModelAction(c.Request.URL.Path) {
+	case "generateContent", "streamGenerateContent", "embedContent", "batchEmbedContents":
+		return
+	default:
+		controller.RelayNotFound(c)
+		c.Abort()
 	}
 }
 

@@ -16,9 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { ColumnDef, RowSelectionState } from '@tanstack/react-table'
+
 import { Search } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -40,6 +40,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useDebounce } from '@/hooks/use-debounce'
+import type { ColumnDef, RowSelectionState } from '@/lib/console-table'
 
 import type { UpstreamChannel } from '../types'
 import {
@@ -83,25 +84,21 @@ export function ChannelSelectorDialog({
   const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const debouncedSearch = useDebounce(search, 200)
-  const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
-
-  useEffect(() => {
-    if (!selectedChannelIds.length) {
-      setRowSelection({})
-      return
-    }
-
-    const availableChannelIds = new Set(channels.map((channel) => channel.id))
-    const newSelection: RowSelectionState = {}
-
-    selectedChannelIds.forEach((id) => {
-      if (availableChannelIds.has(id)) {
-        newSelection[id.toString()] = true
-      }
-    })
-
-    setRowSelection(newSelection)
-  }, [selectedChannelIds, channels])
+  const selectedDefaults = useMemo(() => {
+    const availableIds = new Set(channels.map((channel) => channel.id))
+    return Object.fromEntries(
+      selectedChannelIds
+        .filter((id) => availableIds.has(id))
+        .map((id): [string, true] => [String(id), true])
+    )
+  }, [channels, selectedChannelIds])
+  const [previousDefaults, setPreviousDefaults] = useState(selectedDefaults)
+  const [rowSelection, setRowSelection] =
+    useState<RowSelectionState>(selectedDefaults)
+  if (selectedDefaults !== previousDefaults) {
+    setPreviousDefaults(selectedDefaults)
+    setRowSelection(selectedDefaults)
+  }
 
   const updateEndpoint = useCallback(
     (channelId: number, endpoint: string) => {
@@ -127,7 +124,10 @@ export function ChannelSelectorDialog({
         header: ({ table }) => (
           <Checkbox
             checked={table.getIsAllPageRowsSelected()}
-            indeterminate={table.getIsSomePageRowsSelected()}
+            indeterminate={
+              table.getIsSomePageRowsSelected() &&
+              !table.getIsAllPageRowsSelected()
+            }
             onCheckedChange={(value) =>
               table.toggleAllPageRowsSelected(!!value)
             }

@@ -16,26 +16,25 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import {
-  getCoreRowModel,
-  getPaginationRowModel,
-  useReactTable,
-} from '@tanstack/react-table'
+
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it } from 'vitest'
 
+import { consoleTableFeatures, useConsoleTable } from '@/lib/console-table'
+
 import { DataTablePagination } from '../pagination'
 
+const features = consoleTableFeatures({ paginate: true })
 const rows = [{ id: 1 }, { id: 2 }, { id: 3 }]
 const emptyRows: { id: number }[] = []
 
 function Fixture(props: { empty?: boolean; compact?: boolean }) {
-  const table = useReactTable({
+  const table = useConsoleTable({
     data: props.empty ? emptyRows : rows,
     columns: [{ accessorKey: 'id' }],
-    getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
+
+    features,
     initialState: { pagination: { pageIndex: 0, pageSize: 2 } },
   })
   return <DataTablePagination table={table} compact={props.compact} />

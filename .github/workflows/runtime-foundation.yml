@@ -1,0 +1,523 @@
+name: Runtime foundation verification
+
+on:
+  push:
+    branches: [codex/runtime-stability-maintenance-20260924]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-foundation-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CGO_ENABLED: '1'
+  GOWORK: 'off'
+  GOTOOLCHAIN: local
+  GOFLAGS: '-mod=readonly'
+  SQL_DSN: ''
+  LOG_SQL_DSN: ''
+  REDIS_CONN_STRING: ''
+  TEST_DATABASE_COMPAT: ''
+  TEST_DATABASE_DIALECT: ''
+  TEST_DATABASE_DSN: ''
+  TEST_LOG_DATABASE_DSN: ''
+  TEST_MYSQL_DSN: ''
+  TEST_POSTGRES_DSN: ''
+  TEST_RUNTIME_REDIS: ''
+  TEST_REDIS_DSN: ''
+
+jobs:
+  backend:
+    if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
+    runs-on: ${{ fromJSON(github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924' && '["self-hosted","linux","x64","us-vps-ci"]' || '["ubuntu-24.04"]') }}
+    timeout-minutes: 55
+    env:
+      REPORT_LABEL: backend
+    steps:
+      - name: Initialize isolated report directory
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/runtime-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$REPORT_LABEL"
+          mkdir -p "$out"
+          printf 'OUT=%s\n' "$out" >> "$GITHUB_ENV"
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Record exact source before toolchain setup
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor 73ab0fa7ebfff72e4ba714338c655a6719ac3996 HEAD
+          mkdir -p "$OUT" web/dist
+          touch web/dist/index.html
+          git log -1 --format='%H%n%T%n%P%n%s' > "$OUT/revision.txt"
+          git archive --format=tar.gz -o "$OUT/source.tar.gz" HEAD
+          sha256sum "$OUT/source.tar.gz" > "$OUT/source.sha256"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+      - name: Verify toolchain and module integrity
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = "go$(awk '$1 == "go" {print $2}' go.mod)"
+          go version | tee "$OUT/go-version.txt"
+          go list -m all > "$OUT/modules.txt"
+          go mod verify | tee "$OUT/module-verify.log"
+          git diff --exit-code --ignore-space-at-eol -- go.mod go.sum relaykit/go.mod relaykit/go.sum
+      - name: Root build and vet
+        run: |
+          set -euo pipefail
+          go build -p 2 ./... 2>&1 | tee "$OUT/build.log"
+          go vet -p 2 ./... 2>&1 | tee "$OUT/vet.log"
+      - name: Complete root tests
+        if: success() || failure()
+        run: set -o pipefail; go test -p 2 ./... -count=1 -timeout=15m 2>&1 | tee "$OUT/root-tests.log"
+      - name: Complete root race tests
+        if: success() || failure()
+        env:
+          CGO_ENABLED: '1'
+        run: set -o pipefail; go test -race -p 2 ./... -count=1 -timeout=15m 2>&1 | tee "$OUT/root-race.log"
+      - name: Accepted asynchronous image shutdown and persistence contracts
+        if: success() || failure()
+        run: |
+          set -euo pipefail
+          go test -race ./modules/imagegen -run '^TestAsyncImage(RuntimeDrainWaitsForResult|RuntimeWaitIncludesResultPersistence|DrainRejectsAdmissionWithoutLeavingActiveSlot)$' -count=1 -timeout=3m -json | tee "$OUT/image-drain.jsonl"
+          python3 ops/ci/check_go_test_report.py "$OUT/image-drain.jsonl" TestAsyncImageRuntimeDrainWaitsForResult/graceful TestAsyncImageRuntimeDrainWaitsForResult/forced TestAsyncImageRuntimeWaitIncludesResultPersistence TestAsyncImageDrainRejectsAdmissionWithoutLeavingActiveSlot
+      - name: Independent relaykit validation
+        if: success() || failure()
+        working-directory: relaykit
+        run: |
+          set -euo pipefail
+          go build ./... 2>&1 | tee "$OUT/relaykit-build.log"
+          go vet ./... 2>&1 | tee "$OUT/relaykit-vet.log"
+          go test -race -p 2 ./... -count=1 -timeout=10m 2>&1 | tee "$OUT/relaykit-tests.log"
+      - name: Evidence and release gate regressions
+        if: success() || failure()
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s ops/ci/tests -p 'test_*.py' -v 2>&1 | tee "$OUT/evidence-gate.log"
+          python3 -m unittest discover -s ops/server/tests -p test_release_gate.py -v 2>&1 | tee "$OUT/release-gate.log"
+          git diff --exit-code --ignore-space-at-eol
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: runtime-backend-${{ github.sha }}
+          path: ${{ runner.temp }}/runtime-${{ github.run_id }}-${{ github.run_attempt }}-${{ env.REPORT_LABEL }}/
+          retention-days: 7
+          if-no-files-found: error
+
+  frontend:
+    if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
+    runs-on: ${{ fromJSON(github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924' && '["self-hosted","linux","x64","us-vps-ci"]' || '["ubuntu-24.04"]') }}
+    timeout-minutes: 45
+    env:
+      REPORT_LABEL: frontend
+    defaults:
+      run:
+        shell: bash
+        working-directory: web
+    steps:
+      - name: Initialize isolated report directory
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/runtime-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$REPORT_LABEL"
+          mkdir -p "$out"
+          printf 'OUT=%s\n' "$out" >> "$GITHUB_ENV"
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.0'
+          no-cache: true
+      - name: Install locked frontend dependencies
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$OUT"
+          printf '%s\n' "$GITHUB_SHA" > "$OUT/revision.txt"
+          bun install --frozen-lockfile --force
+      - name: Typecheck, lint, format and copyright
+        run: |
+          set -euo pipefail
+          bun run typecheck 2>&1 | tee "$OUT/typecheck.log"
+          bun run lint:ci 2>&1 | tee "$OUT/lint.log"
+          bun run format:check 2>&1 | tee "$OUT/format.log"
+          bun run copyright:check 2>&1 | tee "$OUT/copyright.log"
+      - name: Full Vitest suite in four serial shards without exclusions
+        if: success() || failure()
+        run: |
+          set -uo pipefail
+          status=0
+          for shard in 1 2 3 4; do
+            bun run test --shard="$shard/4" --reporter=default --reporter=json --outputFile="$OUT/vitest-$shard.json" 2>&1 | tee "$OUT/vitest-$shard.log" || status=1
+          done
+          exit "$status"
+      - name: Production build and dependency audit without publishing
+        if: success() || failure()
+        run: |
+          set -euo pipefail
+          bun run build 2>&1 | tee "$OUT/build.log"
+          bun audit --production 2>&1 | tee "$OUT/dependencies.log"
+          git diff --exit-code --ignore-space-at-eol
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: runtime-frontend-${{ github.sha }}
+          path: ${{ runner.temp }}/runtime-${{ github.run_id }}-${{ github.run_attempt }}-${{ env.REPORT_LABEL }}/
+          retention-days: 7
+          if-no-files-found: error
+
+  databases:
+    if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
+    runs-on: ${{ fromJSON(github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924' && '["self-hosted","linux","x64","us-vps-ci"]' || '["ubuntu-24.04"]') }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - name: sqlite
+            dialect: sqlite
+            mysql: ''
+            postgres: ''
+          - name: mysql57
+            dialect: mysql
+            mysql: mysql:5.7.44
+            postgres: ''
+          - name: postgres96
+            dialect: postgres
+            mysql: ''
+            postgres: postgres:9.6.24-alpine
+          - name: postgres18
+            dialect: postgres
+            mysql: ''
+            postgres: postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    services:
+      mysql:
+        image: ${{ matrix.mysql }}
+        env:
+          MYSQL_ROOT_PASSWORD: compat
+          MYSQL_ROOT_HOST: '%'
+          MYSQL_DATABASE: runtime_compat
+        ports: ['127.0.0.1::3306']
+        options: --health-cmd="mysqladmin ping -h 127.0.0.1 -pcompat --silent" --health-interval=10s --health-timeout=5s --health-retries=12
+      postgres:
+        image: ${{ matrix.postgres }}
+        env:
+          POSTGRES_PASSWORD: compat
+          POSTGRES_DB: runtime_compat
+        ports: ['127.0.0.1::5432']
+        options: --health-cmd="pg_isready -U postgres -d runtime_compat" --health-interval=10s --health-timeout=5s --health-retries=12
+      redis:
+        image: ${{ matrix.name == 'postgres18' && 'redis:7.2-alpine' || '' }}
+        ports: ['127.0.0.1::6379']
+        options: --health-cmd="redis-cli ping" --health-interval=5s --health-timeout=3s --health-retries=12
+    env:
+      TEST_DATABASE_COMPAT: '1'
+      TEST_DATABASE_DIALECT: ${{ matrix.dialect }}
+      REPORT_LABEL: ${{ matrix.name }}
+    steps:
+      - name: Initialize isolated report directory
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/runtime-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$REPORT_LABEL"
+          mkdir -p "$out"
+          printf 'OUT=%s\n' "$out" >> "$GITHUB_ENV"
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+      - name: Prepare only disposable databases and record image identities
+        env:
+          MYSQL_ID: ${{ job.services.mysql.id }}
+          PG_ID: ${{ job.services.postgres.id }}
+          MYSQL_PORT: ${{ job.services.mysql.ports['3306'] }}
+          PG_PORT: ${{ job.services.postgres.ports['5432'] }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$OUT" web/dist
+          touch web/dist/index.html
+          printf '%s\n' "$GITHUB_SHA" > "$OUT/revision.txt"
+          if [ "$TEST_DATABASE_DIALECT" = mysql ]; then
+            test -n "$MYSQL_PORT"
+            docker inspect --format '{{.Config.Image}} {{.Image}}' "$MYSQL_ID" > "$OUT/image.txt"
+            docker exec "$MYSQL_ID" mysql -uroot -pcompat -e 'ALTER DATABASE runtime_compat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE runtime_compat_log CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
+            dsn="root:compat@tcp(127.0.0.1:$MYSQL_PORT)/runtime_compat?charset=utf8mb4&parseTime=true&loc=UTC"
+            printf 'TEST_DATABASE_DSN=%s\nTEST_MYSQL_DSN=%s\n' "$dsn" "$dsn" >> "$GITHUB_ENV"
+            printf 'TEST_LOG_DATABASE_DSN=root:compat@tcp(127.0.0.1:%s)/runtime_compat_log?charset=utf8mb4&parseTime=true&loc=UTC\n' "$MYSQL_PORT" >> "$GITHUB_ENV"
+          elif [ "$TEST_DATABASE_DIALECT" = postgres ]; then
+            test -n "$PG_PORT"
+            docker inspect --format '{{.Config.Image}} {{.Image}}' "$PG_ID" > "$OUT/image.txt"
+            docker exec "$PG_ID" createdb -U postgres runtime_compat_log
+            dsn="postgres://postgres:compat@127.0.0.1:$PG_PORT/runtime_compat?sslmode=disable"
+            printf 'TEST_DATABASE_DSN=%s\nTEST_POSTGRES_DSN=%s\n' "$dsn" "$dsn" >> "$GITHUB_ENV"
+            printf 'TEST_LOG_DATABASE_DSN=postgres://postgres:compat@127.0.0.1:%s/runtime_compat_log?sslmode=disable\n' "$PG_PORT" >> "$GITHUB_ENV"
+          fi
+      - name: Real startup, repeat migration and data preservation
+        run: |
+          set -euo pipefail
+          go test ./model -run '^TestDatabaseCompatibilityReal$' -count=1 -timeout=10m -json | tee "$OUT/migration.jsonl"
+          python3 ops/ci/check_go_test_report.py "$OUT/migration.jsonl" TestDatabaseCompatibilityReal
+      - name: Real support and money column schema checks
+        if: success() || failure()
+        run: |
+          set -euo pipefail
+          if [ "$TEST_DATABASE_DIALECT" = sqlite ]; then
+            go test ./model -run '^TestSupportTicketSchemaSQLite$' -count=1 -json | tee "$OUT/schema.jsonl"
+            python3 ops/ci/check_go_test_report.py "$OUT/schema.jsonl" TestSupportTicketSchemaSQLite
+          else
+            go test ./model -run "^(TestMoneyColumnsAre64BitOnConfiguredDatabases|TestSupportTicketSchemaConfiguredDatabases)$/$TEST_DATABASE_DIALECT$" -count=1 -json | tee "$OUT/schema.jsonl"
+            python3 ops/ci/check_go_test_report.py "$OUT/schema.jsonl" "TestMoneyColumnsAre64BitOnConfiguredDatabases/$TEST_DATABASE_DIALECT" "TestSupportTicketSchemaConfiguredDatabases/$TEST_DATABASE_DIALECT"
+          fi
+      - name: Payment constraints and legacy-schema upgrade
+        if: success() || failure()
+        run: |
+          set -euo pipefail
+          go test ./pkg/paymentcore -run '^TestPaymentOrderBindingDatabaseCompatibilityReal$' -count=1 -json | tee "$OUT/payment.jsonl"
+          python3 ops/ci/check_go_test_report.py "$OUT/payment.jsonl" TestPaymentOrderBindingDatabaseCompatibilityReal
+      - name: Split-wallet pre-consume and repeated settlement
+        if: success() || failure()
+        run: |
+          set -euo pipefail
+          go test ./controller -run "^TestPreConsumePolicyDatabaseMatrix$/$TEST_DATABASE_DIALECT$" -count=1 -timeout=10m -json | tee "$OUT/preconsume.jsonl"
+          python3 ops/ci/check_go_test_report.py "$OUT/preconsume.jsonl" "TestPreConsumePolicyDatabaseMatrix/$TEST_DATABASE_DIALECT"
+          git diff --exit-code --ignore-space-at-eol
+      - name: Stale cache preserves pending tasks and reserved funds
+        if: success() || failure()
+        run: |
+          set -euo pipefail
+          go test -race ./service -run "^TestTaskPollingDefersStaleChannelCache$/$TEST_DATABASE_DIALECT$" -count=1 -timeout=5m -json | tee "$OUT/task-cache.jsonl"
+          prefix="TestTaskPollingDefersStaleChannelCache/$TEST_DATABASE_DIALECT"
+          python3 ops/ci/check_go_test_report.py "$OUT/task-cache.jsonl" "$prefix/batch=false/wallet" "$prefix/batch=false/subscription" "$prefix/batch=true/wallet" "$prefix/batch=true/subscription"
+      - name: Midjourney polling also defers stale cache failures
+        if: success() || failure()
+        env:
+          TEST_TASK_DB_DIALECT: ${{ matrix.dialect }}
+        run: |
+          set -euo pipefail
+          go test -race ./controller -run '^TestMidjourneyPollingDefersStaleChannelCache$' -count=1 -timeout=3m -json | tee "$OUT/midjourney-cache.jsonl"
+          python3 ops/ci/check_go_test_report.py "$OUT/midjourney-cache.jsonl" TestMidjourneyPollingDefersStaleChannelCache
+      - name: Real performance flush and independent SQL audit logs
+        if: success() || failure()
+        env:
+          TEST_PERF_MYSQL_DSN: ${{ env.TEST_MYSQL_DSN }}
+          TEST_PERF_POSTGRES_DSN: ${{ env.TEST_POSTGRES_DSN }}
+          AUDIT_MYSQL_DSN: ${{ env.TEST_MYSQL_DSN }}
+          AUDIT_POSTGRES_DSN: ${{ env.TEST_POSTGRES_DSN }}
+        run: |
+          set -euo pipefail
+          go test ./pkg/perf_metrics -run "^(TestPerformanceAggregationAndFlush|TestRuntimeFinalFlushRetainsFailedSamplesAndPersistsCurrentBucket)$/$TEST_DATABASE_DIALECT$" -count=1 -json | tee "$OUT/performance.jsonl"
+          python3 ops/ci/check_go_test_report.py "$OUT/performance.jsonl" "TestPerformanceAggregationAndFlush/$TEST_DATABASE_DIALECT" "TestRuntimeFinalFlushRetainsFailedSamplesAndPersistsCurrentBucket/$TEST_DATABASE_DIALECT"
+          if [ "$TEST_DATABASE_DIALECT" != sqlite ]; then
+            go test ./controller -run "^TestIndependentAuditLogStores$/$TEST_DATABASE_DIALECT/" -count=1 -timeout=8m -json | tee "$OUT/audit.jsonl"
+            python3 ops/ci/check_go_test_report.py "$OUT/audit.jsonl" "TestIndependentAuditLogStores/$TEST_DATABASE_DIALECT/upgrade=false" "TestIndependentAuditLogStores/$TEST_DATABASE_DIALECT/upgrade=true"
+          fi
+      - name: API token audit contracts on shared and separate SQL log stores
+        if: success() || failure()
+        env:
+          AUDIT_MYSQL_DSN: ${{ env.TEST_MYSQL_DSN }}
+          AUDIT_POSTGRES_DSN: ${{ env.TEST_POSTGRES_DSN }}
+        run: |
+          set -euo pipefail
+          go test ./controller -run "^TestAPITokenAuditDatabaseMatrix$/$TEST_DATABASE_DIALECT/" -count=1 -timeout=8m -json | tee "$OUT/token-audit.jsonl"
+          python3 ops/ci/check_go_test_report.py "$OUT/token-audit.jsonl" "TestAPITokenAuditDatabaseMatrix/$TEST_DATABASE_DIALECT/separate_log=false" "TestAPITokenAuditDatabaseMatrix/$TEST_DATABASE_DIALECT/separate_log=true"
+      - name: Prepare separate PostgreSQL contract fixtures
+        if: (success() || failure()) && matrix.name == 'postgres18'
+        env:
+          PG_ID: ${{ job.services.postgres.id }}
+          PG_PORT: ${{ job.services.postgres.ports['5432'] }}
+          REDIS_PORT: ${{ job.services.redis.ports['6379'] }}
+        run: |
+          set -euo pipefail
+          test -n "$PG_PORT" && test -n "$REDIS_PORT"
+          for database in runtime_groups runtime_identity runtime_websocket; do
+            docker exec "$PG_ID" createdb -U postgres "$database"
+          done
+          printf 'TEST_GROUP_RENAME_POSTGRES_DSN=postgres://postgres:compat@127.0.0.1:%s/runtime_groups?sslmode=disable\n' "$PG_PORT" >> "$GITHUB_ENV"
+          printf 'TEST_RESPONSES_WS_POSTGRES_DSN=postgres://postgres:compat@127.0.0.1:%s/runtime_websocket?sslmode=disable\n' "$PG_PORT" >> "$GITHUB_ENV"
+          printf 'TEST_IDENTITY_POSTGRES_DSN=postgres://postgres:compat@127.0.0.1:%s/runtime_identity?sslmode=disable\n' "$PG_PORT" >> "$GITHUB_ENV"
+          printf 'TEST_REDIS_ADDR=127.0.0.1:%s\n' "$REDIS_PORT" >> "$GITHUB_ENV"
+      - name: Concurrent group writes and two-process cache synchronization
+        if: (success() || failure()) && matrix.name == 'postgres18'
+        run: |
+          set -euo pipefail
+          go test -race ./model -run '^TestGroupRenamePostgresRedis$' -count=1 -timeout=12m -json | tee "$OUT/group-contracts.jsonl"
+          python3 ops/ci/check_go_test_report.py "$OUT/group-contracts.jsonl" TestGroupRenamePostgresRedis 'TestGroupRenamePostgresRedis/two_process_group_runtime' 'TestGroupRenamePostgresRedis/warm_caches'
+      - name: Concurrent identity claims retain a single owner
+        if: (success() || failure()) && matrix.name == 'postgres18'
+        env:
+          TEST_SECURITY_DIALECT: postgres
+          TEST_POSTGRES_DSN: ${{ env.TEST_IDENTITY_POSTGRES_DSN }}
+        run: |
+          set -euo pipefail
+          go test -race ./controller -run '^TestGitHubBindingConcurrentPostgres$' -count=1 -timeout=8m -json | tee "$OUT/identity-contracts.jsonl"
+          python3 ops/ci/check_go_test_report.py "$OUT/identity-contracts.jsonl" TestGitHubBindingConcurrentPostgres
+      - name: PostgreSQL WebSocket settlement, cancellation and rejection
+        if: (success() || failure()) && matrix.name == 'postgres18'
+        run: |
+          set -euo pipefail
+          go test -race ./controller -run '^TestResponses(WSRequestRunner|WebSocket|InterruptedStreamHealth|StreamOutcomesPreserveAccounting|HTTPHealthCountsFinalResult)' -count=1 -timeout=12m -json | tee "$OUT/websocket-contracts.jsonl"
+          python3 ops/ci/check_go_test_report.py "$OUT/websocket-contracts.jsonl" TestResponsesWebSocketDisconnectSettlesDeliveredOutputOnce TestResponsesWebSocketInitialUpstreamRejectionRefundsReservation TestResponsesStreamOutcomesPreserveAccounting TestResponsesWebSocketPreRoutingRejectionsFollowHealthClassification
+          git diff --exit-code --ignore-space-at-eol
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: runtime-${{ matrix.name }}-${{ github.sha }}
+          path: ${{ runner.temp }}/runtime-${{ github.run_id }}-${{ github.run_attempt }}-${{ env.REPORT_LABEL }}/
+          retention-days: 7
+          if-no-files-found: error
+
+  redis:
+    if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
+    runs-on: ${{ fromJSON(github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924' && '["self-hosted","linux","x64","us-vps-ci"]' || '["ubuntu-24.04"]') }}
+    timeout-minutes: 30
+    services:
+      redis:
+        image: redis:7.2-alpine
+        ports: ['127.0.0.1::6379']
+        options: --health-cmd="redis-cli ping" --health-interval=5s --health-timeout=3s --health-retries=12
+    env:
+      TEST_RUNTIME_REDIS: '1'
+      REPORT_LABEL: redis
+    steps:
+      - name: Initialize isolated report directory
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/runtime-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$REPORT_LABEL"
+          mkdir -p "$out"
+          printf 'OUT=%s\n' "$out" >> "$GITHUB_ENV"
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+      - name: Record isolated Redis version
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$OUT" web/dist
+          touch web/dist/index.html
+          printf '%s\n' "$GITHUB_SHA" > "$OUT/revision.txt"
+          docker inspect --format '{{.Config.Image}} {{.Image}}' '${{ job.services.redis.id }}' > "$OUT/image.txt"
+          docker exec '${{ job.services.redis.id }}' redis-cli INFO server > "$OUT/redis-version.txt"
+      - name: Real Redis reservation, replay, renewal and expiry contract
+        env:
+          TEST_REDIS_DSN: redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}/0
+        run: |
+          set -euo pipefail
+          go test -race ./middleware -run '^TestModelRateLimitRealRedis$' -count=1 -timeout=10m -json | tee "$OUT/redis.jsonl"
+          python3 ops/ci/check_go_test_report.py "$OUT/redis.jsonl" TestModelRateLimitRealRedis
+          git diff --exit-code --ignore-space-at-eol
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: runtime-redis-${{ github.sha }}
+          path: ${{ runner.temp }}/runtime-${{ github.run_id }}-${{ github.run_attempt }}-${{ env.REPORT_LABEL }}/
+          retention-days: 7
+          if-no-files-found: error
+
+  clickhouse:
+    if: github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
+    runs-on: ${{ fromJSON(github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924' && '["self-hosted","linux","x64","us-vps-ci"]' || '["ubuntu-24.04"]') }}
+    timeout-minutes: 25
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8
+        env:
+          CLICKHOUSE_DB: runtime_compat
+          CLICKHOUSE_USER: compat
+          CLICKHOUSE_PASSWORD: compat
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: '1'
+        ports: ['127.0.0.1::9000']
+        options: >-
+          --health-cmd="clickhouse-client --user compat --password compat --query 'SELECT 1'"
+          --health-interval=5s --health-timeout=5s --health-retries=24
+          --ulimit nofile=262144:262144
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+      - name: Record isolated ClickHouse identity
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/clickhouse-checks" web/dist
+          touch web/dist/index.html
+          printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/clickhouse-checks/revision.txt"
+          docker inspect --format '{{.Config.Image}} {{.Image}}' '${{ job.services.clickhouse.id }}' > "$RUNNER_TEMP/clickhouse-checks/image.txt"
+          docker exec '${{ job.services.clickhouse.id }}' clickhouse-client --user compat --password compat --query 'SELECT version()' > "$RUNNER_TEMP/clickhouse-checks/version.txt"
+      - name: Fresh and released-schema independent audit log verification
+        env:
+          AUDIT_CLICKHOUSE_DSN: clickhouse://compat:compat@127.0.0.1:${{ job.services.clickhouse.ports['9000'] }}/runtime_compat
+        run: |
+          set -euo pipefail
+          go test -p 2 ./controller -run '^TestIndependentAuditLogStores$/clickhouse/' -count=1 -timeout=10m -json | tee "$RUNNER_TEMP/clickhouse-checks/audit.jsonl"
+          python3 ops/ci/check_go_test_report.py "$RUNNER_TEMP/clickhouse-checks/audit.jsonl" 'TestIndependentAuditLogStores/clickhouse/upgrade=false' 'TestIndependentAuditLogStores/clickhouse/upgrade=true'
+          git diff --exit-code --ignore-space-at-eol
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: runtime-clickhouse-${{ github.sha }}
+          path: ${{ runner.temp }}/clickhouse-checks/
+          retention-days: 7
+          if-no-files-found: error
+
+  acceptance:
+    if: always() && github.repository == '1057300248/wanchuan-new-api' && github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924'
+    needs: [backend, frontend, databases, redis, clickhouse]
+    runs-on: ${{ fromJSON(github.ref == 'refs/heads/codex/runtime-stability-maintenance-20260924' && '["self-hosted","linux","x64","us-vps-ci"]' || '["ubuntu-24.04"]') }}
+    timeout-minutes: 2
+    steps:
+      - name: Require all exact-SHA checks, including every database engine
+        env:
+          BACKEND: ${{ needs.backend.result }}
+          FRONTEND: ${{ needs.frontend.result }}
+          DATABASES: ${{ needs.databases.result }}
+          REDIS: ${{ needs.redis.result }}
+          CLICKHOUSE: ${{ needs.clickhouse.result }}
+        run: |
+          set -euo pipefail
+          printf 'sha=%s backend=%s frontend=%s databases=%s redis=%s clickhouse=%s\n' "$GITHUB_SHA" "$BACKEND" "$FRONTEND" "$DATABASES" "$REDIS" "$CLICKHOUSE" >> "$GITHUB_STEP_SUMMARY"
+          test "$BACKEND" = success
+          test "$FRONTEND" = success
+          test "$DATABASES" = success
+          test "$REDIS" = success
+          test "$CLICKHOUSE" = success
+

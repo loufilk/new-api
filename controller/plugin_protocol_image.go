@@ -5,17 +5,21 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/pkg/privacy"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/requestplugin"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -40,6 +44,11 @@ func serveTaskPluginImageProtocol(c *gin.Context, pinned pluginruntime.PinnedEnd
 	var relayInfoErr error
 	var outcome *taskSubmissionOutcome
 	var taskErr *dto.TaskError
+	// The request plugins' report hooks receive the submission once the
+	// client has the response.
+	defer func() {
+		requestplugin.Report(c, types.RelayFormatTask, relayInfo, nil, taskReportError(taskErr))
+	}()
 	// DashScope bills the images as soon as it accepts the upstream call. A
 	// client that gives up while the submission is in flight must not cancel
 	// that call, the task row, its settlement, or its consume log, so the
@@ -93,11 +102,22 @@ func serveTaskPluginImageProtocol(c *gin.Context, pinned pluginruntime.PinnedEnd
 		respondPluginProtocolError(c, http.StatusInternalServerError, "task_protocol_error", "Task protocol request failed")
 		return
 	}
+	// Submission may retry with a different channel's rules. Render and inline
+	// images using the final attempt's request, not the original client body.
+	if value, exists := c.Get(pluginruntime.ContextKeyEffectiveImageRequest); exists {
+		if effective, ok := value.(pluginruntime.ProtocolRequestContext); ok {
+			protocolRequest = effective
+		}
+	}
 	task := outcome.Task
 	if task.Status != model.TaskStatusSuccess && task.Status != model.TaskStatusFailure {
 		if taskErr = waitTaskPluginImageTask(c, task, deps); taskErr != nil {
 			if c.Request.Context().Err() == nil {
-				respondTaskPluginImageError(c, taskErr)
+				if taskErr.Code == "task_timeout" && taskErr.LocalError && task.ID > 0 && task.TaskID != "" {
+					respondTaskPluginImagePending(c, taskErr, task)
+				} else {
+					respondTaskPluginImageError(c, taskErr)
+				}
 			}
 			return
 		}
@@ -165,7 +185,36 @@ func serveTaskPluginImageProtocol(c *gin.Context, pinned pluginruntime.PinnedEnd
 			item["b64_json"] = encoded
 		}
 	}
-	c.JSON(http.StatusOK, response)
+	payloadJSON, err := common.Marshal(response)
+	if err != nil {
+		respondPluginProtocolError(c, http.StatusInternalServerError, "task_protocol_error", "Task protocol request failed")
+		return
+	}
+	c.Data(http.StatusOK, "application/json; charset=utf-8", privacy.SanitizeClientPayload(c, payloadJSON))
+}
+
+// Only the post-persistence waiting path may emit this recovery hint. An
+// upstream acknowledgement or an unknown delivery outcome is not proof of a
+// durable local task and must never be presented as accepted work.
+func respondTaskPluginImagePending(c *gin.Context, taskErr *dto.TaskError, task *model.Task) {
+	service.RecordRequestPolicyTermination(c, taskSubmissionAPIError(taskErr))
+	message := i18n.T(c, i18n.MsgImageTaskStillProcessing)
+	if requestID := c.GetString(common.RequestIdKey); requestID != "" {
+		message = common.MessageWithRequestId(message, requestID)
+	}
+	c.Header("Cache-Control", "private, no-store")
+	// OpenAI SDKs honor this advisory header before their default 5xx retry.
+	c.Header("X-Should-Retry", "false")
+	c.JSON(http.StatusGatewayTimeout, gin.H{
+		"error": types.OpenAIError{
+			Message: message,
+			Type:    "server_error",
+			Code:    "task_timeout",
+		},
+		"task_id":    task.TaskID,
+		"status_url": "/v1/tasks/" + url.PathEscape(task.TaskID),
+		"retryable":  false,
+	})
 }
 
 // waitTaskPluginImageTask polls an asynchronous image task inside the client
@@ -228,8 +277,8 @@ func taskPluginImageResponseFormat(request pluginruntime.ProtocolRequestContext)
 }
 
 // respondTaskPluginImageError writes an OpenAI error envelope for the Images
-// API. DashScope failure bodies arrive as JSON {code, message}; their message
-// is surfaced so a client sees the vendor reason instead of raw JSON.
+// API. Keep provider diagnostics only for administrator channel tests; ordinary
+// relay callers use the same allowlisted privacy boundary as chat and Responses.
 func respondTaskPluginImageError(c *gin.Context, taskErr *dto.TaskError) {
 	service.RecordRequestPolicyTermination(c, taskSubmissionAPIError(taskErr))
 	status := http.StatusInternalServerError
@@ -252,9 +301,10 @@ func respondTaskPluginImageError(c *gin.Context, taskErr *dto.TaskError) {
 	if status < http.StatusInternalServerError {
 		errorType = "invalid_request_error"
 	}
-	c.JSON(status, gin.H{"error": gin.H{
-		"message": common.MessageWithRequestId(message, c.GetString(common.RequestIdKey)),
-		"type":    errorType,
-		"code":    code,
-	}})
+	clientError := privacy.SanitizeClientOpenAIError(c, status, types.OpenAIError{
+		Message: common.MessageWithRequestId(message, c.GetString(common.RequestIdKey)),
+		Type:    errorType,
+		Code:    code,
+	})
+	c.JSON(status, gin.H{"error": clientError})
 }

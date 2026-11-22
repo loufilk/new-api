@@ -17,12 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import * as z from 'zod'
+import { shallow } from 'zustand/shallow'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { ErrorState } from '@/components/error-state'
@@ -36,13 +37,28 @@ import {
   type ModelPricingConfig,
 } from '@/features/model-pricing/api'
 import { pricingOptions } from '@/features/model-pricing/pricing'
+import { useMediaQuery } from '@/hooks'
+import { toIntlLocale } from '@/i18n/languages'
+import type { TranslateText } from '@/i18n/translate'
+import { formatNumber } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
+import {
+  getServerErrorSources,
+  requireServerSuccess,
+} from '@/lib/server-error-message'
 
+import { getSystemOptions, renameSystemGroups } from '../api'
 import { SettingsPageTitleStatusPortal } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { getOptionValue } from '../hooks/use-system-options'
 import { useUpdateOption } from '../hooks/use-update-option'
+import type { GroupRenameMapping } from '../types'
 import { positiveIntegerSchema } from '../utils/numeric-field'
 import { GroupRatioForm } from './group-ratio-form'
+import type {
+  GroupRatioSaveOutcome,
+  GroupRenameEditableValues,
+} from './group-rename'
 import { ModelRatioForm } from './model-ratio-form'
 import { ToolPriceSettings } from './tool-price-settings'
 import { UpstreamRatioSync } from './upstream-ratio-sync'
@@ -53,10 +69,8 @@ import {
   validateJsonString,
 } from './utils'
 
-type Translate = (key: string, options?: Record<string, unknown>) => string
-
 function formatJsonValidationError(
-  t: Translate,
+  t: TranslateText,
   error?: JsonValidationError,
   fallback = 'Invalid JSON'
 ) {
@@ -100,7 +114,7 @@ function formatJsonValidationError(
 }
 
 function createJsonStringField(
-  t: Translate,
+  t: TranslateText,
   options?: Parameters<typeof validateJsonString>[1]
 ) {
   return z.string().superRefine((value, ctx) => {
@@ -114,7 +128,7 @@ function createJsonStringField(
   })
 }
 
-const createModelSchema = (t: Translate) =>
+const createModelSchema = (t: TranslateText) =>
   z.object({
     ModelPrice: createJsonStringField(t),
     ModelRatio: createJsonStringField(t),
@@ -130,7 +144,7 @@ const createModelSchema = (t: Translate) =>
     PluginBillingExpr: createJsonStringField(t),
   })
 
-const createGroupSchema = (t: Translate) =>
+const createGroupSchema = (t: TranslateText) =>
   z.object({
     GroupRatio: createJsonStringField(t),
     TopupGroupRatio: createJsonStringField(t),
@@ -149,6 +163,61 @@ const createGroupSchema = (t: Translate) =>
 
 type ModelFormValues = z.infer<ReturnType<typeof createModelSchema>>
 type GroupFormValues = z.infer<ReturnType<typeof createGroupSchema>>
+
+// Canonical string form of the group settings the editor was loaded from. It is
+// the comparison base for stale-edit detection and is refreshed after a
+// successful save so later saves do not depend on a refetch completing first.
+type GroupRenameBaseline = {
+  GroupRatio: string
+  TopupGroupRatio: string
+  UserUsableGroups: string
+  GroupGroupRatio: string
+  AutoGroups: string
+  GroupSpecialUsableGroup: string
+  MaxTokenAutoGroups: string
+  DefaultUseAutoGroup: string
+}
+
+function normalizedModelValues(values: ModelFormValues) {
+  return {
+    ModelPrice: normalizeJsonString(values.ModelPrice),
+    ModelRatio: normalizeJsonString(values.ModelRatio),
+    CacheRatio: normalizeJsonString(values.CacheRatio),
+    CreateCacheRatio: normalizeJsonString(values.CreateCacheRatio),
+    CompletionRatio: normalizeJsonString(values.CompletionRatio),
+    ImageRatio: normalizeJsonString(values.ImageRatio),
+    AudioRatio: normalizeJsonString(values.AudioRatio),
+    AudioCompletionRatio: normalizeJsonString(values.AudioCompletionRatio),
+    ExposeRatioEnabled: values.ExposeRatioEnabled,
+    BillingMode: normalizeJsonString(values.BillingMode),
+    BillingExpr: normalizeJsonString(values.BillingExpr),
+    PluginBillingExpr: normalizeJsonString(values.PluginBillingExpr),
+  }
+}
+
+const GROUP_RENAME_STALE_CODE = 'GROUP_RENAME_STALE'
+
+function groupRenameBaselineFromDefaults(
+  defaults: GroupFormValues
+): GroupRenameBaseline {
+  return {
+    GroupRatio: defaults.GroupRatio,
+    TopupGroupRatio: defaults.TopupGroupRatio,
+    UserUsableGroups: defaults.UserUsableGroups,
+    GroupGroupRatio: defaults.GroupGroupRatio,
+    AutoGroups: defaults.AutoGroups,
+    GroupSpecialUsableGroup: defaults.GroupSpecialUsableGroup,
+    MaxTokenAutoGroups: String(defaults.MaxTokenAutoGroups),
+    DefaultUseAutoGroup: defaults.DefaultUseAutoGroup ? 'true' : 'false',
+  }
+}
+
+function isGroupRenameStale(value: unknown): boolean {
+  return getServerErrorSources(value).some(
+    (source) => source.code === GROUP_RENAME_STALE_CODE
+  )
+}
+
 type RatioTabId =
   | 'models'
   | 'unset-models'
@@ -166,25 +235,29 @@ type RatioSettingsCardProps = {
 
 export function RatioSettingsCard({
   modelDefaults: initialModelDefaults,
-  groupDefaults,
+  groupDefaults: incomingGroupDefaults,
   toolPricesDefault,
   titleKey = 'Pricing Ratios',
   visibleTabs = ['models', 'groups', 'tool-prices', 'upstream-sync'],
 }: RatioSettingsCardProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const isMobile = useMediaQuery('(max-width: 639px)')
   const updateOption = useUpdateOption()
+  const queryClient = useQueryClient()
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const groupRenameRequestIds = useRef(new Map<string, string>())
+  const groupReloadInFlight = useRef(false)
+  const [groupReloadRequired, setGroupReloadRequired] = useState(false)
+  const [groupReloading, setGroupReloading] = useState(false)
 
   const pricingQuery = useModelPricing()
   const savePricing = useSaveModelPricing()
   const [pricingBaseline, setPricingBaseline] =
     useState<ModelPricingConfig | null>(null)
-  useEffect(() => {
-    if (!pricingBaseline && pricingQuery.data) {
-      setPricingBaseline(pricingQuery.data)
-    }
-  }, [pricingBaseline, pricingQuery.data])
-  const modelDefaults = useMemo(
+  if (!pricingBaseline && pricingQuery.data) {
+    setPricingBaseline(pricingQuery.data)
+  }
+  const incomingModelDefaults = useMemo(
     () =>
       pricingBaseline
         ? {
@@ -221,40 +294,46 @@ export function RatioSettingsCard({
     onError: (error) => handleServerError(error),
   })
 
-  const modelNormalizedDefaults = useRef({
-    ModelPrice: normalizeJsonString(modelDefaults.ModelPrice),
-    ModelRatio: normalizeJsonString(modelDefaults.ModelRatio),
-    CacheRatio: normalizeJsonString(modelDefaults.CacheRatio),
-    CreateCacheRatio: normalizeJsonString(modelDefaults.CreateCacheRatio),
-    CompletionRatio: normalizeJsonString(modelDefaults.CompletionRatio),
-    ImageRatio: normalizeJsonString(modelDefaults.ImageRatio),
-    AudioRatio: normalizeJsonString(modelDefaults.AudioRatio),
-    AudioCompletionRatio: normalizeJsonString(
-      modelDefaults.AudioCompletionRatio
-    ),
-    ExposeRatioEnabled: modelDefaults.ExposeRatioEnabled,
-    BillingMode: normalizeJsonString(modelDefaults.BillingMode),
-    BillingExpr: normalizeJsonString(modelDefaults.BillingExpr),
-    PluginBillingExpr: normalizeJsonString(modelDefaults.PluginBillingExpr),
+  // The settings registry constructs fresh prop objects on each parent render.
+  // Only new field values or an explicitly reloaded pricing revision reset the
+  // editor. Never replace an acknowledged save with unchanged, cached props.
+  const [loadedModel, setLoadedModel] = useState({
+    values: incomingModelDefaults,
+    revision: pricingBaseline,
   })
-  const [savedModelValues, setSavedModelValues] = useState(
-    modelNormalizedDefaults.current
+  const modelDefaults = loadedModel.values
+  const [savedModelValues, setSavedModelValues] = useState(() =>
+    normalizedModelValues(modelDefaults)
   )
+  if (
+    pricingBaseline !== loadedModel.revision ||
+    !shallow(incomingModelDefaults, modelDefaults)
+  ) {
+    setLoadedModel({ values: incomingModelDefaults, revision: pricingBaseline })
+    setSavedModelValues(normalizedModelValues(incomingModelDefaults))
+  }
 
-  const groupNormalizedDefaults = useRef({
-    GroupRatio: normalizeJsonString(groupDefaults.GroupRatio),
-    TopupGroupRatio: normalizeJsonString(groupDefaults.TopupGroupRatio),
-    UserUsableGroups: normalizeJsonString(groupDefaults.UserUsableGroups),
-    GroupGroupRatio: normalizeJsonString(groupDefaults.GroupGroupRatio),
-    AutoGroups: normalizeJsonString(groupDefaults.AutoGroups),
-    MaxTokenAutoGroups: groupDefaults.MaxTokenAutoGroups,
-    DefaultUseAutoGroup: groupDefaults.DefaultUseAutoGroup,
-    GroupSpecialUsableGroup: normalizeJsonString(
-      groupDefaults.GroupSpecialUsableGroup
-    ),
-  })
+  const [groupDefaults, setGroupDefaults] = useState(incomingGroupDefaults)
+  const [groupBaseline, setGroupBaseline] = useState<GroupRenameBaseline>(() =>
+    groupRenameBaselineFromDefaults(groupDefaults)
+  )
+  if (!shallow(incomingGroupDefaults, groupDefaults)) {
+    setGroupDefaults(incomingGroupDefaults)
+    setGroupBaseline(groupRenameBaselineFromDefaults(incomingGroupDefaults))
+  }
   const modelSchema = useMemo(() => createModelSchema(t), [t])
   const groupSchema = useMemo(() => createGroupSchema(t), [t])
+  const groupRenameBaseline = useMemo<GroupRenameEditableValues>(
+    () => ({
+      GroupRatio: groupBaseline.GroupRatio,
+      TopupGroupRatio: groupBaseline.TopupGroupRatio,
+      UserUsableGroups: groupBaseline.UserUsableGroups,
+      GroupGroupRatio: groupBaseline.GroupGroupRatio,
+      AutoGroups: groupBaseline.AutoGroups,
+      GroupSpecialUsableGroup: groupBaseline.GroupSpecialUsableGroup,
+    }),
+    [groupBaseline]
+  )
 
   const modelForm = useForm<ModelFormValues>({
     resolver: zodResolver(modelSchema),
@@ -294,24 +373,6 @@ export function RatioSettingsCard({
   })
 
   useEffect(() => {
-    modelNormalizedDefaults.current = {
-      ModelPrice: normalizeJsonString(modelDefaults.ModelPrice),
-      ModelRatio: normalizeJsonString(modelDefaults.ModelRatio),
-      CacheRatio: normalizeJsonString(modelDefaults.CacheRatio),
-      CreateCacheRatio: normalizeJsonString(modelDefaults.CreateCacheRatio),
-      CompletionRatio: normalizeJsonString(modelDefaults.CompletionRatio),
-      ImageRatio: normalizeJsonString(modelDefaults.ImageRatio),
-      AudioRatio: normalizeJsonString(modelDefaults.AudioRatio),
-      AudioCompletionRatio: normalizeJsonString(
-        modelDefaults.AudioCompletionRatio
-      ),
-      ExposeRatioEnabled: modelDefaults.ExposeRatioEnabled,
-      BillingMode: normalizeJsonString(modelDefaults.BillingMode),
-      BillingExpr: normalizeJsonString(modelDefaults.BillingExpr),
-      PluginBillingExpr: normalizeJsonString(modelDefaults.PluginBillingExpr),
-    }
-    setSavedModelValues(modelNormalizedDefaults.current)
-
     modelForm.reset({
       ...modelDefaults,
       ModelPrice: formatJsonForTextarea(modelDefaults.ModelPrice),
@@ -331,19 +392,6 @@ export function RatioSettingsCard({
   }, [modelDefaults, modelForm])
 
   useEffect(() => {
-    groupNormalizedDefaults.current = {
-      GroupRatio: normalizeJsonString(groupDefaults.GroupRatio),
-      TopupGroupRatio: normalizeJsonString(groupDefaults.TopupGroupRatio),
-      UserUsableGroups: normalizeJsonString(groupDefaults.UserUsableGroups),
-      GroupGroupRatio: normalizeJsonString(groupDefaults.GroupGroupRatio),
-      AutoGroups: normalizeJsonString(groupDefaults.AutoGroups),
-      MaxTokenAutoGroups: groupDefaults.MaxTokenAutoGroups,
-      DefaultUseAutoGroup: groupDefaults.DefaultUseAutoGroup,
-      GroupSpecialUsableGroup: normalizeJsonString(
-        groupDefaults.GroupSpecialUsableGroup
-      ),
-    }
-
     groupForm.reset({
       ...groupDefaults,
       GroupRatio: formatJsonForTextarea(groupDefaults.GroupRatio),
@@ -359,31 +407,17 @@ export function RatioSettingsCard({
 
   const saveModelRatios = useCallback(
     async (values: ModelFormValues) => {
-      const normalized = {
-        ModelPrice: normalizeJsonString(values.ModelPrice),
-        ModelRatio: normalizeJsonString(values.ModelRatio),
-        CacheRatio: normalizeJsonString(values.CacheRatio),
-        CreateCacheRatio: normalizeJsonString(values.CreateCacheRatio),
-        CompletionRatio: normalizeJsonString(values.CompletionRatio),
-        ImageRatio: normalizeJsonString(values.ImageRatio),
-        AudioRatio: normalizeJsonString(values.AudioRatio),
-        AudioCompletionRatio: normalizeJsonString(values.AudioCompletionRatio),
-        ExposeRatioEnabled: values.ExposeRatioEnabled,
-        BillingMode: normalizeJsonString(values.BillingMode),
-        BillingExpr: normalizeJsonString(values.BillingExpr),
-        PluginBillingExpr: normalizeJsonString(values.PluginBillingExpr),
-      }
+      const normalized = normalizedModelValues(values)
 
       if (!pricingBaseline) return
       try {
         const changes = buildPricingChanges(
           pricingBaseline,
-          pricingOptions(modelNormalizedDefaults.current),
+          pricingOptions(savedModelValues),
           pricingOptions(normalized)
         )
         const visibilityChanged =
-          normalized.ExposeRatioEnabled !==
-          modelNormalizedDefaults.current.ExposeRatioEnabled
+          normalized.ExposeRatioEnabled !== savedModelValues.ExposeRatioEnabled
         if (!changes.length && !visibilityChanged) {
           toast.info(t('No model price changes to save'))
           return
@@ -397,56 +431,204 @@ export function RatioSettingsCard({
         }
         const refreshed = await pricingQuery.refetch()
         setPricingBaseline(refreshed.data ?? null)
-        modelNormalizedDefaults.current = normalized
         setSavedModelValues(normalized)
         toast.success(t('Model pricing saved'))
       } catch (error) {
         handleServerError(error)
       }
     },
-    [t, updateOption, pricingBaseline, savePricing, pricingQuery]
+    [
+      t,
+      updateOption,
+      pricingBaseline,
+      savePricing,
+      pricingQuery,
+      savedModelValues,
+    ]
   )
 
+  const reloadCurrentGroupSettings = useCallback(async () => {
+    if (groupReloadInFlight.current) return
+    groupReloadInFlight.current = true
+    setGroupReloadRequired(true)
+    setGroupReloading(true)
+    try {
+      await queryClient.cancelQueries({ queryKey: ['system-options'] })
+      const refreshed = await queryClient.fetchQuery({
+        queryKey: ['system-options'],
+        queryFn: async () =>
+          requireServerSuccess(await getSystemOptions({ fresh: true })),
+        staleTime: 0,
+        retry: false,
+      })
+      const { GroupSpecialUsableGroup, ...otherFields } = groupDefaults
+      const fields = {
+        ...otherFields,
+        'group_ratio_setting.group_special_usable_group':
+          GroupSpecialUsableGroup,
+      }
+      if (
+        Object.keys(fields).some(
+          (key) => !refreshed.data.some((option) => option.key === key)
+        )
+      ) {
+        throw new Error('Current group settings are incomplete')
+      }
+      const current = getOptionValue(refreshed.data, fields)
+      const values: GroupFormValues = {
+        ...current,
+        GroupSpecialUsableGroup:
+          current['group_ratio_setting.group_special_usable_group'],
+      }
+      setGroupBaseline(groupRenameBaselineFromDefaults(values))
+      groupForm.reset(values)
+      setGroupReloadRequired(false)
+    } catch (error) {
+      handleServerError(error, t('Failed to load current group settings'))
+    } finally {
+      groupReloadInFlight.current = false
+      setGroupReloading(false)
+    }
+  }, [groupDefaults, groupForm, queryClient, t])
+
   const saveGroupRatios = useCallback(
-    async (values: GroupFormValues) => {
-      const normalized = {
+    async (
+      values: GroupFormValues,
+      renames: GroupRenameMapping[]
+    ): Promise<GroupRatioSaveOutcome> => {
+      const normalized: Record<string, string> = {
         GroupRatio: normalizeJsonString(values.GroupRatio),
         TopupGroupRatio: normalizeJsonString(values.TopupGroupRatio),
         UserUsableGroups: normalizeJsonString(values.UserUsableGroups),
         GroupGroupRatio: normalizeJsonString(values.GroupGroupRatio),
         AutoGroups: normalizeJsonString(values.AutoGroups),
-        MaxTokenAutoGroups: values.MaxTokenAutoGroups,
-        DefaultUseAutoGroup: values.DefaultUseAutoGroup,
+        MaxTokenAutoGroups: String(values.MaxTokenAutoGroups),
+        DefaultUseAutoGroup: values.DefaultUseAutoGroup ? 'true' : 'false',
         GroupSpecialUsableGroup: normalizeJsonString(
           values.GroupSpecialUsableGroup
         ),
       }
-
-      // Map form field names to API keys (most are 1:1, except GroupSpecialUsableGroup)
+      const baseline: Record<string, string> = { ...groupBaseline }
+      // Map form field names to API keys (most are 1:1, except the nested
+      // special-usable-group option).
       const apiKeyMap: Record<string, string> = {
         GroupSpecialUsableGroup:
           'group_ratio_setting.group_special_usable_group',
       }
 
-      const updates = (
-        Object.keys(normalized) as Array<keyof typeof normalized>
-      ).filter(
-        (key) => normalized[key] !== groupNormalizedDefaults.current[key]
-      )
-
-      for (const key of updates) {
-        const apiKey = apiKeyMap[key] || key
-        await updateOption.mutateAsync({ key: apiKey, value: normalized[key] })
+      // Every edited option is saved in the same transaction as the renames,
+      // and Expected pins the values these edits were based on so a concurrent
+      // write cannot be silently overwritten.
+      const options: Record<string, string> = {}
+      const expected: Record<string, string> = {}
+      for (const [field, value] of Object.entries(normalized)) {
+        const current = baseline[field] ?? ''
+        if (value === current) continue
+        const apiKey = apiKeyMap[field] ?? field
+        options[apiKey] = value
+        expected[apiKey] = current
       }
 
-      groupNormalizedDefaults.current = normalized
+      if (renames.length === 0 && Object.keys(options).length === 0) {
+        toast.info(t('No changes to save'))
+        return 'saved'
+      }
+
+      // The stale conflict arrives as HTTP 409, which Axios rejects. Keep the
+      // unsaved edits and pending mappings: do not refetch (that would reset
+      // the form) and report a specific, translated conflict message.
+      const reportConflict = (error: unknown) => {
+        if (isGroupRenameStale(error)) {
+          toast.error(
+            t(
+              'The group settings changed on the server. Reload the page and apply your edits again.'
+            )
+          )
+          return true
+        }
+        if (
+          getServerErrorSources(error).some(
+            (source) => source.code === 'GROUP_RENAME_REQUEST_CONFLICT'
+          )
+        ) {
+          toast.error(
+            t(
+              'This rename request was already used for different changes. Reload the page before trying again.'
+            )
+          )
+          return true
+        }
+        return false
+      }
+
+      const fingerprint = JSON.stringify({ renames, options, expected })
+
+      try {
+        // Keep an uncertain operation's identity in this page until it succeeds.
+        // Only an identical payload may reuse the server's durable receipt.
+        let requestId: string | undefined
+        if (renames.length > 0) {
+          requestId = groupRenameRequestIds.current.get(fingerprint)
+          if (!requestId) {
+            requestId = globalThis.crypto.randomUUID()
+            groupRenameRequestIds.current.set(fingerprint, requestId)
+          }
+        }
+        const response = await renameSystemGroups({
+          renames,
+          options,
+          expected,
+          ...(requestId ? { request_id: requestId } : {}),
+        })
+        if (!response.success) {
+          if (reportConflict(response)) return 'failed'
+          handleServerError(response, t('Failed to update setting'))
+          return 'failed'
+        }
+        groupRenameRequestIds.current.delete(fingerprint)
+        if (response.data?.replayed) {
+          // A receipt is historical: later administrators may already have
+          // changed the settings again. Never install its applied_options.
+          await reloadCurrentGroupSettings()
+        } else {
+          const applied = response.data?.applied_options ?? {}
+          const nextBaseline: GroupRenameBaseline = { ...groupBaseline }
+          for (const [field, value] of Object.entries(normalized)) {
+            const apiKey = apiKeyMap[field] ?? field
+            nextBaseline[field as keyof GroupRenameBaseline] =
+              applied[apiKey] ?? options[apiKey] ?? value
+          }
+          setGroupBaseline(nextBaseline)
+          await queryClient.invalidateQueries({ queryKey: ['system-options'] })
+        }
+        if (renames.length > 0 && response.data) {
+          const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+          toast.success(
+            t(
+              'Groups renamed: {{tokens}} API keys, {{users}} users and {{channels}} channels updated.',
+              {
+                tokens: formatNumber(response.data.tokens, locale),
+                users: formatNumber(response.data.users, locale),
+                channels: formatNumber(response.data.channels, locale),
+              }
+            )
+          )
+        } else {
+          toast.success(t('Setting updated successfully'))
+        }
+        return 'saved'
+      } catch (error) {
+        if (reportConflict(error)) return 'failed'
+        handleServerError(error, t('Failed to update setting'))
+        return 'failed'
+      }
     },
-    [updateOption]
+    [queryClient, t, i18n, groupBaseline, reloadCurrentGroupSettings]
   )
 
   const handleResetRatios = useCallback(() => {
     setConfirmOpen(true)
-  }, [])
+  }, [setConfirmOpen])
 
   const { mutate: resetMutate } = resetMutation
   const handleConfirmReset = useCallback(() => {
@@ -509,9 +691,21 @@ export function RatioSettingsCard({
       )
     }
     if (tab === 'groups') {
+      if (groupReloading) return <LoadingState />
+      if (groupReloadRequired) {
+        return (
+          <ErrorState
+            description={t(
+              'The rename completed, but current group settings could not be loaded. Reload before making more changes.'
+            )}
+            onRetry={() => void reloadCurrentGroupSettings()}
+          />
+        )
+      }
       return (
         <GroupRatioForm
           form={groupForm}
+          baseline={groupRenameBaseline}
           onSave={saveGroupRatios}
           isSaving={updateOption.isPending}
         />
@@ -524,9 +718,19 @@ export function RatioSettingsCard({
   }
 
   const renderTabSwitcher = () => (
-    <TabsList className={`grid w-fit max-w-full ${tabsGridClass}`}>
+    <TabsList
+      className={
+        isMobile
+          ? 'flex w-full justify-start overflow-x-auto'
+          : `grid w-fit max-w-full ${tabsGridClass}`
+      }
+    >
       {visibleTabs.map((tab) => (
-        <TabsTrigger key={tab} value={tab}>
+        <TabsTrigger
+          key={tab}
+          value={tab}
+          className={isMobile ? 'flex-none px-3' : undefined}
+        >
           {t(tabLabels[tab])}
         </TabsTrigger>
       ))}
@@ -548,9 +752,14 @@ export function RatioSettingsCard({
         </SettingsSection>
       ) : (
         <Tabs defaultValue={defaultTab} className='h-full min-h-0 gap-6'>
-          <SettingsPageTitleStatusPortal>
-            {renderTabSwitcher()}
-          </SettingsPageTitleStatusPortal>
+          {/* The phone title row is too narrow for the tabs. */}
+          {isMobile ? (
+            renderTabSwitcher()
+          ) : (
+            <SettingsPageTitleStatusPortal>
+              {renderTabSwitcher()}
+            </SettingsPageTitleStatusPortal>
+          )}
 
           <SettingsSection title={t(titleKey)} className='min-h-0 flex-1'>
             {visibleTabs.map((tab) => (

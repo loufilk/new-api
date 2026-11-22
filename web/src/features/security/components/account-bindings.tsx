@@ -37,7 +37,11 @@ import {
 } from '@/features/auth/lib/oauth-popup'
 import { SecureVerificationDialog } from '@/features/auth/secure-verification'
 import type { CustomOAuthProviderInfo } from '@/features/auth/types'
-import { getSelfOAuthBindings, unbindCustomOAuth } from '@/features/profile/api'
+import {
+  getSelfOAuthBindings,
+  unbindCustomOAuth,
+  unbindGoogleOAuth,
+} from '@/features/profile/api'
 import type {
   UserProfile,
   BindingItem,
@@ -49,6 +53,7 @@ import { api } from '@/lib/api'
 import {
   buildOAuthAuthorizationUrl,
   indexCustomOAuthBindings,
+  isOAuthAvailableOnOrigin,
   type CustomOAuthBinding,
 } from '@/lib/oauth'
 import {
@@ -78,14 +83,16 @@ type PreparedOAuthBinding = AccountSecurityResult & {
   url: string
 }
 
+type UnbindTarget =
+  | CustomOAuthBinding
+  | { provider_name: 'Google'; provider_slug: 'google' }
+
 export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
   const { t } = useTranslation()
   const dialogs = useDialogs<DialogKey>()
   const { status, loading } = useStatus()
   const [customBindings, setCustomBindings] = useState<CustomOAuthBinding[]>([])
-  const [unbindTarget, setUnbindTarget] = useState<CustomOAuthBinding | null>(
-    null
-  )
+  const [unbindTarget, setUnbindTarget] = useState<UnbindTarget | null>(null)
   const security = useAccountSecurity()
   const unbinding = security.pending
   const [preparedBinding, setPreparedBinding] =
@@ -96,6 +103,10 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
   const customProviders = status?.custom_oauth_providers as
     | CustomOAuthProviderInfo[]
     | undefined
+  // Provider callbacks finish on the ServerAddress origin, so binding cannot
+  // complete from another entry (for example the CN site). Unbound OAuth rows
+  // are hidden there; already-bound ones stay visible for information.
+  const oauthAvailable = isOAuthAvailableOnOrigin(status?.server_address)
   const customBindingsByProviderId = useMemo(
     () => indexCustomOAuthBindings(customBindings),
     [customBindings]
@@ -117,7 +128,7 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
     fetchCustomBindings()
   }, [fetchCustomBindings])
 
-  const handleUnbindCustom = async () => {
+  const handleUnbind = async () => {
     if (!unbindTarget) return
     const target = unbindTarget
     setUnbindTarget(null)
@@ -125,11 +136,16 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
       const proof = await security.verify(
         {
           scope: 'account.binding.unbind',
-          context: { provider_id: target.provider_id },
+          context:
+            'provider_id' in target
+              ? { provider_id: target.provider_id }
+              : { provider: 'google' },
         },
         signal
       )
-      return unbindCustomOAuth(target.provider_id, proof, signal)
+      return 'provider_id' in target
+        ? unbindCustomOAuth(target.provider_id, proof, signal)
+        : unbindGoogleOAuth(proof, signal)
     })
     if (result) {
       toast.success(
@@ -141,6 +157,7 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
   }
 
   const startOAuthBinding = async (provider: string) => {
+    if (!oauthAvailable) return
     const prepared = await security.run(async (signal) => {
       const proof = await security.verify(
         { scope: 'account.binding.bind', context: { provider } },
@@ -231,6 +248,18 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
 
   const bindings: BindingItem[] = [
     {
+      id: 'google',
+      label: t('Google'),
+      icon: Shield,
+      value: profile.google_id,
+      isBound: Boolean(profile.google_id),
+      isEnabled: Boolean(
+        profile.google_id ||
+        (status.google_oauth && status.google_oauth_configured)
+      ),
+      onBind: () => void startOAuthBinding('google'),
+    },
+    {
       id: 'email',
       label: t('Email'),
       icon: Mail,
@@ -313,7 +342,20 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
       isEnabled: status?.linuxdo_oauth || false,
       onBind: () => void startOAuthBinding('linuxdo'),
     },
-  ].filter((binding) => binding.isEnabled)
+  ].filter(
+    (binding) =>
+      binding.isEnabled &&
+      (oauthAvailable ||
+        binding.isBound ||
+        ![
+          'google',
+          'github',
+          'discord',
+          'oidc',
+          'telegram',
+          'linuxdo',
+        ].includes(binding.id))
+  )
 
   return (
     <>
@@ -359,23 +401,43 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
                   </p>
                 </div>
               </div>
-              <Button
-                variant='outline'
-                size='sm'
-                className='h-7 shrink-0 px-2.5 text-xs'
-                onClick={binding.onBind}
-                disabled={
-                  bindingsLocked || (binding.isBound && binding.id !== 'email')
-                }
-              >
-                {actionLabel}
-              </Button>
+              {binding.id === 'google' && binding.isBound ? (
+                <Button
+                  variant='ghost'
+                  size='sm'
+                  className='text-destructive h-7 shrink-0 px-2.5 text-xs'
+                  onClick={() =>
+                    setUnbindTarget({
+                      provider_name: 'Google',
+                      provider_slug: 'google',
+                    })
+                  }
+                  disabled={bindingsLocked}
+                >
+                  <Unlink className='mr-1 h-3 w-3' />
+                  {t('Unbind')}
+                </Button>
+              ) : (
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='h-7 shrink-0 px-2.5 text-xs'
+                  onClick={binding.onBind}
+                  disabled={
+                    bindingsLocked ||
+                    (binding.isBound && binding.id !== 'email')
+                  }
+                >
+                  {actionLabel}
+                </Button>
+              )}
             </li>
           )
         })}
         {customProviders?.map((provider) => {
           const binding = customBindingsByProviderId.get(provider.id)
           const isBound = !!binding
+          if (!oauthAvailable && !isBound) return null
           return (
             <li
               key={provider.id}
@@ -463,7 +525,7 @@ export function AccountBindings({ profile, onUpdate }: AccountBindingsProps) {
         )}
         confirmText={t('Confirm Unbind')}
         destructive
-        handleConfirm={handleUnbindCustom}
+        handleConfirm={handleUnbind}
         isLoading={unbinding}
       />
 

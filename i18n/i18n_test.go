@@ -17,7 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // The web console saves its own language codes (zhCN, zhTW, fr, ...) in the
@@ -45,6 +45,13 @@ func TestLanguageFromUserSetting(t *testing.T) {
 		c.Set(string(constant.ContextKeyUserSetting), dto.UserSetting{Language: tc.saved})
 		assert.Equal(t, tc.want, StatedLang(c), tc.saved)
 	}
+}
+
+func TestStatedLangWithoutHTTPRequestPreservesContextPreference(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	assert.Empty(t, StatedLang(c))
+	c.Set(string(constant.ContextKeyUserSetting), dto.UserSetting{Language: "zhTW"})
+	assert.Equal(t, LangZhTW, StatedLang(c))
 }
 
 // TokenAuth puts the user's settings into the request. A user who saved no
@@ -204,4 +211,18 @@ func TestServerLogLanguage(t *testing.T) {
 	assert.Equal(t, "任务进度轮询开始", common.LogText("task progress polling started"))
 	common.SetLogLanguage("en")
 	assert.Equal(t, "channel #7 has 2 unfinished tasks", common.LogText(line, 7, 2))
+}
+
+func TestParseAcceptLanguageHonorsQuality(t *testing.T) {
+	for header, want := range map[string]string{
+		"en;q=0.3, zh-Hant;q=0.9": LangZhTW,
+		"zh-TW;q=0, en-US;q=0.8":  LangEn,
+		"de, zh-CN;q=0.5":         LangZhCN,
+		"*":                       "",
+		"":                        "",
+	} {
+		if got := ParseAcceptLanguage(header); got != want {
+			t.Errorf("ParseAcceptLanguage(%q) = %q, want %q", header, got, want)
+		}
+	}
 }

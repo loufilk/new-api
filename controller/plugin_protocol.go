@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"errors"
-	"fmt"
 	"hash/fnv"
 	"net/http"
 	"strconv"
@@ -21,6 +20,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relay/requestplugin"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -160,6 +160,23 @@ func resolveTaskPluginForProtocolRetrieve(platform constant.TaskPlatform) (*plug
 	return plugin, generation, ok
 }
 
+// responsesTaskBackground is taken from the host's validated protocol request,
+// never from an arbitrary field of a provider's native task body.
+func responsesTaskBackground(c *gin.Context) bool {
+	raw, _ := c.Get(pluginruntime.ContextKeyProtocolRequest)
+	request, ok := raw.(pluginruntime.ProtocolRequestContext)
+	if !ok || request.Protocol != "openai_responses" {
+		return false
+	}
+	body, _ := request.Body.(map[string]any)
+	if body["kind"] != string(pluginruntime.BodyJSON) {
+		return false
+	}
+	value, _ := body["value"].(map[string]any)
+	background, _ := value["background"].(bool)
+	return background
+}
+
 func serveTaskPluginProtocol(
 	c *gin.Context,
 	pinned pluginruntime.PinnedEndpoint,
@@ -194,13 +211,8 @@ func serveTaskPluginProtocol(
 		respondPluginProtocolError(c, http.StatusInternalServerError, "task_protocol_error", "Task protocol request failed")
 		return
 	}
+	background := responsesTaskBackground(c)
 	if definition, known := pluginruntime.HostProtocol(pinned.Protocol); known && len(definition.DefinedModes()) > 0 && pinned.Plugin != nil {
-		background := false
-		if body, ok := protocolRequest.Body.(map[string]any); ok && body["kind"] == string(pluginruntime.BodyJSON) {
-			if requestBody, ok := body["value"].(map[string]any); ok {
-				background, _ = requestBody["background"].(bool)
-			}
-		}
 		missing := false
 		if protocolRequest.Stream && !pinned.Plugin.Meta.ProtocolSupports(pinned.Protocol, "stream") {
 			missing = true
@@ -249,6 +261,11 @@ func serveTaskPluginProtocol(
 	var outcome *taskSubmissionOutcome
 	var taskErr *dto.TaskError
 	var relayInfoErr error
+	// The request plugins' report hooks receive the submission once the
+	// client has the response.
+	defer func() {
+		requestplugin.Report(c, types.RelayFormatTask, relayInfo, nil, taskReportError(taskErr))
+	}()
 	submissionStage := "relay_info"
 	// A Responses client only observes an asynchronous task. Once admitted,
 	// disconnecting that observer must not cancel submission, persistence, or
@@ -355,19 +372,7 @@ func serveTaskPluginProtocol(
 		createdAt,
 		deps.protocolLimits,
 	)
-	background := false
-	if body, ok := protocolRequest.Body.(map[string]any); ok && body["kind"] == string(pluginruntime.BodyJSON) {
-		if requestBody, ok := body["value"].(map[string]any); ok {
-			background, _ = requestBody["background"].(bool)
-		}
-	}
 	if background {
-		outcome.Task.PrivateData.ResponsesBackground = true
-		if outcome.Task.ID != 0 {
-			if err := model.DB.Model(outcome.Task).Update("private_data", outcome.Task.PrivateData).Error; err != nil {
-				logger.LogError(c, common.LogText("persist task background flag failed: %s", err.Error()))
-			}
-		}
 		machine.SetBackground(true)
 		if !protocolRequest.Stream {
 			logger.LogDebug(
@@ -1182,36 +1187,11 @@ func taskPluginProtocolRendererContext(
 	if pinned.Plugin == nil {
 		return nil, errors.New("task artifact projection is unavailable")
 	}
-
-	artifacts, err := taskjsplugin.New(pinned.Plugin).ListArtifacts(task)
-	if err != nil {
-		return nil, fmt.Errorf("project task artifacts: %w", err)
-	}
-	artifacts, err = validateProjectedTaskArtifacts(artifacts)
+	artifacts, err := taskjsplugin.RendererArtifacts(pinned.Plugin, task, artifactContentURL)
 	if err != nil {
 		return nil, err
 	}
-	if len(artifacts) > 0 && artifactContentURL == nil {
-		return nil, errors.New("task artifact projection is unavailable")
-	}
-
-	rendererArtifacts := make(map[string]any, len(artifacts))
-	for _, artifact := range artifacts {
-		contentURL, buildErr := artifactContentURL(task.TaskID, artifact.Key)
-		if buildErr != nil {
-			return nil, fmt.Errorf("build task artifact content URL: %w", buildErr)
-		}
-		item := map[string]any{
-			"key":  artifact.Key,
-			"type": artifact.Type,
-			"url":  contentURL,
-		}
-		if artifact.MimeType != "" {
-			item["mimeType"] = artifact.MimeType
-		}
-		rendererArtifacts[artifact.Key] = item
-	}
-	rendererContext["artifacts"] = rendererArtifacts
+	rendererContext["artifacts"] = artifacts
 	return rendererContext, nil
 }
 
@@ -1263,6 +1243,12 @@ func respondPluginProtocolSubmissionError(c *gin.Context, taskErr *dto.TaskError
 	status := http.StatusInternalServerError
 	if taskErr != nil && taskErr.StatusCode >= 400 && taskErr.StatusCode <= 599 {
 		status = taskErr.StatusCode
+	}
+	if requestplugin.Stopped(taskErr) {
+		// A request plugin's stop keeps its code and message, as on chat
+		// routes.
+		respondPluginProtocolError(c, status, taskErr.Code, common.MessageWithRequestId(taskErr.Message, c.GetString(common.RequestIdKey)))
+		return
 	}
 	switch status {
 	case http.StatusBadRequest:

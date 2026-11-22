@@ -102,7 +102,9 @@ func EmailBind(c *gin.Context) {
 	}
 	succeeded = true
 	lang := service.AccountMailLanguage(c, identity.UserID)
-	notificationFailed = service.NotifyAccountSecurityChange(lang, state.CurrentEmail, i18n.MsgSecurityEventEmailChanged) != nil
+	if state.CurrentEmail != state.Email {
+		notificationFailed = service.NotifyAccountSecurityChange(lang, state.CurrentEmail, i18n.MsgSecurityEventEmailChanged) != nil
+	}
 	if err := service.NotifyAccountSecurityChange(lang, state.Email, i18n.MsgSecurityEventEmailConfirmed); err != nil {
 		notificationFailed = true
 	}

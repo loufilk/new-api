@@ -2,9 +2,9 @@ package dto
 
 import (
 	"encoding/json"
-	"regexp"
 	"testing"
 
+	"github.com/MoeForge/moego/regexp"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -735,4 +735,38 @@ func TestChannelOtherSettingsValidateToolLossPolicy(t *testing.T) {
 	err := (&ChannelOtherSettings{ToolLossPolicy: "drop"}).ValidateToolLossPolicy()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tool_loss_policy")
+}
+
+func TestAdvancedCustomPlaygroundExactAliasesRespectChatPathAndModel(t *testing.T) {
+	config := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{
+		{IncomingPath: "/v1/chat/completions", UpstreamPath: "/v1/messages", Models: []string{"allowed"}},
+		{IncomingPath: "/v1/images/generations", UpstreamPath: "/v1/images/generations", Models: []string{"image"}},
+	}}
+	for _, alias := range []string{"/pg/chat/completions", "/api/user/playground/chat"} {
+		t.Run(alias, func(t *testing.T) {
+			route, ok := config.MatchPathForModel(alias, "allowed")
+			require.True(t, ok)
+			require.Equal(t, "/v1/messages", route.UpstreamPath)
+			require.False(t, config.SupportsPathForModel(alias, "image"))
+			require.False(t, config.SupportsPathForModel(alias+"/extra", "allowed"))
+		})
+	}
+}
+
+func TestAdvancedCustomPlaygroundExplicitAliasTakesPrecedence(t *testing.T) {
+	for _, alias := range []string{"/pg/chat/completions", "/api/user/playground/chat"} {
+		t.Run(alias, func(t *testing.T) {
+			config := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{
+				{IncomingPath: "/v1/chat/completions", UpstreamPath: "/canonical", Converter: "none"},
+				{IncomingPath: alias, UpstreamPath: "/explicit", Models: []string{"legacy"}, Converter: "none"},
+			}}
+			require.NoError(t, config.Validate())
+			route, ok := config.MatchPathForModel(alias, "legacy")
+			require.True(t, ok)
+			require.Equal(t, "/explicit", route.UpstreamPath)
+			route, ok = config.MatchPathForModel(alias, "fallback")
+			require.True(t, ok)
+			require.Equal(t, "/canonical", route.UpstreamPath)
+		})
+	}
 }

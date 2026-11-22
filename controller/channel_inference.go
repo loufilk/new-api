@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/common/expfmt"
+	prommodel "github.com/prometheus/common/model"
 )
 
 type inferenceEndpointStatus struct {
@@ -43,7 +44,7 @@ type inferenceStatus struct {
 	Version    string                             `json:"version"`
 	Models     []inferenceModel                   `json:"models"`
 	Metrics    []inferenceMetric                  `json:"metrics"`
-	RawMetrics string                             `json:"raw_metrics"`
+	RawMetrics string                             `json:"raw_metrics"` // legacy wire field; never populated
 }
 
 func GetVLLMChannelStatus(c *gin.Context) {
@@ -198,7 +199,6 @@ func fetchInferenceStatus(ctx context.Context, channel *model.Channel) (*inferen
 					result.Error = "invalid_response"
 				} else {
 					status.Metrics = metrics
-					status.RawMetrics = string(result.body)
 					status.SampledAt = result.at
 				}
 			}
@@ -209,14 +209,14 @@ func fetchInferenceStatus(ctx context.Context, channel *model.Channel) (*inferen
 }
 
 func parseInferenceMetrics(raw string, prefix string) ([]inferenceMetric, error) {
-	var parser expfmt.TextParser
+	parser := expfmt.NewTextParser(prommodel.UTF8Validation)
 	families, err := parser.TextToMetricFamilies(strings.NewReader(raw))
 	if err != nil {
 		return nil, err
 	}
 	metrics := []inferenceMetric{}
 	for name, family := range families {
-		if !strings.HasPrefix(name, prefix) && name != "process_start_time_seconds" {
+		if !isPublicInferenceMetric(name, prefix) {
 			continue
 		}
 		samples, err := expfmt.ExtractSamples(&expfmt.DecodeOptions{}, family)
@@ -231,7 +231,8 @@ func parseInferenceMetrics(raw string, prefix string) ([]inferenceMetric, error)
 			}
 			labels := make(map[string]string, len(sample.Metric)-1)
 			for label, value := range sample.Metric {
-				if label != "__name__" {
+				switch label {
+				case "model_name", "engine", "engine_type", "dp_rank", "tp_rank", "pp_rank", "moe_ep_rank", "sleep_state", "finished_reason":
 					labels[string(label)] = string(value)
 				}
 			}
@@ -239,4 +240,43 @@ func parseInferenceMetrics(raw string, prefix string) ([]inferenceMetric, error)
 		}
 	}
 	return metrics, nil
+}
+
+// Only time series consumed by the status panel are returned. Provider-specific
+// diagnostic series and arbitrary labels are not part of its response contract.
+func isPublicInferenceMetric(name, prefix string) bool {
+	if name == "process_start_time_seconds" {
+		return true
+	}
+	local, ok := strings.CutPrefix(name, prefix)
+	if !ok {
+		return false
+	}
+	// Histogram totals may be exposed as their own families. Created timestamps
+	// are used alongside process start time to recognize counter restarts.
+	for _, suffix := range []string{"_sum", "_count", "_created"} {
+		local = strings.TrimSuffix(local, suffix)
+	}
+	switch local {
+	case "prompt_tokens_total", "generation_tokens_total", "time_to_first_token_seconds", "e2e_request_latency_seconds":
+		return true
+	}
+	switch prefix {
+	case "vllm:":
+		switch local {
+		case "num_requests_running", "num_requests_waiting", "kv_cache_usage_perc", "gpu_cache_usage_perc",
+			"engine_sleep_state", "request_success_total", "prefix_cache_hits_total", "prefix_cache_queries_total",
+			"spec_decode_num_accepted_tokens_total", "spec_decode_num_draft_tokens_total",
+			"request_queue_time_seconds", "request_time_per_output_token_seconds":
+			return true
+		}
+	case "sglang:":
+		switch local {
+		case "num_running_reqs", "num_queue_reqs", "token_usage", "gen_throughput", "num_requests_total",
+			"cached_tokens_total", "queue_time_seconds", "inter_token_latency_seconds", "time_per_output_token_seconds",
+			"cache_hit_rate", "spec_accept_rate":
+			return true
+		}
+	}
+	return false
 }

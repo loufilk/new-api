@@ -16,11 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { ColumnDef } from '@tanstack/react-table'
+
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DataTableColumnHeader } from '@/components/data-table'
+import type { ColumnDef } from '@/lib/console-table'
 
 import {
   SyncPriceCell,
@@ -68,19 +69,17 @@ export function useUpstreamRatioSyncColumns(
           </div>
         ),
       },
-      ...upstreamNames.map(
-        (source): ColumnDef<PricingSyncRow> => ({
-          id: `upstream_${source}`,
-          size: upstreamNames.length === 1 ? 420 : 320,
-          minSize: 280,
-          header: isMobile
-            ? getUpstreamDisplayName(source, t)
-            : () => <SyncSourceHeader source={source} />,
-          cell: ({ row }) => (
-            <SyncSourcePriceCell row={row.original} source={source} />
-          ),
-        })
-      ),
+      ...upstreamNames.map((source): ColumnDef<PricingSyncRow> => ({
+        id: `upstream_${source}`,
+        size: upstreamNames.length === 1 ? 420 : 320,
+        minSize: 280,
+        header: isMobile
+          ? getUpstreamDisplayName(source, t)
+          : () => <SyncSourceHeader source={source} />,
+        cell: ({ row }) => (
+          <SyncSourcePriceCell row={row.original} source={source} />
+        ),
+      })),
     ],
     [upstreamNames, isMobile, t]
   )

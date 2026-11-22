@@ -18,13 +18,18 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
-  getCoreRowModel,
-  useReactTable,
-  type VisibilityState,
-} from '@tanstack/react-table'
-import { render, screen, within, waitFor } from '@testing-library/react'
+  cleanup,
+  render,
+  screen,
+  within,
+  waitFor,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
+
+import { useConsoleTable, type VisibilityState } from '@/lib/console-table'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { usageLogSchema, type UsageLog } from '../../data/schema'
 import { useCommonLogsColumns } from '../columns/common-logs-columns'
@@ -63,10 +68,10 @@ function Fixture(props: {
 }) {
   const columns = useCommonLogsColumns(props.admin ?? true, false)
   const context = useUsageLogsContext()
-  const table = useReactTable({
+  // eslint-disable-next-line react-hooks/incompatible-library -- Use the real v8 row model in this uncompiled test fixture.
+  const table = useConsoleTable({
     data: props.logs ?? [log],
     columns,
-    getCoreRowModel: getCoreRowModel(),
     state: { columnVisibility: props.visibility ?? {} },
   })
   return (
@@ -83,19 +88,36 @@ function Fixture(props: {
   )
 }
 
+const queryClients: QueryClient[] = []
+
 function renderLogs(props: Parameters<typeof Fixture>[0] = {}) {
+  useAuthStore.getState().auth.setUser({
+    id: 1,
+    username: 'log-viewer',
+    role: props.admin === false ? ROLE.USER : ROLE.ADMIN,
+  })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  client.setQueryData(['status'], {}, { updatedAt: Date.now() + 60_000 })
+  queryClients.push(client)
   return render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
+    <QueryClientProvider client={client}>
       <UsageLogsProvider>
         <Fixture {...props} />
       </UsageLogsProvider>
     </QueryClientProvider>
   )
 }
+
+afterEach(async () => {
+  cleanup()
+  for (const client of queryClients.splice(0)) {
+    await client.cancelQueries()
+    client.clear()
+  }
+  useAuthStore.getState().auth.reset()
+})
 
 it('shows model mismatch evidence when tapping the mobile model badge', async () => {
   const user = userEvent.setup()
@@ -257,7 +279,7 @@ it.each([false, true])(
         .closest('.col-start-2')
     ).not.toBeNull()
     if (streaming) {
-      expect(within(row as HTMLElement).getByText('First token')).toBeVisible()
+      expect(within(row as HTMLElement).getByText('FRT')).toBeVisible()
     }
   }
 )
@@ -336,4 +358,19 @@ it('shows loading placeholders without displaying stale log fields', () => {
   expect(
     screen.queryByRole('button', { name: /^Model:/ })
   ).not.toBeInTheDocument()
+})
+
+it('shows first downstream output as first token, not the earlier upstream event', () => {
+  renderLogs({
+    logs: [
+      {
+        ...log,
+        is_stream: true,
+        other: JSON.stringify({ frt: 1000, first_downstream_content_ms: 3200 }),
+      },
+    ],
+  })
+  const metric = screen.getByText('First token').parentElement
+  expect(metric).toHaveTextContent('3.2')
+  expect(screen.queryByText('FRT')).not.toBeInTheDocument()
 })

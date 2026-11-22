@@ -1,12 +1,20 @@
 package relay
 
 import (
+	"context"
 	"encoding/base64"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -27,11 +35,15 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 func setupRelayChannelDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	if dsn := os.Getenv("TEST_POSTGRES_DSN"); dsn != "" {
+		return setupRelayChannelPostgresDB(t, dsn)
+	}
 	previousDB := model.DB
 	previousType := common.MainDatabaseType()
 	previousCache := common.MemoryCacheEnabled
@@ -53,8 +65,58 @@ func setupRelayChannelDB(t *testing.T) *gorm.DB {
 	return database
 }
 
+// Native fixtures use a private schema per test and never fall through to an
+// embedded database when an owned PostgreSQL DSN was selected.
+func setupRelayChannelPostgresDB(t *testing.T, dsn string) *gorm.DB {
+	t.Helper()
+	parsed, err := url.Parse(dsn)
+	require.NoError(t, err)
+	require.Equal(t, "postgres", parsed.Scheme)
+	ip := net.ParseIP(parsed.Hostname())
+	require.NotNil(t, ip)
+	require.True(t, ip.IsLoopback())
+	admin, err := gorm.Open(postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true}), &gorm.Config{})
+	require.NoError(t, err)
+	adminConn, err := admin.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, adminConn.Close()) })
+	var version string
+	require.NoError(t, admin.Raw("SHOW server_version_num").Scan(&version).Error)
+	require.Contains(t, []string{"180006", "180007"}, version)
+	schema := fmt.Sprintf("relay_group_%d", time.Now().UnixNano())
+	require.NoError(t, admin.Exec("CREATE SCHEMA "+schema).Error)
+	query := parsed.Query()
+	query.Set("search_path", schema)
+	parsed.RawQuery = query.Encode()
+	database, err := gorm.Open(postgres.New(postgres.Config{DSN: parsed.String(), PreferSimpleProtocol: true}), &gorm.Config{})
+	require.NoError(t, err)
+	connection, err := database.DB()
+	require.NoError(t, err)
+	connection.SetMaxOpenConns(4)
+	oldDB, oldLog, oldMainType, oldLogType, oldMemory := model.DB, model.LOG_DB, common.MainDatabaseType(), common.LogDatabaseType(), common.MemoryCacheEnabled
+	model.DB, model.LOG_DB = database, database
+	common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = oldDB, oldLog
+		common.SetDatabaseTypes(oldMainType, oldLogType)
+		common.MemoryCacheEnabled = oldMemory
+		require.NoError(t, connection.Close())
+		require.NoError(t, admin.Exec("DROP SCHEMA "+schema+" CASCADE").Error)
+	})
+	require.NoError(t, database.AutoMigrate(&model.Option{}, &model.Channel{}))
+	t.Setenv("LOG_SQL_DSN", "")
+	master := common.IsMasterNode
+	common.IsMasterNode = false
+	err = model.InitLogDB()
+	common.IsMasterNode = master
+	require.NoError(t, err)
+	return database
+}
+
 func TestRealtimeFetchAppliesChannelHeaderOverrides(t *testing.T) {
 	database := setupRelayChannelDB(t)
+	require.NoError(t, database.AutoMigrate(&model.Task{}))
 	service.InitHttpClient()
 	requests := make(chan *http.Request, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +138,7 @@ func TestRealtimeFetchAppliesChannelHeaderOverrides(t *testing.T) {
 		},
 	}
 
+	require.NoError(t, database.Create(task).Error)
 	tryRealtimeFetch(task, true)
 
 	require.Len(t, requests, 1)
@@ -87,7 +150,7 @@ func TestRealtimeFetchAppliesChannelHeaderOverrides(t *testing.T) {
 
 func TestRealtimeFetchRefundsTaskItFindsFailed(t *testing.T) {
 	database := setupRelayChannelDB(t)
-	require.NoError(t, database.AutoMigrate(&model.Task{}, &model.User{}, &model.Log{}))
+	require.NoError(t, database.AutoMigrate(append([]any{&model.Task{}, &model.User{}, &model.Token{}, &model.Log{}, &model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}}, model.BonusSourceModels()...)...))
 	previousLogDB := model.LOG_DB
 	previousFactory := service.GetTaskAdaptorFunc
 	previousRedis := common.RedisEnabled
@@ -105,19 +168,48 @@ func TestRealtimeFetchRefundsTaskItFindsFailed(t *testing.T) {
 		common.RedisEnabled = previousRedis
 	})
 	service.InitHttpClient()
+	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
 		_, _ = w.Write([]byte(`{"name":"operations/task-1","done":true,"error":{"code":3,"message":"blocked by safety"}}`))
 	}))
 	t.Cleanup(server.Close)
-	channel := &model.Channel{Name: "realtime-refund", Type: constant.ChannelTypeGemini, Key: "channel-key", BaseURL: &server.URL}
+	channel := &model.Channel{Name: "realtime-refund", Type: constant.ChannelTypeGemini, Key: "channel-key", BaseURL: &server.URL, UsedQuota: 1000}
 	require.NoError(t, database.Create(channel).Error)
-	require.NoError(t, database.Create(&model.User{Id: 7, Username: "realtime-owner", Quota: 100}).Error)
+	require.NoError(t, database.Create(&model.User{Id: 7, Username: "realtime-owner", Quota: 1100, QuotaPaid: 1000, QuotaBonus: 70, QuotaReward: 30, UsedQuota: 1000, RequestCount: 1}).Error)
+	token := &model.Token{UserId: 7, Key: "realtime-token", RemainQuota: 2000}
+	require.NoError(t, database.Create(token).Error)
+	// Establish the charge through the real ledger/token transaction. A task's
+	// serialized shares alone are not proof of a refundable wallet debit.
+	const requestID = "realtime-refund-request"
+	var receipt []model.LedgerShare
+	require.NoError(t, database.Transaction(func(tx *gorm.DB) error {
+		_, err := model.DebitQuotaTx(tx, model.LedgerEntry{
+			UserId: 7, Delta: 1000, Reason: model.LedgerReasonBillingPreConsume,
+			ReferenceType: "relay", ReferenceId: requestID, RequestId: requestID,
+			IdempotencyKey: "billing:preconsume:" + requestID,
+		}, model.AccountBonus, model.AccountReward, model.AccountPaid)
+		if err != nil {
+			return err
+		}
+		if err := model.ApplyTokenQuotaDeltaTx(tx, token.Id, token.Key, -1000); err != nil {
+			return err
+		}
+		receipt, err = model.WalletRequestReceiptTx(tx, 7, requestID)
+		return err
+	}))
+	require.ElementsMatch(t, []model.LedgerShare{{Account: model.AccountBonus, Amount: 70}, {Account: model.AccountReward, Amount: 30}, {Account: model.AccountPaid, Amount: 900}}, receipt)
+	// Usage counters above represent this already-accounted synthetic task.
 	task := &model.Task{
 		TaskID: "public-task", Platform: constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeGemini)),
 		UserId: 7, ChannelId: channel.Id, Quota: 1000,
 		Status: model.TaskStatusInProgress, Progress: "50%",
 		PrivateData: model.TaskPrivateData{
 			Key: "channel-key", UpstreamTaskID: base64.RawURLEncoding.EncodeToString([]byte("operations/task-1")),
+			TokenId: token.Id, BillingSource: service.BillingSourceWallet,
+			RequestId: requestID, FinancialVersion: 2, SubmissionAccounted: true,
+			TokenFingerprint: model.BillingTokenFingerprint(token.Key),
+			WalletDebit:      receipt,
 		},
 	}
 	require.NoError(t, database.Create(task).Error)
@@ -129,9 +221,42 @@ func TestRealtimeFetchRefundsTaskItFindsFailed(t *testing.T) {
 	assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), stored.Status)
 	assert.Equal(t, "blocked by safety", stored.FailReason)
 	assert.Zero(t, stored.Quota, "the failed task is refunded")
+	assert.Empty(t, stored.PrivateData.FinancialReviewReason)
+	assert.Nil(t, stored.PrivateData.FinancialIntent)
+	assert.NotEmpty(t, stored.PrivateData.FinancialOperationID)
 	var user model.User
 	require.NoError(t, database.First(&user, 7).Error)
 	assert.Equal(t, 1100, user.Quota)
+	assert.Equal(t, 1000, user.QuotaPaid)
+	assert.Equal(t, 70, user.QuotaBonus)
+	assert.Equal(t, 30, user.QuotaReward)
+	assert.Zero(t, user.UsedQuota)
+	assert.Equal(t, 1, user.RequestCount)
+	require.NoError(t, database.First(token, token.Id).Error)
+	assert.Equal(t, 2000, token.RemainQuota)
+	assert.Zero(t, token.UsedQuota)
+	require.NoError(t, database.First(channel, channel.Id).Error)
+	assert.Zero(t, channel.UsedQuota)
+	tryRealtimeFetch(&stored, true)
+	assert.EqualValues(t, 1, calls.Load(), "a terminal query neither polls upstream nor repeats financial settlement")
+	require.NoError(t, database.First(&user, 7).Error)
+	assert.Equal(t, 1100, user.Quota)
+	var ledgerRows []model.BalanceLedger
+	require.NoError(t, database.Where("user_id = ?", 7).Find(&ledgerRows).Error)
+	require.Len(t, ledgerRows, 6, "three source debits and exactly three corresponding refunds")
+	netDelta := 0
+	for _, row := range ledgerRows {
+		netDelta += row.Delta
+	}
+	assert.Zero(t, netDelta)
+	var source model.BonusSourceState
+	require.NoError(t, database.Where("user_id = ?", 7).First(&source).Error)
+	assert.Equal(t, 70, source.Available)
+	assert.Zero(t, source.Outstanding)
+	var refundLogs []model.Log
+	require.NoError(t, database.Where("user_id = ? AND type = ?", 7, model.LogTypeRefund).Find(&refundLogs).Error)
+	require.Len(t, refundLogs, 1, "a terminal query does not duplicate its financial display log")
+	assert.Equal(t, 1000, refundLogs[0].Quota)
 }
 
 func TestApplyChannelPinPreservesOriginTasksAndRetryMode(t *testing.T) {
@@ -413,6 +538,43 @@ export function extractUsage(){return {old_units:2};}
 	}
 }
 
+func TestRelayTaskSubmitFreezesRequestPricingContext(t *testing.T) {
+	saveBillingConfig(t)
+	exprStr := `tier("base", 1) * (header("x-plan") == "fast" ? 2 : 1)`
+	modeJSON, err := common.Marshal(map[string]string{"declared-model": billing_setting.BillingModeTieredExpr})
+	require.NoError(t, err)
+	exprJSON, err := common.Marshal(map[string]string{"declared-model": exprStr})
+	require.NoError(t, err)
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": string(modeJSON),
+		"billing_setting.billing_expr": string(exprJSON),
+	}))
+
+	c, info := newTaskSubmitContext(t, "declared-model", "")
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"quality":"hd","secret":"do-not-store"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("X-Plan", "fast")
+	c.Request.Header.Set("Authorization", "Bearer do-not-store")
+	c.Set("group", "default")
+	info.UserGroup = "default"
+	info.UsingGroup = "default"
+	info.OriginModelName = "declared-model"
+	pinMappingOrderPlugin(t, c, billingFallbackPlugin)
+
+	_, taskErr := RelayTaskSubmit(c, info)
+	require.NotNil(t, taskErr)
+	require.NotNil(t, info.TieredBillingSnapshot)
+	require.NotNil(t, info.TieredBillingSnapshot.RequestInput)
+	assert.Equal(t, map[string]string{"x-plan": "fast"}, info.TieredBillingSnapshot.RequestInput.Headers)
+	assert.Empty(t, info.TieredBillingSnapshot.RequestInput.Body)
+	assert.Equal(t, 2*common.QuotaPerUnit, info.TieredBillingSnapshot.EstimatedQuotaBeforeGroup)
+	assert.Equal(t, info.TieredBillingSnapshot.EstimatedQuotaAfterGroup, info.PriceData.Quota)
+
+	encoded, err := common.Marshal(info.TieredBillingSnapshot)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "do-not-store")
+}
+
 func TestSharedTaskBillingExpressionSelectionAndFrozenSettlement(t *testing.T) {
 	const baseExpr = `tier("base", u("seconds") * 2)`
 	const alphaExpr = `tier("alpha", u("seconds") * 3)`
@@ -610,6 +772,123 @@ func TestSharedEndpointBillingKeepsOrdinaryAndPluginPricesSeparate(t *testing.T)
 	}
 }
 
+// One plugin serves a model on chat paths and as a task. The model-level price
+// prices both only when it is per call or reads usage facts; otherwise tasks
+// need the plugin's own price. Chat request quantities (token counts, bare
+// image_count) never price a task, for any model.
+func TestRelayTaskSubmitPricesModelsAPluginAlsoRelays(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	const chatRoute = `[{incoming_path:"/v1/chat/completions",upstream_path:"/v1/chat/completions"}]`
+	const tokenExpr = `tier("tokens", p * 2 + c * 8)`
+	const usageExpr = `tier("seconds", u("seconds") * 0.3)`
+	const notConfigured = "Model declared-model has no task price for plugin bill-fallback"
+	savedPrices, savedRatios := ratio_setting.ModelPrice2JSONString(), ratio_setting.ModelRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedRatios))
+	})
+	for _, tc := range []struct {
+		name, relay, price, ratio, expr, override string
+		// The chat side is checked when chatQuota or chatErr is set.
+		chatQuota         int
+		chatErr           string
+		taskErr, taskExpr string
+		taskQuota         int
+	}{
+		{name: "per-call price prices chat and tasks", relay: chatRoute, price: "0.04", chatQuota: 20000, taskQuota: 40000},
+		{name: "token ratio alone leaves tasks unpriced", relay: chatRoute, ratio: "10", chatQuota: 10000, taskErr: notConfigured},
+		{name: "token expression is the chat price", relay: chatRoute, expr: tokenExpr, chatQuota: 1000, taskErr: notConfigured},
+		{name: "constant expression is the chat price", relay: chatRoute, expr: `tier("flat", 0.04)`, taskErr: notConfigured},
+		{name: "usage expression prices tasks only", relay: chatRoute, expr: usageExpr, chatErr: "task usage expression", taskExpr: usageExpr, taskQuota: 300000},
+		{name: "plugin price splits a chat price", relay: chatRoute, expr: tokenExpr, override: usageExpr, chatQuota: 1000, taskExpr: usageExpr, taskQuota: 300000},
+		{name: "plugin price splits a token ratio", relay: chatRoute, ratio: "10", override: usageExpr, taskExpr: usageExpr, taskQuota: 300000},
+		{name: "plugin price reading token counts is rejected", expr: usageExpr, override: `tier("tokens", p * 2 + u("seconds"))`, taskErr: notConfigured},
+		{name: "task model token expression no longer bills zero", expr: tokenExpr, taskErr: notConfigured},
+		// image_count is the chat request's image count: a task would read 1.
+		{name: "task model image count expression no longer bills one image", expr: `tier("images", image_count * 0.04)`, taskErr: notConfigured},
+		{name: "plugin price reading image count is rejected", expr: usageExpr, override: `tier("images", image_count * 0.04 + u("seconds"))`, taskErr: notConfigured},
+		{name: "task model token ratio keeps the legacy per-call price", ratio: "10", taskQuota: 5000000},
+		{name: "task model constant expression is a task price", expr: `tier("flat", 0.04)`, taskExpr: `tier("flat", 0.04)`, taskQuota: 20000},
+		{name: "model list route does not relay the model", relay: `[{incoming_path:"/v1/models",upstream_path:"/v1/models"}]`, ratio: "10", taskQuota: 5000000},
+		{name: "route for other models does not relay this one", relay: `[{incoming_path:"/v1/chat/completions",upstream_path:"/v1/chat/completions",models:["other-model"]}]`, expr: `tier("flat", 0.04)`, taskExpr: `tier("flat", 0.04)`, taskQuota: 20000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			saveBillingConfig(t)
+			modes, expressions, overrides := map[string]string{}, map[string]string{}, map[string]string{}
+			if tc.expr != "" {
+				modes["declared-model"], expressions["declared-model"] = billing_setting.BillingModeTieredExpr, tc.expr
+			}
+			if tc.override != "" {
+				overrides["bill-fallback::declared-model"] = tc.override
+			}
+			options := map[string]string{"group_ratio_setting.group_ratio": `{"default":1}`}
+			for key, value := range map[string]map[string]string{"billing_setting.billing_mode": modes, "billing_setting.billing_expr": expressions, billing_setting.PluginBillingExprOption: overrides} {
+				encoded, err := common.Marshal(value)
+				require.NoError(t, err)
+				options[key] = string(encoded)
+			}
+			require.NoError(t, config.GlobalConfig.LoadFromDB(options))
+			prices, ratios := `{}`, `{}`
+			if tc.price != "" {
+				prices = `{"declared-model":` + tc.price + `}`
+			}
+			if tc.ratio != "" {
+				ratios = `{"declared-model":` + tc.ratio + `}`
+			}
+			require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(prices))
+			require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(ratios))
+			meta := `fetchMode:"per_task",usageSchema:{seconds:{type:"number",unit:"second"}}`
+			if tc.relay != "" {
+				meta += `,relay:` + tc.relay
+			}
+			source := strings.Replace(billingFallbackPlugin, `fetchMode:"per_task"`, meta, 1) + `export function extractUsage(){return {seconds:2};}`
+			registry := pluginruntime.NewRegistry()
+			plugin, err := registry.Register(source, pluginruntime.Options{})
+			require.NoError(t, err)
+
+			if tc.chatQuota != 0 || tc.chatErr != "" {
+				chatContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+				chatContext.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+				chatContext.Request.Header.Set("Accept-Language", "en")
+				chat := &relaycommon.RelayInfo{
+					OriginModelName: "declared-model", UserGroup: "default", UsingGroup: "default", RelayFormat: kittypes.RelayFormatOpenAI,
+					Request: &kitdto.GeneralOpenAIRequest{Model: "declared-model"}, BillingRequestInput: &billingexpr.RequestInput{},
+				}
+				chatPrice, err := helper.ModelPriceHelper(chatContext, chat, 1000, &kittypes.TokenCountMeta{})
+				if tc.chatErr != "" {
+					require.ErrorContains(t, err, tc.chatErr)
+				} else {
+					require.NoError(t, err)
+					assert.Equal(t, tc.chatQuota, chatPrice.QuotaToPreConsume)
+				}
+			}
+
+			c, info := newTaskSubmitContext(t, "declared-model", "")
+			c.Request.Header.Set("Accept-Language", "en")
+			c.Set("group", "default")
+			c.Set(pluginruntime.ContextKeyPinnedPlugin, pluginruntime.PinnedPlugin{Generation: registry.Generation(), Plugin: plugin})
+			info.OriginModelName, info.UserGroup, info.UsingGroup = "declared-model", "default", "default"
+			_, taskErr := RelayTaskSubmit(c, info)
+			require.NotNil(t, taskErr) // This fixture stops at reservation, before upstream submission.
+			if tc.taskErr != "" {
+				assert.Equal(t, "model_price_error", taskErr.Code)
+				assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+				assert.Contains(t, taskErr.Message, tc.taskErr)
+				assert.Nil(t, info.TieredBillingSnapshot)
+				return
+			}
+			assert.NotEqual(t, "model_price_error", taskErr.Code, "submission error: %+v", taskErr)
+			assert.Equal(t, tc.taskQuota, info.PriceData.Quota)
+			if tc.taskExpr == "" {
+				assert.Nil(t, info.TieredBillingSnapshot)
+				return
+			}
+			require.NotNil(t, info.TieredBillingSnapshot)
+			assert.Equal(t, tc.taskExpr, info.TieredBillingSnapshot.ExprString)
+		})
+	}
+}
+
 // Issue #7478: task APIs answer 201 Created or 202 Accepted on submission.
 // Every 2xx must reach parseSubmitResponse; only other statuses are upstream
 // failures that keep the upstream status and body.
@@ -766,6 +1045,60 @@ export function extractUsage() { return {seconds:2}; }
 			}
 			require.NotNil(t, info.TieredBillingSnapshot)
 			assert.Equal(t, tc.expressions["retry-b::declared-model"], info.TieredBillingSnapshot.ExprString)
+		})
+	}
+}
+
+func TestTaskSubmitDeliveryEvidenceDistinguishesUnsent(t *testing.T) {
+	service.InitHttpClient()
+	for _, scenario := range []string{"cancel_before_send", "dial_refused", "accepted_then_disconnect"} {
+		t.Run(scenario, func(t *testing.T) {
+			saveBillingConfig(t)
+			require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+				"billing_setting.billing_mode": `{"declared-model":"tiered_expr"}`,
+				"billing_setting.billing_expr": `{"declared-model":"tier(\"flat\", 3)"}`,
+			}))
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				calls.Add(1)
+				conn, _, err := w.(http.Hijacker).Hijack()
+				if err == nil {
+					_ = conn.Close()
+				}
+			}))
+			t.Cleanup(server.Close)
+			if scenario == "dial_refused" {
+				server.Close()
+			}
+			c, info := newTaskSubmitContext(t, "declared-model", "")
+			if scenario == "cancel_before_send" {
+				ctx, cancel := context.WithCancel(c.Request.Context())
+				cancel()
+				c.Request = c.Request.WithContext(ctx)
+			}
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, server.URL)
+			// Prior attempts may leave these facts behind; current evidence wins.
+			common.SetContextKey(c, constant.ContextKeyUpstreamRequestAttempted, true)
+			common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, true)
+			c.Set("group", "default")
+			info.UserGroup, info.UsingGroup = "default", "default"
+			info.OriginModelName = "declared-model"
+			info.Billing = &imageReservation{limit: 1 << 30}
+			pinMappingOrderPlugin(t, c, mappingOrderSubmitPlugin)
+			_, taskErr := RelayTaskSubmit(c, info)
+			require.NotNil(t, taskErr)
+			if scenario != "cancel_before_send" {
+				assert.Equal(t, "do_request_failed", taskErr.Code)
+			}
+			unknown := scenario == "accepted_then_disconnect"
+			assert.Equal(t, unknown, taskErr.DeliveryUnknown)
+			if unknown {
+				assert.True(t, taskErr.NoRetry)
+				assert.Equal(t, int32(1), calls.Load())
+			} else {
+				assert.Zero(t, calls.Load())
+			}
 		})
 	}
 }

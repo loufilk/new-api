@@ -26,9 +26,14 @@ interface ErrorNotificationMeta extends Record<string, unknown> {
   errorToast?: boolean
 }
 
+interface QueryErrorMeta extends ErrorNotificationMeta {
+  /** Optional panels may own HTTP 500 fallback without replacing the route. */
+  redirectOnInternalServerError?: boolean
+}
+
 declare module '@tanstack/react-query' {
   interface Register {
-    queryMeta: ErrorNotificationMeta
+    queryMeta: QueryErrorMeta
     mutationMeta: ErrorNotificationMeta
   }
 }
@@ -36,7 +41,7 @@ declare module '@tanstack/react-query' {
 export function createAppQueryClient(
   onInternalServerError?: () => void
 ): QueryClient {
-  return new QueryClient({
+  const client: QueryClient = new QueryClient({
     defaultOptions: {
       queries: {
         retry: (failureCount, error) => {
@@ -48,6 +53,10 @@ export function createAppQueryClient(
       },
     },
     mutationCache: new MutationCache({
+      // A saved change goes out to every node; show its progress at once.
+      onSuccess: () => {
+        void client.invalidateQueries({ queryKey: ['node-sync'] })
+      },
       onError: (error, _variables, _context, mutation) => {
         // A mutation-specific callback owns its fallback or inline error state.
         if (mutation.meta?.errorToast !== false && !mutation.options.onError) {
@@ -58,8 +67,14 @@ export function createAppQueryClient(
     queryCache: new QueryCache({
       onError: (error, query) => {
         if (query.meta?.errorToast !== false) handleServerError(error)
-        if (getServerErrorStatus(error) === 500) onInternalServerError?.()
+        if (
+          query.meta?.redirectOnInternalServerError !== false &&
+          getServerErrorStatus(error) === 500
+        ) {
+          onInternalServerError?.()
+        }
       },
     }),
   })
+  return client
 }

@@ -63,10 +63,6 @@ export interface UserProfile {
   aff_code?: string
   /** Number of successful affiliate invites */
   aff_count: number
-  /** Affiliate quota (pending rewards) */
-  aff_quota: number
-  /** Total affiliate quota earned (historical) */
-  aff_history_quota: number
   /** Invite user ID */
   invite_user_id?: number
   /** Account creation timestamp */
@@ -82,6 +78,7 @@ export interface UserProfile {
   /** OIDC ID (OAuth) */
   oidc_id?: string
   /** Telegram ID (OAuth) */
+  google_id?: string
   telegram_id?: string
   /** LinuxDO ID (OAuth) */
   linux_do_id?: string
@@ -102,6 +99,8 @@ export interface UserSettings {
   quota_warning_threshold?: number
   /** Receive low balance reminders; absent means on */
   quota_warning_enabled?: boolean
+  /** Whether the selected write-only destination is already saved */
+  notification_destination_configured?: boolean
   /** Webhook URL */
   webhook_url?: string
   /** Webhook secret */
@@ -159,6 +158,7 @@ export interface UpdateUserSettingsRequest {
   quota_warning_enabled?: boolean
   webhook_url?: string
   webhook_secret?: string
+  clear_webhook_secret?: boolean
   notification_email?: string
   bark_url?: string
   gotify_url?: string

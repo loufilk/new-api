@@ -113,6 +113,7 @@ export function UserAuthForm({
     (requiresLegalConsent && !agreedToLegal)
   const hasWeChatLogin = Boolean(status?.wechat_login)
   const hasOAuthLogin = Boolean(
+    (status?.google_oauth && status.google_oauth_configured) ||
     status?.github_oauth ||
     status?.discord_oauth ||
     status?.oidc_enabled ||
@@ -411,6 +412,7 @@ export function UserAuthForm({
                 <Turnstile
                   key={turnstileWidgetKey}
                   siteKey={turnstileSiteKey}
+                  action='login'
                   onVerify={setTurnstileToken}
                   onExpire={() => setTurnstileToken('')}
                 />

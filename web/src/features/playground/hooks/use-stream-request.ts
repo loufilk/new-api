@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { SSE } from 'sse.js'
 
 import { getFreshAuthHeaders } from '@/lib/api'
+import { apiUrl } from '@/lib/api-url'
 
 import { API_ENDPOINTS, ERROR_MESSAGES } from '../constants'
 import {
@@ -27,7 +28,7 @@ import {
   isStreamClosedReadyState,
   isStreamDoneMessage,
   parseStreamErrorDetails,
-  parseStreamMessageUpdates,
+  parseStreamFrame,
 } from '../lib'
 import type { ChatCompletionRequest } from '../types'
 
@@ -121,7 +122,11 @@ export function createStreamRequestController(
       }
 
       try {
-        const updates = parseStreamMessageUpdates(data)
+        const { updates, error } = parseStreamFrame(data)
+        if (error) {
+          handleError(error.errorMessage, error.errorCode)
+          return
+        }
 
         for (const update of updates) {
           callbacks.onUpdate(update.type, update.chunk)
@@ -192,8 +197,9 @@ export function useStreamRequest() {
     controllerRef.current = createStreamRequestController({
       getHeaders: getFreshAuthHeaders,
       createSource: (payload, headers) =>
-        new SSE(API_ENDPOINTS.CHAT_COMPLETIONS, {
+        new SSE(apiUrl(API_ENDPOINTS.CHAT_COMPLETIONS), {
           headers,
+          start: false,
           method: 'POST',
           payload: JSON.stringify(payload),
         }) as StreamEventSource,

@@ -49,6 +49,7 @@ import {
   UserCog,
   Info,
   LogIn,
+  Workflow,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -59,6 +60,11 @@ import { Label } from '@/components/ui/label'
 import { DynamicPricingBreakdown } from '@/features/pricing/components/dynamic-pricing-breakdown'
 import { usePricingData } from '@/features/pricing/hooks/use-pricing-data'
 import { BILLING_PRICING_VARS } from '@/features/pricing/lib/billing-expr'
+import { compileBillingExpression } from '@/features/pricing/lib/billing-expression/parser'
+import {
+  getCachePriceLabels,
+  getCachePricingMode,
+} from '@/features/pricing/lib/cache-pricing'
 import { pluginUsageSchema } from '@/features/pricing/lib/plugin-pricing'
 import { PolicyDecisionRecord } from '@/features/system-settings/request-policies/decision-record'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
@@ -93,6 +99,10 @@ import {
 import { USAGE_BILLING_PATH, type LogOtherData } from '../../types'
 import { ResponseModelDetails } from '../model-badge'
 import { PluginAuthorLink } from '../plugin-author-link'
+import {
+  RequestPluginAdminSteps,
+  RequestPluginRecord,
+} from '../request-plugin-record'
 import { DetailRow, DetailSection } from './log-detail-layout'
 
 // Maps a channel-update changed-field token (as recorded by the backend audit)
@@ -177,7 +187,7 @@ function BillingBreakdown(props: {
   // OpenAI 12-hour cache writes have their own price, listed like Claude's.
   const hasCacheWrite12h = (other.cache_creation_tokens_12h || 0) > 0
   const isTieredExpr = other.billing_mode === 'tiered_expr'
-  const tieredSummary = getTieredBillingSummary(other)
+  const tieredSummary = getTieredBillingSummary(other, log.model_name)
 
   const rows: Array<{ label: string; value: string }> = []
   const priceOpts = { digitsLarge: 4, digitsSmall: 6, abbreviate: false }
@@ -258,9 +268,7 @@ function BillingBreakdown(props: {
       other.cache_creation_ratio !== 1
     ) {
       rows.push({
-        label: hasCacheWrite12h
-          ? t('Cache Creation (30m)')
-          : t('Cache Creation'),
+        label: hasCacheWrite12h ? t('Cache Write (30m)') : t('Cache Write'),
         value: `${fmtPrice(baseInputUSD * other.cache_creation_ratio)}/M`,
       })
     }
@@ -269,7 +277,7 @@ function BillingBreakdown(props: {
       other.cache_creation_ratio_5m !== 0
     ) {
       rows.push({
-        label: t('Cache Creation (5m)'),
+        label: t('Cache Write (5m)'),
         value: `${fmtPrice(baseInputUSD * other.cache_creation_ratio_5m)}/M`,
       })
     }
@@ -278,7 +286,7 @@ function BillingBreakdown(props: {
       other.cache_creation_ratio_1h !== 0
     ) {
       rows.push({
-        label: t('Cache Creation (1h)'),
+        label: t('Cache Write (1h)'),
         value: `${fmtPrice(baseInputUSD * other.cache_creation_ratio_1h)}/M`,
       })
     }
@@ -287,7 +295,7 @@ function BillingBreakdown(props: {
       other.cache_creation_ratio_12h !== 0
     ) {
       rows.push({
-        label: t('Cache Creation (12h)'),
+        label: t('Cache Write (12h)'),
         value: `${fmtPrice(baseInputUSD * other.cache_creation_ratio_12h)}/M`,
       })
     }
@@ -408,6 +416,14 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
 
   if (!hasTokens) return null
 
+  const compiled = compileBillingExpression(
+    decodeBillingExprB64(other.expr_b64)
+  )
+  const cacheMode = getCachePricingMode(
+    compiled.status === 'ready' ? compiled.variables : [],
+    log.model_name
+  )
+
   const rows: Array<{ label: string; value: string }> = []
 
   rows.push({ label: t('Input Tokens'), value: promptTokens.toLocaleString() })
@@ -497,7 +513,7 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
             return (
               <DetailRow
                 key={variable.key}
-                label={t(variable.shortLabel)}
+                label={t(getCachePriceLabels(variable, cacheMode).shortLabel)}
                 value={count.toLocaleString()}
                 mono
               />
@@ -521,6 +537,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const { t } = useTranslation()
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
   const other = parseLogOther(props.log.other)
+  const firstTimingMs =
+    other?.first_downstream_content_ms ??
+    (other?.frt != null && other.frt > 0 ? other.frt : null)
   const typeConfig = getLogTypeConfig(props.log.type)
 
   const isViolation = isViolationFeeLog(other)
@@ -546,6 +565,21 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const showAdminIp =
     !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
   const adminInfo = other?.admin_info
+  const upstreamModel = props.isAdmin
+    ? (adminInfo?.upstream_model_name ?? other?.upstream_model_name)
+    : undefined
+  const responseModel = props.isAdmin
+    ? (adminInfo?.response_model ?? other?.response_model)
+    : undefined
+  const paramOverrides = props.isAdmin
+    ? (adminInfo?.po ?? other?.po)
+    : undefined
+  const streamStatus = props.isAdmin
+    ? (adminInfo?.stream_status ?? other?.stream_status)
+    : undefined
+  const requestConversion = props.isAdmin
+    ? (adminInfo?.request_conversion ?? other?.request_conversion)
+    : undefined
   const topupAuditFields =
     isTopup && props.isAdmin && adminInfo
       ? ([
@@ -647,10 +681,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
       ].filter(Boolean) as Array<{ label: string; value: string }>)
     : []
 
-  const conversionChain =
-    other && Array.isArray(other.request_conversion)
-      ? other.request_conversion.filter(Boolean)
-      : []
+  const conversionChain = Array.isArray(requestConversion)
+    ? requestConversion.filter(Boolean)
+    : []
   const conversionLabel =
     conversionChain.length <= 1
       ? t('Native format')
@@ -704,7 +737,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
               mono
             />
           )}
-          {props.log.upstream_request_id && (
+          {props.isAdmin && props.log.upstream_request_id && (
             <DetailRow
               label={t('Upstream Request ID')}
               value={props.log.upstream_request_id}
@@ -763,41 +796,45 @@ export function DetailsDialog(props: DetailsDialogProps) {
             />
           )}
 
-          {showTiming && props.log.use_time > 0 && (
-            <DetailRow
-              label={t('Response Time')}
-              value={
-                <span
-                  className={cn(
-                    'font-medium',
-                    timingTextColorClass(
-                      getResponseTimeColor(
-                        props.log.use_time,
-                        props.log.completion_tokens
+          {showTiming &&
+            (props.log.use_time > 0 ||
+              (props.log.is_stream && firstTimingMs != null)) && (
+              <DetailRow
+                label={t('Response Time')}
+                value={
+                  <span
+                    className={cn(
+                      'font-medium',
+                      timingTextColorClass(
+                        getResponseTimeColor(
+                          props.log.use_time,
+                          props.log.completion_tokens
+                        )
                       )
-                    )
-                  )}
-                >
-                  {formatUseTime(props.log.use_time)}
-                  {props.log.is_stream &&
-                    other?.frt != null &&
-                    other.frt > 0 && (
+                    )}
+                  >
+                    {formatUseTime(props.log.use_time)}
+                    {props.log.is_stream && firstTimingMs != null && (
                       <span
                         className={cn(
                           'font-normal',
                           timingTextColorClass(
-                            getFirstResponseTimeColor(other.frt / 1000)
+                            getFirstResponseTimeColor(firstTimingMs / 1000)
                           )
                         )}
                       >
                         {' '}
-                        (FRT: {formatUseTime(other.frt / 1000)})
+                        (
+                        {other?.first_downstream_content_ms != null
+                          ? 'TTFT'
+                          : 'FRT'}
+                        : {formatUseTime(firstTimingMs / 1000)})
                       </span>
                     )}
-                </span>
-              }
-            />
-          )}
+                  </span>
+                }
+              />
+            )}
         </div>
 
         {/* Request conversion (admin only, not for refund) */}
@@ -963,6 +1000,12 @@ export function DetailsDialog(props: DetailsDialogProps) {
                 }
               />
             ) : null}
+          </DetailSection>
+        ) : null}
+
+        {props.isAdmin && adminInfo?.request_plugins?.length ? (
+          <DetailSection label={t('Request processing steps')}>
+            <RequestPluginAdminSteps steps={adminInfo.request_plugins} />
           </DetailSection>
         ) : null}
 
@@ -1182,9 +1225,20 @@ export function DetailsDialog(props: DetailsDialogProps) {
           />
         )}
 
-        {other?.response_model && (
+        {responseModel && (
           <DetailSection label={t('Response Model')}>
-            <ResponseModelDetails observation={other.response_model} />
+            <ResponseModelDetails observation={responseModel} />
+          </DetailSection>
+        )}
+        {/* Model mapping for logs without response observations */}
+        {!responseModel && other?.is_model_mapped && upstreamModel && (
+          <DetailSection label={t('Model Mapping')}>
+            <DetailRow
+              label={t('Request Model')}
+              value={props.log.model_name}
+              mono
+            />
+            <DetailRow label={t('Actual Model')} value={upstreamModel} mono />
           </DetailSection>
         )}
         {/* Model mapping for logs without response observations */}
@@ -1229,6 +1283,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
               />
             )}
             <DynamicPricingBreakdown
+              modelName={props.log.model_name}
               compact
               billingExpr={decodeBillingExprB64(other.expr_b64)}
               matchedTierLabel={other.matched_tier}
@@ -1265,41 +1320,41 @@ export function DetailsDialog(props: DetailsDialogProps) {
           )}
 
         {/* Stream status details */}
-        {other?.stream_status && other.stream_status.status !== 'ok' && (
+        {streamStatus && streamStatus.status !== 'ok' && (
           <DetailSection label={t('Stream Status')}>
             <DetailRow
               label={t('Status')}
               value={
                 <StatusBadge
-                  label={other.stream_status.status || t('Error')}
+                  label={streamStatus.status || t('Error')}
                   variant='red'
                   size='sm'
                   copyable={false}
                 />
               }
             />
-            {other.stream_status.end_reason && (
+            {streamStatus.end_reason && (
               <DetailRow
                 label={t('End Reason')}
-                value={other.stream_status.end_reason}
+                value={streamStatus.end_reason}
               />
             )}
-            {(other.stream_status.error_count ?? 0) > 0 && (
+            {(streamStatus.error_count ?? 0) > 0 && (
               <DetailRow
                 label={t('Soft Errors')}
-                value={String(other.stream_status.error_count)}
+                value={String(streamStatus.error_count)}
               />
             )}
-            {other.stream_status.end_error && (
+            {streamStatus.end_error && (
               <DetailRow
                 label={t('End Error')}
-                value={other.stream_status.end_error}
+                value={streamStatus.end_error}
               />
             )}
-            {Array.isArray(other.stream_status.errors) &&
-              other.stream_status.errors.length > 0 && (
+            {Array.isArray(streamStatus.errors) &&
+              streamStatus.errors.length > 0 && (
                 <pre className='bg-background/60 mt-1 max-h-32 overflow-y-auto rounded border p-2 font-mono text-[11px] leading-relaxed wrap-break-word whitespace-pre-wrap'>
-                  {other.stream_status.errors.join('\n')}
+                  {streamStatus.errors.join('\n')}
                 </pre>
               )}
           </DetailSection>
@@ -1353,35 +1408,50 @@ export function DetailsDialog(props: DetailsDialogProps) {
           </DetailSection>
         )}
 
-        {/* Param override */}
-        {other?.po && Array.isArray(other.po) && other.po.length > 0 && (
+        {other?.request_plugins?.length ? (
           <DetailSection
-            icon={<Settings2 className='size-3.5' aria-hidden='true' />}
+            icon={<Workflow className='size-3.5' aria-hidden='true' />}
             iconTone='chart-3'
-            label={`${t('Param Override')} (${other.po.length})`}
+            label={t('Request processing')}
           >
-            {other.po.filter(Boolean).map((line) => {
-              const parsed = parseAuditLine(line)
-              if (!parsed) return null
-              return (
-                <div
-                  key={`${parsed.action}-${parsed.content}`}
-                  className='bg-background/60 flex min-w-0 flex-col gap-1.5 rounded border p-2 sm:flex-row sm:items-start sm:gap-2'
-                >
-                  <StatusBadge
-                    variant='neutral'
-                    label={getParamOverrideActionLabel(parsed.action, t)}
-                    className='shrink-0 font-medium'
-                    copyable={false}
-                  />
-                  <span className='min-w-0 font-mono text-[11px] leading-relaxed break-all sm:wrap-break-word'>
-                    {parsed.content}
-                  </span>
-                </div>
-              )
-            })}
+            <RequestPluginRecord
+              items={other.request_plugins}
+              loadIcons={props.isRoot}
+            />
           </DetailSection>
-        )}
+        ) : null}
+
+        {/* Param override */}
+        {paramOverrides &&
+          Array.isArray(paramOverrides) &&
+          paramOverrides.length > 0 && (
+            <DetailSection
+              icon={<Settings2 className='size-3.5' aria-hidden='true' />}
+              iconTone='chart-3'
+              label={`${t('Param Override')} (${paramOverrides.length})`}
+            >
+              {paramOverrides.filter(Boolean).map((line) => {
+                const parsed = parseAuditLine(line)
+                if (!parsed) return null
+                return (
+                  <div
+                    key={`${parsed.action}-${parsed.content}`}
+                    className='bg-background/60 flex min-w-0 flex-col gap-1.5 rounded border p-2 sm:flex-row sm:items-start sm:gap-2'
+                  >
+                    <StatusBadge
+                      variant='neutral'
+                      label={getParamOverrideActionLabel(parsed.action, t)}
+                      className='shrink-0 font-medium'
+                      copyable={false}
+                    />
+                    <span className='min-w-0 font-mono text-[11px] leading-relaxed break-all sm:wrap-break-word'>
+                      {parsed.content}
+                    </span>
+                  </div>
+                )
+              })}
+            </DetailSection>
+          )}
 
         {/* Content */}
         {details && (

@@ -45,12 +45,17 @@ import {
 } from '../components/settings-form-layout'
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import {
+  sensitiveExemptGroupsSchema,
+  normalizeSensitiveExemptGroups,
+} from '../utils/public-policy-fields'
 import { useSavePolicy } from './use-save-policy'
 
 const sensitiveSchema = z.object({
   CheckSensitiveEnabled: z.boolean(),
   CheckSensitiveOnPromptEnabled: z.boolean(),
   SensitiveWords: z.string().optional(),
+  SensitiveCheckExemptGroups: sensitiveExemptGroupsSchema,
 })
 
 type SensitiveFormValues = z.infer<typeof sensitiveSchema>
@@ -74,9 +79,15 @@ export function RequestChecksSection({
   }, [defaultValues, form])
 
   const onSubmit = async (values: SensitiveFormValues) => {
+    const normalizedDefaults = {
+      ...defaultValues,
+      SensitiveCheckExemptGroups: normalizeSensitiveExemptGroups(
+        defaultValues.SensitiveCheckExemptGroups
+      ),
+    }
     const updates = Object.entries(values).filter(
       ([key, value]) =>
-        value !== defaultValues[key as keyof SensitiveFormValues]
+        value !== normalizedDefaults[key as keyof SensitiveFormValues]
     )
 
     try {
@@ -173,6 +184,33 @@ export function RequestChecksSection({
               />
             </SettingsControlChildren>
           </SettingsControlGroup>
+
+          <FormField
+            control={form.control}
+            name='SensitiveCheckExemptGroups'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>
+                  {t('Groups exempt from local keyword checks')}
+                </FormLabel>
+                <FormControl>
+                  <Textarea
+                    rows={4}
+                    placeholder={t(
+                      'Enter one exact group name per line, for example 破甲'
+                    )}
+                    {...field}
+                  />
+                </FormControl>
+                <FormDescription>
+                  {t(
+                    'Empty by default. Only the authorized group actually selected for each attempt is exempt. Auto retries into other groups are checked. This does not disable upstream provider moderation.'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
 
           <FormField
             control={form.control}

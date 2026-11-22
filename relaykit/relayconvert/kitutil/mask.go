@@ -4,9 +4,10 @@ import (
 	"maps"
 	"net"
 	"net/url"
-	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/MoeForge/moego/regexp"
 )
 
 var (
@@ -123,14 +124,9 @@ func MaskSensitiveInfo(str string, upstreamURLs ...string) string {
 	}
 	// Mask URLs on an upstream host, and the query values of every other URL
 	str = maskURLPattern.ReplaceAllStringFunc(str, func(match string) string {
-		urlStr := match
-		for urlStr != "" {
-			last := urlStr[len(urlStr)-1]
-			if strings.IndexByte(".,;:!?'", last) < 0 && (last != ')' || strings.Count(urlStr, "(") >= strings.Count(urlStr, ")")) {
-				break
-			}
-			urlStr = urlStr[:len(urlStr)-1]
-		}
+		// Trailing punctuation belongs to the surrounding text and is kept
+		// outside the masked URL.
+		urlStr := strings.TrimRight(match, ".,;:!?')")
 		suffix := match[len(urlStr):]
 		u, err := url.Parse(urlStr)
 		if err != nil {
@@ -218,4 +214,16 @@ func MaskSensitiveInfo(str string, upstreamURLs ...string) string {
 	}
 
 	return str
+}
+
+var logDomainPattern = regexp.MustCompile(`\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b`)
+
+// MaskSensitiveLogInfo keeps production's blanket host/path redaction for
+// infrastructure logs without a selected channel. User-facing errors should
+// instead use MaskSensitiveInfo with the selected channel's addresses so public
+// provider documentation links remain readable.
+func MaskSensitiveLogInfo(str string) string {
+	addresses := maskURLPattern.FindAllString(str, -1)
+	addresses = append(addresses, logDomainPattern.FindAllString(str, -1)...)
+	return MaskSensitiveInfo(str, addresses...)
 }

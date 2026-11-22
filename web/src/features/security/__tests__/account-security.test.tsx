@@ -26,12 +26,8 @@ import {
   within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createInstance } from 'i18next'
-import { I18nextProvider, initReactI18next } from 'react-i18next'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
-import en from '@/i18n/locales/en.json'
-import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 import { STATUS_QUERY_KEY } from '@/lib/status-query'
 import { useAuthStore } from '@/stores/auth-store'
@@ -41,7 +37,6 @@ import { DeleteAccountDialog } from '../components/dialogs/delete-account-dialog
 import { EmailBindDialog } from '../components/dialogs/email-bind-dialog'
 import { TwoFABackupDialog } from '../components/dialogs/two-fa-backup-dialog'
 import { TwoFADisableDialog } from '../components/dialogs/two-fa-disable-dialog'
-import { TwoFASetupDialog } from '../components/dialogs/two-fa-setup-dialog'
 
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }))
 vi.mock('@tanstack/react-router', async (importOriginal) => ({
@@ -82,7 +77,11 @@ it('requires verification after username confirmation and cancels without deleti
     data: { success: true, data: {} },
   })
   const user = userEvent.setup()
-  render(<DeleteAccountDialog open username='user' onOpenChange={vi.fn()} />)
+  render(
+    <QueryClientProvider client={client}>
+      <DeleteAccountDialog open username='user' onOpenChange={vi.fn()} />
+    </QueryClientProvider>
+  )
   expect(screen.getByRole('button', { name: 'Delete Account' })).toBeDisabled()
   await user.type(screen.getByRole('textbox'), 'user')
   await user.click(screen.getByRole('button', { name: 'Delete Account' }))
@@ -240,7 +239,9 @@ it.each(['unmount', 'account change'])(
     )
     const user = userEvent.setup()
     const view = render(
-      <DeleteAccountDialog open username='user' onOpenChange={vi.fn()} />
+      <QueryClientProvider client={client}>
+        <DeleteAccountDialog open username='user' onOpenChange={vi.fn()} />
+      </QueryClientProvider>
     )
     await user.type(screen.getByRole('textbox'), 'user')
     await user.click(screen.getByRole('button', { name: 'Delete Account' }))
@@ -398,7 +399,11 @@ it('regenerates backup codes through scoped verification and keeps the result vi
   const close = vi.fn()
   const success = vi.fn()
   const user = userEvent.setup()
-  render(<TwoFABackupDialog open onOpenChange={close} onSuccess={success} />)
+  render(
+    <QueryClientProvider client={client}>
+      <TwoFABackupDialog open onOpenChange={close} onSuccess={success} />
+    </QueryClientProvider>
+  )
   await user.click(screen.getByRole('button', { name: 'Generate New Codes' }))
   const input = await screen.findByRole('textbox', {
     name: 'Authenticator code',
@@ -456,12 +461,18 @@ it('allows a common new password after verifying the current password once', asy
   const user = userEvent.setup()
   const onOpenChange = vi.fn()
   render(
-    <ChangePasswordDialog open username='user' onOpenChange={onOpenChange} />
+    <QueryClientProvider client={client}>
+      <ChangePasswordDialog open username='user' onOpenChange={onOpenChange} />
+    </QueryClientProvider>
   )
-  expect(screen.getByText('Use 8–128 characters.')).toBeVisible()
+  expect(screen.getByLabelText('New Password')).toHaveAccessibleDescription(
+    expect.stringContaining('8–128 characters')
+  )
   await user.type(screen.getByLabelText('Current Password'), 'current-password')
   await user.type(screen.getByLabelText('New Password'), 'password123')
   await user.type(screen.getByLabelText('Confirm New Password'), 'password123')
+  expect(screen.getByText('Easy to guess')).toBeVisible()
+  expect(screen.getByRole('status')).toHaveTextContent('Passwords match')
   await user.click(screen.getByRole('button', { name: 'Change Password' }))
   await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
   expect(get).toHaveBeenCalledWith(
@@ -490,6 +501,35 @@ it('allows a common new password after verifying the current password once', asy
   )
 })
 
+it('shows a password confirmation mismatch once after a failed submit', async () => {
+  const put = vi.spyOn(api, 'put')
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={client}>
+      <ChangePasswordDialog open username='user' onOpenChange={vi.fn()} />
+    </QueryClientProvider>
+  )
+  await user.type(screen.getByLabelText('Current Password'), 'current-password')
+  await user.type(screen.getByLabelText('New Password'), 'account-password!42')
+  await user.type(
+    screen.getByLabelText('Confirm New Password'),
+    'account-password!43'
+  )
+  expect(screen.getAllByText('Passwords do not match')).toHaveLength(1)
+
+  await user.click(screen.getByRole('button', { name: 'Change Password' }))
+
+  const confirmation = screen.getByLabelText('Confirm New Password')
+  await waitFor(() =>
+    expect(confirmation).toHaveAttribute('aria-invalid', 'true')
+  )
+  expect(screen.getAllByText('Passwords do not match')).toHaveLength(1)
+  expect(confirmation).toHaveAccessibleDescription(
+    /^\s*Passwords do not match\s*$/
+  )
+  expect(put).not.toHaveBeenCalled()
+})
+
 it.each(['button', 'escape'])(
   'cancels additional verification and restores focus using %s',
   async (method) => {
@@ -508,7 +548,11 @@ it.each(['button', 'escape'])(
       .spyOn(api, 'put')
       .mockResolvedValue({ data: { success: true } })
     const user = userEvent.setup()
-    render(<ChangePasswordDialog open username='user' onOpenChange={vi.fn()} />)
+    render(
+      <QueryClientProvider client={client}>
+        <ChangePasswordDialog open username='user' onOpenChange={vi.fn()} />
+      </QueryClientProvider>
+    )
     await user.type(
       screen.getByLabelText('Current Password'),
       'current-password'
@@ -580,7 +624,9 @@ it.each(['unmount', 'account change'])(
       .mockResolvedValue({ data: { success: true, data: {} } })
     const user = userEvent.setup()
     const view = render(
-      <ChangePasswordDialog open username='user' onOpenChange={vi.fn()} />
+      <QueryClientProvider client={client}>
+        <ChangePasswordDialog open username='user' onOpenChange={vi.fn()} />
+      </QueryClientProvider>
     )
     await user.type(
       screen.getByLabelText('Current Password'),
@@ -647,12 +693,14 @@ it('sets a first password after verifying an existing factor without asking for 
   })
   const user = userEvent.setup()
   render(
-    <ChangePasswordDialog
-      open
-      username='user'
-      hasPassword={false}
-      onOpenChange={vi.fn()}
-    />
+    <QueryClientProvider client={client}>
+      <ChangePasswordDialog
+        open
+        username='user'
+        hasPassword={false}
+        onOpenChange={vi.fn()}
+      />
+    </QueryClientProvider>
   )
   expect(screen.queryByLabelText('Current Password')).not.toBeInTheDocument()
   await user.type(
@@ -724,12 +772,14 @@ it('confirms both email addresses after identity verification and freezes the su
   const onSuccess = vi.fn()
   const user = userEvent.setup()
   render(
-    <EmailBindDialog
-      open
-      currentEmail='old@example.com'
-      onOpenChange={vi.fn()}
-      onSuccess={onSuccess}
-    />
+    <QueryClientProvider client={client}>
+      <EmailBindDialog
+        open
+        currentEmail='old@example.com'
+        onOpenChange={vi.fn()}
+        onSuccess={onSuccess}
+      />
+    </QueryClientProvider>
   )
   await user.type(screen.getByLabelText('Email Address'), 'new@example.com')
   await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -756,70 +806,89 @@ it('confirms both email addresses after identity verification and freezes the su
   )
 })
 
-it('translates the delete confirmation as a sentence and preserves the literal username on language change', async () => {
-  const i18n = createInstance()
-  await i18n.use(initReactI18next).init({
-    lng: 'zh',
-    fallbackLng: false,
-    nsSeparator: false,
-    resources: { en, zh },
-    interpolation: { escapeValue: false },
+it('reverifies an existing email through the same proof-bound binding flow without requiring a different address', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        scope: 'account.binding.bind',
+        methods: [{ method: 'password', available: true }],
+        oauth_providers: [],
+        password_encryption_enabled: false,
+      },
+    },
   })
-  const username = 'admin <b>name</b>'
-  render(
-    <I18nextProvider i18n={i18n}>
-      <DeleteAccountDialog open username={username} onOpenChange={vi.fn()} />
-    </I18nextProvider>
-  )
-  expect(
-    screen.getByRole('textbox', { name: `输入 ${username} 以确认` })
-  ).toBeVisible()
-  await act(() => i18n.changeLanguage('en'))
-  expect(
-    screen.getByRole('textbox', { name: `Type ${username} to confirm` })
-  ).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Delete Account' })).toBeDisabled()
-})
-
-it('shows complete translated 2FA step descriptions and updates every step on language change', async () => {
-  const i18n = createInstance()
-  await i18n.use(initReactI18next).init({
-    lng: 'zh',
-    fallbackLng: false,
-    nsSeparator: false,
-    resources: { en, zh },
-    interpolation: { escapeValue: false },
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url === '/api/verify') {
+      return {
+        data: {
+          success: true,
+          data: {
+            scope: 'account.binding.bind',
+            method: 'password',
+            proof_token: 'synthetic-reverify-proof',
+            expires_at: Math.floor(Date.now() / 1000) + 60,
+          },
+        },
+      }
+    }
+    if (url === '/api/oauth/email/bind/start') {
+      return {
+        data: {
+          success: true,
+          data: {
+            flow_token: 'synthetic-reverify-flow',
+            email: 'legacy@example.com',
+            current_email: 'l***@example.com',
+            old_email_required: false,
+            expires_at: Math.floor(Date.now() / 1000) + 600,
+            resend_at: Math.floor(Date.now() / 1000) + 60,
+          },
+        },
+      }
+    }
+    return { data: { success: true, data: {} } }
   })
+  const onSuccess = vi.fn()
   const user = userEvent.setup()
   render(
-    <I18nextProvider i18n={i18n}>
-      <TwoFASetupDialog
+    <QueryClientProvider client={client}>
+      <EmailBindDialog
         open
-        setupData={{
-          secret: 'EXAMPLE',
-          qr_code_data: 'otpauth://totp/example',
-          backup_codes: ['EXAMPLE-CODE'],
-          flow_token: 'example-flow',
-          expires_at: 1234567890,
-        }}
-        loading={false}
-        initializing={false}
-        onCancel={vi.fn()}
-        onEnable={vi.fn()}
+        currentEmail='legacy@example.com'
+        onOpenChange={vi.fn()}
+        onSuccess={onSuccess}
       />
-    </I18nextProvider>
+    </QueryClientProvider>
   )
-  const descriptions = [
-    ['第 1 步，共 3 步：扫描二维码', 'Step 1 of 3: Scan QR Code'],
-    ['第 2 步，共 3 步：保存备份代码', 'Step 2 of 3: Save Backup Codes'],
-    ['第 3 步，共 3 步：验证设置', 'Step 3 of 3: Verify Setup'],
-  ]
-  for (const [chinese, english] of descriptions) {
-    await act(() => i18n.changeLanguage('zh'))
-    expect(screen.getByRole('dialog')).toHaveAccessibleDescription(chinese)
-    await act(() => i18n.changeLanguage('en'))
-    expect(screen.getByRole('dialog')).toHaveAccessibleDescription(english)
-    const next = screen.queryByRole('button', { name: 'Next' })
-    if (next) await user.click(next)
-  }
+  await user.type(screen.getByLabelText('Email Address'), 'legacy@example.com')
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.type(
+    await screen.findByLabelText('Password', { selector: 'input' }),
+    'synthetic-current-password'
+  )
+  await user.click(screen.getByRole('button', { name: 'Verify' }))
+  await user.type(
+    await screen.findByLabelText('New email verification code'),
+    '123456'
+  )
+  expect(
+    screen.queryByLabelText('Current email verification code')
+  ).not.toBeInTheDocument()
+  expect(screen.getByLabelText('Email Address')).toHaveValue(
+    'legacy@example.com'
+  )
+  expect(screen.getByLabelText('Email Address')).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: 'Confirm email' }))
+  await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce())
+  expect(post).toHaveBeenCalledWith(
+    '/api/oauth/email/bind/start',
+    { email: 'legacy@example.com' },
+    expect.objectContaining({ singleUseAuthorization: true })
+  )
+  expect(post).toHaveBeenCalledWith(
+    '/api/oauth/email/bind',
+    { flow_token: 'synthetic-reverify-flow', new_code: '123456', old_code: '' },
+    expect.objectContaining({ singleUseAuthorization: true })
+  )
 })

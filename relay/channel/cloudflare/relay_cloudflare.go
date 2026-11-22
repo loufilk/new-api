@@ -62,7 +62,7 @@ func cfStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Res
 			responseText += choice.Delta.GetContentString()
 		}
 		response.Id = id
-		response.Model = info.UpstreamModelName
+		response.Model = info.OriginModelName
 		err = helper.ObjectData(c, response)
 		if isFirst {
 			isFirst = false
@@ -76,9 +76,9 @@ func cfStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Res
 	if err := scanner.Err(); err != nil {
 		logger.LogError(c, common.LogText("error_scanning_stream_response: %s", err.Error()))
 	}
-	usage := service.ResponseText2Usage(c, responseText, info.UpstreamModelName, info.GetEstimatePromptTokens())
+	usage := service.ResponseText2Usage(c, responseText, info.OriginModelName, info.GetEstimatePromptTokens())
 	if info.ShouldIncludeUsage {
-		response := helper.GenerateFinalUsageResponse(id, info.StartTime.Unix(), info.UpstreamModelName, *usage)
+		response := helper.GenerateFinalUsageResponse(id, info.StartTime.Unix(), info.OriginModelName, *usage)
 		err := helper.ObjectData(c, response)
 		if err != nil {
 			logger.LogError(c, common.LogText("error_rendering_final_usage_response: %s", err.Error()))
@@ -102,12 +102,12 @@ func cfHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeBadResponseBody), nil
 	}
-	response.Model = info.UpstreamModelName
+	response.Model = info.OriginModelName
 	var responseText string
 	for _, choice := range response.Choices {
 		responseText += choice.Message.StringContent()
 	}
-	usage := service.ResponseText2Usage(c, responseText, info.UpstreamModelName, info.GetEstimatePromptTokens())
+	usage := service.ResponseText2Usage(c, responseText, info.OriginModelName, info.GetEstimatePromptTokens())
 	response.Usage = *usage
 	response.Id = helper.GetResponseID(c)
 	jsonResponse, err := json.Marshal(response)
@@ -144,6 +144,6 @@ func cfSTTHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respon
 	c.Writer.WriteHeader(resp.StatusCode)
 	_, _ = c.Writer.Write(jsonResponse)
 
-	usage := service.ResponseText2Usage(c, cfResp.Result.Text, info.UpstreamModelName, info.GetEstimatePromptTokens())
+	usage := service.ResponseText2Usage(c, cfResp.Result.Text, info.OriginModelName, info.GetEstimatePromptTokens())
 	return nil, usage
 }

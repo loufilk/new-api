@@ -64,12 +64,24 @@ export function parseStreamErrorDetails(data?: string): StreamErrorDetails {
   }
 }
 
-export function parseStreamMessageUpdates(data: string): StreamMessageUpdate[] {
-  const chunk = JSON.parse(data) as ChatCompletionChunk
+export function parseStreamFrame(data: string): {
+  updates: StreamMessageUpdate[]
+  error?: StreamErrorDetails
+} {
+  const chunk = JSON.parse(data) as ChatCompletionChunk & StreamErrorPayload
+  if (chunk.error) {
+    return {
+      updates: [],
+      error: {
+        errorCode: chunk.error.code,
+        errorMessage: chunk.error.message || ERROR_MESSAGES.API_REQUEST_ERROR,
+      },
+    }
+  }
   const delta = chunk.choices?.[0]?.delta
 
   if (!delta) {
-    return []
+    return { updates: [] }
   }
 
   const updates: StreamMessageUpdate[] = []
@@ -83,7 +95,11 @@ export function parseStreamMessageUpdates(data: string): StreamMessageUpdate[] {
     updates.push({ type: 'content', chunk: delta.content })
   }
 
-  return updates
+  return { updates }
+}
+
+export function parseStreamMessageUpdates(data: string): StreamMessageUpdate[] {
+  return parseStreamFrame(data).updates
 }
 
 export function isStreamDoneMessage(data: string): boolean {
@@ -109,5 +125,7 @@ export function getStreamReadyStateError(
     return `HTTP ${status}: ${ERROR_MESSAGES.CONNECTION_CLOSED}`
   }
 
-  return null
+  return eventReadyState === STREAM_CLOSED_READY_STATE
+    ? ERROR_MESSAGES.CONNECTION_CLOSED
+    : null
 }

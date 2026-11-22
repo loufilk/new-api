@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button'
 interface CTAProps {
   className?: string
   isAuthenticated?: boolean
+  registrationEnabled?: boolean
 }
 
 export function CTA(props: CTAProps) {
@@ -37,7 +38,6 @@ export function CTA(props: CTAProps) {
 
   return (
     <section className='relative z-10 overflow-hidden px-6 py-24 md:py-32'>
-      {/* Gradient mesh background */}
       <div
         aria-hidden
         className='absolute inset-0 -z-10 opacity-20 dark:opacity-[0.08]'
@@ -62,12 +62,17 @@ export function CTA(props: CTAProps) {
         </h2>
         <p className='text-muted-foreground/80 mx-auto mt-5 max-w-md text-sm leading-relaxed md:text-base'>
           {t(
-            'Deploy your own gateway and start routing requests through your configured upstream services.'
+            'Connect through OpenAI, Claude, Gemini, and other compatible API routes'
           )}
         </p>
         <div className='mt-8 flex items-center justify-center gap-3'>
-          <Button className='group rounded-lg' render={<Link to='/sign-up' />}>
-            {t('Get Started')}
+          <Button
+            className='group rounded-lg'
+            render={
+              <Link to={props.registrationEnabled ? '/sign-up' : '/sign-in'} />
+            }
+          >
+            {props.registrationEnabled ? t('Get Started') : t('Sign In')}
             <ArrowRight className='ml-1 size-3.5 transition-transform duration-200 group-hover:translate-x-0.5' />
           </Button>
           <Button

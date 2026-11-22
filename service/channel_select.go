@@ -33,12 +33,17 @@ func AppendTaskPluginIdentityFilter(c *gin.Context, pluginKey string) {
 		return
 	}
 	channelTypes, pluginKeys := pinnedTaskPluginIdentities(c, pluginKey)
-	GetChannelConstraints(c).AddFilter(dto.ChannelFilter{
+	filter := dto.ChannelFilter{
 		Kind:                   dto.FilterTaskPluginIdentity,
 		TaskPluginKey:          pluginKey,
 		TaskPluginChannelTypes: channelTypes,
 		TaskPluginKeys:         pluginKeys,
-	})
+	}
+	if c.Request != nil && c.Request.URL != nil {
+		// An ordinary request may run on a plugin channel whose relay routes serve its path.
+		filter.RequestPath = c.Request.URL.Path
+	}
+	GetChannelConstraints(c).AddFilter(filter)
 }
 
 type RetryParam struct {
@@ -112,11 +117,24 @@ func (p *RetryParam) ResetRetryNextTry() {
 //	Retry=3: GroupB, priority1 (startRetryIndex=2, priorityRetry=1)
 //	         分组B, 优先级1
 func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, error) {
+	if tokenRoutingEnabled(param.Ctx) {
+		guard, err := model.BeginRequestGroupConfigRead(param.Ctx)
+		if err != nil {
+			return nil, "", err
+		}
+		defer guard.Close()
+		channel, group, selectionErr := selectTokenRoutingChannel(param)
+		if err := guard.Finish(); err != nil {
+			return nil, "", err
+		}
+		return channel, group, selectionErr
+	}
 	var channel *model.Channel
 	var err error
 	selectGroup := param.TokenGroup
 	userGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup)
 	filters := GetChannelConstraints(param.Ctx).Filters
+	affinityRetryOffset := param.Ctx.GetInt(ginKeyChannelAffinityRetryOffset)
 
 	if param.TokenGroup == "auto" {
 		autoGroups := GetRequestAutoGroups(param.Ctx, userGroup)
@@ -128,6 +146,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 		// startGroupIndex: 开始搜索的分组索引
 		startGroupIndex := 0
 		crossGroupRetry := common.GetContextKeyBool(param.Ctx, constant.ContextKeyTokenCrossGroupRetry)
+		lastSelectedGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyAutoGroup)
 
 		if lastGroupIndex, exists := common.GetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex); exists {
 			if idx, ok := lastGroupIndex.(int); ok {
@@ -137,23 +156,35 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 
 		for i := startGroupIndex; i < len(autoGroups); i++ {
 			autoGroup := autoGroups[i]
+			if !crossGroupRetry && lastSelectedGroup != "" && autoGroup != lastSelectedGroup {
+				continue
+			}
 			// Calculate priorityRetry for current group
 			// 计算当前分组的 priorityRetry
-			priorityRetry := param.GetRetry()
-			// If moved to a new group, reset priorityRetry and update startRetryIndex
-			// 如果切换到新分组，重置 priorityRetry 并更新 startRetryIndex
-			if i > startGroupIndex {
-				priorityRetry = 0
+			groupRetry := param.GetRetry()
+			// A new group starts from its highest priority without the affinity offset.
+			if i > startGroupIndex || lastSelectedGroup != "" && autoGroup != lastSelectedGroup {
+				groupRetry = 0
+				param.SetRetry(0)
+				affinityRetryOffset = 0
+				param.Ctx.Set(ginKeyChannelAffinityRetryOffset, 0)
 			}
+			priorityRetry := max(groupRetry-affinityRetryOffset, 0)
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
-			channel, _ = model.GetRandomSatisfiedChannel(
+			channel, err = model.GetRandomSatisfiedChannel(
 				autoGroup,
 				param.ModelName,
 				priorityRetry,
 				filters,
 			)
+			if err != nil {
+				return nil, autoGroup, err
+			}
 			if channel == nil {
+				if !crossGroupRetry && lastSelectedGroup != "" {
+					return nil, autoGroup, nil
+				}
 				// Current group has no available channel for this model, try next group
 				// 当前分组没有该模型的可用渠道，尝试下一个分组
 				logger.LogDebug(param.Ctx, "No available channel in group %s for model %s at priorityRetry %d, trying next group", autoGroup, param.ModelName, priorityRetry)
@@ -163,6 +194,8 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 				// Reset retry counter so outer loop can continue for next group
 				// 重置重试计数器，以便外层循环可以为下一个分组继续
 				param.SetRetry(0)
+				affinityRetryOffset = 0
+				param.Ctx.Set(ginKeyChannelAffinityRetryOffset, 0)
 				continue
 			}
 			common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroup, autoGroup)
@@ -171,17 +204,18 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 
 			// Prepare state for next retry
 			// 为下一次重试准备状态
-			if crossGroupRetry && priorityRetry >= common.RetryTimes {
+			if crossGroupRetry && groupRetry >= common.RetryTimes {
 				// Current group has exhausted all retries, prepare to switch to next group
 				// This request still uses current group, but next retry will use next group
 				// 当前分组已用完所有重试次数，准备切换到下一个分组
 				// 本次请求仍使用当前分组，但下次重试将使用下一个分组
-				logger.LogDebug(param.Ctx, "Current group %s retries exhausted (priorityRetry=%d >= RetryTimes=%d), preparing switch to next group for next retry", autoGroup, priorityRetry, common.RetryTimes)
+				logger.LogDebug(param.Ctx, "Current group %s retries exhausted (groupRetry=%d >= RetryTimes=%d), preparing switch to next group for next retry", autoGroup, groupRetry, common.RetryTimes)
 				common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex, i+1)
 				// Reset retry counter so outer loop can continue for next group
 				// 重置重试计数器，以便外层循环可以为下一个分组继续
 				param.SetRetry(0)
 				param.ResetRetryNextTry()
+				param.Ctx.Set(ginKeyChannelAffinityRetryOffset, 0)
 			} else {
 				// Stay in current group, save current state
 				// 保持在当前分组，保存当前状态
@@ -193,7 +227,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 		channel, err = model.GetRandomSatisfiedChannel(
 			param.TokenGroup,
 			param.ModelName,
-			param.GetRetry(),
+			max(param.GetRetry()-affinityRetryOffset, 0),
 			filters,
 		)
 		if err != nil {
@@ -207,37 +241,48 @@ func pinnedTaskPluginIdentities(c *gin.Context, expected string) ([]int, []strin
 	if c == nil || expected == "" {
 		return nil, nil
 	}
+	// A shared host endpoint and a native route several plugins declare both
+	// admit a channel of any candidate.
+	var generation *jsplugin.RoutingGeneration
+	var candidates []*jsplugin.LoadedPlugin
 	if value, exists := c.Get(jsplugin.ContextKeyPinnedEndpoint); exists {
-		pinned, ok := value.(jsplugin.PinnedEndpoint)
-		if ok && pinned.Generation != nil && len(pinned.Candidates) > 1 {
-			expectedFound := false
-			channelTypes := make([]int, 0, len(pinned.Candidates))
-			pluginKeys := make([]string, 0, len(pinned.Candidates))
-			seen := make(map[int]struct{}, len(pinned.Candidates))
+		if pinned, ok := value.(jsplugin.PinnedEndpoint); ok && len(pinned.Candidates) > 1 {
+			generation = pinned.Generation
 			for _, candidate := range pinned.Candidates {
-				if candidate.Plugin == nil {
+				candidates = append(candidates, candidate.Plugin)
+			}
+		}
+	} else if value, exists := c.Get(jsplugin.ContextKeyPinnedRoute); exists {
+		if pinned, ok := value.(jsplugin.PinnedRoute); ok && len(pinned.Candidates) > 1 {
+			generation = pinned.Generation
+			for _, candidate := range pinned.Candidates {
+				candidates = append(candidates, candidate.Plugin)
+			}
+		}
+	}
+	if generation != nil {
+		expectedFound := false
+		channelTypes := make([]int, 0, len(candidates))
+		pluginKeys := make([]string, 0, len(candidates))
+		seen := make(map[int]struct{}, len(candidates))
+		for _, candidate := range candidates {
+			if candidate == nil {
+				continue
+			}
+			if candidate.Meta.Key == expected {
+				expectedFound = true
+			}
+			pluginKeys = append(pluginKeys, candidate.Meta.Key)
+			for _, channelType := range candidate.Meta.ChannelTypes {
+				if _, duplicate := seen[channelType]; duplicate {
 					continue
 				}
-				if candidate.Plugin.Meta.Key == expected {
-					expectedFound = true
-				}
-				pluginKeys = append(pluginKeys, candidate.Plugin.Meta.Key)
-				for _, channelType := range candidate.Plugin.Meta.ChannelTypes {
-					if channelType == 0 || channelType == constant.ChannelTypeTaskPlugin {
-						continue
-					}
-					if _, duplicate := seen[channelType]; duplicate {
-						continue
-					}
-					if plugin, indexed := pinned.Generation.GetByChannelType(channelType); indexed && plugin == candidate.Plugin {
-						seen[channelType] = struct{}{}
-						channelTypes = append(channelTypes, channelType)
-					}
-				}
+				seen[channelType] = struct{}{}
+				channelTypes = append(channelTypes, channelType)
 			}
-			if expectedFound {
-				return channelTypes, pluginKeys
-			}
+		}
+		if expectedFound {
+			return channelTypes, pluginKeys
 		}
 	}
 	value, exists := c.Get(jsplugin.ContextKeyPinnedPlugin)
@@ -280,7 +325,18 @@ type ChannelSelectError struct {
 // eligible channel; every candidate must satisfy the request's channel
 // filters. The group the channel was chosen from is returned for auto-group
 // callers. The caller still applies SetupContextForSelectedChannel.
-func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam) (*model.Channel, string, *ChannelSelectError) {
+func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam) (selected *model.Channel, selectedGroup string, selectionError *ChannelSelectError) {
+	groupRead, err := model.BeginRequestGroupConfigRead(c)
+	if err != nil {
+		return nil, "", &ChannelSelectError{StatusCode: http.StatusServiceUnavailable, Code: "group_config_changed", MessageID: i18n.MsgGroupConfigChanged}
+	}
+	defer func() {
+		if err := groupRead.Finish(); err != nil {
+			selected, selectedGroup = nil, ""
+			selectionError = &ChannelSelectError{StatusCode: http.StatusServiceUnavailable, Code: "group_config_changed", MessageID: i18n.MsgGroupConfigChanged}
+		}
+	}()
+
 	constraints := GetChannelConstraints(c)
 	if pin, found, overridden := constraints.ResolvedPin(); found {
 		for _, lost := range overridden {
@@ -303,13 +359,22 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 				FilterKind: kind, Channel: channel,
 			}
 		}
+		if pin.Source == dto.PinSourceOriginTask {
+			tasks, _ := common.GetContextKeyType[[]*model.Task](c, constant.ContextKeyOriginTasks)
+			group, scopeErr := authorizedOriginTaskGroup(c, channel, modelName, tasks)
+			if scopeErr != nil {
+				return nil, "", scopeErr
+			}
+			common.SetContextKey(c, constant.ContextKeyAutoGroup, group)
+			return channel, group, nil
+		}
 		return channel, "", nil
 	}
 
 	usingGroup := retry.TokenGroup
 	var channel *model.Channel
 	var selectGroup string
-	if retry.GetRetry() == 0 {
+	if retry.GetRetry() == 0 && len(c.GetStringSlice("use_channel")) == 0 {
 		if preferredChannelID, found := GetPreferredChannelByAffinity(c, modelName, usingGroup); found {
 			affinityUsable := false
 			preferred, err := model.CacheGetChannel(preferredChannelID)
@@ -320,13 +385,19 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 			if affinitySatisfied {
 				if usingGroup == "auto" {
 					userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-					for _, g := range GetRequestAutoGroups(c, userGroup) {
+					for idx, g := range GetRequestAutoGroups(c, userGroup) {
 						if model.IsChannelEnabledForGroupModel(g, modelName, preferred.Id) {
 							selectGroup = g
 							common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
 							channel = preferred
 							affinityUsable = true
 							MarkChannelAffinityUsed(c, g, preferred.Id)
+							// The affinity hop used this group's only attempt. The extra
+							// retry slot transitions to the next group, never back here.
+							if !tokenRoutingEnabled(c) && common.RetryTimes == 0 &&
+								common.GetContextKeyBool(c, constant.ContextKeyTokenCrossGroupRetry) {
+								common.SetContextKey(c, constant.ContextKeyAutoGroupIndex, idx+1)
+							}
 							break
 						}
 					}
@@ -348,7 +419,11 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 
 	if channel == nil {
 		var err error
-		channel, selectGroup, err = CacheGetRandomSatisfiedChannel(retry)
+		if tokenRoutingEnabled(c) {
+			channel, selectGroup, err = selectTokenRoutingChannel(retry)
+		} else {
+			channel, selectGroup, err = CacheGetRandomSatisfiedChannel(retry)
+		}
 		if err != nil {
 			showGroup := usingGroup
 			if usingGroup == "auto" {
@@ -388,5 +463,6 @@ func pinnedChannelUnavailable(pin dto.ChannelPin, statusCode int, messageID stri
 // AppendUsedChannel records an attempted channel in the request's channel
 // trail, which the retry log and the consume log's admin_info both read.
 func AppendUsedChannel(c *gin.Context, channelID int) {
+	markTokenRoutingAttempt(c, channelID)
 	c.Set("use_channel", append(c.GetStringSlice("use_channel"), fmt.Sprintf("%d", channelID)))
 }

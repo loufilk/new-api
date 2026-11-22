@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { ColumnDef } from '@tanstack/react-table'
+
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -32,8 +32,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import type { ColumnDef } from '@/lib/console-table'
 import { getCurrencyDisplay } from '@/lib/currency'
-import { formatQuota } from '@/lib/format'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import {
@@ -44,6 +44,7 @@ import {
 } from '../constants'
 import type { User } from '../types'
 import { DataTableRowActions } from './data-table-row-actions'
+import { UserInvitationCell } from './user-invitation-cell'
 import { UserQuotaCell } from './user-quota-cell'
 
 export function useUsersColumns(): ColumnDef<User>[] {
@@ -58,7 +59,10 @@ export function useUsersColumns(): ColumnDef<User>[] {
         header: ({ table }) => (
           <Checkbox
             checked={table.getIsAllPageRowsSelected()}
-            indeterminate={table.getIsSomePageRowsSelected()}
+            indeterminate={
+              table.getIsSomePageRowsSelected() &&
+              !table.getIsAllPageRowsSelected()
+            }
             onCheckedChange={(value) =>
               table.toggleAllPageRowsSelected(!!value)
             }
@@ -238,41 +242,10 @@ export function useUsersColumns(): ColumnDef<User>[] {
       {
         id: 'invite_info',
         header: t('Invite Info'),
-        cell: ({ row }) => {
-          const user = row.original
-          const affCount = user.aff_count || 0
-          const affHistoryQuota = user.aff_history_quota || 0
-          const inviterId = user.inviter_id || 0
-
-          if (affCount === 0 && affHistoryQuota === 0 && inviterId === 0) {
-            return <span className='text-muted-foreground text-sm'>—</span>
-          }
-
-          return (
-            <div
-              data-table-text='secondary'
-              className='min-w-0 space-y-1 text-xs font-normal'
-            >
-              {(affCount > 0 || affHistoryQuota !== 0) && (
-                <LongText>
-                  {t('Invited {{count}} users', { count: affCount })} ·{' '}
-                  {t('Earnings')}:{' '}
-                  <span className='tabular-nums'>
-                    {formatQuota(affHistoryQuota)}
-                  </span>
-                </LongText>
-              )}
-              {inviterId > 0 && (
-                <LongText className='text-muted-foreground'>
-                  {t('Inviter ID: {{id}}', { id: inviterId })}
-                </LongText>
-              )}
-            </div>
-          )
-        },
-        size: 240,
+        cell: ({ row }) => <UserInvitationCell user={row.original} />,
+        size: 280,
         enableSorting: false,
-        meta: { mobileHidden: true },
+        meta: { mobileOrder: 45 },
       },
       {
         accessorKey: 'created_at',

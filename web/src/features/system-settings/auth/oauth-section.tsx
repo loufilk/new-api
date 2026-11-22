@@ -81,6 +81,8 @@ const oauthSchema = z.object({
     token_endpoint: z.string(),
     user_info_endpoint: z.string(),
   }),
+  GoogleOAuthEnabled: z.boolean(),
+  google: z.object({ client_id: z.string(), client_secret: z.string() }),
   TelegramOAuthEnabled: z.boolean(),
   telegram: z.object({ client_id: z.string(), client_secret: z.string() }),
   LinuxDOOAuthEnabled: z.boolean(),
@@ -110,6 +112,10 @@ type FlatOAuthDefaults = {
   'oidc.authorization_endpoint': string
   'oidc.token_endpoint': string
   'oidc.user_info_endpoint': string
+  GoogleOAuthEnabled: boolean
+  'google.client_id': string
+  'google.client_secret': string
+  'google.client_secret_configured': boolean
   TelegramOAuthEnabled: boolean
   'telegram.client_id': string
   'telegram.client_secret': string
@@ -194,6 +200,8 @@ const buildFormDefaults = (defaults: FlatOAuthDefaults): OAuthFormValues => ({
     token_endpoint: defaults['oidc.token_endpoint'] ?? '',
     user_info_endpoint: defaults['oidc.user_info_endpoint'] ?? '',
   },
+  GoogleOAuthEnabled: defaults.GoogleOAuthEnabled,
+  google: { client_id: defaults['google.client_id'] ?? '', client_secret: '' },
   TelegramOAuthEnabled: defaults.TelegramOAuthEnabled,
   telegram: {
     client_id: defaults['telegram.client_id'] ?? '',
@@ -224,6 +232,10 @@ const normalizeFormValues = (values: OAuthFormValues): FlatOAuthDefaults => ({
   'oidc.authorization_endpoint': values.oidc.authorization_endpoint,
   'oidc.token_endpoint': values.oidc.token_endpoint,
   'oidc.user_info_endpoint': values.oidc.user_info_endpoint,
+  'google.client_id': values.google.client_id.trim(),
+  'google.client_secret': values.google.client_secret.trim(),
+  GoogleOAuthEnabled: values.GoogleOAuthEnabled,
+  'google.client_secret_configured': false,
   'telegram.client_id': values.telegram.client_id,
   'telegram.client_secret': values.telegram.client_secret,
   TelegramOAuthEnabled: values.TelegramOAuthEnabled,
@@ -262,6 +274,11 @@ export function OAuthSection(props: OAuthSectionProps) {
     'oidc',
     t('Site URL')
   )
+  const googleCallbackUrl = buildOAuthCallbackUrl(
+    props.serverAddress,
+    'google',
+    t('Site URL')
+  )
   const telegramCallbackUrl = buildOAuthCallbackUrl(
     props.serverAddress,
     'telegram',
@@ -297,6 +314,27 @@ export function OAuthSection(props: OAuthSectionProps) {
   }, [props.defaultValues, form])
 
   const onSubmit = async (values: OAuthFormValues) => {
+    if (
+      values.GoogleOAuthEnabled &&
+      (!values.google.client_id.trim() ||
+        (!values.google.client_secret.trim() &&
+          !baselineRef.current['google.client_secret_configured']))
+    ) {
+      setActiveTab('google')
+      form.setError(
+        !values.google.client_id.trim()
+          ? 'google.client_id'
+          : 'google.client_secret',
+        {
+          type: 'validate',
+          message: t(
+            'Cannot enable {{provider}}. Enter the {{provider}} Client ID and Client Secret first.',
+            { provider: 'Google' }
+          ),
+        }
+      )
+      return
+    }
     let finalValues = values
     const wellKnown = values.oidc.well_known.trim()
     const discoveryUrlChanged =
@@ -354,13 +392,25 @@ export function OAuthSection(props: OAuthSectionProps) {
     const normalized = normalizeFormValues(finalValues)
     const changedKeys = (
       Object.keys(normalized) as Array<keyof FlatOAuthDefaults>
-    ).filter((key) => normalized[key] !== baselineRef.current[key])
+    ).filter((key) => {
+      if (key === 'google.client_secret_configured') return false
+      if (key === 'google.client_secret') return normalized[key] !== ''
+      return normalized[key] !== baselineRef.current[key]
+    })
 
     if (changedKeys.length === 0) {
       toast.info(t('No changes to save'))
       return
     }
 
+    // Disable first when removing configuration; enable only after credentials.
+    if (
+      !normalized.GoogleOAuthEnabled &&
+      changedKeys.includes('GoogleOAuthEnabled')
+    ) {
+      changedKeys.splice(changedKeys.indexOf('GoogleOAuthEnabled'), 1)
+      changedKeys.unshift('GoogleOAuthEnabled')
+    }
     for (const key of changedKeys) {
       await updateOption.mutateAsync({
         key,
@@ -368,9 +418,18 @@ export function OAuthSection(props: OAuthSectionProps) {
       })
     }
 
-    baselineRef.current = normalized
-    baselineSerializedRef.current = JSON.stringify(normalized)
-    form.reset(buildFormDefaults(normalized))
+    // Never retain the write-only Google secret as a form baseline or refill it.
+    const savedValues = {
+      ...normalized,
+      'google.client_secret': '',
+      'google.client_secret_configured': Boolean(
+        normalized['google.client_secret'] ||
+        baselineRef.current['google.client_secret_configured']
+      ),
+    }
+    baselineRef.current = savedValues
+    baselineSerializedRef.current = JSON.stringify(savedValues)
+    form.reset(buildFormDefaults(savedValues))
   }
 
   const handleReset = () => {
@@ -394,7 +453,8 @@ export function OAuthSection(props: OAuthSectionProps) {
             <FormDirtyIndicator isDirty={form.formState.isDirty} />
 
             <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <TabsList className='grid w-full grid-cols-6'>
+              <TabsList className='grid w-full grid-cols-3 group-data-horizontal/tabs:h-auto sm:grid-cols-4 lg:grid-cols-7'>
+                <TabsTrigger value='google'>{t('Google')}</TabsTrigger>
                 <TabsTrigger value='github'>{t('GitHub')}</TabsTrigger>
                 <TabsTrigger value='discord'>{t('Discord')}</TabsTrigger>
                 <TabsTrigger value='oidc'>{t('OIDC')}</TabsTrigger>
@@ -402,6 +462,92 @@ export function OAuthSection(props: OAuthSectionProps) {
                 <TabsTrigger value='linuxdo'>{t('LinuxDO')}</TabsTrigger>
                 <TabsTrigger value='wechat'>{t('WeChat')}</TabsTrigger>
               </TabsList>
+
+              <TabsContent value='google' className={oauthTabContentClassName}>
+                <OAuthSetupGuide
+                  title={t('Setup guide')}
+                  description={t(
+                    'Create a Google OAuth Web application client and register this exact callback URL. Sign-in requests only openid, email and profile; it does not read Gmail.'
+                  )}
+                  rows={[
+                    {
+                      label: t('Authorization callback URL'),
+                      value: googleCallbackUrl,
+                      copyLabel: t('Copy callback URL'),
+                    },
+                  ]}
+                >
+                  <p>
+                    {t(
+                      'Google sign-in requires secure session cookies and a trusted HTTPS site origin. Ask your administrator to configure the session cookie settings.'
+                    )}
+                  </p>
+                  <p>
+                    {t(
+                      'Google security verification requires a signed auth_time claim for a recent sign-in. If unavailable, use password, 2FA or Passkey verification.'
+                    )}
+                  </p>
+                </OAuthSetupGuide>
+                <FormField
+                  control={form.control}
+                  name='GoogleOAuthEnabled'
+                  render={({ field }) => (
+                    <SettingsSwitchItem>
+                      <SettingsSwitchContent>
+                        <FormLabel>{t('Enable Google OAuth')}</FormLabel>
+                        <FormDescription>
+                          {t('Allow users to sign in with Google')}
+                        </FormDescription>
+                      </SettingsSwitchContent>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                    </SettingsSwitchItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name='google.client_id'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Client ID')}</FormLabel>
+                      <FormControl>
+                        <Input {...field} autoComplete='off' />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name='google.client_secret'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Client Secret')}</FormLabel>
+                      <FormControl>
+                        <Input
+                          {...field}
+                          type='password'
+                          autoComplete='new-password'
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {baselineRef.current['google.client_secret_configured']
+                          ? t(
+                              'Client secret is configured. Leave blank to keep it unchanged.'
+                            )
+                          : t(
+                              'Client secret is not configured. Enter it before enabling Google sign-in.'
+                            )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </TabsContent>
 
               <TabsContent value='github' className={oauthTabContentClassName}>
                 <OAuthSetupGuide

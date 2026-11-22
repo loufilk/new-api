@@ -43,6 +43,16 @@ func getScannerBufferSize() int {
 	return DefaultMaxScannerBufferSize
 }
 
+// WebSocketReadLimits applies the HTTP body and stream frame ceilings to
+// upgraded connections too, which net/http's request body limit cannot cover.
+func WebSocketReadLimits() (client, upstream int64) {
+	maxMB := constant.MaxRequestBodyMB
+	if maxMB <= 0 {
+		maxMB = 128
+	}
+	return int64(maxMB) << 20, int64(getScannerBufferSize())
+}
+
 // NewStreamScanner shares relay scanner configuration. Callers buffering bounded
 // task state may additionally cap a line without increasing the configured limit.
 func NewStreamScanner(reader io.Reader, maxBytes ...int) *bufio.Scanner {
@@ -112,6 +122,12 @@ func (w *streamResponseWriter) WriteString(s string) (int, error) {
 	return w.ResponseWriter.WriteString(s)
 }
 
+// FlushError preserves the host's delivery-error contract through the budget
+// wrapper instead of letting Gin's Flush discard an underlying socket error.
+func (w *streamResponseWriter) FlushError() error {
+	return FlushWriter(&gin.Context{Writer: w.ResponseWriter})
+}
+
 // Unwrap lets http.ResponseController reach the connection.
 func (w *streamResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
@@ -125,7 +141,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 
 	// Finish the request keepalive before changing headers. The scanner owns
 	// subsequent ping and data writes through its shared write mutex.
-	if writer, ok := c.Writer.(*streamKeepAliveWriter); ok {
+	if writer := keepAliveWriter(c); writer != nil {
 		writer.stop()
 	}
 
@@ -137,14 +153,15 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	streamingTimeout := time.Duration(constant.StreamingTimeout) * time.Second
 
 	var (
-		stopChan    = make(chan bool, 3) // 增加缓冲区避免阻塞
-		scanner     = NewStreamScanner(resp.Body)
-		ticker      = time.NewTicker(streamingTimeout)
-		pingTicker  *time.Ticker
-		writeMutex  sync.Mutex     // Mutex to protect concurrent writes
-		wg          sync.WaitGroup // 用于等待所有 goroutine 退出
-		cleanupOnce sync.Once
-		stopOnce    sync.Once
+		stopChan      = make(chan bool, 3) // 增加缓冲区避免阻塞
+		scanner       = NewStreamScanner(resp.Body)
+		ticker        = time.NewTicker(streamingTimeout)
+		pingTicker    *time.Ticker
+		writeMutex    sync.Mutex     // Mutex to protect concurrent writes
+		writesStopped bool           // Protected by writeMutex; queued callbacks and pings must not write again.
+		wg            sync.WaitGroup // 用于等待所有 goroutine 退出
+		cleanupOnce   sync.Once
+		stopOnce      sync.Once
 	)
 
 	stop := func() {
@@ -218,14 +235,28 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				select {
 				case <-pingTicker.C:
 					var err error
+					var stopped bool
 					func() {
 						writeMutex.Lock()
 						defer writeMutex.Unlock()
+						if writesStopped {
+							stopped = true
+							return
+						}
 						err = PingData(c)
+						if err != nil {
+							writesStopped = true
+							info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, err)
+							info.StreamStatus.MarkCancelled()
+							info.StreamStatus.SetAPIError(service.NewRelayClientGoneError(err))
+						}
 					}()
+					if stopped {
+						return
+					}
 					if err != nil {
 						logger.LogError(c, common.LogText("ping data error: %s", err.Error()))
-						info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonPingFail, err)
+						stop()
 						return
 					}
 					logger.LogDebug(c, "ping data sent")
@@ -262,7 +293,14 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			func() {
 				writeMutex.Lock()
 				defer writeMutex.Unlock()
+				if writesStopped {
+					sr.Stop(nil)
+					return
+				}
 				dataHandler(data, sr)
+				if sr.IsStopped() {
+					writesStopped = true
+				}
 			}()
 			if sr.IsStopped() {
 				return
@@ -298,18 +336,15 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			data := scanner.Text()
 			logger.LogDebug(c, "stream scanner data: %s", data)
 
-			if len(data) < 6 {
-				continue
-			}
-			if data[:5] != "data:" && data[:6] != "[DONE]" {
-				continue
-			}
-			data = data[5:]
+			data, hasDataPrefix := strings.CutPrefix(data, "data:")
 			data = strings.TrimSpace(data)
+			if !hasDataPrefix && data != "[DONE]" {
+				continue
+			}
 			if data == "" {
 				continue
 			}
-			if !strings.HasPrefix(data, "[DONE]") {
+			if data != "[DONE]" {
 				info.SetFirstResponseTime()
 				info.ReceivedResponseCount++
 

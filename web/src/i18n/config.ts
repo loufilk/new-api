@@ -16,49 +16,119 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import i18n from 'i18next'
+import i18n, { type BackendModule } from 'i18next'
 import LanguageDetector from 'i18next-browser-languagedetector'
 import { initReactI18next } from 'react-i18next'
 
-import { convertDetectedLanguage } from './languages'
-import en from './locales/en.json'
-import fr from './locales/fr.json'
-import ja from './locales/ja.json'
-import ru from './locales/ru.json'
-import vi from './locales/vi.json'
-import zhTW from './locales/zh-TW.json'
-import zhCN from './locales/zh.json'
+import {
+  loadExtensionI18nOverride,
+  type ExtensionLocaleKey,
+} from '@/extensions'
 
-export const resources = {
-  en,
-  zhCN,
-  fr,
-  ru,
-  ja,
-  vi,
-  zhTW,
-} as const
+import {
+  INTERFACE_LANGUAGE_OPTIONS,
+  normalizeInterfaceLanguage,
+  type InterfaceLanguageCode,
+} from './languages'
 
-i18n
-  .use(LanguageDetector)
-  .use(initReactI18next)
-  .init({
-    resources,
-    fallbackLng: 'en',
-    supportedLngs: ['en', 'zhCN', 'fr', 'ru', 'ja', 'vi', 'zhTW'],
-    load: 'currentOnly',
-    nsSeparator: false, // Allow literal colons in keys (e.g., URLs, labels)
-    debug: import.meta.env.DEV,
-    interpolation: {
-      escapeValue: false, // not needed for react as it escapes by default
+type Bundle = { translation: Record<string, string> }
+type LocaleModule = { default: Bundle } | Bundle
+
+const coreLocaleLoaders: Record<
+  InterfaceLanguageCode,
+  () => Promise<LocaleModule>
+> = {
+  en: () => import('./locales/en.json'),
+  zhCN: () => import('./locales/zh.json'),
+  fr: () => import('./locales/fr.json'),
+  ru: () => import('./locales/ru.json'),
+  ja: () => import('./locales/ja.json'),
+  vi: () => import('./locales/vi.json'),
+  zhTW: () => import('./locales/zh-TW.json'),
+}
+
+function normalizeBundle(module: LocaleModule): Bundle {
+  if (module && typeof module === 'object' && 'default' in module) {
+    return module.default
+  }
+  return module
+}
+
+async function loadLocalizedBundle(
+  locale: InterfaceLanguageCode
+): Promise<Bundle> {
+  const [coreModule, extension] = await Promise.all([
+    coreLocaleLoaders[locale](),
+    loadExtensionI18nOverride(locale as ExtensionLocaleKey),
+  ])
+  const core = normalizeBundle(coreModule)
+  if (!extension) return core
+  return {
+    translation: {
+      ...core.translation,
+      ...extension.translation,
     },
-    detection: {
-      order: ['localStorage', 'navigator'],
-      caches: ['localStorage'],
-      // Browsers report `zh-CN`/`zh-TW`/`zh`; map them onto our `zhCN`/`zhTW`
-      // codes (non-Chinese codes pass through for normal supportedLngs matching).
-      convertDetectedLanguage,
-    },
-  })
+  }
+}
+
+const localeBackend: BackendModule = {
+  type: 'backend',
+  init() {},
+  read(language, _namespace, callback) {
+    void (async () => {
+      try {
+        const bundle = await loadLocalizedBundle(
+          normalizeInterfaceLanguage(language)
+        )
+        callback(null, bundle.translation)
+      } catch (error) {
+        callback(
+          error instanceof Error ? error : new Error('Failed to load locale'),
+          false
+        )
+      }
+    })()
+  },
+}
+
+let initPromise: Promise<typeof i18n> | null = null
+
+/** Initialize i18next before React mounts while loading only active locales. */
+export function initI18n(): Promise<typeof i18n> {
+  if (initPromise) return initPromise
+  // The detector filters whitespace before calling convertDetectedLanguage.
+  // Normalize legacy saved aliases through the application's allowlisted codes.
+  let savedLanguage: InterfaceLanguageCode | undefined
+  try {
+    const saved = window.localStorage.getItem('i18nextLng')
+    if (saved?.trim()) savedLanguage = normalizeInterfaceLanguage(saved)
+  } catch {
+    // Storage can be blocked by browser privacy settings; use the navigator.
+  }
+  initPromise = i18n
+    .use(localeBackend)
+    .use(LanguageDetector)
+    .use(initReactI18next)
+    .init({
+      lng: savedLanguage,
+      fallbackLng: 'en',
+      supportedLngs: INTERFACE_LANGUAGE_OPTIONS.map(
+        (language) => language.code
+      ),
+      load: 'currentOnly',
+      nsSeparator: false,
+      debug: import.meta.env.DEV,
+      interpolation: {
+        escapeValue: false,
+      },
+      detection: {
+        order: ['navigator'],
+        caches: ['localStorage'],
+        convertDetectedLanguage: normalizeInterfaceLanguage,
+      },
+    })
+    .then(() => i18n)
+  return initPromise
+}
 
 export default i18n

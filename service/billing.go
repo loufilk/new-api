@@ -6,7 +6,9 @@ import (
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
@@ -22,6 +24,14 @@ const (
 // 会话已存在时（任务重试换到另一个渠道）把预扣补到 preConsumedQuota，
 // 和首次预扣一样必须由余额覆盖。
 func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycommon.RelayInfo) *types.NewAPIError {
+	groupRead, groupErr := model.BeginRequestGroupConfigRead(c)
+	if groupErr == nil {
+		groupErr = groupRead.Finish()
+	}
+	if groupErr != nil {
+		return types.NewError(errors.New(i18n.T(c, i18n.MsgGroupConfigChanged)), "group_config_changed", types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
+	}
+
 	if relayInfo != nil && relayInfo.QuotaClamp != nil {
 		return types.NewErrorWithStatusCode(
 			relayInfo.QuotaClamp,
@@ -38,6 +48,8 @@ func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycom
 			types.ErrOptionWithSkipRetry(),
 		)
 	}
+	// A task retry keeps its reservation, but must hold the newly selected
+	// provider's full quote before it can start more billable work.
 	if relayInfo != nil && relayInfo.Billing != nil {
 		if err := relayInfo.Billing.ReserveBeforeSubmit(preConsumedQuota); err != nil {
 			var apiErr *types.NewAPIError
@@ -106,4 +118,14 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 		return PostConsumeQuota(relayInfo, quotaDelta, relayInfo.FinalPreConsumedQuota, true)
 	}
 	return nil
+}
+
+// Make the post-settlement projection truthful even when the client has already
+// received its response and the durable intent awaits review.
+func recordSettlementUsage(ctx *gin.Context, userID int, settleErr error, params model.RecordConsumeLogParams) {
+	if settleErr != nil {
+		model.RecordUnsettledUsageLog(ctx, userID, params)
+		return
+	}
+	model.RecordConsumeLog(ctx, userID, params)
 }

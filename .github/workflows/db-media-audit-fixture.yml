@@ -1,0 +1,52 @@
+name: Persist scoped audit fixture
+on:
+  push:
+    branches: [codex/db-upstream-media-fix-20261001]
+    paths: [.github/workflows/db-media-audit-fixture.yml]
+permissions:
+  contents: write
+jobs:
+  fixture:
+    if: github.repository == '1057300248/wanchuan-new-api'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Apply guarded test-only edit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('controller/token_test.go')
+          s = p.read_text()
+          edits = [
+            ('db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Token{}, &model.Option{})', 'db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.UserAccessToken{}, &model.Token{}, &model.Option{})'),
+            ('pat := "api-token-audit-pat-secret"', 'pat := model.AccessTokenPrefix + "api-token-audit-pat-secret"'),
+            ('AuthVersion: 1, AccessToken: &pat, AffCode: "token-owner"', 'AuthVersion: 1, AffCode: "token-owner"'),
+            ('require.NoError(t, model.DB.Create(user).Error)\n\tother := &model.User{Username: "other-owner"', 'require.NoError(t, model.DB.Create(user).Error)\n\t// The real-database suite must not rely on another test initializing legacy PATs.\n\taccessToken := &model.UserAccessToken{UserId: user.Id, Name: "audit-fixture", TokenHash: model.AccessTokenFingerprint(pat), ExpiresAt: time.Now().Add(time.Hour).Unix()}\n\trequire.NoError(t, accessToken.SetScopes([]string{"api_key:reveal"}))\n\trequire.NoError(t, model.DB.Create(accessToken).Error)\n\tother := &model.User{Username: "other-owner"'),
+          ]
+          for old, new in edits:
+              assert s.count(old) == 1, old
+              s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+          git diff --check
+          git diff --stat
+      - name: Publish test-only change to fixed candidate, never force
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/codex/db-upstream-media-fix-20261001
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add controller/token_test.go
+          git commit -m 'test: use scoped PAT in isolated database audit matrix'
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:$GITHUB_REF"
+          git log -1 --format='%H %s'

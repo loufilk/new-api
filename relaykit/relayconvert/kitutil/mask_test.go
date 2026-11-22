@@ -50,6 +50,24 @@ func TestMaskSensitiveInfoMasksOnlyTheUpstreamAddress(t *testing.T) {
 			want:         `failed to download https://cdn.example/image(1).png?token=*** (status 403)`,
 		},
 		{
+			name:         "trailing parenthesis stays outside the masked URL",
+			upstreamURLs: nil,
+			input:        `(see https://cdn.example/a?sig)`,
+			want:         `(see https://cdn.example/a?sig=***)`,
+		},
+		{
+			name:         "mixed trailing punctuation and parentheses are trimmed together",
+			upstreamURLs: nil,
+			input:        `(https://cdn.example/a?token=1&sig). ('https://cdn.example/a?sig') (https://cdn.example/a?sig.)`,
+			want:         `(https://cdn.example/a?sig=***&token=***). ('https://cdn.example/a?sig=***') (https://cdn.example/a?sig=***.)`,
+		},
+		{
+			name:         "trailing parentheses on an upstream URL",
+			upstreamURLs: []string{"https://wiki.upstream.example.com"},
+			input:        `(see https://wiki.upstream.example.com/Go_(lang)?k=v)).`,
+			want:         `(see https://***.com/***?k=***)).`,
+		},
+		{
 			name:         "apostrophes inside a URL keep its query and userinfo masked",
 			upstreamURLs: nil,
 			input:        `failed to download https://cdn.example/John's-photo.png?token=secret from 'https://o'neil:pw@cdn.example/a?sig=1'`,
@@ -133,4 +151,20 @@ func TestMaskSensitiveInfoMasksOnlyTheUpstreamAddress(t *testing.T) {
 			assert.Equal(t, tt.want, MaskSensitiveInfo(tt.input, tt.upstreamURLs...))
 		})
 	}
+}
+
+func TestMaskSensitiveLogInfoPreservesConservativeInfrastructureRedaction(t *testing.T) {
+	for _, input := range []string{
+		"dial tcp: lookup internal.db.example: no such host",
+		"fetch https://private.example/jobs/job-123?token=log-secret failed",
+		"https://user:password@private.example:443/path/secret",
+		"dial tcp [2001:db8::1]:443 api_key:log-secret",
+	} {
+		masked := MaskSensitiveLogInfo(input)
+		for _, secret := range []string{"internal.db.example", "private.example", "job-123", "log-secret", "password", "/path/secret", "2001:db8::1"} {
+			assert.NotContains(t, masked, secret, "infrastructure log retained sensitive data")
+		}
+	}
+	public := "see https://platform.claude.com/docs/en/build-with-claude/task-budgets"
+	assert.Equal(t, public, MaskSensitiveInfo(public), "public error documentation changed")
 }

@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation } from '@tanstack/react-query'
-import type { Table } from '@tanstack/react-table'
 import { Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -32,60 +31,44 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import type { Table } from '@/lib/console-table'
 import { handleServerError } from '@/lib/handle-server-error'
-import { createServerError } from '@/lib/server-error-message'
 
-import { batchDeleteRedemptions } from '../api'
+import { deleteRedemptions } from '../api'
 import type { Redemption } from '../types'
 import { useRedemptions } from './redemptions-provider'
 
-type DataTableBulkActionsProps = {
-  table: Table<Redemption>
-}
+type DataTableBulkActionsProps = { table: Table<Redemption> }
 
 export function DataTableBulkActions(props: DataTableBulkActionsProps) {
   const { t } = useTranslation()
   const { triggerRefresh } = useRedemptions()
   const [deleteTargets, setDeleteTargets] = useState<Redemption[] | null>(null)
   const selectedRows = props.table.getFilteredSelectedRowModel().rows
-
-  const contentToCopy = useMemo(() => {
-    const selectedCodes = selectedRows.map((row) => {
-      const redemption = row.original
-      return `${redemption.name}\t${redemption.key}`
-    })
-    return selectedCodes.join('\n')
-  }, [selectedRows])
-
   const deletion = useMutation({
-    mutationFn: async (targets: Redemption[]) => {
-      const result = await batchDeleteRedemptions(
-        targets.map((code) => code.id)
-      )
-      if (!result.success) throw createServerError(result)
-      return result.data ?? 0
-    },
-    onSuccess: (count, targets) => {
+    mutationFn: deleteRedemptions,
+    retry: false,
+    onSuccess: (count, ids) => {
       toast.success(
         t('Successfully deleted {{count}} redemption codes', { count })
       )
       props.table.setRowSelection((previous) => {
         const next = { ...previous }
-        for (const code of targets) delete next[String(code.id)]
+        for (const id of ids) delete next[String(id)]
         return next
       })
       setDeleteTargets(null)
       triggerRefresh()
     },
-    onError: (_error, targets) => {
-      handleServerError(
-        _error,
-        t('Failed to delete {{count}} redemption codes', {
-          count: targets.length,
-        })
-      )
-    },
+    onError: (error) => handleServerError(error),
   })
+  const contentToCopy = useMemo(
+    () =>
+      selectedRows
+        .map((row) => `${row.original.name}\t${row.original.key}`)
+        .join('\n'),
+    [selectedRows]
+  )
 
   return (
     <>
@@ -131,12 +114,12 @@ export function DataTableBulkActions(props: DataTableBulkActionsProps) {
           count: deleteTargets?.length ?? 0,
         })}
         desc={t('This action cannot be undone.')}
-        confirmText={deletion.isPending ? t('Deleting...') : t('Delete')}
-        isLoading={deletion.isPending}
+        confirmText={t('Delete')}
         disabled={!deleteTargets?.length}
+        isLoading={deletion.isPending}
         handleConfirm={() => {
           if (deleteTargets?.length && !deletion.isPending) {
-            deletion.mutate(deleteTargets)
+            deletion.mutate(deleteTargets.map((code) => code.id))
           }
         }}
       />

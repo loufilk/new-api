@@ -73,6 +73,9 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	if info.RelayMode == constant.RelayModeResponses {
+		return fmt.Sprintf("%s/responses", info.ChannelBaseUrl), nil
+	}
 	fimBaseUrl := info.ChannelBaseUrl
 	switch info.RelayFormat {
 	case types.RelayFormatClaude:
@@ -84,8 +87,6 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		switch info.RelayMode {
 		case constant.RelayModeCompletions:
 			return fmt.Sprintf("%s/completions", fimBaseUrl), nil
-		case constant.RelayModeResponses:
-			return fmt.Sprintf("%s/responses", info.ChannelBaseUrl), nil
 		case constant.RelayModeToolsSearch:
 			return fmt.Sprintf("%s/v1/tools/search", info.ChannelBaseUrl), nil
 		case constant.RelayModeToolsFetch:
@@ -105,6 +106,13 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
 	if request == nil {
 		return nil, errors.New("request is nil")
+	}
+	// DeepSeek Chat rejects the developer role; it carries the same
+	// instructions as a system message.
+	for i := range request.Messages {
+		if request.Messages[i].Role == "developer" {
+			request.Messages[i].Role = "system"
+		}
 	}
 	if err := applyDeepSeekV4OpenAIThinkingSuffix(info, request); err != nil {
 		return nil, err
@@ -198,6 +206,11 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(_ *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
+	// A Chat/Claude request can select Responses after Init. Tool billing
+	// follows the wire protocol actually sent on this channel attempt.
+	if info != nil {
+		info.VendorToolUsage = responsesToolUsage
+	}
 	applyDeepSeekV4ResponsesThinkingSuffix(info, &request)
 	return request, nil
 }

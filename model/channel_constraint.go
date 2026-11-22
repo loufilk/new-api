@@ -5,6 +5,9 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 )
 
 var filterEvalOrder = []dto.ChannelFilterKind{
@@ -26,7 +29,7 @@ func ChannelSatisfiesFilters(ch *Channel, modelName string, filters []dto.Channe
 			if filter.Kind != kind {
 				continue
 			}
-			if !channelMatchesFilter(ch, modelName, filter) {
+			if !channelMatchesFilter(ch, modelName, filter, filters) {
 				return false, kind
 			}
 		}
@@ -51,7 +54,7 @@ func filterCandidateIDs(ids []int, modelName string, filters []dto.ChannelFilter
 		next := make([]int, 0, len(kept))
 		for _, id := range kept {
 			channel, exists := channelsIDM[id]
-			if candidatePassesKindFilters(channel, exists, modelName, kind, kindFilters) {
+			if candidatePassesKindFilters(channel, exists, modelName, kind, kindFilters, filters) {
 				next = append(next, id)
 			}
 		}
@@ -73,26 +76,45 @@ func filtersByKind(filters []dto.ChannelFilter, kind dto.ChannelFilterKind) []dt
 	return matched
 }
 
-func candidatePassesKindFilters(ch *Channel, exists bool, modelName string, kind dto.ChannelFilterKind, filters []dto.ChannelFilter) bool {
+func candidatePassesKindFilters(ch *Channel, exists bool, modelName string, kind dto.ChannelFilterKind, kindFilters, filters []dto.ChannelFilter) bool {
 	if kind == dto.FilterRequestPath && !exists {
 		return true
 	}
 	if !exists || ch == nil {
 		return false
 	}
-	for _, filter := range filters {
-		if !channelMatchesFilter(ch, modelName, filter) {
+	for _, filter := range kindFilters {
+		if !channelMatchesFilter(ch, modelName, filter, filters) {
 			return false
 		}
 	}
 	return true
 }
 
-func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilter) bool {
+func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilter, filters []dto.ChannelFilter) bool {
 	switch filter.Kind {
 	case dto.FilterRequestPath:
 		if filter.RequestPath == "" {
 			return true
+		}
+		if ch.Type == constant.ChannelTypeCodex {
+			// A plugin can execute an endpoint it declares for this channel type
+			// instead of the builtin adaptor; leave its decision to the plugin filters.
+			for _, f := range filters {
+				if (f.Kind == dto.FilterTaskPluginEndpoint && !f.TaskPluginRelayOnly || f.Kind == dto.FilterTaskPluginIdentity && f.TaskPluginKey != "") && slices.Contains(f.TaskPluginChannelTypes, ch.Type) {
+					return true
+				}
+			}
+			path := filter.RequestPath
+			if path == "/v1/chat/completions" || path == "/v1/messages" || relayconstant.IsPlaygroundChatPath(path) {
+				global := model_setting.GetGlobalSettings()
+				return !global.PassThroughRequestEnabled && !ch.GetSetting().PassThroughBodyEnabled &&
+					global.ChatCompletionsToResponsesPolicy.Matches(ch.Id, ch.Type, modelName)
+			}
+			switch path {
+			case "/v1/completions", "/v1/images/generations", "/v1/images/edits", "/v1/embeddings", "/v1/rerank", "/v1/audio/speech", "/v1/audio/transcriptions", "/v1/audio/translations":
+				return false
+			}
 		}
 		if !constant.IsAdvancedCustomChannel(ch.Type) {
 			return true
@@ -101,7 +123,7 @@ func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilte
 		return config != nil && config.SupportsPathForModel(filter.RequestPath, modelName)
 	case dto.FilterTaskPluginIdentity:
 		if filter.TaskPluginKey == "" {
-			return ch.Type != constant.ChannelTypeTaskPlugin
+			return ch.Type != constant.ChannelTypeTaskPlugin || providerChannelServes(ch, filter.RequestPath, modelName)
 		}
 		if ch.Type == constant.ChannelTypeTaskPlugin || ch.Type == constant.ChannelTypeNewAPI {
 			// A New API channel serves every plugin it is extended with; the
@@ -115,29 +137,49 @@ func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilte
 		if ch.Type == constant.ChannelTypeTaskPlugin || ch.Type == constant.ChannelTypeNewAPI {
 			pluginChannel = slices.ContainsFunc(filter.TaskPluginKeys, ch.GetSetting().BindsTaskPlugin)
 		}
+		relayChannel := ch.Type != constant.ChannelTypeTaskPlugin || providerChannelServes(ch, filter.RequestPath, modelName)
 		if filter.TaskPluginRelayOnly {
-			return ch.Type != constant.ChannelTypeTaskPlugin && !pluginChannel
+			return relayChannel && !pluginChannel
 		}
 		// Ordinary channels and matching plugin channels compete using the same
 		// group, priority, weight, affinity, and pin rules. Unrelated type-61
-		// plugins cannot execute this endpoint.
-		return ch.Type != constant.ChannelTypeTaskPlugin || pluginChannel
+		// plugins cannot execute this endpoint unless their relay routes do.
+		return relayChannel || pluginChannel
 	case dto.FilterResponsesWebSocket:
 		if !ch.GetSetting().ResponsesWebSocketEnabled {
 			return false
 		}
 		switch ch.Type {
-		case constant.ChannelTypeOpenAI, constant.ChannelTypeCodex, constant.ChannelTypeSub2API, constant.ChannelTypeNewAPI:
+		case constant.ChannelTypeOpenAI, constant.ChannelTypeAzure, constant.ChannelTypeCodex, constant.ChannelTypeSub2API, constant.ChannelTypeNewAPI:
 			return true
 		case constant.ChannelTypeAdvancedCustom:
 			// The session forwards native Responses events without protocol
 			// conversion, so only a converter-free /v1/responses route qualifies.
 			route, ok := ch.GetOtherSettings().AdvancedCustom.MatchPathForModel("/v1/responses", modelName)
 			return ok && route.IsNative()
+		case constant.ChannelTypeTaskPlugin:
+			// The same rule on the relay routes of the channel's plugin.
+			plugin, ok := jsplugin.DefaultRegistry.Get(ch.GetSetting().TaskPluginKey)
+			return ok && plugin.Meta.ServesResponsesWebSocket(modelName)
 		default:
 			return false
 		}
 	default:
 		return true
 	}
+}
+
+// providerChannelServes reports a task plugin channel whose plugin relays
+// requestPath for modelName through its relay routes, as an Advanced Custom
+// channel with those routes would.
+func providerChannelServes(ch *Channel, requestPath, modelName string) bool {
+	if ch.Type != constant.ChannelTypeTaskPlugin || requestPath == "" {
+		return false
+	}
+	plugin, ok := jsplugin.DefaultRegistry.Get(ch.GetSetting().TaskPluginKey)
+	if !ok || !plugin.Meta.HasProviderPart() {
+		return false
+	}
+	_, ok = plugin.Meta.RelayRoute(requestPath, modelName)
+	return ok
 }

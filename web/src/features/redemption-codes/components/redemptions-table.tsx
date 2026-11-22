@@ -30,6 +30,7 @@ import {
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { createServerError } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { getRedemptions, searchRedemptions } from '../api'
 import {
@@ -56,6 +57,7 @@ function isDisabledRedemptionRow(redemption: Redemption) {
 export function RedemptionsTable() {
   const { t } = useTranslation()
   const columns = useRedemptionsColumns()
+  const user = useAuthStore((state) => state.auth.user)
   const { refreshTrigger } = useRedemptions()
   const isMobile = useMediaQuery('(max-width: 640px)')
 
@@ -84,6 +86,8 @@ export function RedemptionsTable() {
   const { data, isLoading, isFetching } = useQuery({
     queryKey: [
       'redemptions',
+      user?.id,
+      user?.role,
       pagination.pageIndex + 1,
       pagination.pageSize,
       globalFilter,
@@ -123,7 +127,6 @@ export function RedemptionsTable() {
         total: result.data?.total || 0,
       }
     },
-    placeholderData: (previousData) => previousData,
   })
 
   const redemptions = data?.items || []

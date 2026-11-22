@@ -1,0 +1,36 @@
+FROM golang:1.27.4-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS builder
+ENV GO111MODULE=on CGO_ENABLED=0 GOWORK=off
+
+ARG TARGETOS
+ARG TARGETARCH
+ENV GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64}
+
+WORKDIR /build
+
+ADD go.mod go.sum ./
+# relaykit is a local submodule referenced via replace; its go.mod must be
+# present for go mod download to resolve the main module graph.
+ADD relaykit/go.mod ./relaykit/go.mod
+ADD tokenkit/go.mod ./tokenkit/go.mod
+RUN go mod download
+
+COPY . .
+RUN go build -tags api_only -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api
+
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
+
+ARG SOURCE_REVISION
+ARG RELEASE_VERSION
+LABEL org.opencontainers.image.revision=$SOURCE_REVISION \
+      org.opencontainers.image.version=$RELEASE_VERSION
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates tzdata libasan8 wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && update-ca-certificates
+
+COPY --from=builder /build/new-api /
+COPY LICENSE NOTICE THIRD-PARTY-LICENSES.md /licenses/
+EXPOSE 3000
+WORKDIR /data
+ENTRYPOINT ["/new-api"]

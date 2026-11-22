@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   createMemoryHistory,
   createRootRoute,
@@ -26,14 +27,20 @@ import {
 } from '@tanstack/react-router'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import i18n from 'i18next'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+import fr from '@/i18n/locales/fr.json'
+import zhTW from '@/i18n/locales/zh-TW.json'
+import zhCN from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 import { useAuthStore, type AuthBundle } from '@/stores/auth-store'
 
 import { useAuthRedirect } from '../../hooks/use-auth-redirect'
 import type { LoginResult } from '../../secure-verification/types'
 import { OtpForm } from '../components/otp-form'
+
+const queryClients: QueryClient[] = []
 
 const bundle: AuthBundle = {
   access_token: 'completed-login',
@@ -110,7 +117,15 @@ function renderLoginVerification(
       initialEntries: [primaryResult ? '/primary-login' : '/otp'],
     }),
   })
-  const view = render(<RouterProvider router={router} />)
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  queryClients.push(queryClient)
+  const view = render(
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
+  )
   return { router, ...view }
 }
 
@@ -126,12 +141,23 @@ function pendingLoginResponse() {
   return { promise, resolve }
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await i18n.changeLanguage('en')
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url !== '/api/status') {
+      throw new Error('Unexpected GET in login verification test')
+    }
+    return { data: { success: true, data: {} } }
+  })
 })
 
-afterEach(() => {
+afterEach(async () => {
   cleanup()
+  for (const client of queryClients.splice(0)) {
+    await client.cancelQueries()
+    client.clear()
+  }
   vi.restoreAllMocks()
   useAuthStore.getState().auth.reset('idle')
 })
@@ -177,6 +203,41 @@ it('accepts a completed Passkey login without opening another verification dialo
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   expect(post).not.toHaveBeenCalled()
 })
+
+it.each([
+  ['zh-HK', 'zhTW', '模型智力監測'],
+  ['fr-CA', 'fr', 'Suivi des capacités des modèles'],
+])(
+  'restores saved %s language after login and retains the original destination',
+  async (saved, expected, title) => {
+    await i18n.init({
+      lng: 'en',
+      fallbackLng: 'en',
+      supportedLngs: ['en', 'zhCN', 'zhTW', 'fr'],
+      load: 'currentOnly',
+      resources: { en: { translation: {} }, zhCN, zhTW, fr },
+    })
+    const { router } = renderLoginVerification(false, {
+      ...bundle,
+      user: { ...bundle.user, setting: JSON.stringify({ language: saved }) },
+    })
+    const user = userEvent.setup()
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Primary authentication succeeded',
+      })
+    )
+
+    await waitFor(() =>
+      expect(router.state.location.href).toBe('/pricing?view=grid')
+    )
+    expect(i18n.resolvedLanguage).toBe(expected)
+    expect(i18n.t('fingerprint.title')).toBe(title)
+    expect(useAuthStore.getState().auth.user?.id).toBe(bundle.user.id)
+    expect(useAuthStore.getState().auth.session?.sid).toBe(bundle.session.sid)
+  }
+)
 
 it('writes authentication only after verification and preserves the original destination', async () => {
   const pending = pendingLoginResponse()

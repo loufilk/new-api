@@ -102,6 +102,11 @@ func (t *TwoFA) IncrementFailedAttempts() error {
 
 		nextFailedAttempts := current.FailedAttempts + 1
 		nextLockedUntil := current.LockedUntil
+		if current.LockedUntil != nil {
+			// The previous lockout has expired, so this failure starts a new window.
+			nextFailedAttempts = 1
+			nextLockedUntil = nil
+		}
 		if nextFailedAttempts >= common.MaxFailAttempts {
 			lockUntil := now.Add(time.Duration(common.LockoutDuration) * time.Second)
 			nextLockedUntil = &lockUntil
@@ -239,9 +244,18 @@ func DisableTwoFAForSession(identity AuthSessionIdentity) error {
 	return disableTwoFAWithAuthVersion(identity.UserID, &identity)
 }
 
-func disableTwoFAWithAuthVersion(userId int, identity *AuthSessionIdentity) error {
+func DisableTwoFAByAdministrator(identity AuthSessionIdentity, expected User) error {
+	return disableTwoFAWithAuthVersion(expected.Id, nil, AdminUserMutationGuard{Identity: identity, Expected: expected})
+}
+
+func disableTwoFAWithAuthVersion(userId int, identity *AuthSessionIdentity, guards ...AdminUserMutationGuard) error {
 	if err := DB.Transaction(func(tx *gorm.DB) error {
-		if identity != nil {
+		if len(guards) != 0 {
+			guard := guards[0]
+			if _, _, err := lockAuthorizedAdminTargetTx(tx, guard.Identity.UserID, guard.Expected, true, guard.Identity); err != nil {
+				return err
+			}
+		} else if identity != nil {
 			if err := ValidateAuthSessionWithTx(tx, *identity); err != nil {
 				return err
 			}

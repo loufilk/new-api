@@ -65,6 +65,7 @@ import dayjs from '@/lib/dayjs'
 import { formatTimestampRelative } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 
+import { AnnouncementEditorTools } from '../components/announcement-editor-tools'
 import { SettingsSwitchField } from '../components/settings-form-layout'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
@@ -86,12 +87,18 @@ const announcementSchema = z.object({
   content: z
     .string()
     .min(1, 'Content is required')
-    .max(500, 'Content must be less than 500 characters'),
+    .refine(
+      (value) => value.length <= 10000,
+      'Content cannot exceed 10000 characters'
+    ),
   publishDate: z.string().min(1, 'Publish date is required'),
   type: z.enum(['default', 'ongoing', 'success', 'warning', 'error']),
   extra: z
     .string()
-    .max(100, 'Extra must be less than 100 characters')
+    .refine(
+      (value) => value.length <= 100,
+      'Extra must be less than 100 characters'
+    )
     .optional(),
 })
 
@@ -270,10 +277,15 @@ export function AnnouncementsSection({
   }
 
   const handleSaveAll = async () => {
+    const value = JSON.stringify(announcements)
+    if (new TextEncoder().encode(value).byteLength > 256 * 1024) {
+      toast.error(t('Announcements cannot exceed 256 KiB in total'))
+      return
+    }
     try {
       await updateOption.mutateAsync({
         key: 'console_setting.announcements',
-        value: JSON.stringify(announcements),
+        value,
       })
       setHasChanges(false)
       toast.success(t('Announcements saved successfully'))
@@ -480,9 +492,16 @@ export function AnnouncementsSection({
                     />
                   </FormControl>
                   <FormDescription>
-                    {t('Maximum 500 characters. Supports Markdown and HTML.')}
+                    {t(
+                      'Maximum 10000 characters, including Markdown image links.'
+                    )}
                   </FormDescription>
                   <FormMessage />
+                  <AnnouncementEditorTools
+                    value={field.value}
+                    onChange={field.onChange}
+                    maxLength={10000}
+                  />
                 </FormItem>
               )}
             />

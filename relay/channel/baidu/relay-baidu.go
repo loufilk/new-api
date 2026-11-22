@@ -1,6 +1,7 @@
 package baidu
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -188,20 +189,27 @@ func baiduEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *ht
 	return nil, &fullTextResponse.Usage
 }
 
-func getBaiduAccessToken(apiKey string) (string, error) {
+func getBaiduAccessToken(ctx context.Context, client *http.Client, apiKey string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if val, ok := baiduTokenStore.Load(apiKey); ok {
 		var accessToken BaiduAccessToken
 		if accessToken, ok = val.(BaiduAccessToken); ok {
 			// soon this will expire
 			if time.Now().Add(time.Hour).After(accessToken.ExpiresAt) {
 				go func() {
-					_, _ = getBaiduAccessTokenHelper(apiKey)
+					// Refresh is independent of the completed request, but cannot
+					// outlive this short bound even with an unlimited relay client.
+					refreshCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+					defer cancel()
+					_, _ = getBaiduAccessTokenHelper(refreshCtx, client, apiKey)
 				}()
 			}
 			return accessToken.AccessToken, nil
 		}
 	}
-	accessToken, err := getBaiduAccessTokenHelper(apiKey)
+	accessToken, err := getBaiduAccessTokenHelper(ctx, client, apiKey)
 	if err != nil {
 		return "", err
 	}
@@ -211,19 +219,19 @@ func getBaiduAccessToken(apiKey string) (string, error) {
 	return (*accessToken).AccessToken, nil
 }
 
-func getBaiduAccessTokenHelper(apiKey string) (*BaiduAccessToken, error) {
+func getBaiduAccessTokenHelper(ctx context.Context, client *http.Client, apiKey string) (*BaiduAccessToken, error) {
 	parts := strings.Split(apiKey, "|")
 	if len(parts) != 2 {
 		return nil, errors.New("invalid baidu apikey")
 	}
-	req, err := http.NewRequest("POST", fmt.Sprintf("https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=%s&client_secret=%s",
+	req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=%s&client_secret=%s",
 		parts[0], parts[1]), nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("Accept", "application/json")
-	res, err := service.GetHttpClient().Do(req)
+	res, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -63,11 +63,28 @@ beforeEach(() => {
   vi.spyOn(api, 'get').mockResolvedValue({
     data: { success: true, data: [], vendors: [] },
   })
+  // The editor requests an effective-price preview even when this test only
+  // changes display currency. Keep that API boundary synthetic and fail closed.
+  vi.spyOn(api, 'post').mockImplementation(async (url, body) => {
+    if (url !== '/api/option/model_pricing/preview') {
+      throw new Error('Unexpected POST in currency editor test')
+    }
+    const request = body as { pricing: Record<string, unknown> }
+    return {
+      data: {
+        success: true,
+        data: { effective: request.pricing, cache_write_mode: 'none' },
+      },
+    }
+  })
 })
 
-afterEach(() => {
+afterEach(async () => {
   cleanup()
-  clients.splice(0).forEach((client) => client.clear())
+  for (const client of clients.splice(0)) {
+    await client.cancelQueries()
+    client.clear()
+  }
   usePricingPreferencesStore.setState({ currency: 'USD' })
   useSystemConfigStore
     .getState()
@@ -188,10 +205,10 @@ it('previews legacy conversion in the selected currency and applies only after c
   expect(within(after).queryByText('Image input price')).not.toBeInTheDocument()
   expect(within(dialog).queryByRole('combobox')).not.toBeInTheDocument()
   expect(
-    within(before).queryByText('Cache write price')
+    within(before).queryByText('Standard cache write price')
   ).not.toBeInTheDocument()
   expect(
-    within(after).queryByText('Cache create price')
+    within(after).queryByText('Standard cache write price')
   ).not.toBeInTheDocument()
   expect(
     within(dialog).queryByText('Cache create (1h) price')
@@ -300,12 +317,9 @@ it.each([
     })
     for (const side of ['Before conversion', 'After conversion']) {
       const panel = within(dialog).getByRole('region', { name: side })
-      let label =
-        side === 'Before conversion'
-          ? 'Cache write price'
-          : 'Cache create price'
-      if (fixture.mode === 'claude_ttl') label = 'Cache Creation (5m)'
-      if (fixture.mode === 'openai_ttl') label = 'Cache Creation (30m)'
+      let label = 'Standard cache write price'
+      if (fixture.mode === 'claude_ttl') label = 'Cache create (5m) price'
+      if (fixture.mode === 'openai_ttl') label = 'Cache create (30m) price'
       expect(
         within(panel).getByText(label).nextElementSibling
       ).toHaveTextContent(`$${fixture.ratio * 2} / 1M token`)

@@ -36,7 +36,12 @@ import { CommandMenu } from '../command-menu'
 import { Search } from '../search'
 
 const adminEntries = ['Channels', 'Models', 'Users', 'Redemption Codes']
-const superAdminEntries = ['System Info', 'Task Plugins', 'System Settings']
+const superAdminEntries = [
+  'System Info',
+  'Plugins',
+  'Request processing',
+  'System Settings',
+]
 
 // jsdom lacks the Web Animations API the menu's scroll area waits on.
 const getAnimationsDescriptor = Object.getOwnPropertyDescriptor(
@@ -96,6 +101,7 @@ async function searchEntriesFor(role: number, sidebarModulesAdmin = '') {
 
   await userEvent.click(await screen.findByRole('button', { name: 'Search' }))
   const options = await screen.findAllByRole('option')
+  expect(screen.getAllByRole('dialog')).toHaveLength(1)
   return options.map((option) => option.textContent)
 }
 
@@ -119,6 +125,15 @@ test('admins find admin pages in search but not super admin pages', async () => 
   }
 })
 
+test('super admins find Request processing right after Plugins', async () => {
+  const entries = await searchEntriesFor(ROLE.SUPER_ADMIN)
+
+  expect(entries).toEqual(expect.arrayContaining(superAdminEntries))
+  expect(entries.indexOf('Request processing')).toBe(
+    entries.indexOf('Plugins') + 1
+  )
+})
+
 test('pages hidden in the sidebar settings stay out of search', async () => {
   const entries = await searchEntriesFor(
     ROLE.USER,
@@ -127,4 +142,11 @@ test('pages hidden in the sidebar settings stay out of search', async () => {
 
   expect(entries).not.toContain('Wallet')
   expect(entries).toContain('Profile')
+})
+
+test('root users find both admin and root pages in search', async () => {
+  const entries = await searchEntriesFor(ROLE.SUPER_ADMIN)
+  expect(entries).toEqual(
+    expect.arrayContaining([...adminEntries, ...superAdminEntries])
+  )
 })

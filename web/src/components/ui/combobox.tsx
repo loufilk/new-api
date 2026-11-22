@@ -78,6 +78,7 @@ function Combobox(
     return (
       <LegacyComboboxInput
         id={props.id}
+        disabled={props.disabled}
         aria-label={props['aria-label']}
         aria-labelledby={props['aria-labelledby']}
         aria-invalid={props['aria-invalid']}
@@ -252,6 +253,7 @@ function ComboboxInput({
       <InputGroupAddon align='inline-end'>
         {showTrigger && (
           <InputGroupButton
+            nativeButton
             size='icon-xs'
             variant='ghost'
             render={<ComboboxTrigger aria-label={triggerAriaLabel} />}

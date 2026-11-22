@@ -144,3 +144,28 @@ func TestWalletQuotaFromDecimalStrict(t *testing.T) {
 	assert.Equal(t, "WalletQuotaFromDecimal", clamp.Op)
 	assert.Equal(t, QuotaClampOverflow, clamp.Kind)
 }
+
+func TestQuotaClampJSONRoundTrip(t *testing.T) {
+	for _, original := range []float64{3.25, math.MaxFloat64, math.Inf(1), math.Inf(-1), math.NaN()} {
+		t.Run(fmt.Sprintf("%g", original), func(t *testing.T) {
+			clamp := QuotaClamp{Op: "QuotaRound", Kind: QuotaClampOverflow, Original: original, Clamped: MaxQuota}
+			data, err := Marshal(clamp)
+			require.NoError(t, err)
+			var restored QuotaClamp
+			require.NoError(t, Unmarshal(data, &restored))
+			assert.Equal(t, clamp.Op, restored.Op)
+			assert.Equal(t, clamp.Kind, restored.Kind)
+			assert.Equal(t, clamp.Clamped, restored.Clamped)
+			if math.IsNaN(original) {
+				assert.True(t, math.IsNaN(restored.Original))
+			} else {
+				assert.Equal(t, original, restored.Original)
+			}
+			audit, err := Marshal(clamp.AuditMap())
+			require.NoError(t, err, "consume logs must remain JSON-safe too")
+			assert.JSONEq(t, string(data), string(audit))
+		})
+	}
+	var clamp QuotaClamp
+	assert.Error(t, Unmarshal([]byte(`{"original":"invalid"}`), &clamp))
+}

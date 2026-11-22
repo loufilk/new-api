@@ -114,7 +114,9 @@ func TestTaskLogDTOKeepsFailureReasonAndDoesNotMarkPluginTaskLegacy(t *testing.T
 		FailReason: "provider rejected the request",
 	}
 	failedView := tasksToDto([]*model.Task{failed}, false, common.RoleCommonUser)[0]
-	assert.Equal(t, "provider rejected the request", failedView.FailReason)
+	assert.Equal(t, "upstream request failed", failedView.FailReason)
+	adminView := tasksToDto([]*model.Task{failed}, false, common.RoleAdminUser)[0]
+	assert.Equal(t, "provider rejected the request", adminView.FailReason)
 	assert.False(t, failedView.LegacyVideoAvailable)
 
 	pluginTask := &model.Task{
@@ -134,4 +136,18 @@ func TestTaskLogDTOKeepsFailureReasonAndDoesNotMarkPluginTaskLegacy(t *testing.T
 	assert.False(t, pluginView.LegacyVideoAvailable)
 	assert.Empty(t, pluginView.ResultURL)
 	assert.Empty(t, pluginView.FailReason)
+}
+
+func TestTaskLogDTOHidesUntrustedFailureDetailsWithoutChangingStoredReason(t *testing.T) {
+	const reason = "vendor=model-private key=sk-private https://provider.invalid/task?signature=secret"
+	for _, status := range []model.TaskStatus{model.TaskStatusFailure, model.TaskStatusInProgress, model.TaskStatusSuccess} {
+		t.Run(string(status), func(t *testing.T) {
+			task := &model.Task{TaskID: "task_public", Status: status, FailReason: reason}
+			userView := tasksToDto([]*model.Task{task}, false, common.RoleCommonUser)[0]
+			assert.Equal(t, "upstream request failed", userView.FailReason)
+			assert.Equal(t, reason, task.FailReason)
+			adminView := tasksToDto([]*model.Task{task}, false, common.RoleAdminUser)[0]
+			assert.Equal(t, reason, adminView.FailReason)
+		})
+	}
 }

@@ -16,7 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import type { ApiKey } from '../../types'
@@ -49,7 +56,10 @@ const originalGet = apiClient.get
 const originalPost = apiClient.post
 let renderedDrawer: RenderedDrawer | null = null
 
-function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
+function installApiFixtures(
+  createdPayloads: Array<Record<string, unknown>>,
+  allowGlobalAuto = true
+) {
   apiClient.get = async (url) => {
     switch (url) {
       case '/api/status':
@@ -61,7 +71,9 @@ function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
           data: {
             success: true,
             data: {
-              auto: { desc: 'Automatic routing', ratio: 'auto' },
+              ...(allowGlobalAuto
+                ? { auto: { desc: 'Automatic routing', ratio: 'auto' } }
+                : {}),
               default: { desc: 'Standard access', ratio: 1 },
               vip: { desc: 'Priority access', ratio: 2 },
             },
@@ -79,6 +91,9 @@ function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
     }
   }
   apiClient.post = async (url, data) => {
+    if (url === '/api/token/models') {
+      return { data: { success: true, data: [] } }
+    }
     expect(url).toBe('/api/token/')
     expect(data && typeof data === 'object').toBeTruthy()
     createdPayloads.push(data as Record<string, unknown>)
@@ -134,7 +149,7 @@ async function renderCreateDrawer(): Promise<void> {
   )
   await waitFor(
     () => {
-      const saveButton = findButton('Save changes', false)
+      const saveButton = findButton('Add', false)
       expect(saveButton).toBeEnabled()
     },
     { timeout: 1500 }
@@ -153,7 +168,9 @@ function findButton(text: string, required = true): HTMLButtonElement | null {
   return button ?? null
 }
 
-function getControlByLabel(labelText: 'Name' | 'Quantity'): HTMLInputElement
+function getControlByLabel(
+  labelText: 'Token Name' | 'Quantity'
+): HTMLInputElement
 function getControlByLabel(labelText: 'Group'): HTMLButtonElement
 function getControlByLabel(labelText: 'Auto group order'): HTMLElement
 function getControlByLabel(labelText: string): HTMLElement {
@@ -181,53 +198,37 @@ function changeInput(input: HTMLInputElement, value: string): void {
   fireEvent.input(input, { target: { value } })
 }
 
-function selectComboboxOption(
-  trigger: HTMLButtonElement,
-  optionDescription: string
-): void {
-  fireEvent.click(trigger)
-  const option = [
-    ...document.querySelectorAll<HTMLElement>('[data-slot="command-item"]'),
-  ].find((candidate) => candidate.textContent?.includes(optionDescription))
-  if (!option) {
-    throw new Error(`Expected option containing "${optionDescription}"`)
-  }
-  fireEvent.click(option)
-}
-
-afterEach(() => {
-  apiClient.get = originalGet
-  apiClient.post = originalPost
-  localStorage.clear()
+afterEach(async () => {
+  cleanup()
   if (renderedDrawer) {
+    await renderedDrawer.queryClient.cancelQueries()
     renderedDrawer.queryClient.clear()
     renderedDrawer = null
   }
+  apiClient.get = originalGet
+  apiClient.post = originalPost
+  localStorage.clear()
 })
 
 describe('API keys mutate drawer Auto group integration', () => {
-  test('inherits the root Auto order and sends an empty override for every batch-created key', async () => {
+  test('explicitly selects the root Auto order and sends an empty override for every batch-created key', async () => {
     const createdPayloads: Array<Record<string, unknown>> = []
     installApiFixtures(createdPayloads)
     await renderCreateDrawer()
 
+    fireEvent.click(findButton('Restore global Auto', true))
     const groupTrigger = getControlByLabel('Group')
-    expect(groupTrigger.textContent?.includes('auto')).toBe(true)
+    expect(groupTrigger).toHaveTextContent('vip → default')
     expect(
       document.body.textContent?.includes(
         'Using the complete global Auto order (2 groups)'
       )
     ).toBe(true)
-    expect(
-      [
-        ...document.querySelectorAll('[data-slot="global-auto-order-name"]'),
-      ].map((item) => item.textContent)
-    ).toEqual(['vip', 'default'])
     expect(findButton('Restore global Auto', true).disabled).toBe(true)
 
-    changeInput(getControlByLabel('Name'), 'batch')
+    changeInput(getControlByLabel('Token Name'), 'batch')
     changeInput(getControlByLabel('Quantity'), '2')
-    fireEvent.click(findButton('Save changes', true))
+    fireEvent.click(findButton('Add', true))
     await waitFor(() => expect(createdPayloads).toHaveLength(2))
 
     expect(createdPayloads.length).toBe(2)
@@ -239,45 +240,55 @@ describe('API keys mutate drawer Auto group integration', () => {
     }
   })
 
-  test('preserves an unsaved custom order and mode after Auto to ordinary to Auto changes', async () => {
+  test('submits ordered manual groups without virtual Auto access through the real drawer form', async () => {
+    const createdPayloads: Array<Record<string, unknown>> = []
+    installApiFixtures(createdPayloads, false)
+    await renderCreateDrawer()
+    expect(
+      screen.queryByRole('button', { name: 'Restore global Auto' })
+    ).not.toBeInTheDocument()
+    fireEvent.click(getControlByLabel('Group'))
+    fireEvent.click(screen.getByRole('option', { name: /^vip/ }))
+    fireEvent.click(screen.getByRole('option', { name: /^default/ }))
+    fireEvent.keyDown(screen.getByPlaceholderText('Search group name'), {
+      key: 'Escape',
+    })
+    expect(getControlByLabel('Group')).toHaveTextContent('vip → default')
+    fireEvent.click(screen.getByRole('button', { name: 'Move default up' }))
+    expect(getControlByLabel('Group')).toHaveTextContent('default → vip')
+    changeInput(getControlByLabel('Token Name'), 'manual-without-global-auto')
+    fireEvent.click(findButton('Add', true))
+    await waitFor(() => expect(createdPayloads).toHaveLength(1))
+    expect(createdPayloads[0]).toMatchObject({
+      group: 'auto',
+      auto_groups: ['default', 'vip'],
+      smart_routing: false,
+      cross_group_retry: true,
+    })
+  })
+
+  test('preserves an unsaved manual order when smart routing is toggled on and off', async () => {
     const createdPayloads: Array<Record<string, unknown>> = []
     installApiFixtures(createdPayloads)
     await renderCreateDrawer()
-
-    const autoOrderControl = getControlByLabel('Auto group order')
-    const addGroupTrigger = autoOrderControl.querySelector<HTMLButtonElement>(
-      'button[role="combobox"]'
-    )
-    if (!addGroupTrigger) {
-      throw new Error('Expected Auto group order combobox')
-    }
-    selectComboboxOption(addGroupTrigger, 'Priority access')
-
-    expect(
-      document.querySelector('button[aria-label="Remove vip"]')
-    ).toBeTruthy()
-    expect(document.body.textContent?.includes('1 / 3 groups selected')).toBe(
-      true
-    )
-    expect(findButton('Restore global Auto', true).disabled).toBe(false)
-
-    const groupTrigger = getControlByLabel('Group')
-    selectComboboxOption(groupTrigger, 'Standard access')
-    expect(document.querySelector('button[aria-label="Remove vip"]')).toBe(null)
-    selectComboboxOption(groupTrigger, 'Automatic routing')
-
-    expect(
-      document.querySelector('button[aria-label="Remove vip"]')
-    ).toBeTruthy()
-    expect(document.body.textContent?.includes('1 / 3 groups selected')).toBe(
-      true
-    )
-    expect(findButton('Restore global Auto', true).disabled).toBe(false)
-
-    changeInput(getControlByLabel('Name'), 'custom')
-    fireEvent.click(findButton('Save changes', true))
+    fireEvent.click(findButton('Restore global Auto', true))
+    fireEvent.click(getControlByLabel('Group'))
+    const selectedDefault = screen.getByRole('option', { name: /^default/ })
+    fireEvent.click(selectedDefault)
+    fireEvent.keyDown(screen.getByPlaceholderText('Search group name'), {
+      key: 'Escape',
+    })
+    fireEvent.click(screen.getByRole('switch', { name: 'Smart Routing' }))
+    expect(getControlByLabel('Group')).toBeDisabled()
+    fireEvent.click(screen.getByRole('switch', { name: 'Smart Routing' }))
+    expect(getControlByLabel('Group')).toHaveTextContent('vip')
+    changeInput(getControlByLabel('Token Name'), 'custom')
+    fireEvent.click(findButton('Add', true))
     await waitFor(() => expect(createdPayloads).toHaveLength(1))
-    expect(createdPayloads[0]?.auto_groups).toEqual(['vip'])
+    expect(createdPayloads[0]).toMatchObject({
+      group: 'vip',
+      smart_routing: false,
+    })
   })
 })
 
@@ -300,8 +311,8 @@ describe('API key expiry across editing sessions', () => {
         group: 'default',
         auto_groups: [],
         cross_group_retry: false,
-        model_limits_enabled: false,
-        model_limits: '',
+        model_limits_enabled: true,
+        model_limits: 'retired-model',
         allow_ips: '',
         allow_user_quota_query: true,
       }
@@ -313,11 +324,14 @@ describe('API key expiry across editing sessions', () => {
       const getFixture = apiClient.get
       const get = vi.spyOn(apiClient, 'get').mockImplementation((url) => {
         if (url === '/api/token/1') {
-          return Promise.resolve({ data: { success: true, data: first } })
+          return Promise.resolve({
+            data: { success: true, data: { ...first, routing_strategy: '' } },
+          })
         }
         if (url === '/api/token/2') return detail
         return getFixture(url)
       })
+      const post = vi.spyOn(apiClient, 'post')
       const put = vi
         .spyOn(api, 'put')
         .mockResolvedValue({ data: { success: true } })
@@ -344,6 +358,13 @@ describe('API key expiry across editing sessions', () => {
         expect(findButton('Save changes', true)).toBeEnabled()
       )
       await waitFor(() => expect(screen.getByLabelText('Time')).toBeEnabled())
+      await waitFor(() =>
+        expect(post).toHaveBeenCalledWith('/api/token/models', {
+          group: 'default',
+          auto_groups_mode: 'inherit',
+          auto_groups: [],
+        })
+      )
 
       if (finish === 'save') {
         fireEvent.click(findButton('Save changes', true))
@@ -351,6 +372,13 @@ describe('API key expiry across editing sessions', () => {
         expect(put.mock.calls[0][1]).toMatchObject({
           id: 1,
           expired_time: 2000000000,
+          model_limits: 'retired-model',
+          routing_strategy: 'auto',
+          smart_routing: false,
+          no_retry_within_group: false,
+          group: 'default',
+          unlimited_quota: true,
+          allow_user_quota_query: true,
         })
       } else {
         fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0])
@@ -377,9 +405,14 @@ describe('API key expiry across editing sessions', () => {
       await waitFor(() =>
         expect(put).toHaveBeenLastCalledWith(
           '/api/token/',
-          expect.objectContaining({ id: 2, expired_time: -1 })
+          expect.objectContaining({
+            id: 2,
+            expired_time: -1,
+            model_limits: 'retired-model',
+          })
         )
       )
+      expect(get).not.toHaveBeenCalledWith('/api/user/models')
     }
   )
 
@@ -389,7 +422,8 @@ describe('API key expiry across editing sessions', () => {
       const payloads: Array<Record<string, unknown>> = []
       installApiFixtures(payloads)
       await renderCreateDrawer()
-      changeInput(getControlByLabel('Name'), 'no-expiry')
+      fireEvent.click(findButton('Restore global Auto', true))
+      changeInput(getControlByLabel('Token Name'), 'no-expiry')
       fireEvent.click(screen.getByRole('button', { name: '1 Month' }))
       expect(screen.getByLabelText('Time')).toBeEnabled()
       fireEvent.click(screen.getByRole('button', { name: action }))
@@ -397,7 +431,7 @@ describe('API key expiry across editing sessions', () => {
         screen.getByRole('button', { name: 'Never expires' })
       ).toBeVisible()
       expect(screen.getByLabelText('Time')).toBeDisabled()
-      fireEvent.click(findButton('Save changes', true))
+      fireEvent.click(findButton('Add', true))
       await waitFor(() => expect(payloads).toHaveLength(1))
       expect(payloads[0]?.expired_time).toBe(-1)
     }
@@ -410,7 +444,7 @@ describe('API keys mutate drawer user quota query switch', () => {
     installApiFixtures(createdPayloads)
     await renderCreateDrawer()
 
-    fireEvent.click(findButton('Advanced Settings', true))
+    fireEvent.click(findButton('Restore global Auto', true))
     const quotaQuerySwitch = await screen.findByRole('switch', {
       name: 'Allow querying user quota',
     })
@@ -418,9 +452,54 @@ describe('API keys mutate drawer user quota query switch', () => {
     fireEvent.click(quotaQuerySwitch)
     expect(quotaQuerySwitch).not.toBeChecked()
 
-    changeInput(getControlByLabel('Name'), 'no-user-quota')
-    fireEvent.click(findButton('Save changes', true))
+    changeInput(getControlByLabel('Token Name'), 'no-user-quota')
+    fireEvent.click(findButton('Add', true))
     await waitFor(() => expect(createdPayloads).toHaveLength(1))
     expect(createdPayloads[0]?.allow_user_quota_query).toBe(false)
   })
+})
+
+describe('API keys persisted routing policy', () => {
+  test('submits the selected strategy, project label and one-channel-per-group policy with the original quota permission', async () => {
+    const payloads: Array<Record<string, unknown>> = []
+    installApiFixtures(payloads)
+    await renderCreateDrawer()
+    fireEvent.click(findButton('Restore global Auto', true))
+    changeInput(getControlByLabel('Token Name'), 'routing-fixture')
+    fireEvent.change(screen.getByLabelText('Project label'), {
+      target: { value: 'Synthetic project' },
+    })
+    fireEvent.click(
+      screen.getByRole('switch', { name: 'No retries within a group' })
+    )
+    fireEvent.click(screen.getByRole('switch', { name: 'Smart Routing' }))
+    fireEvent.click(
+      screen.getByRole('radio', { name: 'Speed first (fastest)' })
+    )
+    fireEvent.click(findButton('Add', true))
+    await waitFor(() => expect(payloads).toHaveLength(1))
+    expect(payloads[0]).toMatchObject({
+      smart_routing: true,
+      routing_strategy: 'speed',
+      no_retry_within_group: true,
+      project_label: 'Synthetic project',
+      group: 'auto',
+      auto_groups: [],
+      allow_user_quota_query: true,
+    })
+  })
+})
+
+test('keeps mobile action buttons in bounded equal grid columns instead of two full-width non-shrinking flex items', async () => {
+  installApiFixtures([])
+  await renderCreateDrawer()
+  const footer = findButton('Add', true).closest('[data-slot="sheet-footer"]')
+  expect(footer).toHaveClass('grid', 'grid-cols-2')
+  expect(footer).not.toHaveClass('flex')
+  expect(footer).not.toHaveClass('flex-row-reverse')
+  expect(footer).toHaveClass('sm:flex', 'sm:flex-row-reverse')
+  expect(findButton('Add', true)).toHaveClass('order-1', 'min-w-0')
+  expect(findButton('Close', true)).toHaveClass('order-2', 'min-w-0')
+  expect(screen.getByRole('dialog')).toHaveClass('min-w-0', 'max-w-[100dvw]')
+  expect(document.querySelector('#api-key-form')).toHaveClass('min-w-0')
 })

@@ -32,6 +32,8 @@ type ResponsesToChatStreamState struct {
 	callIDToKey                map[string]string
 	pendingArgsByOutputIndex   map[int]string
 	pendingArgsByItemID        map[string]string
+	captureUsageText           bool
+	hasUsageText               bool
 	usageText                  strings.Builder
 }
 
@@ -48,11 +50,23 @@ type responsesStreamTool struct {
 }
 
 func NewResponsesToChatStreamState(model string, includeUsage bool) *ResponsesToChatStreamState {
+	return newResponsesToChatStreamState(model, includeUsage, true)
+}
+
+// NewResponsesToChatStreamStateWithoutUsageText is used by the response
+// registry when the caller incrementally accounts for emitted chat deltas.
+// The public compatibility constructor keeps the historical capture behavior.
+func NewResponsesToChatStreamStateWithoutUsageText(model string, includeUsage bool) *ResponsesToChatStreamState {
+	return newResponsesToChatStreamState(model, includeUsage, false)
+}
+
+func newResponsesToChatStreamState(model string, includeUsage bool, captureUsageText bool) *ResponsesToChatStreamState {
 	return &ResponsesToChatStreamState{
 		Model:                    model,
 		Created:                  time.Now().Unix(),
 		IncludeUsage:             includeUsage,
 		Usage:                    &dto.Usage{},
+		captureUsageText:         captureUsageText,
 		toolByKey:                make(map[string]*responsesStreamTool),
 		outputIndexToKey:         make(map[int]string),
 		itemIDToKey:              make(map[string]string),
@@ -60,6 +74,21 @@ func NewResponsesToChatStreamState(model string, includeUsage bool) *ResponsesTo
 		pendingArgsByOutputIndex: make(map[int]string),
 		pendingArgsByItemID:      make(map[string]string),
 	}
+}
+
+func (s *ResponsesToChatStreamState) appendUsageText(text string) {
+	if text != "" {
+		s.hasUsageText = true
+	}
+	if s.captureUsageText {
+		s.usageText.WriteString(text)
+	}
+}
+
+// HasUsageText distinguishes generated text, reasoning and tool output from
+// a role-only prelude even when the caller opts out of retaining the text.
+func (s *ResponsesToChatStreamState) HasUsageText() bool {
+	return s != nil && s.hasUsageText
 }
 
 func (s *ResponsesToChatStreamState) StreamUsage() *dto.Usage {
@@ -170,7 +199,7 @@ func (s *ResponsesToChatStreamState) textDelta(delta string) []dto.ChatCompletio
 	if delta == "" {
 		return nil
 	}
-	s.usageText.WriteString(delta)
+	s.appendUsageText(delta)
 	s.hasSentText = true
 	chunks := s.ensureStart()
 	chunks = append(chunks, s.makeChunk(dto.ChatCompletionsStreamResponseChoiceDelta{
@@ -295,7 +324,7 @@ func (s *ResponsesToChatStreamState) reasoningDelta(delta string) []dto.ChatComp
 			s.needsReasoningSummaryBreak = false
 		}
 	}
-	s.usageText.WriteString(delta)
+	s.appendUsageText(delta)
 	chunks := s.ensureStart()
 	chunks = append(chunks, s.makeChunk(dto.ChatCompletionsStreamResponseChoiceDelta{
 		ReasoningContent: &delta,
@@ -340,6 +369,13 @@ func (s *ResponsesToChatStreamState) flushPendingTool(event *dto.ResponsesStream
 	}
 	if tool == nil {
 		return nil
+	}
+	arguments := event.Arguments
+	if event.Type == responsesEventCustomToolInputDone {
+		arguments = event.Input
+	}
+	if arguments != nil {
+		tool.Arguments = *arguments
 	}
 	return s.toolDelta(tool, "")
 }
@@ -506,10 +542,10 @@ func (s *ResponsesToChatStreamState) toolDelta(tool *responsesStreamTool, explic
 	}
 	if argsDelta != "" {
 		tool.ArgsSentAt += len(argsDelta)
-		s.usageText.WriteString(argsDelta)
+		s.appendUsageText(argsDelta)
 	}
 	if responseTool.Function.Name != "" {
-		s.usageText.WriteString(responseTool.Function.Name)
+		s.appendUsageText(responseTool.Function.Name)
 	}
 
 	chunks = append(chunks, s.makeChunk(dto.ChatCompletionsStreamResponseChoiceDelta{
@@ -742,6 +778,22 @@ func (a *ResponsesBufferedAccumulator) ProcessEvent(event *dto.ResponsesStreamRe
 				tool.Arguments.WriteString(args)
 			}
 		}
+	case responsesEventFunctionArgsDone, responsesEventCustomToolInputDone:
+		arguments := event.Arguments
+		if event.Type == responsesEventCustomToolInputDone {
+			arguments = event.Input
+		}
+		if arguments == nil {
+			return
+		}
+		if idx, ok := a.findToolIndex(event); ok {
+			a.tools[idx].Arguments.Reset()
+			a.tools[idx].Arguments.WriteString(*arguments)
+		} else if event.OutputIndex != nil {
+			a.pendingByOutputIndex[*event.OutputIndex] = *arguments
+		} else if itemID := strings.TrimSpace(event.ItemID); itemID != "" {
+			a.pendingByItemID[itemID] = *arguments
+		}
 	case responsesEventFunctionArgsDelta, responsesEventCustomToolInputDelta:
 		if idx, ok := a.findToolIndex(event); ok {
 			a.tools[idx].Arguments.WriteString(event.Delta)
@@ -801,13 +853,15 @@ func (a *ResponsesBufferedAccumulator) BuildOutput() []dto.ResponsesOutput {
 			}
 			tool := a.tools[item.ToolIndex]
 			argsRaw, _ := kitutil.Marshal(tool.Arguments.String())
-			out = append(out, dto.ResponsesOutput{
-				Type:      item.Type,
-				ID:        tool.ItemID,
-				CallId:    tool.CallID,
-				Name:      tool.Name,
-				Arguments: argsRaw,
-			})
+			output := dto.ResponsesOutput{
+				Type: item.Type, ID: tool.ItemID, CallId: tool.CallID, Name: tool.Name,
+			}
+			if item.Type == responsesOutputTypeCustomToolCall {
+				output.Input = argsRaw
+			} else {
+				output.Arguments = argsRaw
+			}
+			out = append(out, output)
 		}
 	}
 	return out

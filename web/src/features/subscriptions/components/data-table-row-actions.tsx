@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { Row } from '@tanstack/react-table'
+
 import { Pencil, Power, PowerOff, RotateCcw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -26,6 +26,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import type { Row } from '@/lib/console-table'
 
 import type { PlanRecord } from '../types'
 import { useSubscriptions } from './subscriptions-provider'

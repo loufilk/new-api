@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { ColumnDef } from '@tanstack/react-table'
+
 import { Eye, Info, Pencil, Settings2, Timer, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -29,6 +29,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuShortcut,
 } from '@/components/ui/dropdown-menu'
+import type { ColumnDef } from '@/lib/console-table'
 import { formatTimestampToDate } from '@/lib/format'
 
 import { getDeploymentStatusConfig } from '../constants'

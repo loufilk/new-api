@@ -16,7 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { Row } from '@tanstack/react-table'
+
+import { useNavigate } from '@tanstack/react-router'
 import {
   Trash2,
   Edit,
@@ -48,18 +49,28 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { useChatPresets } from '@/features/chat/hooks/use-chat-presets'
-import { resolveChatUrl, type ChatPreset } from '@/features/chat/lib/chat-links'
+import {
+  chatLinkRequiresApiKey,
+  resolveChatUrl,
+  resolveWebChatUrl,
+  type ChatPreset,
+} from '@/features/chat/lib/chat-links'
+import { isSafeClientLink } from '@/features/chat/lib/client-import'
 import { sendToFluent } from '@/features/chat/lib/send-to-fluent'
+import { API_BASE_URL } from '@/lib/api-url'
 import { encodeChannelConnectionInfo } from '@/lib/channel-connection-info'
+import type { Row } from '@/lib/console-table'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { updateApiKeyStatus } from '../api'
 import { API_KEY_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
-import { apiKeySchema } from '../types'
+import type { ApiKey } from '../types'
 import { useApiKeys } from './api-keys-provider'
 
 function getServerAddress(): string {
+  // Connection info must point API clients at the API origin.
+  if (API_BASE_URL) return API_BASE_URL
   try {
     const raw = localStorage.getItem('status')
     if (raw) {
@@ -72,15 +83,14 @@ function getServerAddress(): string {
   return window.location.origin
 }
 
-type DataTableRowActionsProps<TData> = {
-  row: Row<TData>
+type DataTableRowActionsProps = {
+  row: Row<ApiKey>
 }
 
-export function DataTableRowActions<TData>({
-  row,
-}: DataTableRowActionsProps<TData>) {
+export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
-  const apiKey = apiKeySchema.parse(row.original)
+  const navigate = useNavigate()
+  const apiKey = row.original
   const {
     setOpen,
     setCurrentRow,
@@ -99,6 +109,25 @@ export function DataTableRowActions<TData>({
 
   const handleOpenChatPreset = useCallback(
     async (preset: ChatPreset) => {
+      if (preset.type === 'web') {
+        if (chatLinkRequiresApiKey(preset.url)) {
+          await navigate({ to: '/chat/$chatId', params: { chatId: preset.id } })
+        } else {
+          const url = resolveWebChatUrl(preset.url, serverAddress)
+          if (url) {
+            window.open(url, '_blank', 'noopener,noreferrer')
+          } else {
+            toast.error(
+              t('Invalid chat link. Please contact your administrator.')
+            )
+          }
+        }
+        return
+      }
+      if (preset.type !== 'fluent' && !isSafeClientLink(preset.url)) {
+        toast.error(t('Invalid chat link. Please contact your administrator.'))
+        return
+      }
       const realKey = await resolveRealKey(apiKey.id)
       if (!realKey) return
 
@@ -122,7 +151,7 @@ export function DataTableRowActions<TData>({
         serverAddress,
       })
 
-      if (!resolvedUrl) {
+      if (!isSafeClientLink(resolvedUrl)) {
         toast.error(t('Invalid chat link. Please contact your administrator.'))
         return
       }
@@ -135,7 +164,7 @@ export function DataTableRowActions<TData>({
         window.location.href = resolvedUrl
       }
     },
-    [resolveRealKey, apiKey.id, serverAddress, t]
+    [resolveRealKey, apiKey.id, serverAddress, navigate, t]
   )
 
   const handleToggleStatus = async (

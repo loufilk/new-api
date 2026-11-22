@@ -36,8 +36,10 @@ import { getOperationsSectionNavItems } from '@/features/system-settings/operati
 import { getPolicySectionNavItems } from '@/features/system-settings/request-policies/section-registry'
 import { getSecuritySectionNavItems } from '@/features/system-settings/security/section-registry.tsx'
 import { getSiteSectionNavItems } from '@/features/system-settings/site/section-registry.tsx'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
-import type { NavGroup, SidebarView } from '../types'
+import type { NavGroup, SidebarBadges, SidebarView } from '../types'
 
 /**
  * Sidebar nav groups for the System Settings nested view.
@@ -46,7 +48,23 @@ import type { NavGroup, SidebarView } from '../types'
  * header already provides top-level context — the inner group label
  * scopes the items as "administration" actions.
  */
-function getSystemSettingsNavGroups(t: TFunction): NavGroup[] {
+function getSystemSettingsNavGroups(
+  t: TFunction,
+  badges: SidebarBadges
+): NavGroup[] {
+  const role = useAuthStore.getState().auth.user?.role ?? 0
+  if (role !== ROLE.SUPER_ADMIN) {
+    if (role < ROLE.ADMIN) return []
+    return [
+      {
+        id: 'system-administration',
+        title: t('System Administration'),
+        items: getContentSectionNavItems(t).filter(
+          (item) => item.url === '/system-settings/content/model-tests'
+        ),
+      },
+    ]
+  }
   return [
     {
       id: 'system-administration',
@@ -65,7 +83,10 @@ function getSystemSettingsNavGroups(t: TFunction): NavGroup[] {
         {
           title: t('Billing & Payment'),
           icon: CreditCard,
-          items: getBillingSectionNavItems(t),
+          badge: badges.modelPricing,
+          items: getBillingSectionNavItems(t, {
+            'model-pricing': badges.modelPricing,
+          }),
         },
         {
           title: t('Models'),

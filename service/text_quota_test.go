@@ -80,7 +80,15 @@ func TestFixedPriceBillingDatabaseMatrix(t *testing.T) {
 			model.DB, model.LOG_DB = db, logDB
 			common.SetDatabaseTypes(dialect.name, dialect.name)
 			t.Cleanup(func() { model.DB, model.LOG_DB = oldDB, oldLogDB; common.SetDatabaseTypes(oldMainType, oldLogType) })
-			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}))
+			require.NoError(t, db.AutoMigrate(
+				&model.User{},
+				&model.Token{},
+				&model.Channel{},
+				&model.Model{},
+				&model.BalanceLedgerOperation{}, &model.BillingFinalization{},
+				&model.BalanceLedger{},
+			))
+			require.NoError(t, db.AutoMigrate(model.BonusSourceModels()...))
 			require.NoError(t, logDB.AutoMigrate(&model.Log{}))
 			versionQuery := "select version()"
 			if dialect.name == common.DatabaseTypeSQLite {
@@ -151,7 +159,12 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 			if tc.wallet > 0 {
 				quota = tc.wallet
 			}
-			user := model.User{Username: fmt.Sprintf("fixed_billing_%d", index), Quota: quota, Status: common.UserStatusEnabled}
+			user := model.User{
+				Username:  fmt.Sprintf("fixed_billing_%d", index),
+				Quota:     quota,
+				QuotaPaid: quota,
+				Status:    common.UserStatusEnabled,
+			}
 			require.NoError(t, db.Create(&user).Error)
 			token := model.Token{UserId: user.Id, Key: fmt.Sprintf("fixed-billing-test-%d", index), Name: "fixed-billing", RemainQuota: startingQuota, Status: common.TokenStatusEnabled}
 			require.NoError(t, db.Create(&token).Error)
@@ -177,7 +190,7 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 			require.NoError(t, err)
 			snapshot := &billingexpr.BillingSnapshot{BillingMode: "tiered_expr", ExprString: tc.expression, ExprHash: billingexpr.ExprHashString(tc.expression), QuotaPerUnit: common.QuotaPerUnit, GroupRatio: group, EstimatedTier: trace.MatchedTier, EstimatedBillingUnit: trace.BillingUnit, EstimatedFixedPrice: trace.FixedPrice, EstimatedQuotaAfterGroup: reservation}
 			snapshot.EstimatedImageCount = trace.ImageCount
-			info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id}, OriginModelName: "fixed-test", UsingGroup: "default", UserGroup: "default", UserSetting: dto.UserSetting{BillingPreference: "wallet_only"}, ForcePreConsume: true, StartTime: time.Now(), IsStream: tc.stream, RelayFormat: types.RelayFormatOpenAI, PriceData: hosttypes.PriceData{GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: group}}, TieredBillingSnapshot: snapshot, BillingRequestInput: request}
+			info := &relaycommon.RelayInfo{RequestId: fmt.Sprintf("fixed-billing-%d", index), UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id}, OriginModelName: "fixed-test", UsingGroup: "default", UserGroup: "default", UserSetting: dto.UserSetting{BillingPreference: "wallet_only", QuotaWarningEnabled: boolPtr(false)}, ForcePreConsume: true, StartTime: time.Now(), IsStream: tc.stream, RelayFormat: types.RelayFormatOpenAI, PriceData: hosttypes.PriceData{GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: group}}, TieredBillingSnapshot: snapshot, BillingRequestInput: request}
 			info.SetEstimatePromptTokens(tc.estimate)
 			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 			ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
@@ -921,10 +934,7 @@ func TestCalculateTextQuotaSummaryBillsCacheCreationInputTokens(t *testing.T) {
 // OpenAI 12h cache writes bill at twice the write price and keep their own
 // count in the consume log, with ratio and expression pricing alike.
 func TestPostTextConsumeQuotaBillsOpenAI12hCacheWrites(t *testing.T) {
-	truncate(t)
 	const userID, channelID = 63, 63
-	seedUser(t, userID, 1_000_000)
-	seedChannel(t, channelID)
 	gin.SetMode(gin.TestMode)
 	// The OpenAI prompt caching guide example at gpt-6-astra prices: $10 input,
 	// $1 cached, $12.50 30m write and $25 12h write per 1M tokens.
@@ -942,11 +952,23 @@ func TestPostTextConsumeQuotaBillsOpenAI12hCacheWrites(t *testing.T) {
 		{"expression without cc12h", hosttypes.PriceData{}, `tier("standard", p * 10 + c * 50 + cr * 1 + cc * 12.5)`, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// Financial assertions use an isolated real PostgreSQL schema, never
+			// the package's legacy in-memory logging fixture.
+			openTaskPollingSQLFixture(t, "postgres")
+			require.NoError(t, model.DB.AutoMigrate(&model.Model{}, &model.Vendor{}, &model.BillingFinalization{}, &model.SubscriptionPlan{}))
+			model.InvalidateModelBonusEligibleCache()
+			t.Cleanup(model.InvalidateModelBonusEligibleCache)
+			seedUser(t, userID, 1_000_000)
+			seedToken(t, userID, userID, "cache-ttl-fixture-token", 1_000_000)
+			seedChannel(t, channelID)
 			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 			ctx.Request = httptest.NewRequest("POST", "/v1/responses", nil)
 			tc.price.GroupRatioInfo = hosttypes.GroupRatioInfo{GroupRatio: 1}
 			info := &relaycommon.RelayInfo{
-				UserId:          userID,
+				UserId:  userID,
+				TokenId: userID, TokenKey: "cache-ttl-fixture-token",
+				RequestId: "cache-ttl-" + tc.name, ForcePreConsume: true,
+				UserGroup: "default", UserSetting: dto.UserSetting{BillingPreference: "wallet_only", QuotaWarningEnabled: boolPtr(false)},
 				OriginModelName: "gpt-6-astra",
 				UsingGroup:      "default",
 				StartTime:       time.Now(),
@@ -958,7 +980,18 @@ func TestPostTextConsumeQuotaBillsOpenAI12hCacheWrites(t *testing.T) {
 				info.TieredBillingSnapshot = makeSnapshot(tc.expr, 1, 0, 0)
 			}
 
+			require.Nil(t, PreConsumeBilling(ctx, 100_000, info))
+			assert.Equal(t, 900_000, getUserQuota(t, userID))
 			PostTextConsumeQuota(ctx, info, usage, nil)
+			assert.Equal(t, 1_000_000-75750, getUserQuota(t, userID))
+			assert.Equal(t, 1_000_000-75750, getTokenRemainQuota(t, userID))
+			var persisted model.User
+			require.NoError(t, model.DB.First(&persisted, userID).Error)
+			assert.Equal(t, 1_000_000-75750, persisted.QuotaPaid)
+			assert.Zero(t, persisted.QuotaBonus)
+			assert.Zero(t, persisted.QuotaReward)
+			assert.Equal(t, 75750, persisted.UsedQuota)
+			assert.Equal(t, 1, persisted.RequestCount)
 
 			log := getLastLog(t)
 			require.NotNil(t, log)
@@ -1687,6 +1720,8 @@ func TestPostTextConsumeQuotaLogsMissingUsageAsStructuredContent(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		UserId:          userID,
 		OriginModelName: "missing-usage-model",
+		UserQuota:       10_000,
+		UserSetting:     dto.UserSetting{QuotaWarningEnabled: boolPtr(false)},
 		UsingGroup:      "default",
 		StartTime:       time.Now(),
 		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channelID},
@@ -1704,4 +1739,47 @@ func TestPostTextConsumeQuotaLogsMissingUsageAsStructuredContent(t *testing.T) {
 	assert.Equal(t, []any{
 		map[string]any{"key": "Upstream returned no usage, so nothing was charged (possibly an upstream timeout)"},
 	}, other["content_parts"])
+}
+
+func TestDeliveredUsageDoesNotReportUnsettledChargePostgres(t *testing.T) {
+	openTaskPollingSQLFixture(t, "postgres")
+	require.NoError(t, model.DB.AutoMigrate(&model.BillingFinalization{}, &model.Model{}, &model.Vendor{}, &model.SubscriptionPlan{}))
+	const id = 97523
+	seedUser(t, id, 100)
+	seedToken(t, id, id, "settlement-display-token", 100)
+	seedChannel(t, id)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	const requestID = "unconfirmed-settlement-display"
+	ctx.Set(common.RequestIdKey, requestID)
+	info := &relaycommon.RelayInfo{
+		UserId: id, TokenId: id, TokenKey: "settlement-display-token", RequestId: requestID,
+		ForcePreConsume: true, OriginModelName: "settlement-display-model", UserGroup: "default", UsingGroup: "default",
+		UserSetting: dto.UserSetting{BillingPreference: "wallet_only", QuotaWarningEnabled: boolPtr(false)},
+		RelayFormat: types.RelayFormatOpenAI, StartTime: time.Now(),
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelId: id},
+		PriceData:   hosttypes.PriceData{ModelRatio: 1, CompletionRatio: 1, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}},
+	}
+	require.Nil(t, PreConsumeBilling(ctx, 10, info))
+	PostTextConsumeQuota(ctx, info, &dto.Usage{PromptTokens: 150, CompletionTokens: 15, TotalTokens: 165}, nil)
+	assert.Equal(t, 90, getUserQuota(t, id), "ambiguous delivery retains only its original hold")
+	var final model.BillingFinalization
+	require.NoError(t, model.DB.Where("request_id = ?", requestID).Take(&final).Error)
+	assert.Equal(t, model.BillingSettlementReview, final.State)
+	assert.Equal(t, 165, final.ActualQuota)
+	var user model.User
+	require.NoError(t, model.DB.First(&user, id).Error)
+	assert.Zero(t, user.UsedQuota)
+	assert.Zero(t, user.RequestCount)
+	var channel model.Channel
+	require.NoError(t, model.DB.First(&channel, id).Error)
+	assert.Zero(t, channel.UsedQuota)
+	var logs []model.Log
+	require.NoError(t, model.LOG_DB.Where("request_id = ?", requestID).Find(&logs).Error)
+	require.Len(t, logs, 1)
+	assert.Equal(t, model.LogTypeError, logs[0].Type)
+	assert.Zero(t, logs[0].Quota)
+	assert.Equal(t, 150, logs[0].PromptTokens)
+	assert.Equal(t, 15, logs[0].CompletionTokens)
+	assert.Contains(t, logs[0].Content, "settlement is unconfirmed")
 }

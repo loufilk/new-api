@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   fireEvent,
   render,
@@ -25,9 +26,12 @@ import {
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
+import { Toaster, toast } from 'sonner'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 import {
   DEFAULT_CURRENCY_CONFIG,
   useSystemConfigStore,
@@ -52,11 +56,11 @@ function captureDownloads() {
       revokeObjectURL: vi.fn(),
     })
   )
-  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(
-    function (this: HTMLAnchorElement) {
-      downloads.push({ filename: this.download, blob: currentBlob })
-    }
-  )
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+    this: HTMLAnchorElement
+  ) {
+    downloads.push({ filename: this.download, blob: currentBlob })
+  })
   return downloads
 }
 
@@ -74,18 +78,29 @@ function readDownload(download: Download): Promise<string> {
 function CreateDrawer() {
   const [open, setOpen] = useState(true)
   return (
-    <RedemptionsProvider>
-      <RedemptionsMutateDrawer open={open} onOpenChange={setOpen} />
-    </RedemptionsProvider>
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <RedemptionsProvider>
+        <RedemptionsMutateDrawer open={open} onOpenChange={setOpen} />
+      </RedemptionsProvider>
+      <Toaster />
+    </QueryClientProvider>
   )
 }
 
 afterEach(() => {
+  toast.dismiss()
   vi.unstubAllGlobals()
   useSystemConfigStore
     .getState()
     .setConfig({ currency: { ...DEFAULT_CURRENCY_CONFIG } })
   localStorage.clear()
+  sessionStorage.clear()
+  useAuthStore.getState().auth.reset()
+  vi.restoreAllMocks()
 })
 
 test.each([
@@ -188,6 +203,9 @@ test('successful batch creation opens export with returned codes and the configu
       usdExchangeRate: 7.2,
     },
   })
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'operator', role: ROLE.ADMIN })
   vi.spyOn(api, 'post').mockResolvedValue({
     data: { success: true, data: ['createdA', 'createdB'] },
   })
@@ -238,6 +256,9 @@ test('successful batch creation opens export with returned codes and the configu
 
 test('failed creation does not open a success export dialog', async () => {
   const user = userEvent.setup()
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'operator', role: ROLE.ADMIN })
   vi.spyOn(api, 'post').mockResolvedValue({
     data: { success: false, message: 'Creation failed' },
   })
@@ -246,15 +267,11 @@ test('failed creation does not open a success export dialog', async () => {
     target: { value: 'batch' },
   })
   await user.click(screen.getByRole('button', { name: 'Save changes' }))
-  await waitFor(() =>
-    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled()
-  )
+  expect(await screen.findByText('Creation failed')).toBeInTheDocument()
   expect(
     screen.queryByRole('dialog', { name: 'Redemption codes created' })
   ).not.toBeInTheDocument()
-  expect(
-    screen.getByRole('dialog', { name: 'Create Redemption Code' })
-  ).toBeVisible()
+  expect(document.querySelector('#redemption-form')).toBeInTheDocument()
 })
 
 test('completion defaults to no file and closes without downloading', async () => {

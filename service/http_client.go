@@ -64,7 +64,7 @@ func checkProtectedFetchRedirect(req *http.Request, via []*http.Request) error {
 }
 
 func validateURLWithCurrentFetchSetting(urlStr string, applyDomainIPFilter bool) error {
-	fetchSetting := system_setting.GetFetchSetting()
+	fetchSetting := system_setting.SnapshotFetchSetting()
 	return common.ValidateURLWithFetchSetting(urlStr, fetchSetting.EnableSSRFProtection, fetchSetting.AllowPrivateIp, fetchSetting.DomainFilterMode, fetchSetting.IpFilterMode, fetchSetting.DomainList, fetchSetting.IpList, fetchSetting.AllowedPorts, applyDomainIPFilter && fetchSetting.ApplyIPFilterForDomain)
 }
 
@@ -96,6 +96,14 @@ func newRelayHTTPTransport() *http.Transport {
 	transport.MaxIdleConns = common.RelayMaxIdleConns
 	transport.MaxIdleConnsPerHost = common.RelayMaxIdleConnsPerHost
 	transport.IdleConnTimeout = time.Duration(common.RelayIdleConnTimeout) * time.Second
+	if seconds := common.RelayHTTP2PingIdleTimeout; seconds > 0 {
+		if transport.HTTP2 == nil {
+			transport.HTTP2 = &http.HTTP2Config{}
+		}
+		// Probe the upstream connection, independently of downstream SSE heartbeats.
+		transport.HTTP2.SendPingTimeout = time.Duration(min(seconds, maxTimeoutSeconds)) * time.Second
+		transport.HTTP2.PingTimeout = time.Duration(min(max(common.RelayHTTP2PingTimeout, 0), maxTimeoutSeconds)) * time.Second
+	}
 	// Bound the wait for upstream response headers. Without it, an upstream that
 	// accepts the connection but never responds (and never sends FIN/RST) parks the
 	// goroutine forever, and every buffer that request owns -- the raw body read by
@@ -154,10 +162,26 @@ func GetHttpClient() *http.Client {
 	return httpClient
 }
 
+// DoRequestWithoutRedirects keeps operator-configured transport, timeout and
+// cookie settings while preventing an authenticated auxiliary request from
+// forwarding custom credentials to a redirect target. The original response,
+// including a redirect status and body, remains available to the caller. Never
+// replace the redirect policy on the cached/shared client itself.
+func DoRequestWithoutRedirects(client *http.Client, request *http.Request) (*http.Response, error) {
+	if client == nil {
+		return nil, fmt.Errorf("HTTP client is not initialized")
+	}
+	requestClient := *client
+	requestClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return requestClient.Do(request)
+}
+
 // GetSSRFProtectedHTTPClient 返回带拨号时 SSRF 校验的客户端。
 // ssrfProtectedHTTPClient 由 InitHttpClient 在启动时初始化，运行期只读。
 func GetSSRFProtectedHTTPClient() *http.Client {
-	if fetchSetting := system_setting.GetFetchSetting(); fetchSetting != nil && !fetchSetting.EnableSSRFProtection {
+	if fetchSetting := system_setting.SnapshotFetchSetting(); fetchSetting != nil && !fetchSetting.EnableSSRFProtection {
 		return GetHttpClient()
 	}
 	return ssrfProtectedHTTPClient

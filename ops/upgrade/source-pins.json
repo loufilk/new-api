@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "stage": "no-agent-edition",
+  "production_baseline": {
+    "repository": "1057300248/wanchuan-new-api",
+    "commit": "093c7197d5eac50787971fd5ff7553a414142fc7",
+    "tree": "c95f344510ce914c810f51cc8bdff5112934d038"
+  },
+  "feature_reference": {
+    "pull_request": 17,
+    "commit": "da88d8f977f8cbbd12561556344b90a0e94530e1",
+    "tree": "709f4d5c02098b7eb41b173a1271a350861d81be"
+  },
+  "upstream_reference": {
+    "repository": "QuantumNous/new-api",
+    "commit": "ea343c4a81151bfd537d33b66527c25fa21a1112",
+    "release_tag": "v1.0.0-rc.47",
+    "release_commit": "e835b1bfc43b565d625537830dbfb19328925134",
+    "commits_after_release": 38,
+    "alignment_method": "Merge the frozen official main commit into the verified published image/source integration baseline. Preserve custom accounting, authorization, image and source-isolation safeguards. Join completed native-stream fallback usage and same-database consume logs with durable financial ownership; retain uncertain-delivery holds.",
+    "tree": "7de10355dcc9bbef7e5fce68dc7f52d5c8d76dc0",
+    "pinned_at": "2026-10-31T09:09:00Z",
+    "verified_at": "2026-10-31T09:47:00Z"
+  },
+  "version": "v1.0.0-rc.51.chuanapi.im.19",
+  "im19_alignment": {
+    "branch": "fix/im19-upstream-native-errors-20261120",
+    "im18_source": "a396886013659439d4caa57b7373a167ea945126",
+    "official_main": "3a407cc9b064fe79a4ffac4146b2690c465dc929",
+    "official_main_already_ancestor": true
+  },
+  "customer_invoice_feature": {
+    "branch": "feat/customer-invoice-center-20261119",
+    "base_commit": "5c370275b838d37d0ea4480810a2ebc2d7dd49ca",
+    "fee_change_base_commit": "e9f41042240db9da8749646ef4809308146adc69",
+    "category_change_base_commit": "121b5dc14ff706d29fcef01f6dcc6cae62a028e4",
+    "scope": "Company-only invoice applications, configurable terms and categories, optional separate fee settlement, and manual issuance and delivery."
+  },
+  "current_alignment": {
+    "stage": "clean-api-key-upstream-alignment",
+    "repository": "loufilk/new-api",
+    "branch": "fix/im8-clean-review-20261119",
+    "source_baseline": {
+      "commit": "fa8e90b78856eb840ac4ecebe22e2c2598b7d377",
+      "tree": "d13e3c0d3a15d68e52384b1b61f4061c7ddccbea"
+    },
+    "previous_upstream_commit": "669d774976369e986f03b6e24fff1042f6f94832",
+    "upstream_reference": {
+      "repository": "QuantumNous/new-api",
+      "commit": "3a407cc9b064fe79a4ffac4146b2690c465dc929",
+      "tree": "0a98e4e0891fd804875989da40b74a8995675e62",
+      "release_tag": "v1.0.0-rc.51",
+      "release_commit": "c9c6da2786b6a0912215127e78e28fbc6650c85f",
+      "commits_after_release": 16
+    },
+    "pinned_at": "2026-11-19T01:52:52Z"
+  },
+  "scope": "Records source history only. production_baseline and feature_reference remain historical pins, not evidence of the currently deployed version. This manifest does not authorize a release, main-branch merge or deployment, and does not assert feature parity.",
+  "integrated_feature_baseline": {
+    "repository": "loufilk/new-api",
+    "branch": "dot/agent-upstream-align-20261029",
+    "commit": "7b72d259453ac0b54eb29b873d44de435b7e9dc8",
+    "tree": "49759b58960f3095fb409ed3db5363be20cdb1c2"
+  },
+  "merged_image_baseline": {
+    "repository": "loufilk/new-api",
+    "branch": "dot/image-resolution-batch-fix-20261029",
+    "commit": "d07abe39543d3fe8acf23bee42790352286424d1",
+    "tree": "48cef84d50e7e9c40b21ce10e6613974752725e3"
+  },
+  "merged_source_baseline": {
+    "repository": "loufilk/new-api",
+    "branch": "dot/upstream-user-id-search-20261029",
+    "commit": "8de0abd7764a6d4d8c4bb54702c042a655cefadb",
+    "tree": "80b6f7a7a0ed619c1c683fd993a269fe25db5649"
+  },
+  "agent_platform_baseline": {
+    "repository": "loufilk/new-api",
+    "branch": "dot/image-resolution-batch-fix-20261029",
+    "commit": "495c2baa722e90bb2bf024b79f15158a011a946a",
+    "tree": "3fa4666499b17be5cc3a571d8b4473483bc7fc9f"
+  },
+  "no_agent_base": {
+    "repository": "loufilk/new-api",
+    "branch": "dot/sub2-tool-descriptions-20261101",
+    "commit": "04f958fb73fdb4944a0a1c925854a57a5d7b2f6a",
+    "tree": "22681cba6f43a796fc0d44e895a99d6aad6150db"
+  }
+}

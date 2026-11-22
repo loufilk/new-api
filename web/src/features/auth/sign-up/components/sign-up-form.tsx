@@ -19,13 +19,17 @@ For commercial licensing, please contact support@quantumnous.com
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Loader2 } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { z } from 'zod'
 
 import { Dialog } from '@/components/dialog'
 import { PasswordInput } from '@/components/password-input'
+import {
+  PasswordConfirmationStatus,
+  PasswordStrength,
+} from '@/components/password-strength'
 import { Turnstile } from '@/components/turnstile'
 import { Button } from '@/components/ui/button'
 import {
@@ -97,6 +101,11 @@ export function SignUpForm({
       confirmPassword: '',
     },
   })
+  const passwordValue = useWatch({ control: form.control, name: 'password' })
+  const confirmationValue = useWatch({
+    control: form.control,
+    name: 'confirmPassword',
+  })
 
   const emailValue = form.watch('email')
   const emailVerificationRequired = !!status?.email_verification
@@ -159,6 +168,12 @@ export function SignUpForm({
 
     if (!validateTurnstile()) return
 
+    const submittedTurnstileToken = turnstileToken
+    if (isTurnstileEnabled) {
+      setTurnstileToken('')
+      setTurnstileWidgetKey((current) => current + 1)
+    }
+
     setIsLoading(true)
     try {
       const res = await register({
@@ -167,7 +182,7 @@ export function SignUpForm({
         email: data.email || undefined,
         verification_code: verificationCode || undefined,
         aff_code: getAffiliateCode(),
-        turnstile: turnstileToken,
+        turnstile: submittedTurnstileToken,
       })
 
       if (res?.success) {
@@ -186,7 +201,8 @@ export function SignUpForm({
   }
 
   async function handleSendVerificationCode() {
-    if (await sendCode(emailValue || '')) {
+    await sendCode(emailValue || '')
+    if (isTurnstileEnabled) {
       setTurnstileToken('')
       setTurnstileWidgetKey((current) => current + 1)
     }
@@ -273,12 +289,17 @@ export function SignUpForm({
           render={({ field }) => (
             <FormItem>
               <FormLabel>{t('Password')}</FormLabel>
-              <FormControl>
+              <FormControl describedBy='sign-up-password-strength'>
                 <PasswordInput
                   placeholder={t('Enter password (8–128 characters)')}
+                  autoComplete='new-password'
                   {...field}
                 />
               </FormControl>
+              <PasswordStrength
+                id='sign-up-password-strength'
+                value={passwordValue}
+              />
               <FormMessage />
             </FormItem>
           )}
@@ -288,12 +309,22 @@ export function SignUpForm({
         <FormField
           control={form.control}
           name='confirmPassword'
-          render={({ field }) => (
+          render={({ field, fieldState }) => (
             <FormItem>
               <FormLabel>{t('Confirm password')}</FormLabel>
-              <FormControl>
-                <PasswordInput placeholder={t('Confirm password')} {...field} />
+              <FormControl describedBy='sign-up-password-confirmation-status'>
+                <PasswordInput
+                  placeholder={t('Confirm password')}
+                  autoComplete='new-password'
+                  {...field}
+                />
               </FormControl>
+              <PasswordConfirmationStatus
+                id='sign-up-password-confirmation-status'
+                password={passwordValue}
+                confirmation={confirmationValue}
+                hasFieldError={!!fieldState.error}
+              />
               <FormMessage />
             </FormItem>
           )}
@@ -356,7 +387,9 @@ export function SignUpForm({
             <Turnstile
               key={turnstileWidgetKey}
               siteKey={turnstileSiteKey}
+              action='signup'
               onVerify={setTurnstileToken}
+              onExpire={() => setTurnstileToken('')}
             />
           </div>
         )}

@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/casbin/casbin/v2"
-	casbinmodel "github.com/casbin/casbin/v2/model"
+	"github.com/casbin/casbin/v3"
+	casbinmodel "github.com/casbin/casbin/v3/model"
 	"gorm.io/gorm"
 )
 
@@ -31,33 +31,43 @@ m = r.sub == p.sub && r.obj == p.obj && r.act == p.act && p.eft == "allow"
 `
 
 func Init(db *gorm.DB) error {
-	if common.IsMasterNode {
-		if err := seedBuiltInRoles(db); err != nil {
-			return err
-		}
-		if err := resetBuiltInRolePolicies(db); err != nil {
-			return err
-		}
-	}
-
 	m, err := casbinmodel.NewModelFromString(modelText)
 	if err != nil {
 		return err
 	}
-	e, err := casbin.NewSyncedEnforcer(m, newGormAdapter(db))
+	var e *casbin.SyncedEnforcer
+	if common.IsMasterNode {
+		// Serving peers may reload at any time during startup.
+		err = db.Transaction(func(tx *gorm.DB) error {
+			if err := seedBuiltInRoles(tx); err != nil {
+				return err
+			}
+			if err := resetBuiltInRolePolicies(tx); err != nil {
+				return err
+			}
+			var loadErr error
+			e, loadErr = casbin.NewSyncedEnforcer(m, newGormAdapter(tx))
+			if loadErr != nil {
+				return loadErr
+			}
+			e.EnableAutoSave(true)
+			return seedDefaultPolicies(e)
+		})
+	} else {
+		e, err = casbin.NewSyncedEnforcer(m, newGormAdapter(db))
+	}
 	if err != nil {
 		return err
 	}
+	// Future policy changes and reloads use the live pool after commit.
+	e.SetAdapter(newGormAdapter(db))
 	e.EnableAutoSave(true)
 
 	enforcerMu.Lock()
 	enforcer = e
 	enforcerMu.Unlock()
 
-	if !common.IsMasterNode {
-		return nil
-	}
-	return seedDefaultPolicies()
+	return nil
 }
 
 func currentEnforcer() *casbin.SyncedEnforcer {

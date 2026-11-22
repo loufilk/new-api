@@ -23,6 +23,10 @@ import { useState, type ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import {
+  useSystemConfigStore,
+  type CurrencyDisplayType,
+} from '@/stores/system-config-store'
 
 import { SettingsPageProvider } from '../../components/settings-page-context'
 import { createEmailSchema } from '../email-settings-schema'
@@ -339,6 +343,71 @@ describe('email delivery settings', () => {
       expect(parsed.error.issues).toEqual([
         expect.objectContaining({ path: ['ResendSenderName'] }),
       ])
+    }
+  })
+})
+
+describe('converted quota reminder range', () => {
+  it.each<CurrencyDisplayType>(['USD', 'CNY', 'CUSTOM', 'TOKENS'])(
+    'keeps blank, zero and finite %s amounts valid but rejects unsafe converted quota',
+    (quotaDisplayType) => {
+      const previous = useSystemConfigStore.getState().config.currency
+      useSystemConfigStore.getState().setConfig({
+        currency: {
+          ...previous,
+          quotaDisplayType,
+          quotaPerUnit: 500000,
+          usdExchangeRate: 7,
+          customCurrencyExchangeRate: 2,
+        },
+      })
+      try {
+        const schema = createEmailSchema((key) => key)
+        for (const amount of ['', '0', '1']) {
+          expect(
+            schema.safeParse({
+              ...defaults,
+              ResendSenderName: '',
+              QuotaRemindThreshold: amount,
+            }).success
+          ).toBe(true)
+        }
+        expect(
+          schema.safeParse({
+            ...defaults,
+            ResendSenderName: '',
+            QuotaRemindThreshold: '1e308',
+          }).success
+        ).toBe(false)
+      } finally {
+        useSystemConfigStore.getState().setConfig({ currency: previous })
+      }
+    }
+  )
+
+  it('accepts the largest exactly representable token quota and rejects the next integer', () => {
+    const previous = useSystemConfigStore.getState().config.currency
+    useSystemConfigStore
+      .getState()
+      .setConfig({ currency: { ...previous, quotaDisplayType: 'TOKENS' } })
+    try {
+      const schema = createEmailSchema((key) => key)
+      expect(
+        schema.safeParse({
+          ...defaults,
+          ResendSenderName: '',
+          QuotaRemindThreshold: String(Number.MAX_SAFE_INTEGER),
+        }).success
+      ).toBe(true)
+      expect(
+        schema.safeParse({
+          ...defaults,
+          ResendSenderName: '',
+          QuotaRemindThreshold: String(Number.MAX_SAFE_INTEGER + 1),
+        }).success
+      ).toBe(false)
+    } finally {
+      useSystemConfigStore.getState().setConfig({ currency: previous })
     }
   })
 })

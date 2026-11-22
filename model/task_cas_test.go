@@ -3,7 +3,10 @@ package model
 import (
 	"context"
 	"encoding/json"
+	"net"
+	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,18 +16,48 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 func TestMain(m *testing.M) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	var dialector gorm.Dialector
+	nativeDSN := os.Getenv("TEST_MODEL_POSTGRES_DSN")
+	mysqlDSN := os.Getenv("TEST_MODEL_MYSQL_DSN")
+	if nativeDSN != "" {
+		parsed, err := url.Parse(nativeDSN)
+		if err != nil || !net.ParseIP(parsed.Hostname()).IsLoopback() {
+			panic("TEST_MODEL_POSTGRES_DSN must name a disposable loopback PostgreSQL fixture")
+		}
+		dialector = postgres.New(postgres.Config{DSN: nativeDSN, PreferSimpleProtocol: true})
+	} else if mysqlDSN != "" {
+		if !strings.Contains(mysqlDSN, "@tcp(127.0.0.1:") || !strings.Contains(mysqlDSN, ")/no_agent_model?") {
+			panic("requires disposable loopback MySQL")
+		}
+		dialector = mysql.Open(mysqlDSN)
+	} else {
+		dialector = sqlite.Open(":memory:")
+	}
+	db, err := gorm.Open(dialector, &gorm.Config{})
 	if err != nil {
 		panic("failed to open test db: " + err.Error())
 	}
 	DB = db
 	LOG_DB = db
 
-	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	if nativeDSN != "" {
+		common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypePostgreSQL)
+		var version string
+		if err := db.Raw("SHOW server_version_num").Scan(&version).Error; err != nil || (version != "180006" && version != "180007") {
+			panic("native model tests require PostgreSQL 18.6 or 18.7")
+		}
+	} else if mysqlDSN != "" {
+		common.SetDatabaseTypes(common.DatabaseTypeMySQL, common.DatabaseTypeMySQL)
+	} else {
+		common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	}
 	common.RedisEnabled = false
 	common.BatchUpdateEnabled = false
 	common.LogConsumeEnabled = true
@@ -34,10 +67,19 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic("failed to get sql.DB: " + err.Error())
 	}
-	sqlDB.SetMaxOpenConns(1)
+	if nativeDSN != "" || mysqlDSN != "" {
+		sqlDB.SetMaxOpenConns(8)
+	} else {
+		sqlDB.SetMaxOpenConns(1)
+	}
 
-	if err := db.AutoMigrate(
+	if err := db.AutoMigrate(append([]any{
 		&Task{},
+		&Option{},
+		&GroupRenameOperation{},
+		&ModelTestGate{},
+		&ModelFingerprintSiteConfig{},
+		&ModelFingerprintSiteAudit{},
 		&User{},
 		&UserSession{},
 		&AuthFlow{},
@@ -49,6 +91,7 @@ func TestMain(m *testing.M) {
 		&Log{},
 		&Channel{},
 		&QuotaData{},
+		&QuotaDataFlushCursor{},
 		&Ability{},
 		&TopUp{},
 		&SubscriptionPlan{},
@@ -59,8 +102,15 @@ func TestMain(m *testing.M) {
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},
+		&SystemSyncTopic{},
+		&BalanceLedgerOperation{},
+		&BalanceLedger{},
+		&Model{},
+		&Vendor{},
+		&ModelBonusEligibleAudit{},
+		&ReferralCommission{},
 		&UserAccessToken{},
-	); err != nil {
+	}, append(append(append([]any{&PaymentReceipt{}, &RedemptionMutation{}, &AgentRedemptionAccount{}, &AgentRedemptionLedger{}, &AgentRedemptionOperation{}, &AgentInvitation{}, &AgentInvitationPolicy{}, &AgentInvitationPolicyAudit{}}, AgentPlatformModels()...), BonusSourceModels()...), ReferralRewardModels()...)...)...); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
 
@@ -70,6 +120,13 @@ func TestMain(m *testing.M) {
 func truncateTables(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
+		for _, schema := range append(append(append([]any{&PaymentReceipt{}, &RedemptionMutation{}, &AgentRedemptionAccount{}, &AgentRedemptionLedger{}, &AgentRedemptionOperation{}, &AgentInvitation{}, &AgentInvitationPolicy{}, &AgentInvitationPolicyAudit{}}, AgentPlatformModels()...), BonusSourceModels()...), ReferralRewardModels()...) {
+			statement := &gorm.Statement{DB: DB}
+			require.NoError(t, statement.Parse(schema))
+			require.NoError(t, DB.Exec("DELETE FROM "+statement.Schema.Table).Error)
+		}
+		DB.Exec("DELETE FROM balance_ledger")
+		DB.Exec("DELETE FROM balance_ledger_operations")
 		DB.Exec("DELETE FROM tasks")
 		DB.Exec("DELETE FROM auth_flows")
 		DB.Exec("DELETE FROM external_identity_claims")
@@ -93,6 +150,13 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM system_instances")
 		DB.Exec("DELETE FROM system_task_locks")
 		DB.Exec("DELETE FROM system_tasks")
+		DB.Exec("DELETE FROM models")
+		DB.Exec("DELETE FROM vendors")
+		DB.Exec("DELETE FROM model_bonus_eligible_audits")
+		DB.Exec("DELETE FROM referral_commissions")
+		DB.Exec("DELETE FROM model_fingerprint_site_configs")
+		DB.Exec("DELETE FROM model_fingerprint_site_audits")
+		InvalidateModelBonusEligibleCache()
 	})
 }
 
@@ -101,6 +165,76 @@ func insertTask(t *testing.T, task *Task) {
 	task.CreatedAt = time.Now().Unix()
 	task.UpdatedAt = time.Now().Unix()
 	require.NoError(t, DB.Create(task).Error)
+}
+
+func TestUnfinishedTaskQueriesDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			var driver gorm.Dialector
+			switch dialect {
+			case "sqlite":
+				driver = sqlite.Open(":memory:")
+			case "mysql":
+				dsn := os.Getenv("TEST_MYSQL_DSN")
+				if dsn == "" {
+					t.Skip("TEST_MYSQL_DSN is not configured")
+				}
+				driver = mysql.Open(dsn)
+			case "postgres":
+				dsn := os.Getenv("TEST_POSTGRES_DSN")
+				if dsn == "" {
+					t.Skip("TEST_POSTGRES_DSN is not configured")
+				}
+				driver = postgres.Open(dsn)
+			}
+			db, err := gorm.Open(driver, &gorm.Config{NamingStrategy: schema.NamingStrategy{TablePrefix: "task_polling_test_"}})
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			sqlDB.SetMaxOpenConns(1)
+			previousDB := DB
+			DB = db
+			t.Cleanup(func() {
+				DB = previousDB
+				assert.NoError(t, db.Migrator().DropTable(&Task{}))
+				assert.NoError(t, sqlDB.Close())
+			})
+			require.NoError(t, db.AutoMigrate(&Task{}))
+			var version string
+			versionQuery := "SELECT version()"
+			if dialect == "sqlite" {
+				versionQuery = "SELECT sqlite_version()"
+			}
+			require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
+			t.Logf("database version: %s", version)
+			assert.False(t, HasUnfinishedSyncTasks())
+
+			const cutoff int64 = 1_800_000_000
+			for _, status := range []TaskStatus{TaskStatusNotStart, TaskStatusSubmitted, TaskStatusQueued, TaskStatusInProgress, TaskStatusSuccess, TaskStatusFailure} {
+				for _, progress := range []string{"99%", "100%"} {
+					t.Run(string(status)+"/"+progress, func(t *testing.T) {
+						task := &Task{TaskID: "query_candidate", Status: status, Progress: progress, SubmitTime: cutoff - 1}
+						insertTask(t, task)
+						t.Cleanup(func() { assert.NoError(t, db.Delete(task).Error) })
+						unfinished := status != TaskStatusSuccess && status != TaskStatusFailure
+						assert.Equal(t, unfinished, HasUnfinishedSyncTasks())
+						if unfinished {
+							require.Len(t, GetAllUnFinishSyncTasks(1), 1)
+							assert.Equal(t, task.ID, GetAllUnFinishSyncTasks(1)[0].ID)
+							require.Len(t, GetTimedOutUnfinishedTasks(cutoff, 1), 1)
+							assert.Equal(t, task.ID, GetTimedOutUnfinishedTasks(cutoff, 1)[0].ID)
+						} else {
+							assert.Empty(t, GetAllUnFinishSyncTasks(1))
+							assert.Empty(t, GetTimedOutUnfinishedTasks(cutoff, 1))
+						}
+						require.NoError(t, db.Model(task).Update("submit_time", cutoff).Error)
+						assert.Empty(t, GetTimedOutUnfinishedTasks(cutoff, 1), "the timeout cutoff is exclusive")
+						assert.Equal(t, unfinished, HasUnfinishedSyncTasks())
+					})
+				}
+			}
+		})
+	}
 }
 
 func TestGetTaskForProtocolObservationScopesOwnerAndPlatform(t *testing.T) {
@@ -237,6 +371,7 @@ func TestUpdateWithStatus_Win(t *testing.T) {
 
 	task := &Task{
 		TaskID:   "task_cas_win",
+		UserId:   7,
 		Status:   TaskStatusInProgress,
 		Progress: "50%",
 		Data:     json.RawMessage(`{}`),
@@ -260,6 +395,7 @@ func TestUpdateWithStatus_Lose(t *testing.T) {
 
 	task := &Task{
 		TaskID: "task_cas_lose",
+		UserId: 7,
 		Status: TaskStatusFailure,
 		Data:   json.RawMessage(`{}`),
 	}
@@ -280,6 +416,7 @@ func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 
 	task := &Task{
 		TaskID: "task_cas_race",
+		UserId: 7,
 		Status: TaskStatusInProgress,
 		Quota:  1000,
 		Data:   json.RawMessage(`{}`),
@@ -288,6 +425,7 @@ func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 
 	const goroutines = 5
 	wins := make([]bool, goroutines)
+	errs := make([]error, goroutines)
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 
@@ -298,6 +436,7 @@ func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 			*t = Task{
 				ID:       task.ID,
 				TaskID:   task.TaskID,
+				UserId:   task.UserId,
 				Status:   TaskStatusSuccess,
 				Progress: "100%",
 				Quota:    task.Quota,
@@ -306,12 +445,16 @@ func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 			t.CreatedAt = task.CreatedAt
 			t.UpdatedAt = time.Now().Unix()
 			won, err := t.UpdateWithStatus(TaskStatusInProgress)
+			errs[idx] = err
 			if err == nil {
 				wins[idx] = won
 			}
 		}(i)
 	}
 	wg.Wait()
+	for i, err := range errs {
+		require.NoError(t, err, "CAS candidate %d", i)
+	}
 
 	winCount := 0
 	for _, w := range wins {
@@ -327,6 +470,7 @@ func TestUpdateWithStatus_PersistsPluginStateAndPollFailures(t *testing.T) {
 
 	task := &Task{
 		TaskID: "task_cas_plugin_state",
+		UserId: 7,
 		Status: TaskStatusInProgress,
 		Data:   json.RawMessage(`{}`),
 		PrivateData: TaskPrivateData{

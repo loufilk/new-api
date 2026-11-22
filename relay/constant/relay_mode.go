@@ -54,9 +54,29 @@ const (
 	RelayModeToolsFetch
 )
 
+func IsPlaygroundChatPath(path string) bool {
+	return strings.HasPrefix(path, "/pg/chat/completions") || strings.HasPrefix(path, "/api/user/playground/chat")
+}
+
+// GeminiModelAction parses the action independently of the model name.
+func GeminiModelAction(path string) string {
+	if strings.HasPrefix(path, "/v1/engines/") && strings.HasSuffix(path, "/embeddings") {
+		return "embedContent"
+	}
+	_, modelAction, ok := strings.Cut(path, "/models/")
+	if !ok || strings.Contains(modelAction, "/") {
+		return ""
+	}
+	model, action, _ := strings.Cut(modelAction, ":")
+	if model == "" {
+		return ""
+	}
+	return action
+}
+
 func Path2RelayMode(path string) int {
 	relayMode := RelayModeUnknown
-	if strings.HasPrefix(path, "/v1/chat/completions") || strings.HasPrefix(path, "/pg/chat/completions") {
+	if strings.HasPrefix(path, "/v1/chat/completions") || IsPlaygroundChatPath(path) {
 		relayMode = RelayModeChatCompletions
 	} else if strings.HasPrefix(path, "/v1/completions") {
 		relayMode = RelayModeCompletions

@@ -26,6 +26,8 @@ type ImageRequest struct {
 	Prompt            string          `json:"prompt" binding:"required"`
 	N                 *uint           `json:"n,omitempty"`
 	Size              string          `json:"size,omitempty"`
+	AspectRatio       *string         `json:"aspect_ratio,omitempty"`
+	Resolution        *string         `json:"resolution,omitempty"`
 	Quality           string          `json:"quality,omitempty"`
 	ResponseFormat    string          `json:"response_format,omitempty"`
 	Style             json.RawMessage `json:"style,omitempty"`
@@ -40,6 +42,11 @@ type ImageRequest struct {
 	Images            json.RawMessage `json:"images,omitempty"`
 	Mask              json.RawMessage `json:"mask,omitempty"`
 	InputFidelity     json.RawMessage `json:"input_fidelity,omitempty"`
+	Complexity        json.RawMessage `json:"complexity,omitempty"`
+	Markup            json.RawMessage `json:"markup,omitempty"`
+	Svg               json.RawMessage `json:"svg,omitempty"`
+	FrameCount        json.RawMessage `json:"frame_count,omitempty"`
+	FrameDurationMs   json.RawMessage `json:"frame_duration_ms,omitempty"`
 	Watermark         *bool           `json:"watermark,omitempty"`
 	// zhipu 4v
 	WatermarkEnabled json.RawMessage `json:"watermark_enabled,omitempty"`

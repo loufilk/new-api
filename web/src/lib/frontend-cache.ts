@@ -16,18 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { THEME_STORAGE_KEYS } from '@/lib/theme-storage'
-
 const FRONTEND_CACHE_VERSION = 'default-v1'
 const FRONTEND_CACHE_VERSION_KEY = 'newapi:default:cache-version'
-const PRESERVED_LOCAL_STORAGE_KEYS = new Set([
-  FRONTEND_CACHE_VERSION_KEY,
-  ...Object.values(THEME_STORAGE_KEYS),
-  'user',
-  'uid',
-  'aff',
-  'oauth:binding:result',
-])
+// Only discard caches that can be fetched again. User-owned conversations,
+// image history, preferences and other same-origin applications are not caches.
+const REFETCHABLE_LOCAL_STORAGE_KEYS = [
+  'status',
+  'status:updatedAt',
+  'home_page_content',
+]
 
 export function initializeFrontendCache(): void {
   if (typeof window === 'undefined') return
@@ -49,13 +46,7 @@ export function initializeFrontendCache(): void {
 }
 
 function clearLocalUiCache(): void {
-  const keysToRemove: string[] = []
-  for (let index = 0; index < window.localStorage.length; index += 1) {
-    const key = window.localStorage.key(index)
-    if (key && !PRESERVED_LOCAL_STORAGE_KEYS.has(key)) {
-      keysToRemove.push(key)
-    }
-  }
-
-  keysToRemove.forEach((key) => window.localStorage.removeItem(key))
+  REFETCHABLE_LOCAL_STORAGE_KEYS.forEach((key) =>
+    window.localStorage.removeItem(key)
+  )
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -194,4 +195,96 @@ func TestInferencePresetSettingsAndDatabaseRoundTrip(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAdvancedCustomPassThroughDatabaseRoundTrip(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("TEST_POSTGRES_DSN"))
+	if dsn == "" {
+		t.Skip("TEST_POSTGRES_DSN is not configured")
+	}
+
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+
+	table := db.Table("advanced_custom_pass_through_roundtrip").Session(&gorm.Session{})
+	require.NoError(t, table.AutoMigrate(&Channel{}))
+	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable("advanced_custom_pass_through_roundtrip")) })
+
+	var version string
+	require.NoError(t, db.Raw("select version()").Scan(&version).Error)
+	t.Logf("postgres version: %s", version)
+
+	config := &dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{
+			{
+				IncomingPath:           "/v1/chat/completions",
+				UpstreamPath:           "/v1/chat/completions",
+				Converter:              "none",
+				Models:                 []string{"native-model"},
+				PassThroughBodyEnabled: true,
+			},
+			{
+				IncomingPath: "/v1/chat/completions",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    "none",
+				Models:       []string{"plain-model"},
+			},
+			{
+				IncomingPath: "/v1/messages",
+				UpstreamPath: "/v1/chat/completions",
+				Converter:    "anthropic_messages_to_openai_chat_completions",
+			},
+		},
+	}
+	require.NoError(t, config.Validate())
+
+	channel := &Channel{Type: constant.ChannelTypeAdvancedCustom, Key: "EMPTY", Name: "advanced-custom-pass-through", Status: common.ChannelStatusEnabled}
+	channel.SetOtherSettings(dto.ChannelOtherSettings{AdvancedCustom: config})
+	require.NoError(t, channel.ValidateSettings())
+	require.NoError(t, table.Create(channel).Error)
+
+	var loaded Channel
+	require.NoError(t, table.First(&loaded, channel.Id).Error)
+	loadedConfig := loaded.GetOtherSettings().AdvancedCustom
+	require.NotNil(t, loadedConfig)
+	require.NoError(t, loadedConfig.Validate())
+
+	route, ok := loadedConfig.MatchPathForModel("/v1/chat/completions", "native-model")
+	require.True(t, ok)
+	assert.True(t, route.PassThroughBodyEnabled)
+	route, ok = loadedConfig.MatchPathForModel("/v1/chat/completions", "plain-model")
+	require.True(t, ok)
+	assert.False(t, route.PassThroughBodyEnabled)
+	route, ok = loadedConfig.MatchPathForModel("/v1/messages", "any-model")
+	require.True(t, ok)
+	assert.False(t, route.PassThroughBodyEnabled)
+
+	var savedJSON, loadedJSON map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(channel.OtherSettings, &savedJSON))
+	require.NoError(t, common.UnmarshalJsonStr(loaded.OtherSettings, &loadedJSON))
+	assert.Equal(t, savedJSON, loadedJSON)
+	assert.Equal(t, 1, strings.Count(loaded.OtherSettings, `"pass_through_body_enabled":true`))
+
+	loadedConfig.Routes[0].PassThroughBodyEnabled = false
+	loadedConfig.Routes[1].PassThroughBodyEnabled = true
+	require.NoError(t, loadedConfig.Validate())
+	loaded.SetOtherSettings(dto.ChannelOtherSettings{AdvancedCustom: loadedConfig})
+	require.NoError(t, table.Save(&loaded).Error)
+
+	var reloaded Channel
+	require.NoError(t, table.First(&reloaded, channel.Id).Error)
+	reloadedConfig := reloaded.GetOtherSettings().AdvancedCustom
+	require.NotNil(t, reloadedConfig)
+	require.NoError(t, reloadedConfig.Validate())
+
+	route, ok = reloadedConfig.MatchPathForModel("/v1/chat/completions", "native-model")
+	require.True(t, ok)
+	assert.False(t, route.PassThroughBodyEnabled)
+	route, ok = reloadedConfig.MatchPathForModel("/v1/chat/completions", "plain-model")
+	require.True(t, ok)
+	assert.True(t, route.PassThroughBodyEnabled)
+	assert.Equal(t, 1, strings.Count(reloaded.OtherSettings, `"pass_through_body_enabled":true`))
 }

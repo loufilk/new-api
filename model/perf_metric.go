@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"time"
 
 	"gorm.io/gorm"
@@ -27,10 +28,14 @@ func (PerfMetric) TableName() string {
 }
 
 func UpsertPerfMetric(metric *PerfMetric) error {
+	return UpsertPerfMetricContext(context.Background(), metric)
+}
+
+func UpsertPerfMetricContext(ctx context.Context, metric *PerfMetric) error {
 	if metric == nil || metric.RequestCount == 0 {
 		return nil
 	}
-	return DB.Clauses(clause.OnConflict{
+	return DB.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{
 			{Name: "model_name"},
 			{Name: "group"},
@@ -53,7 +58,7 @@ func GetPerfMetrics(modelName string, group string, startTs int64, endTs int64) 
 	query := DB.Model(&PerfMetric{}).
 		Where("model_name = ? AND bucket_ts >= ? AND bucket_ts <= ?", modelName, startTs, endTs)
 	if group != "" {
-		query = query.Where(commonGroupCol+" = ?", group)
+		query = query.Where(map[string]any{"group": group})
 	}
 	err := query.Order("bucket_ts ASC").Find(&metrics).Error
 	return metrics, err
@@ -87,7 +92,7 @@ func GetPerfMetricsSummaryAll(startTs int64, endTs int64, groups []string) ([]Pe
 		if len(groups) == 0 {
 			return summaries, nil
 		}
-		query = query.Where(commonGroupCol+" IN ?", groups)
+		query = query.Where(map[string]any{"group": groups})
 	}
 	err := query.
 		Group("model_name").
@@ -105,7 +110,7 @@ func GetPerfMetricsSummaryBucketsAll(startTs int64, endTs int64, groups []string
 		if len(groups) == 0 {
 			return summaries, nil
 		}
-		query = query.Where(commonGroupCol+" IN ?", groups)
+		query = query.Where(map[string]any{"group": groups})
 	}
 	err := query.
 		Group("model_name, bucket_ts").
@@ -126,7 +131,7 @@ func GetRecentPerfMetricSuccessBuckets(modelName string, startTs int64, endTs in
 		Select("model_name, "+hourBucket+" AS bucket_ts, SUM(request_count) AS request_count, SUM(success_count) AS success_count").
 		Where("model_name = ? AND bucket_ts >= ? AND bucket_ts <= ? AND request_count > 0", modelName, startTs, endTs)
 	if groups != nil {
-		query = query.Where(commonGroupCol+" IN ?", groups)
+		query = query.Where(map[string]any{"group": groups})
 	}
 	var buckets []PerfMetricSummaryBucket
 	err := query.Group("model_name, " + hourBucket).

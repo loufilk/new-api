@@ -46,6 +46,125 @@ afterAll(() => {
   }
 })
 
+test('reopening an override editor discards the cancelled draft and restores the saved source', async () => {
+  const user = userEvent.setup()
+  const props = {
+    value: JSON.stringify({
+      operations: [{ mode: 'copy', from: 'saved.source', to: 'target' }],
+    }),
+    onOpenChange: vi.fn(),
+    onSave: vi.fn(),
+  }
+  const view = render(<ParamOverrideEditorDialog open {...props} />)
+  const field = await screen.findByDisplayValue('saved.source')
+  await user.clear(field)
+  await user.type(field, 'unsaved')
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  expect(props.onOpenChange).toHaveBeenCalledWith(false)
+  view.rerender(<ParamOverrideEditorDialog open={false} {...props} />)
+  view.rerender(<ParamOverrideEditorDialog open {...props} />)
+  expect(await screen.findByDisplayValue('saved.source')).toBeVisible()
+  expect(screen.queryByDisplayValue('unsaved')).not.toBeInTheDocument()
+  expect(props.onSave).not.toHaveBeenCalled()
+})
+
+test.each([
+  'Client-provided function.',
+  '42',
+  'true',
+  'null',
+  '  Keep spacing.  ',
+])(
+  'function description compatibility preserves fallback %s and conditions across visual and JSON editing',
+  async (value) => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    const operation = {
+      mode: 'ensure_function_descriptions',
+      value,
+      conditions: [{ path: 'model', mode: 'prefix', value: 'gpt-' }],
+      logic: 'AND',
+    }
+    render(
+      <ParamOverrideEditorDialog
+        open
+        value={JSON.stringify({ operations: [operation] })}
+        onOpenChange={vi.fn()}
+        onSave={onSave}
+      />
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Visual' })).toHaveFocus()
+    )
+    expect(screen.queryByPlaceholderText('temperature')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'JSON Text' }))
+    await user.click(screen.getByRole('button', { name: 'Visual' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(onSave).toHaveBeenCalledOnce()
+    expect(JSON.parse(onSave.mock.calls[0][0])).toEqual({
+      operations: [operation],
+    })
+  }
+)
+
+test.each(['""', '"   "', 'null', '42', '{}'])(
+  'function description compatibility rejects an invalid fallback %s',
+  async (value) => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    render(
+      <ParamOverrideEditorDialog
+        open
+        value={JSON.stringify({
+          operations: [
+            { mode: 'ensure_function_descriptions', value: 'Function.' },
+          ],
+        })}
+        onOpenChange={vi.fn()}
+        onSave={onSave}
+      />
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Visual' })).toHaveFocus()
+    )
+    const input = screen.getByDisplayValue('"Function."')
+    await user.clear(input)
+    await user.type(input, value.replaceAll('{', '{{'))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(onSave).not.toHaveBeenCalled()
+  }
+)
+
+test('switching a copy rule to function descriptions does not save hidden source or target fields', async () => {
+  const user = userEvent.setup()
+  const onSave = vi.fn()
+  render(
+    <ParamOverrideEditorDialog
+      open
+      value={JSON.stringify({
+        operations: [{ mode: 'copy', from: 'source', to: 'target' }],
+      })}
+      onOpenChange={vi.fn()}
+      onSave={onSave}
+    />
+  )
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Visual' })).toHaveFocus()
+  )
+  const mode = screen.getByDisplayValue('Copy Field')
+  await user.click(mode)
+  await user.keyboard('{ArrowDown}')
+  await user.click(
+    await screen.findByRole('option', { name: 'Ensure Function Descriptions' })
+  )
+  await user.type(screen.getByPlaceholderText('0.7'), 'Function.')
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  expect(onSave).toHaveBeenCalledOnce()
+  expect(JSON.parse(onSave.mock.calls[0][0])).toEqual({
+    operations: [{ mode: 'ensure_function_descriptions', value: 'Function.' }],
+  })
+})
+
 async function renderPruneRules(
   conditions: { path: string; mode: string; value: string }[]
 ) {

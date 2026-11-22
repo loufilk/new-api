@@ -6,7 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/casbin/casbin/v2"
+	"github.com/casbin/casbin/v3"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )

@@ -87,6 +87,9 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	if info.RelayMode == constant.RelayModeResponses {
+		return fmt.Sprintf("%s/compatible-mode/v1/responses", info.ChannelBaseUrl), nil
+	}
 	var fullRequestURL string
 	switch info.RelayFormat {
 	case types.RelayFormatClaude:
@@ -105,8 +108,6 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 			}
 		case constant.RelayModeRerank:
 			fullRequestURL = fmt.Sprintf("%s/api/v1/services/rerank/text-rerank/text-rerank", info.ChannelBaseUrl)
-		case constant.RelayModeResponses:
-			fullRequestURL = fmt.Sprintf("%s/compatible-mode/v1/responses", info.ChannelBaseUrl)
 		case constant.RelayModeCompletions:
 			fullRequestURL = fmt.Sprintf("%s/compatible-mode/v1/completions", info.ChannelBaseUrl)
 		default:
@@ -186,6 +187,9 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
+	if info != nil {
+		info.VendorToolUsage = aliResponsesToolUsage
+	}
 	return request, nil
 }
 

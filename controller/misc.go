@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
@@ -39,39 +41,58 @@ func TestStatus(c *gin.Context) {
 }
 
 func GetStatus(c *gin.Context) {
+	// This public capability flag is non-secret and fails closed. Do not allow
+	// a browser/proxy cache or another node's OptionMap to grant pool access.
+	c.Header("Cache-Control", "no-store")
+	accountPoolEnabled, _ := model.AccountPoolEnabled(c.Request.Context())
+	modelTestEnabled, modelTestSettingsErr := model.ModelTestEnabled(c.Request.Context())
+	invoicePolicy := model.GetCustomerInvoicePolicy()
+	invoiceCenterVisible := false
+	if invoicePolicy.CenterVisible {
+		invoiceSettings, err := model.GetCustomerInvoiceSettings(c.Request.Context())
+		invoiceCenterVisible = err == nil && invoiceSettings.CenterEnabled
+	}
 
 	cs := console_setting.GetConsoleSetting()
 	passkeySetting := system_setting.PasskeySettingsSnapshot()
+	googleAvailable := oauth.GoogleConfigurationError() == nil
 	common.OptionMapRWMutex.RLock()
 	defer common.OptionMapRWMutex.RUnlock()
 
 	legalSetting := system_setting.GetLegalSettings()
 
 	data := gin.H{
-		"version":                     common.Version,
-		"start_time":                  common.StartTime,
-		"email_verification":          common.EmailVerificationEnabled,
-		"github_oauth":                common.GitHubOAuthEnabled,
-		"github_client_id":            common.GitHubClientId,
-		"discord_oauth":               system_setting.GetDiscordSettings().Enabled,
-		"discord_client_id":           system_setting.GetDiscordSettings().ClientId,
-		"linuxdo_oauth":               common.LinuxDOOAuthEnabled,
-		"linuxdo_client_id":           common.LinuxDOClientId,
-		"linuxdo_minimum_trust_level": common.LinuxDOMinimumTrustLevel,
-		"telegram_oauth":              common.TelegramOAuthEnabled,
-		"telegram_oauth_configured":   oauth.TelegramConfigurationError() == nil,
-		"telegram_bot_name":           common.TelegramBotName,
-		"theme":                       "default",
-		"system_name":                 common.SystemName,
-		"logo":                        common.Logo,
-		"footer_html":                 common.Footer,
-		"wechat_qrcode":               common.WeChatAccountQRCodeImageURL,
-		"wechat_login":                common.WeChatAuthEnabled,
-		"server_address":              system_setting.ServerAddress,
-		"turnstile_check":             common.TurnstileCheckEnabled,
-		"turnstile_site_key":          common.TurnstileSiteKey,
-		"docs_link":                   operation_setting.GetGeneralSetting().DocsLink,
-		"quota_per_unit":              common.QuotaPerUnit,
+		"account_pool_enabled":            accountPoolEnabled,
+		"customer_invoice_enabled":        invoicePolicy.Enabled && invoiceCenterVisible,
+		"customer_invoice_center_visible": invoiceCenterVisible,
+		"model_test_enabled":              modelTestEnabled,
+		"model_test_settings_available":   modelTestSettingsErr == nil,
+		"version":                         common.Version,
+		"start_time":                      common.StartTime,
+		"email_verification":              common.EmailVerificationEnabled,
+		"github_oauth":                    common.GitHubOAuthEnabled,
+		"github_client_id":                common.GitHubClientId,
+		"discord_oauth":                   system_setting.GetDiscordSettings().Enabled,
+		"discord_client_id":               system_setting.GetDiscordSettings().ClientId,
+		"linuxdo_oauth":                   common.LinuxDOOAuthEnabled,
+		"linuxdo_client_id":               common.LinuxDOClientId,
+		"linuxdo_minimum_trust_level":     common.LinuxDOMinimumTrustLevel,
+		"telegram_oauth":                  common.TelegramOAuthEnabled,
+		"google_oauth":                    googleAvailable,
+		"google_oauth_configured":         googleAvailable,
+		"telegram_oauth_configured":       oauth.TelegramConfigurationError() == nil,
+		"telegram_bot_name":               common.TelegramBotName,
+		"theme":                           "default",
+		"system_name":                     common.SystemName,
+		"logo":                            common.Logo,
+		"footer_html":                     common.Footer,
+		"wechat_qrcode":                   common.WeChatAccountQRCodeImageURL,
+		"wechat_login":                    common.WeChatAuthEnabled,
+		"server_address":                  system_setting.ServerAddress,
+		"turnstile_check":                 common.TurnstileCheckEnabled,
+		"turnstile_site_key":              common.TurnstileSiteKey,
+		"docs_link":                       operation_setting.GetGeneralSetting().DocsLink,
+		"quota_per_unit":                  common.QuotaPerUnit,
 		// 兼容旧前端：保留 display_in_currency，同时提供新的 quota_display_type
 		"display_in_currency":           operation_setting.IsCurrencyDisplay(),
 		"quota_display_type":            operation_setting.GetQuotaDisplayType(),
@@ -217,32 +238,38 @@ func GetHomePageContent(c *gin.Context) {
 }
 
 func SendEmailVerification(c *gin.Context) {
+	setAuthNoStore(c)
 	email, err := service.ValidateAccountEmail(c.Query("email"))
 	if err != nil {
 		writeSecurityOperationError(c, err)
 		return
 	}
 
-	if model.IsEmailAlreadyTaken(email) {
-		common.ApiErrorT(c, "Email address is already in use")
+	code := common.GenerateVerificationCode(8)
+	err = model.CreateRegistrationEmailCode(c.Request.Context(), email, code, time.Duration(common.VerificationValidMinutes)*time.Minute)
+	if errors.Is(err, model.ErrEmailAlreadyTaken) {
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
 		return
 	}
-	code := common.GenerateVerificationCode(6)
-	common.RegisterVerificationCodeWithKey(email, code, common.EmailVerificationPurpose)
-	// The address may not belong to an account yet, so the mail follows the
-	// request language.
-	systemName := map[string]any{"SystemName": common.SystemName}
-	subject := i18n.T(c, i18n.MsgEmailVerificationSubject, systemName)
-	content := fmt.Sprintf("<p>%s</p>"+
-		"<p>%s</p>"+
-		"<p>%s</p>",
-		i18n.T(c, i18n.MsgEmailVerificationGreeting, systemName),
-		i18n.T(c, i18n.MsgEmailVerificationCode, map[string]any{"Code": code}),
-		i18n.T(c, i18n.MsgEmailVerificationValidity, map[string]any{"Minutes": common.VerificationValidMinutes}))
-	err = common.SendEmail(subject, email, content)
 	if err != nil {
-		common.ApiError(c, err)
+		logger.LogWarn(c.Request.Context(), "registration email issuance unavailable")
+		common.ApiErrorT(c, "Please try again later.")
 		return
+	}
+	subject := fmt.Sprintf("【%s】邮箱验证码", common.SystemName)
+	publicHost := system_setting.PublicSiteDisplayHost()
+	plainText, content := renderAuthEmail(authEmailContent{
+		Heading:         "邮箱验证",
+		Intro:           fmt.Sprintf("您正在进行%s邮箱验证。", common.SystemName),
+		Code:            code,
+		ValidityLabel:   "验证码",
+		ValidityMinutes: common.VerificationValidMinutes,
+		SystemName:      common.SystemName,
+		PublicHost:      publicHost,
+	})
+	err = common.SendEmailWithPlainText(subject, email, plainText, content)
+	if err != nil {
+		logger.LogWarn(c.Request.Context(), "registration email delivery unavailable")
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -251,42 +278,48 @@ func SendEmailVerification(c *gin.Context) {
 	return
 }
 
+func passwordRecoveryURL(address, email, token string) (string, error) {
+	base, err := url.Parse(strings.TrimSpace(address))
+	if err != nil || base.Host == "" || (base.Scheme != "https" && base.Scheme != "http") || base.User != nil {
+		return "", model.ErrAuthFlowInvalid
+	}
+	base.Path = strings.TrimRight(base.Path, "/") + "/user/reset"
+	base.RawPath, base.Fragment = "", ""
+	base.RawQuery = url.Values{"email": {email}, "token": {token}}.Encode()
+	return base.String(), nil
+}
+
 func SendPasswordResetEmail(c *gin.Context) {
+	setAuthNoStore(c)
 	email := model.NormalizeEmail(c.Query("email"))
 	if err := common.Validate.Var(email, "required,email"); err != nil {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	if user, err := model.GetUniqueUserByEmail(email); err == nil {
-		code := common.GenerateVerificationCode(0)
-		common.RegisterVerificationCodeWithKey(email, code, common.PasswordResetPurpose)
-		link := fmt.Sprintf("%s/user/reset?email=%s&token=%s", system_setting.ServerAddress, email, code)
-		lang := user.GetSetting().Language
-		if lang == "" {
-			lang = i18n.StatedLang(c)
+	code, err := model.IssuePasswordRecovery(c.Request.Context(), email, time.Duration(common.VerificationValidMinutes)*time.Minute)
+	if err == nil {
+		link, err := passwordRecoveryURL(system_setting.ServerAddress, email, code)
+		if err == nil {
+			subject := fmt.Sprintf("【%s】密码重置", common.SystemName)
+			plainText, content := renderAuthEmail(authEmailContent{
+				Heading:         "密码重置",
+				Intro:           fmt.Sprintf("您正在进行%s密码重置。", common.SystemName),
+				Link:            link,
+				ActionLabel:     "重置密码",
+				ValidityLabel:   "重置链接",
+				ValidityMinutes: common.VerificationValidMinutes,
+				SystemName:      common.SystemName,
+				PublicHost:      system_setting.PublicSiteDisplayHost(),
+			})
+			err = common.SendEmailWithPlainText(subject, email, plainText, content)
 		}
-		systemName := map[string]any{"SystemName": common.SystemName}
-		linkParams := map[string]any{"Link": link}
-		subject := i18n.Translate(lang, i18n.MsgEmailPasswordResetSubject, systemName)
-		content := fmt.Sprintf("<p>%s</p>"+
-			"<p>%s</p>"+
-			"<p>%s </p>"+
-			"<p>%s</p>",
-			i18n.Translate(lang, i18n.MsgEmailPasswordResetGreeting, systemName),
-			i18n.Translate(lang, i18n.MsgEmailPasswordResetLink, linkParams),
-			i18n.Translate(lang, i18n.MsgEmailPasswordResetLinkFallback, linkParams),
-			i18n.Translate(lang, i18n.MsgEmailPasswordResetValidity, map[string]any{"Minutes": common.VerificationValidMinutes}))
-		err := common.SendEmail(subject, email, content)
 		if err != nil {
-			logger.LogError(c.Request.Context(), common.LogText("failed to send password reset email to %s: %s", email, err.Error()))
+			logger.LogWarn(c.Request.Context(), "password recovery email delivery unavailable")
 		}
-	} else if err != nil && !errors.Is(err, model.ErrEmailNotFound) {
-		logger.LogWarn(c.Request.Context(), common.LogText("skip password reset email for %s: %s", email, err.Error()))
+	} else if !errors.Is(err, model.ErrAuthFlowInvalid) {
+		logger.LogWarn(c.Request.Context(), "password recovery issuance unavailable")
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
 }
 
 type PasswordResetRequest struct {
@@ -295,10 +328,10 @@ type PasswordResetRequest struct {
 }
 
 func ResetPassword(c *gin.Context) {
+	setAuthNoStore(c)
 	var req PasswordResetRequest
-	err := json.NewDecoder(c.Request.Body).Decode(&req)
-	if err != nil {
-		common.ApiError(c, err)
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 	req.Email = model.NormalizeEmail(req.Email)
@@ -306,25 +339,30 @@ func ResetPassword(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	if !common.VerifyCodeWithKey(req.Email, req.Token, common.PasswordResetPurpose) {
-		common.ApiErrorT(c, "Password reset link is invalid or has expired")
+	password, err := common.GenerateRandomCharsKey(24)
+	if err != nil {
+		writeAuthSessionError(c, err)
 		return
 	}
-	password := common.GenerateVerificationCode(12)
-	err = model.ResetUserPasswordByEmail(req.Email, password)
+	userID, err := model.FinishPasswordRecovery(req.Email, req.Token, password)
 	if err != nil {
-		if errors.Is(err, model.ErrEmailNotFound) || errors.Is(err, model.ErrEmailAmbiguous) {
+		if errors.Is(err, model.ErrAuthFlowInvalid) || errors.Is(err, model.ErrAuthFlowExpired) || errors.Is(err, model.ErrAuthFlowConsumed) {
 			common.ApiErrorT(c, "Password reset link is invalid or has expired")
 			return
 		}
-		common.ApiError(c, err)
+		// Do not log database error text from authentication writes.
+		logger.LogError(c.Request.Context(), "password recovery update unavailable")
+		writeAuthSessionError(c, errors.New("password recovery unavailable"))
 		return
 	}
-	common.DeleteKey(req.Email, common.PasswordResetPurpose)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    password,
-	})
-	return
+	if err := model.PublishUserAuthCache(userID); err != nil {
+		logger.LogWarn(c.Request.Context(), "password recovery cache refresh unavailable")
+	}
+	// The committed auth epoch already rejects old credentials. Do not report
+	// a failed password reset after the new password has been committed.
+	if _, err := model.RevokeAllUserSessions(userID, "password_reset"); err != nil {
+		logger.LogWarn(c.Request.Context(), "password recovery session cleanup unavailable")
+	}
+	recordUserSecurityAudit(c, userID, "user.password_reset", map[string]any{"success": true})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": password})
 }

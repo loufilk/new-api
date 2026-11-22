@@ -23,6 +23,13 @@ type Options struct {
 	// it from the channel type.
 	OpenRouterDialect bool
 
+	// ReplayResponsesReasoning enables plaintext reasoning history for Chat
+	// dialects that accept assistant.reasoning_content. Content takes precedence
+	// over summary; summary-only history is an approximation reported by a
+	// diagnostic (legacy Chat bridges emit raw reasoning there). Opaque state
+	// and unsupported input items are rejected rather than silently discarded.
+	ReplayResponsesReasoning bool
+
 	// WebSearch encodes hosted web search for the upstream dialect. Nil, or a
 	// nil result, keeps the default: web_search_options on Chat and the native
 	// hosted tool on Responses, Claude, and Gemini. The host sets it from the

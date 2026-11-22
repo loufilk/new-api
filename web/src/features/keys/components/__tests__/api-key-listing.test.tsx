@@ -25,11 +25,6 @@ import {
   RouterProvider,
 } from '@tanstack/react-router'
 import {
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-} from '@tanstack/react-table'
-import {
   act,
   cleanup,
   render,
@@ -39,12 +34,16 @@ import {
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
+import { useState } from 'react'
 import { I18nextProvider } from 'react-i18next'
 import { Toaster, toast } from 'sonner'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+import { PageFooterProvider } from '@/components/layout/components/page-footer'
 import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
+import { flexRender, useConsoleTable } from '@/lib/console-table'
+import { Route as KeysRoute } from '@/routes/_authenticated/keys'
 import {
   DEFAULT_CURRENCY_CONFIG,
   useSystemConfigStore,
@@ -52,6 +51,7 @@ import {
 
 import { apiKeySchema, type ApiKey } from '../../types'
 import { ApiKeyQuotaCell } from '../api-key-quota-cell'
+import { ModelLimitsCell } from '../api-keys-cells'
 import { useApiKeysColumns } from '../api-keys-columns'
 import { ApiKeysProvider } from '../api-keys-provider'
 import { ApiKeysTable } from '../api-keys-table'
@@ -79,14 +79,34 @@ await i18n.init({
 })
 const clients: QueryClient[] = []
 
+it('distinguishes an enabled empty model allowlist from disabled model restrictions', () => {
+  const view = render(
+    <I18nextProvider i18n={i18n}>
+      <ModelLimitsCell
+        apiKey={{ ...key, model_limits_enabled: true, model_limits: '' }}
+      />
+    </I18nextProvider>
+  )
+  expect(screen.getByText('0 models')).toBeVisible()
+  expect(screen.queryByText('Unlimited')).not.toBeInTheDocument()
+
+  view.rerender(
+    <I18nextProvider i18n={i18n}>
+      <ModelLimitsCell
+        apiKey={{ ...key, model_limits_enabled: false, model_limits: '' }}
+      />
+    </I18nextProvider>
+  )
+  expect(screen.getByText('Unlimited')).toBeVisible()
+})
+
 function QuotaTable(props: { apiKey: ApiKey }) {
   const columns = useApiKeysColumns(now).filter(
     (column) => column.id === 'quota'
   )
-  const table = useReactTable({
+  const table = useConsoleTable({
     columns,
     data: [props.apiKey],
-    getCoreRowModel: getCoreRowModel(),
   })
   return (
     <table>
@@ -295,15 +315,26 @@ it('keeps a long amount within its column while showing the full amount in detai
 })
 
 function KeysPage() {
+  const [footer, setFooter] = useState<HTMLDivElement | null>(null)
   return (
-    <ApiKeysProvider>
-      <ApiKeysTable />
-      <Toaster />
-    </ApiKeysProvider>
+    <PageFooterProvider container={footer}>
+      <ApiKeysProvider>
+        <ApiKeysTable />
+        <div ref={setFooter} />
+        <Toaster />
+      </ApiKeysProvider>
+    </PageFooterProvider>
   )
 }
 
-async function renderKeysPage(status = 1, overrides: Partial<ApiKey> = {}) {
+async function renderKeysPage(
+  status = 1,
+  overrides: Partial<Omit<ApiKey, 'routing_strategy'>> & {
+    routing_strategy?: unknown
+  } = {},
+  waitForRow = true,
+  initialEntry = '/keys/'
+) {
   let currentKey = { ...key, status, ...overrides }
   vi.mocked(api.get).mockImplementation(async (url) => {
     if (url.startsWith('/api/token/')) {
@@ -313,8 +344,15 @@ async function renderKeysPage(status = 1, overrides: Partial<ApiKey> = {}) {
     }
     return { data: { success: true, data: { default: { ratio: 1 } } } }
   })
-  const post = vi.spyOn(api, 'post').mockResolvedValue({
-    data: { success: true, data: { key: 'fake-key-for-test-only' } },
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url.startsWith('/api/token/search')) {
+      return {
+        data: { success: true, data: { items: [currentKey], total: 1 } },
+      }
+    }
+    return {
+      data: { success: true, data: { key: 'fake-key-for-test-only' } },
+    }
   })
   const put = vi.spyOn(api, 'put').mockImplementation(async (_url, data) => {
     const update = data as { id: number; status: number }
@@ -327,15 +365,23 @@ async function renderKeysPage(status = 1, overrides: Partial<ApiKey> = {}) {
   client.setQueryData(['status'], {})
   clients.push(client)
   const root = createRootRoute()
-  const auth = createRoute({ getParentRoute: () => root, id: '_authenticated' })
+  const auth = createRoute({
+    getParentRoute: () => root,
+    id: '_authenticated',
+  })
   const keysRoute = createRoute({
     getParentRoute: () => auth,
     path: 'keys/',
     component: KeysPage,
+    validateSearch: KeysRoute.options.validateSearch,
+    beforeLoad: KeysRoute.options.beforeLoad as unknown as (args: {
+      location: { searchStr: string }
+      search: Record<string, unknown>
+    }) => void,
   })
   const router = createRouter({
     routeTree: root.addChildren([auth.addChildren([keysRoute])]),
-    history: createMemoryHistory({ initialEntries: ['/keys/'] }),
+    history: createMemoryHistory({ initialEntries: [initialEntry] }),
   })
   await router.load()
   render(
@@ -345,9 +391,116 @@ async function renderKeysPage(status = 1, overrides: Partial<ApiKey> = {}) {
       </QueryClientProvider>
     </I18nextProvider>
   )
-  await screen.findByText(currentKey.name)
-  return { post, put }
+  if (waitForRow) await screen.findByText(currentKey.name)
+  return { post, put, router }
 }
+
+it('searches by a pasted API key without adding it to browser history', async () => {
+  const { post, router } = await renderKeysPage()
+  const secret = 'sk-synthetic-search-secret'
+  await userEvent.type(
+    screen.getByRole('textbox', { name: 'Filter by API key...' }),
+    secret
+  )
+
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith('/api/token/search?p=1&size=20', {
+      keyword: '',
+      token: secret,
+    })
+  )
+  expect(router.history.location.href).not.toContain(secret)
+  expect(router.history.location.href).not.toContain('token=')
+  expect(screen.getByText('production')).toBeInTheDocument()
+})
+
+it('filters status on the server, resets the page, and uses the filtered total', async () => {
+  const { router } = await renderKeysPage()
+  vi.mocked(api.get).mockImplementation(async (url) => {
+    if (url.startsWith('/api/token/')) {
+      const filtered =
+        new URL(url, 'https://fixture.invalid').searchParams.get('status') ===
+        '2'
+      return {
+        data: {
+          success: true,
+          data: {
+            items: [
+              filtered
+                ? { ...key, name: 'disabled from another page', status: 2 }
+                : key,
+            ],
+            total: filtered ? 1 : 45,
+          },
+        },
+      }
+    }
+    return { data: { success: true, data: { default: { ratio: 1 } } } }
+  })
+  await act(async () => {
+    await clients.at(-1)?.invalidateQueries({ queryKey: ['keys'] })
+  })
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Go to next page' }))
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/token/?p=2&size=20')
+  )
+  await user.click(screen.getByRole('button', { name: 'Status' }))
+  await user.click(screen.getByRole('option', { name: 'Disabled' }))
+  await user.keyboard('{Escape}')
+
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/token/?p=1&size=20&status=2')
+  )
+  expect(await screen.findByText('disabled from another page')).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Go to next page' })).toBeDisabled()
+  expect(
+    screen.getByRole('button', { name: 'Go to previous page' })
+  ).toBeDisabled()
+  expect(screen.queryByText('45')).not.toBeInTheDocument()
+  expect(router.state.location.search.status).toEqual(['2'])
+})
+
+it('resets the private key search through the shared table toolbar', async () => {
+  const { post, router } = await renderKeysPage()
+  const user = userEvent.setup()
+  const input = screen.getByRole('textbox', { name: 'Filter by API key...' })
+  await user.type(input, 'sk-synthetic-reset-secret')
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith('/api/token/search?p=1&size=20', {
+      keyword: '',
+      token: 'sk-synthetic-reset-secret',
+    })
+  )
+  vi.mocked(api.get).mockClear()
+  post.mockClear()
+
+  await user.click(screen.getByRole('button', { name: 'Reset' }))
+
+  expect(input).toHaveValue('')
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/token/?p=1&size=20')
+  )
+  expect(post).not.toHaveBeenCalled()
+  expect(router.history.location.href).not.toContain('token=')
+})
+
+it('replaces legacy token search URLs before displaying the key list', async () => {
+  const { router } = await renderKeysPage(
+    1,
+    {},
+    true,
+    '/keys/?token=sk-synthetic-legacy-secret&filter=production'
+  )
+
+  await waitFor(() =>
+    expect(router.history.location.href).not.toContain('token=')
+  )
+  expect(router.history.location.href).toContain('filter=production')
+  expect(
+    screen.getByRole('textbox', { name: 'Filter by API key...' })
+  ).toHaveValue('')
+})
 
 it('combines creation and last use while keeping expiry, models and IP restrictions separate', async () => {
   await renderKeysPage()
@@ -400,10 +553,15 @@ it.each([
     act(() => button.focus())
     await user.keyboard('{Enter}')
     await waitFor(() =>
-      expect(put).toHaveBeenCalledWith('/api/token/?status_only=true', {
-        id: 7,
-        status: nextStatus,
-      })
+      expect(put).toHaveBeenCalledWith(
+        nextStatus === 2
+          ? '/api/token/?status_only=true&disable_only=true'
+          : '/api/token/?status_only=true',
+        {
+          id: 7,
+          status: nextStatus,
+        }
+      )
     )
     await screen.findByText(nextLabel)
     expect(post).not.toHaveBeenCalled()
@@ -434,7 +592,11 @@ it.each([true, false])(
     await user.click(screen.getByRole('button', { name: 'Open menu' }))
     expect(post).not.toHaveBeenCalled()
     await user.click(screen.getByRole('menuitem', { name: 'Copy Key' }))
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/token/7/key'))
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith('/api/token/7/key', undefined, {
+        signal: expect.any(AbortSignal),
+      })
+    )
     if (success) {
       await waitFor(() =>
         expect(copy).toHaveBeenCalledWith('sk-fake-key-for-test-only')
@@ -524,4 +686,76 @@ it('keeps mobile quota readable and opens complete model and IP restrictions by 
   details = await screen.findByRole('dialog')
   expect(within(details).getByText('192.0.2.1')).toBeVisible()
   expect(within(details).getByText('2001:db8::1')).toBeVisible()
+})
+
+it('renders a legacy empty-strategy key with working row actions instead of a route-level ZodError', async () => {
+  await renderKeysPage(1, {
+    name: 'legacy empty strategy',
+    routing_strategy: '',
+  })
+  expect(screen.getByText('legacy empty strategy')).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Edit' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Disable' })).toBeEnabled()
+})
+
+it('shows a retryable local error for an invalid key response and recovers without discarding a row', async () => {
+  await renderKeysPage(1, { routing_strategy: 'invalid-private-input' }, false)
+  expect(await screen.findByText('Failed to load API keys')).toBeVisible()
+  expect(screen.queryByText(key.name)).not.toBeInTheDocument()
+  expect(screen.queryByText('No API Keys Found')).not.toBeInTheDocument()
+  expect(screen.queryByText(/invalid-private-input/)).not.toBeInTheDocument()
+  vi.mocked(api.get).mockResolvedValue({
+    data: { success: true, data: { items: [key], total: 1 } },
+  })
+  await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  expect(await screen.findByText(key.name)).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Edit' })).toBeEnabled()
+})
+
+it('hides cached row actions if a refresh returns invalid data', async () => {
+  await renderKeysPage()
+  expect(screen.getByRole('button', { name: 'Edit' })).toBeEnabled()
+  vi.mocked(api.get).mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        items: [{ ...key, routing_strategy: 'invalid-private-input' }],
+        total: 1,
+      },
+    },
+  })
+  await act(async () => {
+    await clients.at(-1)?.invalidateQueries({ queryKey: ['keys'] })
+  })
+  expect(await screen.findByText('Failed to load API keys')).toBeVisible()
+  expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
+  expect(screen.queryByText(key.name)).not.toBeInTheDocument()
+})
+
+it('freezes the confirmed deletion target when the server reorders the current page', async () => {
+  const { post } = await renderKeysPage()
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('checkbox', { name: 'Select row' }))
+  expect(screen.getByRole('checkbox', { name: 'Select all' })).toBeChecked()
+  await user.click(
+    screen.getByRole('button', { name: 'Delete selected API keys' })
+  )
+  const dialog = await screen.findByRole('alertdialog')
+  expect(dialog).toHaveTextContent('production (#7)')
+  vi.mocked(api.get).mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data: url.startsWith('/api/token/')
+        ? { items: [{ ...key, id: 8, name: 'replacement' }], total: 1 }
+        : { default: { ratio: 1 } },
+    },
+  }))
+  await act(async () => {
+    await clients.at(-1)?.invalidateQueries({ queryKey: ['keys'] })
+  })
+  expect(dialog).not.toHaveTextContent('replacement')
+  await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith('/api/token/batch', { ids: [7] })
+  )
 })

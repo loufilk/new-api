@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { TranslateText } from '@/i18n/translate'
 import { formatCurrencyFromUSD, formatQuotaWithCurrency } from '@/lib/currency'
 import { formatTimestampToDate } from '@/lib/format'
 
@@ -56,6 +57,7 @@ export function getChannelTypeIcon(type: number): string {
     60: 'NewAPI', // New API
     62: 'Vllm', // vLLM
     63: 'SGLang', // SGLang
+    64: 'Cline', // Cline
     3: 'Azure', // Azure
 
     // Anthropic
@@ -361,14 +363,14 @@ export function getBalanceVariant(
 // Response Time Utilities
 // ============================================================================
 
-/** Optional i18n: (key, options) => string, e.g. useTranslation().t */
-type TFunction = (key: string, options?: { value?: number | string }) => string
-
 /**
  * Format response time in milliseconds to human-readable.
  * Pass `t` from useTranslation() for i18n (e.g. "Not tested", "{{value}}ms", "{{value}}s").
  */
-export function formatResponseTime(timeMs: number, t?: TFunction): string {
+export function formatResponseTime(
+  timeMs: number,
+  t?: TranslateText<{ value: number | string }>
+): string {
   if (timeMs === 0) {
     return t ? t('Not tested') : 'Not tested'
   }

@@ -20,17 +20,23 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import i18next from 'i18next'
 import { toast } from 'sonner'
 
+import type { ModelTestAvailability } from '@/extensions'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
+import { STATUS_QUERY_KEY, type StatusRecord } from '@/lib/status-query'
 
 import { updatePasskeyDomains, updateSystemOption } from '../api'
 import type { UpdateOptionRequest, UpdatePasskeyDomainsRequest } from '../types'
 
 // Configuration keys that require status refresh
 const STATUS_RELATED_KEYS = new Set([
+  'AccountPoolEnabled',
+  'ModelTestEnabled',
   'HeaderNavModules',
   'SidebarModulesAdmin',
   'Notice',
+  'console_setting.announcements',
+  'console_setting.announcements_enabled',
   'LogConsumeEnabled',
   'log_setting.user_export_enabled',
   'log_setting.max_range_days',
@@ -42,6 +48,9 @@ const STATUS_RELATED_KEYS = new Set([
   'general_setting.custom_currency_symbol',
   'general_setting.custom_currency_exchange_rate',
   'oidc.display_name',
+  'GoogleOAuthEnabled',
+  'google.client_id',
+  'google.client_secret',
   'ServerAddress',
   'passkey.enabled',
   'passkey.rp_id',
@@ -57,8 +66,40 @@ export function useUpdateOption() {
   return useMutation({
     mutationFn: async (request: UpdateOptionRequest) =>
       requireServerSuccess(await updateSystemOption(request)),
-    onSuccess: (data, variables) => {
+    onSuccess: async (data, variables) => {
       if (data.success) {
+        if (variables.key === 'AccountPoolEnabled') {
+          const enabled = variables.value === true || variables.value === 'true'
+          queryClient.setQueryData<StatusRecord>(
+            STATUS_QUERY_KEY,
+            (previous) => ({
+              ...previous,
+              account_pool_enabled: enabled,
+            })
+          )
+          void queryClient
+            .cancelQueries({ queryKey: ['account-pool'] })
+            .then(() => {
+              queryClient.removeQueries({ queryKey: ['account-pool'] })
+            })
+        }
+        if (variables.key === 'ModelTestEnabled') {
+          const enabled = variables.value === true || variables.value === 'true'
+          queryClient.setQueryData<StatusRecord>(
+            STATUS_QUERY_KEY,
+            (previous) => ({ ...previous, model_test_enabled: enabled })
+          )
+          // Do not discard owned history or abort paid requests/cancellation.
+          // Cancel only stale reads before replacing their availability flag.
+          await queryClient.cancelQueries({
+            queryKey: ['model-tests', 'history'],
+          })
+          queryClient.setQueryData<ModelTestAvailability>(
+            ['model-tests', 'history'],
+            (previous) => previous && { ...previous, enabled }
+          )
+          void queryClient.invalidateQueries({ queryKey: ['model-tests'] })
+        }
         // Always refresh system-options
         queryClient.invalidateQueries({ queryKey: ['system-options'] })
 
@@ -70,6 +111,10 @@ export function useUpdateOption() {
           } catch {
             /* empty */
           }
+        }
+
+        if (variables.key === 'Notice') {
+          queryClient.invalidateQueries({ queryKey: ['notice'] })
         }
 
         toast.success(i18next.t('Setting updated successfully'))

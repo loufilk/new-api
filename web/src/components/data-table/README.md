@@ -15,3 +15,12 @@ continue importing from `@/components/data-table`.
 Keep feature-specific columns, actions, and dialogs inside their feature
 folders. Shared table code belongs here only when it is reusable across more
 than one feature.
+
+`@/lib/console-table` binds the console's row, column, and table types to its
+explicit TanStack Table v9 features. It uses the native React `useTable`, not
+the deprecated legacy adapter. Use `useDataTable` for page state, persistence,
+and client/server row processing. Choose the pipeline per table at mount:
+server pages do not re-sort, filter, or paginate a returned page locally.
+Read the subscribed `table.state` in views. Column and row objects themselves
+can stay stable while selection, expansion, visibility or filter state changes;
+a memoized child must receive those changes or subscribe to them.

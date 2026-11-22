@@ -31,6 +31,8 @@ import {
   sideDrawerFormClassName,
   sideDrawerHeaderClassName,
 } from '@/components/drawer-layout'
+import { PasswordInput } from '@/components/password-input'
+import { PasswordStrength } from '@/components/password-strength'
 import { PermissionMatrix } from '@/components/permission-matrix'
 import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
@@ -87,6 +89,7 @@ import {
   getGroups,
   getPermissionCatalog,
 } from '../api'
+import { UserCallInterceptionSection } from '../call-interception/section'
 import { BINDING_FIELDS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
   userFormSchema,
@@ -144,17 +147,28 @@ export function UsersMutateDrawer({
   // Load existing data when updating
   useEffect(() => {
     if (open && isUpdate && currentRow) {
-      // For update, fetch fresh data
+      // For update, fetch fresh data. Lifecycle: ignore stale responses
+      // after close/row switch; transport failures keep current form values
+      // so the user can retry without losing edits, while still surfacing
+      // the failure as a toast.
+      let cancelled = false
       getUser(currentRow.id)
         .then((result) => {
+          if (cancelled) return
           if (result.success && result.data) {
             loadedPermissions.current = result.data.admin_permissions
             form.reset(transformUserToFormDefaults(result.data))
           } else {
-            handleServerError(result, t('Failed to load'))
+            handleServerError(result, t(ERROR_MESSAGES.LOAD_FAILED))
           }
         })
-        .catch((error) => handleServerError(error, t('Failed to load')))
+        .catch((error) => {
+          if (cancelled) return
+          handleServerError(error, t(ERROR_MESSAGES.LOAD_FAILED))
+        })
+      return () => {
+        cancelled = true
+      }
     } else if (open && !isUpdate) {
       // For create, reset to defaults
       form.reset(USER_FORM_DEFAULT_VALUES)
@@ -261,14 +275,17 @@ export function UsersMutateDrawer({
   const refreshUserData = async () => {
     if (!currentRow) return
     try {
-      const result = requireServerSuccess(await getUser(currentRow.id))
+      const result = await getUser(currentRow.id)
       if (result.success && result.data) {
         loadedPermissions.current = result.data.admin_permissions
         form.reset(transformUserToFormDefaults(result.data))
+      } else {
+        handleServerError(result, t(ERROR_MESSAGES.LOAD_FAILED))
       }
-      triggerRefresh()
     } catch (error) {
-      handleServerError(error, t('Failed to load'))
+      handleServerError(error, t(ERROR_MESSAGES.LOAD_FAILED))
+    } finally {
+      triggerRefresh()
     }
   }
 
@@ -393,10 +410,17 @@ export function UsersMutateDrawer({
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>{t('Password')}</FormLabel>
-                      <FormControl>
-                        <Input
+                      <FormControl
+                        describedBy={
+                          !isUpdate || field.value
+                            ? 'user-password-strength'
+                            : undefined
+                        }
+                      >
+                        <PasswordInput
                           {...field}
-                          type='password'
+                          value={field.value ?? ''}
+                          autoComplete='new-password'
                           placeholder={
                             isUpdate
                               ? t('Leave empty to keep unchanged')
@@ -404,6 +428,11 @@ export function UsersMutateDrawer({
                           }
                         />
                       </FormControl>
+                      <PasswordStrength
+                        id='user-password-strength'
+                        value={field.value ?? ''}
+                        quietWhenEmpty={isUpdate}
+                      />
                       <FormMessage />
                     </FormItem>
                   )}
@@ -548,6 +577,14 @@ export function UsersMutateDrawer({
                     )}
                   </SideDrawerSection>
                 )}
+
+              {open && currentRow && (
+                <UserCallInterceptionSection
+                  key={currentRow.id}
+                  userId={currentRow.id}
+                  targetRole={currentRow.role}
+                />
+              )}
 
               {/* Binding Information (Read-only) */}
               {isUpdate && (

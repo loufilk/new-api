@@ -187,6 +187,44 @@ afterEach(() => {
 })
 
 describe('request policy settings', () => {
+  it('saving exact exemption groups trims blanks and duplicates without changing the switches', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    const groups = await screen.findByRole('textbox', {
+      name: 'Groups exempt from local keyword checks',
+    })
+    expect(groups).toHaveValue('')
+    fireEvent.change(groups, { target: { value: ' 破甲 \n\n破甲\nVIP ' } })
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save sensitive words' })
+    )
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+        '/api/option/request_policy',
+        {
+          options: { SensitiveCheckExemptGroups: '破甲\nVIP' },
+        }
+      )
+    )
+  })
+
+  it.each(['auto', '*', 'x'.repeat(129)])(
+    'invalid exemption %s shows a field error and never saves',
+    async (value) => {
+      await renderPolicies('/system-settings/request-policies/filtering')
+      const groups = await screen.findByRole('textbox', {
+        name: 'Groups exempt from local keyword checks',
+      })
+      fireEvent.change(groups, { target: { value } })
+      await userEvent.click(
+        screen.getByRole('button', { name: 'Save sensitive words' })
+      )
+      await waitFor(() =>
+        expect(groups).toHaveAttribute('aria-invalid', 'true')
+      )
+      expect(api.patch).not.toHaveBeenCalled()
+    }
+  )
+
   it.each([
     ['retry', 'Save Changes'],
     ['health', 'Save Changes'],

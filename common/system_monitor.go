@@ -2,11 +2,12 @@ package common
 
 import (
 	"fmt"
+	"runtime"
 	"sync/atomic"
 	"time"
 
-	"github.com/shirou/gopsutil/cpu"
-	"github.com/shirou/gopsutil/mem"
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/mem"
 )
 
 // DiskSpaceInfo 磁盘空间信息
@@ -60,29 +61,6 @@ func init() {
 	latestSystemStatus.Store(SystemStatus{})
 }
 
-// StartSystemMonitor 启动系统监控
-func StartSystemMonitor() {
-	go func() {
-		usage := newContainerUsage()
-		var detector overloadDetector
-		for {
-			config := GetPerformanceMonitorConfig()
-			if !config.Enabled {
-				detector = overloadDetector{}
-				latestSystemStatus.Store(SystemStatus{SampledAt: time.Now()})
-				time.Sleep(systemMonitorInterval)
-				continue
-			}
-
-			status := collectSystemStatus(usage)
-			detector.mark(&status, config)
-			latestSystemStatus.Store(status)
-
-			time.Sleep(systemMonitorInterval)
-		}
-	}()
-}
-
 // overloadDetector 为每项资源累计连续超阈值的采样次数：连续 overloadConsecutiveSamples 次
 // 才标记过载，任一次回落立即清零并重新累计。
 type overloadDetector struct {
@@ -124,8 +102,15 @@ func collectSystemStatus(usage *containerUsage) SystemStatus {
 	}
 	if containerMemory, ok := usage.memoryUsage(); ok {
 		status.MemoryUsage = containerMemory
-	} else if memInfo, err := mem.VirtualMemory(); err == nil {
+	} else if memInfo, err := mem.VirtualMemory(); err == nil && memInfo.Total > 0 {
 		status.MemoryUsage = memInfo.UsedPercent
+		if runtime.GOOS == "linux" {
+			// Keep existing overload thresholds calibrated to gopsutil v3's cache-excluding
+			// host metric; v4's UsedPercent subtracts MemAvailable instead.
+			total := float64(memInfo.Total)
+			used := max(0, total-float64(memInfo.Free)-float64(memInfo.Buffers)-float64(memInfo.Cached))
+			status.MemoryUsage = used / total * 100
+		}
 	}
 
 	diskInfo := GetDiskSpaceInfo()

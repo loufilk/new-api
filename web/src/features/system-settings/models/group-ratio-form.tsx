@@ -17,10 +17,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Code2, Eye, HelpCircle } from 'lucide-react'
-import { memo, useCallback, useState, type ReactNode } from 'react'
-import { useWatch, type UseFormReturn } from 'react-hook-form'
+import {
+  memo,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+import { useFormState, useWatch, type UseFormReturn } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import {
   sideDrawerContentClassName,
   sideDrawerFormClassName,
@@ -33,6 +41,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -52,6 +61,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
+import { handleServerError } from '@/lib/handle-server-error'
 
 import {
   SettingsForm,
@@ -59,13 +69,25 @@ import {
   SettingsSwitchItem,
 } from '../components/settings-form-layout'
 import { SettingsPageActionsPortal } from '../components/settings-page-context'
+import type { GroupRenameMapping } from '../types'
 import { safeNumberFieldProps } from '../utils/numeric-field'
 import {
   GroupRatioVisualEditor,
   type GroupSettingsSection,
 } from './group-ratio-visual-editor'
+import {
+  applyGroupRenamesToValues,
+  collectGroupRenamePlan,
+  collectResolutionMappings,
+  mergeGroupRenameMappings,
+  type GroupRatioSaveOutcome,
+  type GroupRenameEditableValues,
+  type GroupRenameResolutions,
+} from './group-rename'
+import { GroupRenamePanel } from './group-rename-panel'
+import { collectGroupVisibilityConflicts } from './group-special-usable-validation'
 
-type GroupFormValues = {
+export type GroupFormValues = {
   GroupRatio: string
   TopupGroupRatio: string
   UserUsableGroups: string
@@ -78,19 +100,38 @@ type GroupFormValues = {
 
 type GroupRatioFormProps = {
   form: UseFormReturn<GroupFormValues>
-  onSave: (values: GroupFormValues) => Promise<void>
+  baseline: GroupRenameEditableValues
+  onSave: (
+    values: GroupFormValues,
+    renames: GroupRenameMapping[]
+  ) => Promise<GroupRatioSaveOutcome>
   isSaving: boolean
 }
 
 export const GroupRatioForm = memo(function GroupRatioForm({
   form,
+  baseline,
   onSave,
   isSaving,
 }: GroupRatioFormProps) {
   const { t } = useTranslation()
   const values = useWatch({ control: form.control })
+  const { isSubmitting } = useFormState({ control: form.control })
   const [editMode, setEditMode] = useState<'visual' | 'json'>('visual')
   const [guideOpen, setGuideOpen] = useState(false)
+  const [groupRenames, setGroupRenames] = useState<GroupRenameMapping[]>([])
+  const [resolutions, setResolutions] = useState<GroupRenameResolutions>({})
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [renameSaveVersion, setRenameSaveVersion] = useState(0)
+  const [pendingRename, setPendingRename] = useState<{
+    values: GroupFormValues
+    renames: GroupRenameMapping[]
+    baseline: string
+    save: GroupRatioFormProps['onSave']
+  } | null>(null)
+  const [saving, setSaving] = useState(false)
+  const saveInFlight = useRef(false)
+  const submitting = isSaving || isSubmitting || saving
   const [section, setSection] = useState<GroupSettingsSection>('pricing')
 
   const handleFieldChange = useCallback(
@@ -101,6 +142,135 @@ export const GroupRatioForm = memo(function GroupRatioForm({
       })
     },
     [form]
+  )
+
+  const handleRenamesChange = useCallback((renames: GroupRenameMapping[]) => {
+    setGroupRenames(renames)
+  }, [])
+
+  const watchedGroupRatio = form.watch('GroupRatio')
+  const watchedTopupGroupRatio = form.watch('TopupGroupRatio')
+  const watchedUserUsableGroups = form.watch('UserUsableGroups')
+  const watchedGroupGroupRatio = form.watch('GroupGroupRatio')
+  const watchedAutoGroups = form.watch('AutoGroups')
+  const watchedGroupSpecialUsableGroup = form.watch('GroupSpecialUsableGroup')
+
+  const submittedValues = useMemo<GroupRenameEditableValues>(
+    () => ({
+      GroupRatio: watchedGroupRatio,
+      TopupGroupRatio: watchedTopupGroupRatio,
+      UserUsableGroups: watchedUserUsableGroups,
+      GroupGroupRatio: watchedGroupGroupRatio,
+      AutoGroups: watchedAutoGroups,
+      GroupSpecialUsableGroup: watchedGroupSpecialUsableGroup,
+    }),
+    [
+      watchedGroupRatio,
+      watchedTopupGroupRatio,
+      watchedUserUsableGroups,
+      watchedGroupGroupRatio,
+      watchedAutoGroups,
+      watchedGroupSpecialUsableGroup,
+    ]
+  )
+
+  const renamePlan = useMemo(
+    () =>
+      collectGroupRenamePlan(
+        baseline,
+        submittedValues,
+        groupRenames,
+        resolutions
+      ),
+    [baseline, submittedValues, groupRenames, resolutions]
+  )
+
+  const visibilityConflicts = useMemo(() => {
+    const renames = mergeGroupRenameMappings(
+      groupRenames,
+      collectResolutionMappings(resolutions)
+    )
+    return collectGroupVisibilityConflicts(
+      submittedValues.GroupSpecialUsableGroup,
+      renames
+    )
+  }, [submittedValues, groupRenames, resolutions])
+
+  const saveGroupChanges = useCallback(
+    async (
+      values: GroupFormValues,
+      renames: GroupRenameMapping[],
+      save = onSave
+    ) => {
+      if (saveInFlight.current || isSaving) return
+      saveInFlight.current = true
+      setSaving(true)
+      setSaveError(null)
+      try {
+        const outcome = await save(values, renames)
+        if (outcome !== 'failed') {
+          setPendingRename(null)
+          setGroupRenames([])
+          setResolutions({})
+          setRenameSaveVersion((version) => version + 1)
+        }
+      } catch (error) {
+        handleServerError(error, t('Failed to update setting'))
+      } finally {
+        saveInFlight.current = false
+        setSaving(false)
+      }
+    },
+    [isSaving, onSave, t]
+  )
+
+  const handleSave = useCallback(
+    async (values: GroupFormValues) => {
+      if (saveInFlight.current || pendingRename) return
+      setSaveError(null)
+      const renames = mergeGroupRenameMappings(
+        groupRenames,
+        collectResolutionMappings(resolutions)
+      )
+      const plan = collectGroupRenamePlan(
+        baseline,
+        values,
+        renames,
+        resolutions
+      )
+      if (plan.reservedViolations.length > 0 || plan.unresolved.length > 0) {
+        setSaveError(t('Resolve the group changes before saving.'))
+        return
+      }
+      if (
+        collectGroupVisibilityConflicts(values.GroupSpecialUsableGroup, renames)
+          .length > 0
+      ) {
+        return
+      }
+      const renamedValues = applyGroupRenamesToValues(values, renames)
+      if (renames.length > 0) {
+        setPendingRename({
+          values: renamedValues,
+          renames,
+          baseline: JSON.stringify(baseline),
+          // Keep the loaded server revision captured by the save callback.
+          // A background refresh must not silently rebase these old edits.
+          save: onSave,
+        })
+        return
+      }
+      await saveGroupChanges(renamedValues, renames)
+    },
+    [
+      baseline,
+      groupRenames,
+      onSave,
+      pendingRename,
+      resolutions,
+      saveGroupChanges,
+      t,
+    ]
   )
 
   const toggleEditMode = useCallback(() => {
@@ -145,26 +315,115 @@ export const GroupRatioForm = memo(function GroupRatioForm({
       </div>
 
       <GroupPricingGuide open={guideOpen} onOpenChange={setGuideOpen} />
+      <ConfirmDialog
+        open={pendingRename !== null}
+        onOpenChange={(open) => {
+          if (!open && !saveInFlight.current) setPendingRename(null)
+        }}
+        title={t('Rename groups and update API keys?')}
+        desc={
+          <div className='space-y-3'>
+            <p>
+              {t(
+                'Group references in existing API keys, users, channels, group settings, subscription plans and active subscriptions will be updated together.'
+              )}
+            </p>
+            <p>
+              {t(
+                'API key strings, account and key status, balances and IP restrictions stay unchanged.'
+              )}
+            </p>
+            <p>
+              {t(
+                'Past usage logs and financial records keep their original group names.'
+              )}
+            </p>
+          </div>
+        }
+        confirmText={t('Rename and update API keys')}
+        isLoading={saving || isSaving}
+        handleConfirm={() => {
+          if (!pendingRename || saveInFlight.current) return
+          if (pendingRename.baseline !== JSON.stringify(baseline)) {
+            setPendingRename(null)
+            setSaveError(
+              t(
+                'The group settings changed on the server. Reload the page and apply your edits again.'
+              )
+            )
+            return
+          }
+          void saveGroupChanges(
+            pendingRename.values,
+            pendingRename.renames,
+            pendingRename.save
+          )
+        }}
+      >
+        <ul className='max-h-48 space-y-2 overflow-y-auto text-sm'>
+          {pendingRename?.renames.map((rename) => (
+            <li key={rename.from} className='break-words'>
+              {t('{{from}} → {{to}}', { from: rename.from, to: rename.to })}
+            </li>
+          ))}
+        </ul>
+      </ConfirmDialog>
 
       <Form {...form}>
         <SettingsPageActionsPortal>
           <Button
             type='button'
             size='sm'
-            onClick={form.handleSubmit(onSave, (errors) => {
+            onClick={form.handleSubmit(handleSave, (errors) => {
               if (errors.MaxTokenAutoGroups) {
                 setEditMode('visual')
                 setSection('auto')
                 requestAnimationFrame(() => form.setFocus('MaxTokenAutoGroups'))
               }
             })}
-            disabled={isSaving}
+            disabled={submitting}
           >
-            {isSaving ? t('Saving...') : t('Save group settings')}
+            {submitting ? t('Saving...') : t('Save group settings')}
           </Button>
         </SettingsPageActionsPortal>
+        {saveError && (
+          <p className='text-destructive text-sm' role='alert'>
+            {saveError}
+          </p>
+        )}
+        {visibilityConflicts.length > 0 && (
+          <Alert variant='destructive'>
+            <AlertDescription>
+              {visibilityConflicts.map((conflict) => (
+                <p
+                  key={JSON.stringify([
+                    conflict.userGroup,
+                    conflict.targetGroup,
+                  ])}
+                >
+                  {t(
+                    'Group {{target}} cannot be both extra visible and hidden for {{group}}. Remove one rule before saving.',
+                    {
+                      target: conflict.targetGroup,
+                      group: conflict.userGroup,
+                    }
+                  )}
+                </p>
+              ))}
+            </AlertDescription>
+          </Alert>
+        )}
+        <GroupRenamePanel
+          issues={renamePlan.unresolved}
+          reservedViolations={renamePlan.reservedViolations}
+          resolutions={resolutions}
+          onResolutionsChange={setResolutions}
+        />
         {editMode === 'visual' ? (
           <GroupRatioVisualEditor
+            key={renameSaveVersion}
+            pendingRenames={groupRenames}
+            onRenamesChange={handleRenamesChange}
             section={section}
             onSectionChange={setSection}
             groupRatio={values.GroupRatio ?? ''}
@@ -207,10 +466,12 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                 render={({ field }) => (
                   <SettingsSwitchItem>
                     <SettingsSwitchContent>
-                      <FormLabel>{t('Default to auto groups')}</FormLabel>
+                      <FormLabel>
+                        {t('Use Auto for registration-generated keys')}
+                      </FormLabel>
                       <FormDescription>
                         {t(
-                          'If default auto group is enabled, newly created tokens start with auto instead of an empty group.'
+                          'Applies only to keys created automatically during registration. Users must select a group when creating a key manually.'
                         )}
                       </FormDescription>
                     </SettingsSwitchContent>
@@ -230,7 +491,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
             }
           />
         ) : (
-          <SettingsForm onSubmit={form.handleSubmit(onSave)}>
+          <SettingsForm onSubmit={form.handleSubmit(handleSave)}>
             <FormField
               control={form.control}
               name='GroupRatio'
@@ -418,10 +679,12 @@ export const GroupRatioForm = memo(function GroupRatioForm({
               render={({ field }) => (
                 <SettingsSwitchItem>
                   <SettingsSwitchContent>
-                    <FormLabel>{t('Default to auto groups')}</FormLabel>
+                    <FormLabel>
+                      {t('Use Auto for registration-generated keys')}
+                    </FormLabel>
                     <FormDescription>
                       {t(
-                        'If default auto group is enabled, newly created tokens start with auto instead of an empty group.'
+                        'Applies only to keys created automatically during registration. Users must select a group when creating a key manually.'
                       )}
                     </FormDescription>
                   </SettingsSwitchContent>
@@ -725,7 +988,7 @@ vip          0.5     ${t('No')}                ${t('Assigned by administrator on
                 <GuideCodeBlock>{`["default", "vip"]`}</GuideCodeBlock>
                 <p className='text-muted-foreground text-sm leading-6'>
                   {t(
-                    'If default auto group is enabled, newly created tokens start with auto instead of an empty group.'
+                    'Applies only to keys created automatically during registration. Users must select a group when creating a key manually.'
                   )}
                 </p>
               </AccordionContent>

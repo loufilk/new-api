@@ -17,13 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import type { Row } from '@tanstack/react-table'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import type { Row } from '@/lib/console-table'
 
 import type { User } from '../../types'
 import { DataTableRowActions } from '../data-table-row-actions'
@@ -198,3 +198,24 @@ it('disabling a user from the row menu binds the proof to the user and action', 
     expect.anything()
   )
 })
+
+it.each([1, 5])(
+  'role %s has ordinary account actions without reseller eligibility controls',
+  async (role) => {
+    renderInProvider(
+      <DataTableRowActions
+        row={{ original: { ...target, role } } as Row<User>}
+      />
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+    expect(
+      await screen.findByRole('menuitem', { name: 'Promote' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitem', { name: 'Disable' })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('menuitem', { name: 'Manage agent eligibility' })
+    ).not.toBeInTheDocument()
+  }
+)

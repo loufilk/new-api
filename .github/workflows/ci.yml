@@ -1,8 +1,18 @@
 name: CI
 
 on:
+  push:
+    branches:
+      - 'sync/**'
+      - 'fix/upstream-review-playground-*'
+      - 'fix/im8-clean-review-20261119'
+      - 'feat/customer-invoice-center-20261119'
+      - 'fix/im16-latency-deps-20261119'
+      - 'fix/im18-dependency-migration-20261119'
+      - 'fix/im19-*'
   pull_request:
     types: [opened, synchronize, closed]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,26 +21,50 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Checkout the event commit in both jobs. A PR merge ref can disappear while
+# Checkout the event commit. A PR merge ref can disappear while
 # queued runs start, and a base branch can advance after the merge event.
+# This maintenance branch uses the owner's PostgreSQL-only, affected-contract
+# scope. Its push job also covers PR updates without running the same tests twice.
 jobs:
   backend:
     name: Backend vet, build, and test
-    if: github.event.action != 'closed' || github.event.pull_request.merged == true
+    if: >-
+      !startsWith(github.head_ref || github.ref_name, 'fix/im19-') &&
+      !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119","feat/customer-invoice-center-20261119","fix/im16-latency-deps-20261119","fix/im18-dependency-migration-20261119"]'), github.head_ref || github.ref_name) &&
+      (github.event.action != 'closed' || github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:18.7-alpine@sha256:ff64c9e3bdf8e2120107d3559de8db314e8305f7e38c5105903c6295876738ff
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
     env:
       GOWORK: 'off'
+      GOFLAGS: '-p=1'
+      NO_AGENT_FIXTURE_OWNED: '1'
+      TEST_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_fixture?sslmode=disable
+      TEST_MODEL_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_model?sslmode=disable
+      TEST_SERVICE_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_service?sslmode=disable
+      TEST_SECURITY_DIALECT: postgres
 
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event.pull_request.base.repo.full_name }}
+          repository: ${{ github.event.pull_request.base.repo.full_name || github.repository }}
           ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           cache-dependency-path: |
@@ -66,23 +100,50 @@ jobs:
         run: go build ./...
 
       - name: Test root, relaykit, and tokenkit modules
-        run: make test
+        run: |
+          for database in newapi_test_fixture newapi_test_model newapi_test_service; do
+            docker exec "${{ job.services.postgres.id }}" createdb -U postgres "$database"
+          done
+          make test
+
+      - name: Race tests
+        env:
+          CGO_ENABLED: '1'
+          GOMAXPROCS: '2'
+        run: |
+          # Each pass owns fresh fixtures; packages sharing a fixture run serially.
+          for database in newapi_test_fixture newapi_test_model newapi_test_service; do
+            docker exec "${{ job.services.postgres.id }}" dropdb -U postgres "$database"
+            docker exec "${{ job.services.postgres.id }}" createdb -U postgres "$database"
+          done
+          # SQLite-heavy controller tests can exceed Go's default 10m under -race.
+          # Bound resource contention and runtime without reducing test coverage.
+          go test -race -p 1 -count=1 -timeout=20m ./...
+          cd relaykit
+          go test -race -p 1 -count=1 -timeout=20m ./...
+
+      - name: Release evidence gate tests
+        run: python3 -m unittest discover -s ops/server/tests -p test_release_gate.py -v
 
   frontend:
     name: Frontend typecheck and test
-    if: github.event.action != 'closed' || github.event.pull_request.merged == true
+    if: >-
+      !startsWith(github.head_ref || github.ref_name, 'fix/im19-') &&
+      !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119","feat/customer-invoice-center-20261119","fix/im16-latency-deps-20261119","fix/im18-dependency-migration-20261119"]'), github.head_ref || github.ref_name) &&
+      (github.event.action != 'closed' || github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: web
 
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event.pull_request.base.repo.full_name }}
+          repository: ${{ github.event.pull_request.base.repo.full_name || github.repository }}
           ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -92,8 +153,468 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Production dependency audit
+        run: bun audit --production
+
+      - name: Lint
+        run: bun run lint:ci
+
+      - name: Format check
+        run: bun run format:check
+
+      - name: Copyright check
+        run: bun run copyright:check
+
       - name: Typecheck
         run: bun check -b
 
       - name: Test
         run: bun run test
+
+      - name: Production build
+        run: bun run build
+
+  api-key-routing:
+    name: API Key and routing (PostgreSQL 18.6)
+    if: >-
+      contains(fromJSON('["refs/heads/fix/upstream-review-playground-20261118","refs/heads/fix/im8-clean-review-20261119"]'), github.ref) &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    env:
+      GOWORK: 'off'
+      GOTOOLCHAIN: local
+      GOFLAGS: '-mod=readonly -p=1'
+      GOMAXPROCS: '2'
+      NO_AGENT_FIXTURE_OWNED: '1'
+      TEST_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_keys_controller?sslmode=disable
+      TEST_SERVICE_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_keys_service?sslmode=disable
+      TEST_MODEL_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_keys_model?sslmode=disable
+      TEST_TASK_DB_DIALECT: postgres
+      TEST_SECURITY_DIALECT: postgres
+      SQL_DSN: ''
+      LOG_SQL_DSN: ''
+      REDIS_CONN_STRING: ''
+      TEST_MYSQL_DSN: ''
+      TEST_MYSQL_LOG_DSN: ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+            tokenkit/go.sum
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.4'
+
+      - name: Initialize isolated PostgreSQL fixtures
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(docker exec '${{ job.services.postgres.id }}' psql -U postgres -Atc 'SHOW server_version')" = '18.6'
+          for database in newapi_keys_controller newapi_keys_service newapi_keys_task newapi_keys_model; do
+            docker exec '${{ job.services.postgres.id }}' createdb -U postgres "$database"
+          done
+          mkdir -p web/dist
+          touch web/dist/index.html
+
+      - name: API Key permissions, updates and pagination
+        run: >-
+          go test -json -p 1 ./controller
+          -run '^(TestUpdateTokenStatusOnlyAllowsUserStates|TestSmartTokenUpdatePreservesOmittedFieldsAndStatusOnly|TestSearchTokensPostPreservesOwnershipAndCredentialPrivacy|TestTokenStatusFilterAppliesBeforePaginationAndSearch|TestUpdateTokenMasksKeyInResponse|TestTokenAllowUserQuotaQueryOnCreateAndUpdate|TestTokenStatusOnlyPreservesConcurrentQuotaAndRouting|TestTokenStatusOnlyChecksLatestEligibility|TestTokenUpdateKeepsConsumptionAndSupportsOmittedQuota|TestTokenUpdateRejectsConcurrentRevocation|TestTokenNameLimitCountsUnicodeCharacters|TestTokenCreateEnforcesLimitAfterConcurrentCreation)$'
+          -count=1 -timeout=5m
+
+      - name: Upstream API Key authentication and GPT chat compatibility
+        run: |
+          go test -p 1 ./middleware -run '^TestTokenAuthRejectsKeysOfDeletedUser$' -count=1 -timeout=5m
+          go test -p 1 ./controller -run '^(TestChannelTestOpenAIChatCompatibility|TestOpenAIChatSamplingCompatibility)' -count=1 -timeout=5m
+
+      - name: Newly created channel is immediately routable
+        run: go test -p 1 ./controller -run '^TestAddChannelPublishesCommittedRoutesPostgres$' -count=1 -timeout=5m
+
+      - name: Automatic group routing
+        run: go test -json -p 1 ./service -run '^Test(TokenRoutingPostgres|TokenRoutingSmartSameChannelRetry|LegacySelectedGroupReservesBeforeDispatch|SelectedGroupRejectsFreeRealtimeOwnerOnPaidRetry|PrepareTieredBillingForSelectedGroup)' -count=1 -timeout=5m
+
+      - name: Origin-task channel pinning
+        env:
+          TEST_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_keys_task?sslmode=disable
+        run: >-
+          go test -json -p 1 ./controller
+          -run '^(TestTokenNoRetryNativeLockedTaskWithoutPinRefundsOnce|TestTokenAutoCrossGroupNativeLockedTaskPreservesRetryBudget)$'
+          -count=1 -timeout=5m
+
+      - name: Key editing, initial route and continuity
+        run: |
+          go test -p 1 ./controller -run '^TestKey(EditorSnapshot|ExplicitBudget|ListEffective|EmergencyRevocation)' -count=1 -timeout=5m
+          go test -p 1 ./middleware -run '^Test(Distributor(SetupFailureAndChannelFreeOperations|OrganizationClearedOnNextChannel|AffinityRequiresSuccessfulOutcome)|GroupModelDistributorPostgres|DistributeHonorsOriginTaskChannelPin)$' -count=1 -timeout=5m
+          go test -p 1 ./relay -run '^TestPostgresNativeRemixResolvesAuthorizedOriginBeforeFirstHop$' -count=1 -timeout=5m
+
+      - name: Settlement and payment regressions (PostgreSQL)
+        run: |
+          go test -p 1 ./model -run '^TestRechargeEpay(UsesExactHistoricalOrCanonicalCheckoutCents|CreditsQuotaExactlyOnce)$' -count=1 -timeout=5m
+          go test -p 1 ./controller -run '^Test(EpayQuoteUsesOneCanonicalCentAmount|TopUpQuotaValidation|ExecuteTaskSubmission(PersistsKnownAsyncIDOnCancellationAfterUpstreamAcceptance|PreservesHoldOnCancellationAfterUpstreamAcceptance|DisconnectAfterDurableInsertDoesNotRefund))$' -count=1 -timeout=5m
+
+      - name: Streaming and background task contracts
+        run: |
+          go test -p 1 ./controller -run '^TestServeTaskPluginProtocolBackgroundPreservesConcurrentFinancialState$' -count=1 -timeout=5m
+          go test -p 1 ./relay/channel/claude -run '^TestClaude(StreamRequiresMessageStop|BufferFailureClassification|SDKSourceErrorAndDisconnectBeatCompletion)$' -count=1 -timeout=5m
+          go test -p 1 ./relay/channel/aws -run '^TestAwsStreamHandler(RejectsTruncatedSDKStream|StopsAtClientCancellation|UsesFinalUpstreamUsage)$' -count=1 -timeout=5m
+          go test -p 1 ./relay/channel/openai -run '^TestUnformattedChatStreamPreservesRefusalAudioAndFunctionCalls$' -count=1 -timeout=5m
+          go test -p 1 ./pkg/jsplugin -run '^TestReservedRouteNamespaces(ProtectChuanAPIConsole|CoverConsolePages)$' -count=1 -timeout=5m
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      - name: API Key frontend regressions
+        working-directory: web
+        run: >-
+          bun run test
+          src/features/keys/lib/__tests__/auto-group-form.test.ts
+          src/features/keys/components/__tests__/api-key-routing.test.tsx
+          src/features/keys/components/__tests__/api-key-editing.test.tsx
+          src/features/keys/components/__tests__/api-key-creation.test.tsx
+          src/features/keys/components/__tests__/api-key-session.test.tsx
+          src/features/keys/components/__tests__/api-key-listing.test.tsx
+          src/features/keys/components/__tests__/api-key-model-scope.test.tsx
+          src/features/keys/components/__tests__/api-keys-mutate-drawer.test.tsx
+          src/features/keys/__tests__/api-response.test.ts
+          --maxWorkers=2
+
+      - name: Session refresh and wallet return regressions
+        working-directory: web
+        run: >-
+          bun run test
+          src/lib/auth-session.test.ts
+          src/features/auth/lib/__tests__/session-recovery.test.tsx
+          src/extensions/chuanapi/wallet/__tests__/recharge-history-link.test.tsx
+          --maxWorkers=2
+
+      - name: Playground regression
+        working-directory: web
+        run: bun run test src/features/playground src/features/image-generation --maxWorkers=2
+
+      - name: Frontend typecheck and affected lint
+        working-directory: web
+        run: |
+          bun check -b
+          ./node_modules/.bin/oxlint -c .oxlintrc.json src/features/keys
+
+      - name: Affected frontend formatting
+        working-directory: web
+        run: |
+          set -euo pipefail
+          scoped_format="$(mktemp -d)"
+          trap 'rm -rf "$scoped_format"' EXIT
+          mkdir -p "$scoped_format/src/features" "$scoped_format/src/i18n"
+          cp .oxfmtrc.json .gitignore "$scoped_format/"
+          cp -a src/features/keys "$scoped_format/src/features/"
+          cp -a src/i18n/locales "$scoped_format/src/i18n/"
+          export PATH="$PWD/node_modules/.bin:$PATH"
+          formatter="$PWD/scripts/format-with-protected-headers.mjs"
+          cd "$scoped_format"
+          node "$formatter" --check
+
+      - name: Production frontend build
+        working-directory: web
+        run: VITE_REACT_APP_VERSION="$(cat ../VERSION)" bun run build
+
+      - name: Build gateway with frontend assets
+        run: go build -ldflags "-X github.com/QuantumNous/new-api/common.Version=$(cat VERSION)" -o "$RUNNER_TEMP/new-api" .
+
+
+  customer-invoice:
+    name: Customer invoice (PostgreSQL 18.6)
+    if: >-
+      github.ref == 'refs/heads/feat/customer-invoice-center-20261119' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: invoice_fixture
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d invoice_fixture"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    env:
+      GOWORK: 'off'
+      GOTOOLCHAIN: local
+      GOFLAGS: '-mod=readonly -p=1'
+      GOMAXPROCS: '2'
+      NO_AGENT_FIXTURE_OWNED: '1'
+      TEST_MODEL_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/invoice_fixture?sslmode=disable
+      TEST_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/invoice_fixture?sslmode=disable
+      TEST_SECURITY_DIALECT: postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.4'
+      - name: PostgreSQL invoice, authorization and migration contracts
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(docker exec '${{ job.services.postgres.id }}' psql -U postgres -Atc 'SHOW server_version')" = 18.6
+          go test ./model ./controller ./router ./middleware -run '^Test(CustomerInvoice|MainAutoMigrateModels|AccessTokenRouteRulesCoverEveryDashboardRoute)' -count=1 -timeout=5m
+      - name: Reserve customer and admin invoice paths
+        run: go test ./pkg/jsplugin -run '^TestReservedRouteNamespacesProtectChuanAPIConsole$' -count=1
+      - name: Frontend install and targeted verification
+        working-directory: web
+        run: |
+          bun install --frozen-lockfile
+          bun run test src/extensions/chuanapi/invoice --maxWorkers=2
+          bun run typecheck
+          VITE_REACT_APP_VERSION="$(cat ../VERSION)" bun run build
+      - name: Compile Go gateway with the frontend
+        run: go build -ldflags "-X github.com/QuantumNous/new-api/common.Version=$(cat VERSION)" -o "$RUNNER_TEMP/new-api" .
+
+  im16-latency:
+    name: Latency and dependency migration (PostgreSQL 18.7 and Redis 8.10)
+    if: ${{ contains(fromJSON('["fix/im16-latency-deps-20261119","fix/im18-dependency-migration-20261119"]'), github.head_ref || github.ref_name) && (github.event.action != 'closed' || github.event.pull_request.merged == true) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18.7-alpine@sha256:ff64c9e3bdf8e2120107d3559de8db314e8305f7e38c5105903c6295876738ff
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+      redis:
+        image: redis:8.10.3-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+    env:
+      GOWORK: 'off'
+      GOFLAGS: '-p=1'
+      TEST_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_fixture?sslmode=disable
+      TEST_MODEL_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_model?sslmode=disable
+      TEST_SECURITY_DIALECT: postgres
+      AUDIT_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_fixture?sslmode=disable
+      TEST_AUTHZ_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_fixture?sslmode=disable
+      TEST_AUTH_REDIS_DSN: redis://127.0.0.1:6379/0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+            tokenkit/go.sum
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.node-version
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.4'
+      - name: Create isolated fixture databases
+        run: |
+          docker exec '${{ job.services.postgres.id }}' createdb -U postgres newapi_test_fixture
+          docker exec '${{ job.services.postgres.id }}' createdb -U postgres newapi_test_model
+          docker exec '${{ job.services.postgres.id }}' psql -U postgres -Atc 'SHOW server_version' | grep -Fx 18.7
+          docker exec '${{ job.services.redis.id }}' redis-server --version | grep -F 'v=8.10.3'
+      - name: Chat streaming, PostgreSQL log pagination and reporting flush
+        run: |
+          go test -tags api_only ./controller -run '^TestLog(ListRejectsUnboundedPagination|PageOptionalCountPostgres)$' -count=1 -v
+          go test -tags api_only ./model -run '^Test(QuotaFlushPostgres|AuthCacheNativeHotPathUsesNoDatabaseQueries|AuthCacheNativeOrdinaryColdReadRechecksConcurrentRevocation)' -count=1 -v
+          go test -tags api_only ./relay/channel/openai ./service -run 'TestNativeChat|TestOaiStream|TestAppendRelayLogAdminInfo' -count=1 -v
+      - name: CORE rollback entry point and proxy route contracts
+        if: ${{ (github.head_ref || github.ref_name) == 'fix/im18-dependency-migration-20261119' }}
+        run: |
+          bash -n ops/upgrade/core-newapi-cutover.sh
+          python3 -m unittest discover -s ops/server/tests -p 'test_core_newapi_cutover.py' -v
+          python3 -m unittest discover -s ops/server/tests -p 'test_dashboard_route_contract.py' -v
+          python3 -m unittest discover -s ops/upgrade/core-rollback-rehearsal -v
+      - name: Passkey, payment and protocol dependency contracts
+        if: ${{ (github.head_ref || github.ref_name) == 'fix/im18-dependency-migration-20261119' }}
+        run: |
+          go test -tags api_only ./controller -run '^(TestPasskey(LegacyCredentialColumns|FinishLegacySession|DomainsPreserveCredentialsAcrossVerificationFlows|DomainsRejectInvalidAssertions)|TestStripe(CheckoutMerchantContract|PaidWebhookPostgreSQL)|TestWaffo(CreationFailurePreservesSuccessfulWebhook|CreateOutcomePrecedesSignedWebhook|SDKFailureBeforeRequestMarksPendingFailed)|Test(TaskPlugin|BuiltInKling)Responses(Stream|NonStream)DecodesWithOfficialGoSDK)$' -count=1 -v
+          go test -tags api_only ./service/authz -run '^TestLegacyScopedPoliciesDoNotExpandPermissionsPostgreSQL$' -count=1 -v
+          go test ./service/passkey ./i18n -count=1
+      - name: Build and verify the browser console
+        working-directory: web
+        run: |
+          bun install --frozen-lockfile
+          bun check -b --singleThreaded
+          bun run lint:ci
+          bun run test src/features/usage-logs src/features/channels src/components/data-table src/i18n --maxWorkers=2
+          bun run build
+      - name: Build the integrated gateway
+        run: go build -mod=readonly .
+
+
+  im19-production-baseline:
+    name: im.19 exact candidate (PostgreSQL 18.6 and Redis 8.8.0)
+    if: >-
+      startsWith(github.head_ref || github.ref_name, 'fix/im19-') &&
+      (github.event.action != 'closed' || github.event.pull_request.merged == true)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+      redis:
+        image: redis:8.8.0-alpine@sha256:9d317178eceac8454a2284a9e6df2466b93c745529947f0cd42a0fa9609d7005
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      GOWORK: 'off'
+      GOTOOLCHAIN: local
+      GOFLAGS: '-mod=readonly -p=1'
+      NO_AGENT_FIXTURE_OWNED: '1'
+      TEST_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_fixture?sslmode=disable
+      AUDIT_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_fixture?sslmode=disable
+      TEST_FINALIZATION_REALTIME_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_realtime?sslmode=disable
+      TEST_MODEL_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_model?sslmode=disable
+      TEST_SECURITY_DIALECT: postgres
+      TEST_MANAGE_USER_DIALECT: postgres
+      TEST_GOOGLE_OAUTH_DIALECT: postgres
+      TEST_SERVICE_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_service?sslmode=disable
+      TEST_RUNTIME_REDIS: '1'
+      TEST_REDIS_DSN: redis://127.0.0.1:6379/0
+      TEST_AUTH_REDIS_DSN: redis://127.0.0.1:6379/0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+            tokenkit/go.sum
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.node-version
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.4'
+      - name: Confirm immutable source and production fixture versions
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          printf 'Candidate: `%s`\n' "$SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+          test "$(docker exec '${{ job.services.postgres.id }}' psql -U postgres -Atc 'SHOW server_version')" = '18.6'
+          docker exec '${{ job.services.redis.id }}' redis-server --version | grep -Eq '(^| )v=8[.]8[.]0( |$)'
+          docker exec '${{ job.services.postgres.id }}' createdb -U postgres newapi_test_fixture
+          docker exec '${{ job.services.postgres.id }}' createdb -U postgres newapi_test_model
+          docker exec '${{ job.services.postgres.id }}' createdb -U postgres newapi_test_service
+          docker exec '${{ job.services.postgres.id }}' createdb -U postgres newapi_test_realtime
+      - name: Gateway error, PostgreSQL reporting and Redis authentication contracts
+        run: |
+          go test -json -tags api_only ./pkg/privacy ./controller ./relay/helper ./model \
+            -run '^(TestNativeGatewayError.*|TestQuotaFlushPostgres.*|TestLogPageOptionalCountPostgres|TestAuthCacheNativeOrdinaryColdReadRechecksConcurrentRevocation)$' \
+            -count=1 -timeout=10m > "$RUNNER_TEMP/im19-tests.json" || { tail -100 "$RUNNER_TEMP/im19-tests.json"; exit 1; }
+          python3 ops/ci/check_go_test_report.py --require-run --reject-skipped-descendants "$RUNNER_TEMP/im19-tests.json" \
+            TestNativeGatewayErrorRestoresClientContract TestNativeGatewayErrorDoesNotExposeProviderOrInternalDetails \
+            TestNativeGatewayErrorOverHTTP TestNativeGatewayErrorSSEKeepsDetails \
+            TestQuotaFlushPostgresLostAcknowledgmentAndBoundedReplay TestLogPageOptionalCountPostgres \
+            TestAuthCacheNativeOrdinaryColdReadRechecksConcurrentRevocation
+      - name: Account recovery, payment, relay and settings repairs
+        run: |
+          go test -json -tags api_only ./controller ./model ./service ./middleware ./relay/channel/gemini ./setting/config ./plugins ./common \
+            -run '^(TestCoreAccount.*|TestFrozenTopUpTermsPostgres|TestDeliveredUsageDoesNotReportUnsettledChargePostgres|TestStripeCheckoutMerchantContract|TestLegacyOptionPrimaryKeyMigrationPreservesEvidencePostgres|TestSingleOptionFailedWriteDoesNotPublish|TestModelRateLimitRealRedis|TestGeminiNativeRejectsInvalidSuccessfulHTTPEnvelope|TestInvalidConfigBatchPreservesActiveValues|TestContentModeration.*|TestUptimeKuma.*|TestDiskCacheCleanupKeepsLiveReplayAndAccounting)$' \
+            -count=1 -timeout=10m > "$RUNNER_TEMP/im19-repairs.json" || { tail -100 "$RUNNER_TEMP/im19-repairs.json"; exit 1; }
+          python3 ops/ci/check_go_test_report.py --require-run --reject-skipped-descendants "$RUNNER_TEMP/im19-repairs.json" \
+            TestCoreAccountPasswordRecoveryContracts TestCoreAccountAdminWriteRechecksAuthority TestCoreAccountNotificationSettingsAreWriteOnly \
+            TestFrozenTopUpTermsPostgres TestDeliveredUsageDoesNotReportUnsettledChargePostgres TestStripeCheckoutMerchantContract \
+            TestSingleOptionFailedWriteDoesNotPublish TestModelRateLimitRealRedis TestGeminiNativeRejectsInvalidSuccessfulHTTPEnvelope \
+            TestLegacyOptionPrimaryKeyMigrationPreservesEvidencePostgres TestInvalidConfigBatchPreservesActiveValues \
+            TestContentModerationPlugin TestUptimeKumaSnapshotCoalescesAndReportsRemoteAvailability TestDiskCacheCleanupKeepsLiveReplayAndAccounting
+      - name: Realtime settlement on PostgreSQL only
+        run: go test -tags api_only ./relay/channel/openai -run '^TestRealtimeFinancialConsistencyDatabaseMatrix$/^postgres$' -count=1 -timeout=5m
+      - name: Packaged desktop readiness contracts
+        run: |
+          node --test electron/packaged-startup.test.js
+          go test -tags api_only . -run "^TestDesktopStartupProofOnlyForLoopbackReadiness$" -count=1
+      - name: CORE safety, proxy routing and sample production Compose contracts
+        run: |
+          bash -n ops/upgrade/core-newapi-cutover.sh
+          python3 -m unittest discover -s ops/server/tests -v
+          python3 -m unittest discover -s ops/upgrade/core-rollback-rehearsal -v
+          NEW_API_IMAGE=example.invalid/new-api POSTGRES_IMAGE=example.invalid/postgres REDIS_IMAGE=example.invalid/redis \
+            SQL_DSN=postgresql://primary.invalid/main LOG_SQL_DSN=postgresql://log.invalid/logs \
+            REDIS_CONN_STRING=redis://redis.invalid/0 REDIS_PASSWORD=fixture POSTGRES_PASSWORD=fixture \
+            SESSION_SECRET=fixture-session CRYPTO_SECRET=fixture-crypto SHUTDOWN_TIMEOUT_SECONDS=120 SESSION_COOKIE_SECURE=true \
+            SESSION_COOKIE_TRUSTED_URL=https://console.invalid TRUSTED_PROXIES=none \
+            docker compose config --format json | python3 -c '
+          import json, sys
+          app = json.load(sys.stdin)["services"]["new-api"]
+          assert app["environment"]["LOG_SQL_DSN"] == "postgresql://log.invalid/logs"
+          assert app["environment"]["CRYPTO_SECRET"] == "fixture-crypto"
+          assert app["environment"]["SHUTDOWN_TIMEOUT_SECONDS"] == "120"
+          assert app["stop_grace_period"] in ("3m0s", "3m", "180s")
+          '
+      - name: Frontend build and typecheck
+        working-directory: web
+        run: |
+          bun install --frozen-lockfile
+          bun check -b --singleThreaded
+          VITE_REACT_APP_VERSION="$(cat ../VERSION)" bun run build
+      - name: Compile gateway with embedded frontend
+        run: go build -o "$RUNNER_TEMP/new-api" .

@@ -640,7 +640,12 @@ test.each(['table', 'card'] as const)(
   async (view) => {
     await mount(view, false)
     const user = userEvent.setup()
-    screen.getByRole('button', { name: 'Drag mode' }).focus()
+    const reorder = screen.getByRole('button', { name: 'Drag mode' })
+    // The header mounts before the channel list. A disabled control cannot
+    // take focus while the order is still loading.
+    await waitFor(() => expect(reorder).toBeEnabled())
+    reorder.focus()
+    expect(reorder).toHaveFocus()
     await user.keyboard('{Enter}')
     expect(
       screen.getByRole('button', { name: 'Reorder channel 3' })
@@ -684,7 +689,9 @@ test('the header places reorder before batch mode while shared display controls 
   const header = within(screen.getByRole('banner'))
   const toolbar = within(screen.getByRole('region', { name: 'Channels' }))
   const reorder = header.getByRole('button', { name: 'Drag mode' })
+  await waitFor(() => expect(reorder).toBeEnabled())
   reorder.focus()
+  expect(reorder).toHaveFocus()
   await user.tab()
   expect(header.getByRole('button', { name: 'Drag mode help' })).toHaveFocus()
   await user.tab()
@@ -889,3 +896,39 @@ test.each(['table', 'card'] as const)(
     )
   }
 )
+
+test.each([
+  { role: 1, write: false },
+  { role: 10, write: false },
+])(
+  'role $role without channel-write permission cannot start priority changes',
+  async ({ role, write }) => {
+    useAuthStore.getState().auth.setUser({
+      id: 1,
+      username: 'limited',
+      role,
+      permissions: { admin_permissions: { channel: { write } } },
+    })
+    await mount('table', false)
+    expect(screen.getByRole('button', { name: 'Drag mode' })).toBeDisabled()
+    expect(
+      screen.queryByRole('button', { name: 'Reorder channel 3' })
+    ).not.toBeInTheDocument()
+    expect(api.get).not.toHaveBeenCalledWith('/api/channel/priority/order')
+    expect(requests).toEqual([])
+  }
+)
+
+test('an admin explicitly granted channel-write permission can enter reorder mode without saving', async () => {
+  useAuthStore.getState().auth.setUser({
+    id: 1,
+    username: 'channel-editor',
+    role: 10,
+    permissions: { admin_permissions: { channel: { write: true } } },
+  })
+  await mount('table')
+  expect(
+    screen.getByRole('button', { name: 'Reorder channel 3' })
+  ).toBeEnabled()
+  expect(requests).toEqual([])
+})

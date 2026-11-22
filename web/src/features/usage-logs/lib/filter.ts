@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 /**
  * Utility functions for usage logs filters
  */
+import z from 'zod'
+
 import { LOG_CATEGORY_LABELS } from '../constants'
 import type {
   LogCategory,
@@ -27,6 +29,32 @@ import type {
   DrawingLogFilters,
   TaskLogFilters,
 } from '../types'
+
+export const LOG_USER_ID_ERROR =
+  'User ID must be a positive integer no greater than 9223372036854775807'
+
+// Keep identifiers as decimal strings, including values beyond JavaScript's
+// safe integer range. Blank means no filter; malformed values never do.
+export function isValidLogUserId(value: string | undefined): boolean {
+  if (value === undefined || value === '') return true
+  if (!/^[0-9]+$/.test(value)) return false
+  const digits = value.replace(/^0+/, '')
+  return (
+    digits.length > 0 &&
+    (digits.length < 19 ||
+      (digits.length === 19 && digits <= '9223372036854775807'))
+  )
+}
+
+export const logUserIdSearchSchema = z
+  .union([
+    z.string(),
+    // TanStack decodes unquoted numeric URL values (including exponent or
+    // decimal forms). Normalize only safe integers; reject rounded IDs.
+    z.number().int().positive().max(Number.MAX_SAFE_INTEGER).transform(String),
+  ])
+  .refine(isValidLogUserId, LOG_USER_ID_ERROR)
+  .optional()
 
 // ============================================================================
 // Filter Building Functions
@@ -54,6 +82,7 @@ export function buildSearchParams(
         ...(commonFilters.token && { token: commonFilters.token }),
         ...(commonFilters.group && { group: commonFilters.group }),
         ...(commonFilters.username && { username: commonFilters.username }),
+        ...(commonFilters.userId && { userId: commonFilters.userId }),
         ...(commonFilters.requestId && { requestId: commonFilters.requestId }),
         ...(commonFilters.upstreamRequestId && {
           upstreamRequestId: commonFilters.upstreamRequestId,

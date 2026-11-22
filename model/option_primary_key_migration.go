@@ -106,6 +106,12 @@ func withOptionPrimaryKeyLock(db *gorm.DB, fn func(*gorm.DB) error) error {
 			if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", optionPrimaryKeyLockID).Error; err != nil {
 				return fmt.Errorf("lock options table: %w", err)
 			}
+			// The advisory lock only coordinates concurrent migrations. A
+			// relation lock also blocks ordinary option writers from committing
+			// against the old table between the data copy and the table swap.
+			if err := tx.Exec("LOCK TABLE options IN ACCESS EXCLUSIVE MODE").Error; err != nil {
+				return fmt.Errorf("lock options relation: %w", err)
+			}
 			return fn(tx)
 		})
 	default:
@@ -120,7 +126,10 @@ func repairOptionPrimaryKey(db *gorm.DB) error {
 	if err := db.Find(&rows).Error; err != nil {
 		return fmt.Errorf("read options rows: %w", err)
 	}
-	deduped, skippedEmpty := dedupeOptionRows(rows)
+	deduped, skippedEmpty, err := dedupeOptionRows(rows)
+	if err != nil {
+		return err
+	}
 	if db.Migrator().HasTable(optionPrimaryKeyTmpTable) {
 		if err := db.Migrator().DropTable(optionPrimaryKeyTmpTable); err != nil {
 			return fmt.Errorf("drop leftover %s: %w", optionPrimaryKeyTmpTable, err)
@@ -163,7 +172,7 @@ func repairOptionPrimaryKey(db *gorm.DB) error {
 	return nil
 }
 
-func dedupeOptionRows(rows []Option) ([]Option, int) {
+func dedupeOptionRows(rows []Option) ([]Option, int, error) {
 	seen := make(map[string]int)
 	deduped := make([]Option, 0, len(rows))
 	skippedEmpty := 0
@@ -174,9 +183,8 @@ func dedupeOptionRows(rows []Option) ([]Option, int) {
 		}
 		if i, ok := seen[row.Key]; ok {
 			if deduped[i].Value != row.Value {
-				common.SysError(common.LogText("options key %q had conflicting values; keeping the last row", row.Key))
+				return nil, skippedEmpty, fmt.Errorf("options key %q has conflicting historical values; reconcile before enabling a primary key", row.Key)
 			}
-			deduped[i].Value = row.Value
 			continue
 		}
 		seen[row.Key] = len(deduped)
@@ -185,7 +193,7 @@ func dedupeOptionRows(rows []Option) ([]Option, int) {
 	if skippedEmpty > 0 {
 		common.SysError(common.LogText("skipped %d options rows with empty keys while rebuilding the primary key", skippedEmpty))
 	}
-	return deduped, skippedEmpty
+	return deduped, skippedEmpty, nil
 }
 
 func swapOptionTables(db *gorm.DB, tmp, backup string) error {

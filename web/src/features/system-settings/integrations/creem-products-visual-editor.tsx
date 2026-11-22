@@ -24,10 +24,7 @@ import { StaticDataTable } from '@/components/data-table/static/static-data-tabl
 import { StaticRowActions } from '@/components/data-table/static/static-row-actions'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  formatCreemPrice,
-  formatQuotaShort,
-} from '@/features/wallet/lib/format'
+import { formatCreemPrice, formatQuotaShort } from '@/lib/creem'
 
 import { safeJsonParseWithValidation } from '../utils/json-parser'
 import { isArray } from '../utils/json-validators'

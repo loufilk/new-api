@@ -1,0 +1,407 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, afterEach, expect, test, vi } from 'vitest'
+
+import { api } from '@/lib/api'
+
+import { ImageGenerationPage } from '../components/ImageGenerationPage'
+import {
+  readPendingImageTask,
+  writePendingImageTask,
+} from '../storage/pending-task'
+import type { ImageHistoryEntry } from '../types'
+import {
+  HISTORY_OWNER_ID,
+  HISTORY_OWNER_KEY,
+  signInHistoryOwner,
+} from './history-fixture'
+
+const entry: ImageHistoryEntry = {
+  id: 'old',
+  prompt: 'Previous landscape',
+  model: 'retired-model',
+  settings: { size: '1536x1024', quality: 'high', style: '', count: 4 },
+  createdAt: Date.now(),
+  results: [
+    {
+      id: 'old-image',
+      type: 'url',
+      source: 'https://example.com/old.png',
+      createdAt: Date.now(),
+      keptLocally: false,
+    },
+  ],
+}
+let client: QueryClient
+let tokenModels: string[]
+beforeEach(() => {
+  signInHistoryOwner()
+  localStorage.clear()
+  localStorage.setItem(HISTORY_OWNER_KEY, JSON.stringify([entry]))
+  client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  })
+  client.setQueryData(['image-generation-bootstrap'], {
+    keys: [
+      {
+        id: 7,
+        name: 'Current key',
+        status: 1,
+        group: 'test',
+        model_limits_enabled: false,
+        model_limits: '',
+      },
+    ],
+    pricingModels: [
+      {
+        model_name: 'dall-e-3',
+        supported_endpoint_types: ['image-generation'],
+      },
+    ],
+  })
+  tokenModels = ['dall-e-3']
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/token/7/models') {
+      return { data: { success: true, data: tokenModels } }
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  })
+})
+afterEach(() => {
+  vi.restoreAllMocks()
+  client.clear()
+  localStorage.clear()
+  vi.unstubAllGlobals()
+})
+function renderPage() {
+  return render(
+    <QueryClientProvider client={client}>
+      <ImageGenerationPage />
+    </QueryClientProvider>
+  )
+}
+
+test('reusing an unavailable historical model retains current key and clamps settings without generating', async () => {
+  const post = vi.spyOn(api, 'post')
+  renderPage()
+  await waitFor(() =>
+    expect(screen.getByLabelText('Model')).toHaveTextContent('dall-e-3')
+  )
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: 'Reuse' }))
+  expect(screen.getByLabelText('Prompt')).toHaveValue('Previous landscape')
+  expect(screen.getByLabelText('Model')).toHaveTextContent('dall-e-3')
+  expect(screen.getByLabelText('Count')).toHaveTextContent('1')
+  expect(screen.getByLabelText('Token')).toHaveTextContent('Current key')
+  expect(post).not.toHaveBeenCalled()
+})
+
+test('generation resets filters and inserts a single new result without losing old artwork', async () => {
+  vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url === '/api/token/7/key') {
+      return { data: { success: true, data: { key: 'fixture' } } }
+    }
+    if (url === '/v1/images/generations') {
+      return { data: { data: [{ url: 'https://example.com/new.png' }] } }
+    }
+    throw new Error('Unexpected request')
+  })
+  renderPage()
+  const user = userEvent.setup()
+  await user.type(screen.getByLabelText('Search history'), 'no-match')
+  await user.type(screen.getByLabelText('Prompt'), 'New landscape')
+  await user.click(screen.getByRole('button', { name: 'Generate' }))
+  await screen.findByAltText('New landscape')
+  expect(screen.getAllByAltText('New landscape')).toHaveLength(1)
+  expect(screen.getByAltText('Previous landscape')).toBeInTheDocument()
+  expect(screen.getByLabelText('Search history')).toHaveValue('')
+})
+
+test('reusing with reference images requires confirmation before clearing them', async () => {
+  client.setQueryData(['image-generation-bootstrap'], {
+    keys: [
+      {
+        id: 7,
+        name: 'Current key',
+        status: 1,
+        group: 'test',
+        model_limits_enabled: false,
+        model_limits: '',
+      },
+    ],
+    pricingModels: [
+      {
+        model_name: 'gpt-image-1',
+        supported_endpoint_types: ['image-generation'],
+      },
+    ],
+  })
+  tokenModels = ['gpt-image-1']
+  vi.stubGlobal(
+    'URL',
+    class extends URL {
+      static createObjectURL() {
+        return 'blob:reference'
+      }
+      static revokeObjectURL() {}
+    }
+  )
+  renderPage()
+  const user = userEvent.setup()
+  await waitFor(() =>
+    expect(screen.getByLabelText('Model')).toHaveTextContent('gpt-image-1')
+  )
+  await user.click(
+    screen.getAllByRole('button', { name: 'Add reference images' })[0]
+  )
+  const input = document.querySelector<HTMLInputElement>('input[type=file]')
+  if (!input) throw new Error('Missing reference file input')
+  await user.upload(
+    input,
+    new File(['image'], 'reference.png', { type: 'image/png' })
+  )
+  expect(
+    screen.getAllByRole('button', { name: 'Add reference images' })[0]
+  ).toHaveTextContent('1')
+  await user.keyboard('{Escape}')
+  await user.click(screen.getByRole('button', { name: 'Reuse' }))
+  await user.click(
+    within(screen.getByRole('alertdialog')).getByRole('button', {
+      name: 'Cancel',
+    })
+  )
+  expect(
+    screen.getAllByRole('button', { name: 'Add reference images' })[0]
+  ).toHaveTextContent('1')
+  expect(screen.getByLabelText('Prompt')).toHaveValue('')
+  await user.keyboard('{Escape}')
+  await user.click(screen.getByRole('button', { name: 'Reuse' }))
+  await user.click(
+    within(screen.getByRole('alertdialog')).getByRole('button', {
+      name: 'Continue',
+    })
+  )
+  expect(
+    screen.queryByAltText('Reference image reference.png')
+  ).not.toBeInTheDocument()
+  expect(screen.getByLabelText('Prompt')).toHaveValue('Previous landscape')
+  vi.unstubAllGlobals()
+})
+
+test('empty upstream response retains artwork and warns that a retry can be billable', async () => {
+  vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url === '/api/token/7/key') {
+      return { data: { success: true, data: { key: 'fixture' } } }
+    }
+    return { data: { data: [] } }
+  })
+  renderPage()
+  const user = userEvent.setup()
+  await user.type(screen.getByLabelText('Prompt'), 'New landscape')
+  await user.click(screen.getByRole('button', { name: 'Generate' }))
+  await screen.findByText(
+    'No usable images were returned. Check request status and billing before submitting again.'
+  )
+  expect(screen.getByLabelText('Prompt')).toHaveValue('New landscape')
+  expect(screen.getByAltText('Previous landscape')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Generate' })).toBeEnabled()
+})
+
+test('changing the authenticated account clears the editor and historical preview without adopting old history', async () => {
+  renderPage()
+  const user = userEvent.setup()
+  await user.type(screen.getByLabelText('Prompt'), 'Private A draft')
+  expect(screen.getByAltText('Previous landscape')).toBeInTheDocument()
+  act(() => signInHistoryOwner(202))
+  expect(screen.getByLabelText('Prompt')).toHaveValue('')
+  expect(screen.queryByAltText('Previous landscape')).not.toBeInTheDocument()
+  act(() => signInHistoryOwner(101))
+  expect(await screen.findByAltText('Previous landscape')).toBeInTheDocument()
+})
+
+test('a partial batch preserves its artwork and warns before another billable submission', async () => {
+  tokenModels = ['gpt-image-2']
+  client.setQueryData(['image-generation-bootstrap'], {
+    keys: [
+      {
+        id: 7,
+        name: 'Current key',
+        status: 1,
+        group: 'test',
+        model_limits_enabled: false,
+        model_limits: '',
+      },
+    ],
+    pricingModels: [
+      {
+        model_name: 'gpt-image-2',
+        supported_endpoint_types: ['image-generation'],
+      },
+    ],
+  })
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url === '/api/token/7/key') {
+      return { data: { success: true, data: { key: 'fixture' } } }
+    }
+    return {
+      headers: { 'x-new-api-billing-state': 'review' },
+      data: {
+        data: [
+          { url: 'https://example.com/partial.png' },
+          { revised_prompt: 'No image' },
+        ],
+      },
+    }
+  })
+  renderPage()
+  const user = userEvent.setup()
+  await waitFor(() =>
+    expect(screen.getByLabelText('Model')).toHaveTextContent('gpt-image-2')
+  )
+  await user.click(screen.getByLabelText('Count'))
+  await user.click(screen.getByRole('option', { name: '3' }))
+  await user.type(screen.getByLabelText('Prompt'), 'Partial landscape')
+  await user.click(screen.getByRole('button', { name: 'Generate' }))
+  await screen.findByAltText('Partial landscape')
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'Returned 1 of 3 requested images. Results are kept; generating again creates a new billable request.'
+  )
+  expect(
+    post.mock.calls.filter(([url]) => url === '/v1/images/generations')
+  ).toHaveLength(1)
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'Images are kept, but billing is under review. Check request status and billing before submitting again; this is not a free retry.'
+  )
+  expect(
+    screen.getByText(
+      'Billing was under review at generation. Check the latest request and billing status.'
+    )
+  ).toBeInTheDocument()
+  await waitFor(() =>
+    expect(
+      JSON.parse(localStorage.getItem(HISTORY_OWNER_KEY) || '[]')[0]?.results[0]
+        ?.billingState
+    ).toBe('review')
+  )
+  expect(screen.getByAltText('Previous landscape')).toBeInTheDocument()
+})
+
+test('native resolution survives history storage and reuse without silently making another request', async () => {
+  localStorage.clear()
+  tokenModels = ['grok-imagine-image']
+  client.setQueryData(['image-generation-bootstrap'], {
+    keys: [
+      {
+        id: 7,
+        name: 'Current key',
+        status: 1,
+        group: 'test',
+        model_limits_enabled: false,
+        model_limits: '',
+      },
+    ],
+    pricingModels: [
+      {
+        model_name: 'grok-imagine-image',
+        supported_endpoint_types: ['image-generation'],
+      },
+    ],
+  })
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url === '/api/token/7/key') {
+      return { data: { success: true, data: { key: 'fixture' } } }
+    }
+    return { data: { data: [{ url: 'https://example.com/2k.png' }] } }
+  })
+  renderPage()
+  const user = userEvent.setup()
+  await waitFor(() =>
+    expect(screen.getByLabelText('Model')).toHaveTextContent(
+      'grok-imagine-image'
+    )
+  )
+  await user.click(screen.getByLabelText('Output resolution'))
+  await user.click(screen.getByRole('option', { name: '2K' }))
+  await user.type(screen.getByLabelText('Prompt'), 'Native landscape')
+  await user.click(screen.getByRole('button', { name: 'Generate' }))
+  await screen.findByAltText('Native landscape')
+  await waitFor(() =>
+    expect(
+      JSON.parse(localStorage.getItem(HISTORY_OWNER_KEY) || '[]')[0]?.settings
+        .resolution
+    ).toBe('2k')
+  )
+  await user.click(screen.getByLabelText('Output resolution'))
+  await user.click(screen.getByRole('option', { name: '1K' }))
+  await user.click(screen.getByRole('button', { name: 'Reuse' }))
+  expect(screen.getByLabelText('Output resolution')).toHaveTextContent('2K')
+  expect(
+    post.mock.calls.filter(([url]) => url === '/v1/images/generations')
+  ).toHaveLength(1)
+})
+
+test('after reload the owner can recover a paid image with no usable key, without a second POST', async () => {
+  const id = '9'.repeat(48)
+  const pending = {
+    id,
+    expiresAt: Date.now() + 60_000,
+    prompt: 'Recovered artwork',
+    model: 'gpt-image-2',
+    size: 'auto',
+    count: 1,
+    quality: 'auto',
+    style: '',
+  }
+  writePendingImageTask(HISTORY_OWNER_ID, id, pending)
+  signInHistoryOwner(202)
+  expect(readPendingImageTask()).toBeNull()
+  expect(readPendingImageTask(HISTORY_OWNER_ID)).toBeNull()
+  signInHistoryOwner()
+  expect(readPendingImageTask()?.id).toBe(id)
+  client.setQueryData(['image-generation-bootstrap'], {
+    keys: [],
+    pricingModels: [],
+  })
+  vi.mocked(api.get).mockResolvedValue({
+    data: {
+      id,
+      status: 'succeeded',
+      result: { data: [{ url: 'https://example.com/recovered.png' }] },
+    },
+  })
+  const post = vi.spyOn(api, 'post')
+  renderPage()
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Retrieve image result' })
+  )
+  await waitFor(() =>
+    expect(localStorage.getItem(HISTORY_OWNER_KEY)).toContain(
+      'Recovered artwork'
+    )
+  )
+  expect(readPendingImageTask()).toBeNull()
+  expect(api.get).toHaveBeenCalledWith(
+    `/v1/images/tasks/${id}`,
+    expect.anything()
+  )
+  expect(post).not.toHaveBeenCalled()
+})

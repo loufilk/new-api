@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMemo, useRef, useEffect } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import * as z from 'zod'
@@ -44,6 +44,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import type { TranslateText } from '@/i18n/translate'
 import { handleServerError } from '@/lib/handle-server-error'
 import { parseHttpStatusCodeRules } from '@/lib/http-status-code-rules'
 
@@ -76,9 +77,7 @@ const channelTestModes = [
 type ChannelTestMode = (typeof channelTestModes)[number]
 const MAX_CHANNEL_TEST_CONCURRENCY = 32
 
-const createChannelHealthSchema = (
-  t: (key: string, options?: Record<string, unknown>) => string
-) =>
+const createChannelHealthSchema = (t: TranslateText) =>
   z
     .object({
       ChannelDisableThreshold: numericString,
@@ -245,8 +244,22 @@ export function ChannelHealthSection({
     baselineRef.current = normalizeDefaults(defaultValues)
   }, [defaultValues])
 
-  const autoDisableStatusCodes = form.watch('AutomaticDisableStatusCodes')
-  const channelTestMode = form.watch('monitor_setting.channel_test_mode')
+  const [
+    autoDisableStatusCodes,
+    channelTestMode,
+    autoDisable,
+    autoEnable,
+    autoTest,
+  ] = useWatch({
+    control: form.control,
+    name: [
+      'AutomaticDisableStatusCodes',
+      'monitor_setting.channel_test_mode',
+      'AutomaticDisableChannelEnabled',
+      'AutomaticEnableChannelEnabled',
+      'monitor_setting.auto_test_channel_enabled',
+    ],
+  })
   let channelTestModeDescription: string
   switch (channelTestMode) {
     case 'auto_ban_only':
@@ -295,7 +308,7 @@ export function ChannelHealthSection({
       <div className='text-muted-foreground space-y-1 text-sm'>
         <p>{t('Source: global settings. Changes take effect after saving.')}</p>
         <p>
-          {form.watch('AutomaticDisableChannelEnabled')
+          {autoDisable
             ? t(
                 'Channels must also enable Auto Ban before automatic disabling can take effect.'
               )
@@ -303,19 +316,18 @@ export function ChannelHealthSection({
                 'With these settings, automatic disabling is off for all channels.'
               )}
         </p>
-        {form.watch('AutomaticEnableChannelEnabled') &&
-          !form.watch('monitor_setting.auto_test_channel_enabled') && (
-            <p>
-              {t(
-                'Scheduled recovery is off. Bulk channel tests can still re-enable automatically disabled channels.'
-              )}
-            </p>
-          )}
+        {autoEnable && !autoTest && (
+          <p>
+            {t(
+              'Scheduled recovery is off. Bulk channel tests can still re-enable automatically disabled channels.'
+            )}
+          </p>
+        )}
       </div>
       <Form {...form}>
-        <SettingsForm onSubmit={form.handleSubmit(onSubmit)}>
+        <SettingsForm onSubmit={(event) => form.handleSubmit(onSubmit)(event)}>
           <SettingsPageFormActions
-            onSave={form.handleSubmit(onSubmit)}
+            onSave={() => form.handleSubmit(onSubmit)()}
             isSaving={form.formState.isSubmitting}
           />
 

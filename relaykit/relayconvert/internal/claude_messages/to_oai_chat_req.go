@@ -189,19 +189,9 @@ func ClaudeMessagesRequestToOpenAIChat(ctx context.Context, claudeRequest dto.Cl
 					}
 					mediaMessages = append(mediaMessages, message)
 				case "image":
-					url := claudeImageSourceURL(mediaMsg.Source)
-					if url == "" {
-						sourceType := ""
-						if mediaMsg.Source != nil {
-							sourceType = mediaMsg.Source.Type
-						}
-						convdiag.Add(ctx, types.ConversionDiagnostic{
-							Code:     "unsupported_media_source",
-							Path:     fmt.Sprintf("messages[%d].content[%d].source", messageIndex, blockIndex),
-							Message:  fmt.Sprintf("OpenAI Chat Completions cannot reference a Claude image with source type %q; the image was omitted", sourceType),
-							Severity: types.ConversionDiagnosticError,
-						})
-						continue
+					url, err := claudeImageToChatURL(mediaMsg.Source)
+					if err != nil {
+						return nil, err
 					}
 					mediaMessages = append(mediaMessages, dto.MediaContent{
 						Type:     "image_url",
@@ -256,7 +246,10 @@ func ClaudeMessagesRequestToOpenAIChat(ctx context.Context, claudeRequest dto.Cl
 					if mediaMsg.IsStringContent() {
 						oaiToolMessage.SetStringContent(mediaMsg.GetStringContent())
 					} else {
-						content, media := claudeToolResultToChat(mediaMsg.ParseMediaContent())
+						content, media, err := claudeToolResultToChat(mediaMsg.ParseMediaContent())
+						if err != nil {
+							return nil, err
+						}
 						oaiToolMessage.SetStringContent(content)
 						// A Chat tool message only carries text. Images from the tool result
 						// join the user message this Claude message becomes, which lands right
@@ -291,7 +284,7 @@ func ClaudeMessagesRequestToOpenAIChat(ctx context.Context, claudeRequest dto.Cl
 // blocks come back in Chat shape for the caller to place on the following user message;
 // stringifying them instead would hand base64 image data to the upstream text tokenizer.
 // Arrays holding any other block type keep the historical stringified form so nothing is lost.
-func claudeToolResultToChat(blocks []dto.ClaudeMediaMessage) (string, []dto.MediaContent) {
+func claudeToolResultToChat(blocks []dto.ClaudeMediaMessage) (string, []dto.MediaContent, error) {
 	texts := make([]string, 0, len(blocks))
 	media := make([]dto.MediaContent, 0, len(blocks))
 	for _, block := range blocks {
@@ -301,41 +294,24 @@ func claudeToolResultToChat(blocks []dto.ClaudeMediaMessage) (string, []dto.Medi
 				texts = append(texts, text)
 			}
 		case block.Type == "image":
-			url := claudeImageSourceURL(block.Source)
-			if url == "" {
-				return requestToJSONString(blocks), nil
+			url, err := claudeImageToChatURL(block.Source)
+			if err != nil {
+				return "", nil, err
 			}
 			media = append(media, dto.MediaContent{Type: "image_url", ImageUrl: &dto.MessageImageUrl{Url: url}})
 		default:
-			return requestToJSONString(blocks), nil
+			return requestToJSONString(blocks), nil, nil
 		}
 	}
 	switch {
 	case len(texts) == 0 && len(media) == 0:
-		return requestToJSONString(blocks), nil
+		return requestToJSONString(blocks), nil, nil
 	case len(texts) == 0:
 		// Upstreams reject empty tool content; the images ride on the following user message.
-		return "[image]", media
+		return "[image]", media, nil
 	default:
-		return strings.Join(texts, "\n"), media
+		return strings.Join(texts, "\n"), media, nil
 	}
-}
-
-// claudeImageSourceURL is the Chat image_url for a Claude image source: a data
-// URL for base64 data or the URL of a url source. Other sources, such as Files
-// API references, have no Chat equivalent and yield "".
-func claudeImageSourceURL(source *dto.ClaudeMessageSource) string {
-	if source == nil || source.Type == "file" {
-		return ""
-	}
-	if source.Url != "" {
-		return source.Url
-	}
-	data := kitutil.Interface2String(source.Data)
-	if data == "" {
-		return ""
-	}
-	return fmt.Sprintf("data:%s;base64,%s", source.MediaType, data)
 }
 
 func requestToJSONString(v any) string {

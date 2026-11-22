@@ -17,12 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Link } from '@tanstack/react-router'
+import DOMPurify from 'dompurify'
 import { Fragment, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { cn } from '@/lib/utils'
+
+import { HeaderLogo } from './header-logo'
 
 interface FooterLink {
   text: string
@@ -48,17 +51,35 @@ const NEW_API_FOOTER_ATTRIBUTION_KEY = [
   'projectAttributionSuffix',
 ].join('.')
 
+const DOCUMENT_NAV_PATHS = new Set([
+  '/',
+  '/models',
+  '/pricing',
+  '/playground',
+  '/about',
+  '/apps',
+  '/docs',
+  '/blog',
+  '/status',
+  '/support',
+  '/terms',
+  '/privacy',
+  '/refund',
+])
+
 function FooterLinkItem(props: { link: FooterLink }) {
   const { t } = useTranslation()
   const isExternal = props.link.href.startsWith('http')
+  const path = props.link.href.split(/[?#]/, 1)[0].replace(/\/$/, '') || '/'
+  const isMarketingPath = DOCUMENT_NAV_PATHS.has(path)
   const label = t(props.link.text)
 
-  if (isExternal) {
+  if (isExternal || isMarketingPath) {
     return (
       <a
         href={props.link.href}
-        target='_blank'
-        rel='noopener noreferrer'
+        target={isExternal ? '_blank' : undefined}
+        rel={isExternal ? 'noopener noreferrer' : undefined}
         className='text-muted-foreground hover:text-foreground text-sm transition-colors duration-200'
       >
         {label}
@@ -221,6 +242,10 @@ export function Footer(props: FooterProps) {
   )
 
   const displayColumns = props.columns ?? fallbackColumns
+  const sanitizedFooterHtml = useMemo(
+    () => (footerHtml ? DOMPurify.sanitize(footerHtml) : ''),
+    [footerHtml]
+  )
 
   if (footerHtml) {
     return (
@@ -234,7 +259,8 @@ export function Footer(props: FooterProps) {
           <div className='bg-muted/20 border-border/50 flex flex-col items-center justify-between gap-4 rounded-2xl border px-4 py-4 backdrop-blur-sm sm:flex-row sm:px-5'>
             <div
               className='custom-footer text-muted-foreground min-w-0 text-center text-sm sm:text-left'
-              dangerouslySetInnerHTML={{ __html: footerHtml }}
+              // eslint-disable-next-line react/no-danger -- footerHtml is admin-configured and sanitized with DOMPurify above
+              dangerouslySetInnerHTML={{ __html: sanitizedFooterHtml }}
             />
             <div className='border-border/60 text-muted-foreground/45 flex w-full flex-wrap items-center justify-center gap-x-3 gap-y-1 border-t pt-4 text-xs sm:w-auto sm:justify-end sm:border-t-0 sm:border-l sm:pt-0 sm:pl-5'>
               <LegalLinks />
@@ -254,16 +280,16 @@ export function Footer(props: FooterProps) {
         <div className='flex flex-col justify-between gap-10 md:flex-row md:gap-16'>
           {/* Brand column */}
           <div className='shrink-0'>
-            <Link to='/' className='group flex items-center gap-2.5'>
-              <img
+            <a href='/' className='group flex items-center gap-2.5'>
+              <HeaderLogo
                 src={displayLogo}
                 alt={displayName}
-                className='size-7 rounded-lg object-contain'
+                className='size-7'
               />
               <span className='text-sm font-semibold tracking-tight'>
                 {displayName}
               </span>
-            </Link>
+            </a>
             <p className='text-muted-foreground/60 mt-3 max-w-[200px] text-xs leading-relaxed'>
               {t('Powerful API Management Platform')}
             </p>
@@ -272,14 +298,14 @@ export function Footer(props: FooterProps) {
           {/* Links columns */}
           {isDemoSiteMode && (
             <div className='grid grid-cols-3 gap-8 md:gap-16'>
-              {displayColumns.map((column, index) => (
-                <div key={index}>
+              {displayColumns.map((column) => (
+                <div key={column.title}>
                   <p className='text-muted-foreground/50 mb-3 text-xs font-medium tracking-wider uppercase'>
                     {t(column.title)}
                   </p>
                   <ul className='space-y-2.5'>
-                    {column.links.map((link, linkIndex) => (
-                      <li key={linkIndex}>
+                    {column.links.map((link) => (
+                      <li key={`${link.href}-${link.text}`}>
                         <FooterLinkItem link={link} />
                       </li>
                     ))}

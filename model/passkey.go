@@ -85,11 +85,12 @@ func (p *PasskeyCredential) ToWebAuthnCredential() webauthn.Credential {
 	aaguid, _ := base64.StdEncoding.DecodeString(p.AAGUID)
 
 	return webauthn.Credential{
-		ID:              credID,
-		PublicKey:       pubKey,
-		AttestationType: p.AttestationType,
-		Transport:       p.TransportList(),
-		Flags:           flags,
+		ID:        credID,
+		PublicKey: pubKey,
+		// This legacy SQL column stores the statement format, not the attestation type.
+		AttestationFormat: p.AttestationType,
+		Transport:         p.TransportList(),
+		Flags:             flags,
 		Authenticator: webauthn.Authenticator{
 			AAGUID:       aaguid,
 			SignCount:    p.SignCount,
@@ -104,10 +105,11 @@ func NewPasskeyCredentialFromWebAuthn(userID int, credential *webauthn.Credentia
 		return nil
 	}
 	passkey := &PasskeyCredential{
-		UserID:          userID,
-		CredentialID:    base64.StdEncoding.EncodeToString(credential.ID),
-		PublicKey:       base64.StdEncoding.EncodeToString(credential.PublicKey),
-		AttestationType: credential.AttestationType,
+		UserID:       userID,
+		CredentialID: base64.StdEncoding.EncodeToString(credential.ID),
+		PublicKey:    base64.StdEncoding.EncodeToString(credential.PublicKey),
+		// Keep the original column compatible with earlier gateway versions.
+		AttestationType: credential.AttestationFormat,
 		AAGUID:          base64.StdEncoding.EncodeToString(credential.Authenticator.AAGUID),
 		SignCount:       credential.Authenticator.SignCount,
 		CloneWarning:    credential.Authenticator.CloneWarning,
@@ -270,12 +272,21 @@ func DeletePasskeyForSession(identity AuthSessionIdentity) error {
 	return deletePasskeyWithAuthVersion(identity.UserID, &identity)
 }
 
-func deletePasskeyWithAuthVersion(userID int, identity *AuthSessionIdentity) error {
+func DeletePasskeyByAdministrator(identity AuthSessionIdentity, expected User) error {
+	return deletePasskeyWithAuthVersion(expected.Id, nil, AdminUserMutationGuard{Identity: identity, Expected: expected})
+}
+
+func deletePasskeyWithAuthVersion(userID int, identity *AuthSessionIdentity, guards ...AdminUserMutationGuard) error {
 	if userID == 0 {
 		return errors.New("failed to delete the Passkey, please try again")
 	}
 	if err := DB.Transaction(func(tx *gorm.DB) error {
-		if identity != nil {
+		if len(guards) != 0 {
+			guard := guards[0]
+			if _, _, err := lockAuthorizedAdminTargetTx(tx, guard.Identity.UserID, guard.Expected, true, guard.Identity); err != nil {
+				return err
+			}
+		} else if identity != nil {
 			if err := ValidateAuthSessionWithTx(tx, *identity); err != nil {
 				return err
 			}

@@ -7,13 +7,12 @@ COPY ./web ./
 COPY ./VERSION /build/VERSION
 RUN DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$(cat /build/VERSION) bun run build
 
-FROM golang:1.26.10-alpine@sha256:9ce231b28998b32e116927c61aa5c406183061d4f3f2d61b292c88e7f6bdf7ca AS builder2
+FROM golang:1.27.4-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS builder2
 ENV GO111MODULE=on CGO_ENABLED=0 GOWORK=off
 
 ARG TARGETOS
 ARG TARGETARCH
 ENV GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64}
-ENV GOEXPERIMENT=greenteagc
 
 WORKDIR /build
 
@@ -26,9 +25,14 @@ RUN go mod download
 
 COPY . .
 COPY --from=builder /build/web/dist ./web/dist
-RUN go build -pgo="$(go list -m -f '{{.Dir}}' github.com/Calcium-Ion/moejs)/default.pgo" -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api
+RUN go build -pgo="$(go list -m -f '{{.Dir}}' github.com/MoeForge/moejs)/default.pgo" -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api
 
-FROM debian:bookworm-slim@sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
+
+ARG SOURCE_REVISION
+ARG RELEASE_VERSION
+LABEL org.opencontainers.image.revision=$SOURCE_REVISION \
+      org.opencontainers.image.version=$RELEASE_VERSION
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates tzdata libasan8 wget \

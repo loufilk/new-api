@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
@@ -18,7 +19,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tidwall/gjson"
 )
 
 func TestConvertOpenAIRequestFiltersThinkingBudgetByUpstreamModel(t *testing.T) {
@@ -82,8 +82,8 @@ func TestConvertOpenAIRequestFiltersThinkingBudgetByUpstreamModel(t *testing.T) 
 			encoded, err := common.Marshal(converted)
 			require.NoError(t, err)
 
-			assert.True(t, gjson.GetBytes(encoded, "enable_thinking").Bool())
-			value := gjson.GetBytes(encoded, "thinking_budget")
+			assert.True(t, ojson.GetBytes(encoded, "enable_thinking").Bool())
+			value := ojson.GetBytes(encoded, "thinking_budget")
 			assert.Equal(t, tt.wantBudget, value.Exists())
 			if tt.wantBudget {
 				assert.Equal(t, tt.wantValue, value.Int())
@@ -128,7 +128,7 @@ func TestConvertOpenAIRequestPreservesExplicitZeroForMappedQwenModel(t *testing.
 	encoded, err := common.Marshal(converted)
 	require.NoError(t, err)
 
-	value := gjson.GetBytes(encoded, "thinking_budget")
+	value := ojson.GetBytes(encoded, "thinking_budget")
 	assert.True(t, value.Exists())
 	assert.Equal(t, int64(0), value.Int())
 }
@@ -279,7 +279,7 @@ func TestConvertClaudeRequestWebSearch(t *testing.T) {
 			wire, err := common.Marshal(converted)
 			require.NoError(t, err)
 			for path, want := range tt.want {
-				value := gjson.GetBytes(wire, path)
+				value := ojson.GetBytes(wire, path)
 				if want == "" {
 					assert.False(t, value.Exists(), "%s in %s", path, wire)
 					continue
@@ -484,6 +484,36 @@ func TestMultimodalEmbeddingResponse(t *testing.T) {
 			var got dto.EmbeddingResponse
 			require.NoError(t, common.Unmarshal(w.Body.Bytes(), &got))
 			assert.Equal(t, dto.EmbeddingResponse{Object: "list", Data: tt.wantData, Model: tt.model, Usage: *tt.wantUsage}, got)
+		})
+	}
+}
+
+func TestMultimodalEmbeddingUsageCannotOverflowOrBecomeNegative(t *testing.T) {
+	for _, test := range []struct {
+		name, usage         string
+		prompt, text, image int
+		clamped             bool
+	}{
+		{"negative usage uses estimate", `{"input_tokens":-1,"image_tokens":-2}`, 12, 0, 0, false},
+		{"sum beyond integer range saturates", `{"input_tokens":9223372036854775807,"image_tokens":1}`, common.MaxQuota, common.MaxQuota - 1, 1, true},
+		{"details remain within billable total", `{"input_tokens":20,"input_tokens_details":{"text_tokens":-3,"image_tokens":9223372036854775807}}`, 20, 0, 20, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "qwen3-vl-embedding"}}
+			info.SetEstimatePromptTokens(12)
+			response := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"output":{"embeddings":[{"index":0,"embedding":[0.5]}]},"usage":` + test.usage + `}`))}
+			apiErr, usage := MultimodalEmbeddingHandler(c, response, info)
+			require.Nil(t, apiErr)
+			require.NotNil(t, usage)
+			assert.Equal(t, test.prompt, usage.PromptTokens)
+			assert.Equal(t, test.prompt, usage.TotalTokens)
+			assert.Equal(t, test.text, usage.PromptTokensDetails.TextTokens)
+			assert.Equal(t, test.image, usage.PromptTokensDetails.ImageTokens)
+			if test.clamped {
+				require.NotNil(t, info.QuotaClamp, "saturation remains available to admin billing audit")
+			}
 		})
 	}
 }

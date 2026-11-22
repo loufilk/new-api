@@ -23,3 +23,12 @@ func TestPaymentReturnPathUsesDefaultDashboardRoutes(t *testing.T) {
 		paymentReturnPath("/usage-logs"),
 	)
 }
+
+func TestPaymentReturnPathCanonicalChuanapi(t *testing.T) {
+	previousAddress := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://chuanapi.com"
+	t.Cleanup(func() { system_setting.ServerAddress = previousAddress })
+
+	assert.Equal(t, "https://chuanapi.com/wallet?pay=success", paymentReturnPath("/wallet?pay=success"))
+	assert.NotContains(t, paymentReturnPath("/wallet?pay=success"), "api.chuanapi.com")
+}

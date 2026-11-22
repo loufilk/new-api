@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
 
+import type { ModelDisplayCategory } from '@/lib/model-display-categories'
+
 // ============================================================================
 // Model Types
 // ============================================================================
@@ -44,6 +46,16 @@ export interface Model {
   description?: string
   icon?: string
   tags?: string
+  display_categories?: ModelDisplayCategory[] | null
+  input_modalities?: string
+  output_modalities?: string
+  capabilities?: string
+  context_length?: number | null
+  max_output_tokens?: number | null
+  knowledge_cutoff?: string
+  release_date?: string
+  parameter_count?: string
+  bonus_eligible?: boolean | null
   vendor_id?: number
   endpoints?: string
   supported_endpoints?: string[]
@@ -175,7 +187,25 @@ export type MetadataSyncField =
   | 'endpoints'
   | 'name_rule'
   | 'status'
+  | 'context_length'
+  | 'max_output_tokens'
+  | 'knowledge_cutoff'
+  | 'release_date'
+  | 'parameter_count'
+  | 'input_modalities'
+  | 'output_modalities'
+  | 'capabilities'
+  | 'bonus_eligible'
 export type MetadataSyncValues = {
+  context_length?: number
+  max_output_tokens?: number
+  knowledge_cutoff?: string
+  release_date?: string
+  parameter_count?: string
+  input_modalities?: string[] | null
+  output_modalities?: string[] | null
+  capabilities?: string[] | null
+  bonus_eligible?: boolean
   description: string
   icon: string
   tags: string
@@ -197,8 +227,8 @@ export type MetadataSyncCandidate = {
   record_version: string
   fields: Array<{
     field: MetadataSyncField
-    local: string | number
-    upstream: string | number
+    local: string | number | boolean | string[] | null
+    upstream: string | number | boolean | string[] | null
   }>
   upstream?: MetadataSyncValues
   vendor_to_create?: string

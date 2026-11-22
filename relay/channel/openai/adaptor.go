@@ -198,17 +198,8 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 	if info.ChannelType == constant.ChannelTypeOpenAI && "" != info.Organization {
 		header.Set("OpenAI-Organization", info.Organization)
 	}
-	// 检查 Header Override 是否已设置 Authorization，如果已设置则跳过默认设置
-	// 这样可以避免在 Header Override 应用时被覆盖（虽然 Header Override 会在之后应用，但这里作为额外保护）
-	hasAuthOverride := false
-	if len(info.HeadersOverride) > 0 {
-		for k := range info.HeadersOverride {
-			if strings.EqualFold(k, "Authorization") {
-				hasAuthOverride = true
-				break
-			}
-		}
-	}
+	// Seed adaptor credentials first. An explicit configured override can
+	// replace them later, but an unavailable client-header source cannot.
 	if info.RelayMode == relayconstant.RelayModeRealtime {
 		// OpenAI 已下线 Realtime Beta API,GA 模型收到 beta 标识会以 beta_api_shape_disabled 拒绝;
 		// 仅对遗留 preview 模型保留 beta 标识
@@ -230,14 +221,10 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 			if legacyRealtimeBeta {
 				header.Set("openai-beta", "realtime=v1")
 			}
-			if !hasAuthOverride {
-				header.Set("Authorization", "Bearer "+info.ApiKey)
-			}
-		}
-	} else {
-		if !hasAuthOverride {
 			header.Set("Authorization", "Bearer "+info.ApiKey)
 		}
+	} else {
+		header.Set("Authorization", "Bearer "+info.ApiKey)
 	}
 	if info.ChannelType == constant.ChannelTypeOpenRouter {
 		if header.Get("HTTP-Referer") == "" {
@@ -611,31 +598,29 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 				_ = file.Close()
 			}
 
-			// Handle mask file if present
-			if maskFiles, exists := mf.File["mask"]; exists && len(maskFiles) > 0 {
-				maskFile, err := maskFiles[0].Open()
-				if err != nil {
-					return nil, errors.New("failed to open mask file")
+			for _, name := range []string{"mask", "markup"} {
+				files, exists := mf.File[name]
+				if !exists || len(files) == 0 {
+					continue
 				}
-				// 复制完立即关闭，避免在循环内使用 defer 占用资源
+				file, err := files[0].Open()
+				if err != nil {
+					return nil, fmt.Errorf("failed to open %s file", name)
+				}
 
-				// Determine MIME type for mask file
-				mimeType := detectImageMimeType(maskFiles[0].Filename)
-
-				// Create a form file with the appropriate content type
 				h := make(textproto.MIMEHeader)
-				h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="mask"; filename="%s"`, maskFiles[0].Filename))
-				h.Set("Content-Type", mimeType)
+				h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, name, files[0].Filename))
+				h.Set("Content-Type", detectImageMimeType(files[0].Filename))
 
-				maskPart, err := writer.CreatePart(h)
+				part, err := writer.CreatePart(h)
 				if err != nil {
-					return nil, errors.New("create form file failed for mask")
+					return nil, fmt.Errorf("create form file failed for %s", name)
 				}
 
-				if _, err := io.Copy(maskPart, maskFile); err != nil {
-					return nil, errors.New("copy mask file failed")
+				if _, err := io.Copy(part, file); err != nil {
+					return nil, fmt.Errorf("copy %s file failed", name)
 				}
-				_ = maskFile.Close()
+				_ = file.Close()
 			}
 		} else {
 			return nil, errors.New("no multipart form data found")
@@ -679,6 +664,9 @@ func detectImageMimeType(filename string) string {
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
+	if info != nil && info.ChannelType == constant.ChannelTypeAzure {
+		info.VendorToolUsage = azureResponsesToolUsage
+	}
 	//  转换模型推理力度后缀
 	effort, originModel := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(request.Model)
 	preserveSuffix := model_setting.ShouldPreserveThinkingSuffix(request.Model) || (info != nil && model_setting.ShouldPreserveThinkingSuffix(info.OriginModelName))

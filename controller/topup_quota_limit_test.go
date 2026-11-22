@@ -47,10 +47,16 @@ func TestTopUpQuotaValidation(t *testing.T) {
 			wantQuota:   2_147_500_000,
 		},
 		{
-			name:        "token amount preserves settlement truncation",
+			name:        "whole quota units in token display",
 			displayType: operation_setting.QuotaDisplayTypeTokens,
 			amount:      2_147_500_000,
 			wantQuota:   2_147_500_000,
+		},
+		{
+			name:        "fractional quota unit cannot be charged and truncated",
+			displayType: operation_setting.QuotaDisplayTypeTokens,
+			amount:      2_147_500_001,
+			wantErr:     true,
 		},
 		{
 			name:        "token amount above legacy int32 range",
@@ -191,13 +197,28 @@ func TestStripeCreditedQuotaIncludesGroupRatio(t *testing.T) {
 		require.NoError(t, common.UpdateTopupGroupRatioByJSONString(oldTopupGroupRatio))
 	})
 
-	_, err := validateCreditedQuota(getStripeCreditedQuota(2147, "vip"))
+	_, err := validateCreditedQuota(stripeTerms(2147, "vip").creditedQuota)
 	require.NoError(t, err)
-	_, err = validateCreditedQuota(getStripeCreditedQuota(2148, "vip"))
+	_, err = validateCreditedQuota(stripeTerms(2148, "vip").creditedQuota)
 	require.NoError(t, err)
-	_, err = validateCreditedQuota(getStripeCreditedQuota(int64(common.MaxWalletQuota), "vip"))
+	_, err = validateCreditedQuota(stripeTerms(int64(common.MaxWalletQuota), "vip").creditedQuota)
 	require.Error(t, err)
 
 	require.NoError(t, common.UpdateTopupGroupRatioByJSONString(`{"free":0}`))
-	assert.True(t, decimal.NewFromInt(500000).Equal(getStripeCreditedQuota(1, "free")))
+	assert.True(t, decimal.NewFromInt(500000).Equal(stripeTerms(1, "free").creditedQuota))
+}
+
+func TestEpayQuoteUsesOneCanonicalCentAmount(t *testing.T) {
+	oldPrice := operation_setting.Price
+	oldDisplay := operation_setting.GetGeneralSetting().QuotaDisplayType
+	oldRatios := common.TopupGroupRatio2JSONString()
+	t.Cleanup(func() {
+		operation_setting.Price = oldPrice
+		operation_setting.GetGeneralSetting().QuotaDisplayType = oldDisplay
+		require.NoError(t, common.UpdateTopupGroupRatioByJSONString(oldRatios))
+	})
+	require.NoError(t, common.UpdateTopupGroupRatioByJSONString(`{"im11-cents":1}`))
+	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeUSD
+	operation_setting.Price = 10.125
+	require.Equal(t, "10.13", getPayMoney(1, "im11-cents").StringFixed(2))
 }

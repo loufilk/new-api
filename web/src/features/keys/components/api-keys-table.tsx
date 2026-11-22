@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
-import { flexRender, type Table as TanstackTable } from '@tanstack/react-table'
 import { Database } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -30,6 +29,7 @@ import {
   useDebouncedColumnFilter,
   useDataTable,
 } from '@/components/data-table'
+import { ErrorState } from '@/components/error-state'
 import { StatusBadge } from '@/components/status-badge'
 import {
   Empty,
@@ -41,6 +41,11 @@ import {
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
+import {
+  flexRender,
+  type ColumnFiltersState,
+  type Table as TanstackTable,
+} from '@/lib/console-table'
 import { createServerError } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
@@ -72,7 +77,7 @@ const API_KEYS_MOBILE_SKELETON_IDS = Array.from(
 )
 
 function isDisabledApiKeyRow(apiKey: ApiKey) {
-  return apiKey.status !== API_KEY_STATUS.ENABLED
+  return (apiKey.effective_status ?? apiKey.status) !== API_KEY_STATUS.ENABLED
 }
 
 function ApiKeysMobileSkeleton() {
@@ -136,7 +141,8 @@ function ApiKeysMobileList({
     <div className='min-w-0 space-y-3'>
       {rows.map((row) => {
         const apiKey = row.original
-        const statusConfig = API_KEY_STATUSES[apiKey.status]
+        const statusConfig =
+          API_KEY_STATUSES[apiKey.effective_status ?? apiKey.status]
         const groupCell = row
           .getAllCells()
           .find((cell) => cell.column.id === 'group')
@@ -219,6 +225,7 @@ export function ApiKeysTable() {
   const { t } = useTranslation()
   const { refreshTrigger } = useApiKeys()
   const [now, setNow] = useState(() => Date.now())
+  const [tokenFilters, setTokenFilters] = useState<ColumnFiltersState>([])
   const columns = useApiKeysColumns(now)
 
   useEffect(() => {
@@ -242,32 +249,38 @@ export function ApiKeysTable() {
     navigate: route.useNavigate(),
     pagination: { defaultPage: 1, defaultPageSize: 20 },
     globalFilter: { enabled: true, key: 'filter' },
-    columnFilters: [
-      { columnId: 'status', searchKey: 'status', type: 'array' },
-      { columnId: '_tokenSearch', searchKey: 'token', type: 'string' },
-    ],
+    columnFilters: [{ columnId: 'status', searchKey: 'status', type: 'array' }],
   })
 
   const {
     value: tokenFilter,
     inputValue: tokenFilterInput,
     setInputValue: setTokenFilterInput,
+    resetInput: resetTokenFilterInput,
   } = useDebouncedColumnFilter({
-    columnFilters,
+    columnFilters: tokenFilters,
     columnId: '_tokenSearch',
-    onColumnFiltersChange,
+    onColumnFiltersChange: (updater) => {
+      setTokenFilters(updater)
+      onPaginationChange((previous) => ({ ...previous, pageIndex: 0 }))
+    },
   })
   const shouldSearch = Boolean(globalFilter?.trim() || tokenFilter.trim())
+  const statusFilter = columnFilters.find(
+    (filter) => filter.id === 'status'
+  )?.value
+  const statuses = Array.isArray(statusFilter) ? statusFilter.map(Number) : []
 
   // Fetch data with React Query
   // eslint-disable-next-line @tanstack/query/exhaustive-deps
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: [
       'keys',
       pagination.pageIndex + 1,
       pagination.pageSize,
       globalFilter,
       tokenFilter,
+      statuses,
       refreshTrigger,
     ],
     queryFn: async () => {
@@ -277,10 +290,12 @@ export function ApiKeysTable() {
             token: tokenFilter,
             p: pagination.pageIndex + 1,
             size: pagination.pageSize,
+            status: statuses,
           })
         : await getApiKeys({
             p: pagination.pageIndex + 1,
             size: pagination.pageSize,
+            status: statuses,
           })
 
       if (!result.success) {
@@ -308,6 +323,7 @@ export function ApiKeysTable() {
     data: apiKeys,
     columns,
     enableRowSelection: true,
+    getRowId: (row) => String(row.id),
     columnFilters,
     columnVisibilityStorageKey: API_KEYS_COLUMN_VISIBILITY_STORAGE_KEY,
     globalFilter,
@@ -317,11 +333,28 @@ export function ApiKeysTable() {
     onGlobalFilterChange,
     onColumnFiltersChange,
     manualPagination: true,
+    manualFiltering: true,
     totalCount: data?.total || 0,
     ensurePageInRange,
   })
 
-  const columnVisibility = table.getState().columnVisibility
+  // Selection is page-local. Query changes must never transfer checkmarks to
+  // unrelated credentials; stable ids additionally protect background reordering.
+  const selectionScope = JSON.stringify([
+    pagination.pageIndex,
+    pagination.pageSize,
+    globalFilter,
+    tokenFilter,
+    statuses,
+  ])
+  // The v9 React view changes on every selected-state/option update. Depend
+  // only on the stable table action so selecting a row is not itself a reset.
+  const resetSelection = table.resetRowSelection
+  useEffect(() => {
+    resetSelection()
+  }, [selectionScope, resetSelection])
+
+  const columnVisibility = table.state.columnVisibility
   useEffect(() => {
     // Restore the dates hidden by the previous default when adopting the combined time column.
     if (
@@ -338,6 +371,19 @@ export function ApiKeysTable() {
     }
   }, [columnVisibility, table])
 
+  if (isError) {
+    return (
+      <ErrorState
+        title={t(
+          shouldSearch
+            ? ERROR_MESSAGES.SEARCH_FAILED
+            : ERROR_MESSAGES.LOAD_FAILED
+        )}
+        onRetry={() => void refetch()}
+      />
+    )
+  }
+
   return (
     <DataTablePage
       table={table}
@@ -353,10 +399,14 @@ export function ApiKeysTable() {
       toolbarProps={{
         searchPlaceholder: t('Filter by name...'),
         searchDebounceMs: 500,
+        hasAdditionalFilters: !!tokenFilterInput,
+        onReset: resetTokenFilterInput,
         additionalSearch: (
           <Input
             placeholder={t('Filter by API key...')}
             aria-label={t('Filter by API key...')}
+            autoComplete='off'
+            spellCheck={false}
             value={tokenFilterInput}
             onChange={(e) => setTokenFilterInput(e.target.value)}
             className='w-full sm:w-50 lg:w-60'

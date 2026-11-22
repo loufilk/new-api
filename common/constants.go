@@ -72,6 +72,7 @@ var GitHubOAuthEnabled = false
 var LinuxDOOAuthEnabled = false
 var WeChatAuthEnabled = false
 var TelegramOAuthEnabled = false
+var GoogleOAuthEnabled = false
 var TurnstileCheckEnabled = false
 var RegisterEnabled = true
 
@@ -128,8 +129,25 @@ var TelegramBotToken = ""
 var TelegramBotName = ""
 
 var QuotaForNewUser = 0
-var QuotaForInviter = 0
-var QuotaForInvitee = 0
+
+// ---------------------------------------------------------------------------
+// TokenMix P1：注册赠金与推荐返利配置
+//
+// LinuxDOSignupBonusUSD is granted only when a verified LinuxDO login creates
+// a new account. Legacy global signup settings are retained for stored-option
+// compatibility and no longer control registration grants.
+const LinuxDOSignupBonusUSD = 3
+
+var SignupBonusEnabled = false
+var QuotaForSignupBonus = 0
+
+// AffiliateRewardEnabled 关闭时不产生新的邀请奖励。
+// AffiliateRewardRate 为成功在线余额充值金额的奖励比例（默认 5%），每位受邀
+// 用户仅前三次成功充值产生奖励。奖励先进入待使用收益 aff_quota，用户手动
+// 划转后才成为可消费的 reward 余额。
+var AffiliateRewardEnabled = false
+var AffiliateRewardRate = 0.05
+
 var ChannelDisableThreshold = 5.0
 var AutomaticDisableChannelEnabled = false
 var AutomaticEnableChannelEnabled = false
@@ -173,6 +191,9 @@ var RelayTimeout int // unit is second
 
 var RelayIdleConnTimeout int // unit is second
 
+var RelayHTTP2PingIdleTimeout int // seconds without incoming frames before probing; 0 disables probes
+var RelayHTTP2PingTimeout int     // seconds to wait for a PING acknowledgement
+
 // RelayResponseHeaderTimeout limits how long the relay transport waits for the
 // upstream response headers after the request has been fully written.
 // 0 disables it (previous behaviour: wait forever).
@@ -198,12 +219,15 @@ const (
 const (
 	RoleGuestUser  = 0
 	RoleCommonUser = 1
-	RoleAdminUser  = 10
-	RoleRootUser   = 100
+	// RoleAgentUser is a read-only compatibility value for historical accounts.
+	// Ordinary role access remains unchanged; A07 uses current Profile capabilities.
+	RoleAgentUser = 5
+	RoleAdminUser = 10
+	RoleRootUser  = 100
 )
 
 func IsValidateRole(role int) bool {
-	return role == RoleGuestUser || role == RoleCommonUser || role == RoleAdminUser || role == RoleRootUser
+	return role == RoleGuestUser || role == RoleCommonUser || role == RoleAgentUser || role == RoleAdminUser || role == RoleRootUser
 }
 
 var (
@@ -277,3 +301,12 @@ const (
 	TopUpStatusFailed  = "failed"
 	TopUpStatusExpired = "expired"
 )
+
+// EffectiveUserRole preserves stored legacy identities without granting business
+// or administrative privileges. It never rewrites the database role.
+func EffectiveUserRole(role int) int {
+	if role == RoleAgentUser {
+		return RoleCommonUser
+	}
+	return role
+}

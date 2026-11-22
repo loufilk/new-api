@@ -130,7 +130,7 @@ func cohereStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 			openaiResp.Id = responseId
 			openaiResp.Created = createdTime
 			openaiResp.Object = "chat.completion.chunk"
-			openaiResp.Model = info.UpstreamModelName
+			openaiResp.Model = info.OriginModelName
 			if cohereResp.IsFinished {
 				finishReason := stopReasonCohere2OpenAI(cohereResp.FinishReason)
 				openaiResp.Choices = []dto.ChatCompletionsStreamResponseChoice{
@@ -169,7 +169,7 @@ func cohereStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		}
 	})
 	if usage.PromptTokens == 0 {
-		usage = service.ResponseText2Usage(c, responseText, info.UpstreamModelName, info.GetEstimatePromptTokens())
+		usage = service.ResponseText2Usage(c, responseText, info.OriginModelName, info.GetEstimatePromptTokens())
 	}
 	return usage, nil
 }
@@ -195,7 +195,7 @@ func cohereHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	openaiResp.Id = cohereResp.ResponseId
 	openaiResp.Created = createdTime
 	openaiResp.Object = "chat.completion"
-	openaiResp.Model = info.UpstreamModelName
+	openaiResp.Model = info.OriginModelName
 	openaiResp.Usage = usage
 
 	openaiResp.Choices = []dto.OpenAITextResponseChoice{

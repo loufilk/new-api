@@ -28,6 +28,8 @@ import { afterEach, expect, test, vi } from 'vitest'
 
 import { useDataTable } from '@/components/data-table'
 import { api } from '@/lib/api'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { getRedemptions } from '../../api'
 import type { Redemption } from '../../types'
@@ -79,6 +81,9 @@ function RedemptionList() {
 }
 
 async function setup() {
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'operator', role: ROLE.ADMIN })
   let remaining = [...codes]
   vi.spyOn(api, 'get').mockImplementation(async () => ({
     data: {
@@ -88,8 +93,8 @@ async function setup() {
   }))
   const remove = vi
     .spyOn(api, 'post')
-    .mockImplementation(async (_url, body) => {
-      const { ids } = body as { ids: number[] }
+    .mockImplementation(async (_url, data) => {
+      const { ids } = data as { ids: number[] }
       const count = remaining.filter((code) => ids.includes(code.id)).length
       remaining = remaining.filter((code) => !ids.includes(code.id))
       return { data: { success: true, data: count } }
@@ -114,6 +119,9 @@ afterEach(() => {
   toast.dismiss()
   for (const client of clients) client.clear()
   clients.length = 0
+  useAuthStore.getState().auth.reset()
+  sessionStorage.clear()
+  vi.restoreAllMocks()
 })
 
 test('shows deletion only for selected codes and cancellation sends no requests', async () => {
@@ -145,9 +153,9 @@ test('confirmation deletes only selected codes, disables repeat submissions and 
   })
   const originalDelete = remove.getMockImplementation()
   if (!originalDelete) throw new Error('Missing batch delete mock')
-  remove.mockImplementationOnce(async (url, body) => {
+  remove.mockImplementationOnce(async (url, data) => {
     await pending
-    return originalDelete(url, body)
+    return originalDelete(url, data)
   })
   await user.click(screen.getByRole('checkbox', { name: 'code-11' }))
   await user.click(screen.getByRole('checkbox', { name: 'code-22' }))
@@ -158,9 +166,7 @@ test('confirmation deletes only selected codes, disables repeat submissions and 
   expect(dialog).toHaveAccessibleName('Delete 2 redemption codes?')
   expect(remove).not.toHaveBeenCalled()
   await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
-  expect(
-    within(dialog).getByRole('button', { name: 'Deleting...' })
-  ).toBeDisabled()
+  expect(within(dialog).getByRole('button', { name: 'Delete' })).toBeDisabled()
   expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled()
   release()
   await waitFor(() =>
@@ -171,9 +177,10 @@ test('confirmation deletes only selected codes, disables repeat submissions and 
       screen.queryByRole('checkbox', { name: 'code-11' })
     ).not.toBeInTheDocument()
   )
-  expect(remove.mock.calls).toEqual([
-    ['/api/redemption/batch', { ids: [11, 22] }],
-  ])
+  expect(remove).toHaveBeenCalledOnce()
+  expect(remove).toHaveBeenCalledWith('/api/redemption/batch', {
+    ids: [11, 22],
+  })
   expect(screen.getByRole('checkbox', { name: 'code-33' })).not.toBeChecked()
   expect(screen.queryByRole('toolbar')).not.toBeInTheDocument()
   expect(document.body).toHaveTextContent(
@@ -182,39 +189,30 @@ test('confirmation deletes only selected codes, disables repeat submissions and 
 })
 
 test.each(['server', 'network'])(
-  '%s failure keeps selected codes and retries with one batch request',
+  '%s failure preserves the selected codes and does not retry automatically',
   async (failure) => {
     const { user, remove } = await setup()
     if (failure === 'server') {
       remove.mockResolvedValueOnce({ data: { success: false } })
-    } else {
-      remove.mockRejectedValueOnce(new Error('Network unavailable'))
-    }
+    } else remove.mockRejectedValueOnce(new Error('Network unavailable'))
     await user.click(screen.getByRole('checkbox', { name: 'code-11' }))
     await user.click(screen.getByRole('checkbox', { name: 'code-22' }))
     await user.click(
       screen.getByRole('button', { name: 'Delete selected redemption codes' })
     )
-    const dialog = await screen.findByRole('alertdialog')
-    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
-    await waitFor(() =>
-      expect(document.body).toHaveTextContent(
-        failure === 'server'
-          ? 'Failed to delete 2 redemption codes'
-          : 'Network unavailable'
-      )
+    await user.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', {
+        name: 'Delete',
+      })
     )
-    expect(dialog).toHaveAccessibleName('Delete 2 redemption codes?')
+    await screen.findByText(
+      failure === 'server'
+        ? 'Failed to delete redemption code'
+        : 'Network unavailable'
+    )
+    expect(screen.getByRole('button', { name: /^Delete$/ })).toBeEnabled()
     expect(screen.getByLabelText('code-11')).toBeChecked()
     expect(screen.getByLabelText('code-22')).toBeChecked()
-    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
-    await waitFor(() =>
-      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-    )
-    expect(remove.mock.calls).toEqual([
-      ['/api/redemption/batch', { ids: [11, 22] }],
-      ['/api/redemption/batch', { ids: [11, 22] }],
-    ])
-    expect(screen.queryByRole('toolbar')).not.toBeInTheDocument()
+    expect(remove).toHaveBeenCalledOnce()
   }
 )

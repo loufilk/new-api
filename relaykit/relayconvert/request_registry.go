@@ -516,7 +516,7 @@ func convertOpenAIResponsesRequestToGeminiChat(c context.Context, info convmeta.
 	return oairesponses.OpenAIResponsesRequestToGeminiChat(c, responsesRequest, info)
 }
 
-func convertResponsesRequestToChat(c context.Context, _ convmeta.Meta, request any) (any, error) {
+func convertResponsesRequestToChat(c context.Context, info convmeta.Meta, request any) (any, error) {
 	responsesRequest, ok := request.(*dto.OpenAIResponsesRequest)
 	if !ok {
 		if value, ok := request.(dto.OpenAIResponsesRequest); ok {
@@ -526,5 +526,5 @@ func convertResponsesRequestToChat(c context.Context, _ convmeta.Meta, request a
 	if responsesRequest == nil {
 		return nil, fmt.Errorf("expected OpenAI responses request, got %T", request)
 	}
-	return oairesponses.ResponsesRequestToChatCompletionsRequest(c, responsesRequest)
+	return oairesponses.ResponsesRequestToChatCompletionsRequestWithOptions(c, responsesRequest, convmeta.OptionsOf(info))
 }

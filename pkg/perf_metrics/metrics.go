@@ -14,8 +14,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/perf_metrics_setting"
-
-	"github.com/bytedance/gopkg/util/gopool"
+	"github.com/redis/go-redis/v9"
 )
 
 var hotBuckets sync.Map
@@ -104,6 +103,24 @@ func RecordTaskResult(task *model.Task, result *relaycommon.TaskInfo) {
 	Record(sample)
 }
 
+// Immediate failures are submit failures, which are not health samples.
+func RecordImmediateTaskResult(info *relaycommon.RelayInfo, result *relaycommon.TaskInfo) {
+	if result == nil || result.Status != model.TaskStatusSuccess {
+		return
+	}
+	sample := Sample{
+		Model:     info.OriginModelName,
+		Group:     info.UsingGroup,
+		LatencyMs: time.Since(info.StartTime).Milliseconds(),
+		Success:   true,
+	}
+	if tokens := int64(cmp.Or(result.TotalTokens, result.CompletionTokens)); tokens > 0 {
+		sample.OutputTokens = tokens
+		sample.GenerationMs = sample.LatencyMs
+	}
+	Record(sample)
+}
+
 func Record(sample Sample) {
 	setting := perf_metrics_setting.GetSetting()
 	if !setting.Enabled || sample.Model == "" {
@@ -123,9 +140,13 @@ func Record(sample Sample) {
 	}
 	actual, _ := hotBuckets.LoadOrStore(key, &atomicBucket{})
 	actual.(*atomicBucket).add(sample)
-	gopool.Go(func() {
-		recordRedis(key, sample)
-	})
+	// Admission owns the client snapshot. Do not queue no-op work when Redis
+	// is disabled, or consult mutable global configuration from a later task.
+	if common.RedisEnabled {
+		if client := common.RDB; client != nil {
+			recordRedisBackground(func() { recordRedis(client, key, sample) })
+		}
+	}
 }
 
 // queryWindow covers the current partial hour plus the preceding complete
@@ -549,15 +570,12 @@ func avgTps(value counters) float64 {
 	return float64(value.outputTokens) / (float64(value.generationMs) / 1000)
 }
 
-func recordRedis(key bucketKey, sample Sample) {
-	if !common.RedisEnabled || common.RDB == nil {
-		return
-	}
+func recordRedis(client *redis.Client, key bucketKey, sample Sample) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
 	redisKey := redisBucketKey(key)
-	pipe := common.RDB.TxPipeline()
+	pipe := client.TxPipeline()
 	pipe.HIncrBy(ctx, redisKey, "req", 1)
 	if sample.Success {
 		pipe.HIncrBy(ctx, redisKey, "ok", 1)

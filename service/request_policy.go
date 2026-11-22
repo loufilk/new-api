@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"slices"
 	"sync"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -39,17 +41,21 @@ type PolicyEvent struct {
 // read the decision flow in the log details. Channel selection and the retry
 // decision stay in the relay flows; this state only records them.
 type RequestPolicyState struct {
-	FinalLogged       bool
-	StartedAt         time.Time
-	Attempts          int
-	SelectedGroup     string
-	SessionMode       string
-	SessionModeSource string
-	RuleName          string
-	Successful        bool
-	OutcomeRecorded   bool
-	mu                sync.Mutex
-	events            []PolicyEvent
+	FinalLogged            bool
+	StartedAt              time.Time
+	Attempts               int
+	SelectedGroup          string
+	SessionMode            string
+	SessionModeSource      string
+	RuleName               string
+	Successful             bool
+	AffinityEligible       bool
+	AttemptChannelID       int
+	AttemptStartedAt       time.Time
+	RoutingOutcomeRecorded bool
+	OutcomeRecorded        bool
+	mu                     sync.Mutex
+	events                 []PolicyEvent
 }
 
 func RequestPolicy(c *gin.Context) *RequestPolicyState {
@@ -88,10 +94,48 @@ func (s *RequestPolicyState) Events() []PolicyEvent {
 
 func (s *RequestPolicyState) BeginAttempt(channel *model.Channel, group string) {
 	s.Attempts++
+	s.AttemptChannelID = channel.Id
+	s.AttemptStartedAt = time.Now()
+	s.RoutingOutcomeRecorded = false
 	s.Successful = false
+	s.AffinityEligible = false
 	s.OutcomeRecorded = false
 	s.SelectedGroup = group
 	s.AddEvent(PolicyEvent{ChannelID: channel.Id, Decision: PolicyDecision{Action: "attempt", Reason: "channel_selected", Source: "routing"}})
+}
+
+// RelayErrorSource tells where a failed attempt went wrong: "channel" for the
+// channel's own key or config (channel:* codes), "transport" when the
+// upstream could not be reached, "local" for an error new-api raised itself
+// before or without an upstream answer, and "upstream" for an upstream error
+// response. Adaptors also report what the upstream answered with new-api
+// error values, so the response codes count as upstream, and a local error
+// that wraps another relay error takes that error's source.
+func RelayErrorSource(err *types.NewAPIError) string {
+	if err == nil {
+		return "local"
+	}
+	if err.GetErrorType() == types.ErrorTypeNewAPIError && err.GetErrorCode() == ClientGoneErrorCode {
+		return "client"
+	}
+	switch {
+	case types.IsChannelError(err):
+		return "channel"
+	case err.GetErrorCode() == types.ErrorCodeDoRequestFailed:
+		return "transport"
+	case err.GetErrorType() != types.ErrorTypeNewAPIError:
+		return "upstream"
+	}
+	switch err.GetErrorCode() {
+	case types.ErrorCodeReadResponseBodyFailed, types.ErrorCodeBadResponseStatusCode, types.ErrorCodeBadResponse,
+		types.ErrorCodeBadResponseBody, types.ErrorCodeEmptyResponse, types.ErrorCodeAwsInvokeError:
+		return "upstream"
+	}
+	var inner *types.NewAPIError
+	if errors.As(err.Unwrap(), &inner) && inner != err {
+		return RelayErrorSource(inner)
+	}
+	return "local"
 }
 
 // RecordPolicyFailure appends the failed attempt and the retry decision made
@@ -101,23 +145,18 @@ func RecordPolicyFailure(c *gin.Context, channelID int, err *types.NewAPIError, 
 	if c == nil || err == nil {
 		return
 	}
-	source := "upstream"
-	switch {
-	case types.IsChannelError(err):
-		source = "channel"
-	case err.GetErrorCode() == types.ErrorCodeDoRequestFailed:
-		source = "transport"
-	case err.GetErrorType() == types.ErrorTypeNewAPIError:
-		source = "local"
-	}
+	source := RelayErrorSource(err)
 	state := RequestPolicy(c)
+	recordTokenRoutingOutcome(c, &relaycommon.RelayInfo{}, err)
 	event := PolicyEvent{ChannelID: channelID, Status: err.StatusCode, ErrorCode: string(err.GetErrorCode()), ErrorSource: source, Decision: PolicyDecision{Action: "failure", Reason: "upstream_failure", Source: source}}
 	if source == "local" {
 		event.Decision.Reason = "local_rejection"
+	} else if source == "client" {
+		event.Decision = PolicyDecision{Action: "stop", Reason: "client_gone", Source: "client"}
 	}
 	state.AddEvent(event)
 	event.Decision, event.Health = decision, "unchanged"
-	if source != "local" && c.GetBool("auto_ban") && ShouldDisableChannel(err) {
+	if source != "local" && source != "client" && RelayRequestCancellation(c) == nil && c.GetBool("auto_ban") && ShouldDisableChannel(err) {
 		event.Health = "channel_disable_requested"
 		if common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey) {
 			event.Health = "key_disable_requested"
@@ -126,13 +165,19 @@ func RecordPolicyFailure(c *gin.Context, channelID int, err *types.NewAPIError, 
 	state.AddEvent(event)
 }
 
-func MarkRequestPolicySuccess(c *gin.Context, stream *relaycommon.StreamStatus) {
+func MarkRequestPolicySuccess(c *gin.Context, stream *relaycommon.StreamStatus, relayInfos ...*relaycommon.RelayInfo) {
+	info := &relaycommon.RelayInfo{StreamStatus: stream}
+	if len(relayInfos) > 0 && relayInfos[0] != nil {
+		info = relayInfos[0]
+	}
+	recordTokenRoutingOutcome(c, info, nil)
 	state := RequestPolicy(c)
 	if state.OutcomeRecorded {
 		return
 	}
 	state.OutcomeRecorded = true
 	state.Successful = stream == nil || stream.IsNormalEnd() && !stream.HasErrors() && (stream.ResponseOutcome() == "" || stream.ResponseOutcome() == "completed")
+	state.AffinityEligible = state.Successful && perfmetrics.ClassifyRelayOutcome(nil, info, nil) == perfmetrics.OutcomeSuccess
 	decision := PolicyDecision{Action: "success", Reason: "request_completed", Source: "upstream"}
 	if !state.Successful {
 		decision = PolicyDecision{Action: "stop", Reason: "stream_not_successful", Source: "system"}

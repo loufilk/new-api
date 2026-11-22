@@ -8,12 +8,17 @@ import (
 )
 
 type RequestInput struct {
-	Headers map[string]string
-	Body    []byte
-	Usage   map[string]any
+	// Headers and Params may be persisted in a BillingSnapshot. Callers that
+	// freeze an async request must store only the expression-referenced values,
+	// never the full incoming request.
+	Headers   map[string]string `json:"headers,omitempty"`
+	Params    map[string]any    `json:"params,omitempty"`
+	Timestamp int64             `json:"timestamp,omitempty"`
+	Body      []byte            `json:"-"`
+	Usage     map[string]any    `json:"-"`
 	// ImageCount is a validated billing quantity, separate from the frozen
 	// request's n. Settlement can replace it with the actual returned count.
-	ImageCount *int
+	ImageCount *int `json:"image_count,omitempty"`
 }
 
 // TokenParams holds all token dimensions passed into an Expr evaluation.
@@ -81,6 +86,7 @@ type BillingSnapshot struct {
 	ExprVersion               int            `json:"expr_version"`
 	TaskUsageBilling          bool           `json:"task_usage_billing,omitempty"`
 	UsageFacts                map[string]any `json:"usage_facts,omitempty"`
+	RequestInput              *RequestInput  `json:"request_input,omitempty"`
 }
 
 // TieredResult holds everything needed after running tiered settlement.

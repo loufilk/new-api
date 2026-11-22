@@ -21,7 +21,31 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { api } from '@/lib/api'
+
+import type { ApiKey, CCSwitchApp } from '../../../types'
 import { CCSwitchDialog } from '../cc-switch-dialog'
+import { ccSwitchModelsQueryKey } from '../cc-switch-utils'
+
+const token: ApiKey = {
+  id: 1,
+  name: 'Scoped fixture',
+  key: 'masked',
+  status: 1,
+  remain_quota: 0,
+  used_quota: 0,
+  unlimited_quota: true,
+  expired_time: -1,
+  created_time: 1,
+  accessed_time: 1,
+  group: 'default',
+  auto_groups: ['default'],
+  cross_group_retry: false,
+  model_limits_enabled: false,
+  model_limits: '',
+  allow_ips: '',
+  allow_user_quota_query: true,
+}
 
 let queryClient: QueryClient
 
@@ -36,18 +60,63 @@ afterEach(() => {
 })
 
 function renderDialog(models = ['gpt-5.4', 'claude-sonnet-4-6']) {
-  queryClient.setQueryData(['user-models-ccswitch'], {
-    success: true,
-    data: models,
-  })
+  for (const app of ['claude', 'codex', 'gemini'] satisfies CCSwitchApp[]) {
+    queryClient.setQueryData(ccSwitchModelsQueryKey(token, app), {
+      success: true,
+      data: models,
+    })
+  }
   render(
     <QueryClientProvider client={queryClient}>
-      <CCSwitchDialog open onOpenChange={vi.fn()} tokenKey='test-only' />
+      <CCSwitchDialog
+        open
+        onOpenChange={vi.fn()}
+        tokenKey='test-only'
+        token={token}
+      />
     </QueryClientProvider>
   )
 }
 
 describe('CC Switch model selection', () => {
+  it('validates models before offering a separate user-activated launch', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: ['gpt-5.4'] },
+    })
+    const launch = vi.spyOn(window, 'open').mockReturnValue(null)
+    renderDialog()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('radio', { name: 'Codex' }))
+    await user.click(screen.getByRole('combobox', { name: 'Primary Model' }))
+    await user.click(await screen.findByRole('option', { name: 'gpt-5.4' }))
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    const open = await screen.findByRole('button', { name: 'Open CC Switch' })
+    expect(launch).not.toHaveBeenCalled()
+    await user.click(open)
+    expect(launch).toHaveBeenCalledWith(
+      expect.stringContaining('ccswitch://v1/import?'),
+      '_blank',
+      'noopener,noreferrer'
+    )
+  })
+
+  it('discards a prepared launch when the model selection changes', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: ['gpt-5.4', 'claude-sonnet-4-6'] },
+    })
+    const launch = vi.spyOn(window, 'open').mockReturnValue(null)
+    renderDialog()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('radio', { name: 'Codex' }))
+    await user.click(screen.getByRole('combobox', { name: 'Primary Model' }))
+    await user.click(await screen.findByRole('option', { name: 'gpt-5.4' }))
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    await screen.findByRole('button', { name: 'Open CC Switch' })
+    await user.click(screen.getByRole('radio', { name: 'Gemini' }))
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeVisible()
+    expect(launch).not.toHaveBeenCalled()
+  })
+
   it.each(['Claude', 'Codex', 'Gemini'])(
     'opens %s models outside the clipping dialog and keeps the dialog open after selection',
     async (app) => {
@@ -104,7 +173,7 @@ describe('CC Switch model selection', () => {
 
     expect(await screen.findByText('No models found')).toBeVisible()
     await act(async () => {
-      queryClient.setQueryData(['user-models-ccswitch'], {
+      queryClient.setQueryData(ccSwitchModelsQueryKey(token, 'codex'), {
         success: true,
         data: ['gpt-5.4'],
       })

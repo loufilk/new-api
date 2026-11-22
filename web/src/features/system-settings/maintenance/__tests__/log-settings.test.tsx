@@ -44,6 +44,7 @@ function Fixture() {
             LogConsumeEnabled: true,
             'log_setting.user_export_enabled': true,
             'log_setting.max_range_days': 30,
+            'system_task_setting.retention_days': 30,
           }}
         />
       </SettingsPageProvider>
@@ -78,7 +79,7 @@ beforeEach(() => {
   vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
 })
 
-test('the page shows the four log modules in order, each with its own controls', async () => {
+test('the page shows the log modules in order, each with its own controls', async () => {
   await renderSettings()
 
   expect(
@@ -86,6 +87,7 @@ test('the page shows the four log modules in order, each with its own controls',
   ).toEqual([
     'Log recording',
     'Log search and export',
+    'System task records',
     'Clean history logs',
     'Server Log Management',
   ])
@@ -103,6 +105,12 @@ test('the page shows the four log modules in order, each with its own controls',
       name: 'Longest log time range (days)',
     })
   ).toBeVisible()
+  const tasks = screen.getByRole('group', { name: 'System task records' })
+  expect(
+    within(tasks).getByRole('spinbutton', {
+      name: 'Keep finished tasks for (days)',
+    })
+  ).toHaveValue(30)
   const cleanup = screen.getByRole('group', { name: 'Clean history logs' })
   expect(
     within(cleanup).getByRole('button', { name: 'Clean logs' })
@@ -181,4 +189,56 @@ test('a time range under one day shows a field error and is not saved', async ()
 
   await waitFor(() => expect(days).toHaveAttribute('aria-invalid', 'true'))
   expect(api.put).not.toHaveBeenCalled()
+})
+
+test('server log cleanup requires confirmation and cancellation leaves files untouched', async () => {
+  const user = userEvent.setup()
+  const remove = vi.spyOn(api, 'delete').mockResolvedValue({
+    data: { success: true, data: { deleted_count: 2, freed_bytes: 1024 } },
+  })
+  await renderSettings()
+  const open = await screen.findByRole('button', { name: 'Clean Up Log Files' })
+  await user.click(open)
+  let dialog = await screen.findByRole('alertdialog', {
+    name: 'Confirm log file cleanup?',
+  })
+  await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  expect(remove).not.toHaveBeenCalled()
+  await user.click(open)
+  dialog = await screen.findByRole('alertdialog', {
+    name: 'Confirm log file cleanup?',
+  })
+  await user.click(
+    within(dialog).getByRole('button', { name: 'Confirm Cleanup' })
+  )
+  await waitFor(() =>
+    expect(remove).toHaveBeenCalledExactlyOnceWith(
+      '/api/performance/logs?mode=by_count&value=10'
+    )
+  )
+  await waitFor(() =>
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  )
+})
+
+test('the task retention saves whole days and rejects less than one day', async () => {
+  const user = userEvent.setup()
+  await renderSettings()
+  const retention = screen.getByRole('spinbutton', {
+    name: 'Keep finished tasks for (days)',
+  })
+  const save = screen.getByRole('button', { name: 'Save log settings' })
+
+  fireEvent.change(retention, { target: { value: '0' } })
+  await user.click(save)
+  await waitFor(() => expect(retention).toHaveAttribute('aria-invalid', 'true'))
+  expect(api.put).not.toHaveBeenCalled()
+
+  fireEvent.change(retention, { target: { value: '7' } })
+  await user.click(save)
+  await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
+  expect(api.put).toHaveBeenCalledWith('/api/option/', {
+    key: 'system_task_setting.retention_days',
+    value: 7,
+  })
 })

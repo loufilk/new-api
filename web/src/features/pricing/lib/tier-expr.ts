@@ -324,22 +324,22 @@ export function buildEstimatorTokens(
   exprStr: string
 ): Partial<Record<TokenVariable, number>> {
   // Like backend token normalization, a long-lived cache write without its
-  // own price joins cc at a fixed multiple. With cc unpriced it stays free.
+  // own price joins cc at a fixed multiple, or p when cc is omitted.
   const compiled = compileBillingExpression(exprStr)
   const usedVars: ReadonlySet<string> =
     compiled.status === 'ready' ? compiled.variables : new Set()
   let cacheCreateTokens = extraTokenValues.cacheCreateTokens
-  if (usedVars.has('cc') && !usedVars.has('cc1h')) {
+  if (!usedVars.has('cc1h')) {
     cacheCreateTokens +=
       extraTokenValues.cacheCreate1hTokens * CLAUDE_CACHE_CREATION_1H_MULTIPLIER
   }
-  if (usedVars.has('cc') && !usedVars.has('cc12h')) {
+  if (!usedVars.has('cc12h')) {
     cacheCreateTokens +=
       extraTokenValues.cacheCreate12hTokens *
       OPENAI_CACHE_CREATION_12H_MULTIPLIER
   }
   return {
-    p: promptTokens,
+    p: promptTokens + (usedVars.has('cc') ? 0 : cacheCreateTokens),
     c: completionTokens,
     len:
       promptTokens +

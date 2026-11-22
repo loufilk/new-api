@@ -18,9 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient, useIsFetching } from '@tanstack/react-query'
 import { useNavigate, getRouteApi } from '@tanstack/react-router'
-import { type Table } from '@tanstack/react-table'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
+
+import type { Table } from '@/lib/console-table'
 
 import { buildSearchParams } from '../lib/filter'
 import { getDefaultTimeRange } from '../lib/utils'
@@ -38,7 +39,7 @@ const route = getRouteApi('/_authenticated/usage-logs/$section')
 type TaskLikeLogCategory = Extract<LogCategory, 'drawing' | 'task'>
 type TaskLogsFilters = DrawingLogFilters | TaskLogFilters
 
-interface TaskLogsFilterBarProps<TData> {
+interface TaskLogsFilterBarProps<TData extends object> {
   table: Table<TData>
   logCategory: TaskLikeLogCategory
 }
@@ -64,7 +65,9 @@ function setFilterValue(
   return { ...filters, taskId: value }
 }
 
-export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
+export function TaskLogsFilterBar<TData extends object>(
+  props: TaskLogsFilterBarProps<TData>
+) {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -72,12 +75,7 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
   const { isAdminView: isAdmin } = useLogsViewScope()
   const fetchingLogs = useIsFetching({ queryKey: ['logs'] })
 
-  const [filters, setFilters] = useState<TaskLogsFilters>(() => {
-    const { start, end } = getDefaultTimeRange()
-    return { startTime: start, endTime: end }
-  })
-
-  useEffect(() => {
+  const urlFilters = useMemo<TaskLogsFilters>(() => {
     const { start, end } = getDefaultTimeRange()
     const baseFilters = {
       startTime: searchParams.startTime
@@ -88,18 +86,15 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
         ? { channel: String(searchParams.channel) }
         : {}),
     }
-    const next: TaskLogsFilters =
-      props.logCategory === 'drawing'
-        ? {
-            ...baseFilters,
-            ...(searchParams.filter ? { mjId: searchParams.filter } : {}),
-          }
-        : {
-            ...baseFilters,
-            ...(searchParams.filter ? { taskId: searchParams.filter } : {}),
-          }
-
-    setFilters(next)
+    return props.logCategory === 'drawing'
+      ? {
+          ...baseFilters,
+          ...(searchParams.filter ? { mjId: searchParams.filter } : {}),
+        }
+      : {
+          ...baseFilters,
+          ...(searchParams.filter ? { taskId: searchParams.filter } : {}),
+        }
   }, [
     props.logCategory,
     searchParams.startTime,
@@ -107,6 +102,13 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
     searchParams.channel,
     searchParams.filter,
   ])
+
+  const [lastUrlFilters, setLastUrlFilters] = useState(urlFilters)
+  const [filters, setFilters] = useState(urlFilters)
+  if (lastUrlFilters !== urlFilters) {
+    setLastUrlFilters(urlFilters)
+    setFilters(urlFilters)
+  }
 
   const handleChange = useCallback(
     (field: keyof TaskLogsFilters, value: Date | string | undefined) => {

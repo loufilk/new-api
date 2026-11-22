@@ -28,16 +28,36 @@ import type { ApiKey, ApiKeyFormData } from '../types'
 // Form Schema
 // ============================================================================
 
-export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
+export function getApiKeyFormSchema(
+  t: TFunction,
+  maxAutoGroups = 5,
+  allowInheritedGroup = false
+) {
   const autoGroupLimit =
     Number.isInteger(maxAutoGroups) && maxAutoGroups > 0 ? maxAutoGroups : 5
 
   return z
     .object({
-      name: z.string().min(1, t('Please enter a name')),
+      name: z
+        .string()
+        .min(1, t('Please enter a name'))
+        .refine(
+          (value) => [...value].length <= 50,
+          t('Token name is too long')
+        ),
+      smart_routing: z.boolean(),
+      routing_strategy: z.enum(['auto', 'success_rate', 'price', 'speed']),
+      no_retry_within_group: z.boolean(),
+      project_label: z
+        .string()
+        .refine(
+          (value) => [...value].length <= 100,
+          t('Project label must be at most 100 characters')
+        ),
       remain_quota_dollars: z.number().optional(),
       expired_time: z.date().nullable(),
       unlimited_quota: z.boolean(),
+      model_limits_enabled: z.boolean(),
       model_limits: z.array(z.string()),
       allow_ips: z.string().optional(),
       allow_user_quota_query: z.boolean(),
@@ -48,7 +68,15 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
       tokenCount: z.number().min(1).optional(),
     })
     .superRefine((data, ctx) => {
-      if (data.group === 'auto') {
+      if (!data.group?.trim() && !(allowInheritedGroup && data.group === '')) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['group'],
+          message: t('Please select a group'),
+        })
+      }
+
+      if (!data.smart_routing && data.group === 'auto') {
         if (
           data.auto_groups_mode === 'custom' &&
           data.auto_groups.length === 0
@@ -106,28 +134,29 @@ export type ApiKeyFormValues = z.infer<ReturnType<typeof getApiKeyFormSchema>>
 
 export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   name: '',
+  smart_routing: false,
+  routing_strategy: 'auto',
+  no_retry_within_group: false,
+  project_label: '',
   remain_quota_dollars: 10,
   expired_time: null,
   unlimited_quota: true,
+  model_limits_enabled: false,
   model_limits: [],
   allow_ips: '',
   allow_user_quota_query: true,
   group: DEFAULT_GROUP,
   auto_groups_mode: 'inherit',
   auto_groups: [],
-  cross_group_retry: true,
+  cross_group_retry: false,
   tokenCount: 1,
 }
 
-export function getApiKeyFormDefaultValues(
-  defaultUseAutoGroup: boolean
-): ApiKeyFormValues {
+export function getApiKeyFormDefaultValues(): ApiKeyFormValues {
   return {
     ...API_KEY_FORM_DEFAULT_VALUES,
-    group: defaultUseAutoGroup ? 'auto' : DEFAULT_GROUP,
-    auto_groups_mode: 'inherit',
+    model_limits: [],
     auto_groups: [],
-    cross_group_retry: defaultUseAutoGroup,
   }
 }
 
@@ -143,6 +172,10 @@ export function transformFormDataToPayload(
 ): ApiKeyFormData {
   return {
     name: data.name,
+    smart_routing: data.smart_routing,
+    routing_strategy: data.routing_strategy,
+    no_retry_within_group: data.no_retry_within_group,
+    project_label: data.project_label,
     remain_quota: data.unlimited_quota
       ? 0
       : parseQuotaFromDollars(data.remain_quota_dollars || 0),
@@ -150,7 +183,7 @@ export function transformFormDataToPayload(
       ? Math.floor(data.expired_time.getTime() / 1000)
       : -1,
     unlimited_quota: data.unlimited_quota,
-    model_limits_enabled: data.model_limits.length > 0,
+    model_limits_enabled: data.model_limits_enabled,
     model_limits: data.model_limits.join(','),
     allow_ips: data.allow_ips || '',
     allow_user_quota_query: data.allow_user_quota_query,
@@ -167,25 +200,27 @@ export function transformFormDataToPayload(
  * Transform API key data to form defaults
  */
 export function transformApiKeyToFormDefaults(
-  apiKey: ApiKey,
-  availableAutoGroups: string[] = [],
-  maxAutoGroups = 5
+  apiKey: ApiKey
 ): ApiKeyFormValues {
-  const availableSet = new Set(availableAutoGroups)
   const storedAutoGroups = apiKey.auto_groups ?? []
-  const autoGroups = storedAutoGroups
-    .filter((group) => availableSet.has(group))
-    .slice(0, Math.max(0, maxAutoGroups))
+  // Preserve the complete stored order even after access or limits change.
+  // Manual routing is validated on save; edits must never silently drop groups.
+  const autoGroups = [...storedAutoGroups]
   const autoGroupsMode = storedAutoGroups.length > 0 ? 'custom' : 'inherit'
 
   return {
     name: apiKey.name,
+    smart_routing: apiKey.smart_routing ?? false,
+    routing_strategy: apiKey.routing_strategy || 'auto',
+    no_retry_within_group: apiKey.no_retry_within_group ?? false,
+    project_label: apiKey.project_label || '',
     remain_quota_dollars: apiKey.unlimited_quota
       ? 0
       : quotaUnitsToDollars(apiKey.remain_quota),
     expired_time:
       apiKey.expired_time > 0 ? new Date(apiKey.expired_time * 1000) : null,
     unlimited_quota: apiKey.unlimited_quota,
+    model_limits_enabled: apiKey.model_limits_enabled,
     model_limits: apiKey.model_limits
       ? apiKey.model_limits.split(',').filter(Boolean)
       : [],

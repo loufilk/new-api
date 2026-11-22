@@ -16,19 +16,28 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-/**
- * Get plain text preview (strip HTML tags and Markdown formatting)
- */
+import { Lexer, walkTokens } from 'marked'
+
+/** Keep image descriptions and link labels, not their Markdown destinations. */
 export function getPreviewText(
   content: string,
   maxLength: number = 60
 ): string {
   if (!content) return ''
-  const plainText = content
-    .replace(/<[^>]*>/g, '') // Remove HTML tags
-    .replace(/[#*_]/g, '') // Remove Markdown formatting symbols
-    .trim()
+  const parts: string[] = []
+  walkTokens(Lexer.lex(content), (token) => {
+    if (
+      ['paragraph', 'heading', 'list_item', 'space', 'br'].includes(token.type)
+    ) {
+      parts.push(' ')
+    }
+    if ('tokens' in token && token.tokens?.length) return
+    if ('text' in token && typeof token.text === 'string') {
+      parts.push(token.text.replaceAll(/<[^>]*>/g, ''))
+    }
+  })
+  const plainText = parts.join('').replaceAll(/\s+/g, ' ').trim()
   return plainText.length > maxLength
-    ? plainText.substring(0, maxLength) + '...'
+    ? `${plainText.slice(0, maxLength)}...`
     : plainText
 }

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -8,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type Setup struct {
@@ -94,9 +96,23 @@ func PostSetup(c *gin.Context) {
 			Status:      common.UserStatusEnabled,
 			DisplayName: "Root User",
 			AccessToken: nil,
-			Quota:       100000000,
 		}
-		err = model.DB.Create(&rootUser).Error
+		// Match the root_init wallet contract: create the account and its paid
+		// bootstrap credit together, with an auditable, stable ledger identity.
+		err = model.DB.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(&rootUser).Error; err != nil {
+				return err
+			}
+			_, err := model.CreditQuotaTx(tx, model.LedgerEntry{
+				UserId:        rootUser.Id,
+				Account:       model.AccountPaid,
+				Delta:         100000000,
+				Reason:        model.LedgerReasonSystem,
+				ReferenceType: "root_init",
+				ReferenceId:   strconv.Itoa(rootUser.Id),
+			})
+			return err
+		})
 		if err != nil {
 			common.ApiErrorT(c, "Failed to create the administrator account: {{error}}", map[string]any{"error": err.Error()})
 			return
@@ -120,9 +136,6 @@ func PostSetup(c *gin.Context) {
 		return
 	}
 
-	// Update setup status
-	constant.Setup = true
-
 	setup := model.Setup{
 		Version:       common.Version,
 		InitializedAt: time.Now().Unix(),
@@ -132,6 +145,9 @@ func PostSetup(c *gin.Context) {
 		common.ApiErrorT(c, "Failed to initialize the system: {{error}}", map[string]any{"error": err.Error()})
 		return
 	}
+	// A failed setup record must remain retryable; the existing root prevents
+	// that retry from issuing the bootstrap credit again.
+	constant.Setup = true
 
 	common.ApiSuccessT(c, "System initialized successfully", nil)
 }

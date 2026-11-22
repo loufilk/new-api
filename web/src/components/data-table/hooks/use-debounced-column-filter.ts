@@ -16,10 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { ColumnFiltersState, OnChangeFn } from '@tanstack/react-table'
 import * as React from 'react'
 
-import { useDebounce } from '@/hooks/use-debounce'
+import type { ColumnFiltersState, OnChangeFn } from '@/lib/console-table'
 
 type UseDebouncedColumnFilterOptions = {
   columnFilters: ColumnFiltersState
@@ -38,40 +37,48 @@ export function useDebouncedColumnFilter({
     (columnFilters.find((filter) => filter.id === columnId)?.value as
       | string
       | undefined) ?? ''
-  const [inputValue, setInputValue] = React.useState(value)
-  const [pendingValue, setPendingValue] = React.useState(value)
-  const isComposingRef = React.useRef(false)
-  const debouncedValue = useDebounce(pendingValue, delay)
-  const onColumnFiltersChangeRef = React.useRef(onColumnFiltersChange)
-  onColumnFiltersChangeRef.current = onColumnFiltersChange
+  const [draft, setDraft] = React.useState({
+    columnId,
+    base: value,
+    text: value,
+    composing: false,
+  })
+  // An external change (including Back or Forward) wins over the old edit.
+  // Clearing the draft also prevents it resurfacing when the old URL returns.
+  if (draft.columnId !== columnId || draft.base !== value) {
+    setDraft({ columnId, base: value, text: value, composing: false })
+  }
 
-  React.useEffect(() => {
-    // Keep the input aligned when URL state changes outside the local field.
-    if (!isComposingRef.current) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setInputValue(value)
+  const publish = React.useEffectEvent((edit: typeof draft) => {
+    if (edit !== draft || edit.columnId !== columnId || edit.base !== value) {
+      return
     }
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPendingValue(value)
-  }, [value])
-
-  React.useEffect(() => {
-    if (debouncedValue === value) return
-
-    onColumnFiltersChangeRef.current((previous) => {
+    onColumnFiltersChange((previous) => {
+      const current =
+        previous.find((filter) => filter.id === columnId)?.value ?? ''
+      if (current !== edit.base) return previous
       const filters = previous.filter((filter) => filter.id !== columnId)
-      return debouncedValue
-        ? [...filters, { id: columnId, value: debouncedValue }]
+      return edit.text
+        ? [...filters, { id: columnId, value: edit.text }]
         : filters
     })
-  }, [columnId, debouncedValue, value])
+  })
 
-  const updateInputValue = React.useCallback((nextValue: string) => {
-    setInputValue(nextValue)
-
-    if (!isComposingRef.current) {
-      setPendingValue(nextValue)
+  React.useEffect(() => {
+    if (
+      draft.composing ||
+      draft.text === value ||
+      draft.base !== value ||
+      draft.columnId !== columnId
+    ) {
+      return
     }
+    const timer = setTimeout(() => publish(draft), delay)
+    return () => clearTimeout(timer)
+  }, [draft, value, columnId, delay])
+
+  const updateInputValue = React.useCallback((text: string) => {
+    setDraft((previous) => ({ ...previous, text }))
   }, [])
 
   const handleChange = React.useCallback(
@@ -82,28 +89,26 @@ export function useDebouncedColumnFilter({
   )
 
   const handleCompositionStart = React.useCallback(() => {
-    isComposingRef.current = true
+    setDraft((previous) => ({ ...previous, composing: true }))
   }, [])
 
   const handleCompositionEnd = React.useCallback(
     (event: React.CompositionEvent<HTMLInputElement>) => {
-      isComposingRef.current = false
-      const nextValue = event.currentTarget.value
-      setInputValue(nextValue)
-      setPendingValue(nextValue)
+      const text = event.currentTarget.value
+      setDraft((previous) =>
+        previous.composing ? { ...previous, text, composing: false } : previous
+      )
     },
     []
   )
 
   const resetInput = React.useCallback(() => {
-    isComposingRef.current = false
-    setInputValue('')
-    setPendingValue('')
+    setDraft((previous) => ({ ...previous, text: '', composing: false }))
   }, [])
 
   return {
     value,
-    inputValue,
+    inputValue: draft.text,
     setInputValue: updateInputValue,
     onChange: handleChange,
     onCompositionStart: handleCompositionStart,

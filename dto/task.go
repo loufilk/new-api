@@ -5,14 +5,18 @@ import (
 )
 
 type TaskError struct {
-	// NoRetry prevents duplicate upstream work after a response has been accepted.
-	NoRetry    bool   `json:"-"`
-	Code       string `json:"code"`
-	Message    string `json:"message"`
-	Data       any    `json:"data"`
-	StatusCode int    `json:"-"`
-	LocalError bool   `json:"-"`
-	Error      error  `json:"-"`
+	// NoRetry preserves an explicit stop, including failed preconsume and
+	// prevention of duplicate upstream work after a response was accepted.
+	NoRetry bool `json:"-"`
+	// DeliveryUnknown is not a refund authorization: the upstream may have
+	// accepted work even though no usable acknowledgement reached the gateway.
+	DeliveryUnknown bool   `json:"-"`
+	Code            string `json:"code"`
+	Message         string `json:"message"`
+	Data            any    `json:"data"`
+	StatusCode      int    `json:"-"`
+	LocalError      bool   `json:"-"`
+	Error           error  `json:"-"`
 }
 
 type TaskData interface {

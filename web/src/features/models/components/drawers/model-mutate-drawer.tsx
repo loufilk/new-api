@@ -36,6 +36,7 @@ import { ErrorState } from '@/components/error-state'
 import { JsonEditor } from '@/components/json-editor'
 import { LoadingState } from '@/components/loading-state'
 import { LobeIconField } from '@/components/lobe-icon-field'
+import { MultiSelect } from '@/components/multi-select'
 import { TagInput } from '@/components/tag-input'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -188,7 +189,7 @@ export function ModelMutateDrawer(props: {
           t('Save or discard pricing changes before renaming metadata.')
         )
       }
-      const payload = transformFormDataToModelPayload(values)
+      const payload = transformFormDataToModelPayload(values, savedModel)
       const response = currentRow?.id
         ? await updateModel({ ...payload, id: currentRow.id })
         : await createModel(payload)
@@ -402,6 +403,54 @@ export function ModelMutateDrawer(props: {
                                 placeholder={t('Select vendor')}
                               />
                             </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name='display_categories'
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>{t('Display categories')}</FormLabel>
+                            <FormControl>
+                              <MultiSelect
+                                options={[
+                                  { value: 'text', label: t('Text') },
+                                  {
+                                    value: 'images',
+                                    label: t('Image Generation'),
+                                  },
+                                  { value: 'video', label: t('Video') },
+                                  { value: 'audio', label: t('Audio') },
+                                  { value: 'vectors', label: t('Vectors') },
+                                  {
+                                    value: 'decision',
+                                    label: t('Decision Models'),
+                                  },
+                                ]}
+                                selected={field.value ?? []}
+                                onChange={field.onChange}
+                                aria-label={t('Display categories')}
+                                placeholder={t('Automatic classification')}
+                                disabled={isSubmitting}
+                              />
+                            </FormControl>
+                            <FormDescription>
+                              {t(
+                                'Leave empty for automatic classification. Affects model square filters only, not API endpoints, routing, permissions or billing.'
+                              )}
+                            </FormDescription>
+                            <Button
+                              type='button'
+                              variant='outline'
+                              size='sm'
+                              disabled={isSubmitting || !field.value?.length}
+                              onClick={() => field.onChange([])}
+                            >
+                              {t('Restore automatic classification')}
+                            </Button>
                             <FormMessage />
                           </FormItem>
                         )}

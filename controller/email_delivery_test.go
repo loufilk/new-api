@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -192,8 +193,14 @@ func TestEmailProviderCannotActivateIncompleteResend(t *testing.T) {
 }
 
 func TestResendSettingsChangesKeepActiveDeliveryWorking(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
+	var db *gorm.DB
+	if os.Getenv("TEST_SECURITY_DIALECT") == "postgres" {
+		db, _ = newAuditTestDatabase(t, "postgres", os.Getenv("TEST_POSTGRES_DSN"))
+	} else {
+		var err error
+		db, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+		require.NoError(t, err)
+	}
 	require.NoError(t, db.AutoMigrate(&model.Option{}))
 	previousDB, previousRedis := model.DB, common.RedisEnabled
 	model.DB, common.RedisEnabled = db, false
@@ -248,4 +255,19 @@ func TestEmailKeyStatusIsDerivedAndReadOnly(t *testing.T) {
 	UpdateOption(context)
 	assert.Contains(t, response.Body.String(), `"success":false`)
 	assert.Contains(t, response.Body.String(), "read-only")
+}
+
+func TestResendPreservesExplicitPlainTextForTransactionalEmails(t *testing.T) {
+	configureEmailDelivery(t, map[string]string{"EmailProvider": "resend", "ResendApiKey": "test-key", "ResendFrom": "sender@example.com"})
+	http.DefaultTransport = emailHTTPTransport(func(request *http.Request) (*http.Response, error) {
+		var body struct {
+			HTML string `json:"html"`
+			Text string `json:"text"`
+		}
+		require.NoError(t, common.DecodeJson(request.Body, &body))
+		assert.Equal(t, "<p>Follow the verification link</p>", body.HTML)
+		assert.Equal(t, "Open the full verification URL: https://example.com/verify?code=test", body.Text)
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":"transactional-email"}`))}, nil
+	})
+	require.NoError(t, common.SendEmailWithPlainText("Verify your account", "recipient@example.com", "Open the full verification URL: https://example.com/verify?code=test", "<p>Follow the verification link</p>"))
 }

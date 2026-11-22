@@ -39,6 +39,9 @@ type responsesClaudeStreamBlock struct {
 	SentBytes           int
 	AnnotationCount     int
 	NeedsReasoningBreak bool
+	CustomInput         bool
+	CustomInputReady    bool
+	CustomUsageBytes    int
 }
 
 func NewResponsesToClaudeStreamState(id string, model string) *ResponsesToClaudeStreamState {
@@ -154,10 +157,15 @@ func (s *ResponsesToClaudeStreamState) ConvertChunk(event *dto.ResponsesStreamRe
 		if err != nil {
 			return nil, s.Usage, err
 		}
-		if event.Arguments == nil {
+		arguments := event.Arguments
+		if event.Type == responsesEventCustomToolInputDone {
+			arguments = event.Input
+			block.CustomInputReady = true
+		}
+		if arguments == nil {
 			return nil, s.Usage, nil
 		}
-		return s.mergeFinalValue(block, *event.Arguments, estimatedInputTokens), s.Usage, nil
+		return s.mergeFinalValue(block, *arguments, estimatedInputTokens), s.Usage, nil
 	case responsesEventCompleted, responsesEventDone, responsesEventIncomplete:
 		responses, err := s.finish(event.Response, estimatedInputTokens)
 		return responses, s.Usage, err
@@ -258,6 +266,9 @@ func (s *ResponsesToClaudeStreamState) applyBlockMetadata(block *responsesClaude
 	if block == nil || event == nil {
 		return
 	}
+	if event.Type == responsesEventCustomToolInputDelta || event.Type == responsesEventCustomToolInputDone || event.Item != nil && event.Item.Type == responsesOutputTypeCustomToolCall {
+		block.CustomInput = true
+	}
 	if event.OutputIndex != nil {
 		s.byOutputIndex[*event.OutputIndex] = block
 	}
@@ -298,6 +309,9 @@ func (s *ResponsesToClaudeStreamState) startBlock(block *responsesClaudeStreamBl
 		}
 		content = dto.ClaudeMediaMessage{Type: "tool_use", Id: callID, Name: block.Name, Input: map[string]any{}}
 		s.sawToolCall = true
+		// The generated function name is output even when no argument delta
+		// follows before a failure. Count it once when this block starts.
+		s.usageText.WriteString(block.Name)
 	default:
 		return nil
 	}
@@ -338,12 +352,28 @@ func (s *ResponsesToClaudeStreamState) flushBlock(block *responsesClaudeStreamBl
 		return responses
 	}
 	value := block.Value.String()
+	if block.CustomInput {
+		// Custom input is arbitrary text, whereas Claude requires an object.
+		// Retain its raw billing evidence while buffering until the snapshot
+		// can be converted with the same contract as non-streaming responses.
+		if len(value) > block.CustomUsageBytes {
+			s.usageText.WriteString(value[block.CustomUsageBytes:])
+			block.CustomUsageBytes = len(value)
+		}
+		if !block.CustomInputReady {
+			return responses
+		}
+		encoded, _ := kitutil.Marshal(responsesArgumentsToClaudeInput(value))
+		value = string(encoded)
+	}
 	if block.SentBytes >= len(value) {
 		return responses
 	}
 	delta := value[block.SentBytes:]
 	block.SentBytes = len(value)
-	s.usageText.WriteString(delta)
+	if !block.CustomInput {
+		s.usageText.WriteString(delta)
+	}
 	index := block.Index
 	media := &dto.ClaudeMediaMessage{}
 	switch block.Kind {
@@ -365,6 +395,7 @@ func (s *ResponsesToClaudeStreamState) stopBlock(block *responsesClaudeStreamBlo
 	if block == nil || block.Stopped {
 		return nil
 	}
+	block.CustomInputReady = true
 	responses := s.flushBlock(block, estimatedInputTokens)
 	responses = append(responses, s.startBlock(block, estimatedInputTokens)...)
 	if !block.Started {
@@ -415,6 +446,9 @@ func (s *ResponsesToClaudeStreamState) applyOutputItem(event *dto.ResponsesStrea
 		responses = append(responses, s.mergeFinalValue(block, text.String(), estimatedInputTokens)...)
 		responses = append(responses, s.appendAnnotations(block, annotations, estimatedInputTokens, true)...)
 	case "tool_use":
+		if stop {
+			block.CustomInputReady = true
+		}
 		responses = append(responses, s.mergeFinalValue(block, item.ArgumentsString(), estimatedInputTokens)...)
 	}
 	if stop {

@@ -8,7 +8,7 @@ DEV_POSTGRES_DB = new-api
 DEV_POSTGRES_USER = root
 DEV_SQLITE_PATH ?= one-api.db
 
-.PHONY: all build-web build-all-web start-api dev dev-api dev-api-rebuild dev-web reset-setup test
+.PHONY: all build-web build-all-web build-api-only start-api dev dev-api dev-api-rebuild dev-web reset-setup test
 
 all: build-all-web start-api
 
@@ -19,9 +19,15 @@ build-web:
 
 build-all-web: build-web
 
+# API-only backend build: no frontend bundle, no web/dist requirement.
+build-api-only:
+	@echo "Building API-only backend..."
+	@mkdir -p build
+	@cd $(API_DIR) && GOWORK=off go build -tags api_only -o build/new-api-api-only .
+
 start-api:
 	@echo "Starting api dev server..."
-	@cd $(API_DIR) && go run main.go &
+	@cd $(API_DIR) && go run . &
 
 dev-api:
 	@echo "Starting api services (docker)..."

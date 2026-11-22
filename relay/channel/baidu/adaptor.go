@@ -12,11 +12,13 @@ import (
 	"github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 )
 
 type Adaptor struct {
+	accessToken string
 }
 
 func (a *Adaptor) ConvertGeminiRequest(*gin.Context, *relaycommon.RelayInfo, *dto.GeminiChatRequest) (any, error) {
@@ -102,12 +104,10 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		suffix += strings.ToLower(info.UpstreamModelName)
 	}
 	fullRequestURL := fmt.Sprintf("%s/rpc/2.0/ai_custom/v1/wenxinworkshop/%s", info.ChannelBaseUrl, suffix)
-	var accessToken string
-	var err error
-	if accessToken, err = getBaiduAccessToken(info.ApiKey); err != nil {
-		return "", err
+	if a.accessToken == "" {
+		return "", errors.New("baidu access token not prepared")
 	}
-	fullRequestURL += "?access_token=" + accessToken
+	fullRequestURL += "?access_token=" + a.accessToken
 	return fullRequestURL, nil
 }
 
@@ -143,6 +143,17 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
+	if stopped := service.RelayRequestCancellation(c); stopped != nil {
+		return nil, stopped
+	}
+	client, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
+	if err != nil {
+		return nil, fmt.Errorf("new proxy http client failed: %w", err)
+	}
+	a.accessToken, err = getBaiduAccessToken(c.Request.Context(), client, info.ApiKey)
+	if err != nil {
+		return nil, err
+	}
 	return channel.DoApiRequest(a, c, info, requestBody)
 }
 

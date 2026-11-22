@@ -76,5 +76,16 @@ export function sanitizeAuthRedirect(
     return null
   }
 
+  // Retired destinations can contain legacy bearer secrets. Reject them
+  // rather than copying their query or fragment into login/OAuth storage.
+  try {
+    const routePath = decodeURI(redirectURL.pathname)
+      .replace(/\/+$/, '')
+      .toLowerCase()
+    if (/^\/agent-(?:platform|redemption)(?:\/|$)/.test(routePath)) return null
+  } catch {
+    return null
+  }
+
   return `${redirectURL.pathname}${redirectURL.search}${redirectURL.hash}`
 }

@@ -16,12 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { Table } from '@tanstack/react-table'
+
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import type { Table } from '@/lib/console-table'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { batchDeleteApiKeys } from '../api'
@@ -29,30 +30,31 @@ import { ERROR_MESSAGES } from '../constants'
 import type { ApiKey } from '../types'
 import { useApiKeys } from './api-keys-provider'
 
-type ApiKeysMultiDeleteDialogProps<TData> = {
+type ApiKeysMultiDeleteDialogProps<TData extends object> = {
+  targets: Pick<ApiKey, 'id' | 'name'>[]
   open: boolean
   onOpenChange: (open: boolean) => void
   table: Table<TData>
 }
 
-export function ApiKeysMultiDeleteDialog<TData>({
+export function ApiKeysMultiDeleteDialog<TData extends object>({
   open,
   onOpenChange,
   table,
+  targets,
 }: ApiKeysMultiDeleteDialogProps<TData>) {
   const { t } = useTranslation()
   const { triggerRefresh } = useApiKeys()
   const [isDeleting, setIsDeleting] = useState(false)
-  const selectedRows = table.getFilteredSelectedRowModel().rows
 
   const handleConfirm = async () => {
     setIsDeleting(true)
     try {
-      const ids = selectedRows.map((row) => (row.original as ApiKey).id)
+      const ids = targets.map((target) => target.id)
       const result = await batchDeleteApiKeys(ids)
 
       if (result.success) {
-        const count = result.data || ids.length
+        const count = result.data ?? ids.length
         toast.success(t('Successfully deleted {{count}} API key(s)', { count }))
         table.resetRowSelection()
         triggerRefresh()
@@ -75,12 +77,14 @@ export function ApiKeysMultiDeleteDialog<TData>({
       handleConfirm={handleConfirm}
       isLoading={isDeleting}
       className='max-w-md'
-      title={t('Delete {{count}} API key(s)?', { count: selectedRows.length })}
+      title={t('Delete {{count}} API key(s)?', { count: targets.length })}
       desc={
         <>
           {t('You are about to delete {{count}} API key(s).', {
-            count: selectedRows.length,
+            count: targets.length,
           })}{' '}
+          <br />
+          {targets.map((target) => `${target.name} (#${target.id})`).join(', ')}
           <br />
           {t('This action cannot be undone.')}
         </>

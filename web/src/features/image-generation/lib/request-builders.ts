@@ -1,0 +1,248 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import { t } from 'i18next'
+
+import type { GeneratedImage } from '../types'
+import {
+  isBlobSchemeUrl,
+  isDataSchemeUrl,
+  isHttpSchemeUrl,
+  isManagedObjectUrl,
+} from './managed-object-urls'
+import {
+  getModelCapability,
+  resolveSettingsForModel,
+} from './model-capabilities'
+import { getReferenceImageMimeType } from './reference-validation'
+
+export type GenerationsRequestBody = {
+  model: string
+  prompt: string
+  n: number
+  response_format?: 'url' | 'b64_json'
+  size?: string
+  quality?: string
+  style?: string
+  aspect_ratio?: string
+  resolution?: string
+}
+
+const SAFE_HTTP_URL = /^https?:\/\//i
+const SAFE_DATA_IMAGE_URL =
+  /^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/i
+
+export function isSafeImageUrl(url: string): boolean {
+  if (isHttpSchemeUrl(url)) return SAFE_HTTP_URL.test(url.trimStart())
+  if (isBlobSchemeUrl(url)) return isManagedObjectUrl(url)
+  if (isDataSchemeUrl(url)) {
+    return SAFE_DATA_IMAGE_URL.test(url.replaceAll(/\s+/g, ''))
+  }
+  return false
+}
+
+export function assertSafeImageUrl(url: string): void {
+  if (!isSafeImageUrl(url)) {
+    throw new Error('Image not available')
+  }
+}
+
+function normalizeCount(count: number, maxN: number): number {
+  let next = Math.floor(count)
+  if (!Number.isFinite(next)) next = 1
+  return Math.max(1, Math.min(maxN, 4, next))
+}
+
+export function buildGenerationsBody(params: {
+  model: string
+  prompt: string
+  count: number
+  size: string
+  resolution?: string
+  quality: string
+  style: string
+}): GenerationsRequestBody {
+  const capability = getModelCapability(params.model)
+  const count = normalizeCount(params.count, capability.maxN)
+
+  const body: GenerationsRequestBody = {
+    model: params.model,
+    prompt: params.prompt,
+    n: count,
+  }
+  if (capability.supportsResponseFormat) {
+    body.response_format = capability.responseFormat ?? 'url'
+  }
+  if (capability.requestFormat === 'grok') {
+    const settings = resolveSettingsForModel(params.model, params)
+    body.aspect_ratio = settings.size
+    const resolution = params.resolution || '1k'
+    if (!capability.resolutions?.includes(resolution)) {
+      throw new Error(t('Unsupported image resolution for this model'))
+    }
+    body.resolution = resolution
+    if (settings.quality) body.quality = settings.quality
+    return body
+  }
+  if (capability.sizes.length > 0 && params.size) body.size = params.size
+  if (capability.qualities.length > 0 && params.quality) {
+    body.quality = params.quality
+  }
+  if (capability.styles.length > 0 && params.style) body.style = params.style
+  return body
+}
+
+export function buildEditsFormData(params: {
+  model: string
+  prompt: string
+  count: number
+  size: string
+  images: File[]
+  quality?: string
+}): FormData {
+  const capability = getModelCapability(params.model)
+  const count = normalizeCount(params.count, capability.maxN)
+  const limited = params.images.slice(0, capability.maxReferenceImages)
+
+  const form = new FormData()
+  form.append('model', params.model)
+  form.append('prompt', params.prompt)
+  for (const file of limited) {
+    const image = file.type
+      ? file
+      : file.slice(0, file.size, getReferenceImageMimeType(file))
+    form.append(limited.length === 1 ? 'image' : 'image[]', image, file.name)
+  }
+  form.append('n', String(count))
+  if (capability.qualities.length > 0 && params.quality) {
+    form.append('quality', params.quality)
+  }
+  if (capability.sizes.length > 0 && params.size) {
+    form.append('size', params.size)
+  }
+  if (capability.supportsResponseFormat) {
+    form.append('response_format', capability.responseFormat ?? 'url')
+  }
+  return form
+}
+
+type RawImageItem = {
+  url?: string
+  b64_json?: string
+  mime_type?: string
+}
+
+function normalizeDataUrl(value: string, declaredMime?: string): string {
+  if (isDataSchemeUrl(value)) return value
+  let mime = typeof declaredMime === 'string' ? declaredMime.toLowerCase() : ''
+  if (mime && !['image/png', 'image/jpeg', 'image/webp'].includes(mime)) {
+    return ''
+  }
+  if (!mime) {
+    try {
+      const signature = atob(value.slice(0, 24))
+      if (signature.startsWith('\xff\xd8\xff')) mime = 'image/jpeg'
+      else if (
+        signature.startsWith('RIFF') &&
+        signature.slice(8, 12) === 'WEBP'
+      ) {
+        mime = 'image/webp'
+      }
+    } catch {
+      return ''
+    }
+  }
+  return `data:${mime || 'image/png'};base64,${value}`
+}
+
+export function normalizeImageResponse(params: {
+  data: unknown
+  prompt: string
+  model: string
+  size: string
+}): GeneratedImage[] {
+  const raw = params.data as { data?: RawImageItem | RawImageItem[] } | null
+  // Some image providers return a single object instead of a one-item array.
+  // Keep both shapes on the same URL validation and display path.
+  let items: RawImageItem[] = []
+  if (Array.isArray(raw?.data)) {
+    items = raw.data
+  } else if (raw?.data && typeof raw.data === 'object') {
+    items = [raw.data]
+  }
+  const now = Date.now()
+
+  const results: { index: number; image: GeneratedImage }[] = []
+  const urlOnly: typeof results = []
+  const base64Only: typeof results = []
+  const image = (url: string, index: number): GeneratedImage => ({
+    id: `${now}-${index}`,
+    url,
+    source: isDataSchemeUrl(url) ? 'b64' : 'url',
+    prompt: params.prompt,
+    model: params.model,
+    createdAt: now,
+  })
+
+  for (const [index, item] of items.entries()) {
+    if (!item || typeof item !== 'object') continue
+    const url =
+      typeof item.url === 'string' && isSafeImageUrl(item.url) ? item.url : ''
+    const base64 =
+      typeof item.b64_json === 'string' && item.b64_json
+        ? normalizeDataUrl(item.b64_json, item.mime_type)
+        : ''
+    const safeBase64 = isSafeImageUrl(base64) ? base64 : ''
+    if (url && safeBase64) {
+      results.push({ index, image: image(url, index) })
+    } else if (url) {
+      urlOnly.push({ index, image: image(url, index) })
+    } else if (safeBase64) {
+      base64Only.push({ index, image: image(safeBase64, index) })
+    }
+  }
+
+  // Match the relay's OpenAI image count convention: separate URL-only and
+  // base64-only rows can be two representations of the same image.
+  const splitCount = Math.min(urlOnly.length, base64Only.length)
+  for (const [index, entry] of urlOnly.entries()) {
+    const alternate = base64Only[index]
+    results.push(
+      alternate
+        ? {
+            index: Math.min(entry.index, alternate.index),
+            image: alternate.image,
+          }
+        : entry
+    )
+  }
+  results.push(...base64Only.slice(splitCount))
+  return results
+    .sort((left, right) => left.index - right.index)
+    .map((entry) => entry.image)
+}
+
+export function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof DOMException && error.name === 'AbortError') ||
+    (typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: string }).code === 'ERR_CANCELED')
+  )
+}

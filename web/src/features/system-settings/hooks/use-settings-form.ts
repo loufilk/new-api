@@ -26,6 +26,8 @@ import {
 } from 'react-hook-form'
 import { toast } from 'sonner'
 
+import { syncSettingsFormDefaults } from './use-reset-form'
+
 type SettingsFormOptions<T extends FieldValues> = UseFormProps<T> & {
   onSubmit: (data: T, changedFields: Record<string, unknown>) => Promise<void>
   compareValues?: (a: unknown, b: unknown) => boolean
@@ -207,7 +209,8 @@ export function useSettingsForm<T extends FieldValues>({
   /* eslint-enable react-hooks/refs */
 
   useEffect(() => {
-    if (!expandedDefaults) return
+    // Async default factories are initialized by useForm, not this sync refresh.
+    if (!expandedDefaults || typeof expandedDefaults === 'function') return
 
     const flattened = flattenValues(expandedDefaults as T)
     const serialized = JSON.stringify(flattened)
@@ -219,7 +222,7 @@ export function useSettingsForm<T extends FieldValues>({
     baselineRef.current = flattened
     defaultValuesRef.current = expandedDefaults as T
     serializedDefaultsRef.current = serialized
-    form.reset(expandedDefaults as T)
+    syncSettingsFormDefaults<T>(form, expandedDefaults)
   }, [expandedDefaults, form])
 
   const defaultCompare = (a: unknown, b: unknown): boolean => {
@@ -263,11 +266,13 @@ export function useSettingsForm<T extends FieldValues>({
 
     await onSubmit(data, changedFields)
 
-    const flattenedValues = flattenValues(data)
+    const flattenedValues = { ...baselineRef.current, ...changedFields }
+    const savedValues = expandDotPaths(flattenedValues) as T
     baselineRef.current = flattenedValues
-    defaultValuesRef.current = data
-    serializedDefaultsRef.current = JSON.stringify(flattenedValues)
-    form.reset(data)
+    defaultValuesRef.current = savedValues
+    // Acknowledge only fields sent by this submission. Preserve newer server
+    // defaults for untouched fields and user edits made while saving.
+    form.resetDefaultValues(savedValues)
   }
 
   const handleReset = () => {

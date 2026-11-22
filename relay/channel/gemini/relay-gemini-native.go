@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -8,14 +9,15 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
-	"github.com/tidwall/gjson"
 )
 
 func GeminiTextGenerationHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
@@ -24,18 +26,23 @@ func GeminiTextGenerationHandler(c *gin.Context, info *relaycommon.RelayInfo, re
 	// 读取响应体
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		return nil, geminiBadResponse(c, err)
 	}
 
-	logger.LogDebug(c, "Gemini native response body: %s", responseBody)
+	if apiErr := geminiEnvelopeError(c, responseBody); apiErr != nil {
+		return nil, apiErr
+	}
 
 	// 解析为 Gemini 原生响应格式
 	var geminiResponse dto.GeminiChatResponse
 	err = common.Unmarshal(responseBody, &geminiResponse)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		return nil, geminiBadResponse(c, err)
 	}
-	info.ObserveResponseModel(gjson.GetBytes(responseBody, "modelVersion").Str)
+	if len(geminiResponse.Candidates) == 0 && (geminiResponse.PromptFeedback == nil || geminiResponse.PromptFeedback.BlockReason == nil || *geminiResponse.PromptFeedback.BlockReason == "") {
+		return nil, geminiBadResponse(c, errors.New("Gemini response has no candidates or prompt block reason"))
+	}
+	info.ObserveResponseModel(ojson.GetBytes(responseBody, "modelVersion").Str)
 	var grounding geminiGroundingCounter
 	grounding.observe(&geminiResponse)
 	grounding.commit(info)
@@ -59,25 +66,47 @@ func NativeGeminiEmbeddingHandler(c *gin.Context, resp *http.Response, info *rel
 
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		return nil, geminiBadResponse(c, err)
 	}
 
-	logger.LogDebug(c, "Gemini native embedding response body: %s", responseBody)
+	if apiErr := geminiEnvelopeError(c, responseBody); apiErr != nil {
+		return nil, apiErr
+	}
 
-	usage := service.ResponseText2Usage(c, "", info.UpstreamModelName, info.GetEstimatePromptTokens())
-
+	var metadata *dto.GeminiEmbeddingUsageMetadata
 	if info.IsGeminiBatchEmbedding {
 		var geminiResponse dto.GeminiBatchEmbeddingResponse
 		err = common.Unmarshal(responseBody, &geminiResponse)
 		if err != nil {
-			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+			return nil, geminiBadResponse(c, err)
 		}
+		if len(geminiResponse.Embeddings) == 0 {
+			return nil, geminiBadResponse(c, errors.New("Gemini response has no embeddings"))
+		}
+		for _, embedding := range geminiResponse.Embeddings {
+			if embedding == nil || len(embedding.Values) == 0 {
+				return nil, geminiBadResponse(c, errors.New("Gemini response has an empty embedding"))
+			}
+		}
+		metadata = geminiResponse.UsageMetadata
 	} else {
 		var geminiResponse dto.GeminiEmbeddingResponse
 		err = common.Unmarshal(responseBody, &geminiResponse)
 		if err != nil {
-			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+			return nil, geminiBadResponse(c, err)
 		}
+		if len(geminiResponse.Embedding.Values) == 0 {
+			return nil, geminiBadResponse(c, errors.New("Gemini response has an empty embedding"))
+		}
+		metadata = geminiResponse.UsageMetadata
+	}
+
+	var usage *dto.Usage
+	if upstream := metadata.GeminiUsageMetadata(); upstream != nil {
+		upstreamUsage := buildUsageFromGeminiMetadata(upstream, info.GetEstimatePromptTokens())
+		usage = &upstreamUsage
+	} else {
+		usage = service.ResponseText2Usage(c, "", info.UpstreamModelName, info.GetEstimatePromptTokens())
 	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
@@ -88,13 +117,21 @@ func NativeGeminiEmbeddingHandler(c *gin.Context, resp *http.Response, info *rel
 func GeminiTextGenerationStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	helper.SetEventStreamHeaders(c)
 
-	return geminiStreamHandler(c, info, resp, func(data string, geminiResponse *dto.GeminiChatResponse) bool {
+	usage, apiErr := geminiStreamHandler(c, info, resp, func(data string, geminiResponse *dto.GeminiChatResponse) bool {
 		err := helper.StringData(c, data)
 		if err != nil {
 			logger.LogError(c, common.LogText("failed to write stream data: %s", err.Error()))
+			openai.NewStreamResponseError(info, err)
 			return false
 		}
 		info.SendResponseCount++
 		return true
 	})
+	if apiErr != nil {
+		emitGeminiStreamFailure(c, info, apiErr)
+		if info.StreamStatus.ClientGone() || service.RelayRequestCancellation(c) != nil {
+			common.SetContextKey(c, constant.ContextKeyStreamErrorHandled, true)
+		}
+	}
+	return usage, apiErr
 }

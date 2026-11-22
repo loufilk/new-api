@@ -114,20 +114,22 @@ export function DateTimePicker({
   }
 
   return (
-    <div className={cn('flex gap-2', className)}>
+    <div className={cn('flex min-w-0 flex-wrap gap-2', className)}>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger
           render={
             <Button
               variant='outline'
               className={cn(
-                'flex-1 justify-between font-normal',
+                'min-w-0 flex-1 basis-40 justify-between font-normal',
                 !date && 'text-muted-foreground'
               )}
             />
           }
         >
-          {date ? dayjs(date).format('YYYY-MM-DD') : placeholderText}
+          <span className='truncate'>
+            {date ? dayjs(date).format('YYYY-MM-DD') : placeholderText}
+          </span>
           <ChevronDownIcon className='h-4 w-4 opacity-50' />
         </PopoverTrigger>
         <PopoverContent className='w-auto overflow-hidden p-0' align='start'>
@@ -150,7 +152,7 @@ export function DateTimePicker({
         value={time}
         aria-label={t('Time')}
         onChange={handleTimeChange}
-        className='w-32 appearance-none [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none'
+        className='w-32 max-w-full shrink-0 appearance-none [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none'
         disabled={!date}
       />
       {date && (

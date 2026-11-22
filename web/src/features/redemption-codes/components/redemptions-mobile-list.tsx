@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { Table as TanstackTable } from '@tanstack/react-table'
+
 import { Database } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -31,6 +31,7 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
+import type { Table as TanstackTable } from '@/lib/console-table'
 import { formatQuota } from '@/lib/format'
 import { cn } from '@/lib/utils'
 

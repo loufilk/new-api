@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
-import type { Table } from '@tanstack/react-table'
 import { Eye, EyeOff, Trash2, Copy, Building2, Unlink } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -30,6 +29,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import type { Table } from '@/lib/console-table'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
 
 import { handleBatchEnableModels, handleBatchDisableModels } from '../lib'
@@ -38,11 +38,11 @@ import type { VendorOperation } from '../vendor-api'
 import { ModelDeleteDialog } from './dialogs/model-delete-dialog'
 import { VendorOperationDialog } from './dialogs/vendor-operation-dialog'
 
-interface DataTableBulkActionsProps<TData> {
+interface DataTableBulkActionsProps<TData extends object> {
   table: Table<TData>
 }
 
-export function DataTableBulkActions<TData>({
+export function DataTableBulkActions<TData extends object>({
   table,
 }: DataTableBulkActionsProps<TData>) {
   const { t } = useTranslation()

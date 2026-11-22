@@ -37,8 +37,6 @@ const profile: UserProfile = {
   request_count: 0,
   status: 1,
   aff_count: 0,
-  aff_quota: 0,
-  aff_history_quota: 0,
   created_time: 0,
 }
 const settings = {
@@ -60,7 +58,8 @@ afterEach(() => vi.restoreAllMocks())
 
 /** The body a PUT sends over the wire: undefined fields are left out. */
 function sentBody(put: { mock: { calls: unknown[][] } }): unknown {
-  return JSON.parse(JSON.stringify(put.mock.calls[0][1]))
+  const jsonBody = JSON.stringify(put.mock.calls[0][1])
+  return JSON.parse(jsonBody)
 }
 
 describe('user settings saves across profile and security', () => {
@@ -342,4 +341,39 @@ describe('notifications a user receives', () => {
     await save(onUpdate)
     expect(sentBody(put)).toMatchObject({ channel_notify_enabled: true })
   })
+
+  it.each(['1e308', '18014398510', '-1'])(
+    'a converted threshold outside the valid quota range (%s) does not overwrite the previous setting',
+    async (amount) => {
+      const setting = { notify_type: 'email', quota_warning_threshold: 1234 }
+      const put = mockSave(ROLE.USER, setting)
+      const onUpdate = renderNotificationTab(ROLE.USER, setting)
+      const input = screen.getByRole('spinbutton', {
+        name: 'Reminder threshold (USD)',
+      })
+      fireEvent.change(input, { target: { value: amount } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }))
+      expect(
+        await screen.findByText('Please enter a valid number')
+      ).toBeVisible()
+      expect(input).toHaveAttribute('aria-invalid', 'true')
+      expect(put).not.toHaveBeenCalled()
+      expect(onUpdate).not.toHaveBeenCalled()
+      expect(input).toHaveValue(Number(amount))
+      fireEvent.change(input, { target: { value: '0.002468' } })
+      await save(onUpdate)
+      expect(sentBody(put)).toMatchObject({ quota_warning_threshold: 1234 })
+    }
+  )
+
+  it.each([true, false])(
+    'preserves an untouched finite legacy fractional quota when reminder controls are visible=%s',
+    async (visible) => {
+      const setting = { notify_type: 'email', quota_warning_threshold: 1234.5 }
+      const put = mockSave(ROLE.USER, setting)
+      const onUpdate = renderNotificationTab(ROLE.USER, setting, visible)
+      await save(onUpdate)
+      expect(sentBody(put)).toMatchObject({ quota_warning_threshold: 1234.5 })
+    }
+  )
 })

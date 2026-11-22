@@ -1,6 +1,9 @@
 package service
 
 import (
+	"errors"
+	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -46,11 +49,67 @@ func GroupInUserUsableGroups(userGroup, groupName string) bool {
 	return ok
 }
 
+var (
+	ErrTokenGroupForbidden  = errors.New("token group is unauthorized")
+	ErrTokenGroupDeprecated = errors.New("token group is unavailable")
+)
+
+// ValidateTokenGroup is the shared relay, token-editing and discovery policy.
+// Empty selections inherit the user's group. Named selections use exact keys;
+// administrators do not bypass this routing permission boundary.
+func ValidateTokenGroup(userGroup, tokenGroup string) error {
+	if tokenGroup == "" {
+		return nil
+	}
+	if !GroupInUserUsableGroups(userGroup, tokenGroup) {
+		return ErrTokenGroupForbidden
+	}
+	if tokenGroup != "auto" && !ratio_setting.ContainsGroupRatio(tokenGroup) {
+		return ErrTokenGroupDeprecated
+	}
+	return nil
+}
+
+// ValidateTokenRoutingScope distinguishes an explicit manual group list from
+// permission to inherit the virtual Auto group. Runtime revocation filters the
+// explicit list and never falls back to global Auto when it becomes empty.
+func ValidateTokenRoutingScope(userGroup string, token *model.Token) error {
+	if token == nil {
+		return fmt.Errorf("token is nil")
+	}
+	if token.Group == "auto" {
+		groups, err := token.GetAutoGroups()
+		if err != nil {
+			return err
+		}
+		if len(groups) > 0 {
+			if len(FilterUserTokenAutoGroups(userGroup, groups)) > 0 {
+				return nil
+			}
+			return ErrTokenGroupForbidden
+		}
+	}
+	return ValidateTokenGroup(userGroup, token.Group)
+}
+
 func IsUserSelectableGroup(userGroup, groupName string) bool {
 	if groupName == "" || groupName == "auto" {
 		return false
 	}
 	return GroupInUserUsableGroups(userGroup, groupName) && ratio_setting.ContainsGroupRatio(groupName)
+}
+
+// GetUserSelectableGroups returns the current authorized concrete scope, not
+// the configured virtual Auto list or the token's dormant manual selection.
+func GetUserSelectableGroups(userGroup string) []string {
+	groups := make([]string, 0)
+	for group := range GetUserUsableGroups(userGroup) {
+		if IsUserSelectableGroup(userGroup, group) {
+			groups = append(groups, group)
+		}
+	}
+	sort.Strings(groups)
+	return groups
 }
 
 // GetUserAutoGroup 根据用户分组获取自动分组设置
@@ -92,10 +151,52 @@ func FilterUserTokenAutoGroups(userGroup string, groups []string) []string {
 	return filtered
 }
 
+// GetTokenEffectiveGroups mirrors TokenAuth + auto-group routing for read-only
+// capability discovery. A concrete token group is authoritative; "auto" uses
+// the token snapshot when present and otherwise inherits the user's global Auto
+// order. An empty token group follows the user's own group, matching TokenAuth.
+func GetTokenEffectiveGroups(userGroup string, token *model.Token) ([]string, error) {
+	if token == nil {
+		return nil, fmt.Errorf("token is nil")
+	}
+	if token.SmartRouting {
+		return GetUserSelectableGroups(userGroup), nil
+	}
+	tokenGroup := token.Group
+	if err := ValidateTokenRoutingScope(userGroup, token); err != nil {
+		if errors.Is(err, ErrTokenGroupForbidden) || errors.Is(err, ErrTokenGroupDeprecated) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+	switch tokenGroup {
+	case "":
+		return []string{userGroup}, nil
+	case "auto":
+		if token.AutoGroups == "" {
+			return GetUserAutoGroup(userGroup), nil
+		}
+		groups, err := token.GetAutoGroups()
+		if err != nil {
+			return nil, err
+		}
+		// Legacy empty JSON snapshots inherit too, as SetupContextForToken does.
+		if len(groups) == 0 {
+			return GetUserAutoGroup(userGroup), nil
+		}
+		return FilterUserTokenAutoGroups(userGroup, groups), nil
+	default:
+		return []string{tokenGroup}, nil
+	}
+}
+
 // GetRequestAutoGroups resolves the ordered Auto groups for the current token.
 // The absence of the context value means that the token inherits the complete
 // global Auto list; a present (even empty) value is an explicit token snapshot.
 func GetRequestAutoGroups(c *gin.Context, userGroup string) []string {
+	if common.GetContextKeyBool(c, constant.ContextKeyTokenSmartRouting) {
+		return GetUserSelectableGroups(userGroup)
+	}
 	value, ok := common.GetContextKey(c, constant.ContextKeyTokenAutoGroups)
 	if !ok {
 		return GetUserAutoGroup(userGroup)

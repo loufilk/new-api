@@ -7,10 +7,12 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
@@ -37,6 +39,12 @@ type userModelsResponse struct {
 func setupModelListControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
+	if os.Getenv("TEST_TASK_DB_DIALECT") == "postgres" {
+		db := openTokenControllerTestDB(t)
+		require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.Option{}))
+		return db
+	}
+
 	initModelListColumnNames(t)
 
 	gin.SetMode(gin.TestMode)
@@ -49,7 +57,7 @@ func setupModelListControllerTestDB(t *testing.T) *gorm.DB {
 	model.DB = db
 	model.LOG_DB = db
 
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.Option{}))
 
 	t.Cleanup(func() {
 		sqlDB, err := db.DB()
@@ -171,6 +179,94 @@ func pricingByModelName(pricings []model.Pricing) map[string]model.Pricing {
 	return byName
 }
 
+func modelSquareData[T any](t *testing.T, handler gin.HandlerFunc, path, userGroup string) T {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, path, nil)
+	if userGroup != "" {
+		common.SetContextKey(ctx, constant.ContextKeyUserGroup, userGroup)
+	}
+	handler(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool `json:"success"`
+		Data    T    `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	return response.Data
+}
+
+func TestModelSquareGroupVisibility(t *testing.T) {
+	originalGroups := setting.UserUsableGroups2JSONString()
+	originalRatios := ratio_setting.GroupRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalGroups))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalRatios))
+	})
+
+	for _, dialect := range []struct{ kind, env string }{{"sqlite", ""}, {"mysql", "TEST_MYSQL_DSN"}, {"postgres", "TEST_POSTGRES_DSN"}} {
+		t.Run(dialect.kind, func(t *testing.T) {
+			if dialect.env != "" && os.Getenv(dialect.env) == "" {
+				t.Skip("set " + dialect.env + " to run this database")
+			}
+			db := modelManagementDB(t, dialect.kind, os.Getenv(dialect.env))
+			require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Public"}`))
+			require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"internal":2}`))
+			require.NoError(t, db.Create(&[]model.Ability{
+				{Model: "shared", Group: "default", ChannelId: 1, Enabled: true},
+				{Model: "shared", Group: "internal", ChannelId: 1, Enabled: true},
+				{Model: "private-only", Group: "internal", ChannelId: 1, Enabled: true},
+				{Model: "wildcard", Group: "all", ChannelId: 1, Enabled: true},
+				{Model: "wildcard", Group: "internal", ChannelId: 1, Enabled: true},
+			}).Error)
+			model.InvalidatePricingCache()
+			t.Cleanup(model.InvalidatePricingCache)
+
+			guest := pricingByModelName(modelSquareData[[]model.Pricing](t, GetPricing, "/api/pricing", ""))
+			assert.Equal(t, []string{"default"}, guest["shared"].EnableGroup)
+			assert.Equal(t, []string{"all"}, guest["wildcard"].EnableGroup)
+			assert.NotContains(t, guest, "private-only")
+			member := pricingByModelName(modelSquareData[[]model.Pricing](t, GetPricing, "/api/pricing", "internal"))
+			assert.ElementsMatch(t, []string{"default", "internal"}, member["shared"].EnableGroup)
+			assert.Equal(t, []string{"internal"}, member["private-only"].EnableGroup)
+
+			require.NoError(t, db.AutoMigrate(&model.PerfMetric{}))
+			ts := time.Now().Add(-time.Hour).Unix()
+			require.NoError(t, db.Create(&[]model.PerfMetric{
+				{ModelName: "shared", Group: "default", BucketTs: ts, RequestCount: 1, SuccessCount: 1},
+				{ModelName: "shared", Group: "internal", BucketTs: ts, RequestCount: 1},
+				{ModelName: "private-only", Group: "internal", BucketTs: ts, RequestCount: 1},
+			}).Error)
+			const detailPath = "/api/perf-metrics?model=shared"
+			const summaryPath = "/api/perf-metrics/summary?recent_model=private-only"
+			detail := modelSquareData[perfmetrics.QueryResult](t, GetPerfMetrics, detailPath, "")
+			require.Len(t, detail.Groups, 1)
+			assert.Equal(t, "default", detail.Groups[0].Group)
+			denied := modelSquareData[perfmetrics.QueryResult](t, GetPerfMetrics, detailPath+"&group=internal", "")
+			assert.Empty(t, denied.Groups)
+			summary := modelSquareData[perfmetrics.SummaryAllResult](t, GetPerfMetricsSummary, summaryPath, "")
+			require.Len(t, summary.Models, 1)
+			assert.Equal(t, "shared", summary.Models[0].ModelName)
+			assert.Equal(t, 100.0, summary.Models[0].SuccessRate)
+			assert.NotContains(t, summary.RecentSuccessSeries, "private-only")
+			allowed := modelSquareData[perfmetrics.QueryResult](t, GetPerfMetrics, detailPath+"&group=internal", "internal")
+			require.Len(t, allowed.Groups, 1)
+			assert.Equal(t, "internal", allowed.Groups[0].Group)
+
+			require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{}`))
+			assert.Empty(t, modelSquareData[[]model.Pricing](t, GetPricing, "/api/pricing", ""))
+			assert.Empty(t, modelSquareData[perfmetrics.QueryResult](t, GetPerfMetrics, detailPath, "").Groups)
+			assert.Empty(t, modelSquareData[perfmetrics.SummaryAllResult](t, GetPerfMetricsSummary, summaryPath, "").Models)
+			dashboard := modelSquareData[perfmetrics.SummaryAllResult](t, GetDashboardPerfMetricsSummary, "/api/data/perf-metrics/summary", "")
+			assert.Len(t, dashboard.Models, 2)
+			require.NotNil(t, dashboard.Summary)
+			assert.Equal(t, 33.33, dashboard.Summary.SuccessRate)
+		})
+	}
+}
+
 func decodeUserModelsResponse(t *testing.T, recorder *httptest.ResponseRecorder) []string {
 	t.Helper()
 
@@ -277,6 +373,7 @@ func TestListModelsIncludesTieredBillingModel(t *testing.T) {
 	})
 
 	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.Channel{Id: 1, Type: constant.ChannelTypeOpenAI, Key: "synthetic-model-list", Status: common.ChannelStatusEnabled}).Error)
 	require.NoError(t, db.Create(&model.User{
 		Id:       1001,
 		Username: "model-list-user",
@@ -403,6 +500,7 @@ func TestListModelsTokenLimitIncludesTieredBillingModel(t *testing.T) {
 		"zz-token-tiered-empty-expr-model": "",
 	})
 	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.Channel{Id: 1, Type: constant.ChannelTypeOpenAI, Key: "synthetic-model-list", Status: common.ChannelStatusEnabled}).Error)
 	require.NoError(t, db.Create(&[]model.Ability{
 		{Group: "default", Model: "zz-token-tiered-visible-model", ChannelId: 1, Enabled: true},
 		{Group: "default", Model: "zz-token-tiered-empty-expr-model", ChannelId: 1, Enabled: true},
@@ -446,6 +544,7 @@ func TestListModelsTokenLimitUsesResolvedCustomAutoGroups(t *testing.T) {
 	})
 
 	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.Channel{Id: 1, Type: constant.ChannelTypeOpenAI, Key: "synthetic-model-list", Status: common.ChannelStatusEnabled}).Error)
 	require.NoError(t, db.Create(&[]model.Ability{
 		{Group: "vip", Model: "zz-vip-allowed", ChannelId: 1, Enabled: true},
 		{Group: "vip", Model: "zz-vip-denied", ChannelId: 1, Enabled: true},
@@ -528,4 +627,47 @@ func TestSetupLoginDoesNotTouchPasswordWhenPasswordFieldOmitted(t *testing.T) {
 	var stored model.User
 	require.NoError(t, db.First(&stored, user.Id).Error)
 	assert.Equal(t, hashedPassword, stored.Password)
+}
+
+func TestListModelsPublicOwnerOverridesWithoutLeakingOtherChannels(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	db := setupModelListControllerTestDB(t)
+	for _, ch := range []model.Channel{
+		{Id: 901, Type: constant.ChannelTypeOpenAI, Key: "secret-a", Name: "private-name-a", Status: common.ChannelStatusEnabled, Group: "default", Models: "public-a", Setting: common.GetPointer(`{"model_owned_by":"WanChuan A"}`)},
+		{Id: 902, Type: constant.ChannelTypeOpenAI, Key: "secret-b", Name: "private-name-b", Status: common.ChannelStatusEnabled, Group: "default", Models: "public-b", Setting: common.GetPointer(`{"model_owned_by":"WanChuan B"}`)},
+		{Id: 903, Type: constant.ChannelTypeOpenAI, Key: "secret-c", Name: "private-name-c", Status: common.ChannelStatusEnabled, Group: "private", Models: "public-a", Setting: common.GetPointer(`{"model_owned_by":"private-owner"}`)},
+	} {
+		require.NoError(t, db.Create(&ch).Error)
+		priority := int64(ch.Id)
+		require.NoError(t, db.Create(&model.Ability{Group: string(ch.Group), Model: ch.Models, ChannelId: ch.Id, Enabled: true, Priority: &priority}).Error)
+	}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+	payload := decodeListModelsPayload(t, recorder)
+	require.Len(t, payload.Data, 2)
+	owners := map[string]string{}
+	for _, item := range payload.Data {
+		owners[item.Id] = item.OwnedBy
+	}
+	assert.Equal(t, map[string]string{"public-a": "chuanapi", "public-b": "chuanapi"}, owners)
+	for _, private := range []string{"private-name", "secret-", "private-owner"} {
+		assert.NotContains(t, recorder.Body.String(), private)
+	}
+	// A limited API key must not gain visibility because a channel has a public label.
+	recorder = httptest.NewRecorder()
+	ctx, _ = gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyTokenModelLimitEnabled, true)
+	common.SetContextKey(ctx, constant.ContextKeyTokenModelLimit, map[string]bool{"public-b": true})
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+	payload = decodeListModelsPayload(t, recorder)
+	require.Len(t, payload.Data, 1)
+	assert.Equal(t, "public-b", payload.Data[0].Id)
+	assert.Equal(t, "chuanapi", payload.Data[0].OwnedBy)
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", 902).Update("setting", `{}`).Error)
+	assert.Equal(t, "chuanapi", buildOpenAIModel("public-b").OwnedBy)
 }

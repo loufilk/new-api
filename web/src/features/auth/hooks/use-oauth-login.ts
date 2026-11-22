@@ -47,6 +47,7 @@ export function useOAuthLogin(
   const [githubButtonText, setGithubButtonText] = useState('')
   const [githubButtonDisabled, setGithubButtonDisabled] = useState(false)
   const githubTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const googlePendingRef = useRef(false)
 
   useEffect(() => {
     setGithubButtonText(t('Continue with GitHub'))
@@ -170,6 +171,35 @@ export function useOAuthLogin(
     }
   }
 
+  const handleGoogleLogin = async () => {
+    if (googlePendingRef.current) return
+    if (!status?.google_oauth || !status.google_oauth_configured) {
+      toast.error(
+        t(
+          'Google OAuth is not configured or enabled. Please contact your administrator.'
+        )
+      )
+      return
+    }
+    googlePendingRef.current = true
+    setIsLoading(true)
+    try {
+      // The server binds this one-time flow to the browser after sign-out.
+      await resetSession()
+      const authorization = await createOAuthAuthorization('google', 'login')
+      if (!authorization.authorizationUrl) {
+        throw new AuthOperationError('Failed to initialize OAuth')
+      }
+      rememberOAuthLoginRedirect(authorization.state, redirectTo)
+      window.open(authorization.authorizationUrl, '_self')
+    } catch (error) {
+      handleServerError(AuthOperationError.from(error))
+    } finally {
+      googlePendingRef.current = false
+      setIsLoading(false)
+    }
+  }
+
   const handleTelegramLogin = async () => {
     if (!status?.telegram_oauth_configured) {
       toast.error(
@@ -236,6 +266,7 @@ export function useOAuthLogin(
     handleOIDCLogin,
     handleLinuxDOLogin,
     handleTelegramLogin,
+    handleGoogleLogin,
     handleCustomOAuthLogin,
   }
 }

@@ -1,0 +1,123 @@
+package model
+
+import (
+	"testing"
+
+	"github.com/QuantumNous/new-api/extension"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// This explicitly tracks core AutoMigrate order, including additive routing
+// metrics and the ChuanAPI registry tail. A changed index is a schema
+// ordering change and must be reviewed explicitly rather than hidden inside a
+// composition refactor.
+func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
+	reg := extension.NewRegistry()
+	require.NoError(t, reg.RegisterModelSet(extension.ModelSet{
+		Extension: "migration-sequence-test",
+		Name:      "chuanapi-wallet-models",
+		Phase:     extension.PhaseAfterCoreModels,
+		Models: []any{
+			&BalanceLedgerOperation{},
+			&BalanceLedger{},
+			&ModelBonusEligibleAudit{},
+			&ReferralCommission{},
+		},
+	}))
+
+	models := mainAutoMigrateModels(reg)
+	expected := []any{
+		&Channel{},
+		&Token{},
+		&User{},
+		&UserCallInterception{},
+		&UserCallInterceptionHit{},
+		&UserCallInterceptionAudit{},
+		&ModelTestRun{},
+		&ModelTestGate{},
+		&ModelFingerprintSiteConfig{},
+		&ModelFingerprintSiteAudit{},
+		&ModelFingerprintSiteRun{},
+		&ModelFingerprintSiteProbe{},
+		&UserSession{},
+		&AuthFlow{},
+		&ExternalIdentityClaim{},
+		&PasskeyCredential{},
+		&Option{},
+		&GroupRenameOperation{},
+		&LoginEncryptionKey{},
+		&Redemption{},
+		&RedemptionMutation{},
+		&PaymentReceipt{},
+		&Ability{},
+		&Log{},
+		&Midjourney{},
+		&TopUp{},
+		&NewUserBenefitConfig{},
+		&NewUserBenefitConfigAudit{},
+		&NewUserBenefitOrder{},
+		// These production schemas separate paid principal from verified rewards
+		// and enforce one reward per payment identity. Keep their deployed order.
+		&NewUserBenefitReward{},
+		&NewUserBenefitPaymentIdentity{},
+		&QuotaData{},
+		&Task{},
+		&TaskPlugin{},
+		&Model{},
+		&Vendor{},
+		&PrefillGroup{},
+		&Setup{},
+		&TwoFA{},
+		&TwoFABackupCode{},
+		&Checkin{},
+		&SubscriptionOrder{},
+		&UserSubscription{},
+		&SubscriptionPreConsumeRecord{},
+		&CustomOAuthProvider{},
+		&UserOAuthBinding{},
+		&PerfMetric{},
+		&TokenRoutingMetric{},
+		&SystemInstance{},
+		&SystemTask{},
+		&SystemTaskLock{},
+		&SystemSyncTopic{},
+		&CasbinRule{},
+		&AuthzRole{},
+		&UserAccessToken{},
+		&BillingFinalization{},
+		&BonusSourceLot{},
+		&BonusSourceState{},
+		&BonusSourceAccount{},
+		&BonusSourceAllocation{},
+		&BonusSourceRestoration{},
+		&BonusSourceRemoval{},
+		&BonusSourceAnomaly{},
+		&BonusSourceReconciliationCursor{},
+		&ReferralRewardOutbox{},
+		&ReferralRewardInbox{},
+		&CustomerInvoiceApplication{},
+		&CustomerInvoiceItem{},
+		&CustomerInvoiceDocument{},
+		&CustomerInvoiceSettingsRevision{},
+		&QuotaDataFlushCursor{},
+		&BalanceLedgerOperation{},
+		&BalanceLedger{},
+		&ModelBonusEligibleAudit{},
+		&ReferralCommission{},
+	}
+
+	require.Len(t, models, len(expected))
+	for i, want := range expected {
+		assert.IsType(t, want, models[i], "AutoMigrate model at index %d changed", i)
+	}
+}
+
+func TestMainAutoMigrateModelsWithoutRegistryKeepsCoreModels(t *testing.T) {
+	models := mainAutoMigrateModels(nil)
+	require.Len(t, models, 71)
+	assert.IsType(t, &Channel{}, models[0])
+	assert.IsType(t, &ReferralRewardInbox{}, models[65])
+	assert.IsType(t, &QuotaDataFlushCursor{}, models[len(models)-1])
+}

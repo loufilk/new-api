@@ -118,8 +118,12 @@ function flattenRules(nested: Record<string, Record<string, string>>): Rule[] {
   return rules
 }
 
-function serializeRules(rules: Rule[]): string {
-  const result: Record<string, Record<string, string>> = {}
+function serializeRules(rules: Rule[], groupNames: string[]): string {
+  // An explicit empty entry is stored configuration, not a missing rule. Keep
+  // it until the user removes that group; never invent a default grant for it.
+  const result: Record<string, Record<string, string>> = Object.fromEntries(
+    groupNames.map((name) => [name, {}])
+  )
   for (const { userGroup, visible, targetGroup, description } of rules) {
     if (!userGroup || !targetGroup) continue
     if (!result[userGroup]) result[userGroup] = {}
@@ -340,13 +344,18 @@ export function GroupSpecialUsableRulesEditor(
     flattenRules(safeParseJson(props.value))
   )
 
+  const [groupNames, setGroupNames] = useState<string[]>(() =>
+    Object.keys(safeParseJson(props.value))
+  )
+
   const { onChange } = props
   const emitChange = useCallback(
-    (newRules: Rule[]) => {
+    (newRules: Rule[], newGroupNames: string[] = groupNames) => {
       setRules(newRules)
-      onChange(serializeRules(newRules))
+      setGroupNames(newGroupNames)
+      onChange(serializeRules(newRules, newGroupNames))
     },
-    [onChange]
+    [groupNames, onChange]
   )
 
   const updateRule = useCallback(
@@ -374,29 +383,37 @@ export function GroupSpecialUsableRulesEditor(
 
   const removeGroup = useCallback(
     (groupName: string) =>
-      emitChange(rules.filter((r) => r.userGroup !== groupName)),
-    [rules, emitChange]
+      emitChange(
+        rules.filter((r) => r.userGroup !== groupName),
+        groupNames.filter((name) => name !== groupName)
+      ),
+    [rules, groupNames, emitChange]
   )
 
   const addRuleToGroup = useCallback(
     (groupName: string) => {
-      emitChange([
-        ...rules,
-        {
-          _id: uid(),
-          userGroup: groupName,
-          visible: true,
-          targetGroup: '',
-          description: '',
-        },
-      ])
+      emitChange(
+        [
+          ...rules,
+          {
+            _id: uid(),
+            userGroup: groupName,
+            visible: true,
+            targetGroup: '',
+            description: '',
+          },
+        ],
+        groupNames.includes(groupName) ? groupNames : [...groupNames, groupName]
+      )
     },
-    [rules, emitChange]
+    [rules, groupNames, emitChange]
   )
 
   const grouped = useMemo(() => {
-    const map: Record<string, Rule[]> = {}
-    const order: string[] = []
+    const map: Record<string, Rule[]> = Object.fromEntries(
+      groupNames.map((name) => [name, []])
+    )
+    const order = [...groupNames]
     for (const r of rules) {
       if (!r.userGroup) continue
       if (!map[r.userGroup]) {
@@ -406,7 +423,7 @@ export function GroupSpecialUsableRulesEditor(
       map[r.userGroup].push(r)
     }
     return order.map((name) => ({ name, items: map[name] }))
-  }, [rules])
+  }, [groupNames, rules])
 
   const newGroupCandidates = useMemo(() => {
     const used = new Set(grouped.map((g) => g.name))

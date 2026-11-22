@@ -237,7 +237,7 @@ describe('theme preference persistence', () => {
     for (const [key, value] of Object.entries(savedPreferences)) {
       localStorage.setItem(key, value)
     }
-    localStorage.setItem('stale-ui-cache', 'old')
+    localStorage.setItem('status', 'old')
 
     initializeFrontendCache()
     initializeFrontendCache()
@@ -248,7 +248,7 @@ describe('theme preference persistence', () => {
     for (const [key, value] of Object.entries(savedPreferences)) {
       expect(localStorage.getItem(key)).toBe(value)
     }
-    expect(localStorage.getItem('stale-ui-cache')).toBeNull()
+    expect(localStorage.getItem('status')).toBeNull()
   })
 })
 

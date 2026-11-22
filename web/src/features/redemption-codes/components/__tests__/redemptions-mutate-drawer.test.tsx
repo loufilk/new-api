@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   fireEvent,
   render,
@@ -23,7 +24,10 @@ import {
   waitFor,
   type RenderResult,
 } from '@testing-library/react'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import type { Redemption } from '../../types'
 
@@ -96,13 +100,19 @@ function deferred<T>() {
 function drawerTree(currentRow: Redemption, open = true) {
   return (
     <I18nextProvider i18n={i18n}>
-      <RedemptionsProvider>
-        <RedemptionsMutateDrawer
-          open={open}
-          currentRow={currentRow}
-          onOpenChange={() => undefined}
-        />
-      </RedemptionsProvider>
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <RedemptionsProvider>
+          <RedemptionsMutateDrawer
+            open={open}
+            currentRow={currentRow}
+            onOpenChange={() => undefined}
+          />
+        </RedemptionsProvider>
+      </QueryClientProvider>
       <Toaster duration={60_000} />
     </I18nextProvider>
   )
@@ -126,6 +136,9 @@ async function renderDrawer(
     },
   })
 
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'operator', role: ROLE.ADMIN })
   renderedDrawer = { result: render(drawerTree(currentRow)) }
 }
 
@@ -187,6 +200,9 @@ afterEach(() => {
   toast.dismiss()
   localStorage.clear()
   renderedDrawer = null
+  useAuthStore.getState().auth.reset()
+  sessionStorage.clear()
+  vi.restoreAllMocks()
 })
 
 describe('redemption drawer', () => {

@@ -40,7 +40,8 @@ func setupAccessTokenAudit(t *testing.T) (*model.User, string) {
 	require.NoError(t, err)
 	require.NoError(t, i18n.Init())
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Log{}, &model.AuditLog{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.UserAccessToken{}, &model.Option{},
-		&model.AuthFlow{}, &model.TwoFA{}, &model.TwoFABackupCode{}, &model.PasskeyCredential{}, &model.UserOAuthBinding{}))
+		&model.AuthFlow{}, &model.TwoFA{}, &model.TwoFABackupCode{}, &model.PasskeyCredential{}, &model.UserOAuthBinding{},
+		&model.Token{}, &model.Channel{}, &model.Ability{}, &model.SubscriptionPlan{}, &model.AgentInvitation{}))
 	model.DB, model.LOG_DB = db, db
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(time.Now().Unix()))
@@ -831,9 +832,12 @@ func (releasedAuditLog) TableName() string { return "logs" }
 func newAuditTestDatabase(t *testing.T, kind, dsn string) (*gorm.DB, string) {
 	t.Helper()
 	if kind == "sqlite" {
-		path := t.TempDir() + "/audit.db"
+		path := t.TempDir() + "/audit.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"
 		db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
 		require.NoError(t, err)
+		connection, err := db.DB()
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, connection.Close()) })
 		return db, path
 	}
 	require.NotEmpty(t, dsn)
@@ -1077,6 +1081,9 @@ func TestAuditDatabaseMatrix(t *testing.T) {
 					for range 2 {
 						require.NoError(t, model.InitDB())
 						require.NoError(t, model.InitLogDB())
+						connection, err := model.DB.DB()
+						require.NoError(t, err)
+						t.Cleanup(func() { require.NoError(t, connection.Close()) })
 					}
 					if !upgrade {
 						require.NoError(t, db.Create(&model.User{Username: "fresh-owner", Password: "placeholder", AffCode: "fresh-aff"}).Error)

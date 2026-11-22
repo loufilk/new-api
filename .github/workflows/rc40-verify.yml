@@ -1,0 +1,251 @@
+name: RC40 candidate verification
+
+on:
+  push:
+    branches: [codex/rc40-full-integration-20260922]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rc40-readonly-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  GOWORK: 'off'
+
+jobs:
+  backend:
+    runs-on: [self-hosted, linux, rc40]
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact candidate ancestry
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor 6691f29bd2feb3c89f9be396bfda169218f38176 HEAD
+          git merge-base --is-ancestor 0aec08fee811ec6136828fda790551b49e410301 HEAD
+          mkdir -p "$RUNNER_TEMP/rc40-checks" web/dist
+          touch web/dist/index.html
+          printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/rc40-checks/commit.txt"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+      - name: Root build
+        run: set -o pipefail; go build ./... 2>&1 | tee "$RUNNER_TEMP/rc40-checks/build.log"
+      - name: Root vet
+        if: success() || failure()
+        run: set -o pipefail; go vet ./... 2>&1 | tee "$RUNNER_TEMP/rc40-checks/vet.log"
+      - name: Complete root test suite
+        if: success() || failure()
+        run: set -o pipefail; go test ./... -count=1 2>&1 | tee "$RUNNER_TEMP/rc40-checks/root-tests.log"
+      - name: Independent relaykit build and complete tests
+        if: success() || failure()
+        working-directory: relaykit
+        run: |
+          set -euo pipefail
+          go build ./... 2>&1 | tee "$RUNNER_TEMP/rc40-checks/relaykit-build.log"
+          go test ./... -count=1 2>&1 | tee "$RUNNER_TEMP/rc40-checks/relaykit-tests.log"
+      - name: Release evidence gate regression tests
+        if: success() || failure()
+        run: set -o pipefail; python3 -m unittest discover -s ops/server/tests -p test_release_gate.py -v 2>&1 | tee "$RUNNER_TEMP/rc40-checks/release-gate.log"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: rc40-backend-${{ github.sha }}
+          path: ${{ runner.temp }}/rc40-checks/
+          retention-days: 7
+
+  frontend:
+    runs-on: [self-hosted, linux, rc40]
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+        working-directory: web
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.0'
+      - name: Add runner Node runtime
+        run: |
+          set -euo pipefail
+          test -x /opt/actions-runner-rc40/externals/node20/bin/node
+          echo /opt/actions-runner-rc40/externals/node20/bin >> "$GITHUB_PATH"
+      - name: Install locked dependencies
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/rc40-checks"
+          printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/rc40-checks/commit.txt"
+          bun install --frozen-lockfile
+      - name: Typecheck
+        run: set -o pipefail; bun run typecheck 2>&1 | tee "$RUNNER_TEMP/rc40-checks/typecheck.log"
+      - name: Lint
+        if: success() || failure()
+        run: set -o pipefail; bun run lint:ci 2>&1 | tee "$RUNNER_TEMP/rc40-checks/lint.log"
+      - name: Format
+        if: success() || failure()
+        run: set -o pipefail; bun run format:check 2>&1 | tee "$RUNNER_TEMP/rc40-checks/format.log"
+      - name: Copyright headers
+        if: success() || failure()
+        run: set -o pipefail; bun run copyright:check 2>&1 | tee "$RUNNER_TEMP/rc40-checks/copyright.log"
+      - name: Production build without publishing
+        if: success() || failure()
+        run: set -o pipefail; bun run build 2>&1 | tee "$RUNNER_TEMP/rc40-checks/build.log"
+      - name: Production dependency audit
+        if: success() || failure()
+        run: set -o pipefail; bun audit --production 2>&1 | tee "$RUNNER_TEMP/rc40-checks/dependencies.log"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: rc40-frontend-${{ github.sha }}
+          path: ${{ runner.temp }}/rc40-checks/
+          retention-days: 7
+
+  frontend-tests:
+    runs-on: [self-hosted, linux, rc40]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.0'
+          no-cache: true
+      - name: Add runner Node runtime
+        run: |
+          set -euo pipefail
+          test -x /opt/actions-runner-rc40/externals/node20/bin/node
+          echo /opt/actions-runner-rc40/externals/node20/bin >> "$GITHUB_PATH"
+      - name: Install locked dependencies
+        working-directory: web
+        env:
+          RC40_CHECK_DIR: ${{ runner.temp }}/rc40-checks/frontend-tests-${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          rm -rf "$RC40_CHECK_DIR"
+          mkdir -p "$RC40_CHECK_DIR"
+          printf '%s\n' "$GITHUB_SHA" > "$RC40_CHECK_DIR/commit.txt"
+          bun install --frozen-lockfile --force
+      - name: Verify Bun module loading
+        working-directory: web
+        env:
+          RC40_CHECK_DIR: ${{ runner.temp }}/rc40-checks/frontend-tests-${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          env | sort | grep -E '^(CI|GITHUB_ACTIONS|GITHUB_RUN|GITHUB_SHA|HOME|PATH|BUN|NODE|RUNNER)' || true
+          bun -e "import { z } from 'zod'; if (typeof z?.object !== 'function') process.exit(1); console.log('zod import ok')"
+      - name: Full Vitest shard with no file exclusions
+        working-directory: web
+        env:
+          RC40_CHECK_DIR: ${{ runner.temp }}/rc40-checks/frontend-tests-${{ matrix.shard }}
+        run: |
+          set -o pipefail
+          bun run test --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile="$RC40_CHECK_DIR/vitest.json" 2>&1 | tee "$RC40_CHECK_DIR/vitest.log"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: rc40-vitest-${{ matrix.shard }}-${{ github.sha }}
+          path: ${{ runner.temp }}/rc40-checks/frontend-tests-${{ matrix.shard }}/
+          retention-days: 7
+
+  databases:
+    runs-on: [self-hosted, linux, rc40]
+    timeout-minutes: 35
+    services:
+      postgres:
+        # Matches production, observed 2026-09-24. Reconfirm before a later release.
+        image: postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+        env:
+          POSTGRES_PASSWORD: compat
+          POSTGRES_DB: newapi_compat
+        ports: ['5432:5432']
+        options: --health-cmd="pg_isready -U postgres -d newapi_compat" --health-interval=10s --health-timeout=5s --health-retries=12
+    env:
+      TEST_DATABASE_COMPAT: '1'
+      TEST_POSTGRES_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat?sslmode=disable
+      TEST_DATABASE_DIALECT: postgres
+      TEST_DATABASE_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat?sslmode=disable
+      TEST_LOG_DATABASE_DSN: postgres://postgres:compat@127.0.0.1:5432/newapi_compat_log?sslmode=disable
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+      - name: Prepare disposable compatibility databases
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/rc40-checks" web/dist
+          printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/rc40-checks/commit.txt"
+          touch web/dist/index.html
+          docker exec '${{ job.services.postgres.id }}' createdb -U postgres newapi_compat_log
+      - name: PostgreSQL migrations and payment constraints
+        run: |
+          set -euo pipefail
+          go test ./model -run '^(TestDatabaseCompatibilityReal|TestMoneyColumnsAre64BitOnConfiguredDatabases|TestSupportTicketSchemaConfiguredDatabases)$' -count=1 -v 2>&1 | tee "$RUNNER_TEMP/rc40-checks/postgres-model.log"
+          go test ./pkg/paymentcore -list '^TestPaymentOrderBindingDatabaseCompatibilityReal$' | grep -Fx 'TestPaymentOrderBindingDatabaseCompatibilityReal'
+          go test ./pkg/paymentcore -run '^TestPaymentOrderBindingDatabaseCompatibilityReal$' -count=1 -v 2>&1 | tee "$RUNNER_TEMP/rc40-checks/postgres-payment.log"
+      - name: Split-wallet pre-consume policy on PostgreSQL
+        if: success() || failure()
+        run: set -o pipefail; go test ./controller -run '^TestPreConsumePolicyDatabaseMatrix$/postgres' -count=1 -v 2>&1 | tee "$RUNNER_TEMP/rc40-checks/preconsume.log"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: rc40-databases-${{ github.sha }}
+          path: ${{ runner.temp }}/rc40-checks/
+          retention-days: 7
+
+  acceptance:
+    if: always()
+    needs: [backend, frontend, frontend-tests, databases]
+    runs-on: [self-hosted, linux, rc40]
+    timeout-minutes: 2
+    steps:
+      - name: Require every exact-SHA check to pass
+        env:
+          BACKEND: ${{ needs.backend.result }}
+          FRONTEND: ${{ needs.frontend.result }}
+          TESTS: ${{ needs.frontend-tests.result }}
+          DATABASES: ${{ needs.databases.result }}
+        run: |
+          set -euo pipefail
+          printf 'candidate=%s backend=%s frontend=%s tests=%s databases=%s\n' "$GITHUB_SHA" "$BACKEND" "$FRONTEND" "$TESTS" "$DATABASES" | tee -a "$GITHUB_STEP_SUMMARY"
+          test "$BACKEND" = success
+          test "$FRONTEND" = success
+          test "$TESTS" = success
+          test "$DATABASES" = success
+
+
+

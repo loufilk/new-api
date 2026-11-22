@@ -16,12 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+
+import { useEffect, useMemo, useState } from 'react'
+
 import type {
   ColumnFiltersState,
   OnChangeFn,
   PaginationState,
-} from '@tanstack/react-table'
-import { useEffect, useMemo, useState } from 'react'
+} from '@/lib/console-table'
 
 type SearchRecord = Record<string, unknown>
 
@@ -31,7 +33,10 @@ const PAGE_SIZE_STORAGE_KEY = 'page-size'
 
 function getStoredPageSize(): number | undefined {
   try {
-    const n = parseInt(localStorage.getItem(PAGE_SIZE_STORAGE_KEY) ?? '', 10)
+    const n = Number.parseInt(
+      localStorage.getItem(PAGE_SIZE_STORAGE_KEY) ?? '',
+      10
+    )
     return n > 0 ? n : undefined // n > 0 also rejects NaN
   } catch {
     return undefined
@@ -221,9 +226,8 @@ export function useTableUrlState(
         patch[cfg.searchKey] =
           value.trim() !== '' ? serialize(value) : undefined
       } else {
-        const value = Array.isArray(found?.value)
-          ? (found!.value as unknown[])
-          : []
+        const rawValue = found?.value
+        const value = Array.isArray(rawValue) ? rawValue : []
         patch[cfg.searchKey] = value.length > 0 ? serialize(value) : undefined
       }
     }

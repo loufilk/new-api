@@ -1,6 +1,10 @@
 package system_setting
 
-import "github.com/QuantumNous/new-api/setting/config"
+import (
+	"slices"
+
+	"github.com/QuantumNous/new-api/setting/config"
+)
 
 type FetchSetting struct {
 	EnableSSRFProtection   bool     `json:"enable_ssrf_protection"` // 是否启用SSRF防护
@@ -31,4 +35,17 @@ func init() {
 
 func GetFetchSetting() *FetchSetting {
 	return &defaultFetchSetting
+}
+
+// SnapshotFetchSetting keeps a fetch on a coherent configuration even while an
+// administrator or the database poller changes the policy.
+func SnapshotFetchSetting() *FetchSetting {
+	value := config.Snapshot(config.GlobalConfig, &defaultFetchSetting, func(src *FetchSetting) FetchSetting {
+		result := *src
+		result.DomainList = slices.Clone(src.DomainList)
+		result.IpList = slices.Clone(src.IpList)
+		result.AllowedPorts = slices.Clone(src.AllowedPorts)
+		return result
+	})
+	return &value
 }

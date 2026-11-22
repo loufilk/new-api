@@ -29,7 +29,6 @@ import {
   type DragEvent,
   type KeyboardEvent,
   useCallback,
-  useEffect,
   useMemo,
   useState,
 } from 'react'
@@ -59,6 +58,7 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import type { TranslateText } from '@/i18n/translate'
 import { cn } from '@/lib/utils'
 
 // ---------------------------------------------------------------------------
@@ -112,6 +112,10 @@ const OPERATION_MODE_OPTIONS = [
   { label: 'Trim Suffix', value: 'trim_suffix' },
   { label: 'Ensure Prefix', value: 'ensure_prefix' },
   { label: 'Ensure Suffix', value: 'ensure_suffix' },
+  {
+    label: 'Ensure Function Descriptions',
+    value: 'ensure_function_descriptions',
+  },
   { label: 'Trim Space', value: 'trim_space' },
   { label: 'To Lowercase', value: 'to_lower' },
   { label: 'To Uppercase', value: 'to_upper' },
@@ -176,6 +180,7 @@ const MODE_META: Record<
   trim_suffix: { path: true, value: true },
   ensure_prefix: { path: true, value: true },
   ensure_suffix: { path: true, value: true },
+  ensure_function_descriptions: { value: true },
   trim_space: { path: true },
   to_lower: { path: true },
   to_upper: { path: true },
@@ -194,6 +199,7 @@ const VALUE_REQUIRED_MODES = new Set([
   'trim_suffix',
   'ensure_prefix',
   'ensure_suffix',
+  'ensure_function_descriptions',
   'set_header',
   'return_error',
   'prune_objects',
@@ -231,6 +237,8 @@ const MODE_DESCRIPTIONS: Record<string, string> = {
   trim_suffix: 'Remove string suffix',
   ensure_prefix: 'Ensure the string has a specified prefix',
   ensure_suffix: 'Ensure the string has a specified suffix',
+  ensure_function_descriptions:
+    'Fill missing, null, or empty function descriptions in Chat, legacy functions, and Responses; leave built-in tools unchanged',
   trim_space: 'Trim leading/trailing whitespace',
   to_lower: 'Convert string to lowercase',
   to_upper: 'Convert string to uppercase',
@@ -518,7 +526,11 @@ const normalizeOperation = (
   mode: OPERATION_MODE_VALUES.has(operation.mode as string)
     ? (operation.mode as string)
     : 'set',
-  value_text: toValueText(operation.value),
+  value_text:
+    operation.mode === 'ensure_function_descriptions' &&
+    typeof operation.value === 'string'
+      ? JSON.stringify(operation.value)
+      : toValueText(operation.value),
   prune_draft:
     operation.mode === 'prune_objects'
       ? parsePruneObjectsDraft(toValueText(operation.value))
@@ -930,7 +942,7 @@ const buildConditionPayload = (
 
 const validateOperations = (
   operations: ParamOverrideOperation[],
-  t: (key: string, options?: Record<string, unknown>) => string
+  t: TranslateText
 ): string => {
   for (let i = 0; i < operations.length; i++) {
     const op = operations[i]
@@ -956,6 +968,16 @@ const validateOperations = (
     }
     if (VALUE_REQUIRED_MODES.has(mode) && op.value_text.trim() === '') {
       return t('Rule {{line}} is missing value', { line })
+    }
+
+    if (mode === 'ensure_function_descriptions') {
+      const value = parseLooseValue(op.value_text)
+      if (typeof value !== 'string' || !value.trim()) {
+        return t(
+          'Rule {{line}} function description must be a non-empty string',
+          { line }
+        )
+      }
     }
 
     if (mode === 'return_error') {
@@ -1096,7 +1118,7 @@ const parseInitialState = (rawValue: string): EditorState => {
 const buildOperationsJson = (
   sourceOperations: ParamOverrideOperation[],
   options: { validate: boolean },
-  t: (key: string, options?: Record<string, unknown>) => string
+  t: TranslateText
 ): string => {
   const filteredOps = sourceOperations.filter((o) => !isOperationBlank(o))
   if (filteredOps.length === 0) return ''
@@ -1120,7 +1142,13 @@ const buildOperationsJson = (
     if (meta.value) payload.value = parseLooseValue(operation.value_text)
     if (meta.keepOrigin && operation.keep_origin) payload.keep_origin = true
     if (meta.from) payload.from = fromValue
-    if (!meta.to && operation.to.trim()) payload.to = toValue
+    if (
+      !meta.to &&
+      mode !== 'ensure_function_descriptions' &&
+      operation.to.trim()
+    ) {
+      payload.to = toValue
+    }
     if (meta.to) payload.to = toValue
     if (meta.pathAlias) {
       if (!payload.from && pathValue) payload.from = pathValue
@@ -1153,13 +1181,13 @@ export function ParamOverrideEditorDialog(
     'operations'
   )
   const [legacyValue, setLegacyValue] = useState('')
-  const [operations, setOperations] = useState<ParamOverrideOperation[]>([
+  const [operations, setOperations] = useState<ParamOverrideOperation[]>(() => [
     createDefaultOperation(),
   ])
   const [jsonText, setJsonText] = useState('')
   const [jsonError, setJsonError] = useState('')
   const [operationSearch, setOperationSearch] = useState('')
-  const [selectedOperationId, setSelectedOperationId] = useState('')
+  const [requestedOperationId, setSelectedOperationId] = useState('')
   const [expandedConditions, setExpandedConditions] = useState<
     Record<string, boolean>
   >({})
@@ -1171,39 +1199,38 @@ export function ParamOverrideEditorDialog(
   const [templatePresetKey, setTemplatePresetKey] =
     useState('operations_default')
 
-  // Initialize state when dialog opens
-  useEffect(() => {
-    if (!props.open) return
-    const state = parseInitialState(props.value)
-    setEditMode(state.editMode)
-    setVisualMode(state.visualMode)
-    setLegacyValue(state.legacyValue)
-    setOperations(state.operations)
-    setJsonText(state.jsonText)
-    setJsonError(state.jsonError)
-    setOperationSearch('')
-    setSelectedOperationId(state.operations[0]?.id || '')
-    setExpandedConditions({})
-    setDraggedOperationId('')
-    setDragOverOperationId('')
-    setDragOverPosition('before')
-    if (state.visualMode === 'legacy') {
-      setTemplatePresetKey('legacy_default')
-    } else {
-      setTemplatePresetKey('operations_default')
+  // Reset a draft on opening or when its source changes, before stale UI is painted.
+  const [source, setSource] = useState<string | null>(null)
+  const nextSource = props.open ? props.value : null
+  if (source !== nextSource) {
+    setSource(nextSource)
+    if (nextSource !== null) {
+      const state = parseInitialState(nextSource)
+      setEditMode(state.editMode)
+      setVisualMode(state.visualMode)
+      setLegacyValue(state.legacyValue)
+      setOperations(state.operations)
+      setJsonText(state.jsonText)
+      setJsonError(state.jsonError)
+      setOperationSearch('')
+      setSelectedOperationId(state.operations[0]?.id || '')
+      setExpandedConditions({})
+      setDraggedOperationId('')
+      setDragOverOperationId('')
+      setDragOverPosition('before')
+      if (state.visualMode === 'legacy') {
+        setTemplatePresetKey('legacy_default')
+      } else {
+        setTemplatePresetKey('operations_default')
+      }
     }
-  }, [props.open, props.value])
+  }
 
-  // Keep selectedOperationId valid
-  useEffect(() => {
-    if (operations.length === 0) {
-      setSelectedOperationId('')
-      return
-    }
-    if (!operations.some((o) => o.id === selectedOperationId)) {
-      setSelectedOperationId(operations[0].id)
-    }
-  }, [operations, selectedOperationId])
+  const selectedOperationId = operations.some(
+    (op) => op.id === requestedOperationId
+  )
+    ? requestedOperationId
+    : (operations[0]?.id ?? '')
 
   // Template preset options filtered by group
   const templatePresetOptions = useMemo(
@@ -1860,222 +1887,220 @@ export function ParamOverrideEditorDialog(
       </div>
       {/* Content */}
       <div className='min-h-0 flex-1 overflow-hidden'>
-        {editMode === 'visual' &&
-          (visualMode === 'legacy' ? (
-            <div className='p-4'>
-              <p className='text-muted-foreground mb-2 text-sm'>
-                {t('Legacy Format (JSON Object)')}
-              </p>
-              <JsonCodeEditor
-                value={legacyValue}
-                onChange={setLegacyValue}
-                placeholder={JSON.stringify(LEGACY_TEMPLATE, null, 2)}
-                heightClassName='h-72 min-h-72 max-h-72'
-                ariaLabel={t('Legacy Format (JSON Object)')}
-              />
-              <p className='text-muted-foreground mt-2 text-xs'>
-                {t(
-                  'Edit JSON object directly. Suitable for simple parameter overrides.'
-                )}
-              </p>
-            </div>
-          ) : (
-            <div className='flex h-full'>
-              {/* Left sidebar */}
-              <div className='flex w-[280px] flex-shrink-0 flex-col border-r'>
-                <div className='flex items-center justify-between border-b px-3 py-2'>
-                  <div className='flex items-center gap-2'>
-                    <span className='text-sm font-medium'>{t('Rules')}</span>
-                    <Badge variant='secondary'>
-                      {operationCount}/{operations.length}
-                    </Badge>
-                  </div>
-                  <Button
-                    type='button'
-                    variant='ghost'
-                    size='sm'
-                    onClick={addOperation}
-                  >
-                    <Plus className='h-4 w-4' />
-                  </Button>
+        {editMode === 'visual' && visualMode === 'legacy' && (
+          <div className='p-4'>
+            <p className='text-muted-foreground mb-2 text-sm'>
+              {t('Legacy Format (JSON Object)')}
+            </p>
+            <JsonCodeEditor
+              value={legacyValue}
+              onChange={setLegacyValue}
+              placeholder={JSON.stringify(LEGACY_TEMPLATE, null, 2)}
+              heightClassName='h-72 min-h-72 max-h-72'
+              ariaLabel={t('Legacy Format (JSON Object)')}
+            />
+            <p className='text-muted-foreground mt-2 text-xs'>
+              {t(
+                'Edit JSON object directly. Suitable for simple parameter overrides.'
+              )}
+            </p>
+          </div>
+        )}
+        {editMode === 'visual' && visualMode !== 'legacy' && (
+          <div className='flex h-full'>
+            {/* Left sidebar */}
+            <div className='flex w-[280px] flex-shrink-0 flex-col border-r'>
+              <div className='flex items-center justify-between border-b px-3 py-2'>
+                <div className='flex items-center gap-2'>
+                  <span className='text-sm font-medium'>{t('Rules')}</span>
+                  <Badge variant='secondary'>
+                    {operationCount}/{operations.length}
+                  </Badge>
                 </div>
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='sm'
+                  onClick={addOperation}
+                >
+                  <Plus className='h-4 w-4' />
+                </Button>
+              </div>
 
-                {topOperationModes.length > 0 && (
-                  <div className='flex flex-wrap gap-1 border-b px-3 py-2'>
-                    {topOperationModes.map(([mode, count]) => (
-                      <span
-                        key={`mode_stat_${mode}`}
-                        className={cn(
-                          'inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-medium',
-                          getModeTagTailwind(mode)
-                        )}
-                      >
-                        {t(OPERATION_MODE_LABEL_MAP[mode] || mode)} · {count}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                <div className='px-3 py-2'>
-                  <div className='relative'>
-                    <Search className='text-muted-foreground absolute top-2.5 left-2.5 h-3.5 w-3.5' />
-                    <Input
-                      value={operationSearch}
-                      onChange={(e) => setOperationSearch(e.target.value)}
-                      placeholder={t('Search rules...')}
-                      className='h-8 pl-8 text-xs'
-                    />
-                  </div>
+              {topOperationModes.length > 0 && (
+                <div className='flex flex-wrap gap-1 border-b px-3 py-2'>
+                  {topOperationModes.map(([mode, count]) => (
+                    <span
+                      key={`mode_stat_${mode}`}
+                      className={cn(
+                        'inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-medium',
+                        getModeTagTailwind(mode)
+                      )}
+                    >
+                      {t(OPERATION_MODE_LABEL_MAP[mode] || mode)} · {count}
+                    </span>
+                  ))}
                 </div>
+              )}
 
-                <ScrollArea className='flex-1'>
-                  <div className='flex flex-col gap-1 px-3 pb-3'>
-                    {filteredOperations.length === 0 ? (
-                      <p className='text-muted-foreground py-4 text-center text-xs'>
-                        {t('No matching rules')}
-                      </p>
-                    ) : (
-                      filteredOperations.map((operation) => {
-                        const index = operations.findIndex(
-                          (o) => o.id === operation.id
-                        )
-                        const isActive = operation.id === selectedOperationId
-                        const isDragging = operation.id === draggedOperationId
-                        const isDropTarget =
-                          operation.id === dragOverOperationId &&
-                          draggedOperationId !== '' &&
-                          draggedOperationId !== operation.id
-                        return (
-                          <div
-                            key={operation.id}
-                            role='button'
-                            tabIndex={0}
-                            draggable={operations.length > 1}
-                            onClick={() => setSelectedOperationId(operation.id)}
-                            onDragStart={(e) =>
-                              handleDragStart(e, operation.id)
+              <div className='px-3 py-2'>
+                <div className='relative'>
+                  <Search className='text-muted-foreground absolute top-2.5 left-2.5 h-3.5 w-3.5' />
+                  <Input
+                    value={operationSearch}
+                    onChange={(e) => setOperationSearch(e.target.value)}
+                    placeholder={t('Search rules...')}
+                    className='h-8 pl-8 text-xs'
+                  />
+                </div>
+              </div>
+
+              <ScrollArea className='flex-1'>
+                <div className='flex flex-col gap-1 px-3 pb-3'>
+                  {filteredOperations.length === 0 ? (
+                    <p className='text-muted-foreground py-4 text-center text-xs'>
+                      {t('No matching rules')}
+                    </p>
+                  ) : (
+                    filteredOperations.map((operation) => {
+                      const index = operations.findIndex(
+                        (o) => o.id === operation.id
+                      )
+                      const isActive = operation.id === selectedOperationId
+                      const isDragging = operation.id === draggedOperationId
+                      const isDropTarget =
+                        operation.id === dragOverOperationId &&
+                        draggedOperationId !== '' &&
+                        draggedOperationId !== operation.id
+                      return (
+                        <div
+                          key={operation.id}
+                          role='button'
+                          tabIndex={0}
+                          draggable={operations.length > 1}
+                          onClick={() => setSelectedOperationId(operation.id)}
+                          onDragStart={(e) => handleDragStart(e, operation.id)}
+                          onDragOver={(e) => handleDragOver(e, operation.id)}
+                          onDrop={(e) => handleDrop(e, operation.id)}
+                          onDragEnd={resetDragState}
+                          onKeyDown={(e: KeyboardEvent) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              setSelectedOperationId(operation.id)
                             }
-                            onDragOver={(e) => handleDragOver(e, operation.id)}
-                            onDrop={(e) => handleDrop(e, operation.id)}
-                            onDragEnd={resetDragState}
-                            onKeyDown={(e: KeyboardEvent) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault()
-                                setSelectedOperationId(operation.id)
-                              }
-                            }}
-                            className={cn(
-                              'cursor-pointer rounded-lg border p-2.5 transition-colors',
-                              isActive
-                                ? 'border-primary bg-primary/5'
-                                : 'hover:bg-muted/50',
-                              isDragging && 'opacity-50',
-                              isDropTarget &&
-                                dragOverPosition === 'before' &&
-                                'border-t-primary border-t-2',
-                              isDropTarget &&
-                                dragOverPosition === 'after' &&
-                                'border-b-primary border-b-2'
-                            )}
-                          >
-                            <div className='flex items-start gap-2'>
-                              <GripVertical
-                                className={cn(
-                                  'text-muted-foreground mt-0.5 h-3.5 w-3.5 flex-shrink-0',
-                                  operations.length > 1
-                                    ? 'cursor-grab'
-                                    : 'cursor-default'
-                                )}
-                              />
-                              <div className='min-w-0 flex-1'>
-                                <div className='flex items-center justify-between gap-1'>
-                                  <span className='text-xs font-semibold'>
-                                    #{index + 1}
-                                  </span>
-                                  <Badge
-                                    variant='outline'
-                                    className='text-[10px]'
-                                  >
-                                    {operation.conditions.length}
-                                  </Badge>
-                                </div>
-                                <p className='text-muted-foreground mt-0.5 line-clamp-1 text-[11px]'>
-                                  {getOperationSummary(operation, index)}
-                                </p>
-                                {operation.description.trim() && (
-                                  <p className='text-muted-foreground mt-0.5 line-clamp-2 text-[10px]'>
-                                    {operation.description}
-                                  </p>
-                                )}
-                                <span
-                                  className={cn(
-                                    'mt-1 inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-medium',
-                                    getModeTagTailwind(operation.mode || 'set')
-                                  )}
-                                >
-                                  {t(
-                                    OPERATION_MODE_LABEL_MAP[
-                                      operation.mode || 'set'
-                                    ] ||
-                                      operation.mode ||
-                                      'set'
-                                  )}
+                          }}
+                          className={cn(
+                            'cursor-pointer rounded-lg border p-2.5 transition-colors',
+                            isActive
+                              ? 'border-primary bg-primary/5'
+                              : 'hover:bg-muted/50',
+                            isDragging && 'opacity-50',
+                            isDropTarget &&
+                              dragOverPosition === 'before' &&
+                              'border-t-primary border-t-2',
+                            isDropTarget &&
+                              dragOverPosition === 'after' &&
+                              'border-b-primary border-b-2'
+                          )}
+                        >
+                          <div className='flex items-start gap-2'>
+                            <GripVertical
+                              className={cn(
+                                'text-muted-foreground mt-0.5 h-3.5 w-3.5 flex-shrink-0',
+                                operations.length > 1
+                                  ? 'cursor-grab'
+                                  : 'cursor-default'
+                              )}
+                            />
+                            <div className='min-w-0 flex-1'>
+                              <div className='flex items-center justify-between gap-1'>
+                                <span className='text-xs font-semibold'>
+                                  #{index + 1}
                                 </span>
+                                <Badge
+                                  variant='outline'
+                                  className='text-[10px]'
+                                >
+                                  {operation.conditions.length}
+                                </Badge>
                               </div>
+                              <p className='text-muted-foreground mt-0.5 line-clamp-1 text-[11px]'>
+                                {getOperationSummary(operation, index)}
+                              </p>
+                              {operation.description.trim() && (
+                                <p className='text-muted-foreground mt-0.5 line-clamp-2 text-[10px]'>
+                                  {operation.description}
+                                </p>
+                              )}
+                              <span
+                                className={cn(
+                                  'mt-1 inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-medium',
+                                  getModeTagTailwind(operation.mode || 'set')
+                                )}
+                              >
+                                {t(
+                                  OPERATION_MODE_LABEL_MAP[
+                                    operation.mode || 'set'
+                                  ] ||
+                                    operation.mode ||
+                                    'set'
+                                )}
+                              </span>
                             </div>
                           </div>
-                        )
-                      })
-                    )}
-                  </div>
-                </ScrollArea>
-              </div>
-
-              {/* Right panel - Rule editor */}
-              <div className='flex min-w-0 flex-1 flex-col overflow-y-auto'>
-                {selectedOperation ? (
-                  <RuleEditor
-                    operation={selectedOperation}
-                    operationIndex={selectedOperationIndex}
-                    operations={operations}
-                    returnErrorDraft={returnErrorDraft}
-                    pruneObjectsDraft={pruneObjectsDraft}
-                    expandedConditions={expandedConditions}
-                    setExpandedConditions={setExpandedConditions}
-                    updateOperation={updateOperation}
-                    duplicateOperation={duplicateOperation}
-                    removeOperation={removeOperation}
-                    addCondition={addCondition}
-                    updateCondition={updateCondition}
-                    removeCondition={removeCondition}
-                    updateReturnErrorDraft={updateReturnErrorDraft}
-                    updatePruneObjectsDraft={updatePruneObjectsDraft}
-                    addPruneRule={addPruneRule}
-                    updatePruneRule={updatePruneRule}
-                    removePruneRule={removePruneRule}
-                    expandAllConditions={expandAllConditions}
-                    collapseAllConditions={collapseAllConditions}
-                  />
-                ) : (
-                  <div className='flex flex-1 items-center justify-center'>
-                    <p className='text-muted-foreground text-sm'>
-                      {t('Select a rule to edit.')}
-                    </p>
-                  </div>
-                )}
-
-                {visualValidationError && (
-                  <div className='border-t px-4 py-2'>
-                    <p className='text-destructive text-xs'>
-                      {visualValidationError}
-                    </p>
-                  </div>
-                )}
-              </div>
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              </ScrollArea>
             </div>
-          ))}
-        {/* JSON mode */}
+
+            {/* Right panel - Rule editor */}
+            <div className='flex min-w-0 flex-1 flex-col overflow-y-auto'>
+              {selectedOperation ? (
+                <RuleEditor
+                  operation={selectedOperation}
+                  operationIndex={selectedOperationIndex}
+                  operations={operations}
+                  returnErrorDraft={returnErrorDraft}
+                  pruneObjectsDraft={pruneObjectsDraft}
+                  expandedConditions={expandedConditions}
+                  setExpandedConditions={setExpandedConditions}
+                  updateOperation={updateOperation}
+                  duplicateOperation={duplicateOperation}
+                  removeOperation={removeOperation}
+                  addCondition={addCondition}
+                  updateCondition={updateCondition}
+                  removeCondition={removeCondition}
+                  updateReturnErrorDraft={updateReturnErrorDraft}
+                  updatePruneObjectsDraft={updatePruneObjectsDraft}
+                  addPruneRule={addPruneRule}
+                  updatePruneRule={updatePruneRule}
+                  removePruneRule={removePruneRule}
+                  expandAllConditions={expandAllConditions}
+                  collapseAllConditions={collapseAllConditions}
+                />
+              ) : (
+                <div className='flex flex-1 items-center justify-center'>
+                  <p className='text-muted-foreground text-sm'>
+                    {t('Select a rule to edit.')}
+                  </p>
+                </div>
+              )}
+
+              {visualValidationError && (
+                <div className='border-t px-4 py-2'>
+                  <p className='text-destructive text-xs'>
+                    {visualValidationError}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         {editMode !== 'visual' && (
+          /* JSON mode */
           <div className='p-4'>
             <div className='mb-2 flex items-center gap-2'>
               <span className='text-muted-foreground text-xs'>
@@ -2166,6 +2191,20 @@ function RuleEditor(ruleEditorProps: RuleEditorProps) {
     mode === 'sync_fields' ? parseSyncTargetSpec(operation.from) : null
   const syncToTarget =
     mode === 'sync_fields' ? parseSyncTargetSpec(operation.to) : null
+  const showReturnErrorEditor =
+    mode === 'return_error' && ruleEditorProps.returnErrorDraft !== null
+  const showPruneObjectsEditor =
+    !showReturnErrorEditor &&
+    mode === 'prune_objects' &&
+    ruleEditorProps.pruneObjectsDraft !== null
+  const showDefaultValueEditor =
+    Boolean(meta.value) && !showReturnErrorEditor && !showPruneObjectsEditor
+  const showSyncFieldsEditor =
+    mode === 'sync_fields' && syncFromTarget !== null && syncToTarget !== null
+  const showFromToEditor =
+    !showSyncFieldsEditor &&
+    Boolean(meta.from || meta.to !== undefined) &&
+    mode !== 'sync_fields'
 
   return (
     <ScrollArea className='flex-1'>
@@ -2274,66 +2313,62 @@ function RuleEditor(ruleEditorProps: RuleEditorProps) {
         </div>
 
         {/* Value section */}
-        {meta.value && (
-          <>
-            {returnErrorDraft && (
-              <ReturnErrorEditor
-                operationId={operation.id}
-                draft={returnErrorDraft}
-                updateDraft={ruleEditorProps.updateReturnErrorDraft}
-              />
-            )}
-            {pruneObjectsDraft && (
-              <PruneObjectsEditor
-                operationId={operation.id}
-                draft={pruneObjectsDraft}
-                updateDraft={ruleEditorProps.updatePruneObjectsDraft}
-                addRule={ruleEditorProps.addPruneRule}
-                updateRule={ruleEditorProps.updatePruneRule}
-                removeRule={ruleEditorProps.removePruneRule}
-              />
-            )}
-            {!returnErrorDraft && !pruneObjectsDraft && (
-              <div className='space-y-1.5'>
-                <div className='flex items-center justify-between'>
-                  <label className='text-xs font-medium'>
-                    {t(getModeValueLabel(mode))}
-                  </label>
-                  {operation.value_text.trim().startsWith('{') && (
-                    <Button
-                      type='button'
-                      variant='ghost'
-                      size='sm'
-                      className='text-muted-foreground h-auto px-1.5 py-0.5 text-xs'
-                      onClick={() => {
-                        try {
-                          const parsed = JSON.parse(operation.value_text)
-                          ruleEditorProps.updateOperation(operation.id, {
-                            value_text: JSON.stringify(parsed, null, 2),
-                          })
-                        } catch {
-                          /* not valid JSON */
-                        }
-                      }}
-                    >
-                      {t('Format')}
-                    </Button>
-                  )}
-                </div>
-                <Textarea
-                  value={operation.value_text}
-                  onChange={(e) =>
-                    ruleEditorProps.updateOperation(operation.id, {
-                      value_text: e.target.value,
-                    })
-                  }
-                  placeholder={getModeValuePlaceholder(mode)}
-                  rows={3}
-                  className='max-h-[200px] resize-y overflow-y-auto font-mono text-xs'
-                />
-              </div>
-            )}
-          </>
+        {Boolean(meta.value) && showReturnErrorEditor && returnErrorDraft && (
+          <ReturnErrorEditor
+            operationId={operation.id}
+            draft={returnErrorDraft}
+            updateDraft={ruleEditorProps.updateReturnErrorDraft}
+          />
+        )}
+        {Boolean(meta.value) && showPruneObjectsEditor && pruneObjectsDraft && (
+          <PruneObjectsEditor
+            operationId={operation.id}
+            draft={pruneObjectsDraft}
+            updateDraft={ruleEditorProps.updatePruneObjectsDraft}
+            addRule={ruleEditorProps.addPruneRule}
+            updateRule={ruleEditorProps.updatePruneRule}
+            removeRule={ruleEditorProps.removePruneRule}
+          />
+        )}
+        {showDefaultValueEditor && (
+          <div className='space-y-1.5'>
+            <div className='flex items-center justify-between'>
+              <label className='text-xs font-medium'>
+                {t(getModeValueLabel(mode))}
+              </label>
+              {operation.value_text.trim().startsWith('{') && (
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='sm'
+                  className='text-muted-foreground h-auto px-1.5 py-0.5 text-xs'
+                  onClick={() => {
+                    try {
+                      const parsed = JSON.parse(operation.value_text)
+                      ruleEditorProps.updateOperation(operation.id, {
+                        value_text: JSON.stringify(parsed, null, 2),
+                      })
+                    } catch {
+                      /* not valid JSON */
+                    }
+                  }}
+                >
+                  {t('Format')}
+                </Button>
+              )}
+            </div>
+            <Textarea
+              value={operation.value_text}
+              onChange={(e) =>
+                ruleEditorProps.updateOperation(operation.id, {
+                  value_text: e.target.value,
+                })
+              }
+              placeholder={getModeValuePlaceholder(mode)}
+              rows={3}
+              className='max-h-[200px] resize-y overflow-y-auto font-mono text-xs'
+            />
+          </div>
         )}
 
         {/* keep_origin */}
@@ -2354,7 +2389,7 @@ function RuleEditor(ruleEditorProps: RuleEditorProps) {
         )}
 
         {/* sync_fields */}
-        {mode === 'sync_fields' && syncFromTarget && syncToTarget && (
+        {showSyncFieldsEditor && syncFromTarget && syncToTarget && (
           <SyncFieldsEditor
             operationId={operation.id}
             syncFromTarget={syncFromTarget}
@@ -2362,7 +2397,7 @@ function RuleEditor(ruleEditorProps: RuleEditorProps) {
             updateOperation={ruleEditorProps.updateOperation}
           />
         )}
-        {(meta.from || meta.to !== undefined) && mode !== 'sync_fields' && (
+        {showFromToEditor && (
           <div className='grid gap-3 sm:grid-cols-2'>
             {(meta.from || meta.to === false) && (
               <div className='space-y-1.5'>

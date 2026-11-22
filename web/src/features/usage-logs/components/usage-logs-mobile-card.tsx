@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { flexRender, type Cell, type Table } from '@tanstack/react-table'
+
 import { Database } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -28,6 +28,7 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
+import { flexRender, type Cell, type Table } from '@/lib/console-table'
 import { cn } from '@/lib/utils'
 
 import { LOG_TYPE_ENUM } from '../constants'
@@ -43,7 +44,7 @@ const logTypeRowTint: Record<number, string> = {
     'bg-blue-50/30 dark:bg-blue-950/15 border-blue-200/50 dark:border-blue-900/30',
 }
 
-interface UsageLogsMobileListProps<TData> {
+interface UsageLogsMobileListProps<TData extends object> {
   table: Table<TData>
   isLoading?: boolean
   emptyTitle?: string
@@ -91,7 +92,7 @@ function UsageLogsMobileSkeleton(props: { separate: boolean }) {
   )
 }
 
-function CompactCell<TData>({
+function CompactCell<TData extends object>({
   cell,
   fallback = '-',
   className,
@@ -120,7 +121,7 @@ function CompactCell<TData>({
   )
 }
 
-function SummaryField<TData>({
+function SummaryField<TData extends object>({
   label,
   cell,
   className,
@@ -153,7 +154,7 @@ function SummaryField<TData>({
   )
 }
 
-function TaskLogsCard<TData>({
+function TaskLogsCard<TData extends object>({
   cells,
 }: {
   cells: Map<string, Cell<TData, unknown>>
@@ -189,7 +190,7 @@ function TaskLogsCard<TData>({
   )
 }
 
-function DrawingLogsCard<TData>({
+function DrawingLogsCard<TData extends object>({
   cells,
 }: {
   cells: Map<string, Cell<TData, unknown>>
@@ -236,7 +237,7 @@ function DrawingLogsCard<TData>({
   )
 }
 
-export function UsageLogsMobileList<TData>({
+export function UsageLogsMobileList<TData extends object>({
   table,
   isLoading = false,
   emptyTitle,

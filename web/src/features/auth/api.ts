@@ -28,7 +28,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import {
   clearPasswordEncryptionCache,
-  encryptPassword,
+  getLoginPasswordFields,
 } from './lib/password-encryption'
 import { getAffiliateCode } from './lib/storage'
 import type { TelegramAuthorization } from './lib/telegram-login'
@@ -54,18 +54,9 @@ import type {
 export async function login(payload: LoginPayload): Promise<LoginResponse> {
   const turnstile = payload.turnstile ?? ''
   try {
-    let passwordFields:
-      | { password: string }
-      | { password_encrypted: string; encryption_key_id: string }
-    if (payload.passwordEncryptionEnabled) {
-      const encryptedPassword = await encryptPassword(payload.password)
-      passwordFields = {
-        password_encrypted: encryptedPassword.password_encrypted,
-        encryption_key_id: encryptedPassword.encryption_key_id,
-      }
-    } else {
-      passwordFields = { password: payload.password }
-    }
+    // Prior callers also supplied a cached mode hint. Only current server
+    // policy may authorize sending the password in the ordinary JSON field.
+    const passwordFields = await getLoginPasswordFields(payload.password)
     const res = await api.post<LoginResponse>(
       `/api/user/login?turnstile=${turnstile}`,
       {
@@ -74,14 +65,12 @@ export async function login(payload: LoginPayload): Promise<LoginResponse> {
       },
       { skipAuthRefresh: true }
     )
-    if (payload.passwordEncryptionEnabled && !res.data?.success) {
+    if (!res.data?.success) {
       clearPasswordEncryptionCache()
     }
     return res.data
   } catch (error: unknown) {
-    if (payload.passwordEncryptionEnabled) {
-      clearPasswordEncryptionCache()
-    }
+    clearPasswordEncryptionCache()
     throw error
   }
 }

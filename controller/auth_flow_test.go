@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -657,11 +658,19 @@ func setupAuthFlowControllerTest(t *testing.T) *authFlowTestOAuthProvider {
 	previousRedis := common.RedisEnabled
 	common.RedisEnabled = false
 	previousType := common.MainDatabaseType()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
+	var db *gorm.DB
+	dbType := common.DatabaseTypeSQLite
+	if os.Getenv("TEST_SECURITY_DIALECT") == "postgres" {
+		db, _ = newAuditTestDatabase(t, "postgres", os.Getenv("TEST_POSTGRES_DSN"))
+		dbType = common.DatabaseTypePostgreSQL
+	} else {
+		var err error
+		db, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+		require.NoError(t, err)
+	}
 	require.NoError(t, db.AutoMigrate(&model.AuthFlow{}, &model.User{}, &model.UserSession{}, &model.AuditLog{}))
 	model.DB, model.LOG_DB = db, db
-	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	common.SetMainDatabaseType(dbType)
 	provider := &authFlowTestOAuthProvider{}
 	oauth.Register("auth-flow-test", provider)
 	t.Cleanup(func() {
@@ -828,6 +837,7 @@ type legacyGitHubOAuthProvider struct {
 	verifiedEmails     []string
 	verifiedEmailsErr  error
 	verifiedEmailCalls int
+	onVerifiedEmails   func()
 }
 
 func (*legacyGitHubOAuthProvider) GetName() string { return "GitHub" }
@@ -836,7 +846,42 @@ func (provider *legacyGitHubOAuthProvider) GetUserInfo(context.Context, *oauth.O
 }
 func (provider *legacyGitHubOAuthProvider) GetVerifiedEmails(context.Context, *oauth.OAuthToken) ([]string, error) {
 	provider.verifiedEmailCalls++
+	if provider.onVerifiedEmails != nil {
+		provider.onVerifiedEmails()
+	}
 	return provider.verifiedEmails, provider.verifiedEmailsErr
+}
+
+func TestOAuthLegacyGitHubEmailEvidenceMustStillMatchAtCommit(t *testing.T) {
+	for _, change := range []map[string]any{
+		{"email": "changed@example.com"},
+		{"github_id": "relinked-subject"},
+		{"auth_version": 2},
+		{"status": common.UserStatusDisabled},
+	} {
+		for field := range change {
+			t.Run(field, func(t *testing.T) {
+				setupSecurityEnrollmentTest(t)
+				user := model.User{Username: "legacy-race", AffCode: "legacy-race", Email: "confirmed@example.com", GitHubId: "legacy-name", AuthVersion: 1, Status: common.UserStatusEnabled, Role: common.RoleCommonUser, Group: "default"}
+				require.NoError(t, model.DB.Create(&user).Error)
+				provider := &legacyGitHubOAuthProvider{providerUserID: "900001", legacyID: "legacy-name", verifiedEmails: []string{user.Email}}
+				provider.onVerifiedEmails = func() {
+					require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", user.Id).Updates(change).Error)
+				}
+				response := legacyGitHubOAuthLogin(t, provider)
+				var result securityEnrollmentResponse
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+				assert.False(t, result.Success)
+				assert.Empty(t, response.Header().Values("Set-Cookie"))
+				count, err := model.CountActiveUserSessions(user.Id, time.Now().Unix())
+				require.NoError(t, err)
+				assert.Zero(t, count)
+				var claims int64
+				require.NoError(t, model.DB.Model(&model.ExternalIdentityClaim{}).Where("provider = ? AND subject = ?", "github", "900001").Count(&claims).Error)
+				assert.Zero(t, claims)
+			})
+		}
+	}
 }
 func (*legacyGitHubOAuthProvider) IsUserIDTaken(providerUserID string) bool {
 	return model.IsGitHubIdAlreadyTaken(providerUserID)
@@ -1120,6 +1165,46 @@ func TestOAuthBindIgnoresLegacyGitHubUsernames(t *testing.T) {
 			}
 			assert.Equal(t, test.ownGitHubID, bound.GitHubId)
 			assert.Equal(t, "This GitHub account has already been bound", result.Message)
+		})
+	}
+}
+
+func TestOAuthRegistrationPersistsInviter(t *testing.T) {
+	db, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Log{}, &model.AgentInvitation{}, &model.AgentProfile{}, &model.AgentSimpleAccount{}, &model.ExternalIdentityClaim{})
+	oldDB, oldLogDB := model.DB, model.LOG_DB
+	oldMain, oldLog := common.MainDatabaseType(), common.LogDatabaseType()
+	oldRedis, oldRegister := common.RedisEnabled, common.RegisterEnabled
+	model.DB, model.LOG_DB = db, db
+	common.SetDatabaseTypes(dialect, dialect)
+	common.RedisEnabled, common.RegisterEnabled = false, true
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = oldDB, oldLogDB
+		common.SetDatabaseTypes(oldMain, oldLog)
+		common.RedisEnabled, common.RegisterEnabled = oldRedis, oldRegister
+	})
+	inviter := model.User{Username: "inviter", AffCode: "valid-aff", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, db.Create(&inviter).Error)
+	for _, tc := range []struct {
+		name, code string
+		want       int
+	}{
+		{"valid", "valid-aff", inviter.Id}, {"missing", "", 0}, {"invalid", "unknown-aff", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			provider := &oauth.GitHubProvider{}
+			identity := &oauth.OAuthUser{ProviderUserID: "inviter-test-" + tc.name, Username: "oauth-" + tc.name}
+			created, _, err := findOrCreateOAuthUser(ctx, provider, identity, &oauth.OAuthToken{}, tc.code)
+			require.NoError(t, err)
+			var stored model.User
+			require.NoError(t, db.First(&stored, created.Id).Error)
+			assert.Equal(t, tc.want, stored.InviterId)
+			assert.Equal(t, identity.ProviderUserID, stored.GitHubId)
+			existing, _, err := findOrCreateOAuthUser(ctx, provider, identity, &oauth.OAuthToken{}, "valid-aff")
+			require.NoError(t, err)
+			assert.Equal(t, created.Id, existing.Id)
+			require.NoError(t, db.First(&stored, created.Id).Error)
+			assert.Equal(t, tc.want, stored.InviterId, "login must not reassign the inviter")
 		})
 	}
 }

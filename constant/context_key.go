@@ -3,24 +3,42 @@ package constant
 type ContextKey string
 
 const (
-	ContextKeyTokenCountMeta  ContextKey = "token_count_meta"
-	ContextKeyPromptTokens    ContextKey = "prompt_tokens"
-	ContextKeyEstimatedTokens ContextKey = "estimated_tokens"
+	// Only the server-owned, confirmed model-test ingress sets this flag.
+	ContextKeyModelTestSingleAttempt ContextKey = "model_test_single_attempt"
+	ContextKeyModelTestOutputLimit   ContextKey = "model_test_output_limit"
+	ContextKeyTokenCountMeta         ContextKey = "token_count_meta"
+	ContextKeyPromptTokens           ContextKey = "prompt_tokens"
+	ContextKeyEstimatedTokens        ContextKey = "estimated_tokens"
 
-	ContextKeyOriginalModel    ContextKey = "original_model"
-	ContextKeyRequestStartTime ContextKey = "request_start_time"
+	ContextKeyOriginalModel      ContextKey = "original_model"
+	ContextKeyGatewayIngressTime ContextKey = "gateway_ingress_time"
+	ContextKeyRequestStartTime   ContextKey = "request_start_time"
+	// The Responses handler owns the SSE error response, even when the client
+	// disconnected or a write failed. Do not retry or append a JSON HTTP error.
+	ContextKeyResponsesStreamErrorHandled ContextKey = "responses_stream_error_handled"
+	// A failed native non-stream response has confirmed output or usage to
+	// settle. Other adaptors may return an empty Usage alongside an error.
+	ContextKeyResponsesPartialUsage ContextKey = "responses_partial_usage"
+	// ContextKeyStreamErrorHandled marks a non-Responses SSE failure that has
+	// already emitted an in-band protocol error. The outer relay must still
+	// record the request as failed, but must not append a JSON HTTP error or retry
+	// after partial output has reached the client.
+	ContextKeyStreamErrorHandled ContextKey = "stream_error_handled"
 
 	/* token related keys */
-	ContextKeyTokenUnlimited         ContextKey = "token_unlimited_quota"
-	ContextKeyTokenKey               ContextKey = "token_key"
-	ContextKeyTokenId                ContextKey = "token_id"
-	ContextKeyTokenGroup             ContextKey = "token_group"
-	ContextKeyOriginTasks            ContextKey = "origin_tasks"
-	ContextKeyChannelConstraints     ContextKey = "channel_constraints"
-	ContextKeyTokenModelLimitEnabled ContextKey = "token_model_limit_enabled"
-	ContextKeyTokenModelLimit        ContextKey = "token_model_limit"
-	ContextKeyTokenCrossGroupRetry   ContextKey = "token_cross_group_retry"
-	ContextKeyTokenAutoGroups        ContextKey = "token_auto_groups"
+	ContextKeyTokenUnlimited          ContextKey = "token_unlimited_quota"
+	ContextKeyTokenKey                ContextKey = "token_key"
+	ContextKeyTokenId                 ContextKey = "token_id"
+	ContextKeyTokenGroup              ContextKey = "token_group"
+	ContextKeyOriginTasks             ContextKey = "origin_tasks"
+	ContextKeyChannelConstraints      ContextKey = "channel_constraints"
+	ContextKeyTokenModelLimitEnabled  ContextKey = "token_model_limit_enabled"
+	ContextKeyTokenModelLimit         ContextKey = "token_model_limit"
+	ContextKeyTokenCrossGroupRetry    ContextKey = "token_cross_group_retry"
+	ContextKeyTokenAutoGroups         ContextKey = "token_auto_groups"
+	ContextKeyTokenSmartRouting       ContextKey = "token_smart_routing"
+	ContextKeyTokenRoutingStrategy    ContextKey = "token_routing_strategy"
+	ContextKeyTokenNoRetryWithinGroup ContextKey = "token_no_retry_within_group"
 
 	/* channel related keys */
 	ContextKeyChannelId                ContextKey = "channel_id"
@@ -39,11 +57,35 @@ const (
 	ContextKeyChannelIsMultiKey        ContextKey = "channel_is_multi_key"
 	ContextKeyChannelMultiKeyIndex     ContextKey = "channel_multi_key_index"
 	ContextKeyChannelKey               ContextKey = "channel_key"
+	// ChannelEgressAttempt changes at each channel binding, even
+	// when retrying the same channel with another enabled credential.
+	ContextKeyChannelEgressAttempt ContextKey = "channel_egress_attempt"
+	// ContextKeyProviderPlugin holds the jsplugin.PinnedPlugin whose relay
+	// routes serve this request on a task plugin channel.
+	ContextKeyProviderPlugin ContextKey = "provider_plugin"
 
 	// ContextKeyUpstreamRequestOrigin is the scheme and host of the last upstream
 	// request, which differs from the base URL for absolute Advanced Custom routes
 	// and for adaptors that build official endpoints themselves.
 	ContextKeyUpstreamRequestOrigin ContextKey = "upstream_request_origin"
+
+	// Attempted records entry into the current HTTP call or WebSocket business
+	// message write, not provider acceptance. Delivery may still be unknown.
+	ContextKeyUpstreamRequestAttempted ContextKey = "upstream_request_attempted"
+	// Unsent retains typed DNS/dial evidence before errors are sanitized, and
+	// distinguishes a WebSocket handshake from a submitted business message.
+	ContextKeyUpstreamRequestUnsent ContextKey = "upstream_request_unsent"
+	// SubmissionPending retains an accepted, potentially billable step of a
+	// provider request chain until its final usage is known. A later poll's
+	// no-send evidence or rejection cannot prove that earlier submission unused.
+	// Reset it only when starting a new relay attempt, never per HTTP step.
+	ContextKeyUpstreamSubmissionPending ContextKey = "upstream_submission_pending"
+	// Decode failure is a local fact, distinct from a provider error with the
+	// same code. A malformed HTTP 200 body does not prove generation was unused.
+	ContextKeyUpstreamResponseDecodeFailed ContextKey = "upstream_response_decode_failed"
+	ContextKeyUpstreamExplicitRejection    ContextKey = "upstream_explicit_rejection"
+	// UsageIncomplete records observed work whose retained snapshot cannot price all of it.
+	ContextKeyUpstreamResponseUsageIncomplete ContextKey = "upstream_response_usage_incomplete"
 
 	ContextKeyAutoGroup           ContextKey = "auto_group"
 	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"
@@ -74,6 +116,9 @@ const (
 	ContextKeyLanguage             ContextKey = "language"
 	ContextKeyIsStream             ContextKey = "is_stream"
 	ContextKeyResponseStreamStatus ContextKey = "response_stream_status"
+	// ContextKeyConsumeLog holds the *model.RecordConsumeLogParams of the
+	// request's last consume log, which request plugin report hooks read.
+	ContextKeyConsumeLog ContextKey = "consume_log"
 
 	// ContextKeyAuditLogged marks that the current request has already recorded
 	// a manage/operation audit log inside the handler. When set, the admin-audit
@@ -85,4 +130,9 @@ const (
 	ContextKeyTokenAuditParams ContextKey = "token_audit_params"
 	// ContextKeyTokenAuditSucceeded disambiguates token responses that exceed the audit buffer.
 	ContextKeyTokenAuditSucceeded ContextKey = "token_audit_succeeded"
+
+	// ContextKeyChannelTest marks an administrator-triggered channel test. Its
+	// synthetic request carries no end-user credential, so the client privacy
+	// boundary must not rewrite the upstream model or scrub diagnostics.
+	ContextKeyChannelTest ContextKey = "channel_test"
 )

@@ -2,17 +2,41 @@ package model
 
 import (
 	"errors"
-	"sync/atomic"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/alicebob/miniredis/v2"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+// Sharded Redis hashes only the text inside the first brace pair, so fence
+// and version keys tagged with the untagged cache key share its slot.
+// Miniredis does not enforce slots, so check the tags explicitly.
+func TestAuthCacheKeysShareClusterHashTag(t *testing.T) {
+	userPending, userRevision := userPermissionKeys(5)
+	tokenPending, tokenRevision := tokenPermissionKeys("test-token")
+	for _, tc := range []struct {
+		cacheKey string
+		related  []string
+	}{
+		{getUserCacheKey(5), []string{getUserAuthFenceKey(5), getUserAuthVersionKey(5), userPending, userRevision}},
+		{getTokenCacheKey("test-token"), []string{getTokenCacheFenceKey("test-token"), tokenPending, tokenRevision}},
+	} {
+		assert.NotContains(t, tc.cacheKey, "{")
+		for _, key := range tc.related {
+			_, suffix, ok := strings.Cut(key, "{")
+			require.True(t, ok)
+			tag, _, ok := strings.Cut(suffix, "}")
+			require.True(t, ok)
+			assert.Equal(t, tc.cacheKey, tag)
+		}
+	}
+}
 
 func useUserCacheMiniRedis(t *testing.T) *miniredis.Miniredis {
 	t.Helper()
@@ -86,14 +110,16 @@ func TestPendingUserAuthFenceRejectsStaleCacheWrite(t *testing.T) {
 	assert.False(t, server.Exists(getUserCacheKey(userID)))
 }
 
-func TestUserAuthFieldUpdateRejectsVersionMismatch(t *testing.T) {
+func TestUserAuthCacheUpdateRejectsVersionMismatch(t *testing.T) {
 	useUserCacheMiniRedis(t)
 	const userID = 4202
+	_, revision := userPermissionKeys(userID)
+	require.NoError(t, common.RDB.Set(t.Context(), revision, 1, 0).Err())
 	require.NoError(t, writeUserCache(&UserBase{
-		Id: userID, Group: "current", Username: "cached", AuthVersion: 3,
+		Id: userID, Group: "current", Username: "cached", AuthVersion: 3, CacheRevision: 1,
 	}, true))
 
-	err := updateUserCacheFieldAtVersion(userID, "Group", "stale", 2)
+	err := writeUserCache(&UserBase{Id: userID, Group: "stale", AuthVersion: 2, CacheRevision: 1}, false)
 
 	assert.ErrorIs(t, err, ErrUserAuthCachePending)
 	group, err := common.RDB.HGet(t.Context(), getUserCacheKey(userID), "Group").Result()
@@ -101,51 +127,17 @@ func TestUserAuthFieldUpdateRejectsVersionMismatch(t *testing.T) {
 	assert.Equal(t, "current", group)
 }
 
-func TestRefreshUserGroupCacheRepairsDelayedSameVersionWrite(t *testing.T) {
+func TestRefreshUserGroupCacheRejectsDelayedSameAuthVersionSnapshot(t *testing.T) {
 	truncateTables(t)
 	useUserCacheMiniRedis(t)
-
-	user := User{
-		Username:    "delayed-group-refresh",
-		Password:    "password",
-		Role:        common.RoleCommonUser,
-		Status:      common.UserStatusEnabled,
-		Group:       "default",
-		AuthVersion: 1,
-	}
+	user := User{Username: "delayed-group-refresh", Password: "password", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1}
 	require.NoError(t, DB.Create(&user).Error)
 	require.NoError(t, populateUserCache(user))
-
-	firstSnapshotRead := make(chan struct{})
-	releaseDelayedRefresh := make(chan struct{})
-	var intercepted atomic.Bool
-	const callbackName = "test:block_delayed_group_refresh"
-	require.NoError(t, DB.Callback().Query().After("gorm:query").Register(callbackName, func(*gorm.DB) {
-		if intercepted.CompareAndSwap(false, true) {
-			close(firstSnapshotRead)
-			<-releaseDelayedRefresh
-		}
-	}))
-	t.Cleanup(func() {
-		_ = DB.Callback().Query().Remove(callbackName)
-	})
-
-	delayedResult := make(chan error, 1)
-	go func() {
-		delayedResult <- RefreshUserGroupCache(user.Id)
-	}()
-	<-firstSnapshotRead
-
-	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Update("group", "pro").Error)
+	stale := user
+	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error { return updateUserGroupTx(tx, user.Id, "pro") }))
 	require.NoError(t, RefreshUserGroupCache(user.Id))
+	require.NoError(t, updateUserCache(stale))
 	cached, err := cacheGetUserBase(user.Id)
-	require.NoError(t, err)
-	assert.Equal(t, "pro", cached.Group)
-	assert.EqualValues(t, 1, cached.AuthVersion)
-
-	close(releaseDelayedRefresh)
-	require.NoError(t, <-delayedResult)
-	cached, err = cacheGetUserBase(user.Id)
 	require.NoError(t, err)
 	assert.Equal(t, "pro", cached.Group)
 	assert.EqualValues(t, 1, cached.AuthVersion)

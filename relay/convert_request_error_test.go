@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"cmp"
 	"errors"
 	"io"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -23,7 +25,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tidwall/gjson"
 )
 
 type imageReservation struct {
@@ -46,18 +47,56 @@ func (s *imageReservation) ReserveBeforeSubmit(quota int) error { return s.Reser
 
 func TestImageRequestReservesFinalQuantityBeforeUpstream(t *testing.T) {
 	service.InitHttpClient()
+	previous := common.GetDiskCacheConfig()
+	common.SetDiskCacheConfig(common.DiskCacheConfig{Enabled: true, ThresholdMB: 0, MaxSizeMB: 16, Path: t.TempDir()})
+	t.Cleanup(func() { common.SetDiskCacheConfig(previous) })
 	for _, tc := range []struct {
-		name, body                                    string
+		name, body, storedBody                        string
 		tiered, passThrough, insufficient, retryReset bool
-		override                                      any
-		count, status                                 int
+		ingressInvalid                                bool
+		// deleted makes the channel override delete the count member.
+		deleted       bool
+		override      any
+		count, status int
+		// channelType, model and member are the channel's, the model the
+		// request names and the upstream member that carries the count;
+		// OpenAI, gpt-image-2 and n when empty.
+		channelType   int
+		model, member string
+		asyncLimit    int
 	}{
 		{name: "top-level count", body: `{"model":"gpt-image-2","n":2,"parameters":{}}`, count: 2},
+		{name: "vendor count from the client body", body: `{"model":"flux","prompt":"cat","batch_size":4}`, count: 4,
+			channelType: constant.ChannelTypeSiliconFlow, model: "flux", member: "batch_size"},
+		{name: "vendor count channel override", body: `{"model":"flux","prompt":"cat","n":1}`, override: 3, count: 3,
+			channelType: constant.ChannelTypeSiliconFlow, model: "flux", member: "batch_size"},
+		{name: "nested vendor count channel override", body: `{"model":"imagen-4.0-generate-001","prompt":"cat","n":1}`, override: 3, count: 3,
+			channelType: constant.ChannelTypeGemini, model: "imagen-4.0-generate-001", member: "parameters.sampleCount"},
+		{name: "vendor default when the count member is deleted", body: `{"model":"imagen-4.0-generate-001","prompt":"cat","n":1}`, deleted: true, count: 4,
+			channelType: constant.ChannelTypeGemini, model: "imagen-4.0-generate-001", member: "parameters.sampleCount"},
+		{name: "vendor count in a nested client member", body: `{"model":"flux","prompt":"cat","input":{"num_outputs":3}}`, count: 3,
+			channelType: constant.ChannelTypeReplicate, model: "flux", member: "input.num_outputs"},
+		{name: "oversized vendor count rejected", body: `{"model":"flux","prompt":"cat","batch_size":129}`, status: http.StatusBadRequest,
+			channelType: constant.ChannelTypeSiliconFlow, model: "flux", member: "batch_size"},
 		{name: "legacy channel quantity override", body: `{"model":"gpt-image-2","n":1}`, override: 4, count: 4},
 		{name: "expression channel quantity override", body: `{"model":"gpt-image-2","n":1}`, override: 4, count: 4, tiered: true},
 		{name: "pass-through quantity", body: `{"model":"gpt-image-2","n":2,"parameters":{}}`, count: 2, passThrough: true},
+		{name: "large pass-through file", body: `{"model":"gpt-image-2","image":"` + strings.Repeat("A", 1<<20) + `","n":2}`, count: 2, passThrough: true},
+		{name: "pass-through duplicate quantity uses last value", body: `{"model":"gpt-image-2","n":1,"n":2}`, count: 2, passThrough: true},
+		// Production validates official model contracts before applying legacy defaults.
+		{name: "pass-through alias zero quantity defaults to one", body: `{"model":"provider-image-alias","n":0}`, model: "provider-image-alias", count: 1, passThrough: true},
+		{name: "pass-through official zero quantity rejected at ingress", body: `{"model":"gpt-image-2","n":0}`, passThrough: true, ingressInvalid: true},
+		{name: "pass-through official omitted quantity defaults to one", body: `{"model":"gpt-image-2"}`, count: 1, passThrough: true},
+		{name: "pass-through official zero quantity revalidated before reservation", body: `{"model":"gpt-image-2","n":1}`, storedBody: `{"model":"gpt-image-2","n":0}`, passThrough: true, status: http.StatusBadRequest},
+		{name: "pass-through file quantity revalidated", body: `{"model":"gpt-image-2","n":1}`, storedBody: `{"model":"gpt-image-2","n":129}`, passThrough: true, status: http.StatusBadRequest},
+		{name: "pass-through vendor count", body: `{"model":"flux","prompt":"cat","batch_size":3}`, count: 3, passThrough: true,
+			channelType: constant.ChannelTypeSiliconFlow, model: "flux", member: "batch_size"},
+		{name: "pass-through file vendor count revalidated", body: `{"model":"flux","prompt":"cat","batch_size":1}`, storedBody: `{"model":"flux","prompt":"cat","batch_size":129}`, passThrough: true, status: http.StatusBadRequest,
+			channelType: constant.ChannelTypeSiliconFlow, model: "flux", member: "batch_size"},
 		{name: "oversized override rejected", body: `{"model":"gpt-image-2","n":1}`, override: 129, status: http.StatusBadRequest},
 		{name: "insufficient reservation blocks upstream", body: `{"model":"gpt-image-2","n":1}`, override: 4, count: 4, insufficient: true, status: http.StatusForbidden},
+		{name: "async capacity rejects increased override before billing", body: `{"model":"gpt-image-2","n":1}`, override: 4, asyncLimit: 1, status: http.StatusBadRequest},
+		{name: "async capacity allows matching override", body: `{"model":"gpt-image-2","n":1}`, override: 4, asyncLimit: 4, count: 4},
 		{name: "retry drops the previous attempt's quantity", body: `{"model":"gpt-image-2","n":1}`, count: 1, retryReset: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,21 +112,43 @@ func TestImageRequestReservesFinalQuantityBeforeUpstream(t *testing.T) {
 			}))
 			t.Cleanup(upstream.Close)
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(tc.body))
 			c.Request.Header.Set("Content-Type", "application/json")
-			common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+			if tc.asyncLimit != 0 {
+				c.Request = c.Request.WithContext(relaycommon.WithAsyncImageCountLimit(c.Request.Context(), tc.asyncLimit))
+			}
+			channelType, model, member := cmp.Or(tc.channelType, constant.ChannelTypeOpenAI), cmp.Or(tc.model, "gpt-image-2"), cmp.Or(tc.member, "n")
+			common.SetContextKey(c, constant.ContextKeyChannelType, channelType)
 			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, upstream.URL)
+			common.SetContextKey(c, constant.ContextKeyChannelKey, "fixture-key")
+			common.SetContextKey(c, constant.ContextKeyOriginalModel, model)
 			common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{PassThroughBodyEnabled: tc.passThrough})
 			if tc.override != nil {
-				common.SetContextKey(c, constant.ContextKeyChannelParamOverride, map[string]any{"operations": []any{map[string]any{"path": "n", "mode": "set", "value": tc.override}}})
+				common.SetContextKey(c, constant.ContextKeyChannelParamOverride, map[string]any{"operations": []any{map[string]any{"path": member, "mode": "set", "value": tc.override}}})
 			}
-			request, err := helper.GetAndValidOpenAIImageRequest(c, relayconstant.RelayModeImagesGenerations)
-			require.NoError(t, err)
+			if tc.deleted {
+				common.SetContextKey(c, constant.ContextKeyChannelParamOverride, map[string]any{"operations": []any{map[string]any{"path": member, "mode": "delete"}}})
+			}
 			reservation := &imageReservation{held: 20000, limit: 500000}
+			request, err := helper.GetAndValidOpenAIImageRequest(c, relayconstant.RelayModeImagesGenerations)
+			if tc.ingressInvalid {
+				require.ErrorContains(t, err, "requires n between 1 and 10")
+				assert.Empty(t, received, "invalid official quantity never reaches upstream")
+				assert.Equal(t, 20000, reservation.held, "ingress rejection does not add a reservation")
+				return
+			}
+			require.NoError(t, err)
+			if tc.storedBody != "" {
+				common.CleanupBodyStorage(c)
+				storage, err := common.CreateBodyStorage([]byte(tc.storedBody))
+				require.NoError(t, err)
+				c.Set(common.KeyBodyStorage, storage)
+			}
 			if tc.insufficient {
 				reservation.limit = reservation.held
 			}
-			info := &relaycommon.RelayInfo{Request: request, OriginModelName: "gpt-image-2", RelayMode: relayconstant.RelayModeImagesGenerations,
+			info := &relaycommon.RelayInfo{Request: request, OriginModelName: model, RelayMode: relayconstant.RelayModeImagesGenerations,
 				RequestURLPath: c.Request.URL.Path, Billing: reservation,
 				PriceData: hosttypes.PriceData{UsePrice: true, ModelPrice: 0.04, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}},
 			}
@@ -107,19 +168,113 @@ func TestImageRequestReservesFinalQuantityBeforeUpstream(t *testing.T) {
 			if tc.status != 0 {
 				assert.Equal(t, tc.status, apiErr.StatusCode)
 				assert.Empty(t, received, "no upstream submission before quantity validation and reservation")
+				if tc.storedBody == `{"model":"gpt-image-2","n":0}` {
+					assert.Equal(t, 20000, reservation.held, "invalid outbound quantity does not add a reservation")
+				}
 				return
 			}
 			assert.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
 			require.Len(t, received, 1)
 			body := <-received
-			assert.Equal(t, int64(tc.count), gjson.GetBytes(body, "n").Int())
+			switch {
+			case tc.deleted:
+				assert.False(t, ojson.GetBytes(body, member).Exists(), string(body))
+			case tc.passThrough:
+				assert.Equal(t, tc.body, string(body))
+			default:
+				assert.Equal(t, int64(tc.count), ojson.GetBytes(body, member).Int())
+			}
 			assert.Equal(t, tc.count*20000, info.PriceData.QuotaToPreConsume)
 			assert.GreaterOrEqual(t, reservation.held, info.PriceData.QuotaToPreConsume)
 			assert.Nil(t, info.BillingImageCount)
 			if tc.tiered {
-				assert.Equal(t, tc.body, string(info.BillingRequestInput.Body))
-				assert.Equal(t, 1, *info.BillingRequestInput.ImageCount)
+				assert.Equal(t, int64(tc.count), ojson.GetBytes(info.BillingRequestInput.Body, "n").Int())
+				assert.Equal(t, tc.count, *info.BillingRequestInput.ImageCount)
 			}
+		})
+	}
+}
+
+func TestImageFinalGeometryControlsReservationAndSettlement(t *testing.T) {
+	service.InitHttpClient()
+	for _, tc := range []struct {
+		name, model, mapped, body, expression string
+		channel                               int
+		overrides                             map[string]any
+		wantQuota                             int
+	}{
+		{
+			name: "GPT 4K and high quality", model: "gpt-image-2", channel: constant.ChannelTypeOpenAI,
+			body:       `{"model":"gpt-image-2","n":1,"size":"1024x1024","quality":"low"}`,
+			expression: `(param("size") == "3840x2160" && param("quality") == "high" ? tier("high", fixed(0.08)) : tier("base", fixed(0.02))) * image_count`,
+			overrides:  map[string]any{"size": "3840x2160", "quality": "high", "n": 2}, wantQuota: 80000,
+		},
+		{
+			name: "Grok resolution and quality", model: "grok-imagine-image-2.0", channel: constant.ChannelTypeXai,
+			body:       `{"model":"grok-imagine-image-2.0","n":1,"resolution":"1k","quality":"low"}`,
+			expression: `(param("resolution") == "2k" && param("quality") == "medium" ? tier("high", fixed(0.08)) : tier("base", fixed(0.04))) * image_count`,
+			overrides:  map[string]any{"resolution": "2k", "quality": "medium", "n": 2}, wantQuota: 80000,
+		},
+		{
+			name: "alias billing identity survives route mapping", model: "gpt-image-2-4k", mapped: "gpt-image-2", channel: constant.ChannelTypeOpenAI,
+			body:       `{"model":"gpt-image-2-4k","n":1,"size":"2880x2880","quality":"high"}`,
+			expression: `(param("model") == "gpt-image-2-4k" ? tier("alias", fixed(0.08)) : tier("base", fixed(0.01))) * image_count`,
+			overrides:  map[string]any{"size": "3840x2160", "n": 2}, wantQuota: 80000,
+		},
+		{
+			name: "provider parameters in final snapshot", model: "gpt-image-2", channel: constant.ChannelTypeOpenAI,
+			body:       `{"model":"gpt-image-2","n":1,"parameters":{"prompt_extend":true}}`,
+			expression: `(param("parameters.prompt_extend") == false ? tier("override", fixed(0.08)) : tier("base", fixed(0.02))) * image_count`,
+			overrides:  map[string]any{"parameters": map[string]any{"n": 2, "prompt_extend": false}, "n": 2}, wantQuota: 80000,
+		},
+		{
+			name: "flat expression without quantity still refreshes geometry", model: "grok-imagine-image-2.0", channel: constant.ChannelTypeXai,
+			body:       `{"model":"grok-imagine-image-2.0","n":1,"resolution":"1k"}`,
+			expression: `param("resolution") == "2k" ? tier("high", fixed(0.08)) : tier("base", fixed(0.04))`,
+			overrides:  map[string]any{"resolution": "2k", "n": 2}, wantQuota: 40000,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := tc.model
+			if tc.mapped != "" {
+				target = tc.mapped
+			}
+			c, info, captured := newImageRelayFixture(t, "/v1/images/generations", "application/json", []byte(tc.body), target)
+			if tc.mapped != "" {
+				mapping, err := common.Marshal(map[string]string{tc.model: tc.mapped})
+				require.NoError(t, err)
+				c.Set("model_mapping", string(mapping))
+			}
+			common.SetContextKey(c, constant.ContextKeyChannelType, tc.channel)
+			operations := []any{}
+			for key, value := range tc.overrides {
+				operations = append(operations, map[string]any{"path": key, "mode": "set", "value": value})
+			}
+			common.SetContextKey(c, constant.ContextKeyChannelParamOverride, map[string]any{"operations": operations})
+			reservation := &imageReservation{limit: 500000}
+			info.Billing = reservation
+			info.PriceData.GroupRatioInfo.GroupRatio = 1
+			info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{BillingMode: "tiered_expr", ExprString: tc.expression, ExprHash: billingexpr.ExprHashString(tc.expression), GroupRatio: 1, QuotaPerUnit: common.QuotaPerUnit}
+			if strings.Contains(tc.expression, "image_count") {
+				info.TieredBillingSnapshot.EstimatedImageCount = common.GetPointer(1)
+			}
+			info.BillingRequestInput = &billingexpr.RequestInput{Body: []byte(tc.body), ImageCount: common.GetPointer(1)}
+			apiErr := ImageHelper(c, info)
+			require.NotNil(t, apiErr)
+			require.Equal(t, http.StatusUnprocessableEntity, apiErr.StatusCode, "%v", apiErr)
+			require.Len(t, captured, 1)
+			outbound := <-captured
+			for key, value := range tc.overrides {
+				assert.Equal(t, ojson.GetBytes(outbound.body, key).Value(), ojson.GetBytes(info.BillingRequestInput.Body, key).Value(), "%s=%v", key, value)
+			}
+			assert.Equal(t, tc.model, ojson.GetBytes(info.BillingRequestInput.Body, "model").String())
+			assert.Equal(t, target, ojson.GetBytes(info.BillingRequestInput.Body, "upstream_model").String())
+			assert.Equal(t, tc.wantQuota, reservation.held)
+			info.UpdateImageCount(1)
+			ok, settled, _ := service.TryTieredSettle(info, billingexpr.TokenParams{})
+			require.True(t, ok)
+			assert.Equal(t, 40000, settled, "actual count changes quantity, not the final price dimensions")
+			assert.Equal(t, uint(1), *info.Request.(*dto.ImageRequest).N, "do not mutate the original request on retry")
 		})
 	}
 }
@@ -315,4 +470,59 @@ func TestImageHelperKeepsAdaptorClassifiedConvertError(t *testing.T) {
 	assert.Equal(t, types.ErrorCodeInvalidRequest, apiErr.GetErrorCode())
 	assert.True(t, types.IsSkipRetryError(apiErr), "other channels must not be asked to serve the same name")
 	assert.Contains(t, apiErr.Error(), "not served by the alibaba task plugin")
+}
+
+// Image request failures the gateway raises before contacting the upstream are
+// request errors: a conversion the adaptor rejects, and a channel override
+// condition that meets a request value of another type. Neither may be retried
+// on other channels nor count as a channel error that could disable the
+// channel.
+func TestImageHelperLocalFailuresAreRequestErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		channelType int
+		override    map[string]any
+		code        types.ErrorCode
+		status      int
+	}{
+		{name: "adaptor conversion failure", channelType: constant.ChannelTypeAnthropic, code: types.ErrorCodeConvertRequestFailed, status: http.StatusInternalServerError},
+		{
+			name:        "override condition meets a request value of another type",
+			channelType: constant.ChannelTypeOpenAI,
+			override: map[string]any{"operations": []any{map[string]any{
+				"path": "size", "mode": "set", "value": "1024x1024",
+				"conditions": []any{map[string]any{"path": "quality", "mode": "gt", "value": 1}},
+			}}},
+			code:   types.ErrorCodeInvalidRequest,
+			status: http.StatusBadRequest,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-2","prompt":"a cat","quality":"high"}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			common.SetContextKey(c, constant.ContextKeyChannelType, tc.channelType)
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, "https://upstream.invalid")
+			common.SetContextKey(c, constant.ContextKeyChannelKey, "fixture-key")
+			common.SetContextKey(c, constant.ContextKeyOriginalModel, "gpt-image-2")
+			if tc.override != nil {
+				common.SetContextKey(c, constant.ContextKeyChannelParamOverride, tc.override)
+			}
+			request, err := helper.GetAndValidOpenAIImageRequest(c, relayconstant.RelayModeImagesGenerations)
+			require.NoError(t, err)
+			info := &relaycommon.RelayInfo{Request: request, OriginModelName: "gpt-image-2", RelayMode: relayconstant.RelayModeImagesGenerations,
+				RequestURLPath: c.Request.URL.Path, Billing: &imageReservation{limit: 500000},
+				PriceData: hosttypes.PriceData{UsePrice: true, ModelPrice: 0.04, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}},
+			}
+
+			apiErr := ImageHelper(c, info)
+
+			require.NotNil(t, apiErr)
+			assert.Equal(t, tc.code, apiErr.GetErrorCode())
+			assert.Equal(t, tc.status, apiErr.StatusCode)
+			assert.False(t, types.IsChannelError(apiErr))
+			assert.True(t, types.IsSkipRetryError(apiErr), "the same request fails the same way on every channel")
+			assert.Equal(t, "local", service.RelayErrorSource(apiErr))
+		})
+	}
 }

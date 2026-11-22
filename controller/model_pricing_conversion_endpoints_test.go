@@ -2,6 +2,7 @@ package controller
 
 import (
 	"net/http"
+	"os"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -14,7 +15,11 @@ import (
 // Conversion must understand both; reading only the map form made every model
 // with array-form metadata look like a broken routing configuration.
 func TestModelPricingConversionAcceptsDeclaredEndpointArray(t *testing.T) {
-	db := modelManagementDB(t, "sqlite", "")
+	kind, dsn := "sqlite", ""
+	if postgresDSN := os.Getenv("TEST_POSTGRES_DSN"); postgresDSN != "" {
+		kind, dsn = "postgres", postgresDSN
+	}
+	db := modelManagementDB(t, kind, dsn)
 	previousQuota := common.QuotaPerUnit
 	common.QuotaPerUnit = 500000
 	t.Cleanup(func() { common.QuotaPerUnit = previousQuota })

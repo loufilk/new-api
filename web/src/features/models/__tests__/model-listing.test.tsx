@@ -25,11 +25,6 @@ import {
   RouterProvider,
 } from '@tanstack/react-router'
 import {
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-} from '@tanstack/react-table'
-import {
   render,
   screen,
   within,
@@ -51,6 +46,7 @@ import type { PricingModel } from '@/features/pricing/types'
 import fr from '@/i18n/locales/fr.json'
 import zhCN from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
+import { flexRender, useConsoleTable } from '@/lib/console-table'
 import { useAuthStore } from '@/stores/auth-store'
 import {
   DEFAULT_CURRENCY_CONFIG,
@@ -96,10 +92,9 @@ function Page() {
 
 function CatalogPrice(props: { model: PricingModel }) {
   const columns = usePricingColumns({ tokenUnit: 'M' })
-  const table = useReactTable({
+  const table = useConsoleTable({
     data: [props.model],
     columns,
-    getCoreRowModel: getCoreRowModel(),
   })
   const cell = table
     .getRowModel()
@@ -166,13 +161,13 @@ async function renderList(
   })
   const models = createRoute({
     getParentRoute: () => authenticated,
-    path: 'models/$section',
+    path: 'model-management/$section',
     component: Page,
   })
   const router = createRouter({
     routeTree: root.addChildren([authenticated.addChildren([models])]),
     history: createMemoryHistory({
-      initialEntries: [options.initialUrl ?? '/models/metadata'],
+      initialEntries: [options.initialUrl ?? '/model-management/metadata'],
     }),
   })
   await router.load()
@@ -738,7 +733,7 @@ it('distinguishes pending and failed pricing requests from an unset price', asyn
 
 it('filters actual visibility independently of policy and restores filters through browser history', async () => {
   const { get, router } = await renderList([channel], {
-    initialUrl: '/models/metadata?page=3&status=%5B%22enabled%22%5D',
+    initialUrl: '/model-management/metadata?page=3&status=%5B%22enabled%22%5D',
     total: 100,
   })
   const user = userEvent.setup()
@@ -807,7 +802,8 @@ it('keeps all columns while collapsing tags and connection counts', async () => 
 
 it('keeps an active visibility filter when its server result is empty', async () => {
   const { get } = await renderList([], {
-    initialUrl: '/models/metadata?square_state=%5B%22unavailable%22%5D',
+    initialUrl:
+      '/model-management/metadata?square_state=%5B%22unavailable%22%5D',
   })
   expect(screen.getByText('No Models Found')).toBeVisible()
   expect(screen.getByText('Try adjusting your search')).toBeVisible()

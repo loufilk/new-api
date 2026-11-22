@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { Row } from '@tanstack/react-table'
+import { useMutation } from '@tanstack/react-query'
 import { Trash2, Edit, Power, PowerOff } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -33,6 +33,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import type { Row } from '@/lib/console-table'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { updateRedemptionStatus } from '../api'
@@ -41,11 +42,11 @@ import { isRedemptionExpired } from '../lib'
 import { redemptionSchema } from '../types'
 import { useRedemptions } from './redemptions-provider'
 
-interface DataTableRowActionsProps<TData> {
+interface DataTableRowActionsProps<TData extends object> {
   row: Row<TData>
 }
 
-export function DataTableRowActions<TData>({
+export function DataTableRowActions<TData extends object>({
   row,
 }: DataTableRowActionsProps<TData>) {
   const { t } = useTranslation()
@@ -58,29 +59,32 @@ export function DataTableRowActions<TData>({
     redemption.status
   )
 
-  const handleToggleStatus = async () => {
-    const newStatus = isEnabled
-      ? REDEMPTION_STATUS.DISABLED
-      : REDEMPTION_STATUS.ENABLED
-
-    try {
-      const result = await updateRedemptionStatus(redemption.id, newStatus)
-      if (result.success) {
-        const message = isEnabled
-          ? t(SUCCESS_MESSAGES.REDEMPTION_DISABLED)
-          : t(SUCCESS_MESSAGES.REDEMPTION_ENABLED)
-        toast.success(message)
-        triggerRefresh()
-      } else {
-        handleServerError(result)
-      }
-    } catch (error) {
-      handleServerError(error)
-    }
-  }
-
+  const statusMutation = useMutation({
+    mutationFn: updateRedemptionStatus,
+    retry: false,
+    onSuccess: (_result, payload) => {
+      toast.success(
+        t(
+          payload.status === REDEMPTION_STATUS.DISABLED
+            ? SUCCESS_MESSAGES.REDEMPTION_DISABLED
+            : SUCCESS_MESSAGES.REDEMPTION_ENABLED
+        )
+      )
+      triggerRefresh()
+    },
+    onError: (error) => handleServerError(error),
+  })
   const canEdit = isEnabled && !isExpired
   const canToggle = !isUsed && !isExpired
+  const handleToggleStatus = () => {
+    if (!canToggle || statusMutation.isPending) return
+    statusMutation.mutate({
+      id: redemption.id,
+      status: isEnabled
+        ? REDEMPTION_STATUS.DISABLED
+        : REDEMPTION_STATUS.ENABLED,
+    })
+  }
 
   return (
     <div className='-ml-1.5 flex items-center gap-1'>
@@ -94,7 +98,7 @@ export function DataTableRowActions<TData>({
                 setCurrentRow(redemption)
                 setOpen('update')
               }}
-              disabled={!canEdit}
+              disabled={!canEdit || statusMutation.isPending}
               aria-label={t('Edit')}
             />
           }
@@ -106,7 +110,10 @@ export function DataTableRowActions<TData>({
 
       <DataTableRowActionMenu ariaLabel={t('Open menu')} modal={false}>
         {canToggle && (
-          <DropdownMenuItem onClick={handleToggleStatus}>
+          <DropdownMenuItem
+            onClick={handleToggleStatus}
+            disabled={statusMutation.isPending}
+          >
             {isEnabled ? (
               <>
                 {t('Disable')}
@@ -126,6 +133,7 @@ export function DataTableRowActions<TData>({
         )}
         {canToggle && <DropdownMenuSeparator />}
         <DropdownMenuItem
+          disabled={statusMutation.isPending}
           onClick={() => {
             setCurrentRow(redemption)
             setOpen('delete')

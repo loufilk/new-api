@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/base64"
+	"slices"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -81,6 +82,10 @@ func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 		if relayInfo.ConversionDiagnosticsTruncated() {
 			other.SetAdmin("conversion_diagnostics_truncated", true)
 		}
+		appendStreamAdminDiagnostics(ctx, relayInfo, other)
+		if len(relayInfo.RequestPluginSteps) > 0 {
+			other.SetAdmin("request_plugins", relayInfo.RequestPluginSteps)
+		}
 	}
 	if common.GetContextKeyBool(ctx, constant.ContextKeyChannelIsMultiKey) {
 		other.SetAdmin("is_multi_key", true)
@@ -96,9 +101,65 @@ func AppendRelayLogAdminInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	}
 }
 
+func appendStreamAdminDiagnostics(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
+	if relayInfo == nil || other == nil || !relayInfo.IsStream {
+		return
+	}
+
+	diagnostics := map[string]any{
+		"event_count": relayInfo.ReceivedResponseCount,
+	}
+	if relayInfo.HasSendResponse() {
+		diagnostics["first_event_ms"] = relayInfo.FirstResponseTime.Sub(relayInfo.StartTime).Milliseconds()
+	}
+	if ctx != nil {
+		// Deliberately do not fall back to StartTime: it is set after auth and
+		// initial channel selection, and would understate the gateway latency.
+		ingress := common.GetContextKeyTime(ctx, constant.ContextKeyGatewayIngressTime)
+		if !ingress.IsZero() && !relayInfo.FirstDownstreamContentTime.Before(ingress) {
+			ms := relayInfo.FirstDownstreamContentTime.Sub(ingress).Milliseconds()
+			diagnostics["first_downstream_content_ms"] = ms
+			other.SetPublic("first_downstream_content_ms", ms)
+		}
+		if upstreamRequestID := ctx.GetString(common.UpstreamRequestIdKey); upstreamRequestID != "" {
+			diagnostics["upstream_request_id"] = upstreamRequestID
+		}
+	}
+
+	if relayInfo.StreamStatus != nil {
+		ss := relayInfo.StreamStatus
+		diagnostics["termination"] = string(ss.EndReason)
+		diagnostics["client_disconnected"] = ss.EndReason == relaycommon.StreamEndReasonClientGone
+		diagnostics["upstream_eof"] = ss.EndReason == relaycommon.StreamEndReasonEOF
+		diagnostics["idle_timeout"] = ss.EndReason == relaycommon.StreamEndReasonTimeout
+
+		var errorText strings.Builder
+		if ss.EndError != nil {
+			errorText.WriteString(ss.EndError.Error())
+		}
+		for _, entry := range ss.Errors {
+			if errorText.Len() > 0 {
+				errorText.WriteByte(' ')
+			}
+			errorText.WriteString(entry.Message)
+		}
+		classified := strings.ToLower(errorText.String())
+		if strings.Contains(classified, "output-loop") || strings.Contains(classified, "output loop") {
+			diagnostics["output_loop_error"] = true
+		}
+		if strings.Contains(classified, "reasoning") &&
+			(strings.Contains(classified, "recover") || strings.Contains(classified, "replay") ||
+				strings.Contains(classified, "decrypt") || strings.Contains(classified, "encrypted")) {
+			diagnostics["reasoning_recovery_error"] = true
+		}
+	}
+
+	other.SetAdmin("stream_diagnostics", diagnostics)
+}
+
 func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelRatio, groupRatio, completionRatio float64,
 	cacheTokens int, cacheRatio float64, modelPrice float64, userGroupRatio float64) *model.LogOther {
-	MarkRequestPolicySuccess(ctx, relayInfo.StreamStatus)
+	MarkRequestPolicySuccess(ctx, relayInfo.StreamStatus, relayInfo)
 	other := model.NewLogOther()
 	other.SetPublic("model_ratio", modelRatio)
 	other.SetPublic("group_ratio", groupRatio)
@@ -113,7 +174,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	}
 	if relayInfo.IsModelMapped {
 		other.SetPublic("is_model_mapped", true)
-		other.SetPublic("upstream_model_name", relayInfo.UpstreamModelName)
+		other.SetAdmin("upstream_model_name", relayInfo.UpstreamModelName)
 	}
 
 	isSystemPromptOverwritten := common.GetContextKeyBool(ctx, constant.ContextKeySystemPromptOverride)
@@ -128,6 +189,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	appendFinalRequestFormat(relayInfo, other)
 	appendBillingInfo(relayInfo, other)
 	appendParamOverrideInfo(relayInfo, other)
+	appendRequestPluginRecord(relayInfo, other)
 	appendStreamStatus(relayInfo, other)
 	return other
 }
@@ -142,14 +204,24 @@ func AppendResponseModelLogInfo(relayInfo *relaycommon.RelayInfo, other *model.L
 		(relayInfo.ChannelMeta == nil || !relayInfo.IsModelMapped) {
 		return
 	}
-	other.SetPublic("response_model", *observation)
+	other.SetAdmin("response_model", *observation)
 }
 
 func appendParamOverrideInfo(relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
 	if relayInfo == nil || other == nil || len(relayInfo.ParamOverrideAudit) == 0 {
 		return
 	}
-	other.SetPublic("po", relayInfo.ParamOverrideAudit)
+	other.SetAdmin("po", relayInfo.ParamOverrideAudit)
+}
+
+// appendRequestPluginRecord shows users what the request plugins changed in
+// their request. A retry rewrites the attempt's entries in place, so the
+// log keeps a copy.
+func appendRequestPluginRecord(relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
+	if relayInfo == nil || other == nil || len(relayInfo.RequestPluginRecord) == 0 {
+		return
+	}
+	other.SetPublic("request_plugins", relaycommon.CapRequestPluginRecord(slices.Clone(relayInfo.RequestPluginRecord)))
 }
 
 func appendStreamStatus(relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
@@ -179,7 +251,7 @@ func appendStreamStatus(relayInfo *relaycommon.RelayInfo, other *model.LogOther)
 		}
 		streamInfo["errors"] = messages
 	}
-	other.SetPublic("stream_status", streamInfo)
+	other.SetAdmin("stream_status", streamInfo)
 }
 
 func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
@@ -219,7 +291,9 @@ func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other *model.LogOther) 
 		if usedFinal < 0 {
 			usedFinal = 0
 		}
-		if relayInfo.SubscriptionAmountTotal > 0 {
+		if relayInfo.SubscriptionSnapshotUnknown {
+			other.SetPublic("subscription_snapshot_unknown", true)
+		} else if relayInfo.SubscriptionAmountTotal > 0 {
 			remain := max(relayInfo.SubscriptionAmountTotal-usedFinal, 0)
 			other.SetPublic("subscription_total", relayInfo.SubscriptionAmountTotal)
 			other.SetPublic("subscription_used", usedFinal)
@@ -258,7 +332,7 @@ func appendRequestConversionChain(relayInfo *relaycommon.RelayInfo, other *model
 	if len(chain) == 0 {
 		return
 	}
-	other.SetPublic("request_conversion", chain)
+	other.SetAdmin("request_conversion", chain)
 }
 
 func appendFinalRequestFormat(relayInfo *relaycommon.RelayInfo, other *model.LogOther) {
@@ -268,7 +342,7 @@ func appendFinalRequestFormat(relayInfo *relaycommon.RelayInfo, other *model.Log
 	if relayInfo.GetFinalRequestRelayFormat() == types.RelayFormatClaude {
 		// claude indicates the final upstream request format is Claude Messages.
 		// Frontend log rendering uses this to keep the original Claude input display.
-		other.SetPublic("claude", true)
+		other.SetAdmin("claude", true)
 	}
 }
 
@@ -325,6 +399,7 @@ func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData hosttypes.P
 		other.SetPublic("user_group_ratio", priceData.GroupRatioInfo.GroupSpecialRatio)
 	}
 	appendRequestPath(nil, relayInfo, other)
+	appendRequestPluginRecord(relayInfo, other)
 	return other
 }
 

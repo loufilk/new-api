@@ -18,47 +18,72 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
 
-import type {
-  ApiKey,
-  ApiResponse,
-  GetApiKeysParams,
-  GetApiKeysResponse,
-  SearchApiKeysParams,
-  ApiKeyFormData,
-  TokenAutoGroupsConfig,
+import { ERROR_MESSAGES } from './constants'
+import {
+  apiKeySchema,
+  type ApiKey,
+  type ApiResponse,
+  type GetApiKeysParams,
+  type GetApiKeysResponse,
+  type SearchApiKeysParams,
+  type ApiKeyFormData,
+  type ApiKeyUpdateData,
+  type TokenAutoGroupsConfig,
+  type CCSwitchApp,
 } from './types'
 
 // ============================================================================
 // API Key Management
 // ============================================================================
 
+function parseApiKeysResponse(
+  response: GetApiKeysResponse
+): GetApiKeysResponse {
+  if (!response.success || !response.data) return response
+
+  const parsed = apiKeySchema.array().safeParse(response.data.items)
+  // Never expose raw token data or schema issues through the UI error path.
+  if (!parsed.success) throw new Error(ERROR_MESSAGES.LOAD_FAILED)
+  return { ...response, data: { ...response.data, items: parsed.data } }
+}
+
 // Get paginated API keys list
 export async function getApiKeys(
   params: GetApiKeysParams = {}
 ): Promise<GetApiKeysResponse> {
   const { p = 1, size = 10 } = params
-  const res = await api.get(`/api/token/?p=${p}&size=${size}`)
-  return res.data
+  const queryParams = new URLSearchParams({ p: String(p), size: String(size) })
+  if (params.status?.length) queryParams.set('status', params.status.join(','))
+  const res = await api.get(`/api/token/?${queryParams.toString()}`)
+  return parseApiKeysResponse(res.data)
 }
 
-// Search API keys by keyword or token (with pagination)
+// Keep credential searches in the request body, out of request URLs and logs.
 export async function searchApiKeys(
   params: SearchApiKeysParams
 ): Promise<GetApiKeysResponse> {
   const { keyword = '', token = '', p, size } = params
   const queryParams = new URLSearchParams()
-  if (keyword) queryParams.set('keyword', keyword)
-  if (token) queryParams.set('token', token)
   if (p != null) queryParams.set('p', String(p))
   if (size != null) queryParams.set('size', String(size))
-  const res = await api.get(`/api/token/search?${queryParams.toString()}`)
-  return res.data
+  if (params.status?.length) queryParams.set('status', params.status.join(','))
+  const query = queryParams.toString()
+  const res = await api.post(`/api/token/search${query ? `?${query}` : ''}`, {
+    keyword,
+    token,
+  })
+  return parseApiKeysResponse(res.data)
 }
 
 // Get single API key by ID
 export async function getApiKey(id: number): Promise<ApiResponse<ApiKey>> {
   const res = await api.get(`/api/token/${id}`)
-  return res.data
+  const response: ApiResponse<ApiKey> = res.data
+  if (!response.success || !response.data) return response
+
+  const parsed = apiKeySchema.safeParse(response.data)
+  if (!parsed.success) throw new Error(ERROR_MESSAGES.LOAD_FAILED)
+  return { ...response, data: parsed.data }
 }
 
 // Get the current user's global Auto order and the per-token selection limit.
@@ -66,6 +91,29 @@ export async function getTokenAutoGroups(): Promise<
   ApiResponse<TokenAutoGroupsConfig>
 > {
   const res = await api.get('/api/token/auto-groups')
+  return res.data
+}
+
+// Models routable by the API key routing scope currently selected in the form.
+export async function getApiKeyScopeModels(data: {
+  group: string
+  smart_routing?: boolean
+  auto_groups_mode: 'inherit' | 'custom'
+  auto_groups: string[]
+}): Promise<ApiResponse<string[]>> {
+  const res = await api.post('/api/token/models', data)
+  return res.data
+}
+
+// Models that this exact API key can route for the selected CC Switch app.
+export async function getCCSwitchTokenModels(
+  id: number,
+  app: CCSwitchApp
+): Promise<ApiResponse<string[]>> {
+  const params = new URLSearchParams({ app })
+  const res = await api.get(
+    `/api/user/tokens/${id}/models?${params.toString()}`
+  )
   return res.data
 }
 
@@ -79,7 +127,7 @@ export async function createApiKey(
 
 // Update an existing API key
 export async function updateApiKey(
-  data: ApiKeyFormData & { id: number }
+  data: ApiKeyUpdateData
 ): Promise<ApiResponse<ApiKey>> {
   const res = await api.put('/api/token/', data)
   return res.data
@@ -104,24 +152,37 @@ export async function updateApiKeyStatus(
   id: number,
   status: number
 ): Promise<ApiResponse<ApiKey>> {
-  const res = await api.put('/api/token/?status_only=true', { id, status })
+  const res = await api.put(
+    status === 2
+      ? '/api/token/?status_only=true&disable_only=true'
+      : '/api/token/?status_only=true',
+    { id, status }
+  )
   return res.data
 }
 
 // Fetch the real (unmasked) key for a token by ID
 export async function fetchTokenKey(
-  id: number
+  id: number,
+  config?: { signal?: AbortSignal }
 ): Promise<{ success: boolean; message?: string; data?: { key: string } }> {
-  const res = await api.post(`/api/token/${id}/key`)
+  const res = config
+    ? await api.post(`/api/token/${id}/key`, undefined, config)
+    : await api.post(`/api/token/${id}/key`)
   return res.data
 }
 
 // Batch fetch real (unmasked) keys for multiple tokens
-export async function fetchTokenKeysBatch(ids: number[]): Promise<{
+export async function fetchTokenKeysBatch(
+  ids: number[],
+  config?: { signal?: AbortSignal }
+): Promise<{
   success: boolean
   message?: string
   data?: { keys: Record<number, string> }
 }> {
-  const res = await api.post('/api/token/batch/keys', { ids })
+  const res = config
+    ? await api.post('/api/token/batch/keys', { ids }, config)
+    : await api.post('/api/token/batch/keys', { ids })
   return res.data
 }

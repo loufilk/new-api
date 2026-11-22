@@ -16,11 +16,15 @@ type embedFileSystem struct {
 }
 
 func (e *embedFileSystem) Exists(prefix string, path string) bool {
-	_, err := e.Open(path)
+	file, err := e.Open(path)
 	if err != nil {
 		return false
 	}
-	return true
+	defer file.Close()
+	info, err := file.Stat()
+	// Directories are not build assets. Let the web router return its
+	// non-HTML static 404 instead of FileServer's directory HTML/redirect.
+	return err == nil && !info.IsDir()
 }
 
 func (e *embedFileSystem) Open(name string) (http.File, error) {

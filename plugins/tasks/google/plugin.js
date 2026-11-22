@@ -7,7 +7,7 @@ export const meta = {
     en: "Google Veo video generation on the Gemini API (text-to-video and image-to-video)",
     zh: "Google Veo 视频生成（文生视频、图生视频），Gemini API 版本",
   },
-  version: "1.1.0",
+  version: "1.2.0",
   author: { name: "QuantumNous" },
   channelTypes: [24],
   models: ["veo-3.0-generate-001", "veo-3.0-fast-generate-001", "veo-3.1-generate-preview", "veo-3.1-fast-generate-preview"],
@@ -37,9 +37,11 @@ export const meta = {
   // New API gateway. The model segment carries the method,
   // models/{model}:predictLongRunning, and the operation it returns is named
   // after the gateway task.
+  // The gateway also serves each route under /google.
   routes: [
-    { method: "POST", path: "/google/v1beta/models/:model", type: "submit", decode: "predictLongRunning", render: "operation" },
-    { method: "GET", path: "/google/v1beta/models/:model/operations/:task_id", type: "query", render: "operation" },
+    // The host's Gemini relay hands :predictLongRunning to this route.
+    { method: "POST", path: "/v1beta/models/:model", type: "submit", decode: "predictLongRunning", render: "operation" },
+    { method: "GET", path: "/v1beta/models/:model/operations/:task_id", type: "query", render: "operation" },
   ],
   protocols: [{ name: "openai_responses", supports: ["stream", "sync", "background"] }, "openai_video"],
 };
@@ -53,8 +55,8 @@ function plainObject(value) {
 }
 
 // On a New API channel the same plugin answers on another gateway, which
-// serves the Gemini API wire format on the prefixed native routes and takes
-// its own token as a Bearer header.
+// serves the Gemini API wire format under /google, the form every gateway
+// release serves, and takes its own token as a Bearer header.
 function viaGateway(ctx) {
   return Boolean(ctx.upstream && ctx.upstream.kind === "new_api");
 }
@@ -168,11 +170,21 @@ function imageInput(value, files) {
   return { inlineData: { mimeType: mime, data: value } };
 }
 
+function requestedVideoDuration(req) {
+  const value = req.duration !== undefined ? req.duration : (req.metadata || {}).durationSeconds;
+  if (value === undefined) return undefined;
+  const seconds = Number(value);
+  if ((typeof value !== "number" && typeof value !== "string") || !Number.isInteger(seconds) || seconds < 1 || seconds > 3600)
+    throw new Error("durationSeconds must be an integer between 1 and 3600");
+  return seconds;
+}
+
 function converted(ctx) {
   const req = ctx.requestBody || {};
   const metadata = Object.assign({}, req.metadata || {});
   const params = Object.assign({}, metadata);
-  if (Number(req.duration) > 0) params.durationSeconds = Number(req.duration);
+  const seconds = requestedVideoDuration(req);
+  if (seconds !== undefined) params.durationSeconds = seconds;
   if (!params.resolution && req.size) params.resolution = resolutionForSize(req.size);
   if (!params.aspectRatio && req.size) params.aspectRatio = aspectForSize(req.size);
   if (params.resolution) params.resolution = String(params.resolution).toLowerCase();
@@ -256,7 +268,7 @@ export function parseSubmitResponse(ctx, resp) {
   if (!String(body.name || "").trim()) throw new Error("missing operation name");
   const result = { taskId: utils.base64URL(body.name), taskData: body };
   if (body.done && !(body.error && body.error.message)) {
-    const videos = ((body.response || {}).generateVideoResponse || {}).generatedVideos || [];
+    const videos = ((body.response || {}).generateVideoResponse || {}).generatedSamples || [];
     const uri = videos.length && videos[0].video ? videos[0].video.uri || "" : "";
     result.immediate = { taskId: result.taskId, status: "SUCCESS", progress: "100%", remoteUrl: uri };
   }
@@ -266,8 +278,8 @@ export function parseSubmitResponse(ctx, resp) {
 export function extractUsage(ctx) {
   const req = ctx.requestBody || {};
   const metadata = req.metadata || {};
-  let seconds = Number(req.duration);
-  if (!Number.isFinite(seconds) || seconds <= 0) seconds = 8;
+  const duration = requestedVideoDuration(req);
+  const seconds = duration === undefined ? 8 : duration;
   const resolution = String(metadata.resolution || resolutionForSize(req.size) || "720p").toLowerCase();
   return { seconds: seconds, resolution: resolution };
 }
@@ -291,7 +303,7 @@ export function parseTaskResult(ctx, body) {
   // unrecognized.
   if (!body || typeof body !== "object" || !String(body.name || "").trim()) return { status: "UNKNOWN", reason: "unrecognized operation state" };
   if (body.done !== true) return { status: "IN_PROGRESS", progress: "50%" };
-  const videos = ((body.response || {}).generateVideoResponse || {}).generatedVideos || [];
+  const videos = ((body.response || {}).generateVideoResponse || {}).generatedSamples || [];
   const uri = videos.length && videos[0].video ? videos[0].video.uri || "" : "";
   return { taskId: utils.base64URL(body.name || ""), status: "SUCCESS", progress: "100%", remoteUrl: uri };
 }
@@ -302,8 +314,10 @@ function artifactData(ctx) {
   return data;
 }
 
+// The REST operation lists its videos in generatedSamples; generatedVideos is
+// only the name the SDKs give them after converting the response.
 function artifactVideoURL(ctx) {
-  const videos = ((artifactData(ctx).response || {}).generateVideoResponse || {}).generatedVideos || [];
+  const videos = ((artifactData(ctx).response || {}).generateVideoResponse || {}).generatedSamples || [];
   return videos.length && videos[0].video ? String(videos[0].video.uri || "").trim() : "";
 }
 

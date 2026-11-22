@@ -25,11 +25,6 @@ import {
   RouterProvider,
 } from '@tanstack/react-router'
 import {
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-} from '@tanstack/react-table'
-import {
   act,
   cleanup,
   render,
@@ -45,6 +40,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
+import { flexRender, useConsoleTable } from '@/lib/console-table'
 import { formatTimestampToDate } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth-store'
 import {
@@ -71,7 +67,7 @@ function QuotaTable(props: { remaining: number; used: number }) {
       column.id ?? ('accessorKey' in column ? String(column.accessorKey) : '')
     )
   )
-  const table = useReactTable({
+  const table = useConsoleTable({
     columns,
     data: [
       {
@@ -86,7 +82,6 @@ function QuotaTable(props: { remaining: number; used: number }) {
         group: 'default',
       } as User,
     ],
-    getCoreRowModel: getCoreRowModel(),
   })
   return (
     <table>
@@ -316,7 +311,7 @@ async function renderUsersList(emptyInvitation = false) {
   return get
 }
 
-it('sends balance sorting to the server and keeps invitation details on two lines', async () => {
+it('sends balance sorting to the server and keeps the inviter without legacy affiliate earnings', async () => {
   const get = await renderUsersList()
   expect(
     screen.getByRole('columnheader', { name: 'User Group' })
@@ -334,7 +329,8 @@ it('sends balance sorting to the server and keeps invitation details on two line
     screen.queryByRole('button', { name: 'Total Used' })
   ).not.toBeInTheDocument()
   expect(screen.getByText('Inviter ID: 42')).toBeInTheDocument()
-  expect(screen.getByText(/Invited 2 users · Earnings:/)).toBeInTheDocument()
+  expect(screen.getByText('Invited 2 users')).toBeInTheDocument()
+  expect(screen.queryByText(/Earnings:/)).not.toBeInTheDocument()
 })
 
 it('shows balance above usage on mobile cards in Chinese', async () => {

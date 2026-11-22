@@ -17,7 +17,6 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -49,7 +48,17 @@ func validUserInfo(username string, role int) bool {
 	return true
 }
 
-func authHelper(c *gin.Context, minRole int) {
+func authHelper(c *gin.Context, minRole int, requireGroupConfig bool) {
+	var groupRead *model.GroupConfigRead
+	if requireGroupConfig {
+		var err error
+		groupRead, err = model.BeginGroupConfigRead(c.Request.Context())
+		if err != nil {
+			abortWithWebMessage(c, http.StatusServiceUnavailable, "GROUP_CONFIG_CHANGED", common.NewMessage("Group settings changed or are temporarily unavailable. Retry the request."))
+			return
+		}
+		defer groupRead.Close()
+	}
 	if _, started := c.Get(accessTokenAuditContextKey); !started {
 		defer finishAccessTokenAudit(c)
 	}
@@ -62,7 +71,8 @@ func authHelper(c *gin.Context, minRole int) {
 		abortWithWebMessage(c, http.StatusUnauthorized, "AUTH_USER_DISABLED", common.NewMessage("User has been banned"))
 		return
 	}
-	if user.Role < minRole {
+	requiredRole := minRole
+	if common.EffectiveUserRole(user.Role) < requiredRole {
 		abortWithWebMessage(c, http.StatusForbidden, "AUTH_INSUFFICIENT_PRIVILEGE", common.NewMessage("Unauthorized, insufficient privileges"))
 		return
 	}
@@ -90,6 +100,13 @@ func authHelper(c *gin.Context, minRole int) {
 		auditWriter = beginAdminAudit(c)
 	}
 
+	if groupRead != nil {
+		if err := groupRead.Finish(); err != nil {
+			abortWithWebMessage(c, http.StatusServiceUnavailable, "GROUP_CONFIG_CHANGED", common.NewMessage("Group settings changed or are temporarily unavailable. Retry the request."))
+			return
+		}
+		c.Set(model.GroupConfigVersionContextKey, groupRead.Version)
+	}
 	c.Next()
 
 	finishAdminAudit(c, auditWriter)
@@ -129,21 +146,64 @@ func TryUserAuth() func(c *gin.Context) {
 	}
 }
 
+// SessionAuth accepts only the live dashboard refresh cookie. It deliberately
+// does not accept PATs or caller-supplied bearer tokens, so the standalone
+// same-site playground is bound to the user's browser login session.
+func SessionAuth() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		groupRead, groupErr := model.BeginGroupConfigRead(c.Request.Context())
+		if groupErr != nil {
+			abortWithWebMessage(c, http.StatusServiceUnavailable, "GROUP_CONFIG_CHANGED", common.NewMessage("Group settings changed or are temporarily unavailable. Retry the request."))
+			return
+		}
+		defer groupRead.Close()
+		rawRefreshToken, err := c.Cookie(service.RefreshCookieName)
+		if err != nil || strings.TrimSpace(rawRefreshToken) == "" {
+			writeDashboardAuthError(c, service.ErrRefreshTokenInvalid)
+			return
+		}
+		identity, user, err := service.ValidateRefreshLoginSession(rawRefreshToken)
+		if err != nil {
+			writeDashboardAuthError(c, err)
+			return
+		}
+		if user.Status != common.UserStatusEnabled || user.Role < common.RoleCommonUser || !validUserInfo(user.Username, user.Role) {
+			writeDashboardAuthError(c, service.ErrLoginSessionRevoked)
+			return
+		}
+		setDashboardAuthContext(c, user, identity, false)
+		if err := groupRead.Finish(); err != nil {
+			abortWithWebMessage(c, http.StatusServiceUnavailable, "GROUP_CONFIG_CHANGED", common.NewMessage("Group settings changed or are temporarily unavailable. Retry the request."))
+			return
+		}
+		c.Set(model.GroupConfigVersionContextKey, groupRead.Version)
+		c.Next()
+	}
+}
+
 func UserAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
-		authHelper(c, common.RoleCommonUser)
+		authHelper(c, common.RoleCommonUser, true)
+	}
+}
+
+// ModelTestHistoryAuth keeps live dashboard/session/PAT checks while allowing
+// only owner history and cancellation to work without routing configuration.
+func ModelTestHistoryAuth() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		authHelper(c, common.RoleCommonUser, false)
 	}
 }
 
 func AdminAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
-		authHelper(c, common.RoleAdminUser)
+		authHelper(c, common.RoleAdminUser, false)
 	}
 }
 
 func RootAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
-		authHelper(c, common.RoleRootUser)
+		authHelper(c, common.RoleRootUser, false)
 	}
 }
 
@@ -359,7 +419,7 @@ func authorizationToken(header string) (string, bool) {
 func setDashboardAuthContext(c *gin.Context, user *model.UserBase, identity service.AuthIdentity, useAccessToken bool) {
 	c.Header("Auth-Version", "864b7076dbcd0a3c01b5520316720ebf")
 	c.Set("username", user.Username)
-	c.Set("role", user.Role)
+	c.Set("role", common.EffectiveUserRole(user.Role))
 	c.Set("id", user.Id)
 	c.Set("group", user.Group)
 	c.Set("user_group", user.Group)
@@ -399,7 +459,7 @@ func writeDashboardAuthError(c *gin.Context, err error) {
 		abortWithWebMessage(c, http.StatusUnauthorized, "AUTH_SESSION_REVOKED", common.NewMessage("Unauthorized, not logged in and no access token provided"))
 		return
 	}
-	if errors.Is(err, service.ErrAuthTokenInvalid) {
+	if errors.Is(err, service.ErrAuthTokenInvalid) || errors.Is(err, service.ErrRefreshTokenInvalid) {
 		abortWithWebMessage(c, http.StatusUnauthorized, "AUTH_UNAUTHORIZED", common.NewMessage("Unauthorized, invalid access token"))
 		return
 	}
@@ -506,6 +566,12 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 		}
 
 		userCache, err := model.GetUserCache(token.UserId)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// A self-deleted account keeps its API keys; they must read as invalid.
+			common.ApiErrorStatus(c, http.StatusUnauthorized, errors.New(common.TranslateMessage(c, i18n.MsgTokenInvalid)))
+			c.Abort()
+			return
+		}
 		if err != nil {
 			common.SysLog(common.LogText("TokenAuthReadOnly GetUserCache error for user %d: %v", token.UserId, err))
 			common.ApiErrorStatus(c, http.StatusInternalServerError, errors.New(common.TranslateMessage(c, i18n.MsgDatabaseError)))
@@ -527,6 +593,13 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 
 func TokenAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		groupRead, groupErr := model.BeginGroupConfigRead(c.Request.Context())
+		if groupErr != nil {
+			abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgGroupConfigChanged), "group_config_changed")
+			return
+		}
+		defer groupRead.Close()
+
 		// 先检测是否为ws
 		applyWebSocketSubprotocolAuthorization(c.Request.Header)
 		// 检查path包含/v1/messages 或 /v1/models
@@ -569,7 +642,7 @@ func TokenAuth() func(c *gin.Context) {
 			parts = strings.Split(key, "-")
 			key = parts[0]
 		}
-		token, err := model.ValidateUserToken(key)
+		token, err := model.ValidateUserTokenIdentity(key)
 		if token != nil {
 			id := c.GetInt("id")
 			if id == 0 {
@@ -605,6 +678,11 @@ func TokenAuth() func(c *gin.Context) {
 		}
 
 		userCache, err := model.GetUserCache(token.UserId)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// A self-deleted account keeps its API keys; they must read as invalid.
+			abortWithOpenAiMessage(c, http.StatusUnauthorized, common.TranslateMessage(c, i18n.MsgTokenInvalid))
+			return
+		}
 		if err != nil {
 			common.SysLog(common.LogText("TokenAuth GetUserCache error for user %d: %v", token.UserId, err))
 			abortWithOpenAiMessage(c, http.StatusInternalServerError,
@@ -621,25 +699,37 @@ func TokenAuth() func(c *gin.Context) {
 
 		userGroup := userCache.Group
 		tokenGroup := token.Group
+		if token.SmartRouting {
+			// Only the virtual Auto gate is bypassed. Candidate selection still
+			// intersects every request with the user's live concrete permissions.
+			tokenGroup = "auto"
+		} else if err := service.ValidateTokenRoutingScope(userGroup, token); err != nil {
+			message := i18n.MsgAuthTokenGroupForbidden
+			if errors.Is(err, service.ErrTokenGroupDeprecated) {
+				message = i18n.MsgAuthTokenGroupDeprecated
+			}
+			abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, message, map[string]any{"Group": tokenGroup}))
+			return
+		}
 		if tokenGroup != "" {
-			// check common.UserUsableGroups[userGroup]
-			if _, ok := service.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {
-				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgAuthTokenGroupForbidden, map[string]any{"Group": tokenGroup}))
-				return
-			}
-			// check group in common.GroupRatio
-			if !ratio_setting.ContainsGroupRatio(tokenGroup) {
-				if tokenGroup != "auto" {
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgAuthTokenGroupDeprecated, map[string]any{"Group": tokenGroup}))
-					return
-				}
-			}
 			userGroup = tokenGroup
 		}
 		common.SetContextKey(c, constant.ContextKeyUsingGroup, userGroup)
 
 		err = SetupContextForToken(c, token, parts...)
 		if err != nil {
+			return
+		}
+		if err := groupRead.Finish(); err != nil {
+			abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgGroupConfigChanged), "group_config_changed")
+			return
+		}
+		c.Set(model.GroupConfigVersionContextKey, groupRead.Version)
+		if interceptAuthenticatedUserCall(c) {
+			return
+		}
+		if err := model.ValidateUserTokenQuota(token); err != nil {
+			abortWithOpenAiMessage(c, http.StatusUnauthorized, common.TranslateMessage(c, i18n.MsgTokenInvalid))
 			return
 		}
 		c.Next()
@@ -688,7 +778,14 @@ func SetupContextForToken(c *gin.Context, token *model.Token, parts ...string) e
 	} else {
 		c.Set("token_model_limit_enabled", false)
 	}
-	common.SetContextKey(c, constant.ContextKeyTokenGroup, token.Group)
+	tokenGroup := token.Group
+	if token.SmartRouting {
+		tokenGroup = "auto"
+	}
+	common.SetContextKey(c, constant.ContextKeyTokenGroup, tokenGroup)
+	common.SetContextKey(c, constant.ContextKeyTokenSmartRouting, token.SmartRouting)
+	common.SetContextKey(c, constant.ContextKeyTokenRoutingStrategy, token.GetRoutingStrategy())
+	common.SetContextKey(c, constant.ContextKeyTokenNoRetryWithinGroup, token.NoRetryWithinGroup)
 	common.SetContextKey(c, constant.ContextKeyTokenCrossGroupRetry, token.CrossGroupRetry)
 	if token.AutoGroups != "" {
 		autoGroups, err := token.GetAutoGroups()

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -18,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 
@@ -67,6 +69,14 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 	}
 
 	awsSecret := strings.Split(info.ApiKey, "|")
+	// SDK retries are otherwise invisible to the host's per-group attempt
+	// accounting. Apply this to the request's client, never a shared/global
+	// retryer, so legacy keys retain the SDK's normal retry behavior.
+	var retryer aws.Retryer
+	if common.GetContextKeyBool(c, constant.ContextKeyTokenNoRetryWithinGroup) ||
+		common.GetContextKeyBool(c, constant.ContextKeyModelTestSingleAttempt) {
+		retryer = aws.NopRetryer{}
+	}
 	var client *bedrockruntime.Client
 	switch len(awsSecret) {
 	case 2:
@@ -76,6 +86,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 			Region:                  region,
 			BearerAuthTokenProvider: bearer.StaticTokenProvider{Token: bearer.Token{Value: apiKey}},
 			HTTPClient:              httpClient,
+			Retryer:                 retryer,
 		})
 	case 3:
 		ak := awsSecret[0]
@@ -85,6 +96,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 			Region:      region,
 			Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(ak, sk, "")),
 			HTTPClient:  httpClient,
+			Retryer:     retryer,
 		})
 	default:
 		return nil, errors.New("invalid aws secret key")
@@ -186,14 +198,18 @@ func buildAwsRequestBody(c *gin.Context, info *relaycommon.RelayInfo, awsClaudeR
 		if err != nil {
 			return nil, errors.Wrap(err, "get request body bytes fail")
 		}
-		// Nested values keep the client's bytes and key order.
-		var data map[string]json.RawMessage
-		if err := common.Unmarshal(body, &data); err != nil {
-			return nil, errors.Wrap(err, "pass-through unmarshal request body fail")
+		// Only model and stream are removed: the rest keeps the client's bytes
+		// and key order. The Doc reads body in place and never changes it.
+		if !ojson.ValidBytes(body) || !ojson.GetBytesNoCopy(body, "@this").IsObject() {
+			return nil, errors.New("pass-through unmarshal request body fail: request body must be a JSON object")
 		}
-		delete(data, "model")
-		delete(data, "stream")
-		return common.Marshal(data)
+		data := ojson.NewDoc(body)
+		for _, key := range []string{"model", "stream"} {
+			if err := relaycommon.DeleteJSONMember(data, key); err != nil {
+				return nil, errors.Wrap(err, "pass-through unmarshal request body fail")
+			}
+		}
+		return data.Bytes(), nil
 	}
 	return common.Marshal(awsClaudeReq)
 }
@@ -227,12 +243,30 @@ func getAwsModelID(requestModel string) string {
 	return requestModel
 }
 
+// SDK requests are only prepared by DoRequest. Check admission immediately
+// before Invoke, just like the ordinary HTTP transport's dispatch boundary.
+func authorizeAwsInvoke(c *gin.Context) *types.NewAPIError {
+	if stopped := service.RelayRequestCancellation(c); stopped != nil {
+		common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, true)
+		return stopped
+	}
+	if apiErr := service.CheckModelTestAccess(c); apiErr != nil {
+		common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, true)
+		return apiErr
+	}
+	common.SetContextKey(c, constant.ContextKeyUpstreamRequestAttempted, true)
+	return nil
+}
+
 func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types.NewAPIError, *dto.Usage) {
 
 	requestContext := c.Request.Context()
 	ctx, cancel := newAwsInvokeContext(requestContext)
 	defer cancel()
 
+	if apiErr := authorizeAwsInvoke(c); apiErr != nil {
+		return apiErr, nil
+	}
 	awsResp, err := a.AwsClient.InvokeModel(ctx, a.AwsReq.(*bedrockruntime.InvokeModelInput))
 	if err != nil {
 		return newAwsInvokeError(requestContext, err, "InvokeModel"), nil
@@ -263,6 +297,9 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
 	ctx, cancel := newAwsInvokeContext(requestContext)
 	defer cancel()
 
+	if apiErr := authorizeAwsInvoke(c); apiErr != nil {
+		return apiErr, nil
+	}
 	awsResp, err := a.AwsClient.InvokeModelWithResponseStream(ctx, a.AwsReq.(*bedrockruntime.InvokeModelWithResponseStreamInput))
 	if err != nil {
 		return newAwsInvokeError(requestContext, err, "InvokeModelWithResponseStream"), nil
@@ -278,6 +315,12 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
 		Usage:        &dto.Usage{},
 	}
 
+	info.StreamStatus = relaycommon.NewStreamStatus()
+	info.StreamStatus.RequireTerminal()
+	failed := func(apiErr *types.NewAPIError) (*types.NewAPIError, *dto.Usage) {
+		usage, failure := claude.FailStream(c, info, claudeInfo, apiErr)
+		return failure, usage
+	}
 	events := stream.Events()
 streamLoop:
 	for {
@@ -295,21 +338,28 @@ streamLoop:
 			switch v := event.(type) {
 			case *bedrockruntimeTypes.ResponseStreamMemberChunk:
 				info.SetFirstResponseTime()
+				info.ReceivedResponseCount++
 				respErr := claude.HandleStreamResponseData(c, info, claudeInfo, string(v.Value.Bytes))
 				if respErr != nil {
-					return respErr, nil
+					return failed(respErr)
 				}
 			case *bedrockruntimeTypes.UnknownUnionMember:
 				fmt.Println(common.LogText("unknown tag: %v", v.Tag))
-				return types.NewError(errors.New("unknown response type"), types.ErrorCodeInvalidRequest), nil
+				return failed(types.NewError(errors.New("unknown response type"), types.ErrorCodeBadResponse))
 			default:
 				fmt.Println(common.LogText("union is nil or unknown type"))
-				return types.NewError(errors.New("nil or unknown response type"), types.ErrorCodeInvalidRequest), nil
+				return failed(types.NewError(errors.New("nil or unknown response type"), types.ErrorCodeBadResponse))
 			}
 		}
 	}
 
-	_ = stream.Close()
+	sourceErr := ctx.Err()
+	if sourceErr == nil {
+		sourceErr = stream.Err()
+	}
+	if apiErr := claude.StreamTerminalError(c, info, sourceErr); apiErr != nil {
+		return failed(apiErr)
+	}
 	claude.HandleStreamFinalResponse(c, info, claudeInfo)
 	return nil, claudeInfo.Usage
 }
@@ -321,6 +371,9 @@ func handleNovaRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) 
 	ctx, cancel := newAwsInvokeContext(requestContext)
 	defer cancel()
 
+	if apiErr := authorizeAwsInvoke(c); apiErr != nil {
+		return apiErr, nil
+	}
 	awsResp, err := a.AwsClient.InvokeModel(ctx, a.AwsReq.(*bedrockruntime.InvokeModelInput))
 	if err != nil {
 		return newAwsInvokeError(requestContext, err, "InvokeModel"), nil
@@ -345,13 +398,16 @@ func handleNovaRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) 
 	if err := json.Unmarshal(awsResp.Body, &novaResp); err != nil {
 		return types.NewError(errors.Wrap(err, "unmarshal nova response"), types.ErrorCodeBadResponseBody), nil
 	}
+	if len(novaResp.Output.Message.Content) == 0 {
+		return types.NewError(errors.New("nova response has no message content"), types.ErrorCodeBadResponseBody), nil
+	}
 
 	// 构造OpenAI格式响应
 	response := dto.OpenAITextResponse{
 		Id:      helper.GetResponseID(c),
 		Object:  "chat.completion",
 		Created: common.GetTimestamp(),
-		Model:   info.UpstreamModelName,
+		Model:   info.OriginModelName,
 		Choices: []dto.OpenAITextResponseChoice{{
 			Index: 0,
 			Message: dto.Message{

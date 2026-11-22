@@ -1,0 +1,216 @@
+name: Clean upgrade exact-head validation
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clean-head-${{ github.ref }}
+  cancel-in-progress: true
+
+# Existing CI remains the merge/event-commit integration check. This workflow
+# checks the immutable candidate head separately; never infer head evidence from
+# a merge-ref result. It uses pull_request, never pull_request_target.
+env:
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  GOTOOLCHAIN: local
+  GOFLAGS: '-mod=readonly'
+jobs:
+  backend:
+    name: Exact head backend vet, build, and test
+    if: ${{ !startsWith(github.head_ref || github.ref_name, 'fix/im19-') && !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119"]'), github.head_ref || github.ref_name) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:18.7-alpine@sha256:ff64c9e3bdf8e2120107d3559de8db314e8305f7e38c5105903c6295876738ff
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    env:
+      GOWORK: 'off'
+      GOFLAGS: '-mod=readonly -p=1'
+      NO_AGENT_FIXTURE_OWNED: '1'
+      TEST_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_fixture?sslmode=disable
+      TEST_MODEL_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_model?sslmode=disable
+      TEST_SERVICE_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/newapi_test_service?sslmode=disable
+      TEST_SECURITY_DIALECT: postgres
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Attest exact head and setup-version bounds
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          out="$RUNNER_TEMP/clean-head-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${{ github.job }}"
+          mkdir -p "$out"
+          printf 'OUT=%s\n' "$out" >> "$GITHUB_ENV"
+          git rev-parse HEAD HEAD^{tree} > "$out/source-identity.txt"
+          python3 - <<'PYVERSION'
+          from pathlib import Path
+          version = Path('VERSION').read_text().strip()
+          if not 0 < len(version) <= 50:
+              raise SystemExit('VERSION must fit existing setups.version varchar(50); preserve full SHA in provenance')
+          print(version)
+          PYVERSION
+
+      - name: Set up Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+            tokenkit/go.sum
+
+      - name: Record compiler version
+        run: go version | tee "$OUT/go-version.txt"
+
+      - name: Create frontend embed placeholder
+        run: |
+          mkdir -p web/dist
+          touch web/dist/index.html
+
+      - name: Vet root module
+        run: go vet ./...
+
+      - name: Vet relaykit independently
+        working-directory: relaykit
+        run: go vet ./...
+
+      - name: Vet tokenkit independently
+        working-directory: tokenkit
+        run: go vet ./...
+
+      - name: Build root module
+        run: go build ./...
+
+      - name: Build relaykit independently
+        working-directory: relaykit
+        run: go build ./...
+
+      - name: Build tokenkit independently
+        working-directory: tokenkit
+        run: go build ./...
+
+      - name: Test root, relaykit, and tokenkit modules
+        run: |
+          for database in newapi_test_fixture newapi_test_model newapi_test_service; do
+            docker exec "${{ job.services.postgres.id }}" createdb -U postgres "$database"
+          done
+          make test
+
+      - name: Race tests
+        env:
+          CGO_ENABLED: '1'
+          GOMAXPROCS: '2'
+        run: |
+          # Each pass owns fresh fixtures; packages sharing a fixture run serially.
+          for database in newapi_test_fixture newapi_test_model newapi_test_service; do
+            docker exec "${{ job.services.postgres.id }}" dropdb -U postgres "$database"
+            docker exec "${{ job.services.postgres.id }}" createdb -U postgres "$database"
+          done
+          # SQLite-heavy controller tests can exceed Go's default 10m under -race.
+          # Bound resource contention and runtime without reducing test coverage.
+          go test -race -p 1 -count=1 -timeout=20m ./...
+          cd relaykit
+          go test -race -p 1 -count=1 -timeout=20m ./...
+
+      - name: Release evidence gate tests
+        run: python3 -m unittest discover -s ops/server/tests -p test_release_gate.py -v
+
+      - name: Preserve exact-head identity
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: exact-head-backend-${{ env.SOURCE_SHA }}
+          path: ${{ env.OUT }}/
+          if-no-files-found: error
+          retention-days: 7
+
+  frontend:
+    if: ${{ !startsWith(github.head_ref || github.ref_name, 'fix/im19-') && !contains(fromJSON('["fix/upstream-review-playground-20261118","fix/im8-clean-review-20261119"]'), github.head_ref || github.ref_name) }}
+    name: Exact head frontend typecheck and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Attest exact head and setup-version bounds
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          out="$RUNNER_TEMP/clean-head-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${{ github.job }}"
+          mkdir -p "$out"
+          printf 'OUT=%s\n' "$out" >> "$GITHUB_ENV"
+          git rev-parse HEAD HEAD^{tree} > "$out/source-identity.txt"
+          python3 - <<'PYVERSION'
+          from pathlib import Path
+          version = Path('VERSION').read_text().strip()
+          if not 0 < len(version) <= 50:
+              raise SystemExit('VERSION must fit existing setups.version varchar(50); preserve full SHA in provenance')
+          print(version)
+          PYVERSION
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.4'
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Production dependency audit
+        run: bun audit --production
+
+      - name: Lint
+        run: bun run lint:ci
+
+      - name: Format check
+        run: bun run format:check
+
+      - name: Copyright check
+        run: bun run copyright:check
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun run test
+
+      - name: Production build
+        run: bun run build
+
+      - name: Preserve exact-head identity
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: exact-head-frontend-${{ env.SOURCE_SHA }}
+          path: ${{ env.OUT }}/
+          if-no-files-found: error
+          retention-days: 7

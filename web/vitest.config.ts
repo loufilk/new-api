@@ -45,7 +45,7 @@ export default defineConfig({
     restoreMocks: true,
     include: [
       'src/**/*.{test,spec}.{ts,tsx}',
-      'scripts/oxlint/__tests__/*.test.ts',
+      'scripts/**/*.{test,spec}.{ts,mts}',
     ],
   },
 })

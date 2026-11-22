@@ -157,3 +157,23 @@ describe('multi-select batch paste', () => {
     expect(input).toHaveValue('')
   })
 })
+
+it('preserves an explicit accessible label, description and validation state instead of using the empty placeholder as its name', () => {
+  render(
+    <>
+      <p id='category-help'>Choose display categories</p>
+      <MultiSelect
+        options={options}
+        selected={[]}
+        onChange={() => {}}
+        placeholder='Automatic classification'
+        aria-label='Display categories'
+        aria-describedby='category-help'
+        aria-invalid
+      />
+    </>
+  )
+  const input = screen.getByRole('combobox', { name: 'Display categories' })
+  expect(input).toHaveAccessibleDescription('Choose display categories')
+  expect(input).toHaveAttribute('aria-invalid', 'true')
+})
