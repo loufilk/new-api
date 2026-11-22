@@ -37,7 +37,10 @@ import {
   type MarketPlatform,
 } from '../lib/market-groups'
 import type { PricingModel, MarketGroupCatalog } from '../types'
-import { GroupCatalogBadges } from './group-catalog-badges'
+import {
+  GroupCatalogBadges,
+  groupCatalogBadgeLabels,
+} from './group-catalog-badges'
 import { SearchBar, type SearchBarProps } from './search-bar'
 
 interface Option {
@@ -46,6 +49,7 @@ interface Option {
   suffix?: string | number
   description?: string
   leading?: ReactNode
+  accessiblePrefix?: string[]
 }
 
 const PLATFORM_ICONS: Partial<Record<MarketPlatform, string>> = {
@@ -90,6 +94,13 @@ function FilterRow(props: {
               className='h-auto min-h-8 max-w-full gap-1.5 rounded-full px-3 py-1 text-sm'
               type='button'
               aria-pressed={active}
+              aria-label={[
+                ...(option.accessiblePrefix ?? []),
+                option.label,
+                option.suffix,
+              ]
+                .filter((part) => part != null)
+                .join(' ')}
               onClick={() => props.onChange(option.value)}
               title={option.description || option.label}
             >
@@ -204,6 +215,10 @@ export const PricingSidebar = memo(function PricingSidebar(
           value: group,
           label: marketGroupLabel(group, props.groupCatalog),
           description: meta?.description,
+          accessiblePrefix: [
+            ...(meta?.exclusive ? [t('Exclusive')] : []),
+            ...groupCatalogBadgeLabels(meta?.badges).map((label) => t(label)),
+          ],
           suffix: ratio == null ? undefined : `×${ratio}`,
           leading: (
             <>

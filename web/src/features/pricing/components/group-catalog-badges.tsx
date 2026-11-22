@@ -42,6 +42,12 @@ const badges = {
   },
 } as const
 
+export function groupCatalogBadgeLabels(values?: readonly string[]) {
+  return [...new Set(values)].flatMap((key) =>
+    Object.hasOwn(badges, key) ? [badges[key as keyof typeof badges].label] : []
+  )
+}
+
 export function GroupCatalogBadges({ values }: { values?: readonly string[] }) {
   const { t } = useTranslation()
   return [...new Set(values)].map((key) => {
