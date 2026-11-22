@@ -32,6 +32,8 @@ export type ConsoleToolsExtension = {
   intelligencePage: () => ReactNode
   loadInvoicePage: ConsolePageLoader
   loadInvoiceManagementPage: ConsolePageLoader
+  loadPartnerApplicationPage: ConsolePageLoader
+  loadPartnerApplicationManagementPage: ConsolePageLoader
 }
 
 let consoleToolsExtension: ConsoleToolsExtension | null = null

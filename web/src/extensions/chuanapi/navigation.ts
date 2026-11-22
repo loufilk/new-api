@@ -17,8 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { t } from 'i18next'
+import { ClipboardCheck, Handshake } from 'lucide-react'
+
+import { ROLE } from '@/lib/roles'
 
 import type { NavigationExtension } from '../navigation'
+import type { SidebarNavigationExtension } from '../sidebar-navigation'
 
 export const CHUANAPI_PUBLIC_HOME = 'https://chuanapi.com/'
 
@@ -57,6 +61,60 @@ export const chuanapiToolsNavigationExtension: NavigationExtension = {
     const docsIndex = result.findIndex((link) => link.href === '/help')
     result.splice(docsIndex < 0 ? result.length : docsIndex, 0, ...additions)
     return result
+  },
+}
+
+export const chuanapiSidebarNavigationExtension: SidebarNavigationExtension = {
+  id: 'chuanapi/sidebar-navigation',
+  apply(sidebar, context) {
+    if (!context.isAuthenticated) return sidebar
+
+    return {
+      ...sidebar,
+      navGroups: sidebar.navGroups.map((group) => {
+        if (group.id === 'personal') {
+          const hasPartnerApplication = group.items.some(
+            (item) => 'url' in item && item.url === '/partner-applications'
+          )
+          return hasPartnerApplication
+            ? group
+            : {
+                ...group,
+                items: [
+                  ...group.items,
+                  {
+                    title: t('Partner application'),
+                    url: '/partner-applications',
+                    icon: Handshake,
+                  },
+                ],
+              }
+        }
+
+        if (group.id === 'admin' && (context.role ?? 0) >= ROLE.ADMIN) {
+          const hasPartnerManagement = group.items.some(
+            (item) =>
+              'url' in item && item.url === '/partner-application-management'
+          )
+          return hasPartnerManagement
+            ? group
+            : {
+                ...group,
+                items: [
+                  ...group.items,
+                  {
+                    title: t('Partner applications'),
+                    url: '/partner-application-management',
+                    icon: ClipboardCheck,
+                    requiredRole: ROLE.ADMIN,
+                  },
+                ],
+              }
+        }
+
+        return group
+      }),
+    }
   },
 }
 

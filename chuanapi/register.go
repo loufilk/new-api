@@ -19,6 +19,7 @@ import (
 	affiliatemodule "github.com/QuantumNous/new-api/modules/chuanapi/affiliate"
 	agentmodule "github.com/QuantumNous/new-api/modules/chuanapi/agents"
 	consolemodule "github.com/QuantumNous/new-api/modules/chuanapi/console"
+	partnersmodule "github.com/QuantumNous/new-api/modules/chuanapi/partners"
 	paymentmodule "github.com/QuantumNous/new-api/modules/chuanapi/payment"
 	supportmodule "github.com/QuantumNous/new-api/modules/chuanapi/support"
 	walletmodule "github.com/QuantumNous/new-api/modules/chuanapi/wallet"
@@ -31,16 +32,18 @@ const ExtensionName = "chuanapi"
 // Descriptor aliases preserve the historical operator-visible identities while
 // ownership of each contribution lives in its module.
 const (
-	WalletModelsName        = walletmodule.ModelsName
-	WalletPolicyRoutesName  = walletroutes.RoutesName
-	AffiliateModelsName     = affiliatemodule.ModelsName
-	PaymentModelsName       = paymentmodule.ModelsName
-	LegacyQuotaBackfillName = walletmodule.LegacyQuotaBackfillName
-	LlmsRoutesName          = consolemodule.RoutesName
-	ConsolePublicRoutesName = consolemodule.PublicRoutesName
-	PaymentRoutesName       = paymentmodule.RoutesName
-	SupportModelsName       = supportmodule.ModelsName
-	SupportRoutesName       = supportmodule.RoutesName
+	WalletModelsName              = walletmodule.ModelsName
+	WalletPolicyRoutesName        = walletroutes.RoutesName
+	AffiliateModelsName           = affiliatemodule.ModelsName
+	PaymentModelsName             = paymentmodule.ModelsName
+	LegacyQuotaBackfillName       = walletmodule.LegacyQuotaBackfillName
+	LlmsRoutesName                = consolemodule.RoutesName
+	ConsolePublicRoutesName       = consolemodule.PublicRoutesName
+	PaymentRoutesName             = paymentmodule.RoutesName
+	SupportModelsName             = supportmodule.ModelsName
+	SupportRoutesName             = supportmodule.RoutesName
+	PartnerApplicationModelsName = partnersmodule.ModelsName
+	PartnerApplicationRoutesName = partnersmodule.RoutesName
 )
 
 // WalletModels remains as a compatibility accessor for migration tests and any
@@ -90,5 +93,5 @@ func Register(reg *extension.Registry) error {
 	if err := supportmodule.Register(reg); err != nil {
 		return err
 	}
-	return nil
+	return partnersmodule.Register(reg)
 }

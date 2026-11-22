@@ -43,6 +43,7 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import type { SidebarBadges, SidebarData } from '@/components/layout/types'
+import { applySidebarNavigationExtensions } from '@/extensions'
 import { useStatus } from '@/hooks/use-status'
 import { isAgentWorkspaceUser } from '@/lib/agent-permissions'
 import { ROLE } from '@/lib/roles'
@@ -58,6 +59,11 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
   const { t } = useTranslation()
   const { status } = useStatus()
   const user = useAuthStore((state) => state.auth.user)
+  const invoiceVisibility = status?.customer_invoice_center_visible
+  const showInvoiceCenter =
+    invoiceVisibility === undefined
+      ? status?.customer_invoice_enabled === true
+      : invoiceVisibility === true
   const agentGroups: SidebarData['navGroups'] = isAgentWorkspaceUser(user)
     ? [
         {
@@ -84,7 +90,7 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
       ]
     : []
 
-  return {
+  const sidebar: SidebarData = {
     navGroups: [
       ...agentGroups,
       {
@@ -178,7 +184,7 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             url: '/affiliate',
             icon: Users,
           },
-          ...(user && status?.customer_invoice_enabled === true
+          ...(user && showInvoiceCenter
             ? [
                 {
                   title: t('Invoice Center', { defaultValue: '开票中心' }),
@@ -276,4 +282,9 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
       },
     ],
   }
+
+  return applySidebarNavigationExtensions(sidebar, {
+    isAuthenticated: Boolean(user),
+    role: user?.role,
+  })
 }

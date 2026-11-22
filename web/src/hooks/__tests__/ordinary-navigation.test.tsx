@@ -57,7 +57,9 @@ afterEach(() => {
 async function renderNavigation(
   role: number,
   accountPoolEnabled = false,
-  modelTestEnabled: unknown = false
+  modelTestEnabled: unknown = false,
+  invoiceCenterVisible?: boolean,
+  invoiceEnabled = false
 ) {
   useAuthStore.getState().auth.setUser({ id: 7, username: 'user', role })
   const client = new QueryClient({
@@ -67,6 +69,10 @@ async function renderNavigation(
     SidebarModulesAdmin: '',
     account_pool_enabled: accountPoolEnabled,
     model_test_enabled: modelTestEnabled,
+    customer_invoice_enabled: invoiceEnabled,
+    ...(invoiceCenterVisible === undefined
+      ? {}
+      : { customer_invoice_center_visible: invoiceCenterVisible }),
   })
   const router = createRouter({
     routeTree: createRootRoute({ component: Navigation }),
@@ -161,6 +167,25 @@ it.each([1, 5, 10, 100])(
     ).toHaveLength(1)
   }
 )
+
+it('shows the invoice center by default with the new visibility status flag', async () => {
+  await renderNavigation(ROLE.USER, false, false, true, false)
+  expect(
+    await screen.findByRole('link', { name: 'Invoice Center' })
+  ).toHaveAttribute('href', '/invoice')
+})
+
+it('uses the intake status as the visibility fallback for older servers', async () => {
+  await renderNavigation(ROLE.USER, false, false, undefined, true)
+  expect(
+    await screen.findByRole('link', { name: 'Invoice Center' })
+  ).toHaveAttribute('href', '/invoice')
+})
+
+it('respects an explicit invoice center visibility disablement', async () => {
+  await renderNavigation(ROLE.USER, false, false, false, true)
+  expect(screen.queryByRole('link', { name: 'Invoice Center' })).toBeNull()
+})
 
 it.each([1, 5, 10, 100])(
   'role %s sees read-only model history even when new tests are disabled without hiding playground',

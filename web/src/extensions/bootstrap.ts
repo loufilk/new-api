@@ -24,6 +24,7 @@ import {
   chuanapiI18nExtension,
   chuanapiNavigationExtension,
   chuanapiPaymentSettingsExtension,
+  chuanapiSidebarNavigationExtension,
   chuanapiWalletExtension,
   chuanapiToolsNavigationExtension,
   SHOW_LEGACY_AFFILIATE_QUOTA,
@@ -33,6 +34,7 @@ import { setExtensionFlags } from './flags'
 import { setHelpExtension } from './help'
 import { setI18nExtensions } from './i18n'
 import { setNavigationExtensions } from './navigation'
+import { setSidebarNavigationExtensions } from './sidebar-navigation'
 import { setPaymentSettingsExtension } from './payment-settings'
 import { setWalletExtension } from './wallet'
 
@@ -43,6 +45,7 @@ setNavigationExtensions([
   chuanapiNavigationExtension,
   chuanapiToolsNavigationExtension,
 ])
+setSidebarNavigationExtensions([chuanapiSidebarNavigationExtension])
 setBrandExtension(chuanapiBrandExtension)
 setHelpExtension(chuanapiHelpExtension)
 setI18nExtensions([chuanapiI18nExtension])

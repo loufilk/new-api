@@ -31,6 +31,8 @@ test('the public console bridge preserves fresh account pool access checks', asy
   expect(typeof tools.accountPoolDiagnostics).toBe('function')
   expect(typeof tools.affiliatePage).toBe('function')
   expect(typeof tools.intelligencePage).toBe('function')
+  expect(typeof tools.loadPartnerApplicationPage).toBe('function')
+  expect(typeof tools.loadPartnerApplicationManagementPage).toBe('function')
   const client = new QueryClient()
   const get = vi.spyOn(api, 'get').mockResolvedValue({
     data: { success: true, data: { account_pool_enabled: true } },

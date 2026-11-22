@@ -46,6 +46,7 @@ import {
 export {
   CHUANAPI_PUBLIC_HOME,
   chuanapiNavigationExtension,
+  chuanapiSidebarNavigationExtension,
   chuanapiToolsNavigationExtension,
 } from './navigation'
 export { SHOW_LEGACY_AFFILIATE_QUOTA } from './flags'
@@ -94,6 +95,9 @@ export const chuanapiConsoleToolsExtension: ConsoleToolsExtension = {
   intelligencePage: LazyIntelligence,
   loadInvoicePage: () => import('./invoice/customer'),
   loadInvoiceManagementPage: () => import('./invoice/admin'),
+  loadPartnerApplicationPage: () => import('./partners/user-page'),
+  loadPartnerApplicationManagementPage: () =>
+    import('./partners/management-page'),
 }
 
 export const chuanapiPaymentSettingsExtension: PaymentSettingsExtension = {

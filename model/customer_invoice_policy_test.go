@@ -1,29 +1,36 @@
 package model
 
 import (
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
-func TestCustomerInvoicePolicyRequiresExplicitEnableAndMerchant(t *testing.T) {
+func TestCustomerInvoicePolicyDefaultsVisibleButRequiresMerchantForIntake(t *testing.T) {
 	for _, tc := range []struct {
 		name, flag, scope, wantScope string
-		wantEnabled                  bool
+		wantVisible, wantEnabled     bool
 	}{
-		{"empty", "", "", "", false},
-		{"explicit flag only", "true", "", "", false},
-		{"merchant alone", "", "merchant-fixture", "merchant-fixture", false},
-		{"disabled can finish pending", "false", "merchant-fixture", "merchant-fixture", false},
-		{"valid", "true", " merchant-fixture ", "merchant-fixture", true},
-		{"invalid", "true", "m\nother", "", false},
-		{"oversized", "true", strings.Repeat("m", 129), "", false},
+		{"unset", "", "", "", true, false},
+		{"explicit flag only", "true", "", "", true, false},
+		{"merchant enables intake by default", "", "merchant-fixture", "merchant-fixture", true, true},
+		{"explicit opt out", "false", "merchant-fixture", "merchant-fixture", false, false},
+		{"invalid flag fails closed", "invalid", "merchant-fixture", "merchant-fixture", false, false},
+		{"valid", "true", " merchant-fixture ", "merchant-fixture", true, true},
+		{"invalid merchant", "true", "m\nother", "", true, false},
+		{"oversized merchant", "true", strings.Repeat("m", 129), "", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("CUSTOMER_INVOICE_ENABLED", tc.flag)
+			if tc.name == "unset" {
+				require.NoError(t, os.Unsetenv("CUSTOMER_INVOICE_ENABLED"))
+			}
 			t.Setenv("CUSTOMER_INVOICE_EPAY_MERCHANT_SCOPE", tc.scope)
-			require.Equal(t, CustomerInvoicePolicy{Enabled: tc.wantEnabled, MerchantScope: tc.wantScope}, GetCustomerInvoicePolicy())
+			require.Equal(t, CustomerInvoicePolicy{
+				CenterVisible: tc.wantVisible, Enabled: tc.wantEnabled, MerchantScope: tc.wantScope,
+			}, GetCustomerInvoicePolicy())
 		})
 	}
 }

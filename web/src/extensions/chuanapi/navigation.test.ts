@@ -23,11 +23,13 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
 
 import type { TopNavLink } from '@/components/layout/types'
+import { ROLE } from '@/lib/roles'
 
 import {
   CHUANAPI_LEGACY_QUICKSTART_DOCS,
   CHUANAPI_PUBLIC_HOME,
   chuanapiNavigationExtension,
+  chuanapiSidebarNavigationExtension,
 } from './navigation'
 
 const webSrc = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
@@ -37,6 +39,70 @@ function source(path: string) {
 }
 
 describe('ChuanAPI cross-shell navigation', () => {
+  test('shows partner applications to signed-in users and management to admins', () => {
+    const sidebar = {
+      navGroups: [
+        { id: 'personal', title: 'Personal', items: [] },
+        { id: 'admin', title: 'Admin', items: [] },
+      ],
+    }
+    const ordinary = chuanapiSidebarNavigationExtension.apply(sidebar, {
+      isAuthenticated: true,
+      role: ROLE.USER,
+    })
+    expect(ordinary.navGroups[0]?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: 'Partner application',
+          url: '/partner-applications',
+        }),
+      ])
+    )
+    expect(ordinary.navGroups[1]?.items).toHaveLength(0)
+
+    const admin = chuanapiSidebarNavigationExtension.apply(sidebar, {
+      isAuthenticated: true,
+      role: ROLE.ADMIN,
+    })
+    expect(admin.navGroups[1]?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: 'Partner applications',
+          url: '/partner-application-management',
+          requiredRole: ROLE.ADMIN,
+        }),
+      ])
+    )
+
+    const root = chuanapiSidebarNavigationExtension.apply(sidebar, {
+      isAuthenticated: true,
+      role: ROLE.SUPER_ADMIN,
+    })
+    expect(root.navGroups[1]?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: 'Partner applications',
+          url: '/partner-application-management',
+          requiredRole: ROLE.ADMIN,
+        }),
+      ])
+    )
+  })
+
+  test('does not add authenticated links for signed-out navigation', () => {
+    const sidebar = {
+      navGroups: [
+        { id: 'personal', title: 'Personal', items: [] },
+        { id: 'admin', title: 'Admin', items: [] },
+      ],
+    }
+    expect(
+      chuanapiSidebarNavigationExtension.apply(sidebar, {
+        isAuthenticated: false,
+      })
+    ).toEqual(sidebar)
+  })
+
   test('uses the canonical public homepage', () => {
     expect(CHUANAPI_PUBLIC_HOME).toBe('https://chuanapi.com/')
   })

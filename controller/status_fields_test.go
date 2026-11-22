@@ -49,3 +49,22 @@ func TestGetStatusKeepsProductBonusAndAuthFieldsOut(t *testing.T) {
 	assert.Contains(t, payload.Data, "register_enabled")
 	assert.Contains(t, payload.Data, "quota_per_unit")
 }
+
+func TestGetStatusShowsInvoiceCenterWithoutEnablingIntake(t *testing.T) {
+	t.Setenv("CUSTOMER_INVOICE_ENABLED", "")
+	t.Setenv("CUSTOMER_INVOICE_EPAY_MERCHANT_SCOPE", "")
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+
+	GetStatus(context)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload struct {
+		Data map[string]any `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	assert.Equal(t, true, payload.Data["customer_invoice_center_visible"])
+	assert.Equal(t, false, payload.Data["customer_invoice_enabled"])
+}

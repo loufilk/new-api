@@ -20,8 +20,31 @@ import { describe, expect, test } from 'vitest'
 
 import { loadChuanapiI18nOverride } from '..'
 import en from '../locales/en.json'
+import zh from '../locales/zh.json'
+import zhTW from '../locales/zh-TW.json'
 
 describe('wallet and recharge translations', () => {
+  test.each([
+    ['zhCN', zh],
+    ['zhTW', zhTW],
+  ] as const)(
+    '%s localizes the partner application workflow',
+    (_locale, locale) => {
+      for (const key of [
+        'Partner application',
+        'Submit a quote',
+        'Available groups',
+        'Partner application settings',
+        'Approve application',
+        'Partner application #{{id}}',
+        'Submitted {{time}}',
+      ] as const) {
+        expect(locale.translation[key], key).toBeTruthy()
+        expect(locale.translation[key], key).not.toBe(key)
+      }
+    }
+  )
+
   test.each(['fr', 'ja', 'ru', 'vi'] as const)(
     '%s localizes the paid, bonus and total balances shown alongside the recharge offer',
     async (language) => {

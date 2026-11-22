@@ -50,3 +50,8 @@ export type {
   ConsoleToolsExtension,
   ModelTestAvailability,
 } from './console-tools'
+export { applySidebarNavigationExtensions } from './sidebar-navigation'
+export type {
+  SidebarNavigationContext,
+  SidebarNavigationExtension,
+} from './sidebar-navigation'

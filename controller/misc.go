@@ -46,6 +46,7 @@ func GetStatus(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	accountPoolEnabled, _ := model.AccountPoolEnabled(c.Request.Context())
 	modelTestEnabled, modelTestSettingsErr := model.ModelTestEnabled(c.Request.Context())
+	invoicePolicy := model.GetCustomerInvoicePolicy()
 
 	cs := console_setting.GetConsoleSetting()
 	passkeySetting := system_setting.PasskeySettingsSnapshot()
@@ -57,7 +58,8 @@ func GetStatus(c *gin.Context) {
 
 	data := gin.H{
 		"account_pool_enabled":          accountPoolEnabled,
-		"customer_invoice_enabled":      model.GetCustomerInvoicePolicy().Enabled,
+		"customer_invoice_enabled":      invoicePolicy.Enabled,
+		"customer_invoice_center_visible": invoicePolicy.CenterVisible,
 		"model_test_enabled":            modelTestEnabled,
 		"model_test_settings_available": modelTestSettingsErr == nil,
 		"version":                       common.Version,
