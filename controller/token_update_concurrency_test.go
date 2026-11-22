@@ -141,7 +141,7 @@ func TestTokenUpdateKeepsConsumptionAndSupportsOmittedQuota(t *testing.T) {
 					return model.ApplyTokenQuotaDeltaTx(tx, current.Id, current.Key, -tc.consume)
 				}))
 			})
-			request := baseAutoTokenRequest("after")
+			request := baseTokenRequest("after")
 			request["id"], request["group"], request["unlimited_quota"] = token.Id, "vip", false
 			delete(request, "remain_quota")
 			if tc.quota != nil {
@@ -172,7 +172,7 @@ func TestTokenUpdateRejectsConcurrentRevocation(t *testing.T) {
 		current.ModelLimitsEnabled, current.ModelLimits = true, "allowed-model"
 		require.NoError(t, current.Update())
 	})
-	request := baseAutoTokenRequest("stale edit")
+	request := baseTokenRequest("stale edit")
 	request["id"], request["group"] = token.Id, "vip"
 	ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id)
 	UpdateToken(ctx)
@@ -193,7 +193,7 @@ func TestTokenNameLimitCountsUnicodeCharacters(t *testing.T) {
 	db, user, token := setupTokenWriteRegression(t)
 	for _, method := range []string{http.MethodPost, http.MethodPut} {
 		for _, count := range []int{50, 51} {
-			request := baseAutoTokenRequest(strings.Repeat("密", count))
+			request := baseTokenRequest(strings.Repeat("密", count))
 			if method == http.MethodPut {
 				request["id"] = token.Id
 			}
@@ -235,7 +235,7 @@ func TestTokenCreateEnforcesLimitAfterConcurrentCreation(t *testing.T) {
 		require.NoError(t, other.Insert(user.AuthVersion))
 	}))
 	t.Cleanup(func() { require.NoError(t, db.Callback().Query().Remove(callback)) })
-	ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", baseAutoTokenRequest("third slot"), user.Id)
+	ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", baseTokenRequest("third slot"), user.Id)
 	AddToken(ctx)
 	response := decodeAPIResponse(t, recorder)
 	require.True(t, fired)
@@ -268,7 +268,7 @@ func TestKeyEditorSnapshotAndPartialUpdate(t *testing.T) {
 		}
 		return &saved, recorder.Code, res.Success
 	}
-	saved, _, ok := update(map[string]any{"expected_version": version, "routing_strategy": "speed"})
+	saved, _, ok := update(map[string]any{"expected_version": version, "project_label": "Synthetic project"})
 	require.True(t, ok)
 	assert.Equal(t, token.Name, saved.Name)
 	assert.Equal(t, token.ExpiredTime, saved.ExpiredTime)

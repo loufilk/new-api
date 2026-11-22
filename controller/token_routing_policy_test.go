@@ -24,43 +24,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSmartTokenCreateRequiresAuthorizedRoutingScope(t *testing.T) {
-	configureTokenAutoGroupsTest(t, "1", `[]`)
-	user := setupTokenAutoGroupsControllerTest(t)
-	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","vip":"VIP"}`))
-	request := baseAutoTokenRequest("smart-create")
-	request["group"] = "default"
-	request["smart_routing"], request["no_retry_within_group"] = true, true
-	request["routing_strategy"], request["project_label"] = "price", "  项目 A  "
-	ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", request, user.Id)
-	AddToken(ctx)
-	response := decodeAPIResponse(t, recorder)
-	require.True(t, response.Success, response.Message)
-	var token model.Token
-	require.NoError(t, model.DB.Where("name = ?", "smart-create").First(&token).Error)
-	assert.True(t, token.SmartRouting)
-	assert.True(t, token.NoRetryWithinGroup)
-	assert.Equal(t, "price", token.RoutingStrategy)
-	assert.Equal(t, "项目 A", token.ProjectLabel)
-	assert.Equal(t, "default", token.Group)
-	assert.True(t, token.CrossGroupRetry)
-	// A new smart key still needs an authorized explicit routing selection.
-	request["name"], request["group"] = "unavailable-auto", "auto"
-	ctx, recorder = newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", request, user.Id)
-	AddToken(ctx)
-	assert.False(t, decodeAPIResponse(t, recorder).Success)
-	request["name"], request["auto_groups"] = "authorized-manual-auto", []string{"vip"}
-	ctx, recorder = newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", request, user.Id)
-	AddToken(ctx)
-	response = decodeAPIResponse(t, recorder)
-	require.True(t, response.Success, response.Message)
-	// Smart routing does not turn an arbitrary named manual group into a grant.
-	request["name"], request["group"] = "forbidden-create", "private"
-	ctx, recorder = newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", request, user.Id)
-	AddToken(ctx)
-	assert.False(t, decodeAPIResponse(t, recorder).Success)
-}
-
 func TestSmartTokenUpdatePreservesOmittedFieldsAndStatusOnly(t *testing.T) {
 	configureTokenAutoGroupsTest(t, "5", `["default","vip"]`)
 	user := setupTokenAutoGroupsControllerTest(t)
@@ -69,11 +32,10 @@ func TestSmartTokenUpdatePreservesOmittedFieldsAndStatusOnly(t *testing.T) {
 	token.SmartRouting, token.NoRetryWithinGroup, token.CrossGroupRetry = true, true, true
 	token.RoutingStrategy, token.ProjectLabel = "success_rate", "Project A"
 	require.NoError(t, model.DB.Save(token).Error)
-	request := baseAutoTokenRequest("smart-updated")
+	request := baseTokenRequest("smart-updated")
 	delete(request, "group")
 	delete(request, "cross_group_retry")
 	request["id"] = token.Id
-	request["auto_groups"] = []string{"retired", "default"}
 	ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id)
 	UpdateToken(ctx)
 	response := decodeAPIResponse(t, recorder)
@@ -100,23 +62,40 @@ func TestSmartTokenUpdatePreservesOmittedFieldsAndStatusOnly(t *testing.T) {
 	assert.True(t, updated.NoRetryWithinGroup)
 	assert.Equal(t, "success_rate", updated.RoutingStrategy)
 	assert.Equal(t, "Project A", updated.ProjectLabel)
-	// Disabling smart routing must revalidate the retained dormant group.
+	// Omission preserves routing. An explicit conversion must use the version
+	// returned by the editor and revalidate even the formerly dormant group.
 	request["smart_routing"] = false
 	ctx, recorder = newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id)
 	UpdateToken(ctx)
 	assert.False(t, decodeAPIResponse(t, recorder).Success)
-	request["group"], request["auto_groups"] = "auto", []string{"vip"}
+	delete(request, "smart_routing")
+	request["group"] = "vip"
+	ctx, recorder = newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id)
+	UpdateToken(ctx)
+	assert.Equal(t, http.StatusConflict, recorder.Code, "legacy adoption must not run without its snapshot")
+	request["expected_version"] = updated.CacheRevision
+	request["group"] = "retired"
+	ctx, recorder = newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id)
+	UpdateToken(ctx)
+	assert.False(t, decodeAPIResponse(t, recorder).Success, "a dormant group does not confer a grant")
+
+	request["group"] = "vip"
 	request["no_retry_within_group"], request["project_label"] = false, ""
-	request["routing_strategy"] = "speed"
 	ctx, recorder = newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id)
 	UpdateToken(ctx)
 	response = decodeAPIResponse(t, recorder)
 	require.True(t, response.Success, response.Message)
 	require.NoError(t, model.DB.First(&updated, token.Id).Error)
+	assert.Equal(t, "vip", updated.Group)
 	assert.False(t, updated.SmartRouting)
+	assert.False(t, updated.CrossGroupRetry)
+	assert.Empty(t, updated.AutoGroups)
 	assert.False(t, updated.NoRetryWithinGroup)
 	assert.Empty(t, updated.ProjectLabel)
-	assert.Equal(t, "speed", updated.RoutingStrategy)
+	assert.Equal(t, "auto", updated.RoutingStrategy)
+	assert.Equal(t, token.Key, updated.Key)
+	assert.Equal(t, common.TokenStatusDisabled, updated.Status)
+	assert.NotContains(t, recorder.Body.String(), token.Key)
 }
 
 func TestSmartTokenPolicyValidationAndOwnership(t *testing.T) {
@@ -132,7 +111,7 @@ func TestSmartTokenPolicyValidationAndOwnership(t *testing.T) {
 		{"invalid strategy", "balanced", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			request := baseAutoTokenRequest(tc.name)
+			request := baseTokenRequest(tc.name)
 			request["routing_strategy"], request["project_label"] = tc.strategy, tc.label
 			ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", request, user.Id)
 			AddToken(ctx)
@@ -147,7 +126,7 @@ func TestSmartTokenPolicyValidationAndOwnership(t *testing.T) {
 		})
 	}
 	token := seedToken(t, model.DB, user.Id, "owner-policy", "synthetic-owner-policy")
-	request := baseAutoTokenRequest("cross-owner")
+	request := baseTokenRequest("cross-owner")
 	request["id"], request["smart_routing"] = token.Id, true
 	ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id+1)
 	UpdateToken(ctx)
@@ -231,28 +210,16 @@ func TestMaskedTokenRoutingStrategyCanonicalizesOnlyLegacyDefault(t *testing.T) 
 	}
 }
 
-func TestTokenRequestNormalizesDefaultWithoutChangingRoutingScope(t *testing.T) {
-	for _, tc := range []struct {
-		name, payload, existing, want string
-	}{
-		{"create omitted", `{}`, "", "auto"},
-		{"create null", `{"routing_strategy":null}`, "", "auto"},
-		{"explicit empty", `{"routing_strategy":""}`, "speed", "auto"},
-		{"update omitted", `{}`, "speed", "speed"},
-		{"update null", `{"routing_strategy":null}`, "price", "price"},
-		{"explicit strategy", `{"routing_strategy":"success_rate"}`, "", "success_rate"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var request tokenRequest
-			require.NoError(t, common.UnmarshalJsonStr(tc.payload, &request))
-			token := &model.Token{Key: "synthetic-request-contract", RoutingStrategy: tc.existing,
-				SmartRouting: false, Group: "restricted", AutoGroups: `["restricted"]`,
-				NoRetryWithinGroup: true, RemainQuota: 73, UsedQuota: 19, CacheRevision: 3}
-			want := *token
-			want.RoutingStrategy = tc.want
-			require.NoError(t, request.applyRoutingSettings(token))
-			assert.Equal(t, want, *token)
-		})
+func TestTokenRequestPreservesLegacyWithoutExplicitAdoption(t *testing.T) {
+	for _, payload := range []string{`{}`, `{"routing_strategy":null}`, `{"group":null}`} {
+		var request tokenRequest
+		require.NoError(t, common.UnmarshalJsonStr(payload, &request))
+		token := model.Token{Key: "synthetic-request-contract", RoutingStrategy: "speed",
+			SmartRouting: true, Group: "restricted", AutoGroups: `["restricted"]`,
+			NoRetryWithinGroup: true, RemainQuota: 73, UsedQuota: 19, CacheRevision: 3}
+		before := token
+		require.NoError(t, request.applySingleGroupSettings(&token, false))
+		assert.Equal(t, before, token)
 	}
 }
 

@@ -53,8 +53,10 @@ func TestAnonymousCatalogsProjectOnlyPublicModelFields(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:console-public-pricing?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	model.DB, model.LOG_DB = db, db
-	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}))
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.Option{}))
 	t.Cleanup(func() {
+		_ = db.Where("key = ?", "GroupCatalogMetadata").Delete(&model.Option{}).Error
+		_ = model.LoadOptionsFromDatabase()
 		model.DB, model.LOG_DB = previousDB, previousLogDB
 		common.RedisEnabled = previousRedis
 		common.SetDatabaseTypes(previousMainType, previousLogType)
@@ -68,9 +70,11 @@ func TestAnonymousCatalogsProjectOnlyPublicModelFields(t *testing.T) {
 	originalUsableGroups := setting.UserUsableGroups2JSONString()
 	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
 	originalAutoGroups := setting.AutoGroups2JsonString()
-	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","unpriced":"Missing ratio"}`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","private":"Private group exposed by the legacy list","unpriced":"Missing ratio"}`))
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"private":9}`))
 	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["default","private"]`))
+	require.NoError(t, db.Create(&model.Option{Key: "GroupCatalogMetadata", Value: `{"private":{"exclusive":true,"label":"private group label","badges":["stable"]}}`}).Error)
+	require.NoError(t, model.LoadOptionsFromDatabase())
 	t.Cleanup(func() {
 		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalUsableGroups))
 		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))

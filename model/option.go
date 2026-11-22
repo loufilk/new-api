@@ -246,10 +246,13 @@ func LoadOptionsFromDatabase() (loadErr error) {
 		common.SysError("conflicting group option aliases; runtime refresh rejected")
 		return err
 	}
-	var bucketRaw string
+	var bucketRaw, catalogRaw string
 	for _, option := range options {
 		if option.Key == groupRateLimitBucketsOptionKey {
 			bucketRaw = option.Value
+		}
+		if option.Key == groupCatalogOptionKey {
+			catalogRaw = option.Value
 		}
 	}
 	buckets, err := parseGroupRateLimitBuckets(bucketRaw)
@@ -259,10 +262,14 @@ func LoadOptionsFromDatabase() (loadErr error) {
 		return err
 	}
 	groupRateLimitBuckets.Store(&buckets)
+	if err := loadGroupCatalogRuntime(catalogRaw); err != nil {
+		groupConfigRuntimeInvalid.Store(true)
+		return err
+	}
 	valid := true
 	passkeyOptions := make(map[string]string)
 	for _, option := range options {
-		if option.Key == groupRateLimitBucketsOptionKey {
+		if option.Key == groupRateLimitBucketsOptionKey || option.Key == groupCatalogOptionKey {
 			continue
 		}
 		if IsPasskeyDomainOption(option.Key) {
@@ -302,6 +309,9 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	if key == groupCatalogOptionKey {
+		return ErrInvalidGroupCatalog
+	}
 	if key == groupRateLimitBucketsOptionKey {
 		return errors.New("group rate limit bucket metadata is read-only")
 	}

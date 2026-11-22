@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { describe, expect, it } from 'vitest'
 
 import type { PricingModel } from '../../types'
-import { getModelCategories, filterByCategory } from '../model-categories'
+import { getAutomaticModelCategories } from '../model-categories'
 import { getModelEndpoints, getModelPlayground } from '../model-endpoints'
 
 const model = (values: Partial<PricingModel> = {}): PricingModel => ({
@@ -38,13 +38,11 @@ describe('model capability categories', () => {
       model_name: 'gpt-image-video-embedding',
       supported_endpoint_types: ['openai'],
     })
-    expect(getModelCategories(unknown)).toEqual([])
-    expect(filterByCategory([unknown], 'all')).toEqual([unknown])
-    expect(filterByCategory([unknown], 'text')).toEqual([])
+    expect(getAutomaticModelCategories(unknown)).toEqual([])
   })
   it('does not confuse vision input with generated images', () => {
     expect(
-      getModelCategories(
+      getAutomaticModelCategories(
         model({
           input_modalities: ['text', 'image'],
           output_modalities: ['text'],
@@ -55,7 +53,7 @@ describe('model capability categories', () => {
   })
   it('keeps pure audio transcription out of text despite text output and a default chat protocol', () => {
     expect(
-      getModelCategories(
+      getAutomaticModelCategories(
         model({
           input_modalities: ['audio'],
           output_modalities: ['text'],
@@ -66,7 +64,7 @@ describe('model capability categories', () => {
   })
   it('includes multimodal output in every matching category without duplicates', () => {
     expect(
-      getModelCategories(
+      getAutomaticModelCategories(
         model({
           output_modalities: ['text', 'image', 'video', 'audio'],
           supported_endpoint_types: ['image-generation', 'openai-video'],
@@ -76,7 +74,7 @@ describe('model capability categories', () => {
   })
   it('groups embedding and rerank protocols under vectors', () => {
     expect(
-      getModelCategories(
+      getAutomaticModelCategories(
         model({
           supported_endpoint_types: ['embeddings', 'jina-rerank'],
           capabilities: ['embeddings'],
@@ -86,67 +84,14 @@ describe('model capability categories', () => {
   })
   it('uses explicit capabilities when modalities and endpoints are absent', () => {
     expect(
-      getModelCategories(
+      getAutomaticModelCategories(
         model({ capabilities: ['image_generation', 'speech_recognition'] })
       )
     ).toEqual(['images', 'audio'])
   })
 })
 
-describe('manual display categories', () => {
-  it('accepts decision only as a manual display category, without guessing names or changing chat capability', () => {
-    const automatic = model({
-      model_name: 'decision-reasoning-model',
-      output_modalities: ['text'],
-      capabilities: ['reasoning'],
-      supported_endpoint_types: ['openai'],
-    })
-    expect(getModelCategories(automatic)).toEqual(['text'])
-    expect(filterByCategory([automatic], 'decision')).toEqual([])
-    const manual = {
-      ...automatic,
-      display_categories: [
-        'decision',
-        'text',
-        'decision',
-      ] as PricingModel['display_categories'],
-    }
-    expect(getModelCategories(manual)).toEqual(['text', 'decision'])
-    expect(filterByCategory([manual], 'decision')).toEqual([manual])
-    expect(
-      getModelEndpoints(manual, { openai: { path: '/v1/chat/completions' } })
-    ).toEqual(
-      getModelEndpoints(automatic, {
-        openai: { path: '/v1/chat/completions' },
-      })
-    )
-    expect(getModelPlayground(manual)).toBe('/playground')
-    expect(getModelCategories({ ...manual, display_categories: [] })).toEqual([
-      'text',
-    ])
-  })
-
-  it('replaces automatic categories, supports multiple values and counts each once', () => {
-    const item = model({
-      output_modalities: ['text'],
-      display_categories: ['video', 'images', 'images'],
-    })
-    expect(getModelCategories(item)).toEqual(['images', 'video'])
-    expect(filterByCategory([item], 'text')).toEqual([])
-    expect(filterByCategory([item], 'images')).toEqual([item])
-    expect(filterByCategory([item], 'video')).toEqual([item])
-    expect(filterByCategory([item], 'all')).toEqual([item])
-  })
-  it.each([undefined, null, [], ['all'], ['images', 'unknown'], 'text'])(
-    'falls back to automatic classification for absent or invalid overrides: %j',
-    (override) => {
-      const item = model({
-        output_modalities: ['text'],
-        display_categories: override as PricingModel['display_categories'],
-      })
-      expect(getModelCategories(item)).toEqual(['text'])
-    }
-  )
+describe('retired marketplace categories', () => {
   it('does not change real endpoints or playground when text is displayed as images', () => {
     const item = model({
       output_modalities: ['text'],

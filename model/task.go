@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	hosttypes "github.com/QuantumNous/new-api/types"
 	"gorm.io/gorm"
 )
 
@@ -245,6 +246,9 @@ type TaskBillingContext struct {
 	BillingModelName string                       `json:"billing_model_name,omitempty"` // 价格/倍率/赠金资格使用的计费模型身份
 	PerCallBilling   bool                         `json:"per_call_billing,omitempty"`   // 按次计费：跳过轮询阶段的差额结算
 	TieredSnapshot   *billingexpr.BillingSnapshot `json:"tiered_snapshot,omitempty"`
+	// A non-nil pointer version-discriminates the new quote from historical
+	// tasks and preserves the selected group's explicit zero rate.
+	GroupRatioInfo *hosttypes.GroupRatioInfo `json:"group_rate_snapshot,omitempty"`
 }
 
 // EffectiveBillingModelName 返回任务的计费模型身份。

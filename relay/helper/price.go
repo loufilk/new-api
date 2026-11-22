@@ -45,31 +45,17 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) (ratio
 		}
 	}()
 
-	groupRatioInfo := hosttypes.GroupRatioInfo{
-		GroupRatio:        1.0, // default ratio
-		GroupSpecialRatio: -1,
-	}
-
 	// check auto group
-	autoGroup, exists := ctx.Get("auto_group")
-	if exists {
+	if autoGroup := ctx.GetString("auto_group"); autoGroup != "" {
 		logger.LogDebug(ctx, "final group: %s", autoGroup)
-		relayInfo.UsingGroup = autoGroup.(string)
+		relayInfo.UsingGroup = autoGroup
 	}
 
-	// check user group special ratio
-	userGroupRatio, ok := ratio_setting.GetGroupGroupRatio(relayInfo.UserGroup, relayInfo.UsingGroup)
-	if ok {
-		// user group special ratio
-		groupRatioInfo.GroupSpecialRatio = userGroupRatio
-		groupRatioInfo.GroupRatio = userGroupRatio
-		groupRatioInfo.HasSpecialRatio = true
-	} else {
-		// normal group ratio
-		groupRatioInfo.GroupRatio = ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
+	policy, err := model.GetRequestUserGroupPricing(ctx, relayInfo.UserId, relayInfo.UserGroup)
+	if err != nil {
+		return ratio, err
 	}
-
-	return groupRatioInfo, nil
+	return policy.ResolveGroupRatio(relayInfo.UserGroup, relayInfo.UsingGroup), nil
 }
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (hosttypes.PriceData, error) {

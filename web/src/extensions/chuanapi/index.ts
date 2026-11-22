@@ -35,7 +35,6 @@ import {
   LazyHelpApiReference,
   LazyHelpGuide,
   LazyHelpIndex,
-  LazyIntelligence,
   LazyNewUserBenefitSettings,
   LazyPaymentSettingsRenderer,
   LazyWallet,
@@ -92,7 +91,6 @@ export const chuanapiConsoleToolsExtension: ConsoleToolsExtension = {
     return verifyAccountPoolAccess(client)
   },
   affiliatePage: LazyAffiliate,
-  intelligencePage: LazyIntelligence,
   loadInvoicePage: () => import('./invoice/customer'),
   loadInvoiceManagementPage: () => import('./invoice/admin'),
   loadPartnerApplicationPage: () => import('./partners/user-page'),

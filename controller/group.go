@@ -1,7 +1,9 @@
 package controller
 
 import (
+	"maps"
 	"net/http"
+	"slices"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -54,13 +56,30 @@ func GetUserGroups(c *gin.Context) {
 		}
 		userGroup = user.Group
 	}
-	userUsableGroups := service.GetUserUsableGroups(userGroup)
-	for groupName, _ := range ratio_setting.GetGroupRatioCopy() {
+	userUsableGroups, err := service.GetUserUsableGroupsForUser(c.Request.Context(), userId, userGroup)
+	if err != nil {
+		groupConfigReadFailure(c)
+		return
+	}
+	catalog, err := model.GetGroupCatalogProjection(c.Request.Context(), userUsableGroups)
+	if err != nil {
+		groupConfigReadFailure(c)
+		return
+	}
+	rates, err := service.LoadEffectiveGroupRates(c.Request.Context(), userId, userGroup, slices.Collect(maps.Keys(userUsableGroups)))
+	if err != nil {
+		groupConfigReadFailure(c)
+		return
+	}
+	for groupName := range ratio_setting.GetGroupRatioCopy() {
 		// UserUsableGroups contains the groups that the user can use
 		if desc, ok := userUsableGroups[groupName]; ok {
 			usableGroups[groupName] = map[string]any{
-				"ratio": service.GetUserGroupRatio(userGroup, groupName),
+				"ratio": rates[groupName].GroupRatio,
 				"desc":  desc,
+			}
+			if entry, ok := catalog[groupName]; ok && userId > 0 {
+				usableGroups[groupName]["catalog"] = entry
 			}
 		}
 	}

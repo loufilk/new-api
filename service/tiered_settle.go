@@ -217,6 +217,10 @@ func PrepareTieredBillingForSelectedGroup(c *gin.Context, relayInfo *relaycommon
 			return types.NewErrorWithStatusCode(errors.New("free realtime authorization does not cover the selected paid group"), types.ErrorCodeModelPriceError, http.StatusConflict, types.ErrOptionWithSkipRetry())
 		}
 	}
+	previousEstimate := 0
+	if relayInfo != nil && relayInfo.TieredBillingSnapshot != nil {
+		previousEstimate = relayInfo.TieredBillingSnapshot.EstimatedQuotaAfterGroup
+	}
 	snap, err := refreshTieredBillingGroup(relayInfo)
 	if err != nil {
 		return types.NewErrorWithStatusCode(
@@ -271,9 +275,18 @@ func PrepareTieredBillingForSelectedGroup(c *gin.Context, relayInfo *relaycommon
 	relayInfo.PriceData.FreeModel = false
 
 	if relayInfo.Billing == nil {
+		// A free first group never ran the paid affordability check. A paid
+		// fallback must establish an actual hold before another upstream send.
+		previous := relayInfo.ForcePreConsume
+		relayInfo.ForcePreConsume = true
+		defer func() { relayInfo.ForcePreConsume = previous }()
 		return PreConsumeBilling(c, snap.EstimatedQuotaAfterGroup, relayInfo)
 	}
-	if err := relayInfo.Billing.Reserve(snap.EstimatedQuotaAfterGroup); err != nil {
+	if snap.EstimatedQuotaAfterGroup > previousEstimate {
+		if err := relayInfo.Billing.ReserveBeforeSubmit(snap.EstimatedQuotaAfterGroup); err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+		}
+	} else if err := relayInfo.Billing.Reserve(snap.EstimatedQuotaAfterGroup); err != nil {
 		return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
 	}
 	relayInfo.FinalPreConsumedQuota = relayInfo.Billing.GetPreConsumedQuota()

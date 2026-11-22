@@ -40,6 +40,7 @@ import {
   type ModelEndpointMap,
 } from '../lib/model-endpoints'
 import type { PricingModel } from '../types'
+import { MarketCreateKey } from './market-create-key'
 
 // ---------------------------------------------------------------------------
 // Code-sample registry
@@ -238,6 +239,7 @@ function AuthSection() {
 // ---------------------------------------------------------------------------
 
 export function ModelDetailsApi(props: {
+  selectedGroup?: string
   model: PricingModel
   endpointMap: ModelEndpointMap
 }) {
@@ -245,6 +247,10 @@ export function ModelDetailsApi(props: {
     <div className='space-y-6'>
       <CodeSamplesSection model={props.model} endpointMap={props.endpointMap} />
       <AuthSection />
+      <MarketCreateKey
+        model={props.model}
+        selectedGroup={props.selectedGroup}
+      />
     </div>
   )
 }

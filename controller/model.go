@@ -177,11 +177,18 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 	if tokenGroup != "" {
 		group = tokenGroup
 	}
-	return modelListGroups{
-		userGroup:   userGroup,
-		tokenGroup:  tokenGroup,
-		ownerGroups: []string{group},
-	}, nil
+	var ownerGroups []string
+	if !model.IsExclusiveGroup(group) {
+		ownerGroups = []string{group}
+	} else {
+		err := service.ValidateTokenGroupForUser(c.Request.Context(), c.GetInt("id"), userGroup, tokenGroup)
+		if err == nil {
+			ownerGroups = []string{group}
+		} else if !errors.Is(err, service.ErrTokenGroupForbidden) && !errors.Is(err, service.ErrTokenGroupDeprecated) {
+			return modelListGroups{}, err
+		}
+	}
+	return modelListGroups{userGroup: userGroup, tokenGroup: tokenGroup, ownerGroups: ownerGroups}, nil
 }
 
 func visibleModelNames(c *gin.Context) (names []string, resultErr error) {

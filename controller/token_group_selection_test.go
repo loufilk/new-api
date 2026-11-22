@@ -30,7 +30,7 @@ func TestAddTokenRequiresExplicitAuthorizedGroup(t *testing.T) {
 				{name: "empty", group: ""},
 				{name: "whitespace", group: " \t\n"},
 				{name: "default", group: "default", want: true},
-				{name: "auto", group: "auto", want: true},
+				{name: "auto", group: "auto"},
 				{name: "named", group: "vip", want: true},
 				{name: "unknown", group: "missing"},
 				{name: "unauthorized", group: "private"},
@@ -38,7 +38,7 @@ func TestAddTokenRequiresExplicitAuthorizedGroup(t *testing.T) {
 				{name: "not an exact name", group: " default "},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
-					request := baseAutoTokenRequest("selection-" + tc.name)
+					request := baseTokenRequest("selection-" + tc.name)
 					request["smart_routing"] = smart
 					request["user_id"] = user.Id + 1
 					if tc.omit {
@@ -49,10 +49,11 @@ func TestAddTokenRequiresExplicitAuthorizedGroup(t *testing.T) {
 					ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", request, user.Id)
 					AddToken(ctx)
 					response := decodeAPIResponse(t, recorder)
-					assert.Equal(t, tc.want, response.Success, response.Message)
+					want := tc.want && !smart
+					assert.Equal(t, want, response.Success, response.Message)
 					var saved []model.Token
 					require.NoError(t, model.DB.Where("name = ?", request["name"]).Find(&saved).Error)
-					if !tc.want {
+					if !want {
 						assert.Empty(t, saved, "invalid selections must not create an API key")
 						return
 					}
@@ -78,22 +79,23 @@ func TestUpdateTokenPreservesGroupUnlessExplicitlySelected(t *testing.T) {
 		{name: "named null", previous: "vip", expected: "vip", want: true},
 		{name: "legacy omitted", omit: true, want: true},
 		{name: "legacy null", want: true},
-		{name: "legacy unchanged", group: "", want: true},
+		{name: "legacy cannot explicitly select empty", group: ""},
 		{name: "named cannot clear", previous: "vip", expected: "vip", group: ""},
 		{name: "named cannot use whitespace", previous: "vip", expected: "vip", group: " \t"},
 		{name: "legacy cannot use whitespace", group: " \t"},
 		{name: "explicit default", previous: "vip", group: "default", expected: "default", want: true},
 		{name: "legacy explicit selection", group: "vip", expected: "vip", want: true},
 		{name: "smart named cannot clear", previous: "vip", expected: "vip", group: "", smart: true},
-		{name: "smart legacy unchanged", group: "", smart: true, want: true},
+		{name: "smart legacy omitted", omit: true, smart: true, want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			token := seedToken(t, model.DB, user.Id, "before", fmt.Sprintf("synthetic-selection-%d", index))
 			token.Group, token.SmartRouting = tc.previous, tc.smart
 			require.NoError(t, model.DB.Save(token).Error)
-			request := baseAutoTokenRequest("after")
+			request := baseTokenRequest("after")
 			request["id"], request["user_id"] = token.Id, user.Id+1
 			request["key"] = "must-not-replace-the-key"
+			request["expected_version"] = token.CacheRevision
 			if tc.omit {
 				delete(request, "group")
 			} else {
@@ -116,6 +118,46 @@ func TestUpdateTokenPreservesGroupUnlessExplicitlySelected(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUpdateTokenExplicitlyAdoptsItsOwnFormerSmartGroupWithoutRotation(t *testing.T) {
+	configureTokenAutoGroupsTest(t, "5", `["default","vip"]`)
+	user := setupTokenAutoGroupsControllerTest(t)
+	token := seedToken(t, model.DB, user.Id, "legacy same group", "synthetic-key-same-group")
+	token.Group, token.SmartRouting, token.CrossGroupRetry = "vip", true, true
+	token.RoutingStrategy, token.NoRetryWithinGroup = "price", true
+	token.AutoGroups = `["default","vip"]`
+	token.ModelLimitsEnabled, token.ModelLimits = true, "restricted"
+	token.AllowIps = common.GetPointer("192.0.2.10")
+	token.UnlimitedQuota, token.RemainQuota, token.UsedQuota = false, 650, 42
+	token.ExpiredTime = common.GetTimestamp() + 3600
+	require.NoError(t, model.DB.Save(token).Error)
+	body := map[string]any{"id": token.Id, "expected_version": token.CacheRevision, "group": "vip"}
+	ctx, rec := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/", body, user.Id)
+	UpdateToken(ctx)
+	res := decodeAPIResponse(t, rec)
+	require.True(t, res.Success, res.Message)
+	var stored model.Token
+	require.NoError(t, model.DB.First(&stored, token.Id).Error)
+	assert.Equal(t, "vip", stored.Group)
+	assert.False(t, stored.SmartRouting)
+	assert.False(t, stored.CrossGroupRetry)
+	assert.Empty(t, stored.AutoGroups)
+	assert.Equal(t, "auto", stored.GetRoutingStrategy())
+	assert.Equal(t, token.Key, stored.Key)
+	assert.Equal(t, token.Status, stored.Status)
+	assert.Equal(t, token.ExpiredTime, stored.ExpiredTime)
+	assert.Equal(t, token.NoRetryWithinGroup, stored.NoRetryWithinGroup)
+	assert.Equal(t, token.AllowIps, stored.AllowIps)
+	assert.Equal(t, token.ModelLimits, stored.ModelLimits)
+	assert.Equal(t, token.ModelLimitsEnabled, stored.ModelLimitsEnabled)
+	assert.Equal(t, token.RemainQuota, stored.RemainQuota)
+	assert.Equal(t, token.UsedQuota, stored.UsedQuota)
+	assert.NotContains(t, rec.Body.String(), token.Key)
+
+	ctx, rec = newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/", body, user.Id)
+	UpdateToken(ctx)
+	assert.Equal(t, http.StatusConflict, rec.Code, "a replay must not overwrite a newer key snapshot")
 }
 
 func TestUpdateTokenStatusOnlyAllowsUserStates(t *testing.T) {

@@ -41,21 +41,18 @@ export const chuanapiToolsNavigationExtension: NavigationExtension = {
   id: 'chuanapi/tools-navigation',
   apply(links, context) {
     const enabled = context.status?.account_pool_enabled === true
-    const canViewTests = context.isAuthenticated
     const result = links.filter(
       (link) =>
         link.href !== '/model-monitor' &&
         (enabled || link.href !== '/account-pool') &&
-        (canViewTests || link.href !== '/intelligence')
+        link.href !== '/intelligence'
     )
     const additions = [
       { title: t('pool.title'), href: '/account-pool' },
-      { title: t('intelligence.title'), href: '/intelligence' },
       { title: t('Invitation Rewards'), href: '/affiliate' },
     ].filter(
       (link) =>
         (enabled || link.href !== '/account-pool') &&
-        (canViewTests || link.href !== '/intelligence') &&
         !result.some((existing) => existing.href === link.href)
     )
     const docsIndex = result.findIndex((link) => link.href === '/help')

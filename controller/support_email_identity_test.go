@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -102,12 +103,13 @@ func TestSupportEmailRegistrationTrustRequiresConsumedVerificationCode(t *testin
 	_, _ = setupSecurityEnrollmentTest(t)
 	previousRegister, previousPassword, previousVerify := common.RegisterEnabled, common.PasswordRegisterEnabled, common.EmailVerificationEnabled
 	previousToken := constant.GenerateDefaultToken
+	previousAuto := setting.DefaultUseAutoGroup
 	common.RegisterEnabled, common.PasswordRegisterEnabled, common.EmailVerificationEnabled = true, true, true
-	constant.GenerateDefaultToken = false
+	constant.GenerateDefaultToken, setting.DefaultUseAutoGroup = true, true
 	t.Cleanup(func() {
 		common.RegisterEnabled, common.PasswordRegisterEnabled, common.EmailVerificationEnabled = previousRegister, previousPassword, previousVerify
 		constant.GenerateDefaultToken = previousToken
-
+		setting.DefaultUseAutoGroup = previousAuto
 	})
 	forged := `{"username":"register-user","password":"SecureRegistration123","email":"register@example.com","verification_code":"12345678","email_verified_address":"register@example.com","email_verification_version":999,"email_verified_at":123}`
 	rejected := securityEnrollmentRequest(http.MethodPost, "/api/user/register", forged, "", service.AuthIdentity{}, Register)
@@ -120,6 +122,9 @@ func TestSupportEmailRegistrationTrustRequiresConsumedVerificationCode(t *testin
 	assert.True(t, model.VerifiedSupportEmail(&stored))
 	assert.EqualValues(t, 1, stored.EmailVerificationVersion, "client cannot set server trust metadata")
 	assert.NotEqualValues(t, 123, stored.EmailVerifiedAt)
-	_, err := model.GetAuthFlow("register:register@example.com:12345678", model.AuthFlowMatch{Purpose: model.AuthFlowPurposeRegistrationEmail})
+	keys, err := model.CountUserTokens(stored.Id)
+	require.NoError(t, err)
+	assert.Zero(t, keys, "retired automatic issuance flags must not create a key without a selected group")
+	_, err = model.GetAuthFlow("register:register@example.com:12345678", model.AuthFlowMatch{Purpose: model.AuthFlowPurposeRegistrationEmail})
 	assert.ErrorIs(t, err, model.ErrAuthFlowConsumed)
 }

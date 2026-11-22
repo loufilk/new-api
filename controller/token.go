@@ -23,6 +23,7 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/perf_metrics_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -52,6 +53,7 @@ type tokenRequest struct {
 	ModelLimits        *string              `json:"model_limits"`
 	AllowIps           *string              `json:"allow_ips"`
 	AutoGroups         tokenAutoGroupsInput `json:"auto_groups"`
+	AutoGroupsMode     string               `json:"auto_groups_mode"`
 	Group              *string              `json:"group"`
 	CrossGroupRetry    *bool                `json:"cross_group_retry"`
 	SmartRouting       *bool                `json:"smart_routing"`
@@ -89,18 +91,28 @@ func (request *tokenRequest) applyEditableFields(token *model.Token) {
 	}
 }
 
-func (request *tokenRequest) applyRoutingSettings(token *model.Token) error {
+func (request *tokenRequest) applySingleGroupSettings(token *model.Token, creating bool) error {
+	if (creating && request.Group == nil) || (request.Group != nil && strings.TrimSpace(*request.Group) == "") {
+		return common.NewMessage("Please select a group")
+	}
+	if (request.Group != nil && *request.Group == "auto") ||
+		(request.SmartRouting != nil && *request.SmartRouting) ||
+		(request.CrossGroupRetry != nil && *request.CrossGroupRetry) ||
+		(request.RoutingStrategy != nil && *request.RoutingStrategy != "" && *request.RoutingStrategy != "auto") ||
+		len(request.AutoGroups.Groups) > 0 || request.AutoGroupsMode != "" {
+		return common.NewMessage("Please select a single group")
+	}
+	legacy := token.SmartRouting || token.Group == "auto" || token.Group == ""
 	if request.Group != nil {
 		token.Group = *request.Group
-	}
-	if request.CrossGroupRetry != nil {
-		token.CrossGroupRetry = *request.CrossGroupRetry
-	}
-	if request.SmartRouting != nil {
-		token.SmartRouting = *request.SmartRouting
-	}
-	if request.RoutingStrategy != nil {
-		token.RoutingStrategy = *request.RoutingStrategy
+		token.SmartRouting = false
+		token.CrossGroupRetry = false
+		token.AutoGroups = ""
+		token.RoutingStrategy = "auto"
+	} else if legacy && (request.NoRetryWithinGroup != nil || request.SmartRouting != nil ||
+		request.CrossGroupRetry != nil || request.RoutingStrategy != nil || request.AutoGroups.Set) {
+		// Omission is how a metadata edit preserves every legacy route field.
+		return common.NewMessage("Please select a single group")
 	}
 	if request.NoRetryWithinGroup != nil {
 		token.NoRetryWithinGroup = *request.NoRetryWithinGroup
@@ -108,8 +120,6 @@ func (request *tokenRequest) applyRoutingSettings(token *model.Token) error {
 	if request.ProjectLabel != nil {
 		token.ProjectLabel = strings.TrimSpace(*request.ProjectLabel)
 	}
-	// Persist the existing default semantics for legacy clients, without enabling smart routing.
-	token.RoutingStrategy = token.GetRoutingStrategy()
 	return token.ValidateRoutingSettings()
 }
 
@@ -167,64 +177,23 @@ func getTokenRequestUserGroup(c *gin.Context) (string, error) {
 }
 
 func validateTokenRequestRoutingScope(c *gin.Context, token *model.Token) bool {
-	tokenGroup := token.Group
-	if tokenGroup == "" {
-		return true
-	}
 	userGroup, err := getTokenRequestUserGroup(c)
 	if err != nil {
 		common.ApiError(c, err)
 		return false
 	}
-	if err := service.ValidateTokenRoutingScope(userGroup, token); err != nil {
-		message := i18n.MsgAuthTokenGroupForbidden
-		if errors.Is(err, service.ErrTokenGroupDeprecated) {
-			message = i18n.MsgAuthTokenGroupDeprecated
-		}
-		common.ApiErrorI18n(c, message, map[string]any{"Group": tokenGroup})
-		return false
-	}
-	return true
-}
-
-func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) bool {
-	if len(groups) == 0 {
-		if err := token.SetAutoGroups(nil); err != nil {
-			common.ApiError(c, err)
-			return false
-		}
+	err = service.ValidateTokenRoutingScopeForUser(c.Request.Context(), c.GetInt("id"), userGroup, token)
+	switch {
+	case err == nil:
 		return true
+	case errors.Is(err, service.ErrTokenGroupForbidden):
+		common.ApiErrorI18n(c, i18n.MsgAuthTokenGroupForbidden, map[string]any{"Group": token.Group})
+	case errors.Is(err, service.ErrTokenGroupDeprecated):
+		common.ApiErrorI18n(c, i18n.MsgAuthTokenGroupDeprecated, map[string]any{"Group": token.Group})
+	default:
+		groupConfigReadFailure(c)
 	}
-
-	maxCount := setting.GetMaxTokenAutoGroups()
-	if len(groups) > maxCount {
-		common.ApiErrorT(c, "A token can select at most {{max}} Auto groups", map[string]any{"max": maxCount})
-		return false
-	}
-
-	userGroup, err := getTokenRequestUserGroup(c)
-	if err != nil {
-		common.ApiError(c, err)
-		return false
-	}
-	seen := make(map[string]struct{}, len(groups))
-	for _, group := range groups {
-		if _, ok := seen[group]; ok {
-			common.ApiErrorT(c, "Auto group {{group}} is duplicated", map[string]any{"group": group})
-			return false
-		}
-		seen[group] = struct{}{}
-		if !service.IsUserSelectableGroup(userGroup, group) {
-			common.ApiErrorT(c, "Auto group {{group}} is unavailable or unauthorized", map[string]any{"group": group})
-			return false
-		}
-	}
-
-	if err := token.SetAutoGroups(groups); err != nil {
-		common.ApiError(c, err)
-		return false
-	}
-	return true
+	return false
 }
 
 func tokenListStatuses(c *gin.Context) ([]int, error) {
@@ -323,6 +292,7 @@ func GetToken(c *gin.Context) {
 }
 
 func GetTokenAutoGroups(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	guard, guardOK := beginControllerGroupConfigRead(c)
 	if !guardOK {
 		return
@@ -336,6 +306,11 @@ func GetTokenAutoGroups(c *gin.Context) {
 	}
 	groups := service.GetUserAutoGroup(userGroup)
 	selectable := service.GetUserSelectableGroups(userGroup)
+	rates, err := service.LoadEffectiveGroupRates(c.Request.Context(), c.GetInt("id"), userGroup, selectable)
+	if err != nil {
+		groupConfigReadFailure(c)
+		return
+	}
 	abilities, err := model.GetEnabledAbilitiesWithChannelsForGroups(selectable)
 	if err != nil {
 		common.ApiError(c, err)
@@ -371,7 +346,7 @@ func GetTokenAutoGroups(c *gin.Context) {
 			history.History = make([]*float64, perfmetrics.TokenGroupHistoryBuckets)
 		}
 		details = append(details, groupDetail{
-			Name: group, Ratio: service.GetUserGroupRatio(userGroup, group),
+			Name: group, Ratio: rates[group].GroupRatio,
 			SuccessRate: history.SuccessRate, Available: available[group], History: history.History,
 		})
 	}
@@ -491,7 +466,7 @@ func PreviewTokenModels(c *gin.Context) {
 				return
 			}
 		}
-		groups, err = service.GetTokenEffectiveGroups(user.Group, token)
+		groups, err = service.GetTokenEffectiveGroupsForUser(c.Request.Context(), userID, user.Group, token)
 		if err != nil {
 			common.ApiError(c, err)
 			return
@@ -558,7 +533,7 @@ func respondWithTokenModels(c *gin.Context, allow func(*model.Channel, string) b
 		common.ApiError(c, err)
 		return
 	}
-	groups, err := service.GetTokenEffectiveGroups(user.Group, token)
+	groups, err := service.GetTokenEffectiveGroupsForUser(c.Request.Context(), userID, user.Group, token)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -709,7 +684,7 @@ func AddToken(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
-	if err := request.applyRoutingSettings(&token); err != nil {
+	if err := request.applySingleGroupSettings(&token, true); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -719,10 +694,6 @@ func AddToken(c *gin.Context) {
 	}
 	params := tokenAuditParams(c)
 	params["name"] = token.Name
-	if request.Group == nil || strings.TrimSpace(*request.Group) == "" {
-		common.ApiErrorT(c, "Please select a group")
-		return
-	}
 	// 非无限额度时，检查额度值是否超出有效范围
 	if !token.UnlimitedQuota {
 		if token.RemainQuota < 0 {
@@ -745,14 +716,6 @@ func AddToken(c *gin.Context) {
 	if int(count) >= maxTokens {
 		common.ApiErrorT(c, "Maximum number of tokens reached ({{max}})", map[string]any{"max": maxTokens})
 		return
-	}
-	if token.Group == "auto" || token.SmartRouting {
-		if !setTokenAutoGroups(c, &token, request.AutoGroups.Groups) {
-			return
-		}
-	} else {
-		token.CrossGroupRetry = false
-		_ = token.SetAutoGroups(nil)
 	}
 	if !validateTokenRequestRoutingScope(c, &token) {
 		return
@@ -840,11 +803,16 @@ func UpdateToken(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid token status")
 		return
 	}
-	guard, ok := beginControllerGroupConfigRead(c)
-	if !ok {
-		return
+	disabling := statusOnly != "" && request.Token.Status == common.TokenStatusDisabled
+	var guard *model.GroupConfigRead
+	if !disabling {
+		var ok bool
+		guard, ok = beginControllerGroupConfigRead(c)
+		if !ok {
+			return
+		}
+		defer guard.Close()
 	}
-	defer guard.Close()
 	token := request.Token
 	request.applyEditableFields(&token)
 	params := tokenAuditParams(c)
@@ -873,22 +841,16 @@ func UpdateToken(c *gin.Context) {
 	if statusOnly != "" {
 		cleanToken.Status = token.Status
 	} else {
-		// Existing empty selections still inherit their owner's group. An
-		// explicit named selection cannot be cleared into that legacy mode.
-		if request.Group != nil && strings.TrimSpace(*request.Group) == "" &&
-			(*request.Group != "" || cleanToken.Group != "") {
-			common.ApiErrorT(c, "Please select a group")
-			return
-		}
-		if err := request.applyRoutingSettings(cleanToken); err != nil {
+		if err := request.applySingleGroupSettings(cleanToken, false); err != nil {
 			common.ApiError(c, err)
 			return
 		}
-		// An unchanged manual draft has no authority while smart routing is on.
-		// New named selections still require permission; virtual Auto is only
-		// an internal dispatch mode for smart routing, never a new group grant.
-		validateManualGroup := !cleanToken.SmartRouting ||
-			(cleanToken.Group != "auto" && cleanToken.Group != previous.Group)
+		if request.Group != nil && (previous.SmartRouting || previous.Group == "auto" || previous.Group == "") && request.ExpectedVersion == nil {
+			// An old client must not convert a rolling configuration without
+			// explicitly adopting a group against the settings it just read.
+			common.ApiErrorStatus(c, http.StatusConflict, model.ErrTokenSettingsChanged)
+			return
+		}
 		// If you add more fields, please also update token.Update()
 		request.applyEditableFields(cleanToken)
 		if request.ExpiredTime != nil && cleanToken.ExpiredTime != -1 && cleanToken.ExpiredTime <= 0 {
@@ -908,33 +870,11 @@ func UpdateToken(c *gin.Context) {
 		if request.AllowUserQuotaQuery != nil {
 			cleanToken.AllowUserQuotaQuery = *request.AllowUserQuotaQuery
 		}
-		if cleanToken.Group != "auto" && !cleanToken.SmartRouting {
-			cleanToken.CrossGroupRetry = false
-			_ = cleanToken.SetAutoGroups(nil)
-		} else if request.AutoGroups.Set {
-			previousGroups, parseErr := previous.GetAutoGroups()
-			retainedDraft := cleanToken.SmartRouting && parseErr == nil && slices.Equal(previousGroups, request.AutoGroups.Groups)
-			if !retainedDraft && !setTokenAutoGroups(c, cleanToken, request.AutoGroups.Groups) {
-				return
-			}
-		} else if !cleanToken.SmartRouting && cleanToken.Group == "auto" {
-			groups, err := cleanToken.GetAutoGroups()
-			if err != nil {
-				common.ApiError(c, err)
-				return
-			}
-			if !setTokenAutoGroups(c, cleanToken, groups) {
-				return
-			}
-		}
-		if validateManualGroup && !validateTokenRequestRoutingScope(c, cleanToken) {
+		if request.Group != nil && !validateTokenRequestRoutingScope(c, cleanToken) {
 			return
 		}
 	}
-	if !finishControllerGroupConfigRead(c, guard) {
-		return
-	}
-	if statusOnly != "" && token.Status == common.TokenStatusDisabled {
+	if disabling {
 		previous.Status, err = cleanToken.DisableForOwner(c.GetInt64("auth_version"))
 	} else if statusOnly != "" {
 		userGroup, groupErr := getTokenRequestUserGroup(c)
@@ -942,20 +882,38 @@ func UpdateToken(c *gin.Context) {
 			common.ApiError(c, groupErr)
 			return
 		}
+		grants, groupErr := model.ListUserExclusiveGroups(c.Request.Context(), userId)
+		if groupErr != nil {
+			groupConfigReadFailure(c)
+			return
+		}
+		if !finishControllerGroupConfigRead(c, guard) {
+			return
+		}
+		// The namespace version protects this grant snapshot. The callback
+		// checks the locked token's current group without another DB checkout.
 		previous.Status, err = cleanToken.UpdateStatusAtGroupConfigVersion(c.GetInt64("auth_version"), guard.Version, func(current *model.Token) error {
 			if current.SmartRouting {
 				return nil
 			}
-			if scopeErr := service.ValidateTokenRoutingScope(userGroup, current); scopeErr != nil {
-				message := i18n.MsgAuthTokenGroupForbidden
-				if errors.Is(scopeErr, service.ErrTokenGroupDeprecated) {
-					message = i18n.MsgAuthTokenGroupDeprecated
-				}
-				return errors.New(i18n.T(c, message, map[string]any{"Group": current.Group}))
+			if current.Group == "" && model.IsExclusiveGroup(userGroup) {
+				return service.ErrTokenGroupForbidden
 			}
-			return nil
+			if model.IsExclusiveGroup(current.Group) {
+				if !slices.Contains(grants, current.Group) {
+					return service.ErrTokenGroupForbidden
+				}
+				if !ratio_setting.ContainsGroupRatio(current.Group) {
+					return service.ErrTokenGroupDeprecated
+				}
+				return nil
+			}
+			return service.ValidateTokenRoutingScope(userGroup, current)
 		})
 	} else {
+		if !finishControllerGroupConfigRead(c, guard) {
+			return
+		}
 		var finiteEditMaximum *int
 		if !cleanToken.UnlimitedQuota && (request.RemainQuota != nil || previous.UnlimitedQuota) {
 			maximum := maxTokenQuota()
@@ -969,6 +927,14 @@ func UpdateToken(c *gin.Context) {
 	}
 	if errors.Is(err, model.ErrGroupConfigChanged) {
 		groupConfigReadFailure(c)
+		return
+	}
+	if errors.Is(err, service.ErrTokenGroupForbidden) || errors.Is(err, service.ErrTokenGroupDeprecated) {
+		message := i18n.MsgAuthTokenGroupForbidden
+		if errors.Is(err, service.ErrTokenGroupDeprecated) {
+			message = i18n.MsgAuthTokenGroupDeprecated
+		}
+		common.ApiErrorI18n(c, message, map[string]any{"Group": cleanToken.Group})
 		return
 	}
 	if err != nil {

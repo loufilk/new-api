@@ -34,8 +34,7 @@ test.each([1, 5, 10, 100])(
     useAuthStore.getState().auth.setUser({ id: 7, username: 'admin', role })
     const fingerprint = () =>
       guard({ location: { pathname: '/system-settings/content/model-tests' } })
-    if (role >= 10) expect(fingerprint).not.toThrow()
-    else expect(fingerprint).toThrow()
+    expect(fingerprint).toThrow()
     for (const pathname of [
       '/system-settings/site/branding',
       '/system-settings/content/support-email',
@@ -49,14 +48,10 @@ test.each([1, 5, 10, 100])(
   }
 )
 
-test('ordinary admin settings sidebar shows only fingerprint configuration', () => {
+test('ordinary admin settings sidebar does not expose retired fingerprint configuration', () => {
   useAuthStore.getState().auth.setUser({ id: 7, username: 'admin', role: 10 })
   const groups = SYSTEM_SETTINGS_VIEW.getNavGroups(i18next.t, {})
-  expect(groups).toHaveLength(1)
-  expect(groups[0].items).toHaveLength(1)
-  expect(groups[0].items[0]).toMatchObject({
-    url: '/system-settings/content/model-tests',
-  })
+  expect(groups).toHaveLength(0)
 })
 
 test('ordinary users cannot discover any settings entries', () => {

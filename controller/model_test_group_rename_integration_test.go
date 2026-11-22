@@ -197,7 +197,7 @@ func TestModelTestGroupRenamePostgresEnabledHistorySurvivesUnavailableCatalogue(
 	require.NoError(t, err)
 	enabled, err := model.ModelTestEnabled(t.Context())
 	require.NoError(t, err)
-	require.True(t, enabled, "this must exercise the enabled catalogue branch, not the disabled shortcut")
+	require.True(t, enabled, "a legacy enabled option must not reactivate the retired catalogue")
 	require.NoError(t, db.Model(&model.Option{}).Where("key = ?", "GroupConfigVersion").Update("value", "malformed-primary-version").Error)
 	engine := gin.New()
 	engine.GET("/history", func(c *gin.Context) {
@@ -212,7 +212,7 @@ func TestModelTestGroupRenamePostgresEnabledHistorySurvivesUnavailableCatalogue(
 	assert.Contains(t, response.Body.String(), run.ID)
 	assert.Contains(t, response.Body.String(), `"enabled":false`)
 	assert.Contains(t, response.Body.String(), `"eligible_models_by_group":{}`)
-	assert.Contains(t, response.Body.String(), `"availability_error":"model_test_settings_unavailable"`)
+	assert.Contains(t, response.Body.String(), `"availability_error":"fingerprint_retired"`)
 }
 
 func TestModelTestGroupRenamePostgresDisableAfterReservationRefundsFrozenAmountOnce(t *testing.T) {

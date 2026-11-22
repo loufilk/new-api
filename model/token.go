@@ -531,8 +531,13 @@ func (token *Token) updateWithGroupConfig(groupVersion *int64, previous *Token, 
 			token.UsedQuota = current.UsedQuota
 			token.AccessedTime = current.AccessedTime
 		}
-		if err := validateTokenGroupsForWriteTx(tx, token); err != nil {
-			return err
+		// An owned snapshot metadata edit does not re-adopt its routing
+		// scope. A legacy list (even a malformed one) can still be renamed
+		// without making it runnable or repairing it behind the owner's back.
+		if previous == nil || token.Group != current.Group || token.AutoGroups != current.AutoGroups || token.SmartRouting != current.SmartRouting {
+			if err := validateTokenGroupsForWriteTx(tx, token); err != nil {
+				return err
+			}
 		}
 		if err := advanceTokenPermissionRevisionTx(tx, token.Id); err != nil {
 			return err

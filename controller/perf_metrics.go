@@ -14,9 +14,18 @@ import (
 	"github.com/samber/lo"
 )
 
-func usablePerfMetricGroups(c *gin.Context) []string {
+func usablePerfMetricGroups(c *gin.Context) ([]string, bool) {
+	guard, ok := beginControllerGroupConfigRead(c)
+	if !ok {
+		return nil, false
+	}
+	defer guard.Close()
 	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-	usableGroups := service.GetUserUsableGroups(userGroup)
+	usableGroups, err := service.GetUserUsableGroupsForUser(c.Request.Context(), c.GetInt("id"), userGroup)
+	if err != nil {
+		groupConfigReadFailure(c)
+		return nil, false
+	}
 	// A non-nil empty list restricts the metrics query to zero groups.
 	groups := make([]string, 0, len(usableGroups))
 	for group := range usableGroups {
@@ -24,11 +33,13 @@ func usablePerfMetricGroups(c *gin.Context) []string {
 			groups = append(groups, group)
 		}
 	}
-	return groups
+	return groups, finishControllerGroupConfigRead(c, guard)
 }
 
 func GetPerfMetricsSummary(c *gin.Context) {
-	getPerfMetricsSummary(c, usablePerfMetricGroups(c))
+	if groups, ok := usablePerfMetricGroups(c); ok {
+		getPerfMetricsSummary(c, groups)
+	}
 }
 
 func GetDashboardPerfMetricsSummary(c *gin.Context) {
@@ -80,11 +91,15 @@ func GetPerfMetrics(c *gin.Context) {
 		}
 	}
 
+	groups, ok := usablePerfMetricGroups(c)
+	if !ok {
+		return
+	}
 	result, err := perfmetrics.Query(perfmetrics.QueryParams{
 		Model:         modelName,
 		Group:         c.Query("group"),
 		Hours:         hours,
-		AllowedGroups: usablePerfMetricGroups(c),
+		AllowedGroups: groups,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{

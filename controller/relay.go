@@ -880,9 +880,11 @@ func executeTaskSubmissionWith(
 	task.PrivateData.SubscriptionQuotaPeriod = relayInfo.SubscriptionQuotaPeriod
 	task.PrivateData.TokenId = relayInfo.TokenId
 	task.PrivateData.NodeName = common.NodeName
+	groupRateSnapshot := relayInfo.PriceData.GroupRatioInfo
 	task.PrivateData.BillingContext = &model.TaskBillingContext{
 		ModelPrice:       relayInfo.PriceData.ModelPrice,
 		GroupRatio:       relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+		GroupRatioInfo:   &groupRateSnapshot,
 		ModelRatio:       relayInfo.PriceData.ModelRatio,
 		OtherRatios:      relayInfo.PriceData.OtherRatios(),
 		OriginModelName:  relayInfo.OriginModelName,

@@ -349,6 +349,12 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 		if err := renameGroupSubscriptionReferences(tx, plan, state); err != nil {
 			return err
 		}
+		if err := renameGroupCatalogAndEntitlementsTx(tx, plan.mappings); err != nil {
+			return err
+		}
+		if err := renameUserGroupPricingTx(tx, plan.mappings, request.ActorID); err != nil {
+			return err
+		}
 		for key, value := range renamedOptions {
 			if optionValues[key] != value {
 				if err := upsertGroupRenameOption(tx, key, value); err != nil {
@@ -821,6 +827,16 @@ func validateGroupRenameOptionUpdates(tx *gorm.DB, request GroupRenameApplyReque
 func groupRenameNameStillReferenced(tx *gorm.DB, group string, effective map[string]string, exceptKey string, autoRefs map[string]struct{}) (bool, error) {
 	if _, ok := autoRefs[group]; ok {
 		return true, nil
+	}
+	catalog, err := readGroupCatalogTx(tx)
+	if err != nil {
+		return false, err
+	}
+	if _, ok := catalog[group]; ok {
+		return true, nil
+	}
+	if exists, err := userGroupPricingReferencesGroup(tx, group); err != nil || exists {
+		return exists, err
 	}
 	for _, key := range groupRenameOptionKeys {
 		if key == exceptKey {

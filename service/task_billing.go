@@ -72,6 +72,7 @@ func taskConsumptionLogParams(c *gin.Context, info *relaycommon.RelayInfo, task 
 	if info.PriceData.GroupRatioInfo.HasSpecialRatio {
 		other.SetPublic("user_group_ratio", info.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	}
+	appendGroupPricingInfo(other, info.PriceData.GroupRatioInfo)
 	if info.IsModelMapped {
 		other.SetPublic("is_model_mapped", true)
 		other.SetAdmin("upstream_model_name", info.UpstreamModelName)
@@ -430,6 +431,12 @@ func taskBillingOther(task *model.Task) *model.LogOther {
 			other.SetPublic("model_ratio", bc.ModelRatio)
 		}
 		other.SetPublic("group_ratio", bc.GroupRatio)
+		if bc.GroupRatioInfo != nil {
+			if bc.GroupRatioInfo.HasSpecialRatio {
+				other.SetPublic("user_group_ratio", bc.GroupRatioInfo.GroupSpecialRatio)
+			}
+			appendGroupPricingInfo(other, *bc.GroupRatioInfo)
+		}
 		if priceData := taskBillingContextPriceData(bc); priceData != nil {
 			for k, v := range priceData.OtherRatios() {
 				if !other.SetPublic(k, v) {
@@ -575,7 +582,14 @@ func taskQuotaByTokens(task *model.Task, totalTokens int) (int, *common.Message,
 	modelName := taskModelName(task)
 
 	// 获取模型价格和倍率
-	modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
+	snapshot := task.PrivateData.BillingContext
+	var modelRatio float64
+	var hasRatioSetting bool
+	if snapshot != nil && snapshot.GroupRatioInfo != nil {
+		modelRatio, hasRatioSetting = snapshot.ModelRatio, !snapshot.PerCallBilling
+	} else {
+		modelRatio, hasRatioSetting, _ = ratio_setting.GetModelRatio(modelName)
+	}
 	// 只有配置了倍率(非固定价格)时才按 token 重新计费
 	if !hasRatioSetting || modelRatio <= 0 {
 		return 0, nil, nil, false
@@ -584,8 +598,11 @@ func taskQuotaByTokens(task *model.Task, totalTokens int) (int, *common.Message,
 	// A task's admitted group ratio is a financial snapshot, not a lookup by
 	// its historical display name. Renames never rewrite that snapshot.
 	var finalGroupRatio float64
-	if snapshot := task.PrivateData.BillingContext; snapshot != nil {
+	if snapshot != nil {
 		finalGroupRatio = snapshot.GroupRatio
+		if snapshot.GroupRatioInfo != nil {
+			finalGroupRatio = snapshot.GroupRatioInfo.GroupRatio
+		}
 	} else {
 		// Legacy tasks without a quote cannot safely follow a renamed name (or
 		// a later, unrelated group that reused it). Keep the existing reservation.

@@ -329,6 +329,7 @@ relay.user_call_intercepted: 該使用者的呼叫已被攔截。此介面無法
 relay.user_call_interception_unavailable: 呼叫攔截服務暫時無法使用，本請求未轉送。
 
 common.group_config_changed: "分組設定已變更或暫時無法使用，請重試請求。"
+common.user_group_pricing_unavailable: "使用者分組定價暫時無法使用，請重試請求。"
 
 # Minimal support ticket notifications
 support_email_subject: "工單 #{{.ID}}"

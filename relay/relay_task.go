@@ -335,6 +335,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 		groupRatioInfo, groupErr := helper.HandleGroupRatio(c, info)
 		if groupErr != nil {
+			if errors.Is(groupErr, model.ErrUserGroupPricingUnavailable) {
+				return nil, service.TaskErrorWrapperLocal(errors.New(i18n.T(c, i18n.MsgUserGroupPricingUnavailable)), "user_group_pricing_unavailable", http.StatusServiceUnavailable)
+			}
 			return nil, service.TaskErrorWrapperLocal(errors.New(i18n.T(c, i18n.MsgGroupConfigChanged)), "group_config_changed", http.StatusServiceUnavailable)
 		}
 		quota, clamp := common.QuotaRoundChecked(cost * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
@@ -344,6 +347,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{BillingMode: billing_setting.BillingModeTieredExpr, ModelName: modelName, ExprString: exprStr, ExprHash: billingexpr.ExprHashString(exprStr), GroupRatio: groupRatioInfo.GroupRatio, EstimatedQuotaBeforeGroup: cost * common.QuotaPerUnit, EstimatedQuotaAfterGroup: quota, EstimatedTier: trace.MatchedTier, QuotaPerUnit: common.QuotaPerUnit, ExprVersion: billingexpr.ExprVersion(exprStr), TaskUsageBilling: true, UsageFacts: facts, RequestInput: &requestInput}
 	} else {
 		priceData, err = helper.ModelPriceHelperPerCall(c, info)
+		if errors.Is(err, model.ErrUserGroupPricingUnavailable) {
+			return nil, service.TaskErrorWrapperLocal(errors.New(i18n.T(c, i18n.MsgUserGroupPricingUnavailable)), "user_group_pricing_unavailable", http.StatusServiceUnavailable)
+		}
 		if errors.Is(err, model.ErrGroupConfigChanged) {
 			return nil, service.TaskErrorWrapperLocal(errors.New(i18n.T(c, i18n.MsgGroupConfigChanged)), "group_config_changed", http.StatusServiceUnavailable)
 		}

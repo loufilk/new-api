@@ -79,6 +79,7 @@ func TestGroupRenamePostgresRedis(t *testing.T) {
 	t.Run("subscription_plan_map_writer", testGroupNamespaceSubscriptionPlanMapWriter)
 	t.Run("subscription_plan_legacy_group_edits", testSubscriptionPlanLegacyGroupEdits)
 	t.Run("namespace_rollback", testGroupNamespaceRollbackState)
+	t.Run("exclusive_group_catalog", testExclusiveGroupCatalogLifecycle)
 	t.Run("group_config_pubsub_and_fallback", testGroupConfigPubSubAndFallback)
 	t.Run("two_process_group_runtime", testGroupConfigTwoProcessInstances)
 	t.Run("warm_caches", func(t *testing.T) {

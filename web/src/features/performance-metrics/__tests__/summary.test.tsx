@@ -25,6 +25,7 @@ import { PerformanceHealthPanel } from '@/features/dashboard/components/overview
 import { ModelDetailsPerformance } from '@/features/pricing/components/model-details-performance'
 import { UptimeSparkline } from '@/features/pricing/components/model-details-uptime-sparkline'
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 
 const chart = vi.hoisted(() =>
   vi.fn(
@@ -45,7 +46,10 @@ beforeEach(() => {
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   })
 })
-afterEach(() => client.clear())
+afterEach(() => {
+  client.clear()
+  useAuthStore.getState().auth.reset('idle')
+})
 
 const summary = { success_rate: 99.01, avg_latency_ms: 1009, avg_tps: 5 }
 const windowStart = 1789387200
@@ -86,7 +90,10 @@ const groups = [
 ]
 
 function renderModelDetails() {
-  client.setQueryData(['perf-metrics', 'test-model'], {
+  useAuthStore.setState((state) => ({
+    auth: { ...state.auth, user: { id: 1, username: 'viewer', role: 1 } },
+  }))
+  client.setQueryData(['market-perf-model', 'user:1:', 24, 'test-model'], {
     success: true,
     data: {
       model_name: 'test-model',
@@ -151,11 +158,11 @@ describe('server performance summaries', () => {
     }
   )
 
-  it('shows the server summary and series incident count for model details instead of averaging groups', () => {
+  it('shows the server summary without pretending hourly percentages count individual incidents', () => {
     renderModelDetails()
     expect(screen.getByText('99.01%')).toBeVisible()
     expect(screen.queryByText('50.00%')).not.toBeInTheDocument()
-    expect(screen.getByText('1 incidents in the last 24 hours')).toBeVisible()
+    expect(screen.queryByText(/incidents/i)).not.toBeInTheDocument()
   })
 
   it('feeds the uptime chart from the backend series rather than group averages', async () => {

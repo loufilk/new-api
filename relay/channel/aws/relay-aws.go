@@ -245,7 +245,25 @@ func getAwsModelID(requestModel string) string {
 
 // SDK requests are only prepared by DoRequest. Check admission immediately
 // before Invoke, just like the ordinary HTTP transport's dispatch boundary.
-func authorizeAwsInvoke(c *gin.Context) *types.NewAPIError {
+func authorizeAwsInvoke(c *gin.Context, a *Adaptor) *types.NewAPIError {
+	if common.GetContextKeyInt(c, constant.ContextKeyKeyDiagnosticTokenID) > 0 {
+		var body []byte
+		switch req := a.AwsReq.(type) {
+		case *bedrockruntime.InvokeModelInput:
+			if req != nil {
+				body = req.Body
+			}
+		case *bedrockruntime.InvokeModelWithResponseStreamInput:
+			if req != nil {
+				body = req.Body
+			}
+		}
+		if err := channel.ValidateDiagnosticOutputBudget(body, common.GetContextKeyInt(c, constant.ContextKeyModelTestOutputLimit)); err != nil {
+			c.Set("model_test_error_code", "output_budget_changed")
+			common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, true)
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+		}
+	}
 	if stopped := service.RelayRequestCancellation(c); stopped != nil {
 		common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, true)
 		return stopped
@@ -264,7 +282,7 @@ func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types
 	ctx, cancel := newAwsInvokeContext(requestContext)
 	defer cancel()
 
-	if apiErr := authorizeAwsInvoke(c); apiErr != nil {
+	if apiErr := authorizeAwsInvoke(c, a); apiErr != nil {
 		return apiErr, nil
 	}
 	awsResp, err := a.AwsClient.InvokeModel(ctx, a.AwsReq.(*bedrockruntime.InvokeModelInput))
@@ -297,7 +315,7 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
 	ctx, cancel := newAwsInvokeContext(requestContext)
 	defer cancel()
 
-	if apiErr := authorizeAwsInvoke(c); apiErr != nil {
+	if apiErr := authorizeAwsInvoke(c, a); apiErr != nil {
 		return apiErr, nil
 	}
 	awsResp, err := a.AwsClient.InvokeModelWithResponseStream(ctx, a.AwsReq.(*bedrockruntime.InvokeModelWithResponseStreamInput))
@@ -371,7 +389,7 @@ func handleNovaRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) 
 	ctx, cancel := newAwsInvokeContext(requestContext)
 	defer cancel()
 
-	if apiErr := authorizeAwsInvoke(c); apiErr != nil {
+	if apiErr := authorizeAwsInvoke(c, a); apiErr != nil {
 		return apiErr, nil
 	}
 	awsResp, err := a.AwsClient.InvokeModel(ctx, a.AwsReq.(*bedrockruntime.InvokeModelInput))

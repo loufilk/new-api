@@ -73,12 +73,12 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
   )
   const statusLabel =
     statusSamples.length > 0
-      ? t('Success rate')
+      ? t('Latest reported samples')
       : t('No performance data available')
 
   return (
     <div
-      aria-label={t('Performance metrics for the last 24 hours')}
+      aria-label={t('Performance')}
       className={cn(
         'flex w-full min-w-0 items-center justify-between gap-3',
         props.className
@@ -87,12 +87,10 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
       <dl className='flex min-w-0 flex-wrap items-start gap-5 text-sm tabular-nums'>
         <div className='w-24 shrink-0'>
           <dt
-            title={t(
-              'Success rate excludes business rejections and includes the current partial hour.'
-            )}
+            title={t('Performance metrics for the last 24 hours')}
             className='text-muted-foreground flex items-center justify-between gap-1 text-xs leading-[1.4]'
           >
-            <span>{t('Status')}</span>
+            <span title={t('Latest reported samples')}>{t('Status')}</span>
             <span className='font-mono'>
               {hasSuccessRate ? `${successRate.toFixed(2)}%` : '—'}
             </span>
@@ -118,8 +116,13 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
               <span className='text-muted-foreground'>—</span>
             )}
           </dd>
+          {statusSamples.length > 0 && (
+            <dd className='text-muted-foreground mt-1 text-[10px]'>
+              {t('Latest reported samples')}
+            </dd>
+          )}
         </div>
-        <div title={t('Average latency')} className='shrink-0'>
+        <div title={`${t('Average latency')} · 24 h`} className='shrink-0'>
           <dt className='text-muted-foreground text-xs leading-[1.4]'>
             {t('Latency short')}
           </dt>
@@ -127,7 +130,7 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
             {latencyText === '—' ? '—s' : latencyText}
           </dd>
         </div>
-        <div title={t('Throughput')} className='shrink-0'>
+        <div title={`${t('Throughput')} · 24 h`} className='shrink-0'>
           <dt className='text-muted-foreground text-xs leading-[1.4]'>
             {t('Throughput short')}
           </dt>

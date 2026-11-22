@@ -25,6 +25,7 @@ import { QuotaSettingsSection } from '../general/quota-settings-section'
 import { RatioSettingsCard } from '../models/ratio-settings-card'
 import type { BillingSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { GroupCatalogSettings } from './group-catalog-settings'
 
 const getModelDefaults = (settings: BillingSettings) => ({
   ModelPrice: settings.ModelPrice,
@@ -114,13 +115,16 @@ const BILLING_SECTIONS = [
     id: 'group-pricing',
     titleKey: 'Group Pricing',
     build: (settings: BillingSettings) => (
-      <RatioSettingsCard
-        titleKey='Group Pricing'
-        modelDefaults={getModelDefaults(settings)}
-        groupDefaults={getGroupDefaults(settings)}
-        toolPricesDefault={settings['tool_price_setting.prices']}
-        visibleTabs={['groups']}
-      />
+      <>
+        <RatioSettingsCard
+          titleKey='Group Pricing'
+          modelDefaults={getModelDefaults(settings)}
+          groupDefaults={getGroupDefaults(settings)}
+          toolPricesDefault={settings['tool_price_setting.prices']}
+          visibleTabs={['groups']}
+        />
+        <GroupCatalogSettings groupRatios={settings.GroupRatio} />
+      </>
     ),
   },
   {

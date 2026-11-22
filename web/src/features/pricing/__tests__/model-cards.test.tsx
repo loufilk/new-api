@@ -158,9 +158,7 @@ describe('model cards', () => {
 
   it('shows missing values without placeholder bars when metrics are unavailable', () => {
     render(<ModelCard model={pricingModel()} onClick={vi.fn()} />)
-    const metrics = screen.getByLabelText(
-      'Performance metrics for the last 24 hours'
-    )
+    const metrics = screen.getByLabelText('Performance')
     expect(within(metrics).getAllByText('—')).toHaveLength(2)
     expect(within(metrics).getByText('—s')).toBeVisible()
     expect(within(metrics).getByText('—t/s')).toBeVisible()
@@ -191,7 +189,7 @@ describe('model cards', () => {
       />
     )
     const statusStrip = screen.getByRole('img', {
-      name: 'Success rate',
+      name: 'Latest reported samples',
     })
     expect(statusStrip).toHaveClass('gap-px')
     expect(statusStrip).not.toHaveClass('justify-between')
@@ -237,15 +235,14 @@ describe('model cards', () => {
       params: { hours: 24, recent_model: ['active-model', 'idle-model'] },
       paramsSerializer: { indexes: null },
     })
-    const [active, idle] = screen.getAllByLabelText(
-      'Performance metrics for the last 24 hours'
-    )
+    const [active, idle] = screen.getAllByLabelText('Performance')
     expect(within(active).getByText('1.20s')).toBeVisible()
     expect(
-      within(active).getByRole('img', { name: 'Success rate' }).children[0]
+      within(active).getByRole('img', { name: 'Latest reported samples' })
+        .children[0]
     ).toHaveClass('bg-emerald-500')
     const samples = within(idle).getByRole('img', {
-      name: 'Success rate',
+      name: 'Latest reported samples',
     }).children
     expect(samples).toHaveLength(2)
     expect(samples[0]).toHaveClass('bg-red-500')
@@ -331,9 +328,7 @@ describe('model cards', () => {
           perf={{ avg_latency_ms: 1200, avg_tps: 42, success_rate }}
         />
       )
-      const metrics = screen.getByLabelText(
-        'Performance metrics for the last 24 hours'
-      )
+      const metrics = screen.getByLabelText('Performance')
       expect(within(metrics).getAllByText(expected)[0]).toBeVisible()
       expect(within(metrics).getByText('Status')).toBeVisible()
       expect(within(metrics).getByText('1.20s')).toBeVisible()
@@ -607,7 +602,8 @@ describe('model cards', () => {
     await waitFor(() =>
       expect(
         queryClient.getQueryState([
-          'perf-metrics-summary',
+          'market-perf-summary',
+          'public',
           24,
           ['example-model'],
         ])?.status
@@ -618,9 +614,7 @@ describe('model cards', () => {
       paramsSerializer: { indexes: null },
     })
     expect(
-      within(
-        screen.getByLabelText('Performance metrics for the last 24 hours')
-      ).getAllByText(/^—/)
+      within(screen.getByLabelText('Performance')).getAllByText(/^—/)
     ).toHaveLength(4)
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Details' }))
@@ -662,10 +656,13 @@ describe('model cards', () => {
   })
 
   it('switches the card grid to three columns at the xl breakpoint instead of 2xl', () => {
-    queryClient.setQueryData(['perf-metrics-summary', 24, ['example-model']], {
-      success: true,
-      data: { models: [] },
-    })
+    queryClient.setQueryData(
+      ['market-perf-summary', 'public', 24, ['example-model']],
+      {
+        success: true,
+        data: { models: [] },
+      }
+    )
     render(
       <QueryClientProvider client={queryClient}>
         <ModelCardGrid models={[pricingModel()]} onModelClick={vi.fn()} />
@@ -704,7 +701,7 @@ describe('model cards', () => {
 
     const spans = [
       ...screen.getByRole('img', {
-        name: 'Success rate',
+        name: 'Latest reported samples',
       }).children,
     ]
     expect(spans).toHaveLength(3)
@@ -743,7 +740,7 @@ describe('model cards', () => {
 
     const spans = [
       ...screen.getByRole('img', {
-        name: 'Success rate',
+        name: 'Latest reported samples',
       }).children,
     ]
     expect(spans).toHaveLength(2)
@@ -776,7 +773,7 @@ describe('model cards', () => {
 
     const spans = [
       ...screen.getByRole('img', {
-        name: 'Success rate',
+        name: 'Latest reported samples',
       }).children,
     ]
     expect(spans).toHaveLength(24)
@@ -833,7 +830,7 @@ describe('model cards', () => {
 
     const spans = [
       ...screen.getByRole('img', {
-        name: 'Success rate',
+        name: 'Latest reported samples',
       }).children,
     ]
     expect(spans).toHaveLength(1)

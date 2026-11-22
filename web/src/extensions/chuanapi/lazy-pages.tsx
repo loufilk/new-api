@@ -84,11 +84,7 @@ const LazyAffiliatePage = lazy(() =>
     default: AffiliatePage,
   }))
 )
-const LazyIntelligencePage = lazy(() =>
-  import('./intelligence').then(({ IntelligencePage }) => ({
-    default: IntelligencePage,
-  }))
-)
+
 
 function ExtensionLoading() {
   return <div className='min-h-24' role='status' aria-label='Loading' />
@@ -130,7 +126,6 @@ export const LazyAccountPoolDiagnostics = () =>
 
 export const LazyAffiliate = () => withLoading(<LazyAffiliatePage />)
 
-export const LazyIntelligence = () => withLoading(<LazyIntelligencePage />)
 
 export function LazyPaymentSettingsRenderer({
   settings,

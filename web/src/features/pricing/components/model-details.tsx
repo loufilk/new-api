@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import {
   ArrowLeft,
@@ -36,6 +35,7 @@ import { useTranslation } from 'react-i18next'
 import { CopyButton } from '@/components/copy-button'
 import { StaticDataTable } from '@/components/data-table'
 import { sideDrawerContentClassName } from '@/components/drawer-layout'
+import { ErrorState } from '@/components/error-state'
 import { GroupBadge } from '@/components/group-badge'
 import { PublicLayout } from '@/components/layout'
 import { Button } from '@/components/ui/button'
@@ -48,7 +48,6 @@ import {
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { getPerfMetrics } from '@/features/performance-metrics/api'
 import {
   formatLatency,
   formatThroughput,
@@ -57,12 +56,12 @@ import {
 } from '@/features/performance-metrics/lib/format'
 import { PluginIcon } from '@/features/task-plugins/components/plugin-icon'
 import { getLobeIcon } from '@/lib/lobe-icon'
-import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { DEFAULT_TOKEN_UNIT } from '../constants'
 import { useBillingTime } from '../hooks/use-billing-time'
+import { useMarketModelMetrics } from '../hooks/use-market-metrics'
 import { usePricingData } from '../hooks/use-pricing-data'
 import type { ParsedTaskTier, ParsedTier } from '../lib/billing-expr'
 import { formatBillingCondition } from '../lib/billing-expression/condition-display'
@@ -79,7 +78,15 @@ import {
   type DynamicPriceEntry,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { getAvailableGroups, isTokenBasedModel } from '../lib/model-helpers'
+import {
+  activeBillingExpressions,
+  marketGroupLabel,
+} from '../lib/market-groups'
+import {
+  getAvailableGroups,
+  getConfiguredGroupRatio,
+  isTokenBasedModel,
+} from '../lib/model-helpers'
 import {
   withBasePricing,
   withOrdinaryPricing,
@@ -272,12 +279,7 @@ function OverviewMetric(props: {
 
 function OverviewSummaryGrid(props: { model: PricingModel }) {
   const { t } = useTranslation()
-  const metricsQuery = useQuery({
-    queryKey: ['perf-metrics', props.model.model_name],
-    queryFn: async () =>
-      requireServerSuccess(await getPerfMetrics(props.model.model_name, 24)),
-    staleTime: 60 * 1000,
-  })
+  const metricsQuery = useMarketModelMetrics(props.model.model_name)
 
   const summary = metricsQuery.data?.data.summary
   const successRate = summary?.success_rate ?? Number.NaN
@@ -522,7 +524,9 @@ function ModelBackendSignalsSection(props: { model: PricingModel }) {
 function ModelBackendProviderSection(props: { model: PricingModel }) {
   const { t } = useTranslation()
   const model = props.model
-  const groups = normalizeCatalogItems(model.enable_groups)
+  const groups = normalizeCatalogItems(model.enable_groups).map((group) =>
+    marketGroupLabel(group, model.group_catalog)
+  )
   const endpoints = normalizeCatalogItems(model.supported_endpoint_types)
   const tags = parseTags(model.tags)
   const cells: React.ReactNode[] = []
@@ -655,7 +659,11 @@ function PriceSection(props: {
   const baseGroupKey = '_base'
   const baseGroupRatioMap = { [baseGroupKey]: 1 }
   const currency = useSystemConfigStore((state) => state.config.currency)
-  const billingTime = useBillingTime(props.model.billing_expr)
+  const expressions = useMemo(
+    () => activeBillingExpressions([props.model]),
+    [props.model]
+  )
+  const billingTime = useBillingTime(expressions)
   const dynamicSummary = useMemo(
     () =>
       getDynamicPricingSummary(props.model, {
@@ -943,7 +951,11 @@ function AutoGroupChain(props: { model: PricingModel; autoGroups: string[] }) {
       <span className='text-muted-foreground/40'>→</span>
       {autoChain.map((g, idx) => (
         <span key={g} className='flex items-center gap-1'>
-          <GroupBadge group={g} size='sm' />
+          <GroupBadge
+            group={g}
+            label={marketGroupLabel(g, props.model.group_catalog)}
+            size='sm'
+          />
           {idx < autoChain.length - 1 && (
             <span className='text-muted-foreground/40'>→</span>
           )}
@@ -1203,7 +1215,7 @@ function ProviderGroupPricingSection(
     })
     const formattedPricesByGroup = new Map(
       availableGroups.map((group) => {
-        const ratio = props.groupRatio[group] || 1
+        const ratio = getConfiguredGroupRatio(props.groupRatio, group)
         return [
           group,
           getDynamicFormattedPricesByTier(dynamicTiers, {
@@ -1227,7 +1239,7 @@ function ProviderGroupPricingSection(
         <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
         <div className='space-y-3'>
           {availableGroups.map((group) => {
-            const ratio = props.groupRatio[group] || 1
+            const ratio = getConfiguredGroupRatio(props.groupRatio, group)
             const formattedPricesByTier =
               formattedPricesByGroup.get(group) ??
               new Map<DynamicPricingTier, Map<string, string>>()
@@ -1235,7 +1247,11 @@ function ProviderGroupPricingSection(
             return (
               <div key={group} className='overflow-hidden rounded-lg border'>
                 <div className='bg-muted/20 flex items-center justify-between gap-3 border-b px-3 py-2'>
-                  <GroupBadge group={group} size='sm' />
+                  <GroupBadge
+                    group={group}
+                    label={marketGroupLabel(group, props.model.group_catalog)}
+                    size='sm'
+                  />
                   <span className='text-muted-foreground font-mono text-xs'>
                     {ratio}x
                   </span>
@@ -1426,14 +1442,21 @@ function ProviderGroupPricingSection(
             header: t('Group'),
             className: thClass,
             cellClassName: 'py-2.5',
-            cell: (group) => <GroupBadge group={group} size='sm' />,
+            cell: (group) => (
+              <GroupBadge
+                group={group}
+                label={marketGroupLabel(group, props.model.group_catalog)}
+                size='sm'
+              />
+            ),
           },
           {
             id: 'ratio',
             header: t('Ratio'),
             className: thClass,
             cellClassName: 'text-muted-foreground py-2.5 font-mono',
-            cell: (group) => `${props.groupRatio[group] || 1}x`,
+            cell: (group) =>
+              `${getConfiguredGroupRatio(props.groupRatio, group)}x`,
           },
           ...(isTokenBased
             ? [
@@ -1494,6 +1517,7 @@ const TAB_META: Record<
 }
 
 export interface ModelDetailsContentProps {
+  selectedGroup?: string
   model: PricingModel
   groupRatio: Record<string, number>
   usableGroup: Record<string, { desc: string; ratio: number }>
@@ -1593,6 +1617,7 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
 
         <TabsContent value='api' className='outline-none'>
           <ModelDetailsApi
+            selectedGroup={props.selectedGroup}
             model={props.model}
             endpointMap={props.endpointMap}
           />
@@ -1648,6 +1673,8 @@ export function ModelDetails() {
     endpointMap,
     autoGroups,
     isLoading,
+    error,
+    refetch,
     priceRate,
     usdExchangeRate,
   } = usePricingData()
@@ -1662,6 +1689,18 @@ export function ModelDetails() {
 
   const handleBack = () => {
     navigate({ to: '/pricing', search })
+  }
+
+  if (error) {
+    return (
+      <PublicLayout>
+        <ErrorState
+          onRetry={() => {
+            void refetch()
+          }}
+        />
+      </PublicLayout>
+    )
   }
 
   if (isLoading) {
@@ -1722,6 +1761,7 @@ export function ModelDetails() {
 
         <ModelDetailsContent
           model={model}
+          selectedGroup={search.group}
           groupRatio={groupRatio || {}}
           usableGroup={usableGroup || {}}
           autoGroups={autoGroups || []}

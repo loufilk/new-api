@@ -16,135 +16,123 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { ChevronDown, RotateCcw } from 'lucide-react'
+import { RotateCcw } from 'lucide-react'
 import { memo, useMemo, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
 
 import {
-  ENDPOINT_TYPES,
   FILTER_ALL,
-  QUOTA_TYPES,
   getEndpointTypeLabels,
   getQuotaTypeLabels,
 } from '../constants'
-import { getModelQuotaType, parseTags } from '../lib/filters'
-import type { PricingModel, PricingVendor } from '../types'
+import { getModelQuotaType } from '../lib/filters'
+import {
+  groupPlatform,
+  marketGroupLabel,
+  MARKET_PLATFORMS,
+  type MarketPlatform,
+} from '../lib/market-groups'
+import type { PricingModel, MarketGroupCatalog } from '../types'
+import { GroupCatalogBadges } from './group-catalog-badges'
+import { SearchBar, type SearchBarProps } from './search-bar'
 
-type FilterOption = {
+interface Option {
   value: string
   label: string
-  count?: number
-  suffix?: string
-  icon?: ReactNode
+  suffix?: string | number
+  description?: string
+  leading?: ReactNode
 }
 
-type FilterSectionProps = {
+const PLATFORM_ICONS: Partial<Record<MarketPlatform, string>> = {
+  openai: 'OpenAI',
+  anthropic: 'Claude.Color',
+  gemini: 'Gemini.Color',
+  deepseek: 'DeepSeek.Color',
+  moonshot: 'Moonshot',
+  xai: 'XAI',
+  zhipu: 'Zhipu.Color',
+  azure: 'Azure.Color',
+}
+
+function PlatformIcon(props: { platform: MarketPlatform }) {
+  const key = PLATFORM_ICONS[props.platform]
+  return key ? getLobeIcon(key, 15) : null
+}
+
+function FilterRow(props: {
   title: string
   value: string
-  options: FilterOption[]
+  options: Option[]
   onChange: (value: string) => void
+}) {
+  return (
+    <div
+      role='group'
+      aria-label={props.title}
+      className='grid min-w-0 gap-2 sm:grid-cols-[5.25rem_minmax(0,1fr)]'
+    >
+      <span className='text-muted-foreground self-start pt-1 text-sm font-medium'>
+        {props.title}
+      </span>
+      <div className='flex min-w-0 flex-wrap gap-x-2 gap-y-2'>
+        {props.options.map((option) => {
+          const active = props.value === option.value
+          return (
+            <Button
+              key={option.value}
+              variant={active ? 'default' : 'outline'}
+              size='sm'
+              className='h-auto min-h-8 max-w-full gap-1.5 rounded-full px-3 py-1 text-sm'
+              type='button'
+              aria-pressed={active}
+              onClick={() => props.onChange(option.value)}
+              title={option.description || option.label}
+            >
+              {option.leading}
+              <span className='break-all whitespace-normal'>
+                {option.label}
+              </span>
+              {option.suffix != null && (
+                <span
+                  className={cn(
+                    'shrink-0 rounded-full px-1.5 text-xs tabular-nums',
+                    active
+                      ? 'bg-background/20'
+                      : 'bg-muted text-muted-foreground'
+                  )}
+                >
+                  {option.suffix}
+                </span>
+              )}
+            </Button>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 export interface PricingSidebarProps {
+  platform: string
   quotaTypeFilter: string
   endpointTypeFilter: string
-  vendorFilter: string
   groupFilter: string
-  tagFilter: string
+  onPlatformChange: (value: string) => void
   onQuotaTypeChange: (value: string) => void
   onEndpointTypeChange: (value: string) => void
-  onVendorChange: (value: string) => void
   onGroupChange: (value: string) => void
-  onTagChange: (value: string) => void
-  vendors: PricingVendor[]
   groups: string[]
+  groupCatalog?: MarketGroupCatalog
   groupRatios?: Record<string, number>
-  tags: string[]
   models: PricingModel[]
   hasActiveFilters: boolean
   onClearFilters: () => void
-  className?: string
-}
-
-function formatGroupRatio(ratio: number | undefined): string | undefined {
-  if (ratio == null) return undefined
-  const formatted = Number.isInteger(ratio)
-    ? ratio.toString()
-    : ratio.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')
-  return `x${formatted}`
-}
-
-function FilterChip(props: {
-  option: FilterOption
-  active: boolean
-  onClick: () => void
-}) {
-  return (
-    <Button
-      type='button'
-      variant={props.active ? 'secondary' : 'outline'}
-      size='sm'
-      onClick={props.onClick}
-      aria-pressed={props.active}
-      className='h-auto max-w-full gap-1.5 px-2 py-1 text-xs'
-      title={props.option.label}
-    >
-      {props.option.icon && (
-        <span className='shrink-0'>{props.option.icon}</span>
-      )}
-      <span className='truncate'>{props.option.label}</span>
-      {(props.option.suffix || props.option.count != null) && (
-        <span
-          className={cn(
-            'rounded-md px-1.5 py-0.5 text-[12px]',
-            props.active
-              ? 'bg-background text-foreground'
-              : 'bg-muted text-muted-foreground'
-          )}
-        >
-          {props.option.suffix ?? props.option.count}
-        </span>
-      )}
-    </Button>
-  )
-}
-
-function FilterSection(props: FilterSectionProps) {
-  return (
-    <Collapsible
-      defaultOpen
-      className='border-border/70 border-b pb-3 last:border-b-0'
-    >
-      <CollapsibleTrigger className='group flex w-full items-center justify-between py-2.5 text-left'>
-        <span className='text-foreground text-sm font-semibold'>
-          {props.title}
-        </span>
-        <ChevronDown className='text-muted-foreground size-4 transition-transform group-data-[panel-open]:rotate-180' />
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <div className='flex flex-wrap gap-1.5'>
-          {props.options.map((option) => (
-            <FilterChip
-              key={option.value}
-              option={option}
-              active={props.value === option.value}
-              onClick={() => props.onChange(option.value)}
-            />
-          ))}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
-  )
+  search: SearchBarProps
 }
 
 export const PricingSidebar = memo(function PricingSidebar(
@@ -152,172 +140,150 @@ export const PricingSidebar = memo(function PricingSidebar(
 ) {
   const { t } = useTranslation()
   const counts = useMemo(() => {
-    const vendors = new Map<string, number>()
-    const tags = new Map<string, number>()
     const endpoints = new Map<string, number>()
     const quotas = { token: 0, request: 0, task: 0 }
     for (const model of props.models) {
-      if (model.vendor_name) {
-        vendors.set(
-          model.vendor_name,
-          (vendors.get(model.vendor_name) ?? 0) + 1
-        )
+      for (const type of new Set(model.supported_endpoint_types ?? [])) {
+        endpoints.set(type, (endpoints.get(type) ?? 0) + 1)
       }
-      for (const tag of new Set(
-        parseTags(model.tags).map((tag) => tag.toLowerCase())
-      )) {
-        tags.set(tag, (tags.get(tag) ?? 0) + 1)
-      }
-      for (const endpoint of new Set(model.supported_endpoint_types ?? [])) {
-        endpoints.set(endpoint, (endpoints.get(endpoint) ?? 0) + 1)
-      }
-      const quotaType = getModelQuotaType(model)
-      if (quotaType) quotas[quotaType]++
+      const quota = getModelQuotaType(model)
+      if (quota) quotas[quota]++
     }
-    return { vendors, tags, endpoints, quotas }
+    return { endpoints, quotas }
   }, [props.models])
-  const quotaTypeLabels = getQuotaTypeLabels(t)
-  const endpointTypeLabels = getEndpointTypeLabels(t)
-
-  const vendorOptions: FilterOption[] = [
-    {
-      value: FILTER_ALL,
-      label: t('All Vendors'),
-      count: props.models.length,
-    },
-    ...props.vendors
-      .map((vendor) => ({
-        value: vendor.name,
-        label: vendor.name,
-        count: counts.vendors.get(vendor.name) ?? 0,
-        icon: vendor.icon ? getLobeIcon(vendor.icon, 14) : undefined,
-      }))
-      .filter((vendor) => vendor.count > 0),
+  const platformCounts = useMemo(() => {
+    const counts = new Map<MarketPlatform, number>()
+    for (const group of props.groups) {
+      const key = groupPlatform(props.groupCatalog?.[group])
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+    return counts
+  }, [props.groups, props.groupCatalog])
+  const all = (suffix?: number): Option => ({
+    value: FILTER_ALL,
+    label: t('All'),
+    suffix,
+  })
+  const platformOptions = [
+    all(props.groups.length),
+    ...Object.entries(MARKET_PLATFORMS).flatMap(([key, label]) => {
+      const value = key as MarketPlatform
+      const count = platformCounts.get(value)
+      return count
+        ? [
+            {
+              value,
+              label: value === 'other' ? t('Other') : label,
+              leading: <PlatformIcon platform={value} />,
+              suffix: count,
+            },
+          ]
+        : []
+    }),
   ]
-
-  const groupOptions: FilterOption[] = [
-    {
-      value: FILTER_ALL,
-      label: t('All Groups'),
-    },
-    ...props.groups.map((group) => ({
-      value: group,
-      label: group,
-      suffix: formatGroupRatio(props.groupRatios?.[group]),
+  const groupOptions = [
+    all(),
+    ...props.groups
+      .filter(
+        (group) =>
+          props.platform === FILTER_ALL ||
+          props.platform === groupPlatform(props.groupCatalog?.[group])
+      )
+      .sort(
+        (a, b) =>
+          (props.groupCatalog?.[a]?.sort_order ?? 0) -
+            (props.groupCatalog?.[b]?.sort_order ?? 0) ||
+          marketGroupLabel(a, props.groupCatalog).localeCompare(
+            marketGroupLabel(b, props.groupCatalog)
+          )
+      )
+      .map((group): Option => {
+        const meta = props.groupCatalog?.[group]
+        const ratio = props.groupRatios?.[group]
+        return {
+          value: group,
+          label: marketGroupLabel(group, props.groupCatalog),
+          description: meta?.description,
+          suffix: ratio == null ? undefined : `×${ratio}`,
+          leading: (
+            <>
+              <PlatformIcon platform={groupPlatform(meta)} />
+              {meta?.exclusive && (
+                <span className='rounded bg-violet-700 px-1 text-xs text-white'>
+                  {t('Exclusive')}
+                </span>
+              )}
+              <GroupCatalogBadges values={meta?.badges} />
+            </>
+          ),
+        }
+      }),
+  ]
+  const quotaLabels = getQuotaTypeLabels(t)
+  const quotaOptions = [
+    all(props.models.length),
+    ...Object.entries(counts.quotas).map(([key, count]) => ({
+      value: key,
+      label: quotaLabels[key as keyof typeof counts.quotas],
+      suffix: count,
     })),
   ]
-
-  const quotaOptions: FilterOption[] = [
-    {
-      value: QUOTA_TYPES.ALL,
-      label: quotaTypeLabels[QUOTA_TYPES.ALL],
-      count: props.models.length,
-    },
-    {
-      value: QUOTA_TYPES.TOKEN,
-      label: quotaTypeLabels[QUOTA_TYPES.TOKEN],
-      count: counts.quotas.token,
-    },
-    {
-      value: QUOTA_TYPES.REQUEST,
-      label: quotaTypeLabels[QUOTA_TYPES.REQUEST],
-      count: counts.quotas.request,
-    },
-    {
-      value: QUOTA_TYPES.TASK,
-      label: quotaTypeLabels[QUOTA_TYPES.TASK],
-      count: counts.quotas.task,
-    },
-  ]
-
-  const tagOptions: FilterOption[] = [
-    {
-      value: FILTER_ALL,
-      label: t('All Tags'),
-      count: props.models.length,
-    },
-    ...props.tags.map((tag) => ({
-      value: tag,
-      label: tag,
-      count: counts.tags.get(tag.toLowerCase()) ?? 0,
-    })),
-  ]
-
-  const endpointOptions: FilterOption[] = [
-    {
-      value: ENDPOINT_TYPES.ALL,
-      label: endpointTypeLabels[ENDPOINT_TYPES.ALL],
-      count: props.models.length,
-    },
-    ...Object.entries(endpointTypeLabels)
-      .filter(([value]) => value !== ENDPOINT_TYPES.ALL)
-      .map(([value, label]) => ({
-        value,
-        label,
-        count: counts.endpoints.get(value) ?? 0,
+  const endpointLabels: Record<string, string> = getEndpointTypeLabels(t)
+  const endpointOptions = [
+    all(props.models.length),
+    ...[
+      ...new Set([...Object.keys(endpointLabels), ...counts.endpoints.keys()]),
+    ]
+      .filter((key) => key !== FILTER_ALL)
+      .map((key) => ({
+        value: key,
+        label: endpointLabels[key] ?? key,
+        suffix: counts.endpoints.get(key) ?? 0,
       })),
   ]
-
   return (
-    <aside className={cn('bg-card rounded-xl border p-3', props.className)}>
-      <div className='mb-2.5 flex items-center justify-between gap-2'>
-        <div>
-          <h2 className='text-foreground text-sm font-bold'>{t('Filter')}</h2>
-          <p className='text-muted-foreground mt-1 text-xs'>
-            {t('Refine models by provider, group, type, and tags.')}
-          </p>
-        </div>
-        <Button
-          type='button'
-          variant='ghost'
-          size='sm'
-          onClick={props.onClearFilters}
-          disabled={!props.hasActiveFilters}
-          className='h-7 gap-1.5 px-2 text-xs'
-        >
-          <RotateCcw className='size-3.5' />
-          {t('Reset')}
-        </Button>
-      </div>
-
-      {props.hasActiveFilters && (
-        <Badge variant='secondary' className='mb-3'>
-          {t('Filters active')}
-        </Badge>
-      )}
-
-      <div className='space-y-1'>
-        <FilterSection
-          title={t('Groups')}
+    <section
+      aria-label={t('Filter')}
+      className='bg-card rounded-2xl border px-4 py-4 shadow-sm sm:px-5'
+    >
+      <div className='space-y-3'>
+        <FilterRow
+          title={t('Platform')}
+          value={props.platform}
+          options={platformOptions}
+          onChange={props.onPlatformChange}
+        />
+        <FilterRow
+          title={t('Group')}
           value={props.groupFilter}
           options={groupOptions}
           onChange={props.onGroupChange}
         />
-        <FilterSection
-          title={t('All Vendors')}
-          value={props.vendorFilter}
-          options={vendorOptions}
-          onChange={props.onVendorChange}
-        />
-        <FilterSection
-          title={t('Model Tags')}
-          value={props.tagFilter}
-          options={tagOptions}
-          onChange={props.onTagChange}
-        />
-        <FilterSection
+        <FilterRow
           title={t('Pricing Type')}
           value={props.quotaTypeFilter}
           options={quotaOptions}
           onChange={props.onQuotaTypeChange}
         />
-        <FilterSection
+        <FilterRow
           title={t('Endpoint Type')}
           value={props.endpointTypeFilter}
           options={endpointOptions}
           onChange={props.onEndpointTypeChange}
         />
       </div>
-    </aside>
+      <div className='mt-4 flex items-center gap-2 border-t pt-3'>
+        <SearchBar {...props.search} className='min-w-0 flex-1' />
+        <Button
+          variant='ghost'
+          size='sm'
+          onClick={props.onClearFilters}
+          disabled={!props.hasActiveFilters && !props.search.value}
+        >
+          <RotateCcw aria-hidden className='size-3.5' />
+          {t('Reset')}
+        </Button>
+      </div>
+    </section>
   )
 })

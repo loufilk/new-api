@@ -224,3 +224,29 @@ test('sorts a plugin model by the token price its ordinary requests pay', () => 
     'expr-task',
   ])
 })
+
+test('sort uses the displayed group multiplier, including free groups and active time tiers', () => {
+  const groups = {
+    enable_groups: ['standard', 'free'],
+    group_ratio: { standard: 2, free: 0 },
+  }
+  const values = [
+    pricingModel('plain', { model_ratio: 0.5 }),
+    pricingModel('timed', {
+      ...groups,
+      billing_mode: 'tiered_expr',
+      billing_expr:
+        'hour("UTC") < 12 ? tier("morning", p * 0.1) : tier("late", p * 8)',
+    }),
+  ]
+  const order = (group: string, hour: string) =>
+    sortModels(
+      values,
+      SORT_OPTIONS.INPUT_PRICE_LOW,
+      group,
+      new Date(`2026-11-20T${hour}:00:00Z`)
+    ).map((m) => m.model_name)
+  expect(order('standard', '09')).toEqual(['timed', 'plain'])
+  expect(order('standard', '15')).toEqual(['plain', 'timed'])
+  expect(order('all', '15')).toEqual(['timed', 'plain'])
+})

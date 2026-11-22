@@ -30,10 +30,12 @@ import {
   type ModelEndpointMap,
 } from '../lib/model-endpoints'
 import type { PricingModel } from '../types'
+import { MarketCreateKey } from './market-create-key'
 
 export function ModelApiActions(props: {
   model: PricingModel
   endpointMap: ModelEndpointMap
+  selectedGroup?: string
 }) {
   const { t } = useTranslation()
   const endpoint = getModelEndpoints(props.model, props.endpointMap)[0]
@@ -54,6 +56,10 @@ export function ModelApiActions(props: {
         </code>
       )}
       <div className='flex flex-wrap gap-1.5'>
+        <MarketCreateKey
+          model={props.model}
+          selectedGroup={props.selectedGroup}
+        />
         {path && (
           <CopyButton
             value={`${origin}${path}`}

@@ -26,7 +26,7 @@ func validateModelTestOutputBudget(c *gin.Context, req *http.Request) error {
 	if limit == 0 {
 		return nil
 	}
-	if limit < 0 || limit > 4096 || req == nil || req.Body == nil {
+	if (common.GetContextKeyInt(c, constant.ContextKeyKeyDiagnosticTokenID) == 0 && limit > 4096) || limit < 0 || limit > 32000 || req == nil || req.Body == nil {
 		return fail
 	}
 	body, err := io.ReadAll(io.LimitReader(req.Body, 64<<10+1))
@@ -38,11 +38,24 @@ func validateModelTestOutputBudget(c *gin.Context, req *http.Request) error {
 	req.Body = io.NopCloser(bytes.NewReader(body))
 	req.ContentLength = int64(len(body))
 	req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
+	return ValidateDiagnosticOutputBudget(body, limit)
+}
+
+// Used by the shared HTTP transport and the direct AWS SDK transport.
+// Never forward a converter override that raised or removed the promised cap.
+func ValidateDiagnosticOutputBudget(body []byte, limit int) error {
+	fail := errors.New("controlled model test output budget changed or missing")
+	if limit <= 0 || limit > 32000 {
+		return fail
+	}
 	var payload struct {
 		MaxTokens           *int `json:"max_tokens"`
 		MaxCompletionTokens *int `json:"max_completion_tokens"`
 		MaxOutputTokens     *int `json:"max_output_tokens"`
-		GenerationConfig    struct {
+		InferenceConfig     struct {
+			MaxTokens *int `json:"maxTokens"`
+		} `json:"inferenceConfig"`
+		GenerationConfig struct {
 			MaxOutputTokens *int `json:"maxOutputTokens"`
 		} `json:"generationConfig"`
 	}
@@ -50,7 +63,7 @@ func validateModelTestOutputBudget(c *gin.Context, req *http.Request) error {
 		return fail
 	}
 	found := false
-	for _, value := range []*int{payload.MaxTokens, payload.MaxCompletionTokens, payload.MaxOutputTokens, payload.GenerationConfig.MaxOutputTokens} {
+	for _, value := range []*int{payload.MaxTokens, payload.MaxCompletionTokens, payload.MaxOutputTokens, payload.GenerationConfig.MaxOutputTokens, payload.InferenceConfig.MaxTokens} {
 		if value == nil {
 			continue
 		}

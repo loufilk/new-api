@@ -34,14 +34,11 @@ export function LoadingSkeleton(props: LoadingSkeletonProps) {
         <Skeleton className='mt-2 h-5 w-full max-w-xl' />
         <Skeleton className='mt-4 h-10 w-full max-w-2xl sm:mt-6' />
       </div>
-      <div className='grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]'>
-        <div className='hidden self-start rounded-xl border p-3 xl:block'>
+      <div className='grid gap-4'>
+        <div className='self-start rounded-xl border p-3'>
           <Skeleton className='mb-4 h-5 w-24' />
-          {Array.from({ length: 5 }, (_, index) => (
-            <div
-              key={index}
-              className='flex flex-col gap-3 border-b py-4 last:border-0'
-            >
+          {Array.from({ length: 4 }, (_, index) => (
+            <div key={index} className='flex flex-wrap items-center gap-3 py-2'>
               <Skeleton className='h-4 w-28' />
               <div className='flex flex-wrap gap-2'>
                 <Skeleton className='h-7 w-24' />
