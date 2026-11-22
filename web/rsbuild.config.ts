@@ -102,7 +102,21 @@ export default defineConfig(({ envMode }) => {
       buildCache: false,
     },
     tools: {
+      // Deterministic chunk IDs can spell CON, AUX, etc. Go's embed rejects
+      // those filesystem basenames even on Linux; keep hashed names prefixed.
+      ...(isProd && {
+        cssExtract: {
+          pluginOptions: {
+            chunkFilename: 'static/css/async/chunk-[id].[contenthash:10].css',
+          },
+        },
+      }),
       rspack: {
+        ...(isProd && {
+          output: {
+            chunkFilename: 'static/js/async/chunk-[id].[contenthash:10].js',
+          },
+        }),
         plugins: [
           tanstackRouter({
             target: 'react',
