@@ -7,7 +7,6 @@ require (
 	github.com/Azure/go-ntlmssp v0.1.1
 	github.com/Calcium-Ion/go-epay v0.0.6
 	github.com/ClickHouse/clickhouse-go/v2 v2.51.0
-	github.com/HugoSmits86/nativewebp v1.3.0
 	github.com/MoeForge/moego v0.1.0-alpha.4
 	github.com/MoeForge/moejs v0.1.1
 	github.com/QuantumNous/new-api/relaykit v0.0.0

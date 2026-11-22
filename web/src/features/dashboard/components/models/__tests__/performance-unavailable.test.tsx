@@ -161,7 +161,7 @@ describe.each([
   )
 
   it('validates a fresh malformed cache entry before rendering', async () => {
-    client.setQueryData(['perf-metrics-summary', 24], {
+    client.setQueryData(['dashboard-perf-metrics-summary', 24], {
       success: true,
       data: null,
     })
@@ -230,13 +230,13 @@ describe.each([
   })
 
   it('does not present cached healthy values as current after a failed refetch', async () => {
-    client.setQueryData(['perf-metrics-summary', 24], healthyResponse)
+    client.setQueryData(['dashboard-perf-metrics-summary', 24], healthyResponse)
     setResponse({ success: false, message: 'temporarily unavailable' })
     renderPanel()
     expect(screen.getByText('99.01%')).toBeVisible()
     await act(async () => {
       await client.refetchQueries({
-        queryKey: ['perf-metrics-summary', 24],
+        queryKey: ['dashboard-perf-metrics-summary', 24],
         exact: true,
       })
     })

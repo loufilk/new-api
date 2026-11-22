@@ -496,7 +496,7 @@ func excludeLegacyBillingTasks(tasks []*Task) []*Task {
 
 func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) []*Task {
 	var tasks []*Task
-	err := DB.Where("settlement_pending = ? OR settlement_pending IS NULL", false).Where("progress != ?", "100%").
+	err := DB.Where("settlement_pending = ? OR settlement_pending IS NULL", false).
 		Where("status NOT IN ?", []string{TaskStatusFailure, TaskStatusSuccess, TaskStatusUnknown}).
 		Where("submit_time < ?", cutoffUnix).
 		Order("submit_time").
@@ -511,8 +511,12 @@ func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) []*Task {
 func GetAllUnFinishSyncTasks(limit int) []*Task {
 	var tasks []*Task
 	var err error
-	// get all tasks progress is not 100%
-	err = DB.Where("settlement_pending = ? OR settlement_pending IS NULL", false).Where("progress != ?", "100%").Where("status != ?", TaskStatusFailure).Where("status != ?", TaskStatusSuccess).Where("status != ?", TaskStatusUnknown).Limit(limit).Order("id").Find(&tasks).Error
+	// Upstream progress can reach 100% before the task enters a terminal state.
+	err = DB.Where("settlement_pending = ? OR settlement_pending IS NULL", false).
+		Where("status != ?", TaskStatusFailure).
+		Where("status != ?", TaskStatusSuccess).
+		Where("status != ?", TaskStatusUnknown).
+		Limit(limit).Order("id").Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
@@ -527,7 +531,6 @@ func HasUnfinishedSyncTasks() bool {
 	var id int64
 	err := DB.Model(&Task{}).
 		Where("settlement_pending = ? OR settlement_pending IS NULL", false).
-		Where("progress != ?", "100%").
 		Where("status != ?", TaskStatusFailure).
 		Where("status != ?", TaskStatusSuccess).
 		Where("status != ?", TaskStatusUnknown).

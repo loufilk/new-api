@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
-import { getPerfMetricsSummary } from '@/features/performance-metrics/api'
+import { getDashboardPerfMetricsSummary } from '@/features/performance-metrics/api'
 import { selectDashboardPerformanceSummary } from '@/features/performance-metrics/lib/summary-response'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
@@ -29,10 +29,10 @@ const PERFORMANCE_WINDOW_HOURS = 24
 export function usePerformanceSummary() {
   const [lastError, setLastError] = useState<Error | null>(null)
   const query = useQuery({
-    queryKey: ['perf-metrics-summary', PERFORMANCE_WINDOW_HOURS],
+    queryKey: ['dashboard-perf-metrics-summary', PERFORMANCE_WINDOW_HOURS],
     queryFn: async () =>
       requireServerSuccess(
-        await getPerfMetricsSummary(PERFORMANCE_WINDOW_HOURS)
+        await getDashboardPerfMetricsSummary(PERFORMANCE_WINDOW_HOURS)
       ),
     // select also validates fresh cache entries, which can bypass queryFn.
     // The raw query cache/API contract remains unchanged for other consumers.

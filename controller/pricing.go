@@ -11,6 +11,31 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string]string) []model.Pricing {
+	if len(pricing) == 0 {
+		return pricing
+	}
+	if len(usableGroup) == 0 {
+		return []model.Pricing{}
+	}
+
+	filtered := make([]model.Pricing, 0, len(pricing))
+	for _, item := range pricing {
+		// The pricing cache is shared by all viewers.
+		groups := make([]string, 0, len(item.EnableGroup))
+		for _, group := range item.EnableGroup {
+			if _, ok := usableGroup[group]; ok || group == "all" {
+				groups = append(groups, group)
+			}
+		}
+		if len(groups) > 0 {
+			item.EnableGroup = groups
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
 func GetPricing(c *gin.Context) {
 	guard, guardOK := beginControllerGroupConfigRead(c)
 	if !guardOK {
@@ -18,33 +43,23 @@ func GetPricing(c *gin.Context) {
 	}
 	defer guard.Close()
 
-	pricing := model.GetPricing()
-	userId, exists := c.Get("id")
-	usableGroup := map[string]string{}
+	user, err := model.GetUserCache(c.GetInt("id"))
+	if err != nil {
+		groupConfigReadFailure(c)
+		return
+	}
+	group := user.Group
+	usableGroup := service.GetUserUsableGroups(group)
+	pricing := filterPricingByUsableGroups(model.GetPricing(), usableGroup)
 	groupRatio := map[string]float64{}
 	maps.Copy(groupRatio, ratio_setting.GetGroupRatioCopy())
-	var group string
-	if exists {
-		user, err := model.GetUserCache(userId.(int))
-		if err != nil {
-			groupConfigReadFailure(c)
-			return
+	for groupName := range groupRatio {
+		if _, ok := usableGroup[groupName]; !ok {
+			delete(groupRatio, groupName)
+			continue
 		}
-		group = user.Group
-		for g := range groupRatio {
-			ratio, ok := ratio_setting.GetGroupGroupRatio(group, g)
-			if ok {
-				groupRatio[g] = ratio
-			}
-		}
-	}
-
-	usableGroup = service.GetUserUsableGroups(group)
-	pricing = model.FilterPricingByUsableGroups(pricing, usableGroup)
-	// check groupRatio contains usableGroup
-	for group := range ratio_setting.GetGroupRatioCopy() {
-		if _, ok := usableGroup[group]; !ok {
-			delete(groupRatio, group)
+		if ratio, ok := ratio_setting.GetGroupGroupRatio(group, groupName); ok {
+			groupRatio[groupName] = ratio
 		}
 	}
 
