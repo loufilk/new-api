@@ -20,6 +20,7 @@ import { useTranslation } from 'react-i18next'
 
 import { TruncatedCell } from '@/components/data-table'
 import { Badge } from '@/components/ui/badge'
+import { toIntlLocale } from '@/i18n/languages'
 
 type ApiKeyGroupCellProps = {
   group: string
@@ -47,7 +48,7 @@ export function ApiKeyGroupCell({
         : t('Follow user group')
   const multiplier =
     !legacy && typeof ratio === 'number' && Number.isFinite(ratio)
-      ? `${new Intl.NumberFormat(i18n.resolvedLanguage || i18n.language, { maximumFractionDigits: 8 }).format(ratio)}×`
+      ? `${new Intl.NumberFormat(toIntlLocale(i18n.resolvedLanguage || i18n.language), { maximumFractionDigits: 8 }).format(ratio)}×`
       : null
   const detail =
     !smartRouting && group === 'auto' && autoGroups?.length

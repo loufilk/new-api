@@ -32,7 +32,10 @@ await i18n.init({
   initAsync: false,
 })
 
-afterEach(cleanup)
+afterEach(async () => {
+  cleanup()
+  await i18n.changeLanguage('en')
+})
 
 function show(props: React.ComponentProps<typeof ApiKeyGroupCell>) {
   return render(
@@ -65,3 +68,16 @@ test('legacy auto and inherited keys remain distinguishable without inventing pr
   expect(screen.getByText('Follow user group')).toBeVisible()
   expect(screen.queryByText(/×/)).not.toBeInTheDocument()
 })
+
+test.each(['zhCN', 'zhTW'])(
+  'renders the group price with the %s interface locale',
+  async (language) => {
+    i18n.addResourceBundle(language, 'translation', {
+      'Follow user group': 'group',
+    })
+    await i18n.changeLanguage(language)
+    expect(i18n.resolvedLanguage).toBe(language)
+    show({ group: 'vip', label: 'Private', ratio: 0.125 })
+    expect(screen.getByText('0.125×')).toBeVisible()
+  }
+)
