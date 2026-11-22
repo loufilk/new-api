@@ -1,5 +1,15 @@
 {
   "translation": {
+    "Personal Pricing and Access": "Индивидуальные цены и доступ",
+    "Advanced Rules": "Расширенные правила",
+    "Group pricing sections": "Разделы цен групп",
+    "Manage group rates, access, and marketplace presentation.": "Настраивайте коэффициенты, доступ и отображение групп в каталоге.",
+    "Manage exclusive access and rates for a specific account.": "Настраивайте эксклюзивный доступ и коэффициенты для выбранной учётной записи.",
+    "Manage group overrides, visibility rules, and legacy Auto order.": "Управляйте переопределениями между группами, видимостью и прежним порядком Auto.",
+    "Group defaults and access": "Настройки по умолчанию и доступ к группам",
+    "Legacy Auto": "Прежний Auto",
+    "Applies to existing API keys using Auto. New API keys use a single selected group.": "Действует только для существующих ключей API в режиме Auto. Для нового ключа API выбирается одна группа.",
+    "Base group ratios apply to calls billed to this group. Top-up ratios and availability are in Advanced.": "Базовый коэффициент применяется к вызовам, оплачиваемым по этой группе. Коэффициенты пополнения и доступность настраиваются в расширенных правилах.",
     "Key diagnostic": "Тест ключа",
     "This sends one paid request with your selected API key. Your normal account balance and group price apply. A single answer does not verify model identity.": "Выбранный ключ отправит один платный запрос. Спишется обычная стоимость по тарифу группы. Один ответ не подтверждает подлинность модели.",
     "Start test": "Начать тест",

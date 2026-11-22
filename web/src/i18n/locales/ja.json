@@ -1,5 +1,15 @@
 {
   "translation": {
+    "Personal Pricing and Access": "ユーザー別料金とアクセス",
+    "Advanced Rules": "詳細ルール",
+    "Group pricing sections": "グループ料金のセクション",
+    "Manage group rates, access, and marketplace presentation.": "グループの倍率、アクセス権、マーケットでの表示を管理します。",
+    "Manage exclusive access and rates for a specific account.": "アカウントごとに専用グループへのアクセスと倍率を管理します。",
+    "Manage group overrides, visibility rules, and legacy Auto order.": "グループ間の倍率上書き、表示ルール、旧 Auto の順序を管理します。",
+    "Group defaults and access": "グループの既定値とアクセス",
+    "Legacy Auto": "旧 Auto",
+    "Applies to existing API keys using Auto. New API keys use a single selected group.": "Auto を使う既存の API キーにのみ適用されます。新しい API キーでは単一のグループを選択します。",
+    "Base group ratios apply to calls billed to this group. Top-up ratios and availability are in Advanced.": "基本倍率は、このグループで課金される呼び出しに適用されます。チャージ倍率と利用可否は詳細ルールで設定します。",
     "Key diagnostic": "キーのテスト",
     "This sends one paid request with your selected API key. Your normal account balance and group price apply. A single answer does not verify model identity.": "選択したキーで有料リクエストを1回送信します。通常の残高とグループ料金が適用されます。1回の回答でモデルの正体は確認できません。",
     "Start test": "テスト開始",

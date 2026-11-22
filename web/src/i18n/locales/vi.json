@@ -1,5 +1,15 @@
 {
   "translation": {
+    "Personal Pricing and Access": "Giá và quyền truy cập cá nhân",
+    "Advanced Rules": "Quy tắc nâng cao",
+    "Group pricing sections": "Các mục định giá nhóm",
+    "Manage group rates, access, and marketplace presentation.": "Quản lý hệ số, quyền truy cập và cách hiển thị nhóm trong danh mục.",
+    "Manage exclusive access and rates for a specific account.": "Quản lý quyền truy cập riêng và hệ số cho từng tài khoản.",
+    "Manage group overrides, visibility rules, and legacy Auto order.": "Quản lý hệ số ghi đè giữa các nhóm, chế độ hiển thị và thứ tự Auto cũ.",
+    "Group defaults and access": "Mặc định và quyền truy cập nhóm",
+    "Legacy Auto": "Auto cũ",
+    "Applies to existing API keys using Auto. New API keys use a single selected group.": "Chỉ áp dụng cho các khóa API hiện có dùng Auto. Mỗi khóa API mới sử dụng một nhóm đã chọn.",
+    "Base group ratios apply to calls billed to this group. Top-up ratios and availability are in Advanced.": "Hệ số cơ bản áp dụng cho các yêu cầu tính phí theo nhóm này. Hệ số nạp tiền và khả năng sử dụng nằm trong phần nâng cao.",
     "Key diagnostic": "Kiểm tra khóa",
     "This sends one paid request with your selected API key. Your normal account balance and group price apply. A single answer does not verify model identity.": "Khóa đã chọn sẽ gửi một yêu cầu có tính phí. Số dư tài khoản và giá nhóm thông thường được áp dụng. Một câu trả lời không chứng minh được danh tính mô hình.",
     "Start test": "Bắt đầu kiểm tra",

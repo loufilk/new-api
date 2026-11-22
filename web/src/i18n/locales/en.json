@@ -1,5 +1,15 @@
 {
   "translation": {
+    "Personal Pricing and Access": "Personal Pricing and Access",
+    "Advanced Rules": "Advanced Rules",
+    "Group pricing sections": "Group pricing sections",
+    "Manage group rates, access, and marketplace presentation.": "Manage group rates, access, and marketplace presentation.",
+    "Manage exclusive access and rates for a specific account.": "Manage exclusive access and rates for a specific account.",
+    "Manage group overrides, visibility rules, and legacy Auto order.": "Manage group overrides, visibility rules, and legacy Auto order.",
+    "Group defaults and access": "Group defaults and access",
+    "Legacy Auto": "Legacy Auto",
+    "Applies to existing API keys using Auto. New API keys use a single selected group.": "Applies to existing API keys using Auto. New API keys use a single selected group.",
+    "Base group ratios apply to calls billed to this group. Top-up ratios and availability are in Advanced.": "Base group ratios apply to calls billed to this group. Top-up ratios and availability are in Advanced.",
     "Key diagnostic": "Key diagnostic",
     "This sends one paid request with your selected API key. Your normal account balance and group price apply. A single answer does not verify model identity.": "This sends one paid request with your selected API key. Your normal account balance and group price apply. A single answer does not verify model identity.",
     "Start test": "Start test",

@@ -1,5 +1,15 @@
 {
   "translation": {
+    "Personal Pricing and Access": "Tarification et accès individuels",
+    "Advanced Rules": "Règles avancées",
+    "Group pricing sections": "Sections de tarification des groupes",
+    "Manage group rates, access, and marketplace presentation.": "Gérez les coefficients, les accès et la présentation des groupes dans le catalogue.",
+    "Manage exclusive access and rates for a specific account.": "Gérez les accès exclusifs et les coefficients propres à un compte.",
+    "Manage group overrides, visibility rules, and legacy Auto order.": "Gérez les dérogations entre groupes, la visibilité et l’ordre Auto hérité.",
+    "Group defaults and access": "Valeurs par défaut et accès des groupes",
+    "Legacy Auto": "Ancien mode Auto",
+    "Applies to existing API keys using Auto. New API keys use a single selected group.": "Concerne les clés API existantes en mode Auto. Les nouvelles clés API utilisent un seul groupe choisi.",
+    "Base group ratios apply to calls billed to this group. Top-up ratios and availability are in Advanced.": "Le coefficient de base s’applique aux appels facturés à ce groupe. Les coefficients de recharge et la disponibilité se règlent dans les règles avancées.",
     "Key diagnostic": "Test de clé",
     "This sends one paid request with your selected API key. Your normal account balance and group price apply. A single answer does not verify model identity.": "Une seule requête payante utilisera la clé sélectionnée. Le solde et le tarif habituel du groupe s’appliquent. Une réponse ne prouve pas l’identité du modèle.",
     "Start test": "Lancer le test",

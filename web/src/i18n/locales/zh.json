@@ -1,5 +1,15 @@
 {
   "translation": {
+    "Personal Pricing and Access": "个人专价与授权",
+    "Advanced Rules": "高级规则",
+    "Group pricing sections": "分组定价导航",
+    "Manage group rates, access, and marketplace presentation.": "管理分组倍率、访问权限和广场展示。",
+    "Manage exclusive access and rates for a specific account.": "按账号管理专属分组授权和独立倍率。",
+    "Manage group overrides, visibility rules, and legacy Auto order.": "管理组间倍率覆盖、可见性规则及旧版 Auto 顺序。",
+    "Group defaults and access": "分组默认值与可用性",
+    "Legacy Auto": "存量 Auto",
+    "Applies to existing API keys using Auto. New API keys use a single selected group.": "仅适用于仍在使用 Auto 的旧密钥。新密钥必须选择一个分组。",
+    "Base group ratios apply to calls billed to this group. Top-up ratios and availability are in Advanced.": "基础倍率适用于由本分组结算的调用。充值倍率与分组可用性见高级规则。",
     "Enter valid IP addresses or networks, one per line.": "请输入有效的 IP 地址或网段，每行一项。",
     "Choose one group for this API key.": "为此 API 密钥选择一个分组。",
     "Could not confirm key creation. Check the list before trying again.": "无法确认密钥是否创建成功，请先检查列表再重试。",
