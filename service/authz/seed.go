@@ -1,9 +1,8 @@
 package authz
 
 import (
-	"fmt"
-
 	"github.com/QuantumNous/new-api/model"
+	"github.com/casbin/casbin/v3"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -46,12 +45,7 @@ func resetBuiltInRolePolicies(db *gorm.DB) error {
 		Delete(&model.CasbinRule{}).Error
 }
 
-func seedDefaultPolicies() error {
-	e := currentEnforcer()
-	if e == nil {
-		return fmt.Errorf("authz enforcer is not initialized")
-	}
-
+func seedDefaultPolicies(e *casbin.SyncedEnforcer) error {
 	for _, spec := range builtInRoles {
 		if spec.Superuser {
 			continue
