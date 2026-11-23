@@ -487,3 +487,15 @@ test('a server that omits categories in its save response cannot confirm the cat
   ).toBeVisible()
   expect(close).not.toHaveBeenCalled()
 })
+
+test('explains why new applications are unavailable despite an enabled saved switch', async () => {
+  setup({ ...settings, intake_state: 'merchant_not_configured' })
+  expect(
+    await screen.findByText(
+      'This node has no valid invoice merchant scope configured.'
+    )
+  ).toBeVisible()
+  expect(
+    screen.getByRole('switch', { name: 'Enable invoice center' })
+  ).toBeChecked()
+})

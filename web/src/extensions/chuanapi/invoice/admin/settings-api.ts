@@ -25,6 +25,16 @@ import { invoiceSettingsSchema, type InvoiceSettings } from '../contracts'
 
 const settings = invoiceSettingsSchema.extend({
   fee_payment_available: z.boolean().optional(),
+  intake_state: z
+    .enum([
+      'center_off',
+      'deployment_off',
+      'merchant_not_configured',
+      'no_invoice_types',
+      'no_categories',
+      'configured',
+    ])
+    .optional(),
 })
 export type AdminInvoiceSettings = z.infer<typeof settings>
 

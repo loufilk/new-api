@@ -23,14 +23,14 @@ import {
 } from '@tanstack/react-router'
 
 import { extensionConsoleTools } from '@/extensions'
-import { ROLE } from '@/lib/roles'
+import { partnerManagementAccess } from '@/extensions/chuanapi/partners/permissions'
 import { useAuthStore } from '@/stores/auth-store'
 
 export const Route = createFileRoute(
   '/_authenticated/partner-application-management/'
 )({
   beforeLoad: () => {
-    if ((useAuthStore.getState().auth.user?.role ?? ROLE.GUEST) < ROLE.ADMIN) {
+    if (!partnerManagementAccess(useAuthStore.getState().auth.user).open) {
       throw redirect({ to: '/403', replace: true })
     }
   },

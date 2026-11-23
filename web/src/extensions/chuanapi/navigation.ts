@@ -23,6 +23,7 @@ import { ROLE } from '@/lib/roles'
 
 import type { NavigationExtension } from '../navigation'
 import type { SidebarNavigationExtension } from '../sidebar-navigation'
+import { partnerManagementAccess } from './partners/permissions'
 
 export const CHUANAPI_PUBLIC_HOME = 'https://chuanapi.com/'
 
@@ -91,7 +92,10 @@ export const chuanapiSidebarNavigationExtension: SidebarNavigationExtension = {
               }
         }
 
-        if (group.id === 'admin' && (context.role ?? 0) >= ROLE.ADMIN) {
+        if (
+          group.id === 'admin' &&
+          partnerManagementAccess(context.user).open
+        ) {
           const hasPartnerManagement = group.items.some(
             (item) =>
               'url' in item && item.url === '/partner-application-management'

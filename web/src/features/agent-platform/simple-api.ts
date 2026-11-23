@@ -194,12 +194,15 @@ export function quoteSimplePayment(
   return postPlatform('/simple/payment/quote', payload)
 }
 
-export async function getSimplePaymentOrders(params?: {
-  agent_user_id?: number
-  p?: number
-  page_size?: number
-}): Promise<SimplePaymentOrderPage> {
-  return getPlatform<SimplePaymentOrderPage>('/simple/payment-orders', params)
+export async function getSimplePaymentOrders(
+  params?: { agent_user_id?: number; p?: number; page_size?: number },
+  signal?: AbortSignal
+): Promise<SimplePaymentOrderPage> {
+  return getPlatform<SimplePaymentOrderPage>(
+    '/simple/payment-orders',
+    params,
+    signal
+  )
 }
 
 export async function getSimplePaymentMethods(

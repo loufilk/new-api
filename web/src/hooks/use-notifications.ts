@@ -16,47 +16,72 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useState, useMemo } from 'react'
+import { sha256 } from '@noble/hashes/sha2.js'
+import { bytesToHex } from '@noble/hashes/utils.js'
+import { focusManager, useQuery } from '@tanstack/react-query'
+import {
+  useCallback,
+  useEffect,
+  useState,
+  useMemo,
+  useSyncExternalStore,
+} from 'react'
 
 import { useStatus } from '@/hooks/use-status'
 import { getNotice } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
+import { readCachedStatus } from '@/lib/status-query'
 import { useNotificationStore } from '@/stores/notification-store'
 
-function hashString(input: string): string {
-  let hash = 0
-  if (!input) return '0'
+type Announcement = Record<string, unknown>
+const EMPTY_ANNOUNCEMENTS: Announcement[] = []
+const ANNOUNCEMENT_KEY_PREFIX = 'v2:'
+const subscribeFocus = (listener: () => void) =>
+  focusManager.subscribe(listener)
+const isFocused = () => focusManager.isFocused()
 
-  for (let i = 0; i < input.length; i += 1) {
-    const chr = input.charCodeAt(i)
-    hash = (hash << 5) - hash + chr
-    hash |= 0
-  }
-
-  return hash.toString(36)
+function parseAnnouncements(value: unknown): Announcement[] | undefined {
+  if (!Array.isArray(value)) return
+  return value.filter(
+    (item): item is Announcement =>
+      item !== null && typeof item === 'object' && !Array.isArray(item)
+  )
 }
 
-/**
- * Generate a unique key for an announcement
- * Prefer backend id, fall back to a content hash so edits register
- */
-function getAnnouncementKey(item: Record<string, unknown>): string {
-  if (!item) return ''
-
-  if (item.id !== undefined && item.id !== null) {
-    return `id:${item.id}`
+function announcementContent(item: Announcement) {
+  const text = (key: string) => {
+    const value = item[key]
+    return typeof value === 'string' ? value : ''
   }
+  return {
+    publishDate: text('publishDate'),
+    content: text('content').trim(),
+    extra: text('extra').trim(),
+    type: text('type'),
+    title: text('title').trim(),
+    link: text('link').trim(),
+  }
+}
 
-  const fingerprint = JSON.stringify({
-    publishDate: (item?.publishDate as string) || '',
-    content: ((item?.content as string) || '').trim(),
-    extra: ((item?.extra as string) || '').trim(),
-    type: (item?.type as string) || '',
-    title: ((item?.title as string) || '').trim(),
-    link: ((item?.link as string) || '').trim(),
+function getAnnouncementKey(item: Announcement): string {
+  const payload = JSON.stringify({
+    id: item.id == null ? null : String(item.id),
+    ...announcementContent(item),
   })
-  return `hash:${hashString(fingerprint)}`
+  return (
+    ANNOUNCEMENT_KEY_PREFIX +
+    bytesToHex(sha256(new TextEncoder().encode(payload)))
+  )
+}
+
+function getLegacyAnnouncementKey(item: Announcement): string {
+  if (item.id != null) return `id:${item.id}`
+  const fingerprint = JSON.stringify(announcementContent(item))
+  let hash = 0
+  for (let i = 0; i < fingerprint.length; i += 1) {
+    hash = ((hash << 5) - hash + fingerprint.charCodeAt(i)) | 0
+  }
+  return `hash:${hash.toString(36)}`
 }
 
 /**
@@ -64,6 +89,9 @@ function getAnnouncementKey(item: Record<string, unknown>): string {
  * Provides unread counts and read status management
  */
 export function useNotifications(options: { autoOpen?: boolean } = {}) {
+  // The app headers pass false when the notification button is disabled.
+  const enabled = options.autoOpen !== false
+  const focused = useSyncExternalStore(subscribeFocus, isFocused, () => true)
   const [popoverOpen, setPopoverOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<'notice' | 'announcements'>(
     'notice'
@@ -77,25 +105,39 @@ export function useNotifications(options: { autoOpen?: boolean } = {}) {
   } = useQuery({
     queryKey: ['notice'],
     queryFn: async () => requireServerSuccess(await getNotice()),
+    enabled,
     staleTime: 1000 * 60 * 5, // 5 minutes
   })
 
-  // Fetch Announcements from status
-  const { status, loading: statusLoading } = useStatus()
-  const announcementsEnabled = status?.announcements_enabled ?? false
-  const rawAnnouncements = status?.announcements
-  const announcements: Record<string, unknown>[] = useMemo(
+  // Use the same status entry as the dashboard without putting a poll on
+  // every page. Opening the announcement view enables a foreground poll.
+  const {
+    status,
+    loading: statusLoading,
+    refetchIfAnnouncementStale,
+  } = useStatus(
+    enabled ? { announcements: popoverOpen ? 'active' : 'return' } : false
+  )
+  const announcementsEnabled = enabled && status?.announcements_enabled === true
+  const rawAnnouncements = useMemo(
+    () => parseAnnouncements(status?.announcements),
+    [status?.announcements]
+  )
+  const announcements = useMemo(
     () =>
-      announcementsEnabled
-        ? ((rawAnnouncements || []) as Record<string, unknown>[]).slice(0, 20)
-        : [],
+      (announcementsEnabled ? rawAnnouncements?.slice(0, 20) : undefined) ??
+      EMPTY_ANNOUNCEMENTS,
     [announcementsEnabled, rawAnnouncements]
   )
+  const announcementKeys = useMemo(
+    () => announcements.map(getAnnouncementKey),
+    [announcements]
+  )
 
-  // Notification store
   const {
     lastReadNotice,
     readAnnouncementKeys,
+    replaceLegacyAnnouncementKeys,
     markNoticeRead,
     markAnnouncementsRead,
     closedUntilDate,
@@ -103,6 +145,38 @@ export function useNotifications(options: { autoOpen?: boolean } = {}) {
     setAutoPopupShown,
     setClosedUntilDate,
   } = useNotificationStore()
+  const [cachedAnnouncements] = useState(() =>
+    parseAnnouncements(readCachedStatus()?.announcements)
+  )
+  const effectiveReadKeys = useMemo(() => {
+    if (
+      !enabled ||
+      !readAnnouncementKeys.some(
+        (key) => !key.startsWith(ANNOUNCEMENT_KEY_PREFIX)
+      )
+    ) {
+      return readAnnouncementKeys
+    }
+    // Before versioned keys, an ID alone did not identify a revision. Use the
+    // previous cached payload if available; otherwise take the first payload
+    // as the baseline, so upgrading doesn't re-alert known read IDs.
+    const baseline = cachedAnnouncements ?? rawAnnouncements
+    if (!baseline) return readAnnouncementKeys
+    const read = new Set(readAnnouncementKeys)
+    return [
+      ...readAnnouncementKeys.filter((key) =>
+        key.startsWith(ANNOUNCEMENT_KEY_PREFIX)
+      ),
+      ...baseline
+        .filter((item) => read.has(getLegacyAnnouncementKey(item)))
+        .map(getAnnouncementKey),
+    ]
+  }, [cachedAnnouncements, enabled, rawAnnouncements, readAnnouncementKeys])
+  useEffect(() => {
+    if (effectiveReadKeys !== readAnnouncementKeys) {
+      replaceLegacyAnnouncementKeys(readAnnouncementKeys, effectiveReadKeys)
+    }
+  }, [effectiveReadKeys, readAnnouncementKeys, replaceLegacyAnnouncementKeys])
 
   // Extract notice content
   const noticeContent = noticeResponse?.success
@@ -114,11 +188,9 @@ export function useNotifications(options: { autoOpen?: boolean } = {}) {
     const noticeUnread =
       noticeContent && noticeContent !== lastReadNotice ? 1 : 0
 
-    const announcementsUnread = announcements.filter(
-      (item: Record<string, unknown>) => {
-        const key = getAnnouncementKey(item)
-        return !readAnnouncementKeys.includes(key)
-      }
+    const read = new Set(effectiveReadKeys)
+    const announcementsUnread = announcementKeys.filter(
+      (key) => !read.has(key)
     ).length
 
     return {
@@ -126,16 +198,18 @@ export function useNotifications(options: { autoOpen?: boolean } = {}) {
       announcements: announcementsUnread,
       total: noticeUnread + announcementsUnread,
     }
-  }, [noticeContent, lastReadNotice, announcements, readAnnouncementKeys])
+  }, [noticeContent, lastReadNotice, announcementKeys, effectiveReadKeys])
 
-  const markAnnouncementsAsRead = useCallback(() => {
-    if (announcements.length > 0) {
-      const allKeys = announcements.map((item: Record<string, unknown>) =>
-        getAnnouncementKey(item)
-      )
-      markAnnouncementsRead(allKeys)
+  useEffect(() => {
+    if (
+      focused &&
+      popoverOpen &&
+      activeTab === 'announcements' &&
+      announcementKeys.length > 0
+    ) {
+      markAnnouncementsRead(announcementKeys)
     }
-  }, [announcements, markAnnouncementsRead])
+  }, [activeTab, announcementKeys, focused, markAnnouncementsRead, popoverOpen])
 
   // Handle popover open
   const handleOpenPopover = useCallback(
@@ -149,10 +223,6 @@ export function useNotifications(options: { autoOpen?: boolean } = {}) {
       if (noticeContent) {
         markNoticeRead(noticeContent)
       }
-      if (nextTab === 'announcements') {
-        markAnnouncementsAsRead()
-      }
-
       setActiveTab(nextTab)
       setAutoPopupShown()
       setPopoverOpen(true)
@@ -162,52 +232,56 @@ export function useNotifications(options: { autoOpen?: boolean } = {}) {
       announcements.length,
       noticeContent,
       markNoticeRead,
-      markAnnouncementsAsRead,
       setAutoPopupShown,
     ]
   )
 
   useEffect(() => {
     if (
+      !enabled ||
+      !focused ||
       !options.autoOpen ||
       autoPopupShown ||
       useNotificationStore.getState().autoPopupShown ||
       noticeLoading ||
       statusLoading ||
       closedUntilDate === new Date().toDateString() ||
-      (!noticeContent && announcements.length === 0)
+      (!noticeContent && unreadCounts.announcements === 0)
     ) {
       return
     }
 
-    handleOpenPopover(announcements.length > 0 ? 'announcements' : 'notice')
+    // Yield to the user-facing render and allow another header to claim the
+    // one-per-page popup before opening a second dialog.
+    const timer = setTimeout(() => {
+      if (isFocused() && !useNotificationStore.getState().autoPopupShown) {
+        handleOpenPopover(
+          unreadCounts.announcements > 0 ? 'announcements' : 'notice'
+        )
+      }
+    }, 0)
+    return () => clearTimeout(timer)
   }, [
+    enabled,
+    focused,
     options.autoOpen,
     autoPopupShown,
     noticeLoading,
     statusLoading,
     closedUntilDate,
     noticeContent,
-    announcements.length,
+    unreadCounts.announcements,
     handleOpenPopover,
   ])
 
   const handlePopoverOpenChange = (open: boolean) => {
     if (open) {
+      refetchIfAnnouncementStale?.()
       handleOpenPopover(activeTab)
       return
     }
 
     setPopoverOpen(false)
-  }
-
-  // Handle tab change - mark announcements as read when switching to that tab
-  const handleTabChange = (tab: 'notice' | 'announcements') => {
-    setActiveTab(tab)
-
-    if (tab === 'announcements') {
-      markAnnouncementsAsRead()
-    }
   }
 
   return {
@@ -225,7 +299,7 @@ export function useNotifications(options: { autoOpen?: boolean } = {}) {
     popoverOpen,
     setPopoverOpen: handlePopoverOpenChange,
     activeTab,
-    setActiveTab: handleTabChange,
+    setActiveTab,
 
     // Actions
     openPopover: handleOpenPopover,

@@ -287,5 +287,6 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
   return applySidebarNavigationExtensions(sidebar, {
     isAuthenticated: Boolean(user),
     role: user?.role,
+    user,
   })
 }

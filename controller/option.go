@@ -333,6 +333,11 @@ func UpdateOption(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
+	case "gemini.version_settings":
+		if err := model_setting.ValidateGeminiVersionSettings(option.Value.(string)); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	case "claude.default_max_tokens":
 		err = model_setting.ValidateClaudeDefaultMaxTokens(option.Value.(string))
 		if err != nil {
