@@ -61,6 +61,9 @@ func registerSupportRoutes(engine *gin.Engine) error {
 	user.GET("/:id/attachments/:attachment_id", controller.GetSupportTicketAttachment)
 	user.POST("/:id/replies", middleware.UserCriticalRateLimit("support-ticket-reply"), controller.ReplySupportTicket)
 	user.POST("/:id/read", controller.MarkSupportTicketRead)
+	// Old binaries do not recognize this path; never send snapshot requests
+	// through the legacy handler, which ignores the body and clears unread.
+	user.POST("/:id/read-observed", controller.MarkObservedSupportTicketRead)
 
 	admin := engine.Group("/api/admin/support/tickets")
 	admin.Use(middleware.DisableCache())
@@ -72,6 +75,7 @@ func registerSupportRoutes(engine *gin.Engine) error {
 	admin.GET("/:id/attachments/:attachment_id", controller.GetAdminSupportTicketAttachment)
 	admin.POST("/:id/replies", middleware.UserCriticalRateLimit("support-ticket-reply"), controller.ReplyAdminSupportTicket)
 	admin.POST("/:id/read", controller.MarkAdminSupportTicketRead)
+	admin.POST("/:id/read-observed", controller.MarkAdminObservedSupportTicketRead)
 	admin.PUT("/:id/status", controller.UpdateAdminSupportTicketStatus)
 
 	notification := engine.Group("/api/support-email")

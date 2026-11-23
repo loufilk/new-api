@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"unicode/utf8"
@@ -191,4 +192,17 @@ func MarkSupportTicketRead(userID int, adminView bool, ticketID int64) error {
 		return ErrSupportTicketNotFound
 	}
 	return err
+}
+
+// MarkObservedSupportTicketRead acknowledges the conversation snapshot the
+// reader actually saw. A newer message or status is not an application error.
+func MarkObservedSupportTicketRead(ctx context.Context, userID int, adminView bool, ticketID int64, observed model.SupportTicketReadSnapshot) (bool, error) {
+	if userID <= 0 || ticketID <= 0 || observed.MessageID < 0 || observed.Status == "" || !ValidSupportTicketStatus(observed.Status) {
+		return false, ErrSupportTicketInvalidInput
+	}
+	acknowledged, err := model.MarkObservedSupportTicketRead(ctx, ticketID, userID, adminView, observed)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, ErrSupportTicketNotFound
+	}
+	return acknowledged, err
 }

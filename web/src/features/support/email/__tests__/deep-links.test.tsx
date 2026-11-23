@@ -157,8 +157,14 @@ test('invalid email ticket IDs never trigger a detail request or a redirect', as
 test('administrator deep links use only administrator ticket detail routes', async () => {
   const { get } = renderSupport('/support?ticket=41', 100)
   expect(await screen.findByText('Reply for ticket 41')).toBeVisible()
-  expect(get).toHaveBeenCalledWith('/api/admin/support/tickets/41')
-  expect(get).not.toHaveBeenCalledWith('/api/support/tickets/41')
+  expect(get).toHaveBeenCalledWith(
+    '/api/admin/support/tickets/41',
+    expect.any(Object)
+  )
+  expect(get).not.toHaveBeenCalledWith(
+    '/api/support/tickets/41',
+    expect.any(Object)
+  )
 })
 
 test('a different user cannot see the previous owner conversation from the query cache', async () => {

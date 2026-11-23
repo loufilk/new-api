@@ -84,3 +84,32 @@ func TestSupportEmailHTTPPostgresOwnPreferenceOnlyAndMalformedInput(t *testing.T
 	response = supportHTTPRequest(t, fixture, http.MethodPut, "/api/support-email/settings", "1", 203, map[string]any{"enabled": false, "admin_recipients": []string{"admin@example.invalid\r\nBcc:attacker"}, "site_origin": "https://trusted.example.invalid"})
 	assert.Contains(t, response.Body.String(), `"success":false`)
 }
+
+func TestSupportEmailHTTPPostgresSelectedResendAndOutboxTicketFilter(t *testing.T) {
+	require.NotEmpty(t, os.Getenv("TEST_POSTGRES_DSN"))
+	fixture := newSupportHTTPFixture(t, supportHTTPOptions{globalLimitNum: 1000, criticalLimitNum: 1000, users: []supportHTTPUser{{id: 301, role: common.RoleCommonUser}, {id: 302, role: common.RoleRootUser}}})
+	for k, v := range map[string]string{"EmailProvider": "resend", "ResendApiKey": "test-secret-credential", "ResendFrom": "sender@example.invalid"} {
+		require.NoError(t, fixture.db.Create(&model.Option{Key: k, Value: v}).Error)
+	}
+	response := supportHTTPRequest(t, fixture, http.MethodGet, "/api/support-email/settings", "1", 302, nil)
+	assert.Contains(t, response.Body.String(), `"delivery_provider":"resend"`)
+	assert.Contains(t, response.Body.String(), `"delivery_configured":true`)
+	assert.Contains(t, response.Body.String(), `"smtp_configured":false`)
+	assert.NotContains(t, response.Body.String(), "test-secret-credential")
+	settings := map[string]any{"enabled": true, "admin_recipients": []string{"admin@example.invalid"}, "site_origin": "https://trusted.example.invalid"}
+	response = supportHTTPRequest(t, fixture, http.MethodPut, "/api/support-email/settings", "1", 302, settings)
+	require.Contains(t, response.Body.String(), `"success":true`)
+	a, err := service.CreateSupportTicket(fixture.userIDs[301], "first", "one")
+	require.NoError(t, err)
+	b, err := service.CreateSupportTicket(fixture.userIDs[301], "second", "two")
+	require.NoError(t, err)
+	url := fmt.Sprintf("/api/support-email/outbox?ticket_id=%d", a.Ticket.ID)
+	response = supportHTTPRequest(t, fixture, http.MethodGet, url, "1", 302, nil)
+	require.Contains(t, response.Body.String(), `"total":1`)
+	require.Contains(t, response.Body.String(), fmt.Sprintf(`"ticket_id":%d`, a.Ticket.ID))
+	require.NotContains(t, response.Body.String(), fmt.Sprintf(`"ticket_id":%d`, b.Ticket.ID))
+	require.Equal(t, http.StatusForbidden, supportHTTPRequest(t, fixture, http.MethodGet, url, "1", 301, nil).Code)
+	for _, bad := range []string{"", "-1", "0", "x", "%zz", "1&ticket_id=2", "18446744073709551615"} {
+		assert.Equal(t, http.StatusBadRequest, supportHTTPRequest(t, fixture, http.MethodGet, "/api/support-email/outbox?ticket_id="+bad, "1", 302, nil).Code, bad)
+	}
+}

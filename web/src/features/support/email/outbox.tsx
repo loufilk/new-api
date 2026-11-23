@@ -30,6 +30,7 @@ import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { formatTimestamp } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 
@@ -52,7 +53,7 @@ function queueStatus(t: TFunction, status: string): string {
     case 'sending':
       return t('Sending')
     case 'sent':
-      return t('Sent')
+      return t('Accepted by the mail provider')
     case 'cancelled':
       return t('Cancelled')
     case 'dead':
@@ -85,11 +86,18 @@ export function SupportEmailOutbox(props: { userId: number }) {
   const { t } = useTranslation()
   const client = useQueryClient()
   const [page, setPage] = useState(1)
+  const [filterText, setFilterText] = useState('')
+  const [ticketID, setTicketID] = useState<number>()
+  const normalizedTicketID = filterText.trim().replace(/^#\s*/, '')
+  const parsedTicketID = Number(normalizedTicketID)
+  const validTicketID =
+    /^[1-9][0-9]*$/.test(normalizedTicketID) &&
+    Number.isSafeInteger(parsedTicketID)
   const [selected, setSelected] = useState<QueueAction | null>(null)
   const queryKey = ['support-email-outbox', props.userId] as const
   const query = useQuery({
-    queryKey: [...queryKey, page],
-    queryFn: ({ signal }) => getSupportEmailOutbox(page, signal),
+    queryKey: [...queryKey, page, ticketID],
+    queryFn: ({ signal }) => getSupportEmailOutbox(page, signal, ticketID),
     retry: false,
     staleTime: 0,
     refetchOnMount: 'always',
@@ -230,9 +238,51 @@ export function SupportEmailOutbox(props: { userId: number }) {
           {t('Refresh')}
         </Button>
       </div>
+      <form
+        className='flex flex-wrap items-center gap-2'
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (!validTicketID || mutation.isPending) return
+          setSelected(null)
+          setPage(1)
+          setTicketID(parsedTicketID)
+        }}
+      >
+        <label htmlFor='support-outbox-ticket'>{t('Ticket')}</label>
+        <Input
+          id='support-outbox-ticket'
+          inputMode='numeric'
+          className='w-36'
+          placeholder='#42'
+          value={filterText}
+          onChange={(event) => setFilterText(event.target.value)}
+        />
+        <Button
+          type='submit'
+          variant='outline'
+          disabled={!validTicketID || mutation.isPending}
+        >
+          {t('Search')}
+        </Button>
+        {ticketID !== undefined && (
+          <Button
+            type='button'
+            variant='ghost'
+            disabled={mutation.isPending}
+            onClick={() => {
+              setSelected(null)
+              setPage(1)
+              setTicketID(undefined)
+              setFilterText('')
+            }}
+          >
+            {t('Reset')}
+          </Button>
+        )}
+      </form>
       <p className='text-muted-foreground text-sm'>
         {t(
-          'Repeated events may be combined. SMTP acknowledgement loss can still cause a duplicate; retries do not guarantee exactly-once delivery.'
+          'Repeated events may be combined. Provider acceptance does not confirm delivery to the inbox, and retries can still cause duplicates.'
         )}
       </p>
       <p className='text-muted-foreground text-sm'>

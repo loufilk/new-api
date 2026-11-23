@@ -193,11 +193,13 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/support/tickets/:id/attachments/:attachment_id":       accessTokenSessionRule,
 	"POST /api/support/tickets/:id/replies":                         accessTokenSessionRule,
 	"POST /api/support/tickets/:id/read":                            accessTokenSessionRule,
+	"POST /api/support/tickets/:id/read-observed":                   accessTokenSessionRule,
 	"GET /api/admin/support/tickets":                                accessTokenSessionRule,
 	"GET /api/admin/support/tickets/:id":                            accessTokenSessionRule,
 	"GET /api/admin/support/tickets/:id/attachments/:attachment_id": accessTokenSessionRule,
 	"POST /api/admin/support/tickets/:id/replies":                   accessTokenSessionRule,
 	"POST /api/admin/support/tickets/:id/read":                      accessTokenSessionRule,
+	"POST /api/admin/support/tickets/:id/read-observed":             accessTokenSessionRule,
 	"PUT /api/admin/support/tickets/:id/status":                     accessTokenSessionRule,
 	// Mail preferences, delivery configuration and outbox actions also require
 	// sessions; explicitly deny both scoped and legacy PATs at authentication.

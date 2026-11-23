@@ -3,6 +3,8 @@ package common
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"io"
 	"net/http"
 	"net/mail"
@@ -38,12 +40,37 @@ func ValidateResendConfiguration(apiKey, from string) error {
 // do not expose credentials, verification codes or reset links in errors/logs.
 // This transport does not change token expiry, single-use or session rules.
 func sendResendEmail(apiKey, from, subject, receiver, plainText, content string) error {
+	return sendResendEmailContext(context.Background(), apiKey, from, subject, receiver, plainText, content, "")
+}
+
+// ResendHTTPError exposes only the status, never provider-controlled body text.
+type ResendHTTPError struct{ Status int }
+
+func (e *ResendHTTPError) Error() string {
+	return fmt.Sprintf("Resend email delivery failed (HTTP %d)", e.Status)
+}
+
+// SendQueuedResend delivers one admitted notification under its original deadline.
+// Keep the key stable across restarts, without sending a raw recipient or event ID.
+func SendQueuedResend(ctx context.Context, apiKey, from, subject, receiver, plainText, content, eventID string) error {
+	recipient, err := mail.ParseAddress(receiver)
+	if err != nil || recipient.Name != "" || recipient.Address != receiver || strings.ContainsAny(receiver, "\r\n\x00;,") || eventID == "" {
+		return NewMessage("Invalid email address")
+	}
+	key := fmt.Sprintf("support/%x", sha256.Sum256([]byte(eventID)))
+	return sendResendEmailContext(ctx, apiKey, from, subject, receiver, plainText, content, key)
+}
+
+func sendResendEmailContext(ctx context.Context, apiKey, from, subject, receiver, plainText, content, key string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := ValidateResendConfiguration(apiKey, from); err != nil {
 		return err
 	}
 	apiKey = strings.TrimSpace(apiKey)
 	sender, _ := mail.ParseAddress(strings.TrimSpace(from))
-	if sender.Name == "" {
+	if sender.Name == "" && key == "" {
 		sender.Name = SystemName
 	}
 	to := make([]string, 0)
@@ -54,17 +81,22 @@ func sendResendEmail(apiKey, from, subject, receiver, plainText, content string)
 		}
 		to = append(to, recipient.Address)
 	}
+	var headers map[string]string
+	if key != "" {
+		headers = map[string]string{"Auto-Submitted": "auto-generated"}
+	}
 	payload, err := Marshal(struct {
-		From    string   `json:"from"`
-		To      []string `json:"to"`
-		Subject string   `json:"subject"`
-		HTML    string   `json:"html"`
-		Text    string   `json:"text,omitempty"`
-	}{sender.String(), to, subject, content, plainText})
+		From    string            `json:"from"`
+		To      []string          `json:"to"`
+		Subject string            `json:"subject"`
+		HTML    string            `json:"html"`
+		Text    string            `json:"text,omitempty"`
+		Headers map[string]string `json:"headers,omitempty"`
+	}{sender.String(), to, subject, content, plainText, headers})
 	if err != nil {
 		return NewMessage("Resend request failed")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.resend.com/emails", bytes.NewReader(payload))
 	if err != nil {
@@ -72,10 +104,16 @@ func sendResendEmail(apiKey, from, subject, receiver, plainText, content string)
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
+	if key != "" {
+		req.Header.Set("Idempotency-Key", key)
+	}
 	resp, err := resendEmailClient.Do(req)
 	if err != nil {
 		// Transport errors may quote request data or credentials. Keep the
 		// failure observable without copying untrusted error text into logs.
+		if key != "" && ctx.Err() != nil {
+			return ctx.Err()
+		}
 		SysError(LogText("Resend request failed"))
 		return NewMessage("Resend request failed")
 	}
@@ -85,6 +123,9 @@ func sendResendEmail(apiKey, from, subject, receiver, plainText, content string)
 		// reset links. Status is sufficient to diagnose delivery without
 		// exposing those values to callers or server-log readers.
 		SysError(LogText("Resend rejected the email: status=%d", resp.StatusCode))
+		if key != "" {
+			return &ResendHTTPError{Status: resp.StatusCode}
+		}
 		return NewMessage("Resend email delivery failed (HTTP {{status}})", map[string]any{"status": resp.StatusCode})
 	}
 	var result struct {

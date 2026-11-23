@@ -19,6 +19,7 @@ import (
 )
 
 const SupportEmailMaxAttempts = 6
+const SupportEmailReplayWindowElapsed = "resend_replay_window_elapsed"
 const SupportEmailLifetime = 7 * 24 * time.Hour
 
 var ErrSupportEmailInput = errors.New("Invalid support email settings")
@@ -396,6 +397,8 @@ func FinishSupportEmail(ctx context.Context, row *SupportEmailOutbox, now int64,
 	if errorCode == "" {
 		updates["status"] = "sent"
 		updates["sent_at"] = now
+	} else if errorCode == SupportEmailReplayWindowElapsed {
+		updates["status"] = "cancelled"
 	} else {
 		updates["status"] = "retry"
 		round := max(1, row.Attempts-SupportEmailMaxAttempts*row.RetryGeneration)

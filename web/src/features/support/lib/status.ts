@@ -22,13 +22,16 @@ import type { SupportTicketStatus } from '../types'
 
 export function supportTicketStatusLabel(
   t: TFunction,
-  status: SupportTicketStatus
+  status: SupportTicketStatus,
+  admin: boolean
 ): string {
   switch (status) {
     case 'processing':
       return t('Platform processing')
     case 'awaiting_user':
-      return t('Waiting for your reply')
+      return admin
+        ? t('Waiting for customer reply')
+        : t('Waiting for your reply')
     case 'resolved':
       return t('Resolved')
   }
