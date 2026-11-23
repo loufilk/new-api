@@ -252,6 +252,7 @@
     "Select an invoice category": "発票の記載項目を選択してください",
     "This invoice category is currently unavailable": "この項目での発票発行は現在受け付けていません",
     "Update the server to edit invoice categories.": "発票の記載項目を編集するには、サーバーを更新してください。",
-    "Invoice fee refund": "発票発行手数料の返金"
+    "Invoice fee refund": "発票発行手数料の返金",
+    "Site information": "サイト情報"
   }
 }

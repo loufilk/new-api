@@ -252,6 +252,7 @@
     "Select an invoice category": "Sélectionnez une catégorie de facturation",
     "This invoice category is currently unavailable": "Cette catégorie de facturation est actuellement indisponible",
     "Update the server to edit invoice categories.": "Mettez à jour le serveur pour pouvoir modifier les catégories de facturation.",
-    "Invoice fee refund": "Remboursement des frais d’émission de facture"
+    "Invoice fee refund": "Remboursement des frais d’émission de facture",
+    "Site information": "Informations sur le site"
   }
 }

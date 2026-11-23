@@ -15,8 +15,8 @@ import {
   partnerKey,
   privateRead,
 } from './api'
-import { ApplicationHistory } from './application-history'
 import { PartnerApplicationForm } from './application-form'
+import { ApplicationHistory } from './application-history'
 
 const partnershipSteps = [
   {
@@ -66,37 +66,44 @@ function PartnerWorkspace(props: { owner: number }) {
 
   return (
     <SectionPageLayout>
-      <SectionPageLayout.Title>{t('Partner application')}</SectionPageLayout.Title>
+      <SectionPageLayout.Title>
+        {t('Partner application')}
+      </SectionPageLayout.Title>
       <SectionPageLayout.Content>
         <div className='flex flex-col gap-4'>
-          <h2 className='text-base font-semibold'>
-            {t('Share your upstream and start a partnership')}
-          </h2>
-          <p className='text-muted-foreground text-sm'>
-            {t('Tell us about your site, available groups and rates. API keys are not needed.')}
-          </p>
-          <div className='grid gap-3 sm:grid-cols-3'>
-            {partnershipSteps.map((step, index) => (
-              <Card key={step.title} className='min-w-0 rounded-md'>
-                <CardContent className='flex gap-3 p-3'>
-                  <span className='text-muted-foreground text-sm tabular-nums'>
-                    0{index + 1}
-                  </span>
-                  <div className='min-w-0'>
-                    <p className='text-sm font-medium'>{t(step.title)}</p>
-                    <p className='text-muted-foreground mt-1 text-sm'>
-                      {t(step.detail)}
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-          <Alert>
-            <AlertDescription>
-              {t('Do not include API keys. Submitted applications cannot be edited. Review the details before submitting.')}
-            </AlertDescription>
-          </Alert>
+          <Card className='gap-3'>
+            <CardContent className='flex flex-col gap-2'>
+              <h2 className='text-lg font-semibold'>
+                {t('Share your upstream and start a partnership')}
+              </h2>
+              <p className='text-muted-foreground text-sm'>
+                {t(
+                  'Tell us about your site, available groups and rates. API keys are not needed.'
+                )}
+              </p>
+              <ol className='mt-2 grid gap-3 sm:grid-cols-3'>
+                {partnershipSteps.map((step, index) => (
+                  <li
+                    key={step.title}
+                    className='flex min-w-0 items-start gap-2'
+                  >
+                    <span
+                      aria-hidden='true'
+                      className='bg-muted flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-medium'
+                    >
+                      {index + 1}
+                    </span>
+                    <div className='min-w-0'>
+                      <p className='text-sm font-medium'>{t(step.title)}</p>
+                      <p className='text-muted-foreground mt-1 text-sm'>
+                        {t(step.detail)}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </CardContent>
+          </Card>
           {settings.isPending && <LoadingState className='min-h-20' />}
           {settings.isError && (
             <ErrorState
@@ -108,21 +115,27 @@ function PartnerWorkspace(props: { owner: number }) {
           {intakeClosed && (
             <Alert>
               <AlertDescription>
-                {t('Partner applications are currently closed. You can still view your submissions.')}
+                {t(
+                  'Partner applications are currently closed. You can still view your submissions.'
+                )}
               </AlertDescription>
             </Alert>
           )}
           {hasActiveApplication && (
             <Alert>
               <AlertDescription>
-                {t('An application is already awaiting review. You can follow its status below.')}
+                {t(
+                  'An application is already awaiting review. You can follow its status below.'
+                )}
               </AlertDescription>
             </Alert>
           )}
           {history.isError && (
             <Alert>
               <AlertDescription className='flex flex-wrap items-center gap-2'>
-                {t('Unable to verify whether an application is already pending. Retry before submitting.')}
+                {t(
+                  'Unable to verify whether an application is already pending. Retry before submitting.'
+                )}
                 <Button
                   type='button'
                   variant='link'

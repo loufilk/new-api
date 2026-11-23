@@ -1,7 +1,8 @@
-import type { UseFormRegister } from 'react-hook-form'
+import { Controller, type Control, type UseFormRegister } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { Combobox } from '@/components/ui/combobox'
 import {
   Field,
   FieldDescription,
@@ -12,23 +13,9 @@ import {
   FieldSet,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 
 import type { PartnerApplicationFormValues } from './schema'
-import type { PartnerPlatform } from './types'
-
-const platforms: Array<{ value: PartnerPlatform; label: string }> = [
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'anthropic', label: 'Anthropic' },
-  { value: 'google', label: 'Google Gemini' },
-  { value: 'deepseek', label: 'DeepSeek' },
-  { value: 'alibaba', label: 'Alibaba Cloud' },
-  { value: 'bytedance', label: 'ByteDance' },
-  { value: 'zhipu', label: 'Zhipu' },
-  { value: 'moonshot', label: 'Moonshot' },
-  { value: 'other', label: 'Other' },
-]
 
 type QuoteError = Partial<
   Record<'platform' | 'group' | 'rate' | 'models' | 'description', string>
@@ -36,6 +23,8 @@ type QuoteError = Partial<
 
 export function QuoteFields(props: {
   index: number
+  control: Control<PartnerApplicationFormValues>
+  platforms: { value: string; label: string }[]
   register: UseFormRegister<PartnerApplicationFormValues>
   errors?: QuoteError
   disabled: boolean
@@ -49,7 +38,7 @@ export function QuoteFields(props: {
   const modelsName = `quotes.${props.index}.models` as const
   const descriptionName = `quotes.${props.index}.description` as const
   return (
-    <FieldSet className='min-w-0 border-t pt-4'>
+    <FieldSet className='min-w-0 gap-3 rounded-lg border p-4'>
       <FieldLegend variant='label'>
         {t('Quote {{number}}', { number: props.index + 1 })}
       </FieldLegend>
@@ -58,19 +47,22 @@ export function QuoteFields(props: {
           <FieldLabel htmlFor={`partner-platform-${props.index}`} required>
             {t('Platform')}
           </FieldLabel>
-          <NativeSelect
-            id={`partner-platform-${props.index}`}
-            {...props.register(platformName)}
-            required
-            disabled={props.disabled}
-            aria-invalid={Boolean(props.errors?.platform)}
-          >
-            {platforms.map((platform) => (
-              <NativeSelectOption key={platform.value} value={platform.value}>
-                {t(platform.label)}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
+          <Controller
+            control={props.control}
+            name={platformName}
+            render={({ field }) => (
+              <Combobox
+                id={`partner-platform-${props.index}`}
+                options={props.platforms}
+                value={field.value}
+                ref={field.ref}
+                onBlur={field.onBlur}
+                onValueChange={field.onChange}
+                disabled={props.disabled}
+                aria-invalid={Boolean(props.errors?.platform)}
+              />
+            )}
+          />
           <FieldError>
             {props.errors?.platform ? t(props.errors.platform) : undefined}
           </FieldError>
@@ -93,7 +85,7 @@ export function QuoteFields(props: {
         </Field>
         <Field data-invalid={Boolean(props.errors?.rate)}>
           <FieldLabel htmlFor={`partner-rate-${props.index}`} required>
-            {t('Rate')}
+            {t('Multiplier')}
           </FieldLabel>
           <Input
             id={`partner-rate-${props.index}`}
@@ -150,19 +142,17 @@ export function QuoteFields(props: {
           </FieldError>
         </Field>
       </FieldGroup>
-      {props.canRemove && (
-        <div className='flex justify-end'>
-          <Button
-            type='button'
-            variant='ghost'
-            size='sm'
-            disabled={props.disabled}
-            onClick={props.onRemove}
-          >
-            {t('Remove group')}
-          </Button>
-        </div>
-      )}
+      <div className='flex justify-end'>
+        <Button
+          type='button'
+          variant='ghost'
+          size='sm'
+          disabled={props.disabled || !props.canRemove}
+          onClick={props.onRemove}
+        >
+          {t('Remove group')}
+        </Button>
+      </div>
     </FieldSet>
   )
 }
