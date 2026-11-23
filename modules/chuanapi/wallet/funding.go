@@ -228,14 +228,6 @@ func (w *Funding) ApplyReservationResult(target int, result moneyport.Settlement
 	w.ApplySettlementResult(0, result)
 }
 
-// ApplyZeroReservationReceipt only mirrors the empty receipt of an acknowledged
-// fresh trusted reservation. PreConsumeInTx(0) moves no wallet balance, so the
-// host can leave the derived cache unchanged. Replays and recovery use
-// ApplyReservationResult instead.
-func (w *Funding) ApplyZeroReservationReceipt() {
-	w.replaceReceipt(nil)
-}
-
 func (w *Funding) Receipt() []moneyport.AccountShare {
 	shares := w.debitSharesInOrder()
 	if len(shares) == 0 {
