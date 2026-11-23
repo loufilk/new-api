@@ -364,3 +364,84 @@ func TestBillingSettlementRecoveryMixedRefundPostgres(t *testing.T) {
 	require.NoError(t, recoverBillingSettlement(t.Context(), receipt))
 	require.Equal(t, u, getUserBalances(t, 93301))
 }
+
+func TestBillingSettlementRecoveryConnectionCapacityPostgres(t *testing.T) {
+	openTaskPollingSQLFixture(t, "postgres")
+	require.NoError(t, model.DB.AutoMigrate(&model.BillingFinalization{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.ModelBonusEligibleAudit{}, &model.SubscriptionPlan{}))
+	capacity := &pgconn.PgError{Code: "53300", Message: "synthetic too many connections"}
+	require.False(t, model.IsTransientBillingSettlementError(capacity), "do not retry a connection-capacity error inline")
+	t.Run("frozen_explicit_retries_only_after_backoff", func(t *testing.T) {
+		s, _ := settlementDeadlineSession(t, "recovery-capacity-explicit", true, BillingSourceWallet)
+		s.relayInfo.UserSetting.QuotaWarningEnabled = boolPtr(false)
+		var hits atomic.Int32
+		const hook = "recovery-capacity-token"
+		require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(hook, func(tx *gorm.DB) {
+			if tx.Statement.Table == "tokens" && hits.Add(1) == 1 {
+				tx.AddError(fmt.Errorf("synthetic wrapped PostgreSQL failure: %w", capacity))
+			}
+		}))
+		t.Cleanup(func() { _ = model.DB.Callback().Update().Remove(hook) })
+		owned, err := settleObservedTextBilling(testGinContext(t), s.relayInfo, 180, true)
+		require.True(t, owned)
+		require.ErrorIs(t, err, capacity)
+		require.EqualValues(t, 1, hits.Load(), "overload cannot cause inline retries")
+		receipt := lifecycleOwner(t, s.relayInfo.RequestId)
+		require.Equal(t, model.BillingSettlementReview, receipt.State)
+		require.Equal(t, 180, receipt.ActualQuota)
+		require.Equal(t, "transient_database", receipt.LastErrorCode)
+		require.Equal(t, 1, receipt.Attempts)
+		require.Equal(t, receipt.LastAttemptAt+2, receipt.NextRetryAt)
+		require.Zero(t, receipt.EscalatedAt)
+		assertSettlementBalances(t, 900, 900)
+		// Assert the production delay above, then make the lease check independent
+		// of this fixture's elapsed time on a busy test host.
+		require.NoError(t, model.DB.Model(&receipt).Update("next_retry_at", common.GetTimestamp()+60).Error)
+		claimed, err := model.ClaimBillingSettlementRecovery(t.Context(), receipt.RequestID)
+		require.NoError(t, err)
+		require.Nil(t, claimed, "worker must respect the scheduled retry time")
+		require.NoError(t, recoverBillingSettlement(t.Context(), makeRecoveryDue(t, receipt.RequestID)))
+		require.EqualValues(t, 2, hits.Load())
+		assertRecoveryAccounting(t, 180)
+	})
+	t.Run("legacy_review_and_unfrozen_hold_never_gain_authority", func(t *testing.T) {
+		s, _ := settlementDeadlineSession(t, "recovery-capacity-legacy", true, BillingSourceWallet)
+		receipt := *s.terminalReceipt
+		require.Error(t, model.RecordBillingSettlementFailure(t.Context(), receipt, 180, capacity))
+		stored := lifecycleOwner(t, receipt.RequestID)
+		require.Equal(t, model.BillingHeld, stored.State)
+		require.Zero(t, stored.ActualQuota)
+		require.Zero(t, stored.NextRetryAt)
+		require.Zero(t, stored.Attempts)
+		require.NoError(t, model.RequestBillingSettlement(t.Context(), receipt, 180))
+		require.NoError(t, model.RecordBillingSettlementFailure(t.Context(), receipt, 180, capacity))
+		stored = lifecycleOwner(t, receipt.RequestID)
+		require.Equal(t, model.BillingSettlementReview, stored.State)
+		require.Equal(t, 180, stored.ActualQuota)
+		require.Empty(t, stored.SettlementRecovery)
+		require.Equal(t, "review_required", stored.LastErrorClass)
+		require.Zero(t, stored.NextRetryAt)
+		require.Positive(t, stored.EscalatedAt)
+		assertSettlementBalances(t, 900, 900)
+	})
+	t.Run("typed_only_and_retry_budget", func(t *testing.T) {
+		s, _ := settlementDeadlineSession(t, "recovery-capacity-budget", true, BillingSourceWallet)
+		receipt := *s.terminalReceipt
+		recovery := model.BillingSettlementRecovery{Version: 1, AccountOrder: s.funding.(moneyport.SettlementPolicyReporter).SettlementAccountOrder()}
+		require.NoError(t, model.RequestRecoverableBillingSettlement(t.Context(), receipt, 180, recovery))
+		require.NoError(t, model.RecordBillingSettlementFailure(t.Context(), receipt, 180, errors.New("synthetic SQLSTATE 53300")))
+		require.Zero(t, lifecycleOwner(t, receipt.RequestID).NextRetryAt, "text never authorizes an automatic retry")
+		for i := 1; i < model.BillingSettlementRecoveryMaxAttempts; i++ {
+			require.NoError(t, model.RecordBillingSettlementFailure(t.Context(), receipt, 180, capacity))
+			stored := lifecycleOwner(t, receipt.RequestID)
+			require.Equal(t, i+1, stored.Attempts)
+			if i+1 < model.BillingSettlementRecoveryMaxAttempts {
+				require.Equal(t, stored.LastAttemptAt+min(int64(60), int64(2)<<min(i, 5)), stored.NextRetryAt)
+			} else {
+				require.Zero(t, stored.NextRetryAt)
+				require.Positive(t, stored.EscalatedAt)
+			}
+		}
+		require.NoError(t, recoverBillingSettlement(t.Context(), makeRecoveryDue(t, receipt.RequestID)))
+		assertSettlementBalances(t, 900, 900)
+	})
+}

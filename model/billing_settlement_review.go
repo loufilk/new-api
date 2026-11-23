@@ -138,9 +138,17 @@ func RecordBillingSettlementFailure(ctx context.Context, receipt BillingFinaliza
 			return billingRefundReviewError("settlement_intent_unconfirmed", "billing settlement intent is not confirmed")
 		}
 		// Only explicit current measured-usage snapshots can retry a local SQL
-		// deadline. A deadline alone never creates settlement authority.
-		if r.SettlementRecovery != "" && (errors.Is(failure, context.DeadlineExceeded) || errors.Is(failure, context.Canceled)) {
-			code, class = "transient_database", billingRefundRetryable
+		// deadline or PostgreSQL connection-capacity error. In particular 53300
+		// is NOT an inline retry: reconnecting immediately amplifies overload.
+		if r.SettlementRecovery != "" {
+			var sqlState interface{ SQLState() string }
+			if errors.Is(failure, context.DeadlineExceeded) || errors.Is(failure, context.Canceled) {
+				code, class = "transient_database", billingRefundRetryable
+			} else if errors.As(failure, &sqlState) && sqlState.SQLState() == "53300" {
+				if _, err := DecodeBillingSettlementRecovery(r); err == nil {
+					code, class = "transient_database", billingRefundRetryable
+				}
+			}
 		}
 		now := common.GetTimestamp()
 		updates := map[string]any{

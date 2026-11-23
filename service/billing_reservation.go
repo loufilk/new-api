@@ -89,7 +89,17 @@ func (s *BillingSession) reserveDurableLocked(target int, initial bool) error {
 		return readErr
 	})
 	cancel()
-	model.RefreshUserQuotaCacheAfterBillingFinalization(s.relayInfo.UserId)
+	// Only an acknowledged fresh trusted wallet hold with no source or token
+	// movement is known not to affect the user cache. The funding source must
+	// explicitly support applying its empty receipt without invalidation.
+	zeroFunding, supportsZeroReceipt := funding.(interface{ ApplyZeroReservationReceipt() })
+	cacheUnchanged := supportsZeroReceipt && err == nil && s.trusted && initial && target == 0 &&
+		attempt.Applied && attempt.FreshInitialPrepared && stored.Source == BillingSourceWallet &&
+		stored.PreConsumed == 0 && stored.SourceHeld == 0 && stored.TokenHeld == 0 &&
+		result.ReceiptKnown && len(result.OutstandingShares) == 0
+	if !cacheUnchanged {
+		model.RefreshUserQuotaCacheAfterBillingFinalization(s.relayInfo.UserId)
+	}
 	if err != nil {
 		s.reservationUncertain = true
 		if initial && attempt.FreshInitialPrepared {
@@ -100,7 +110,11 @@ func (s *BillingSession) reserveDurableLocked(target int, initial bool) error {
 		}
 		return err // Preserve the original failure; never dispatch after recovery.
 	}
-	funding.ApplyReservationResult(stored.PreConsumed, result)
+	if cacheUnchanged {
+		zeroFunding.ApplyZeroReservationReceipt()
+	} else {
+		funding.ApplyReservationResult(stored.PreConsumed, result)
+	}
 	s.applyHeldReceipt(stored)
 	return nil
 }

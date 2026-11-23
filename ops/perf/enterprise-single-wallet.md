@@ -74,3 +74,28 @@ requests even when they do not delay their own request's first text.
   process readiness. Check that a master worker is live. Drain recovery and
   check pending evidence before any downgrade. No automated downgrade or
   accounting action against old review rows is authorized by this document.
+
+## PostgreSQL connection budget
+
+`SQL_MAX_OPEN_CONNS` is a per-process main pool ceiling. When
+`LOG_SQL_DSN` points to a separate database, its pool **inherits** that
+ceiling unless `LOG_SQL_MAX_OPEN_CONNS` is explicitly set. If both databases
+are on the same PostgreSQL server, both pools compete for the same server
+connection capacity. Budget each server independently across all serving
+replicas, background roles, separate log pools, observer connections,
+migrations, and administrative reserve. Leave room for failover and avoid
+holding a larger application queue than the request latency budget allows.
+
+The stock Compose serving and migration services forward the eight optional
+`SQL_MAX_*` and `LOG_SQL_MAX_*` values. Empty values keep the application
+defaults. The managed one-shot migration requires at least two primary
+connections. Check the effective numeric settings on each container; do
+not dump the entire environment, which can contain credentials. Legacy
+startup also logs `SQL pool log=… max_open=…`; the managed path is not
+required to emit that message.
+Measure PostgreSQL `max_connections`, peak application sessions, SQLSTATE
+`53300` and Go pool wait together with row-lock wait. `group_config_changed`
+errors can be caused by inability to read the authoritative version, not
+just an actual group configuration change. A lower pool limit can eliminate
+connection exhaustion while leaving a serialized single-wallet row as the
+throughput bottleneck. A pool setting does not expand that row's capacity.

@@ -41,6 +41,15 @@ services:
       - SQL_DSN=${SQL_DSN:?SQL_DSN is required}
 #      - SQL_DSN=REPLACE_MYSQL_DSN  # Point to the mysql service, uncomment if using MySQL
       - LOG_SQL_DSN # Optional pass-through; preserve an existing separate log DSN
+      # Empty values retain the application's defaults and log-pool inheritance.
+      - SQL_MAX_OPEN_CONNS=${SQL_MAX_OPEN_CONNS:-}
+      - SQL_MAX_IDLE_CONNS=${SQL_MAX_IDLE_CONNS:-}
+      - SQL_MAX_LIFETIME=${SQL_MAX_LIFETIME:-}
+      - SQL_MAX_IDLE_TIME=${SQL_MAX_IDLE_TIME:-}
+      - LOG_SQL_MAX_OPEN_CONNS=${LOG_SQL_MAX_OPEN_CONNS:-}
+      - LOG_SQL_MAX_IDLE_CONNS=${LOG_SQL_MAX_IDLE_CONNS:-}
+      - LOG_SQL_MAX_LIFETIME=${LOG_SQL_MAX_LIFETIME:-}
+      - LOG_SQL_MAX_IDLE_TIME=${LOG_SQL_MAX_IDLE_TIME:-}
 #      - LOG_SQL_CLICKHOUSE_TTL_DAYS=0 # OPTIONAL: ClickHouse log retention days. Unset or 0 disables automatic deletion; set to e.g. 30 to keep 30 days
       - REDIS_CONN_STRING=${REDIS_CONN_STRING:?REDIS_CONN_STRING is required}
       - SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET is required}
@@ -107,6 +116,14 @@ services:
     environment:
       - SQL_DSN=${SQL_DSN:?SQL_DSN is required}
       - LOG_SQL_DSN
+      - SQL_MAX_OPEN_CONNS=${SQL_MAX_OPEN_CONNS:-}
+      - SQL_MAX_IDLE_CONNS=${SQL_MAX_IDLE_CONNS:-}
+      - SQL_MAX_LIFETIME=${SQL_MAX_LIFETIME:-}
+      - SQL_MAX_IDLE_TIME=${SQL_MAX_IDLE_TIME:-}
+      - LOG_SQL_MAX_OPEN_CONNS=${LOG_SQL_MAX_OPEN_CONNS:-}
+      - LOG_SQL_MAX_IDLE_CONNS=${LOG_SQL_MAX_IDLE_CONNS:-}
+      - LOG_SQL_MAX_LIFETIME=${LOG_SQL_MAX_LIFETIME:-}
+      - LOG_SQL_MAX_IDLE_TIME=${LOG_SQL_MAX_IDLE_TIME:-}
       - REDIS_CONN_STRING=${REDIS_CONN_STRING:?REDIS_CONN_STRING is required}
       - SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET is required}
       - CRYPTO_SECRET
