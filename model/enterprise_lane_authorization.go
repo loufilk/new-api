@@ -13,7 +13,9 @@ import (
 	"gorm.io/gorm"
 )
 
-const EnterpriseLaneGatewayMaxLanes = 16
+// EnterpriseLaneGatewayMaxLanes bounds the explicitly configured lab bundle
+// and its admission statistics. It is not a default lane count.
+const EnterpriseLaneGatewayMaxLanes = 32
 
 // CheckEnterpriseLaneGatewayDisabled prevents a tagged server from silently
 // reverting to ordinary wallet traffic on a database with live lab escrow.

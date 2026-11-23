@@ -51,7 +51,7 @@ func TestEnterpriseLaneGatewayLaunchIsolation(t *testing.T) {
 		{"SQL_DSN", "postgres://qa@127.0.0.1:56830/enterprise_lane_test?options=-csearch_path%3Dproduction"},
 		{"LOG_SQL_DSN", "postgres://qa@127.0.0.1:56830/enterprise_lane_logs?sslmode=disable"},
 		{"REDIS_CONN_STRING", "redis://production.example:6379/0"},
-		{laneCountEnv, "17"}, {laneTokenBudgetEnv, "0"}, {laneStopEnv, "anything"}, {laneModelEnv, "other"},
+		{laneCountEnv, "33"}, {laneTokenBudgetEnv, "0"}, {laneStopEnv, "anything"}, {laneModelEnv, "other"},
 	} {
 		t.Run(tc.key+"/"+tc.value, func(t *testing.T) {
 			t.Setenv(tc.key, tc.value)
@@ -62,6 +62,28 @@ func TestEnterpriseLaneGatewayLaunchIsolation(t *testing.T) {
 	t.Setenv(laneStopEnv, "true")
 	require.NoError(t, PrepareEnterpriseLaneGateway(false))
 	require.True(t, enterpriseLaneGatewayLaunch.stop)
+
+	t.Setenv(laneStopEnv, "false")
+	t.Setenv(laneCountEnv, "32")
+	t.Setenv(laneAdmissionGlobalEnv, "96")
+	t.Setenv(laneAdmissionPerLaneEnv, "8")
+	t.Setenv(laneAdmissionWaitMSEnv, "35")
+	t.Setenv(laneAdmissionQueueTotalEnv, "32")
+	t.Setenv(laneAdmissionQueueLaneEnv, "2")
+	require.NoError(t, PrepareEnterpriseLaneGateway(false))
+	require.Equal(t, 32, enterpriseLaneGatewayLaunch.count)
+	require.Equal(t, 96, enterpriseLaneGatewayLaunch.admissionGlobal)
+	require.Equal(t, 8, enterpriseLaneGatewayLaunch.admissionPerLane)
+	require.Equal(t, 35*time.Millisecond, enterpriseLaneGatewayLaunch.admissionWait.budget)
+	require.Equal(t, 32, enterpriseLaneGatewayLaunch.admissionWait.total)
+	require.Equal(t, 2, enterpriseLaneGatewayLaunch.admissionWait.perLane)
+
+	t.Setenv(laneEnabledEnv, "")
+	for _, key := range []string{laneAdmissionGlobalEnv, laneAdmissionPerLaneEnv, laneAdmissionWaitMSEnv, laneAdmissionQueueTotalEnv, laneAdmissionQueueLaneEnv} {
+		t.Setenv(key, "")
+	}
+	require.NoError(t, PrepareEnterpriseLaneGateway(false))
+	require.Nil(t, enterpriseLaneGatewayLaunch, "the 32-lane manifest is inert without explicit opt-in")
 }
 
 func TestEnterpriseLaneGatewayCanonicalAuthorizationPostgres(t *testing.T) {

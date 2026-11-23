@@ -212,6 +212,13 @@ func ConfigureEnterpriseLaneGateway(ctx context.Context) (stop bool, err error) 
 	return false, nil
 }
 
+// Count is the nonempty funded manifest, never a caller-supplied shard hint.
+func enterpriseLaneSlot(requestID string, count int) int {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(requestID))
+	return int(h.Sum32() % uint32(count))
+}
+
 // authorizeEnterpriseLaneGateway runs only after ordinary credential, user,
 // IP, group, and interception checks. A true return means the bound key was
 // handled: the caller must not fall through to its ordinary finite balance.
@@ -234,9 +241,7 @@ func authorizeEnterpriseLaneGateway(c *gin.Context, token *model.Token, keyParts
 		abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDatabaseError))
 		return true
 	}
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(requestID))
-	slot := int(h.Sum32() % uint32(len(config.lanes)))
+	slot := enterpriseLaneSlot(requestID, len(config.lanes))
 	lane := config.lanes[slot]
 	if err := model.AuthorizeEnterpriseLaneGateway(c.Request.Context(), model.DB, lane, token.CacheRevision); err != nil {
 		if errors.Is(err, model.ErrEnterpriseLaneIdentity) {
