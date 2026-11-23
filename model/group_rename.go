@@ -183,6 +183,9 @@ func RenameGroups(mappings []GroupRenameMapping) (*GroupRenameResult, error) {
 // provided option values in one transaction. Missing option rows are
 // materialized before locking so concurrent initial operations serialize.
 func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, error) {
+	if len(request.Mappings) != 0 && !common.IM21RolloutActive() {
+		return nil, common.ErrIM21RolloutLocked
+	}
 	if len(request.Mappings) == 0 && len(request.Options) == 0 {
 		return nil, ErrGroupRenameEmpty
 	}

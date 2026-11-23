@@ -30,6 +30,7 @@ import {
   getQuotaTypeLabels,
 } from '../constants'
 import { getModelQuotaType } from '../lib/filters'
+import { groupCatalogBadgeLabels } from '../lib/group-catalog-badges'
 import {
   groupPlatform,
   marketGroupLabel,
@@ -37,10 +38,7 @@ import {
   type MarketPlatform,
 } from '../lib/market-groups'
 import type { PricingModel, MarketGroupCatalog } from '../types'
-import {
-  GroupCatalogBadges,
-  groupCatalogBadgeLabels,
-} from './group-catalog-badges'
+import { GroupCatalogBadges } from './group-catalog-badges'
 import { SearchBar, type SearchBarProps } from './search-bar'
 
 interface Option {

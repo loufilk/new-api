@@ -199,6 +199,9 @@ func (policy *UserGroupPricing) ResolveGroupRatio(userGroup, callingGroup string
 }
 
 func SaveUserGroupPricing(ctx context.Context, identity AuthSessionIdentity, userID int, update UserGroupPricingUpdate) (*UserGroupPricing, error) {
+	if !common.IM21RolloutActive() {
+		return nil, common.ErrIM21RolloutLocked
+	}
 	if DB == nil {
 		return nil, ErrUserGroupPricingUnavailable
 	}

@@ -120,6 +120,11 @@ func TestGroupRenameRouteRequiresRootAuth(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, readOnly.Code)
 	assert.Contains(t, readOnly.Body.String(), "ACCESS_TOKEN_SCOPE_DENIED", "root role must not bypass the token grant")
 
+	t.Setenv(common.IM21RolloutModeEnv, "locked")
+	locked := request(rootToken)
+	require.Equal(t, http.StatusConflict, locked.Code)
+	assert.Contains(t, locked.Body.String(), "IM21_ROLLOUT_LOCKED")
+	t.Setenv(common.IM21RolloutModeEnv, "active")
 	rootRecorder := request(rootToken)
 	require.Equal(t, http.StatusOK, rootRecorder.Code, "root must be allowed to rename groups: %s", rootRecorder.Body.String())
 

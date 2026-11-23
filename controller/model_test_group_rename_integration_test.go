@@ -44,6 +44,7 @@ func modelTestGroupRenameIsolatedProcess(t *testing.T) bool {
 
 func setupModelTestGroupRename(t *testing.T) (*gorm.DB, int, *gin.Engine) {
 	t.Helper()
+	t.Setenv(common.IM21RolloutModeEnv, "active")
 	db, userID := setupModelTestSwitchExecution(t)
 	require.NoError(t, db.AutoMigrate(&model.GroupRenameOperation{}, &model.UserSession{}, &model.AuditLog{}, &model.UserCallInterceptionAudit{}))
 	for key, value := range map[string]string{

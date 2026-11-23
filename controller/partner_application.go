@@ -20,6 +20,9 @@ const partnerApplicationBodyLimit = 128 * 1024
 func partnerApplicationError(c *gin.Context, err error) {
 	status, message := http.StatusServiceUnavailable, "Partner applications are temporarily unavailable. Try again."
 	switch {
+	case errors.Is(err, common.ErrIM21RolloutLocked):
+		im21RolloutLocked(c)
+		return
 	case errors.Is(err, model.ErrPartnerApplicationInvalid):
 		status, message = http.StatusBadRequest, err.Error()
 	case errors.Is(err, model.ErrPartnerApplicationTooLarge):

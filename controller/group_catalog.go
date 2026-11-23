@@ -27,6 +27,10 @@ func PatchGroupCatalog(c *gin.Context) {
 		groupCatalogError(c, model.ErrGroupRenamePermission)
 		return
 	}
+	if !common.IM21RolloutActive() {
+		im21RolloutLocked(c)
+		return
+	}
 	var request struct {
 		Revision *int64                             `json:"revision"`
 		Groups   map[string]model.GroupCatalogEntry `json:"groups"`
@@ -64,6 +68,10 @@ func PutUserGroupEntitlements(c *gin.Context) {
 		groupCatalogError(c, model.ErrGroupRenamePermission)
 		return
 	}
+	if !common.IM21RolloutActive() {
+		im21RolloutLocked(c)
+		return
+	}
 	id, err := strconv.Atoi(c.Param("user_id"))
 	if err != nil || id <= 0 {
 		groupCatalogError(c, model.ErrInvalidGroupCatalog)
@@ -88,6 +96,9 @@ func PutUserGroupEntitlements(c *gin.Context) {
 
 func groupCatalogError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, common.ErrIM21RolloutLocked):
+		im21RolloutLocked(c)
+		return
 	case errors.Is(err, model.ErrInvalidGroupCatalog), errors.Is(err, model.ErrGroupCatalogGrants):
 		common.ApiErrorStatus(c, http.StatusBadRequest, err)
 	case errors.Is(err, model.ErrGroupRenamePermission):

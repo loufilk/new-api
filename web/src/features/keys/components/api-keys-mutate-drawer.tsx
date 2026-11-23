@@ -99,7 +99,10 @@ export function ApiKeysMutateDrawer({
   const currentId = currentRow?.id
   const detail = useQuery({
     queryKey: ['api-key', userId, currentId],
-    queryFn: async () => requireServerSuccess(await getApiKey(currentId!)),
+    queryFn: async () => {
+      if (currentId === undefined) throw new Error('API key ID is required')
+      return requireServerSuccess(await getApiKey(currentId))
+    },
     enabled: open && currentId !== undefined,
     staleTime: 0,
     refetchOnWindowFocus: false,
@@ -133,6 +136,34 @@ export function ApiKeysMutateDrawer({
     if (result.isSuccess) setGeneration((previous) => previous + 1)
   }
 
+  const errorContent = (
+    <ErrorState
+      title={t('Failed to load API key settings')}
+      onRetry={() => {
+        void groups.refetch()
+        if (currentRow) void detail.refetch()
+      }}
+    />
+  )
+  let content: React.ReactNode = null
+  if (error) {
+    content = errorContent
+  } else if (!ready) {
+    content = <LoadingState inline size='sm' message={t('Loading...')} />
+  } else if (open) {
+    content = (
+      <ApiKeyEditor
+        key={`${userId}:${currentId ?? 'create'}:${generation}`}
+        currentKey={detail.data?.data}
+        groups={groupCards}
+        draft={currentRow ? undefined : draft}
+        onClose={() => onOpenChange(false)}
+        onCreated={onCreated}
+        onReload={reload}
+      />
+    )
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className='sm:max-w-2xl'>
@@ -144,27 +175,7 @@ export function ApiKeysMutateDrawer({
             {t('Choose one group for this API key.')}
           </DialogDescription>
         </DialogHeader>
-        {error ? (
-          <ErrorState
-            title={t('Failed to load API key settings')}
-            onRetry={() => {
-              void groups.refetch()
-              if (currentRow) void detail.refetch()
-            }}
-          />
-        ) : !ready ? (
-          <LoadingState inline size='sm' message={t('Loading...')} />
-        ) : open ? (
-          <ApiKeyEditor
-            key={`${userId}:${currentId ?? 'create'}:${generation}`}
-            currentKey={detail.data?.data}
-            groups={groupCards}
-            draft={currentRow ? undefined : draft}
-            onClose={() => onOpenChange(false)}
-            onCreated={onCreated}
-            onReload={reload}
-          />
-        ) : null}
+        {content}
       </DialogContent>
     </Dialog>
   )
@@ -198,19 +209,17 @@ function ApiKeyEditor({
     draft?.group && groups.some(({ id }) => id === draft.group)
       ? draft.group
       : undefined
-  const [values, setValues] = useState<SingleGroupKeyValues>(() => ({
+  const [enteredValues, setValues] = useState<SingleGroupKeyValues>(() => ({
     ...original,
     group: groupFromDraft ?? original.group,
   }))
   const [advanced, setAdvanced] = useState(
     !!draft?.model || original.modelLimited || !!original.ips
   )
-  const [draftPending, setDraftPending] = useState(
-    !!groupFromDraft && !!draft?.model
+  const [unavailableInitialGroup, setUnavailableInitialGroup] = useState(
+    !!draft?.group && !groupFromDraft
   )
-  const [draftRejected, setDraftRejected] = useState(
-    (!!draft?.group && !groupFromDraft) || (!!draft?.model && !groupFromDraft)
-  )
+  const [draftModel, setDraftModel] = useState(draft?.model)
   const [busy, setBusy] = useState(false)
   const [conflict, setConflict] = useState(false)
   const [error, setError] = useState('')
@@ -228,52 +237,61 @@ function ApiKeyEditor({
   ) => setValues((previous) => ({ ...previous, [field]: next }))
 
   const legacy = !!currentKey && isLegacyApiKey(currentKey)
-  const authorized = groups.some(({ id }) => id === values.group)
-  const changedGroup = values.group !== original.group
+  const authorized = groups.some(({ id }) => id === enteredValues.group)
+  const changedGroup = enteredValues.group !== original.group
   const validGroup = currentKey && !changedGroup ? true : authorized
   const validVersion =
     !legacy || !changedGroup || !!currentKey?.settings_version
-  const showModelQuery = advanced || draftPending
+  const showModelQuery = advanced || !!draftModel
   const savedId = legacy && !changedGroup ? currentKey?.id : undefined
   const modelsAvailable = authorized || savedId !== undefined
   const models = useQuery({
-    queryKey: ['api-key-fixed-scope-models', userId, values.group, savedId],
+    queryKey: [
+      'api-key-fixed-scope-models',
+      userId,
+      enteredValues.group,
+      savedId,
+    ],
     queryFn: async () =>
       requireServerSuccess(
         savedId !== undefined
           ? await getSavedApiKeyModels(savedId)
-          : await getApiKeyScopeModels({ group: values.group })
+          : await getApiKeyScopeModels({ group: enteredValues.group })
       ),
     enabled: showModelQuery && modelsAvailable,
     staleTime: 0,
     refetchOnWindowFocus: false,
   })
-  useEffect(() => {
-    if (!draftPending || !draft?.model || models.isFetching) return
-    if (models.isSuccess && models.isFetchedAfterMount) {
-      setDraftPending(false)
-      if (models.data?.data?.includes(draft.model)) {
-        setValues((previous) => ({
-          ...previous,
-          modelLimited: true,
-          models: [draft.model!],
-        }))
-      } else {
-        setDraftRejected(true)
-      }
-    } else if (models.isError) {
-      setDraftPending(false)
-      setDraftRejected(true)
-    }
-  }, [
-    draft?.model,
-    draftPending,
-    models.data,
-    models.isError,
-    models.isFetchedAfterMount,
-    models.isFetching,
-    models.isSuccess,
-  ])
+  const checkingDraft = !!draftModel && authorized
+  const freshModels =
+    models.isSuccess && models.isFetchedAfterMount && !models.isFetching
+  const verifiedDraft =
+    checkingDraft &&
+    freshModels &&
+    models.data?.data?.includes(draftModel ?? '')
+      ? draftModel
+      : undefined
+  const draftPending = checkingDraft && !freshModels && !models.isError
+  const draftRejected =
+    unavailableInitialGroup ||
+    (checkingDraft && (models.isError || (freshModels && !verifiedDraft)))
+  // Keep the catalogue intent until a group is chosen and verified by the
+  // server. Changing groups rechecks it; never silently widen the Key.
+  const values = useMemo(
+    () =>
+      verifiedDraft
+        ? { ...enteredValues, modelLimited: true, models: [verifiedDraft] }
+        : enteredValues,
+    [enteredValues, verifiedDraft]
+  )
+  function editModelLimit(next: boolean, choices: string[]) {
+    setDraftModel(undefined)
+    setValues((previous) => ({
+      ...previous,
+      modelLimited: next,
+      models: choices,
+    }))
+  }
   const modelOptions = useMemo(() => {
     const available = models.data?.data ?? []
     const names = new Set(available)
@@ -381,6 +399,8 @@ function ApiKeyEditor({
       }
     }
   }
+
+  const saveLabel = currentKey ? t('Save changes') : t('Add')
 
   return (
     <form className='space-y-4' onSubmit={submit} noValidate aria-busy={busy}>
@@ -493,7 +513,10 @@ function ApiKeyEditor({
             type='button'
             variant='outline'
             size='xs'
-            onClick={() => setDraftRejected(false)}
+            onClick={() => {
+              setDraftModel(undefined)
+              setUnavailableInitialGroup(false)
+            }}
           >
             {t('Discard catalogue draft')}
           </Button>
@@ -503,7 +526,10 @@ function ApiKeyEditor({
         groups={groups}
         value={values.group}
         disabled={busy || draftPending}
-        onChange={(group) => set('group', group)}
+        onChange={(group) => {
+          set('group', group)
+          if (draftModel) setUnavailableInitialGroup(false)
+        }}
       />
       <div className='space-y-3 rounded-md border px-3 py-2.5'>
         <Button
@@ -524,8 +550,10 @@ function ApiKeyEditor({
               <Switch
                 id='fixed-key-model-limit'
                 checked={values.modelLimited}
-                disabled={busy || draftPending}
-                onCheckedChange={(checked) => set('modelLimited', checked)}
+                disabled={busy || draftPending || draftRejected}
+                onCheckedChange={(checked) =>
+                  editModelLimit(checked, values.models)
+                }
               />
             </div>
             {values.modelLimited && (
@@ -534,7 +562,7 @@ function ApiKeyEditor({
                 <MultiSelect
                   options={modelOptions}
                   selected={values.models}
-                  onChange={(choices) => set('models', choices)}
+                  onChange={(choices) => editModelLimit(true, choices)}
                   placeholder={t('Select models')}
                   disabled={
                     busy ||
@@ -614,7 +642,7 @@ function ApiKeyEditor({
           {t('Cancel')}
         </Button>
         <Button type='submit' disabled={!canSave}>
-          {busy ? t('Saving...') : currentKey ? t('Save changes') : t('Add')}
+          {busy ? t('Saving...') : saveLabel}
         </Button>
       </DialogFooter>
     </form>

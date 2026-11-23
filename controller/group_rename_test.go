@@ -44,6 +44,7 @@ func groupRenameControllerIsolatedProcess(t *testing.T) bool {
 
 func setupGroupRenameControllerTest(t *testing.T) *gorm.DB {
 	t.Helper()
+	t.Setenv(common.IM21RolloutModeEnv, "active")
 	db := openTokenControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(
 		&model.Option{}, &model.GroupRenameOperation{}, &model.User{}, &model.UserSession{}, &model.Token{}, &model.Channel{},

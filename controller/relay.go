@@ -880,18 +880,7 @@ func executeTaskSubmissionWith(
 	task.PrivateData.SubscriptionQuotaPeriod = relayInfo.SubscriptionQuotaPeriod
 	task.PrivateData.TokenId = relayInfo.TokenId
 	task.PrivateData.NodeName = common.NodeName
-	groupRateSnapshot := relayInfo.PriceData.GroupRatioInfo
-	task.PrivateData.BillingContext = &model.TaskBillingContext{
-		ModelPrice:       relayInfo.PriceData.ModelPrice,
-		GroupRatio:       relayInfo.PriceData.GroupRatioInfo.GroupRatio,
-		GroupRatioInfo:   &groupRateSnapshot,
-		ModelRatio:       relayInfo.PriceData.ModelRatio,
-		OtherRatios:      relayInfo.PriceData.OtherRatios(),
-		OriginModelName:  relayInfo.OriginModelName,
-		BillingModelName: relayInfo.GetBillingModelName(),
-		PerCallBilling:   common.StringsContains(constant.TaskPricePatches, relayInfo.GetBillingModelName()) || relayInfo.PriceData.UsePrice,
-		TieredSnapshot:   relayInfo.TieredBillingSnapshot,
-	}
+	task.PrivateData.BillingContext = model.NewTaskBillingContext(relayInfo)
 	task.Quota = result.Quota
 	task.Data = result.TaskData
 	if len(result.PluginState) > 0 {

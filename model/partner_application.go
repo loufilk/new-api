@@ -57,6 +57,27 @@ var partnerQuotePlatforms = []string{
 	"replicate", "ohmygpt", PartnerPlatformZhipu, "sglang", PartnerPlatformOther,
 }
 
+// The previous candidate (0dff956) accepts exactly these persisted codes.
+// Keep the allowlists independent from future additions to the live catalogue.
+func isLegacyPartnerContactType(value string) bool {
+	switch value {
+	case PartnerContactWeChat, PartnerContactQQ, PartnerContactEmail, PartnerContactPhone, PartnerContactOther:
+		return true
+	default:
+		return false
+	}
+}
+
+func isLegacyPartnerQuotePlatform(value string) bool {
+	switch value {
+	case PartnerPlatformOpenAI, PartnerPlatformAnthropic, PartnerPlatformGoogle, PartnerPlatformDeepSeek,
+		PartnerPlatformAlibaba, PartnerPlatformByteDance, PartnerPlatformZhipu, PartnerPlatformMoonshot, PartnerPlatformOther:
+		return true
+	default:
+		return false
+	}
+}
+
 var (
 	ErrPartnerApplicationInvalid   = errors.New("Invalid partner application")
 	ErrPartnerApplicationTooLarge  = errors.New("Partner application request is too large")
@@ -285,6 +306,12 @@ func CreatePartnerApplication(ctx context.Context, userID int, requestKey string
 	input, err := normalizePartnerApplication(input)
 	if err != nil || !partnerRequestKeyValid(requestKey) {
 		return nil, ErrPartnerApplicationInvalid
+	}
+	// Run ordinary validation first; invalid inputs stay invalid in either mode.
+	// Do not translate new codes to "other" or silently drop a quote.
+	if !common.IM21RolloutActive() && (!isLegacyPartnerContactType(input.ContactType) ||
+		slices.ContainsFunc(input.Quotes, func(q PartnerQuote) bool { return !isLegacyPartnerQuotePlatform(q.Platform) })) {
+		return nil, common.ErrIM21RolloutLocked
 	}
 	encoded, err := common.Marshal(input)
 	if err != nil {

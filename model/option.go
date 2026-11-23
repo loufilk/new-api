@@ -309,6 +309,12 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	// Only the serialized rename transaction owns these internal records. A
+	// generic option upsert must never publish arbitrary aliases or reset the
+	// revision that fences concurrent validation, in either rollout mode.
+	if key == groupRenameAliasesOptionKey || key == groupConfigVersionOptionKey {
+		return common.NewMessage("Group namespace metadata is read-only.")
+	}
 	if key == groupCatalogOptionKey {
 		return ErrInvalidGroupCatalog
 	}

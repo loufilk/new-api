@@ -251,6 +251,29 @@ type TaskBillingContext struct {
 	GroupRatioInfo *hosttypes.GroupRatioInfo `json:"group_rate_snapshot,omitempty"`
 }
 
+// NewTaskBillingContext records the financial contract understood by every
+// eligible poller. Legacy pollers use the current model ratio and the admitted
+// group ratio. Only after the mixed-version window may a writer select the
+// admitted-model-ratio contract by adding group_rate_snapshot. Readers must
+// always honor the contract recorded on the task, not the current rollout mode.
+func NewTaskBillingContext(relayInfo *commonRelay.RelayInfo) *TaskBillingContext {
+	ctx := &TaskBillingContext{
+		ModelPrice:       relayInfo.PriceData.ModelPrice,
+		GroupRatio:       relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+		ModelRatio:       relayInfo.PriceData.ModelRatio,
+		OtherRatios:      relayInfo.PriceData.OtherRatios(),
+		OriginModelName:  relayInfo.OriginModelName,
+		BillingModelName: relayInfo.GetBillingModelName(),
+		PerCallBilling:   common.StringsContains(constant.TaskPricePatches, relayInfo.GetBillingModelName()) || relayInfo.PriceData.UsePrice,
+		TieredSnapshot:   relayInfo.TieredBillingSnapshot,
+	}
+	if common.IM21RolloutActive() {
+		quote := relayInfo.PriceData.GroupRatioInfo
+		ctx.GroupRatioInfo = &quote
+	}
+	return ctx
+}
+
 // EffectiveBillingModelName 返回任务的计费模型身份。
 // 新任务直接使用提交时持久化的 BillingModelName；旧任务（仅写入
 // OriginModelName 的历史数据）回退到 OriginModelName，保证老数据结算行为不变。

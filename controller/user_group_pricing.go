@@ -20,6 +20,9 @@ import (
 func userGroupPricingAPIError(c *gin.Context, err error) {
 	status, message, code := http.StatusServiceUnavailable, model.ErrUserGroupPricingUnavailable.Error(), "user_group_pricing_unavailable"
 	switch {
+	case errors.Is(err, common.ErrIM21RolloutLocked):
+		im21RolloutLocked(c)
+		return
 	case errors.Is(err, model.ErrUserGroupPricingConflict):
 		status, message, code = http.StatusConflict, err.Error(), "user_group_pricing_conflict"
 	case errors.Is(err, model.ErrUserGroupPricingInvalid):
@@ -128,6 +131,10 @@ func UpdateUserGroupPricing(c *gin.Context) {
 	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok || identity.UserID != c.GetInt("id") {
 		userGroupPricingAPIError(c, model.ErrUserGroupPricingPermission)
+		return
+	}
+	if !common.IM21RolloutActive() {
+		im21RolloutLocked(c)
 		return
 	}
 	var request struct {

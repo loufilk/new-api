@@ -32,7 +32,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
-import { type MarketKeyDraft } from '../../lib/market-key-draft'
+import type { MarketKeyDraft } from '../../lib/market-key-draft'
 import { apiKeySchema, type ApiKey } from '../../types'
 import { ApiKeysMutateDrawer } from '../api-keys-mutate-drawer'
 import { ApiKeysProvider } from '../api-keys-provider'
@@ -85,8 +85,9 @@ function openEditor({
   groups?: Record<string, unknown>
 } = {}) {
   const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
-    if (url === '/api/user/self/groups')
+    if (url === '/api/user/self/groups') {
       return { data: { success: true, data: groups } }
+    }
     if (url === '/api/token/7') return { data: { success: true, data: entry } }
     if (url === '/api/token/7/models') {
       return { data: { success: true, data: ['a-model'] } }
@@ -239,6 +240,37 @@ test('validates a catalogue draft against current group and model scope; never s
   )
 })
 
+test('a model-only catalogue draft waits for group selection and rechecks another authorized group', async () => {
+  const { user, post } = openEditor({ draft: { model: 'b-model' } })
+  await user.type(await screen.findByLabelText('Token Name'), 'Model first')
+  expect(
+    screen.queryByText(/The group or model from the catalogue is unavailable/)
+  ).not.toBeInTheDocument()
+  expect(post).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('radio', { name: /Group One/ }))
+  expect(
+    await screen.findByText(
+      /The group or model from the catalogue is unavailable/
+    )
+  ).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+  await user.click(screen.getByRole('radio', { name: /Group Two/ }))
+  await waitFor(() =>
+    expect(
+      screen.getByRole('switch', { name: 'Model limits enabled' })
+    ).toBeChecked()
+  )
+  expect(post.mock.calls).toEqual([
+    ['/api/token/models', { group: 'a' }],
+    ['/api/token/models', { group: 'b' }],
+  ])
+  await user.click(screen.getByRole('button', { name: 'Add' }))
+  expect(post).toHaveBeenLastCalledWith(
+    '/api/token/',
+    expect.objectContaining({ group: 'b', model_limits: 'b-model' })
+  )
+})
+
 test('never previews or selects a catalogue group the key owner cannot use', async () => {
   const { user, post } = openEditor({
     draft: { group: 'other-private', model: 'private-model' },
@@ -263,7 +295,8 @@ test('does not double-submit when a request is pending', async () => {
   await user.type(await screen.findByLabelText('Token Name'), 'New key')
   await user.click(screen.getByRole('radio', { name: /Group One/ }))
   const submit = screen.getByRole('button', { name: 'Add' })
-  const form = submit.closest('form')!
+  const form = submit.closest('form')
+  if (!form) throw new Error('Expected the API key form')
   fireEvent.submit(form)
   fireEvent.submit(form)
   expect(post).toHaveBeenCalledTimes(1)

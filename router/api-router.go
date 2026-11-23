@@ -74,10 +74,11 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 		apiRouter.GET("/home_page_content", controller.GetHomePageContent)
 		apiRouter.GET("/pricing", middleware.DisableCache(), middleware.HeaderNavModuleAuth("pricing"), middleware.UserAuth(), controller.GetPricing)
 		perfMetricsRoute := apiRouter.Group("/perf-metrics")
-		perfMetricsRoute.Use(middleware.DisableCache(), middleware.HeaderNavModulePublicOrUserAuth("pricing"))
+		perfMetricsRoute.Use(middleware.DisableCache())
 		{
-			perfMetricsRoute.GET("/summary", controller.GetPerfMetricsSummary)
-			perfMetricsRoute.GET("", controller.GetPerfMetrics)
+			perfMetricsRoute.GET("/summary", middleware.HeaderNavModulePublicOrUserAuth("pricing"), controller.GetPerfMetricsSummary)
+			// Anonymous callers use the public aggregate; group rows require authentication.
+			perfMetricsRoute.GET("", middleware.UserAuth(), controller.GetPerfMetrics)
 		}
 		apiRouter.GET("/rankings", middleware.HeaderNavModuleAuth("rankings"), controller.GetRankings)
 		apiRouter.GET("/verification", middleware.EmailVerificationRateLimit(), middleware.TurnstileCheck(), controller.SendEmailVerification)

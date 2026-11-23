@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -15,13 +16,24 @@ import (
 )
 
 func usablePerfMetricGroups(c *gin.Context) ([]string, bool) {
-	guard, ok := beginControllerGroupConfigRead(c)
+	_, previouslyAdmitted := c.Get(model.GroupConfigVersionContextKey)
+	guard, ok := beginPublicGroupConfigRead(c)
 	if !ok {
 		return nil, false
 	}
 	defer guard.Close()
 	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-	usableGroups, err := service.GetUserUsableGroupsForUser(c.Request.Context(), c.GetInt("id"), userGroup)
+	userID := c.GetInt("id")
+	if !previouslyAdmitted && userID > 0 {
+		// Optional authentication may have read identity before a remote rename.
+		user, err := model.GetUserCache(userID)
+		if err != nil {
+			groupConfigReadFailure(c)
+			return nil, false
+		}
+		userGroup = user.Group
+	}
+	usableGroups, err := service.GetUserUsableGroupsForUser(c.Request.Context(), userID, userGroup)
 	if err != nil {
 		groupConfigReadFailure(c)
 		return nil, false
@@ -38,15 +50,15 @@ func usablePerfMetricGroups(c *gin.Context) ([]string, bool) {
 
 func GetPerfMetricsSummary(c *gin.Context) {
 	if groups, ok := usablePerfMetricGroups(c); ok {
-		getPerfMetricsSummary(c, groups)
+		getPerfMetricsSummary(c, groups, true)
 	}
 }
 
 func GetDashboardPerfMetricsSummary(c *gin.Context) {
-	getPerfMetricsSummary(c, append(lo.Keys(ratio_setting.GetGroupRatioCopy()), "auto"))
+	getPerfMetricsSummary(c, append(lo.Keys(ratio_setting.GetGroupRatioCopy()), "auto"), false)
 }
 
-func getPerfMetricsSummary(c *gin.Context, groups []string) {
+func getPerfMetricsSummary(c *gin.Context, groups []string, verifyGroupScope bool) {
 	hours := 24
 	if rawHours := c.Query("hours"); rawHours != "" {
 		if parsed, err := strconv.Atoi(rawHours); err == nil {
@@ -68,6 +80,9 @@ func getPerfMetricsSummary(c *gin.Context, groups []string) {
 		return
 	}
 
+	if verifyGroupScope && !metricGroupScopeStillCurrent(c) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    result,
@@ -109,8 +124,21 @@ func GetPerfMetrics(c *gin.Context) {
 		return
 	}
 
+	if !metricGroupScopeStillCurrent(c) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    result,
 	})
+}
+
+// Do not hold the policy lock across a potentially slow metrics query. Before
+// emitting its rows, check that the groups used for the query are still current.
+func metricGroupScopeStillCurrent(c *gin.Context) bool {
+	guard, ok := beginControllerGroupConfigRead(c)
+	if ok {
+		guard.Close()
+	}
+	return ok
 }

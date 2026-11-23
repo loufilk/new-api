@@ -198,6 +198,9 @@ func commitGroupCatalogVersion(version int64) {
 }
 
 func UpdateGroupCatalog(ctx context.Context, request GroupCatalogSnapshot, identity AuthSessionIdentity) (*GroupCatalogSnapshot, error) {
+	if !common.IM21RolloutActive() {
+		return nil, common.ErrIM21RolloutLocked
+	}
 	groups, err := normalizeGroupCatalog(request.Groups)
 	if err != nil || request.Groups == nil || request.Revision < 0 {
 		return nil, ErrInvalidGroupCatalog
@@ -317,6 +320,9 @@ func ReadUserGroupEntitlements(ctx context.Context, userID int) (*UserGroupEntit
 }
 
 func UpdateUserGroupEntitlements(ctx context.Context, userID int, expected *int64, groups []string, identity AuthSessionIdentity) (*UserGroupEntitlementsSnapshot, error) {
+	if !common.IM21RolloutActive() {
+		return nil, common.ErrIM21RolloutLocked
+	}
 	if userID <= 0 || groups == nil || len(groups) > 200 || expected == nil || *expected < 0 {
 		return nil, ErrInvalidGroupCatalog
 	}

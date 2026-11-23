@@ -17,42 +17,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import { Award, Building2, FlaskConical, Gift, Shield } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
 
-const badges = {
-  self_operated: {
-    label: 'Self-operated',
-    icon: Building2,
-    color: 'bg-slate-700 text-white',
-  },
-  authentic: {
-    label: 'Authentic',
-    icon: Shield,
-    color: 'bg-emerald-700 text-white',
-  },
-  benefit: { label: 'Benefit', icon: Gift, color: 'bg-rose-700 text-white' },
-  stable: { label: 'Stable', icon: Award, color: 'bg-violet-700 text-white' },
-  distill: {
-    label: 'Distill',
-    icon: FlaskConical,
-    color: 'bg-indigo-700 text-white',
-  },
-} as const
-
-export function groupCatalogBadgeLabels(values?: readonly string[]) {
-  return [...new Set(values)].flatMap((key) =>
-    Object.hasOwn(badges, key) ? [badges[key as keyof typeof badges].label] : []
-  )
-}
+import { groupCatalogBadges } from '../lib/group-catalog-badges'
 
 export function GroupCatalogBadges({ values }: { values?: readonly string[] }) {
   const { t } = useTranslation()
   return [...new Set(values)].map((key) => {
-    if (!Object.hasOwn(badges, key)) return null
-    const meta = badges[key as keyof typeof badges]
+    if (!Object.hasOwn(groupCatalogBadges, key)) return null
+    const meta = groupCatalogBadges[key as keyof typeof groupCatalogBadges]
     return (
       <span
         key={key}

@@ -19,7 +19,7 @@ func GetRatioConfig(c *gin.Context) {
 		return
 	}
 
-	guard, ok := beginControllerGroupConfigRead(c)
+	guard, ok := beginPublicGroupConfigRead(c)
 	if !ok {
 		return
 	}
