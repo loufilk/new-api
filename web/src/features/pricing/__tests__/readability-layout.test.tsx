@@ -108,9 +108,11 @@ describe('pricing readability layout', () => {
 
   it('allows performance details to wrap rather than overflowing a narrow card', () => {
     render(<ModelCard model={model} onClick={vi.fn()} />)
-    expect(
-      screen.getByLabelText('Performance metrics for the last 24 hours')
-    ).toHaveClass('flex-wrap')
+    const performance = screen.getByLabelText('Performance')
+    expect(performance).toHaveClass('flex-wrap')
+    expect(performance).toContainElement(
+      screen.getByTitle('Performance metrics for the last 24 hours')
+    )
     expect(screen.getByRole('button', { name: 'Details' })).toHaveClass(
       'h-9',
       'text-sm'
