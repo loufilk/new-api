@@ -170,7 +170,11 @@ func claimBillingFinalizationTx(tx *gorm.DB, receipt BillingFinalization) (*Bill
 // source locks, never from a current balance. Terminal-owner replays bypass it:
 // successful settlement/task processing legitimately changes the source later.
 func validateBillingSourceTx(tx *gorm.DB, r *BillingFinalization) error {
-	if err := LockFinancialUserTx(tx, r.UserID); err != nil {
+	return validateBillingSourceWithWalletTimingTx(tx, r, nil)
+}
+
+func validateBillingSourceWithWalletTimingTx(tx *gorm.DB, r *BillingFinalization, timing *walletLockTiming) error {
+	if err := timing.lockFinancialUser(tx, r.UserID); err != nil {
 		return err
 	}
 	if r.Source == "subscription" {
@@ -308,8 +312,14 @@ func settleBillingFinalization(ctx context.Context, receipt BillingFinalization,
 	if err := requestBillingSettlement(ctx, receipt, actual, recovery); err != nil {
 		return false, err
 	}
+	operation := "settlement"
+	if recovering {
+		operation = "recovery_settlement"
+	}
+	timing := beginWalletLockTiming(DB, receipt.Source, operation)
 	applied := false
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		timing.enterTransaction()
 		r, err := claimBillingFinalizationTx(tx, receipt)
 		if err != nil {
 			return err
@@ -331,7 +341,7 @@ func settleBillingFinalization(ctx context.Context, receipt BillingFinalization,
 		if r.ActualQuota != actual {
 			return errors.New("billing settlement replay amount mismatch")
 		}
-		if err = validateBillingSourceTx(tx, r); err != nil {
+		if err = validateBillingSourceWithWalletTimingTx(tx, r, timing); err != nil {
 			return err
 		}
 		if err = apply(tx); err != nil {
@@ -347,6 +357,7 @@ func settleBillingFinalization(ctx context.Context, receipt BillingFinalization,
 		}
 		return tx.Model(r).Updates(updates).Error
 	})
+	timing.finish(err)
 	return applied && err == nil, err
 }
 
