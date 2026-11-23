@@ -62,6 +62,53 @@ func TestGroupConfigReadRejectsRemoteCommitAndStaleRouting(t *testing.T) {
 	assert.Equal(t, int64(1), groupConfigAppliedVersion.Load())
 }
 
+func TestPointGroupConfigFenceChecksPrimaryOnceAndRejectsMissedInvalidation(t *testing.T) {
+	setupGroupRenameTest(t)
+	current, err := BeginGroupConfigRead(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, current.Finish())
+
+	queries := 0
+	const hook = "count_point_group_fence_options"
+	require.NoError(t, DB.Callback().Query().Before("gorm:query").Register(hook, func(tx *gorm.DB) {
+		if tx.Statement.Table == "options" {
+			queries++
+		}
+	}))
+	t.Cleanup(func() { _ = DB.Callback().Query().Remove(hook) })
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	require.NoError(t, CheckRequestGroupConfigVersion(nil))
+	require.NoError(t, CheckRequestGroupConfigVersion(c))
+	require.Zero(t, queries, "internal calls without an ingress fence must remain no-ops")
+
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	c.Set(GroupConfigVersionContextKey, "0")
+	require.ErrorIs(t, CheckRequestGroupConfigVersion(c), ErrGroupConfigChanged)
+	require.Zero(t, queries)
+
+	c.Set(GroupConfigVersionContextKey, current.Version)
+	require.NoError(t, CheckRequestGroupConfigVersion(c))
+	require.Equal(t, 1, queries)
+
+	// The surrounding read contract still checks both ends for callers that
+	// consult actual mutable policy between the two fences.
+	guard, err := BeginRequestGroupConfigRead(c)
+	require.NoError(t, err)
+	require.NoError(t, guard.Finish())
+	require.Equal(t, 3, queries)
+
+	setGroupGuardOption(t, groupConfigVersionOptionKey, "1")
+	require.ErrorIs(t, CheckRequestGroupConfigVersion(c), ErrGroupConfigChanged)
+	require.Equal(t, 4, queries)
+	require.Equal(t, current.Version, groupConfigAppliedVersion.Load())
+
+	advanced, err := BeginGroupConfigRead(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, advanced.Finish())
+	c.Set(GroupConfigVersionContextKey, advanced.Version)
+	require.NoError(t, CheckRequestGroupConfigVersion(c))
+}
+
 func TestGroupConfigReadFailedRefreshIsRetryableAndNeverAcknowledged(t *testing.T) {
 	setupGroupRenameTest(t)
 	setGroupGuardOption(t, "GroupRatio", `{"new":0.25}`)

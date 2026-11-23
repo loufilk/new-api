@@ -24,11 +24,7 @@ const (
 // 会话已存在时（任务重试换到另一个渠道）把预扣补到 preConsumedQuota，
 // 和首次预扣一样必须由余额覆盖。
 func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycommon.RelayInfo) *types.NewAPIError {
-	groupRead, groupErr := model.BeginRequestGroupConfigRead(c)
-	if groupErr == nil {
-		groupErr = groupRead.Finish()
-	}
-	if groupErr != nil {
+	if err := model.CheckRequestGroupConfigVersion(c); err != nil {
 		return types.NewError(errors.New(i18n.T(c, i18n.MsgGroupConfigChanged)), "group_config_changed", types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
 	}
 

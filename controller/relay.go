@@ -19,6 +19,7 @@ import (
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/pkg/privacy"
+	"github.com/QuantumNous/new-api/pkg/relay_timing"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -94,6 +95,26 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 
 	var relayInfo *relaycommon.RelayInfo
+	var timings *relay_timing.Sample
+	if relayFormat != types.RelayFormatOpenAIRealtime {
+		timings = relay_timing.Begin(c)
+		if timings != nil {
+			defer func() {
+				var firstUpstreamEvent, firstUsableOutput time.Time
+				if relayInfo != nil && relayInfo.IsStream {
+					if relayInfo.HasSendResponse() {
+						firstUpstreamEvent = relayInfo.FirstResponseTime
+					}
+					firstUsableOutput = relayInfo.FirstDownstreamContentTime
+				}
+				report := timings.Finish(c.Writer.Status(), newAPIError != nil, firstUpstreamEvent, firstUsableOutput)
+				// All fields in this report are fixed types; none are request data.
+				if encoded, err := common.Marshal(report); err == nil {
+					logger.LogInfo(c.Request.Context(), "relay_timing "+string(encoded))
+				}
+			}()
+		}
+	}
 	var ingressRecord []relaycommon.RequestPluginRecord
 	// Registered first so that it runs last: the request plugins' report
 	// hooks receive the request once the client has the whole response and
@@ -200,7 +221,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		defer stopKeepAlive()
 	}
 
-	if newAPIError = relay.PrepareRequestBilling(c, relayInfo); newAPIError != nil {
+	var billingStarted time.Time
+	if timings != nil {
+		billingStarted = time.Now()
+	}
+	newAPIError = relay.PrepareRequestBilling(c, relayInfo)
+	if timings != nil {
+		timings.RecordBillingPreparation(billingStarted)
+	}
+	if newAPIError != nil {
 		return
 	}
 	defer func() {

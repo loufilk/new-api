@@ -81,6 +81,28 @@ func BeginGroupConfigRead(ctx context.Context) (*GroupConfigRead, error) {
 // authentication snapshot. Internal callers with no HTTP admission snapshot
 // retain their existing contract; public ingress sets the version explicitly.
 func BeginRequestGroupConfigRead(c *gin.Context) (*GroupConfigRead, error) {
+	guard, err := lockRequestGroupConfigRead(c)
+	if err != nil {
+		return nil, err
+	}
+	if err := guard.Check(); err != nil {
+		guard.Close()
+		return nil, err
+	}
+	return guard, nil
+}
+
+// CheckRequestGroupConfigVersion is a point-in-time fence. Use Begin and
+// Finish instead when there are intervening policy or routing reads.
+func CheckRequestGroupConfigVersion(c *gin.Context) error {
+	guard, err := lockRequestGroupConfigRead(c)
+	if err != nil {
+		return err
+	}
+	return guard.Finish()
+}
+
+func lockRequestGroupConfigRead(c *gin.Context) (*GroupConfigRead, error) {
 	if c == nil {
 		return &GroupConfigRead{}, nil
 	}
@@ -97,10 +119,6 @@ func BeginRequestGroupConfigRead(c *gin.Context) (*GroupConfigRead, error) {
 	if version != groupConfigAppliedVersion.Load() || groupConfigRuntimeInvalid.Load() || !groupConfigVersionInitialized.Load() {
 		guard.Close()
 		return nil, ErrGroupConfigChanged
-	}
-	if err := guard.Check(); err != nil {
-		guard.Close()
-		return nil, err
 	}
 	return guard, nil
 }
