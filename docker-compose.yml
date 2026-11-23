@@ -50,6 +50,7 @@ services:
       - LOG_SQL_MAX_IDLE_CONNS=${LOG_SQL_MAX_IDLE_CONNS:-}
       - LOG_SQL_MAX_LIFETIME=${LOG_SQL_MAX_LIFETIME:-}
       - LOG_SQL_MAX_IDLE_TIME=${LOG_SQL_MAX_IDLE_TIME:-}
+      - WALLET_LOCK_TIMING_SAMPLE_PERMILLE=${WALLET_LOCK_TIMING_SAMPLE_PERMILLE:-}
 #      - LOG_SQL_CLICKHOUSE_TTL_DAYS=0 # OPTIONAL: ClickHouse log retention days. Unset or 0 disables automatic deletion; set to e.g. 30 to keep 30 days
       - REDIS_CONN_STRING=${REDIS_CONN_STRING:?REDIS_CONN_STRING is required}
       - SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET is required}

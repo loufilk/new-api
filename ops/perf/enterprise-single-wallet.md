@@ -99,3 +99,82 @@ errors can be caused by inability to read the authoritative version, not
 just an actual group configuration change. A lower pool limit can eliminate
 connection exhaustion while leaving a serialized single-wallet row as the
 throughput bottleneck. A pool setting does not expand that row's capacity.
+
+## Sample the existing wallet transaction
+
+For diagnostic runs on PostgreSQL, set `WALLET_LOCK_TIMING_SAMPLE_PERMILLE`
+to a small nonzero value (for example, `10` samples about 1% of transactions).
+The default is off. Read the JSON after `wallet_lock_timing` in the process log
+and split reservation, settlement and recovery settlement:
+
+- `pool_and_begin_us`: connection checkout/setup plus BEGIN until the transaction
+  callback entry, not pure pool wait. Compare with database/sql pool counters.
+- `wallet_lock_query_us`: complete row-lock query wall time, including the
+  round trip and result scan. Use PostgreSQL wait events to confirm contention.
+- `after_lock_query_to_tx_return_us`: client-side remaining work and COMMIT or
+  rollback return, not the exact server-side lock release timestamp. A missing
+  field means the wallet lock was not acquired; separate acknowledged commit
+  samples when interpreting the hold duration.
+
+Keep the sample setting and count in test receipts. The report contains no
+request IDs, account details, amounts, keys or raw SQL. Check PostgreSQL lock
+waits alongside application telemetry; do not sum percentiles across stages.
+
+## Prefunded wallet lanes: experimental proof versus release gates
+
+The experiment is **not a gateway billing mode**. Test it in a disposable
+PostgreSQL database with one synthetic user and one finite synthetic Key. A
+lane is an internal partition of the same available paid balance and Key
+budget, not a new account, a separate credit line, or a way to bypass API
+limits. Existing configurations and production data are out of scope.
+
+- Compare one lane with 4, 8 and 16 using the same funds, finite Key budget,
+  exact arrivals, pool size, and storage medium. Record the effective total
+  budget and assert per-request identity, not just equal sums. Measure
+  reservation, dispatch, immutable usage recording and final debit, plus
+  before/after close reconciliation. Count an unsent benchmark arrival as a
+  failure to achieve the tier. Keep kernel timings separate from gateway SSE
+  time-to-first-content and database timings from runs on a different medium.
+- Transfer paid balance and finite Key budget atomically. Capacity transferred
+  into a lane is unavailable to ordinary spending and is not yet usage. For
+  each dimension reconcile original funding to available + outstanding holds
+  + committed consumption. On close, reconcile returned cash and Key quota,
+  the exact finalized request IDs and unique actuals. No use of bonus or
+  reward balances or negative/over-limit arithmetic. Never accept a changed
+  owner, epoch or frozen actual on replay; cap increases, if allowed, must
+  acquire the extra hold on both budgets before dispatch.
+- A committed hold does not mean the upstream was called. Only a newly
+  committed dispatch transition can authorize the first send. If the outcome
+  of that transition or actual upstream usage is ambiguous, preserve owner
+  and exposure; do not issue a second send or free the hold from age alone.
+  Admit refund only when no dispatch can occur, or with separately defined and
+  verified no-delivery evidence. Block close and downgrade on unresolved
+  exposure; disabling a flag is not an unwind.
+
+The Go files require the explicit `enterprise_lane_lab` build tag. For
+the model regression suite, point `TEST_MODEL_POSTGRES_DSN` and
+`TEST_AUTH_REDIS_DSN` at disposable, dedicated local test processes and
+run `go test -tags 'api_only enterprise_lane_lab' ./model -run '^TestEnterpriseLane' -count=1 -v`.
+The tests create synthetic balances and perform schema and cache mutations.
+A skip is not a PostgreSQL or Redis pass. Normal builds omit the tagged files;
+neither environment variables nor the ordinary migration can activate them.
+
+Do not enable this in the relay until the following are verified together:
+
+1. **Admission:** Explicit opt-in for eligible model and protocol, original
+   IP, account, model and group restrictions, and atomic Key disable/exclusion
+   across replicas and cached auth. Escrowed Key capacity must not be treated as
+   spendable legacy quota. The same Key must not spend via unsupported paths.
+2. **Accounting:** Reserve a true upper bound from the final wire payload and
+   frozen price, not the prompt-only legacy estimate. Capture definitive
+   provider usage durably before the client sees a successful terminal event.
+   Same-owner replay must be idempotent; an over-cap charge, missing usage or
+   ambiguous delivery cannot silently become zero or a refund.
+3. **Visibility and rollback:** Verify per-request consume logs, user and
+   channel reporting, dashboard consistency and lost-ACK recovery. Reconcile
+   escrow before admitting an old executable. Old versions cannot interpret
+   new financial states; unchanged readiness alone is not a safety signal.
+4. **End-to-end performance:** Repeat the same finite-Key test with the
+   gateway, local SSE fixture and normal log/counter projections. The
+   experimental storage-path result cannot be used as proof of relay RPM or
+   production readiness.
