@@ -765,22 +765,28 @@ func ApplyTokenQuotaDeltaTx(tx *gorm.DB, id int, key string, delta int) error {
 	if delta == 0 {
 		return nil
 	}
-	// Unscoped() is a chainable GORM statement. A SELECT on that same
-	// statement would leak FROM/WHERE clauses into UPDATE (including SQLite
-	// UPDATE ... FROM tokens). Keep each query fresh on the SAME transaction.
-	fresh := func() *gorm.DB {
-		query := tx.Session(&gorm.Session{NewDB: true})
-		if tx.Statement.Unscoped {
-			query = query.Unscoped()
-		}
-		return query
+	query := tx.Session(&gorm.Session{NewDB: true})
+	if tx.Statement.Unscoped {
+		query = query.Unscoped()
 	}
 	var token Token
-	if err := lockForUpdate(fresh()).First(&token, id).Error; err != nil {
+	if err := lockForUpdate(query).First(&token, id).Error; err != nil {
 		return err
 	}
 	if token.Key != key {
 		return errors.New("token quota identity mismatch")
+	}
+	return applyLockedTokenQuotaDeltaTx(tx, token, delta)
+}
+
+// applyLockedTokenQuotaDeltaTx requires the caller to have just read and locked
+// this token in the SAME transaction and verified its authorized identity. Do
+// not pass a cached snapshot or reuse the snapshot after another quota write.
+// Reservations and finalization already hold that row lock, so repeating its
+// SELECT here would only extend the time they hold the shared user's wallet.
+func applyLockedTokenQuotaDeltaTx(tx *gorm.DB, token Token, delta int) error {
+	if delta == 0 {
+		return nil
 	}
 	// SQLite silently promotes overflowing INTEGER arithmetic to REAL. Check
 	// both signed counters before SQL so all supported engines fail closed.
@@ -789,7 +795,7 @@ func ApplyTokenQuotaDeltaTx(tx *gorm.DB, id int, key string, delta int) error {
 		return billingRefundReviewError("token_counter_bounds", "token quota counter is out of integer range")
 	}
 	ctx := tx.Statement.Context
-	if err := invalidateTokenCacheForMutationContext(ctx, key); err != nil {
+	if err := invalidateTokenCacheForMutationContext(ctx, token.Key); err != nil {
 		code, class := BillingRefundErrorCode(err)
 		common.SysLog(fmt.Sprintf("failed to invalidate token quota cache before transaction: code=%s class=%s", code, class))
 	}
@@ -803,7 +809,13 @@ func ApplyTokenQuotaDeltaTx(tx *gorm.DB, id int, key string, delta int) error {
 	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
 		return context.DeadlineExceeded
 	}
-	result := fresh().Model(&Token{}).Where("id = ?", id).Updates(
+	// Unscoped() is a chainable GORM statement. Keep the UPDATE fresh on the
+	// SAME transaction so the caller's SELECT cannot leak FROM/WHERE clauses.
+	query := tx.Session(&gorm.Session{NewDB: true})
+	if tx.Statement.Unscoped {
+		query = query.Unscoped()
+	}
+	result := query.Model(&Token{}).Where("id = ?", token.Id).Updates(
 		map[string]any{
 			"remain_quota":  gorm.Expr("remain_quota + ?", delta),
 			"used_quota":    gorm.Expr("used_quota - ?", delta),
@@ -814,7 +826,7 @@ func ApplyTokenQuotaDeltaTx(tx *gorm.DB, id int, key string, delta int) error {
 		return result.Error
 	}
 	if result.RowsAffected != 1 {
-		return fmt.Errorf("token quota update affected %d rows for token %d", result.RowsAffected, id)
+		return fmt.Errorf("token quota update affected %d rows for token %d", result.RowsAffected, token.Id)
 	}
 	return nil
 }
@@ -840,7 +852,7 @@ func SettleTokenQuotaDeltaTx(tx *gorm.DB, id, userID int, key string, delta int)
 	if token.UserId != userID || token.Key != key {
 		return errors.New("token settlement identity mismatch")
 	}
-	return ApplyTokenQuotaDeltaTx(tx.Unscoped(), id, key, delta)
+	return applyLockedTokenQuotaDeltaTx(tx.Unscoped(), token, delta)
 }
 
 // CountUserTokens returns total number of tokens for the given user, used for pagination

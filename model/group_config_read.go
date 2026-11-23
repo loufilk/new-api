@@ -55,10 +55,19 @@ func BeginGroupConfigRead(ctx context.Context) (*GroupConfigRead, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// The common path can establish its opening fence with one primary read
+	// under the local read lock. A stale or invalid runtime must release the
+	// read lock before refreshing, then establish a new primary fence.
+	groupConfigRuntimeMutex.RLock()
 	version, err := readGroupConfigVersion(ctx)
 	if err != nil {
+		groupConfigRuntimeMutex.RUnlock()
 		return nil, err
 	}
+	if version == groupConfigAppliedVersion.Load() && groupConfigVersionInitialized.Load() && !groupConfigRuntimeInvalid.Load() {
+		return &GroupConfigRead{Version: version, ctx: ctx, locked: true}, nil
+	}
+	groupConfigRuntimeMutex.RUnlock()
 	if version > groupConfigAppliedVersion.Load() || !groupConfigVersionInitialized.Load() || groupConfigRuntimeInvalid.Load() {
 		if err := applyGroupConfigInvalidation(version, nil, true); err != nil {
 			return nil, err

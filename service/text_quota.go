@@ -460,10 +460,10 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		logger.LogError(ctx, common.LogText("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, relayInfo.FinalPreConsumedQuota))
 	}
 
-	settleErr := SettleBilling(ctx, relayInfo, summary.Quota)
+	accountingOwned, settleErr := settleObservedTextBilling(ctx, relayInfo, summary.Quota, canRecoverObservedTextSettlement(ctx, relayInfo, originUsage) && summary.hasBillableUsage())
 	if settleErr != nil {
 		logger.LogError(ctx, "error settling billing: "+settleErr.Error())
-	} else if summary.hasBillableUsage() {
+	} else if summary.hasBillableUsage() && !accountingOwned {
 		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, summary.Quota)
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, summary.Quota)
 	}

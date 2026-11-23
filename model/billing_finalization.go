@@ -22,7 +22,7 @@ const (
 	BillingSettled       = "settled"
 	BillingTaskOwned     = "task_owned"
 	// Frozen actual consumption awaiting atomic settlement or operator review.
-	// This is not a refund intent or an automatic background debit queue.
+	// Legacy rows without explicit recovery evidence are not an automatic debit queue.
 	BillingSettlementReview = "settlement_review_v2"
 	// Only these versioned intents are eligible for the new refund executor.
 	// Historical refund_pending rows always require operator review.
@@ -37,7 +37,7 @@ var ErrBillingFinalized = errors.New("request billing already has a different te
 // transitions. Historical refund_pending rows remain read-only.
 // Never delete historical rows while their original financial receipts survive.
 type BillingFinalization struct {
-	RequestID string `gorm:"type:varchar(64);primaryKey;index:idx_billing_refund_due,priority:3"`
+	RequestID string `gorm:"type:varchar(64);primaryKey;index:idx_billing_refund_due,priority:3;index:idx_billing_settlement_log_due,priority:3"`
 	UserID    int    `gorm:"not null;index"`
 	Source    string `gorm:"type:varchar(16);not null"`
 	TokenID   int    `gorm:"not null"`
@@ -53,10 +53,15 @@ type BillingFinalization struct {
 	Reward             int    `gorm:"type:bigint;not null"`
 	SubscriptionID     int    `gorm:"not null"`
 	SubscriptionPeriod int64  `gorm:"type:bigint;not null"`
-	State              string `gorm:"type:varchar(24);not null;index:idx_billing_refund_queue,priority:1;index:idx_billing_refund_due,priority:1"`
+	State              string `gorm:"type:varchar(24);not null;index:idx_billing_refund_queue,priority:1;index:idx_billing_refund_due,priority:1;index:idx_billing_settlement_log_due,priority:1"`
 	ActualQuota        int    `gorm:"type:bigint;not null"`
-	TaskID             int64  `gorm:"not null"`
-	TaskPublicID       string `gorm:"type:varchar(191);not null"`
+	// Only a current measured-usage admission writes this versioned snapshot.
+	// Empty historical rows remain manual; it never stores usable credentials.
+	SettlementRecovery string `json:"-" gorm:"type:text;not null;default:''"`
+	// Independent log projection retry, never authority for financial mutations.
+	SettlementLogRetryAt int64  `gorm:"type:bigint;not null;default:0;index:idx_billing_settlement_log_due,priority:2"`
+	TaskID               int64  `gorm:"not null"`
+	TaskPublicID         string `gorm:"type:varchar(191);not null"`
 	// Operational metadata never changes refund eligibility or money ownership.
 	// Historical retry fields remain readable; no current worker schedules them.
 	Attempts        int    `gorm:"not null"` // Failed recovery attempts, retained after recovery.
@@ -135,6 +140,8 @@ func claimBillingFinalizationTx(tx *gorm.DB, receipt BillingFinalization) (*Bill
 	receipt.State = "b:" + hex.EncodeToString(nonce[:]) // private, never committed
 	receipt.ActualQuota, receipt.TaskID, receipt.Attempts = 0, 0, 0
 	receipt.TaskPublicID = ""
+	receipt.SettlementRecovery = ""
+	receipt.SettlementLogRetryAt = 0
 	receipt.FirstErrorCode, receipt.FirstErrorClass, receipt.LastErrorCode, receipt.LastErrorClass = "", "", "", ""
 	receipt.FirstFailedAt, receipt.LastAttemptAt, receipt.NextRetryAt, receipt.EscalatedAt = 0, 0, 0, 0
 	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "request_id"}}, DoNothing: true}).Create(&receipt).Error; err != nil {
@@ -175,10 +182,6 @@ func validateBillingSourceTx(tx *gorm.DB, r *BillingFinalization) error {
 	}
 	if r.Source != "wallet" {
 		return billingRefundReviewError("source_evidence", "unsupported billing finalization source")
-	}
-	var user User
-	if err := lockForUpdate(tx).First(&user, r.UserID).Error; err != nil {
-		return err
 	}
 	var rows []BalanceLedger
 	if err := lockForUpdate(tx).Where("user_id = ? AND reference_type = ? AND reference_id = ?", r.UserID, "relay", r.RequestID).Order("id").Find(&rows).Error; err != nil {
@@ -271,20 +274,38 @@ func ApplyBillingTokenDeltaTx(tx *gorm.DB, r *BillingFinalization, delta int) er
 	if token.UserId != r.UserID || subtle.ConstantTimeCompare([]byte(BillingTokenFingerprint(token.Key)), []byte(r.TokenFingerprint)) != 1 {
 		return billingRefundReviewError("identity_mismatch", "original billing token identity mismatch")
 	}
-	return ApplyTokenQuotaDeltaTx(tx.Unscoped(), token.Id, token.Key, delta)
+	return applyLockedTokenQuotaDeltaTx(tx.Unscoped(), token, delta)
 }
 
 // SettleBillingFinalization runs the existing source/token arithmetic under one
 // terminal owner. The callback must reject source-only legacy replays: this row
 // is the only proof that both sides and the terminal marker committed together.
 func SettleBillingFinalization(ctx context.Context, receipt BillingFinalization, actual int, apply func(*gorm.DB) error) (bool, error) {
+	return settleBillingFinalization(ctx, receipt, actual, nil, false, apply)
+}
+
+// SettleRecoverableBillingFinalization is only used after the current request
+// has measured usage and captured its original funding policy. The snapshot
+// and amount commit together before any money movement.
+func SettleRecoverableBillingFinalization(ctx context.Context, receipt BillingFinalization, actual int, recovery BillingSettlementRecovery, apply func(*gorm.DB) error) (bool, error) {
+	return settleBillingFinalization(ctx, receipt, actual, &recovery, false, apply)
+}
+
+// RecoverBillingFinalization additionally schedules correction of an existing
+// unconfirmed log after the background transaction commits. Normal successful
+// requests do not create log-repair traffic.
+func RecoverBillingFinalization(ctx context.Context, receipt BillingFinalization, actual int, recovery BillingSettlementRecovery, apply func(*gorm.DB) error) (bool, error) {
+	return settleBillingFinalization(ctx, receipt, actual, &recovery, true, apply)
+}
+
+func settleBillingFinalization(ctx context.Context, receipt BillingFinalization, actual int, recovery *BillingSettlementRecovery, recovering bool, apply func(*gorm.DB) error) (bool, error) {
 	if actual < 0 || actual > common.MaxQuota {
 		return false, errors.New("invalid billing actual quota")
 	}
 	// Commit the observed charge before attempting money movement. A rollback,
 	// insufficient balance or a process exit must not erase the charge and make
 	// the original hold refundable. Replays retain the exact original amount.
-	if err := RequestBillingSettlement(ctx, receipt, actual); err != nil {
+	if err := requestBillingSettlement(ctx, receipt, actual, recovery); err != nil {
 		return false, err
 	}
 	applied := false
@@ -317,10 +338,14 @@ func SettleBillingFinalization(ctx context.Context, receipt BillingFinalization,
 			return err
 		}
 		applied = true
-		return tx.Model(r).Updates(map[string]any{
+		updates := map[string]any{
 			"state": BillingSettled, "actual_quota": actual, "next_retry_at": 0,
 			"last_error_code": "", "last_error_class": "", "escalated_at": 0,
-		}).Error
+		}
+		if recovering && recovery != nil && recovery.LogExpected {
+			updates["settlement_log_retry_at"] = common.GetTimestamp() + 2
+		}
+		return tx.Model(r).Updates(updates).Error
 	})
 	return applied && err == nil, err
 }

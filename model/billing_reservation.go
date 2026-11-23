@@ -138,7 +138,7 @@ func ReserveBillingTokenTx(tx *gorm.DB, r *BillingFinalization, amount int, unli
 	if !unlimited && token.RemainQuota < amount {
 		return ErrBillingTokenInsufficient
 	}
-	return ApplyTokenQuotaDeltaTx(tx, token.Id, token.Key, -amount)
+	return applyLockedTokenQuotaDeltaTx(tx, token, -amount)
 }
 
 var ErrBillingTokenInsufficient = errors.New("token quota is not enough")

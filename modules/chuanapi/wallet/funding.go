@@ -340,3 +340,13 @@ func settlementResultFromLedger(result *model.LedgerResult, receipt []model.Ledg
 	}
 	return out
 }
+
+// SettlementAccountOrder copies the policy frozen when this funding source was
+// created. Recovery must never infer eligibility from current model settings.
+func (w *Funding) SettlementAccountOrder() []string {
+	order := make([]string, len(w.debitOrder))
+	for i, account := range w.debitOrder {
+		order[i] = string(account)
+	}
+	return order
+}

@@ -128,6 +128,9 @@ func (s *BillingSession) settleDurableWithAccountingLocked(actual int, accountin
 		if err := model.ApplyBillingTokenDeltaTx(tx, &receipt, -delta); err != nil {
 			return err
 		}
+		if s.settlementRecovery != nil {
+			return model.ApplyTaskUsageDeltaTx(tx, receipt.UserID, s.settlementRecovery.ChannelID, actual, 1)
+		}
 		if s.realtime != nil && s.realtime.observed {
 			count := 0
 			if s.realtime.usage.TotalTokens > 0 {
@@ -143,7 +146,11 @@ func (s *BillingSession) settleDurableWithAccountingLocked(actual int, accountin
 	var applied bool
 	for attempt := 0; attempt < 3; attempt++ {
 		result = moneyport.SettlementResult{}
-		applied, err = model.SettleBillingFinalization(ctx, receipt, actual, apply)
+		if s.settlementRecovery != nil {
+			applied, err = model.SettleRecoverableBillingFinalization(ctx, receipt, actual, *s.settlementRecovery, apply)
+		} else {
+			applied, err = model.SettleBillingFinalization(ctx, receipt, actual, apply)
+		}
 		if err == nil {
 			break
 		}
@@ -155,7 +162,20 @@ func (s *BillingSession) settleDurableWithAccountingLocked(actual int, accountin
 			recordParent = context.Background()
 		}
 		recordCtx, stop := context.WithTimeout(recordParent, time.Second)
-		recordErr := model.RecordBillingSettlementFailure(recordCtx, receipt, actual, err)
+		// The initial intent may have timed out before committing. Preserve the
+		// same observed amount/policy in the bounded evidence tail, never infer it
+		// later from logs. Existing nonempty/mismatched intents cannot be replaced.
+		var recordErr error
+		failure := err
+		if ctx.Err() != nil {
+			failure = errors.Join(err, ctx.Err())
+		}
+		if s.settlementRecovery != nil {
+			recordErr = model.RequestRecoverableBillingSettlement(recordCtx, receipt, actual, *s.settlementRecovery)
+		}
+		if recordErr == nil {
+			recordErr = model.RecordBillingSettlementFailure(recordCtx, receipt, actual, failure)
+		}
 		stop()
 		if recordErr != nil {
 			code, class := model.BillingSettlementFailureCode(err)

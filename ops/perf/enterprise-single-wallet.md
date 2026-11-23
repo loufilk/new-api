@@ -58,3 +58,19 @@ requests even when they do not delay their own request's first text.
    with the durable request/ledger exactly once; in-flight unknown delivery
    is not a successful refund. Keep real upstream capacity approval and
    staged provider tests a separate gate.
+
+## Before admitting enterprise volume
+
+- A completed SSE reply is not the ledger result. Record the exact request
+  identifiers that emitted content and terminal usage. After stopping arrivals,
+  drain and compare wallet changes, token usage, terminal financial owners,
+  usage logs and user/channel aggregates by owner. Report any held, review, or
+  unconfirmed result separately. Do not declare success from an HTTP 200 or
+  from matching totals over different requests.
+- Separate ordinary measured text-wallet recovery from unknown delivery,
+  locally estimated usage, subscriptions, task callbacks, and realtime.
+  Never infer a financial action from an error or usage-log display.
+- Alert on due settlement age and owner-state backlog independently of
+  process readiness. Check that a master worker is live. Drain recovery and
+  check pending evidence before any downgrade. No automated downgrade or
+  accounting action against old review rows is authorized by this document.
