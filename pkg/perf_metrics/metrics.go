@@ -220,7 +220,6 @@ func QuerySummaryAll(hours int, groups []string, recentModels ...string) (Summar
 	startTs, endTs := queryWindow(now, hours)
 	recentStartTs, _ := queryWindow(now, recentSuccessHistoryHours)
 	allowedGroups := allowedGroupSet(groups)
-	queryStartTs := startTs
 
 	recentBuckets := make(map[string]map[int64]counters, len(recentModels))
 	for _, name := range recentModels {
@@ -236,7 +235,6 @@ func QuerySummaryAll(hours int, groups []string, recentModels ...string) (Summar
 			return SummaryAllResult{}, err
 		}
 		for _, bucket := range buckets {
-			queryStartTs = min(queryStartTs, bucket.BucketTs)
 			mergeModelBucket(recentBuckets, name, bucket.BucketTs, counters{
 				requestCount: bucket.RequestCount,
 				successCount: bucket.SuccessCount,
@@ -244,7 +242,9 @@ func QuerySummaryAll(hours int, groups []string, recentModels ...string) (Summar
 		}
 	}
 
-	rows, err := model.GetPerfMetricsSummaryBucketsAll(queryStartTs, endTs, groups)
+	// History is opt-in and independent: the all-model query and headline totals
+	// must always cover only the advertised reporting window.
+	rows, err := model.GetPerfMetricsSummaryBucketsAll(startTs, endTs, groups)
 	if err != nil {
 		return SummaryAllResult{}, err
 	}
@@ -278,7 +278,7 @@ func QuerySummaryAll(hours int, groups []string, recentModels ...string) (Summar
 		if _, requested := recentBuckets[k.model]; requested && k.bucketTs >= recentStartTs {
 			mergeModelBucket(recentBuckets, k.model, k.bucketTs, snap)
 		}
-		if k.bucketTs < queryStartTs {
+		if k.bucketTs < startTs {
 			return true
 		}
 		mergeModelBucket(modelBuckets, k.model, k.bucketTs, snap)
@@ -294,18 +294,9 @@ func QuerySummaryAll(hours int, groups []string, recentModels ...string) (Summar
 		recentSeries[name] = points[max(0, len(points)-recentSuccessSampleLimit):]
 	}
 
-	// Requested models are summarized over the same hours as their status samples.
 	totals := map[string]counters{}
 	for name, buckets := range modelBuckets {
-		fromTs := startTs
-		if points, ok := recentSeries[name]; ok {
-			fromTs = points[0].Ts
-		}
-		for bucketTs, value := range buckets {
-			if bucketTs < fromTs {
-				delete(buckets, bucketTs)
-				continue
-			}
+		for _, value := range buckets {
 			mergeModelTotals(totals, name, value)
 		}
 	}
