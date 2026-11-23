@@ -21,6 +21,7 @@ import {
   partnerKey,
   privateRead,
 } from './api'
+import { contactTitle, platformTitle } from './catalog'
 import type { PartnerApplication, PartnerApplicationStatus } from './types'
 
 function statusTitle(
@@ -47,50 +48,6 @@ function statusVariant(status: PartnerApplicationStatus) {
     return 'secondary' as const
   }
   return 'warning' as const
-}
-
-function contactTitle(
-  type: PartnerApplication['contact_type'],
-  t: (key: string) => string
-) {
-  switch (type) {
-    case 'wechat':
-      return t('WeChat')
-    case 'qq':
-      return t('QQ')
-    case 'email':
-      return t('Email')
-    case 'phone':
-      return t('Phone')
-    case 'other':
-      return t('Other')
-  }
-}
-
-function platformTitle(
-  platform: PartnerApplication['quotes'][number]['platform'],
-  t: (key: string) => string
-) {
-  switch (platform) {
-    case 'openai':
-      return t('OpenAI')
-    case 'anthropic':
-      return t('Anthropic')
-    case 'google':
-      return t('Google Gemini')
-    case 'deepseek':
-      return t('DeepSeek')
-    case 'alibaba':
-      return t('Alibaba Cloud')
-    case 'bytedance':
-      return t('ByteDance')
-    case 'zhipu':
-      return t('Zhipu')
-    case 'moonshot':
-      return t('Moonshot')
-    case 'other':
-      return t('Other')
-  }
 }
 
 function ApplicationRow(props: {

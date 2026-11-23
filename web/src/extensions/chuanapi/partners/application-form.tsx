@@ -1,5 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMemo } from 'react'
 import { useFieldArray, useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -11,8 +12,6 @@ import {
   FieldError,
   FieldGroup,
   FieldLabel,
-  FieldLegend,
-  FieldSet,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
@@ -21,6 +20,12 @@ import { useRequestId } from '@/features/agent-platform/hooks/use-request-id'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { partnerKey, submitPartnerApplication } from './api'
+import {
+  contactTitle,
+  maxPartnerGroups,
+  partnerContacts,
+  partnerPlatformOptions,
+} from './catalog'
 import { QuoteFields } from './quote-fields'
 import {
   partnerApplicationSchema,
@@ -50,6 +55,14 @@ export function PartnerApplicationForm(props: {
   disabled: boolean
 }) {
   const { t } = useTranslation()
+  const platforms = useMemo(
+    () =>
+      partnerPlatformOptions.map((option) => ({
+        ...option,
+        label: t(option.label),
+      })),
+    [t]
+  )
   const client = useQueryClient()
   const identify = useRequestId()
   const form = useForm<PartnerApplicationFormValues>({
@@ -76,29 +89,18 @@ export function PartnerApplicationForm(props: {
   const errors = form.formState.errors
 
   return (
-    <Card className='min-w-0'>
-      <CardHeader>
-        <CardTitle>{t('Submit a quote')}</CardTitle>
-        <p className='text-muted-foreground text-sm'>
-          {t('Share your site, contact details, groups and rates.')}
-        </p>
-      </CardHeader>
-      <CardContent>
-        <form
-          noValidate
-          onSubmit={form.handleSubmit((values) => {
-            if (disabled) return
-            const input: PartnerApplicationInput = {
-              ...values,
-              quotes: values.quotes.map((quote) => ({
-                ...quote,
-                rate: quote.rate,
-              })),
-            }
-            mutation.mutate({ input, key: identify(input) })
-          })}
-        >
-          <fieldset disabled={disabled} className='flex min-w-0 flex-col gap-4'>
+    <form
+      noValidate
+      onSubmit={form.handleSubmit((input) => {
+        if (!disabled) mutation.mutate({ input, key: identify(input) })
+      })}
+    >
+      <fieldset disabled={disabled} className='flex min-w-0 flex-col gap-4'>
+        <Card className='min-w-0'>
+          <CardHeader>
+            <CardTitle>{t('Site information')}</CardTitle>
+          </CardHeader>
+          <CardContent>
             <FieldGroup className='grid min-w-0 gap-3 sm:grid-cols-2'>
               <Field data-invalid={Boolean(errors.site_name)}>
                 <FieldLabel htmlFor='partner-site-name' required>
@@ -144,19 +146,11 @@ export function PartnerApplicationForm(props: {
                   {...form.register('contact_type')}
                   required
                 >
-                  <NativeSelectOption value='wechat'>
-                    {t('WeChat')}
-                  </NativeSelectOption>
-                  <NativeSelectOption value='qq'>{t('QQ')}</NativeSelectOption>
-                  <NativeSelectOption value='email'>
-                    {t('Email')}
-                  </NativeSelectOption>
-                  <NativeSelectOption value='phone'>
-                    {t('Phone')}
-                  </NativeSelectOption>
-                  <NativeSelectOption value='other'>
-                    {t('Other')}
-                  </NativeSelectOption>
+                  {partnerContacts.map((type) => (
+                    <NativeSelectOption key={type} value={type}>
+                      {contactTitle(type, t)}
+                    </NativeSelectOption>
+                  ))}
                 </NativeSelect>
               </Field>
               <Field data-invalid={Boolean(errors.contact)}>
@@ -188,54 +182,63 @@ export function PartnerApplicationForm(props: {
                 />
               </Field>
             </FieldGroup>
-            <FieldSet className='min-w-0 gap-3'>
-              <FieldLegend
-                variant='label'
-                className='flex w-full items-center justify-between gap-2'
-              >
-                {t('Available groups')}
-                <span className='text-muted-foreground text-xs'>
-                  {t('{{current}} / {{maximum}} maximum', {
-                    current: quotes.fields.length,
-                    maximum: 20,
-                  })}
-                </span>
-              </FieldLegend>
-              {quotes.fields.map((field, index) => {
-                const quoteErrors = errors.quotes?.[index]
-                return (
-                  <QuoteFields
-                    key={field.id}
-                    index={index}
-                    register={form.register}
-                    errors={{
-                      platform: quoteErrors?.platform?.message,
-                      group: quoteErrors?.group?.message,
-                      rate: quoteErrors?.rate?.message,
-                      models: quoteErrors?.models?.message,
-                      description: quoteErrors?.description?.message,
-                    }}
-                    disabled={disabled}
-                    canRemove={quotes.fields.length > 1}
-                    onRemove={() => quotes.remove(index)}
-                  />
-                )
+          </CardContent>
+        </Card>
+        <Card className='min-w-0'>
+          <CardHeader className='flex flex-wrap items-center justify-between gap-2'>
+            <CardTitle>{t('Available groups')}</CardTitle>
+            <span className='text-muted-foreground text-xs'>
+              {t('{{current}} / {{maximum}} maximum', {
+                current: quotes.fields.length,
+                maximum: maxPartnerGroups,
               })}
-              <FieldError>
-                {errors.quotes?.root?.message
-                  ? t(errors.quotes.root.message)
-                  : undefined}
-              </FieldError>
-              <Button
-                type='button'
-                variant='outline'
-                size='sm'
-                disabled={disabled || quotes.fields.length >= 20}
-                onClick={() => quotes.append({ ...emptyQuote })}
-              >
-                {t('Add group')}
-              </Button>
-            </FieldSet>
+            </span>
+          </CardHeader>
+          <CardContent className='flex flex-col gap-3'>
+            {quotes.fields.map((field, index) => {
+              const quoteErrors = errors.quotes?.[index]
+              return (
+                <QuoteFields
+                  key={field.id}
+                  index={index}
+                  control={form.control}
+                  platforms={platforms}
+                  register={form.register}
+                  errors={{
+                    platform: quoteErrors?.platform?.message,
+                    group: quoteErrors?.group?.message,
+                    rate: quoteErrors?.rate?.message,
+                    models: quoteErrors?.models?.message,
+                    description: quoteErrors?.description?.message,
+                  }}
+                  disabled={disabled}
+                  canRemove={quotes.fields.length > 1}
+                  onRemove={() => quotes.remove(index)}
+                />
+              )
+            })}
+            <FieldError>
+              {errors.quotes?.root?.message
+                ? t(errors.quotes.root.message)
+                : undefined}
+            </FieldError>
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              disabled={disabled || quotes.fields.length >= maxPartnerGroups}
+              onClick={() =>
+                quotes.append(
+                  { ...emptyQuote },
+                  {
+                    focusName: `quotes.${quotes.fields.length}.group`,
+                  }
+                )
+              }
+            >
+              {t('Add group')}
+            </Button>
+
             <p className='text-muted-foreground text-xs'>
               {t(
                 'Do not include API keys. Submitted applications cannot be edited.'
@@ -248,9 +251,9 @@ export function PartnerApplicationForm(props: {
                   : t('Submit partner application')}
               </Button>
             </div>
-          </fieldset>
-        </form>
-      </CardContent>
-    </Card>
+          </CardContent>
+        </Card>
+      </fieldset>
+    </form>
   )
 }

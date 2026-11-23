@@ -18,6 +18,7 @@ import {
   privateRead,
   reviewPartnerApplication,
 } from './api'
+import { contactTitle, platformTitle } from './catalog'
 import type { PartnerApplicationStatus } from './types'
 
 function statusTitle(
@@ -35,48 +36,6 @@ function statusTitle(
       return t('Rejected')
     case 'cancelled':
       return t('Cancelled')
-  }
-}
-
-function contactTitle(type: string, t: (key: string) => string) {
-  switch (type) {
-    case 'wechat':
-      return t('WeChat')
-    case 'qq':
-      return t('QQ')
-    case 'email':
-      return t('Email')
-    case 'phone':
-      return t('Phone')
-    case 'other':
-      return t('Other')
-    default:
-      return t('Other')
-  }
-}
-
-function platformTitle(platform: string, t: (key: string) => string) {
-  switch (platform) {
-    case 'openai':
-      return t('OpenAI')
-    case 'anthropic':
-      return t('Anthropic')
-    case 'google':
-      return t('Google Gemini')
-    case 'deepseek':
-      return t('DeepSeek')
-    case 'alibaba':
-      return t('Alibaba Cloud')
-    case 'bytedance':
-      return t('ByteDance')
-    case 'zhipu':
-      return t('Zhipu')
-    case 'moonshot':
-      return t('Moonshot')
-    case 'other':
-      return t('Other')
-    default:
-      return t('Other')
   }
 }
 

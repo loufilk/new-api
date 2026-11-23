@@ -1,18 +1,6 @@
 import { z } from 'zod'
 
-const partnerPlatforms = [
-  'openai',
-  'anthropic',
-  'google',
-  'deepseek',
-  'alibaba',
-  'bytedance',
-  'zhipu',
-  'moonshot',
-  'other',
-] as const
-
-const partnerContacts = ['wechat', 'qq', 'email', 'phone', 'other'] as const
+import { maxPartnerGroups, partnerContacts, partnerPlatforms } from './catalog'
 
 const rateSchema = z
   .string()
@@ -58,7 +46,7 @@ export const partnerApplicationSchema = z
         })
       )
       .min(1)
-      .max(20),
+      .max(maxPartnerGroups),
   })
   .superRefine((value, context) => {
     if (
@@ -73,7 +61,7 @@ export const partnerApplicationSchema = z
     }
     const seen = new Set<string>()
     value.quotes.forEach((quote, index) => {
-      const group = quote.group.toLocaleLowerCase()
+      const group = quote.group.toLowerCase()
       if (seen.has(group)) {
         context.addIssue({
           code: 'custom',

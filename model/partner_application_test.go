@@ -52,7 +52,9 @@ func TestNormalizePartnerApplicationRejectsInvalidSupplierFields(t *testing.T) {
 	}{
 		{"non-HTTPS site", func(input *PartnerApplicationInput) { input.SiteURL = "http://provider.example" }},
 		{"unknown contact type", func(input *PartnerApplicationInput) { input.ContactType = "pager" }},
-		{"invalid email contact", func(input *PartnerApplicationInput) { input.ContactType, input.Contact = PartnerContactEmail, "not-an-email" }},
+		{"invalid email contact", func(input *PartnerApplicationInput) {
+			input.ContactType, input.Contact = PartnerContactEmail, "not-an-email"
+		}},
 		{"line break in contact", func(input *PartnerApplicationInput) { input.Contact = "first\nsecond" }},
 		{"unknown platform", func(input *PartnerApplicationInput) { input.Quotes[0].Platform = "made-up" }},
 		{"negative rate", func(input *PartnerApplicationInput) { input.Quotes[0].Rate = "-1" }},
@@ -78,6 +80,37 @@ func TestNormalizePartnerApplicationBoundsFreeText(t *testing.T) {
 	input := validPartnerApplicationInput()
 	input.Description = strings.Repeat("x", 3001)
 
+	_, err := normalizePartnerApplication(input)
+	require.ErrorIs(t, err, ErrPartnerApplicationInvalid)
+}
+
+func TestNormalizePartnerApplicationSupplierCatalog(t *testing.T) {
+	for _, contact := range []string{"wechat", "telegram", "qq", "email", "other", "phone"} {
+		t.Run(contact, func(t *testing.T) {
+			input := validPartnerApplicationInput()
+			input.ContactType, input.Contact = contact, "fixture@example.com"
+			input.Quotes = []PartnerQuote{
+				{Platform: "zhipu-glm", Group: "new GLM", Rate: "0.125000", Description: "line 1\nline 2"},
+				{Platform: "custom", Group: "custom", Rate: "1.0000"},
+				{Platform: PartnerPlatformZhipu, Group: "legacy Zhipu", Rate: "1"},
+				{Platform: PartnerPlatformOther, Group: "legacy Other", Rate: "1"},
+				{Platform: "sglang", Group: "SGLang", Rate: "0.5"},
+			}
+			got, err := normalizePartnerApplication(input)
+			require.NoError(t, err)
+			assert.Equal(t, contact, got.ContactType)
+			assert.Equal(t, "0.125", got.Quotes[0].Rate)
+			assert.Equal(t, "line 1\nline 2", got.Quotes[0].Description)
+			for i, want := range []string{"zhipu-glm", "custom", "zhipu", "other", "sglang"} {
+				assert.Equal(t, want, got.Quotes[i].Platform)
+			}
+		})
+	}
+}
+
+func TestNormalizePartnerApplicationKeepsGlobalGroupUniqueness(t *testing.T) {
+	input := validPartnerApplicationInput()
+	input.Quotes = append(input.Quotes, PartnerQuote{Platform: "aws", Group: " STANDARD ", Rate: "0.5"})
 	_, err := normalizePartnerApplication(input)
 	require.ErrorIs(t, err, ErrPartnerApplicationInvalid)
 }

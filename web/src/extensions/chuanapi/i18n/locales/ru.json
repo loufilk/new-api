@@ -252,6 +252,7 @@
     "Select an invoice category": "Выберите категорию счёта-фактуры",
     "This invoice category is currently unavailable": "Эта категория счёта-фактуры сейчас недоступна",
     "Update the server to edit invoice categories.": "Чтобы редактировать категории счетов-фактур, обновите сервер.",
-    "Invoice fee refund": "Возврат комиссии за выставление счёта"
+    "Invoice fee refund": "Возврат комиссии за выставление счёта",
+    "Site information": "Сведения о сайте"
   }
 }
