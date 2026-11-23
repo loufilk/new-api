@@ -22,7 +22,7 @@ export const immersiveTranslate: GuideDoc = {
   slug: 'immersive-translate',
   title: '接入沉浸式翻译',
   description: '让沉浸式翻译使用本站中转的模型做网页翻译。',
-  updated: '2026-08-30',
+  updated: '2026-11-23',
   body: `
 > 沉浸式翻译的自定义 AI 翻译服务走 OpenAI 兼容协议。注意它的「自定义 API 接口地址」通常要填**完整端点**（以 \`/chat/completions\` 结尾），不是 Base URL。
 
@@ -32,7 +32,7 @@ export const immersiveTranslate: GuideDoc = {
 2. 打开沉浸式翻译的设置页，进入「翻译服务」。
 3. 选择 OpenAI（或自定义 AI 翻译服务），填写：
    - **APIKEY**：控制台创建的令牌
-   - **模型**：从 [定价页](/pricing) 复制真实 model id，翻译场景选便宜快速的模型即可
+   - **模型**：用翻译专用密钥查询 \`GET /v1/models\`，在支持 Chat Completions 的模型中选择，再用 [定价页](/pricing) 比较费用
    - **自定义 API 接口地址**：\`{{BASE_URL}}/v1/chat/completions\`（部分版本只要求填到 \`{{BASE_URL}}/v1\`，以设置项旁的说明为准）
 4. 保存后在任意外文页面测试一次翻译。
 

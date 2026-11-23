@@ -22,7 +22,7 @@ export const anthropicSdk: GuideDoc = {
   slug: 'anthropic-sdk',
   title: '接入 Anthropic SDK',
   description: '用官方 Anthropic SDK 调用 Claude 格式接口。',
-  updated: '2026-08-30',
+  updated: '2026-11-23',
   body: `
 > \`base_url\` 填 \`{{BASE_URL}}\`，**不要带 /v1**。Anthropic SDK 会自己拼上 \`/v1/messages\`。这是从 OpenAI SDK 迁过来时最容易踩的坑。
 
@@ -55,7 +55,7 @@ resp = client.messages.create(
 print(resp.content[0].text)
 \`\`\`
 
-把 \`MODEL_ID\` 换成 [定价页](/pricing) 里的真实 id。
+用 SDK 所用的同一把密钥查询 \`GET /v1/models\`，把 \`MODEL_ID\` 换成列表中支持 Anthropic Messages 的模型 ID。
 
 ## Node.js
 
@@ -80,7 +80,7 @@ console.log(resp.content[0].text);
 
 - **\`max_tokens\` 必填**：Messages 协议要求显式给出，省略会返回 400。OpenAI 协议下它是可选的。
 - **\`system\` 是顶层参数**：不放进 \`messages\` 数组。
-- **model id 用本站目录的**：不要沿用官方的模型名，目录之外的名称一律 404。
+- **模型与协议分开验证**：密钥能看到模型，不代表该模型支持 Messages。用下方请求确认。
 - **计费口径统一**：无论走 Messages 还是 Chat Completions，都按本站定价计费，不因协议不同而变化。
 
 \`\`\`python
@@ -110,10 +110,10 @@ curl {{BASE_URL}}/v1/messages \\
 
 ## 常见问题
 
-- **404**：\`base_url\` 多写了 \`/v1\`，实际打到了 \`/v1/v1/messages\`。
+- **404**：\`base_url\` 多写了 \`/v1\`，实际打到了 \`/v1/v1/messages\`；路径正确时，检查当前分组是否配置了目标模型。
 - **400 max_tokens**：忘了传 \`max_tokens\`，或者填的值超过该模型上限。
 - **401**：密钥没读到，或者环境里残留了 \`ANTHROPIC_API_KEY\` 覆盖了显式传入的值。
-- **403**：令牌分组不含该模型。
+- **403**：请按响应体核对密钥的模型限制或来源 IP 限制。
 
 ## 相关文档
 

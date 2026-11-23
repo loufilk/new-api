@@ -31,12 +31,12 @@ export const fallbackFaq: readonly FAQItem[] = [
   {
     question: '模型名应该填什么？',
     answer:
-      '以 [定价页](/pricing) 公开目录中的真实 model id 为准，不要沿用其他平台的模型名；目录之外的名称会返回 404。',
+      '用客户端的同一把密钥查询 `GET /v1/models`，选择支持目标协议的模型 ID，再发一次实际请求。[定价页](/pricing) 是公开目录，不是这把密钥的模型列表。',
   },
   {
     question: '为什么返回 401 / 403？',
     answer:
-      '401 是认证没通过：令牌缺失、拼错或已删除。403 是认证通过但没有权限：通常是令牌分组不含目标模型。详见 [认证与密钥](/help/guides/authentication)。',
+      '401 是认证没通过：令牌缺失、拼错或已删除。403 是认证通过但没有权限：请按响应体检查密钥的模型限制或来源 IP 限制。详见 [认证与密钥](/help/guides/authentication)。',
   },
   {
     question: '余额和计费怎么看？',

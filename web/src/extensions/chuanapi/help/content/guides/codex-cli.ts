@@ -22,7 +22,7 @@ export const codexCli: GuideDoc = {
   slug: 'codex-cli',
   title: '接入 Codex CLI',
   description: '配置 config.toml，让 Codex CLI 使用本站。',
-  updated: '2026-08-30',
+  updated: '2026-11-23',
   body: `
 > 这里的 \`base_url\` 需要带 \`/v1\`，即 \`{{BASE_URL}}/v1\`。Codex CLI 会在其后拼接 \`/chat/completions\` 或 \`/responses\`。
 
@@ -49,7 +49,7 @@ env_key = "WANCHUAN_API_KEY"
 wire_api = "chat"
 \`\`\`
 
-把 \`MODEL_ID\` 换成 [定价页](/pricing) 里的真实 id。\`env_key\` 填的是环境变量名而不是密钥本身，密钥不会落到配置文件里。
+用配置给 Codex 的同一把密钥查询 \`GET /v1/models\`，将 \`MODEL_ID\` 换为列表里支持所选协议的模型 ID。\`env_key\` 填的是环境变量名而不是密钥本身，密钥不会落到配置文件里。
 
 ## chat 还是 responses
 
@@ -81,9 +81,9 @@ curl {{BASE_URL}}/v1/chat/completions \\
 
 ## 常见问题
 
-- **404**：\`base_url\` 漏了 \`/v1\`，或 model id 不在目录里。
+- **404**：\`base_url\` 漏了 \`/v1\`，或当前分组未配置该模型。
 - **401**：\`env_key\` 指向的环境变量在启动 codex 的那个 shell 里没有值。注意 GUI 终端与登录 shell 的环境可能不同。
-- **403**：令牌分组不含该模型，换一个目录中可用的 id。
+- **403**：请按响应体核对密钥的模型限制或来源 IP 限制。
 - **工具调用不生效**：先确认该模型支持工具调用，再尝试把 \`wire_api\` 切到 \`responses\`。
 - **配置没被读取**：确认改的是 \`~/.codex/config.toml\` 而不是项目内的同名文件，且 TOML 语法正确（表头拼写错误会被静默忽略）。
 
