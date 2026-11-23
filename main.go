@@ -67,7 +67,7 @@ func main() {
 // Managed containers use only their explicit launch environment. A mounted
 // development .env must neither amend the audited DB pair nor enter managed mode.
 func loadStartupDotenv(path string) error {
-	keys := []string{common.IM21RolloutModeEnv, "CORE_IM21_MIGRATION_MODE", "CORE_IM21_RELEASE_ID"}
+	keys := append([]string{common.IM21RolloutModeEnv, "CORE_IM21_MIGRATION_MODE", "CORE_IM21_RELEASE_ID"}, middleware.EnterpriseLaneGatewayLaunchKeys()...)
 	for _, key := range keys {
 		if _, explicit := os.LookupEnv(key); explicit {
 			return nil
@@ -106,6 +106,9 @@ func validateIM21MigratorArgs(args []string) error {
 }
 
 func runApplication(mode string) error {
+	if err := middleware.PrepareEnterpriseLaneGateway(mode == model.IM21Migrate); err != nil {
+		return err
+	}
 	startTime := time.Now()
 	kitutil.SetLogging(common.SysLog, func(message string) {
 		logger.LogError(nil, message)
@@ -151,6 +154,15 @@ func runApplication(mode string) error {
 	err := initServingResources(mode == model.IM21Serve)
 	if err != nil {
 		return fmt.Errorf("failed to initialize resources: %w", err)
+	}
+	labCtx, cancelLab := context.WithTimeout(context.Background(), 15*time.Second)
+	stopLab, labErr := middleware.ConfigureEnterpriseLaneGateway(labCtx)
+	cancelLab()
+	if labErr != nil {
+		return labErr
+	}
+	if stopLab {
+		return nil
 	}
 
 	common.SysLog(common.LogText("New API %s started", common.Version))

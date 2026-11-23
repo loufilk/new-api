@@ -41,8 +41,10 @@ const (
 // and epoch. A refilled/replacement partition needs a new funded epoch. Do not
 // construct it from unauthenticated request input or log its fingerprint.
 type EnterpriseLaneIdentity struct {
-	LaneID           string `gorm:"type:varchar(64);not null"`
-	Epoch            int64  `gorm:"not null"`
+	// GORM names this composite for its owning table. In particular, the
+	// retained request receipt index covers the cold drain reconciliation scan.
+	LaneID           string `gorm:"type:varchar(64);not null;index:,composite:lane_epoch,priority:1"`
+	Epoch            int64  `gorm:"not null;index:,composite:lane_epoch,priority:2"`
 	UserID           int    `gorm:"not null"`
 	TokenID          int    `gorm:"not null"`
 	TokenFingerprint string `json:"-" gorm:"type:varchar(64);not null"`
@@ -73,20 +75,22 @@ type EnterpriseLane struct {
 // Finalized rows are durable per-request accounting evidence, never a refund
 // retry queue. No state expires a possibly delivered request.
 type EnterpriseLaneRequest struct {
-	RequestID string `gorm:"type:varchar(64);primaryKey"`
+	RequestID string `gorm:"type:varchar(64);primaryKey;index:idx_enterprise_lane_usage_pending,where:usage_projection_pending"`
 	EnterpriseLaneIdentity
-	Held        int    `gorm:"type:bigint;not null"`
-	Actual      int    `gorm:"type:bigint;not null"`
-	State       string `gorm:"type:varchar(24);not null"`
-	RefundProof string `gorm:"type:varchar(32);not null"`
-	CreatedAt   int64  `gorm:"autoCreateTime"`
-	UpdatedAt   int64  `gorm:"autoUpdateTime"`
+	Held                   int                 `gorm:"type:bigint;not null"`
+	Actual                 int                 `gorm:"type:bigint;not null"`
+	State                  string              `gorm:"type:varchar(24);not null"`
+	RefundProof            string              `gorm:"type:varchar(32);not null"`
+	Usage                  EnterpriseLaneUsage `gorm:"embedded;embeddedPrefix:usage_"`
+	UsageProjectionPending bool                `gorm:"not null;default:false"`
+	CreatedAt              int64               `gorm:"autoCreateTime"`
+	UpdatedAt              int64               `gorm:"autoUpdateTime"`
 }
 
 // EnterpriseLaneModels is an explicit lab fixture opt-in; never add to startup
 // migrations. The ordinary service has no route or dependency on these types.
 func EnterpriseLaneModels() []any {
-	return []any{&EnterpriseLane{}, &EnterpriseLaneRequest{}}
+	return []any{&EnterpriseLane{}, &EnterpriseLaneRequest{}, &EnterpriseLaneUsageProjection{}}
 }
 
 func enterpriseLaneIDValid(s string) bool {

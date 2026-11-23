@@ -37,6 +37,7 @@ func (app *applicationRuntime) Start(balanceInterval time.Duration, enablePprof 
 	app.workers.Go("websocket-invalidation", func(schedule, _ context.Context) { wsmanager.RunSubscriber(schedule) })
 	app.workers.Go("system-monitor", common.RunSystemMonitor)
 	app.workers.Go("performance-flush", perfmetrics.RunFlush)
+	startEnterpriseLaneProjection(app.workers)
 	if common.SyncFrequency > 0 {
 		app.workers.Go("authorization-policy-sync", func(schedule, work context.Context) {
 			lifecycle.Periodic(schedule, work, func() time.Duration { return time.Duration(common.SyncFrequency) * time.Second }, false, func(context.Context) {
@@ -122,11 +123,12 @@ func (app *applicationRuntime) Shutdown(server *http.Server) bool {
 	defer finish()
 	done := make(chan error, 1)
 	go func() {
+		laneErr := drainEnterpriseLaneProjection(cleanup)
 		if err := perfmetrics.Drain(cleanup); err != nil {
-			done <- err
+			done <- errors.Join(laneErr, err)
 			return
 		}
-		done <- errors.Join(model.FlushRuntimeData(cleanup), common.StopPyroScope())
+		done <- errors.Join(laneErr, model.FlushRuntimeData(cleanup), common.StopPyroScope())
 	}()
 	select {
 	case err := <-done:

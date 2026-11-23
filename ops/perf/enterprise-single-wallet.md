@@ -122,11 +122,12 @@ waits alongside application telemetry; do not sum percentiles across stages.
 
 ## Prefunded wallet lanes: experimental proof versus release gates
 
-The experiment is **not a gateway billing mode**. Test it in a disposable
-PostgreSQL database with one synthetic user and one finite synthetic Key. A
-lane is an internal partition of the same available paid balance and Key
-budget, not a new account, a separate credit line, or a way to bypass API
-limits. Existing configurations and production data are out of scope.
+The model experiment alone is **not proof of gateway capacity**. Test it in a
+disposable PostgreSQL database with one synthetic user and one finite synthetic
+Key. A lane is an internal partition of the same available paid balance and Key
+budget, not a new account, a separate credit line, or a way to bypass API limits.
+The separately tagged P4 gateway fixture below does not enable a production
+billing mode. Existing configurations and production data are out of scope.
 
 - Compare one lane with 4, 8 and 16 using the same funds, finite Key budget,
   exact arrivals, pool size, and storage medium. Record the effective total
@@ -159,7 +160,8 @@ The tests create synthetic balances and perform schema and cache mutations.
 A skip is not a PostgreSQL or Redis pass. Normal builds omit the tagged files;
 neither environment variables nor the ordinary migration can activate them.
 
-Do not enable this in the relay until the following are verified together:
+Do not promote this beyond the isolated fixture until the following are
+verified together:
 
 1. **Admission:** Explicit opt-in for eligible model and protocol, original
    IP, account, model and group restrictions, and atomic Key disable/exclusion
@@ -178,3 +180,64 @@ Do not enable this in the relay until the following are verified together:
    gateway, local SSE fixture and normal log/counter projections. The
    experimental storage-path result cannot be used as proof of relay RPM or
    production readiness.
+
+## P4: reproduce the isolated gateway fixture
+
+- Build from a clean pinned revision with `go build -tags 'api_only enterprise_lane_lab'`.
+  Record the executable SHA-256 and harness hash. Ordinary builds omit lab
+  accounting; even tagged serving needs `ENTERPRISE_LANE_LAB_ENABLED=true` in
+  the launch environment, not `.env` or the managed migration. Set
+  `HTTP_BIND_ADDRESS=127.0.0.1` and `TRUSTED_PROXIES=none`. Use a disposable
+  loopback PostgreSQL `enterprise_lane_*` database, optional loopback Redis,
+  `LogConsumeEnabled=true`, and leave `LOG_SQL_DSN` unset.
+- Use one dedicated, never-spent finite synthetic Key and one designated native
+  OpenAI-type channel on a direct loopback HTTP origin, without proxies,
+  overrides, plugins, conversion, or external credentials. Supply the manifest
+  via `ENTERPRISE_LANE_LAB_TOKEN_ID`, `ENTERPRISE_LANE_LAB_CHANNEL_ID`,
+  `ENTERPRISE_LANE_LAB_MODEL=gpt-4o`, `ENTERPRISE_LANE_LAB_COUNT`,
+  `ENTERPRISE_LANE_LAB_PAID_PER_LANE` and `ENTERPRISE_LANE_LAB_TOKEN_PER_LANE`.
+  Only the allowlisted `POST /v1/chat/completions` text SSE shape is supported;
+  send an explicit bounded `max_tokens` and request `include_usage`. Unsupported
+  routes for the bound Key must not fall through to legacy billing.
+- With the isolated `relay_p4.py` fixture bundle, run `start --phase <phase>`
+  with the clean tagged `--binary`, `--revision` and `--binary-sha256`. For any
+  phase after `smoke`, pass the prior phase's passing `summary.json` via
+  `--prerequisite`. The ladder is `smoke` (500 RPM / 10 s), `5k` (5,000 / 180 s),
+  `10k30` (10,000 / 30 min), then `mixed2h` (four 30-min blocks with increasing
+  long-stream share). In the mixed fixture the long profile's nominal 250 ms
+  first-content delay plus 17.5 s tail stays below the 20 s upstream deadline;
+  record observed lifetimes too. These are test plans, not achieved rates. Pin
+  storage medium, pool settings, fixture profiles and accepted request/stream
+  caps before running. Disclose missed offers, content TTFT, fixture-adjusted
+  gateway TTFT, terminal SSE, and per-request reconciliation. Do not infer
+  production or provider capacity from this loopback workload.
+- Only verified final SSE usage is frozen with the request's actual charge.
+  Client success terminal frames follow acknowledged settlement. The off-path
+  projector uses one primary PostgreSQL transaction for each batch's unique
+  per-request projection, consume log, grouped user/channel counters and
+  pending-marker clear. Split log databases and broader legacy reporting such
+  as `quota_data` exports are outside this parity claim. Require zero durable
+  pending projections plus exact request IDs, charge, prompt/completion tokens,
+  logs, counters and wallet/Key conservation before reporting a full pass.
+
+### Separate cold stop and drain drill
+
+After the timed load, test cold lifecycle in a separate disposable fixture; do
+not run a heavy rollover/drain benchmark concurrently with timed ingress.
+Retain terminal receipt history in the stopped lane and older epochs, and keep
+a sibling lane active for the contention check. Test time under the parent
+wallet lock and sibling request impact as well as exact conservation. The
+`(lane_id, epoch)` index excludes unrelated history; exact drain still checks
+the stopped lane's own retained receipts, so this is not a constant-time close.
+
+The tagged, one-shot `ENTERPRISE_LANE_LAB_STOP=true` launch with the same
+manifest atomically fences new holds, extensions and dispatch claims across
+the lane bundle. Ordinary Key/user revocation is checked at ingress and again
+before dispatch, but those reads are not the atomic stop barrier. A previously
+claimed dispatch is not canceled by Stop; do not refund or resend it based on
+age, a missing acknowledgment, or a disabled flag. Stop is not Drain: only a
+stopped lane with no unresolved exposure and matching financial receipts can
+return unused paid/Key escrow to the original owner. Finish reporting projection
+separately and verify no unresolved or unprojected owners before considering an
+older executable. Never start an ordinary or prior gateway on the lab database
+while the escrow is live.

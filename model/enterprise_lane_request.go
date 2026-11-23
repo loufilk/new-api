@@ -30,13 +30,26 @@ func lockEnterpriseLaneRequest(tx *gorm.DB, identity EnterpriseLaneIdentity, req
 	if request.EnterpriseLaneIdentity != identity || request.Held <= 0 || request.Held > common.MaxQuota || request.Actual < 0 || request.Actual > common.MaxQuota {
 		return request, ErrEnterpriseLaneIdentity
 	}
+	if (request.Usage != EnterpriseLaneUsage{} && !request.Usage.valid()) ||
+		(request.UsageProjectionPending && (request.State != EnterpriseLaneSettled || !request.Usage.valid())) {
+		return request, ErrEnterpriseLaneUsage
+	}
 	return request, nil
 }
 
 func saveEnterpriseLaneRequest(tx *gorm.DB, request EnterpriseLaneRequest) error {
-	result := tx.Model(&EnterpriseLaneRequest{}).Where("request_id = ?", request.RequestID).Updates(map[string]any{
+	updates := map[string]any{
 		"held": request.Held, "actual": request.Actual, "state": request.State, "refund_proof": request.RefundProof,
-	})
+	}
+	if (request.State == EnterpriseLaneObserved || request.State == EnterpriseLaneReview) && request.Usage != (EnterpriseLaneUsage{}) {
+		updates["usage_channel_id"], updates["usage_prompt_tokens"] = request.Usage.ChannelID, request.Usage.PromptTokens
+		updates["usage_completion_tokens"], updates["usage_model"] = request.Usage.CompletionTokens, request.Usage.Model
+		updates["usage_group"], updates["usage_observed_at"] = request.Usage.Group, request.Usage.ObservedAt
+	}
+	if request.UsageProjectionPending {
+		updates["usage_projection_pending"] = true
+	}
+	result := tx.Model(&EnterpriseLaneRequest{}).Where("request_id = ?", request.RequestID).Updates(updates)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -153,19 +166,23 @@ func MarkEnterpriseLaneDeliveryUnknown(ctx context.Context, db *gorm.DB, identit
 // measured evidence. Same-actual retry after any
 // uncertain COMMIT safely returns the settled owner or resumes its debit.
 func SettleEnterpriseLane(ctx context.Context, db *gorm.DB, identity EnterpriseLaneIdentity, requestID string, actual int) (EnterpriseLaneRequest, error) {
+	return settleEnterpriseLane(ctx, db, identity, requestID, actual, EnterpriseLaneUsage{})
+}
+
+func settleEnterpriseLane(ctx context.Context, db *gorm.DB, identity EnterpriseLaneIdentity, requestID string, actual int, usage EnterpriseLaneUsage) (EnterpriseLaneRequest, error) {
 	if actual < 0 || actual > common.MaxQuota {
 		return EnterpriseLaneRequest{}, ErrEnterpriseLaneExposure
 	}
 	frozen, err := updateEnterpriseLaneRequest(ctx, db, identity, requestID, func(tx *gorm.DB, request *EnterpriseLaneRequest) error {
 		switch request.State {
 		case EnterpriseLaneDispatch:
-			request.Actual, request.State = actual, EnterpriseLaneObserved
+			request.Actual, request.State, request.Usage = actual, EnterpriseLaneObserved, usage
 			if actual > request.Held {
 				request.State = EnterpriseLaneReview
 			}
 			return saveEnterpriseLaneRequest(tx, *request)
 		case EnterpriseLaneObserved, EnterpriseLaneSettled, EnterpriseLaneReview:
-			if request.Actual != actual {
+			if request.Actual != actual || request.Usage != usage {
 				return ErrEnterpriseLaneIdentity
 			}
 			return nil
@@ -182,20 +199,31 @@ func SettleEnterpriseLane(ctx context.Context, db *gorm.DB, identity EnterpriseL
 	if frozen.State == EnterpriseLaneSettled {
 		return frozen, nil
 	}
+	return completeEnterpriseLaneObserved(ctx, db, identity, requestID, &frozen)
+}
+
+func completeEnterpriseLaneObserved(ctx context.Context, db *gorm.DB, identity EnterpriseLaneIdentity, requestID string, expected *EnterpriseLaneRequest) (EnterpriseLaneRequest, error) {
 	return updateEnterpriseLaneRequest(ctx, db, identity, requestID, func(tx *gorm.DB, request *EnterpriseLaneRequest) error {
-		if request.Actual != actual || request.Actual > request.Held {
+		if request.State == EnterpriseLaneReview {
+			return ErrEnterpriseLaneExposure
+		}
+		if request.State != EnterpriseLaneSettled && request.State != EnterpriseLaneObserved {
+			return ErrEnterpriseLaneState
+		}
+		if (expected != nil && (request.Actual != expected.Actual || request.Usage != expected.Usage)) || request.Actual > request.Held {
 			return ErrEnterpriseLaneIdentity
+		}
+		if expected == nil && !request.Usage.valid() {
+			return ErrEnterpriseLaneUsage
 		}
 		if request.State == EnterpriseLaneSettled {
 			return nil
 		}
-		if request.State != EnterpriseLaneObserved {
-			return ErrEnterpriseLaneState
-		}
-		if err := releaseEnterpriseLaneRequestHold(tx, *request, actual); err != nil {
+		if err := releaseEnterpriseLaneRequestHold(tx, *request, request.Actual); err != nil {
 			return err
 		}
 		request.State = EnterpriseLaneSettled
+		request.UsageProjectionPending = request.Usage.valid()
 		return saveEnterpriseLaneRequest(tx, *request)
 	})
 }

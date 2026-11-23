@@ -732,6 +732,9 @@ func TokenAuth() func(c *gin.Context) {
 		if interceptAuthenticatedUserCall(c) {
 			return
 		}
+		if authorizeEnterpriseLaneGateway(c, token, parts) {
+			return
+		}
 		if err := model.ValidateUserTokenQuota(token); err != nil {
 			abortWithOpenAiMessage(c, http.StatusUnauthorized, common.TranslateMessage(c, i18n.MsgTokenInvalid))
 			return
