@@ -39,6 +39,11 @@ func PruneModelFingerprintHistory(ctx context.Context, now int64) error {
 		if err := pruneModelFingerprintReports(tx, now, "", ""); err != nil {
 			return err
 		}
+		// Drop only private display text after the transient history window.
+		// Keep ownership, billing request identifiers, status and replay tombstones.
+		if err := tx.Model(&ModelTestRun{}).Where("source = ? AND created_at < ? AND status <> ? AND artwork_html <> ?", KeyDiagnosticSource, now-ModelTestTransientHistorySeconds, "running", "").Update("artwork_html", "").Error; err != nil {
+			return err
+		}
 		return anonymizeExpiredModelTestRuns(tx, now)
 	})
 }

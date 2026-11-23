@@ -40,6 +40,7 @@ import { useApiInfo } from '@/features/dashboard/hooks/use-status-data'
 import { useStatus } from '@/hooks/use-status'
 
 import { useApiKeys } from './api-keys-provider'
+import { KeyDiagnosticButton } from './key-diagnostic-dialog'
 
 export function ApiKeysPrimaryButtons() {
   const { t } = useTranslation()
@@ -112,6 +113,7 @@ export function ApiKeysPrimaryButtons() {
           )}
         </PopoverContent>
       </Popover>
+      <KeyDiagnosticButton />
       <Button size='sm' onClick={() => setOpen('create')}>
         <Plus className='h-4 w-4' />
         {t('Create API Key')}

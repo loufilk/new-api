@@ -45,7 +45,6 @@ func GetStatus(c *gin.Context) {
 	// a browser/proxy cache or another node's OptionMap to grant pool access.
 	c.Header("Cache-Control", "no-store")
 	accountPoolEnabled, _ := model.AccountPoolEnabled(c.Request.Context())
-	modelTestEnabled, modelTestSettingsErr := model.ModelTestEnabled(c.Request.Context())
 	invoicePolicy := model.GetCustomerInvoicePolicy()
 	invoiceCenterVisible := false
 	if invoicePolicy.CenterVisible {
@@ -65,8 +64,8 @@ func GetStatus(c *gin.Context) {
 		"account_pool_enabled":            accountPoolEnabled,
 		"customer_invoice_enabled":        invoicePolicy.Enabled && invoiceCenterVisible,
 		"customer_invoice_center_visible": invoiceCenterVisible,
-		"model_test_enabled":              modelTestEnabled,
-		"model_test_settings_available":   modelTestSettingsErr == nil,
+		"model_test_enabled":              false,
+		"model_test_settings_available":   false,
 		"version":                         common.Version,
 		"start_time":                      common.StartTime,
 		"email_verification":              common.EmailVerificationEnabled,

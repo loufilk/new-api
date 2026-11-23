@@ -252,6 +252,7 @@
     "Select an invoice category": "Select an invoice category",
     "This invoice category is currently unavailable": "This invoice category is currently unavailable",
     "Update the server to edit invoice categories.": "Update the server to edit invoice categories.",
-    "Invoice fee refund": "Invoice fee refund"
+    "Invoice fee refund": "Invoice fee refund",
+    "Site information": "Site information"
   }
 }

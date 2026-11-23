@@ -16,14 +16,29 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-// ============================================================================
-// Form Utilities
-// ============================================================================
-export {
-  getApiKeyFormSchema,
-  type ApiKeyFormValues,
-  API_KEY_FORM_DEFAULT_VALUES,
-  getApiKeyFormDefaultValues,
-  transformFormDataToPayload,
-  transformApiKeyToFormDefaults,
-} from './api-key-form'
+
+import { useTranslation } from 'react-i18next'
+
+import { cn } from '@/lib/utils'
+
+import { groupCatalogBadges } from '../lib/group-catalog-badges'
+
+export function GroupCatalogBadges({ values }: { values?: readonly string[] }) {
+  const { t } = useTranslation()
+  return [...new Set(values)].map((key) => {
+    if (!Object.hasOwn(groupCatalogBadges, key)) return null
+    const meta = groupCatalogBadges[key as keyof typeof groupCatalogBadges]
+    return (
+      <span
+        key={key}
+        className={cn(
+          'inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-px text-xs',
+          meta.color
+        )}
+      >
+        <meta.icon className='size-3' aria-hidden />
+        {t(meta.label)}
+      </span>
+    )
+  })
+}

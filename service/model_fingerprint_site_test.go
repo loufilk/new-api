@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"net"
 	"net/url"
 	"os"
@@ -47,48 +46,32 @@ func setupFingerprintSchedulerDatabase(t *testing.T) {
 		&model.ModelFingerprintSiteProbe{}, &model.ModelTestRun{}, &model.SystemTask{}, &model.SystemTaskLock{}))
 }
 
-func TestModelFingerprintSiteSchedulerStartsFirstRunAndContinuesAfterPartialResult(t *testing.T) {
+func TestRetiredFingerprintSchedulerClosesQueuedJobsWithoutDispatch(t *testing.T) {
 	setupFingerprintSchedulerDatabase(t)
-	handler := modelFingerprintSiteHandler{}
+	handler := retiredFingerprintSiteHandler{}
 	withSystemTaskRegistry(t, handler)
-	config, err := model.UpdateModelFingerprintSiteConfig(t.Context(), 0, 1, model.ModelFingerprintSiteConfig{
-		Enabled: true, AutomaticEnabled: true, DefaultPeriodSecs: 3600,
-		Targets: []model.ModelFingerprintSiteTarget{
-			{Group: "default", Model: "first", Enabled: true},
-			{Group: "default", Model: "second", Enabled: true},
-			{Group: "default", Model: "disabled", Enabled: false},
-		},
-	})
+	_, err := model.UpdateModelFingerprintSiteConfig(t.Context(), 0, 1, model.ModelFingerprintSiteConfig{Enabled: true, AutomaticEnabled: true, DefaultPeriodSecs: 3600, Targets: []model.ModelFingerprintSiteTarget{{Group: "default", Model: "old-target", Enabled: true}}})
 	require.NoError(t, err)
-	var visited []string
-	fingerprintSiteExecutorMu.Lock()
-	previousExecutor := fingerprintSiteExecutor
-	fingerprintSiteExecutor = func(ctx context.Context, task *model.SystemTask, runnerID string, target model.ModelFingerprintSiteTarget, run *model.ModelFingerprintSiteRun) error {
-		visited = append(visited, target.Model)
-		result := model.ModelFingerprintSiteResult{Status: "succeeded", Assessment: "partial",
-			FingerprintResult: `{"status":"partial","used_outputs":1,"top_candidates":[{"model":"fixture","probability":null}],"probability_status":"unavailable"}`}
-		return model.FinishModelFingerprintSiteRun(ctx, run.ID, result, false)
-	}
-	fingerprintSiteExecutorMu.Unlock()
-	t.Cleanup(func() {
-		fingerprintSiteExecutorMu.Lock()
-		fingerprintSiteExecutor = previousExecutor
-		fingerprintSiteExecutorMu.Unlock()
-	})
 	runSystemTaskScheduler()
-	task, err := model.GetLatestSystemTask(handler.Type())
+	latest, err := model.GetLatestSystemTask(handler.Type())
 	require.NoError(t, err)
-	require.NotNil(t, task, "enabling automatic monitoring schedules its first run")
-	claimedTask, claimed, err := model.ClaimSystemTask(task.ID, task.Type, "monitor-test", time.Now().Add(time.Hour).Unix())
+	assert.Nil(t, latest)
+	queued, err := model.CreateSystemTask(handler.Type(), struct{}{}, nil)
+	require.NoError(t, err)
+	task, claimed, err := model.ClaimSystemTask(queued.ID, queued.Type, "retirement-test", time.Now().Add(time.Hour).Unix())
 	require.NoError(t, err)
 	require.True(t, claimed)
-	handler.Run(t.Context(), claimedTask, "monitor-test")
-	assert.Equal(t, []string{"first", "second"}, visited, "a partial first result must not starve the next enabled target")
-	finished, err := model.GetLatestSystemTask(handler.Type())
+	handler.Run(t.Context(), task, "retirement-test")
+	latest, err = model.GetLatestSystemTask(handler.Type())
 	require.NoError(t, err)
-	assert.Equal(t, model.SystemTaskStatusSucceeded, finished.Status)
-	after, err := model.GetModelFingerprintSiteConfig(t.Context())
+	require.NotNil(t, latest)
+	assert.Equal(t, model.SystemTaskStatusFailed, latest.Status)
+	var count int64
+	require.NoError(t, model.DB.Model(&model.ModelFingerprintSiteRun{}).Count(&count).Error)
+	assert.Zero(t, count)
+	runSystemTaskScheduler()
+	next, err := model.GetLatestSystemTask(handler.Type())
 	require.NoError(t, err)
-	assert.True(t, after.AutomaticEnabled)
-	assert.Equal(t, config.Version, after.Version)
+	require.NotNil(t, next)
+	assert.Equal(t, queued.ID, next.ID)
 }

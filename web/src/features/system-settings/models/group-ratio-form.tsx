@@ -25,7 +25,12 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { useFormState, useWatch, type UseFormReturn } from 'react-hook-form'
+import {
+  useFormState,
+  useWatch,
+  type FieldErrors,
+  type UseFormReturn,
+} from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
@@ -98,6 +103,8 @@ export type GroupFormValues = {
   GroupSpecialUsableGroup: string
 }
 
+export type GroupWorkspacePanel = 'pricing' | 'advanced'
+
 type GroupRatioFormProps = {
   form: UseFormReturn<GroupFormValues>
   baseline: GroupRenameEditableValues
@@ -106,6 +113,9 @@ type GroupRatioFormProps = {
     renames: GroupRenameMapping[]
   ) => Promise<GroupRatioSaveOutcome>
   isSaving: boolean
+  workspacePanel?: GroupWorkspacePanel
+  workspaceActive?: boolean
+  onWorkspacePricingValidityChange?: (valid: boolean) => void
 }
 
 export const GroupRatioForm = memo(function GroupRatioForm({
@@ -113,6 +123,9 @@ export const GroupRatioForm = memo(function GroupRatioForm({
   baseline,
   onSave,
   isSaving,
+  workspacePanel,
+  workspaceActive = true,
+  onWorkspacePricingValidityChange,
 }: GroupRatioFormProps) {
   const { t } = useTranslation()
   const values = useWatch({ control: form.control })
@@ -122,6 +135,14 @@ export const GroupRatioForm = memo(function GroupRatioForm({
   const [groupRenames, setGroupRenames] = useState<GroupRenameMapping[]>([])
   const [resolutions, setResolutions] = useState<GroupRenameResolutions>({})
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [pricingRowsValid, setPricingRowsValid] = useState(true)
+  const handlePricingValidityChange = useCallback(
+    (valid: boolean) => {
+      setPricingRowsValid(valid)
+      onWorkspacePricingValidityChange?.(valid)
+    },
+    [onWorkspacePricingValidityChange]
+  )
   const [renameSaveVersion, setRenameSaveVersion] = useState(0)
   const [pendingRename, setPendingRename] = useState<{
     values: GroupFormValues
@@ -132,7 +153,12 @@ export const GroupRatioForm = memo(function GroupRatioForm({
   const [saving, setSaving] = useState(false)
   const saveInFlight = useRef(false)
   const submitting = isSaving || isSubmitting || saving
-  const [section, setSection] = useState<GroupSettingsSection>('pricing')
+  const [section, setSection] = useState<GroupSettingsSection>(
+    workspacePanel ? 'overrides' : 'pricing'
+  )
+  const pricingPanel = workspacePanel === 'pricing'
+  const showVisual = pricingPanel || editMode === 'visual'
+  const showActions = !workspacePanel || workspaceActive
 
   const handleFieldChange = useCallback(
     (field: keyof GroupFormValues, value: string) => {
@@ -226,7 +252,13 @@ export const GroupRatioForm = memo(function GroupRatioForm({
 
   const handleSave = useCallback(
     async (values: GroupFormValues) => {
-      if (saveInFlight.current || pendingRename) return
+      if (
+        saveInFlight.current ||
+        pendingRename ||
+        !showActions ||
+        !pricingRowsValid
+      )
+        return
       setSaveError(null)
       const renames = mergeGroupRenameMappings(
         groupRenames,
@@ -267,8 +299,10 @@ export const GroupRatioForm = memo(function GroupRatioForm({
       groupRenames,
       onSave,
       pendingRename,
+      pricingRowsValid,
       resolutions,
       saveGroupChanges,
+      showActions,
       t,
     ]
   )
@@ -277,46 +311,72 @@ export const GroupRatioForm = memo(function GroupRatioForm({
     setEditMode((prev) => (prev === 'visual' ? 'json' : 'visual'))
   }, [])
 
+  const handleInvalid = (errors: FieldErrors<GroupFormValues>) => {
+    if (workspacePanel) {
+      setSaveError(t('Resolve the group changes before saving.'))
+    }
+    if (errors.MaxTokenAutoGroups) {
+      setEditMode('visual')
+      setSection('auto')
+      if (!pricingPanel) {
+        requestAnimationFrame(() => form.setFocus('MaxTokenAutoGroups'))
+      }
+    }
+  }
+
   return (
     <div className='space-y-6'>
-      <div className='flex flex-wrap items-center justify-between gap-3'>
-        <p className='text-muted-foreground text-sm'>
-          {editMode === 'visual'
-            ? t(
-                'Manage pricing, visibility and automatic routing for your groups.'
-              )
-            : t(
-                'Edit group settings as JSON. Changes are shared with the visual editor.'
+      {!pricingPanel && (
+        <div className='flex flex-wrap items-center justify-between gap-3'>
+          <p className='text-muted-foreground text-sm'>
+            {editMode === 'visual'
+              ? t(
+                  'Manage pricing, visibility and automatic routing for your groups.'
+                )
+              : t(
+                  'Edit group settings as JSON. Changes are shared with the visual editor.'
+                )}
+          </p>
+          <div className='flex shrink-0 gap-2'>
+            <Button
+              variant='outline'
+              size='sm'
+              onClick={() => setGuideOpen(true)}
+            >
+              <HelpCircle className='mr-2 h-4 w-4' />
+              {t('Usage guide')}
+            </Button>
+            <Button
+              variant='outline'
+              size='sm'
+              onClick={toggleEditMode}
+              disabled={
+                Boolean(workspacePanel) && (submitting || !pricingRowsValid)
+              }
+            >
+              {editMode === 'visual' ? (
+                <>
+                  <Code2 className='mr-2 h-4 w-4' />
+                  {t('Switch to JSON')}
+                </>
+              ) : (
+                <>
+                  <Eye className='mr-2 h-4 w-4' />
+                  {t('Switch to Visual')}
+                </>
               )}
-        </p>
-        <div className='flex shrink-0 gap-2'>
-          <Button
-            variant='outline'
-            size='sm'
-            onClick={() => setGuideOpen(true)}
-          >
-            <HelpCircle className='mr-2 h-4 w-4' />
-            {t('Usage guide')}
-          </Button>
-          <Button variant='outline' size='sm' onClick={toggleEditMode}>
-            {editMode === 'visual' ? (
-              <>
-                <Code2 className='mr-2 h-4 w-4' />
-                {t('Switch to JSON')}
-              </>
-            ) : (
-              <>
-                <Eye className='mr-2 h-4 w-4' />
-                {t('Switch to Visual')}
-              </>
-            )}
-          </Button>
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
-      <GroupPricingGuide open={guideOpen} onOpenChange={setGuideOpen} />
+      <GroupPricingGuide
+        open={showActions && guideOpen}
+        onOpenChange={setGuideOpen}
+        workspace={Boolean(workspacePanel)}
+      />
       <ConfirmDialog
-        open={pendingRename !== null}
+        open={showActions && pendingRename !== null}
         onOpenChange={(open) => {
           if (!open && !saveInFlight.current) setPendingRename(null)
         }}
@@ -370,25 +430,26 @@ export const GroupRatioForm = memo(function GroupRatioForm({
       </ConfirmDialog>
 
       <Form {...form}>
-        <SettingsPageActionsPortal>
-          <Button
-            type='button'
-            size='sm'
-            onClick={form.handleSubmit(handleSave, (errors) => {
-              if (errors.MaxTokenAutoGroups) {
-                setEditMode('visual')
-                setSection('auto')
-                requestAnimationFrame(() => form.setFocus('MaxTokenAutoGroups'))
-              }
-            })}
-            disabled={submitting}
-          >
-            {submitting ? t('Saving...') : t('Save group settings')}
-          </Button>
-        </SettingsPageActionsPortal>
+        {showActions && (
+          <SettingsPageActionsPortal>
+            <Button
+              type='button'
+              size='sm'
+              onClick={form.handleSubmit(handleSave, handleInvalid)}
+              disabled={submitting || !pricingRowsValid}
+            >
+              {submitting ? t('Saving...') : t('Save group settings')}
+            </Button>
+          </SettingsPageActionsPortal>
+        )}
         {saveError && (
           <p className='text-destructive text-sm' role='alert'>
             {saveError}
+          </p>
+        )}
+        {!pricingRowsValid && (
+          <p className='text-destructive text-sm' role='alert'>
+            {t('Resolve the group changes before saving.')}
           </p>
         )}
         {visibilityConflicts.length > 0 && (
@@ -413,85 +474,108 @@ export const GroupRatioForm = memo(function GroupRatioForm({
             </AlertDescription>
           </Alert>
         )}
-        <GroupRenamePanel
-          issues={renamePlan.unresolved}
-          reservedViolations={renamePlan.reservedViolations}
-          resolutions={resolutions}
-          onResolutionsChange={setResolutions}
-        />
-        {editMode === 'visual' ? (
-          <GroupRatioVisualEditor
-            key={renameSaveVersion}
-            pendingRenames={groupRenames}
-            onRenamesChange={handleRenamesChange}
-            section={section}
-            onSectionChange={setSection}
-            groupRatio={values.GroupRatio ?? ''}
-            topupGroupRatio={values.TopupGroupRatio ?? ''}
-            userUsableGroups={values.UserUsableGroups ?? ''}
-            groupGroupRatio={values.GroupGroupRatio ?? ''}
-            autoGroups={values.AutoGroups ?? ''}
-            maxTokenAutoGroupsField={
-              <FormField
-                control={form.control}
-                name='MaxTokenAutoGroups'
-                render={({ field, fieldState }) => (
-                  <FormItem data-invalid={fieldState.invalid}>
-                    <FormLabel>
-                      {t('Maximum custom groups per token')}
-                    </FormLabel>
-                    <FormControl>
-                      <Input
-                        {...safeNumberFieldProps(field)}
-                        type='number'
-                        min={1}
-                        step={1}
-                        aria-invalid={fieldState.invalid}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {t(
-                        'Limits only token-specific Auto snapshots. Global Auto inheritance remains unlimited.'
-                      )}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            }
-            defaultUseAutoGroupField={
-              <FormField
-                control={form.control}
-                name='DefaultUseAutoGroup'
-                render={({ field }) => (
-                  <SettingsSwitchItem>
-                    <SettingsSwitchContent>
-                      <FormLabel>
-                        {t('Use Auto for registration-generated keys')}
-                      </FormLabel>
-                      <FormDescription>
-                        {t(
-                          'Applies only to keys created automatically during registration. Users must select a group when creating a key manually.'
-                        )}
-                      </FormDescription>
-                    </SettingsSwitchContent>
-                    <FormControl>
-                      <Switch
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                      />
-                    </FormControl>
-                  </SettingsSwitchItem>
-                )}
-              />
-            }
-            groupSpecialUsableGroup={values.GroupSpecialUsableGroup ?? ''}
-            onChange={(field, value) =>
-              handleFieldChange(field as keyof GroupFormValues, value)
-            }
+        <div className='contents' inert={Boolean(workspacePanel) && submitting}>
+          <GroupRenamePanel
+            issues={renamePlan.unresolved}
+            reservedViolations={renamePlan.reservedViolations}
+            resolutions={resolutions}
+            onResolutionsChange={setResolutions}
           />
-        ) : (
-          <SettingsForm onSubmit={form.handleSubmit(handleSave)}>
+        </div>
+        {(showVisual || workspacePanel) && (
+          <div
+            hidden={!showVisual}
+            inert={Boolean(workspacePanel) && submitting}
+          >
+            <GroupRatioVisualEditor
+              key={renameSaveVersion}
+              pendingRenames={groupRenames}
+              onRenamesChange={handleRenamesChange}
+              section={pricingPanel ? 'pricing' : section}
+              workspacePanel={workspacePanel}
+              workspaceActive={showActions && showVisual}
+              onPricingValidityChange={
+                workspacePanel ? handlePricingValidityChange : undefined
+              }
+              onSectionChange={setSection}
+              groupRatio={values.GroupRatio ?? ''}
+              topupGroupRatio={values.TopupGroupRatio ?? ''}
+              userUsableGroups={values.UserUsableGroups ?? ''}
+              groupGroupRatio={values.GroupGroupRatio ?? ''}
+              autoGroups={values.AutoGroups ?? ''}
+              maxTokenAutoGroupsField={
+                showVisual ? (
+                  <FormField
+                    control={form.control}
+                    name='MaxTokenAutoGroups'
+                    render={({ field, fieldState }) => (
+                      <FormItem data-invalid={fieldState.invalid}>
+                        <FormLabel>
+                          {t('Maximum custom groups per token')}
+                        </FormLabel>
+                        <FormControl>
+                          <Input
+                            {...safeNumberFieldProps(field)}
+                            type='number'
+                            min={1}
+                            step={1}
+                            aria-invalid={fieldState.invalid}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t(
+                            'Limits only token-specific Auto snapshots. Global Auto inheritance remains unlimited.'
+                          )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                ) : null
+              }
+              defaultUseAutoGroupField={
+                workspacePanel ? null : (
+                  <FormField
+                    control={form.control}
+                    name='DefaultUseAutoGroup'
+                    render={({ field }) => (
+                      <SettingsSwitchItem>
+                        <SettingsSwitchContent>
+                          <FormLabel>
+                            {t('Use Auto for registration-generated keys')}
+                          </FormLabel>
+                          <FormDescription>
+                            {t(
+                              'Applies only to keys created automatically during registration. Users must select a group when creating a key manually.'
+                            )}
+                          </FormDescription>
+                        </SettingsSwitchContent>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </SettingsSwitchItem>
+                    )}
+                  />
+                )
+              }
+              groupSpecialUsableGroup={values.GroupSpecialUsableGroup ?? ''}
+              onChange={(field, value) =>
+                handleFieldChange(field as keyof GroupFormValues, value)
+              }
+            />
+          </div>
+        )}
+        {!showVisual && (
+          <SettingsForm
+            inert={Boolean(workspacePanel) && submitting}
+            onSubmit={form.handleSubmit(
+              handleSave,
+              workspacePanel ? handleInvalid : undefined
+            )}
+          >
             <FormField
               control={form.control}
               name='GroupRatio'
@@ -673,30 +757,32 @@ export const GroupRatioForm = memo(function GroupRatioForm({
               )}
             />
 
-            <FormField
-              control={form.control}
-              name='DefaultUseAutoGroup'
-              render={({ field }) => (
-                <SettingsSwitchItem>
-                  <SettingsSwitchContent>
-                    <FormLabel>
-                      {t('Use Auto for registration-generated keys')}
-                    </FormLabel>
-                    <FormDescription>
-                      {t(
-                        'Applies only to keys created automatically during registration. Users must select a group when creating a key manually.'
-                      )}
-                    </FormDescription>
-                  </SettingsSwitchContent>
-                  <FormControl>
-                    <Switch
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
-                    />
-                  </FormControl>
-                </SettingsSwitchItem>
-              )}
-            />
+            {!workspacePanel && (
+              <FormField
+                control={form.control}
+                name='DefaultUseAutoGroup'
+                render={({ field }) => (
+                  <SettingsSwitchItem>
+                    <SettingsSwitchContent>
+                      <FormLabel>
+                        {t('Use Auto for registration-generated keys')}
+                      </FormLabel>
+                      <FormDescription>
+                        {t(
+                          'Applies only to keys created automatically during registration. Users must select a group when creating a key manually.'
+                        )}
+                      </FormDescription>
+                    </SettingsSwitchContent>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </SettingsSwitchItem>
+                )}
+              />
+            )}
           </SettingsForm>
         )}
       </Form>
@@ -705,6 +791,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
 })
 
 type GroupPricingGuideProps = {
+  workspace?: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
 }
@@ -734,7 +821,11 @@ function GuideStepRow({
   )
 }
 
-function GroupPricingGuide({ open, onOpenChange }: GroupPricingGuideProps) {
+function GroupPricingGuide({
+  open,
+  onOpenChange,
+  workspace,
+}: GroupPricingGuideProps) {
   const { t } = useTranslation()
 
   return (
@@ -987,9 +1078,13 @@ vip          0.5     ${t('No')}                ${t('Assigned by administrator on
                 </p>
                 <GuideCodeBlock>{`["default", "vip"]`}</GuideCodeBlock>
                 <p className='text-muted-foreground text-sm leading-6'>
-                  {t(
-                    'Applies only to keys created automatically during registration. Users must select a group when creating a key manually.'
-                  )}
+                  {workspace
+                    ? t(
+                        'Applies to existing API keys using Auto. New API keys use a single selected group.'
+                      )
+                    : t(
+                        'Applies only to keys created automatically during registration. Users must select a group when creating a key manually.'
+                      )}
                 </p>
               </AccordionContent>
             </AccordionItem>

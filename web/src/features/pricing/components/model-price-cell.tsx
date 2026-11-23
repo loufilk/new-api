@@ -30,6 +30,7 @@ import {
   getDynamicPricingSummary,
   isUnconfiguredTaskUsageModel,
 } from '../lib/dynamic-price'
+import { activeBillingExpressions } from '../lib/market-groups'
 import { isTokenBasedModel } from '../lib/model-helpers'
 import { withBasePricing } from '../lib/plugin-pricing'
 import { formatPrice, formatRequestPrice } from '../lib/price'
@@ -57,7 +58,8 @@ export function ModelPriceCell(props: {
   const options = props.options ?? {}
   const tokenUnit = options.tokenUnit ?? DEFAULT_TOKEN_UNIT
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
-  const billingTime = useBillingTime(model.billing_expr)
+  const expressions = useMemo(() => activeBillingExpressions([model]), [model])
+  const billingTime = useBillingTime(expressions)
   const dynamic = useMemo(
     () =>
       getDynamicPricingSummary(model, {

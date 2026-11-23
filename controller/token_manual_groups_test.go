@@ -19,40 +19,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestManualTokenGroupsCreateReorderAndStatusWithoutVirtualAuto(t *testing.T) {
+func TestLegacyManualTokenGroupsKeepOrderAndStatusWithoutVirtualAuto(t *testing.T) {
 	configureTokenAutoGroupsTest(t, "2", `["default"]`)
 	user := setupTokenAutoGroupsControllerTest(t)
 	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","vip":"VIP"}`))
-	request := baseAutoTokenRequest("manual-ordered")
-	request["auto_groups"] = []string{"vip", "default"}
-	ctx, rec := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", request, user.Id)
-	AddToken(ctx)
-	response := decodeAPIResponse(t, rec)
-	require.True(t, response.Success, response.Message)
-	var token model.Token
-	require.NoError(t, model.DB.Where("name = ?", request["name"]).First(&token).Error)
-	require.False(t, token.SmartRouting)
-	require.Equal(t, "auto", token.Group)
-	require.JSONEq(t, `["vip","default"]`, token.AutoGroups)
-	request["id"] = token.Id
-	request["auto_groups"] = []string{"default", "vip"}
-	ctx, rec = newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id)
+	token := seedToken(t, model.DB, user.Id, "manual-ordered", "synthetic-manual-ordered-key")
+	token.Group, token.CrossGroupRetry = "auto", true
+	require.NoError(t, token.SetAutoGroups([]string{"vip", "default"}))
+	require.NoError(t, model.DB.Save(token).Error)
+
+	request := map[string]any{"id": token.Id, "name": "renamed", "auto_groups": []string{"default", "vip"}}
+	ctx, rec := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id)
 	UpdateToken(ctx)
-	response = decodeAPIResponse(t, rec)
-	require.True(t, response.Success, response.Message)
+	assert.False(t, decodeAPIResponse(t, rec).Success)
 	delete(request, "auto_groups")
-	delete(request, "group")
 	ctx, rec = newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id)
 	UpdateToken(ctx)
 	require.True(t, decodeAPIResponse(t, rec).Success)
 	for _, status := range []int{common.TokenStatusDisabled, common.TokenStatusEnabled} {
 		ctx, rec = newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/?status_only=true", map[string]any{"id": token.Id, "status": status, "auto_groups": []string{"private"}}, user.Id)
 		UpdateToken(ctx)
-		response = decodeAPIResponse(t, rec)
+		response := decodeAPIResponse(t, rec)
 		require.True(t, response.Success, response.Message)
 	}
 	require.NoError(t, model.DB.First(&token, token.Id).Error)
-	assert.JSONEq(t, `["default","vip"]`, token.AutoGroups)
+	assert.Equal(t, "renamed", token.Name)
+	assert.JSONEq(t, `["vip","default"]`, token.AutoGroups)
 	assert.False(t, service.GroupInUserUsableGroups(user.Group, "auto"), "manual selections never grant inherited Auto")
 	ctx, rec = newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id+1)
 	UpdateToken(ctx)
@@ -78,7 +70,8 @@ func TestManualTokenGroupsRejectInvalidOrInheritedScopeWithoutVirtualAuto(t *tes
 		{"virtual group", []string{"auto"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			request := baseAutoTokenRequest(tc.name)
+			request := baseTokenRequest(tc.name)
+			request["group"] = "auto"
 			request["auto_groups"] = tc.groups
 			ctx, rec := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", request, user.Id)
 			AddToken(ctx)
@@ -92,7 +85,8 @@ func TestManualTokenGroupsRejectInvalidOrInheritedScopeWithoutVirtualAuto(t *tes
 			assert.Equal(t, token.AutoGroups, unchanged.AutoGroups)
 		})
 	}
-	request := baseAutoTokenRequest("inherited-omitted")
+	request := baseTokenRequest("inherited-omitted")
+	request["group"] = "auto"
 	ctx, rec := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", request, user.Id)
 	AddToken(ctx)
 	assert.False(t, decodeAPIResponse(t, rec).Success)

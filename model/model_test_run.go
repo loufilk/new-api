@@ -47,6 +47,8 @@ type ModelTestGate struct {
 var ErrModelTestLimit = errors.New("Model test rate or concurrency limit reached")
 var ErrModelTestConflict = errors.New("Model test request identifier already used")
 
+const KeyDiagnosticSource = "key-diagnostic"
+
 // The user row is the cross-node serialization point. Every application node
 // shares these limits; a process-local semaphore is not an authorization limit.
 func CreateModelTestRun(run *ModelTestRun) (replayed bool, err error) {
@@ -91,8 +93,10 @@ func CreateModelTestRun(run *ModelTestRun) (replayed bool, err error) {
 		}
 		// Recheck after the cross-node queue/owner locks. A valid quote acquired
 		// before a disable is not authority to create work after waiting here.
-		if err := requireModelTestTarget(tx, run.Group, run.Model); err != nil {
-			return err
+		if run.Source != KeyDiagnosticSource {
+			if err := requireModelTestTarget(tx, run.Group, run.Model); err != nil {
+				return err
+			}
 		}
 		now := time.Now().Unix()
 		// A crashed node is never retried automatically: the outcome and charge
@@ -207,4 +211,17 @@ func ListPublicModelTestRuns(ctx context.Context) ([]ModelTestPublicRun, error) 
 	}
 	_, result, err := ListModelFingerprintCurrentRuns(ctx, config.EnabledTargets())
 	return result, err
+}
+
+// Keep the replay tombstone and ordinary relay receipt separate. Do not publish
+// an answer to the shared fingerprint report or touch any quota/settlement row.
+func FinishKeyDiagnostic(run *ModelTestRun) error {
+	result := DB.Model(&ModelTestRun{}).Where("id = ? AND user_id = ? AND source = ? AND status = ?", run.ID, run.UserID, KeyDiagnosticSource, "running").Updates(map[string]any{"status": run.Status, "error_code": run.ErrorCode, "completed_at": run.CompletedAt, "artwork_html": run.ArtworkHTML})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrModelTestConflict
+	}
+	return nil
 }

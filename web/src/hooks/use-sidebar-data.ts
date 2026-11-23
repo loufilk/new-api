@@ -171,15 +171,6 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
                 },
               ]
             : []),
-          ...(user
-            ? [
-                {
-                  title: t('intelligence.title'),
-                  url: '/intelligence',
-                  icon: FlaskConical,
-                },
-              ]
-            : []),
           {
             title: t('Invitation Rewards'),
             url: '/affiliate',

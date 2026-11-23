@@ -16,13 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute } from '@tanstack/react-router'
-
-import { extensionConsoleTools } from '@/extensions'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_authenticated/intelligence/')({
-  component: () => {
-    const Page = extensionConsoleTools().intelligencePage
-    return <Page />
+  beforeLoad: () => {
+    throw redirect({ to: '/keys', replace: true })
   },
 })

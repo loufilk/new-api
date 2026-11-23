@@ -23,7 +23,7 @@ export const clineRoo: GuideDoc = {
   title: '接入 Cline / Roo Code',
   description:
     '在 VS Code 中配置 OpenAI Compatible 供应商，并确认工具调用可用。',
-  updated: '2026-08-30',
+  updated: '2026-11-23',
   body: `
 > 编码代理高度依赖**工具调用**。选模型时先确认它支持 tools，否则代理会一直卡在「无法编辑文件」。
 
@@ -40,7 +40,7 @@ export const clineRoo: GuideDoc = {
 2. **API Provider** 选择 \`OpenAI Compatible\`。不要选 Anthropic 或 OpenAI 官方选项，那两个会走各自的固定域名。
 3. **Base URL** 填 \`{{BASE_URL}}/v1\`。
 4. **API Key** 填控制台创建的令牌。
-5. **Model ID** 手动填入 [定价页](/pricing) 中的真实 id。这两个扩展通常不会自动拉取列表。
+5. **Model ID**：用同一把密钥查询 \`GET /v1/models\`，手动填入支持工具调用的模型 ID。
 6. 如果设置里有 \`Function Calling\` 或 \`Tool Use\` 开关，保持开启。
 
 ## 验证工具调用

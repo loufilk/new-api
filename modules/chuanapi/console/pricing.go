@@ -1,11 +1,13 @@
 package console
 
 import (
+	"context"
 	"math"
 	"net/http"
 	"slices"
 	"strconv"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
@@ -67,6 +69,10 @@ func buildPublicCatalog() publicCatalog {
 	groupRatio := make(map[string]float64)
 	publicGroups := make(map[string]string)
 	for group := range usableGroup {
+		if model.IsExclusiveGroup(group) {
+			delete(usableGroup, group)
+			continue
+		}
 		ratio, ok := ratios[group]
 		if !ok || math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 {
 			continue
@@ -93,11 +99,39 @@ func buildPublicCatalog() publicCatalog {
 // the public usable-group set and never consults a caller identity, so a stray
 // cookie, bearer token, or forged context value cannot reveal private groups or
 // personalized discounts.
-func GetPublicPricing(c *gin.Context) {
+func readPublicCatalog(ctx context.Context) (publicCatalog, error) {
+	guard, err := model.BeginGroupConfigRead(ctx)
+	if err != nil {
+		return publicCatalog{}, err
+	}
+	defer guard.Close()
 	catalog := buildPublicCatalog()
+	if err := guard.Finish(); err != nil {
+		return publicCatalog{}, err
+	}
+	return catalog, nil
+}
+
+func GetPublicPricing(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	catalog, err := readPublicCatalog(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "Pricing is temporarily unavailable"})
+		return
+	}
 	publicVendorIDs := make(map[int]bool)
+	publicEndpointKeys := make(map[string]bool)
 	for _, row := range catalog.Models {
 		publicVendorIDs[row.VendorID] = true
+		for _, kind := range row.SupportedEndpointTypes {
+			publicEndpointKeys[string(kind)] = true
+		}
+	}
+	endpointMap := make(map[string]common.EndpointInfo)
+	for key, info := range model.GetSupportedEndpointMap() {
+		if publicEndpointKeys[key] {
+			endpointMap[key] = info
+		}
 	}
 	vendors := make([]gin.H, 0)
 	for _, vendor := range model.GetVendors() {
@@ -113,7 +147,7 @@ func GetPublicPricing(c *gin.Context) {
 		"vendors":                     vendors,
 		"group_ratio":                 catalog.GroupRatio,
 		"usable_group":                catalog.UsableGroup,
-		"supported_endpoint":          model.GetSupportedEndpointMap(),
+		"supported_endpoint":          endpointMap,
 		"auto_groups":                 catalog.AutoGroups,
 		"pricing_version":             pricingVersion,
 		"group_keys_are_display_only": true,

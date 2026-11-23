@@ -26,13 +26,13 @@ export const Route = createFileRoute('/_authenticated/system-settings')({
   beforeLoad: ({ location }) => {
     const { auth } = useAuthStore.getState()
 
-    const fingerprintSettings =
-      location.pathname === '/system-settings/content/model-tests'
-    const isAdmin = (auth.user?.role ?? 0) >= ROLE.ADMIN
     if (
-      auth.user?.role !== ROLE.SUPER_ADMIN &&
-      !(fingerprintSettings && isAdmin)
+      location.pathname.replace(/\/$/, '') ===
+      '/system-settings/content/model-tests'
     ) {
+      throw redirect({ to: '/keys', replace: true })
+    }
+    if (auth.user?.role !== ROLE.SUPER_ADMIN) {
       throw redirect({
         to: '/403',
       })

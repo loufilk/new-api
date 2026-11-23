@@ -28,7 +28,8 @@ import (
 	"github.com/google/uuid"
 )
 
-func init() { service.RegisterModelFingerprintSiteExecutor(executeSiteModelFingerprint) }
+// The paid executor is no longer registered. On upgrade a non-scheduled
+// retirement handler closes queued system tasks without dispatching probes.
 
 // Automatic work uses the ordinary group/model router and provider adaptors. It
 // never borrows a visitor/root account or changes a user's wallet. Only aggregate

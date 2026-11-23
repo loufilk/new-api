@@ -185,7 +185,10 @@ func modelSquareData[T any](t *testing.T, handler gin.HandlerFunc, path, userGro
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodGet, path, nil)
 	if userGroup != "" {
-		common.SetContextKey(ctx, constant.ContextKeyUserGroup, userGroup)
+		var user model.User
+		require.NoError(t, model.DB.Where("username = ?", "square-"+userGroup).First(&user).Error)
+		ctx.Set("id", user.Id)
+		common.SetContextKey(ctx, constant.ContextKeyUserGroup, user.Group)
 	}
 	handler(ctx)
 	require.Equal(t, http.StatusOK, recorder.Code)
@@ -212,6 +215,10 @@ func TestModelSquareGroupVisibility(t *testing.T) {
 				t.Skip("set " + dialect.env + " to run this database")
 			}
 			db := modelManagementDB(t, dialect.kind, os.Getenv(dialect.env))
+			require.NoError(t, db.AutoMigrate(&model.Token{}, &model.SubscriptionPlan{}))
+			for _, group := range []string{"default", "internal"} {
+				require.NoError(t, db.Create(&model.User{Username: "square-" + group, Group: group, AffCode: "square-" + group, Status: common.UserStatusEnabled}).Error)
+			}
 			require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Public"}`))
 			require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"internal":2}`))
 			require.NoError(t, db.Create(&[]model.Ability{
@@ -224,10 +231,10 @@ func TestModelSquareGroupVisibility(t *testing.T) {
 			model.InvalidatePricingCache()
 			t.Cleanup(model.InvalidatePricingCache)
 
-			guest := pricingByModelName(modelSquareData[[]model.Pricing](t, GetPricing, "/api/pricing", ""))
-			assert.Equal(t, []string{"default"}, guest["shared"].EnableGroup)
-			assert.Equal(t, []string{"all"}, guest["wildcard"].EnableGroup)
-			assert.NotContains(t, guest, "private-only")
+			ordinary := pricingByModelName(modelSquareData[[]model.Pricing](t, GetPricing, "/api/pricing", "default"))
+			assert.Equal(t, []string{"default"}, ordinary["shared"].EnableGroup)
+			assert.Equal(t, []string{"all"}, ordinary["wildcard"].EnableGroup)
+			assert.NotContains(t, ordinary, "private-only")
 			member := pricingByModelName(modelSquareData[[]model.Pricing](t, GetPricing, "/api/pricing", "internal"))
 			assert.ElementsMatch(t, []string{"default", "internal"}, member["shared"].EnableGroup)
 			assert.Equal(t, []string{"internal"}, member["private-only"].EnableGroup)
@@ -241,10 +248,10 @@ func TestModelSquareGroupVisibility(t *testing.T) {
 			}).Error)
 			const detailPath = "/api/perf-metrics?model=shared"
 			const summaryPath = "/api/perf-metrics/summary?recent_model=private-only"
-			detail := modelSquareData[perfmetrics.QueryResult](t, GetPerfMetrics, detailPath, "")
+			detail := modelSquareData[perfmetrics.QueryResult](t, GetPerfMetrics, detailPath, "default")
 			require.Len(t, detail.Groups, 1)
 			assert.Equal(t, "default", detail.Groups[0].Group)
-			denied := modelSquareData[perfmetrics.QueryResult](t, GetPerfMetrics, detailPath+"&group=internal", "")
+			denied := modelSquareData[perfmetrics.QueryResult](t, GetPerfMetrics, detailPath+"&group=internal", "default")
 			assert.Empty(t, denied.Groups)
 			summary := modelSquareData[perfmetrics.SummaryAllResult](t, GetPerfMetricsSummary, summaryPath, "")
 			require.Len(t, summary.Models, 1)
@@ -256,8 +263,12 @@ func TestModelSquareGroupVisibility(t *testing.T) {
 			assert.Equal(t, "internal", allowed.Groups[0].Group)
 
 			require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{}`))
-			assert.Empty(t, modelSquareData[[]model.Pricing](t, GetPricing, "/api/pricing", ""))
-			assert.Empty(t, modelSquareData[perfmetrics.QueryResult](t, GetPerfMetrics, detailPath, "").Groups)
+			// The authenticated member retains its own group, but an anonymous
+			// market summary has no implicit group after public visibility is cleared.
+			remaining := pricingByModelName(modelSquareData[[]model.Pricing](t, GetPricing, "/api/pricing", "default"))
+			assert.Equal(t, []string{"default"}, remaining["shared"].EnableGroup)
+			assert.NotContains(t, remaining, "private-only")
+			assert.Len(t, modelSquareData[perfmetrics.QueryResult](t, GetPerfMetrics, detailPath, "default").Groups, 1)
 			assert.Empty(t, modelSquareData[perfmetrics.SummaryAllResult](t, GetPerfMetricsSummary, summaryPath, "").Models)
 			dashboard := modelSquareData[perfmetrics.SummaryAllResult](t, GetDashboardPerfMetricsSummary, "/api/data/perf-metrics/summary", "")
 			assert.Len(t, dashboard.Models, 2)

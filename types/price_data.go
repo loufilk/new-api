@@ -16,9 +16,13 @@ const ClaudeCacheCreation1hMultiplier = 6 / 3.75
 const OpenAICacheCreation12hMultiplier = 2
 
 type GroupRatioInfo struct {
-	GroupRatio        float64
-	GroupSpecialRatio float64
-	HasSpecialRatio   bool
+	GroupRatio             float64  `json:"group_ratio"`
+	GroupSpecialRatio      float64  `json:"group_special_ratio"`
+	HasSpecialRatio        bool     `json:"has_special_ratio"`
+	RateSource             string   `json:"rate_source,omitempty"`
+	InheritedGroupRatio    float64  `json:"inherited_group_ratio"`
+	UserGroupPriceOverride *float64 `json:"user_group_price_override,omitempty"`
+	UserPricingRevision    int64    `json:"user_pricing_revision,omitempty"`
 }
 
 type PriceData struct {

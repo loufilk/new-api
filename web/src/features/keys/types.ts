@@ -99,10 +99,6 @@ export interface SearchApiKeysParams {
 }
 
 export interface ApiKeyFormData {
-  smart_routing: boolean
-  routing_strategy: 'auto' | 'success_rate' | 'price' | 'speed'
-  no_retry_within_group: boolean
-  project_label: string
   name: string
   remain_quota: number
   expired_time: number
@@ -110,35 +106,12 @@ export interface ApiKeyFormData {
   model_limits_enabled: boolean
   model_limits: string
   allow_ips: string
-  allow_user_quota_query: boolean
   group: string
-  auto_groups: string[]
-  cross_group_retry: boolean
 }
 
-export type ApiKeyUpdateData = Omit<ApiKeyFormData, 'remain_quota'> & {
+export type ApiKeyUpdateData = Partial<ApiKeyFormData> & {
   id: number
-  remain_quota?: number
   expected_version?: number
-}
-
-export interface TokenGroupDetail {
-  name: string
-  ratio: number
-  success_rate: number | null
-  available: boolean
-  history: Array<number | null>
-}
-
-export interface TokenAutoGroupsConfig {
-  groups: string[]
-  max_count: number
-  selectable_groups?: string[]
-  group_details?: TokenGroupDetail[]
-  metrics_available?: boolean
-  window_start?: number
-  window_end?: number
-  history_bucket_seconds?: number
 }
 
 export type CCSwitchApp = 'claude' | 'codex' | 'gemini'

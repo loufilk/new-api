@@ -53,18 +53,7 @@ function getSystemSettingsNavGroups(
   badges: SidebarBadges
 ): NavGroup[] {
   const role = useAuthStore.getState().auth.user?.role ?? 0
-  if (role !== ROLE.SUPER_ADMIN) {
-    if (role < ROLE.ADMIN) return []
-    return [
-      {
-        id: 'system-administration',
-        title: t('System Administration'),
-        items: getContentSectionNavItems(t).filter(
-          (item) => item.url === '/system-settings/content/model-tests'
-        ),
-      },
-    ]
-  }
+  if (role !== ROLE.SUPER_ADMIN) return []
   return [
     {
       id: 'system-administration',

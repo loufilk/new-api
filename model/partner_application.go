@@ -27,26 +27,60 @@ const (
 )
 
 const (
-	PartnerContactWeChat = "wechat"
-	PartnerContactQQ    = "qq"
-	PartnerContactEmail = "email"
-	PartnerContactPhone = "phone"
-	PartnerContactOther = "other"
+	PartnerContactWeChat   = "wechat"
+	PartnerContactQQ       = "qq"
+	PartnerContactEmail    = "email"
+	PartnerContactPhone    = "phone"
+	PartnerContactOther    = "other"
+	PartnerContactTelegram = "telegram"
 
-	PartnerPlatformOpenAI      = "openai"
-	PartnerPlatformAnthropic   = "anthropic"
-	PartnerPlatformGoogle      = "google"
-	PartnerPlatformDeepSeek    = "deepseek"
-	PartnerPlatformAlibaba     = "alibaba"
-	PartnerPlatformByteDance   = "bytedance"
-	PartnerPlatformZhipu       = "zhipu"
-	PartnerPlatformMoonshot    = "moonshot"
-	PartnerPlatformOther       = "other"
+	PartnerPlatformOpenAI    = "openai"
+	PartnerPlatformAnthropic = "anthropic"
+	PartnerPlatformGoogle    = "google"
+	PartnerPlatformDeepSeek  = "deepseek"
+	PartnerPlatformAlibaba   = "alibaba"
+	PartnerPlatformByteDance = "bytedance"
+	PartnerPlatformZhipu     = "zhipu"
+	PartnerPlatformMoonshot  = "moonshot"
+	PartnerPlatformOther     = "other"
 )
+
+// Supplier platform codes label quotes; they do not select relay channels.
+var partnerQuotePlatforms = []string{
+	PartnerPlatformOpenAI, PartnerPlatformAnthropic, PartnerPlatformGoogle, "aws",
+	PartnerPlatformDeepSeek, "azure", "vertex", PartnerPlatformAlibaba, PartnerPlatformByteDance,
+	PartnerPlatformMoonshot, "zhipu-glm", "tencent", "xai", "newapi", "advanced-custom",
+	"sub2api", "mistral", "cohere", "openrouter", "ollama", "vllm", "siliconflow", "perplexity",
+	"baidu", "baidu-v2", "xunfei", "lingyiwanwu", "minimax", "coze", "360", "xinference",
+	"dify", "jina", "cloudflare", "custom", "codex", "fastgpt", "mokaai", "mjproxy",
+	"mjproxy-plus", "sunoapi", "kling", "jimeng", "vidu", "submodel", "doubao", "sora",
+	"replicate", "ohmygpt", PartnerPlatformZhipu, "sglang", PartnerPlatformOther,
+}
+
+// The previous candidate (0dff956) accepts exactly these persisted codes.
+// Keep the allowlists independent from future additions to the live catalogue.
+func isLegacyPartnerContactType(value string) bool {
+	switch value {
+	case PartnerContactWeChat, PartnerContactQQ, PartnerContactEmail, PartnerContactPhone, PartnerContactOther:
+		return true
+	default:
+		return false
+	}
+}
+
+func isLegacyPartnerQuotePlatform(value string) bool {
+	switch value {
+	case PartnerPlatformOpenAI, PartnerPlatformAnthropic, PartnerPlatformGoogle, PartnerPlatformDeepSeek,
+		PartnerPlatformAlibaba, PartnerPlatformByteDance, PartnerPlatformZhipu, PartnerPlatformMoonshot, PartnerPlatformOther:
+		return true
+	default:
+		return false
+	}
+}
 
 var (
 	ErrPartnerApplicationInvalid   = errors.New("Invalid partner application")
-	ErrPartnerApplicationTooLarge = errors.New("Partner application request is too large")
+	ErrPartnerApplicationTooLarge  = errors.New("Partner application request is too large")
 	ErrPartnerApplicationConflict  = errors.New("This application changed. Reload and try again.")
 	ErrPartnerApplicationForbidden = errors.New("Unauthorized, insufficient privileges")
 	ErrPartnerApplicationsClosed   = errors.New("Partner applications are currently closed")
@@ -71,25 +105,25 @@ type PartnerQuote struct {
 }
 
 type PartnerApplication struct {
-	ID            int64           `json:"id" gorm:"primaryKey"`
-	UserID        int             `json:"user_id" gorm:"not null;index:idx_partner_application_user_status,priority:1;uniqueIndex:idx_partner_application_request,priority:1"`
-	RequestKey    string          `json:"-" gorm:"size:96;not null;uniqueIndex:idx_partner_application_request,priority:2"`
-	RequestHash   string          `json:"-" gorm:"size:64;not null"`
-	ActiveUserID  *int            `json:"-" gorm:"uniqueIndex:idx_partner_application_active_user"`
-	SiteName      string          `json:"site_name" gorm:"size:120;not null"`
-	SiteURL       string          `json:"site_url" gorm:"size:2048;not null"`
-	ContactType   string          `json:"contact_type" gorm:"size:24;not null"`
-	Contact       string          `json:"contact" gorm:"size:200;not null"`
-	Description   string          `json:"description" gorm:"type:text;not null"`
-	QuotesJSON    string          `json:"-" gorm:"type:text;not null"`
-	Quotes        []PartnerQuote  `json:"quotes" gorm:"-"`
-	Status        string          `json:"status" gorm:"size:24;not null;index:idx_partner_application_user_status,priority:2;index:idx_partner_application_status"`
-	Revision      int64           `json:"revision" gorm:"not null"`
-	ReviewNote    string          `json:"review_note" gorm:"size:1000;not null"`
-	ReviewedBy    int             `json:"reviewed_by" gorm:"not null"`
-	CreatedAt     int64           `json:"created_at" gorm:"not null;autoCreateTime:false"`
-	UpdatedAt     int64           `json:"updated_at" gorm:"not null;autoUpdateTime:false"`
-	Events        []PartnerApplicationEvent `json:"events,omitempty" gorm:"-"`
+	ID           int64                     `json:"id" gorm:"primaryKey"`
+	UserID       int                       `json:"user_id" gorm:"not null;index:idx_partner_application_user_status,priority:1;uniqueIndex:idx_partner_application_request,priority:1"`
+	RequestKey   string                    `json:"-" gorm:"size:96;not null;uniqueIndex:idx_partner_application_request,priority:2"`
+	RequestHash  string                    `json:"-" gorm:"size:64;not null"`
+	ActiveUserID *int                      `json:"-" gorm:"uniqueIndex:idx_partner_application_active_user"`
+	SiteName     string                    `json:"site_name" gorm:"size:120;not null"`
+	SiteURL      string                    `json:"site_url" gorm:"size:2048;not null"`
+	ContactType  string                    `json:"contact_type" gorm:"size:24;not null"`
+	Contact      string                    `json:"contact" gorm:"size:200;not null"`
+	Description  string                    `json:"description" gorm:"type:text;not null"`
+	QuotesJSON   string                    `json:"-" gorm:"type:text;not null"`
+	Quotes       []PartnerQuote            `json:"quotes" gorm:"-"`
+	Status       string                    `json:"status" gorm:"size:24;not null;index:idx_partner_application_user_status,priority:2;index:idx_partner_application_status"`
+	Revision     int64                     `json:"revision" gorm:"not null"`
+	ReviewNote   string                    `json:"review_note" gorm:"size:1000;not null"`
+	ReviewedBy   int                       `json:"reviewed_by" gorm:"not null"`
+	CreatedAt    int64                     `json:"created_at" gorm:"not null;autoCreateTime:false"`
+	UpdatedAt    int64                     `json:"updated_at" gorm:"not null;autoUpdateTime:false"`
+	Events       []PartnerApplicationEvent `json:"events,omitempty" gorm:"-"`
 }
 
 type PartnerApplicationEvent struct {
@@ -180,7 +214,7 @@ func normalizePartnerApplication(input PartnerApplicationInput) (PartnerApplicat
 	input.Description = strings.TrimSpace(input.Description)
 	if !validPartnerSingleLine(input.SiteName, 2, 120) ||
 		input.SiteURL != "" && !validPartnerHTTPS(input.SiteURL) ||
-		!slices.Contains([]string{PartnerContactWeChat, PartnerContactQQ, PartnerContactEmail, PartnerContactPhone, PartnerContactOther}, input.ContactType) ||
+		!slices.Contains([]string{PartnerContactWeChat, PartnerContactQQ, PartnerContactEmail, PartnerContactPhone, PartnerContactOther, PartnerContactTelegram}, input.ContactType) ||
 		!validPartnerSingleLine(input.Contact, 1, 200) || !validPartnerText(input.Description, 0, 3000) ||
 		len(input.Quotes) == 0 || len(input.Quotes) > 20 {
 		return PartnerApplicationInput{}, ErrPartnerApplicationInvalid
@@ -197,7 +231,7 @@ func normalizePartnerApplication(input PartnerApplicationInput) (PartnerApplicat
 		quote.Models = strings.TrimSpace(quote.Models)
 		quote.Rate = strings.TrimSpace(quote.Rate)
 		quote.Description = strings.TrimSpace(quote.Description)
-		if !slices.Contains([]string{PartnerPlatformOpenAI, PartnerPlatformAnthropic, PartnerPlatformGoogle, PartnerPlatformDeepSeek, PartnerPlatformAlibaba, PartnerPlatformByteDance, PartnerPlatformZhipu, PartnerPlatformMoonshot, PartnerPlatformOther}, quote.Platform) ||
+		if !slices.Contains(partnerQuotePlatforms, quote.Platform) ||
 			!partnerQuoteRatePattern.MatchString(quote.Rate) || !validPartnerSingleLine(quote.Group, 1, 120) ||
 			!validPartnerSingleLine(quote.Models, 0, 500) || !validPartnerText(quote.Description, 0, 500) {
 			return PartnerApplicationInput{}, ErrPartnerApplicationInvalid
@@ -272,6 +306,12 @@ func CreatePartnerApplication(ctx context.Context, userID int, requestKey string
 	input, err := normalizePartnerApplication(input)
 	if err != nil || !partnerRequestKeyValid(requestKey) {
 		return nil, ErrPartnerApplicationInvalid
+	}
+	// Run ordinary validation first; invalid inputs stay invalid in either mode.
+	// Do not translate new codes to "other" or silently drop a quote.
+	if !common.IM21RolloutActive() && (!isLegacyPartnerContactType(input.ContactType) ||
+		slices.ContainsFunc(input.Quotes, func(q PartnerQuote) bool { return !isLegacyPartnerQuotePlatform(q.Platform) })) {
+		return nil, common.ErrIM21RolloutLocked
 	}
 	encoded, err := common.Marshal(input)
 	if err != nil {

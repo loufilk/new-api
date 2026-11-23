@@ -19,11 +19,29 @@ For commercial licensing, please contact support@quantumnous.com
 import { describe, expect, it } from 'vitest'
 
 import { getEndpoint } from '../../content/endpoints'
+import { quickStart } from '../../content/guides/quick-start'
 import { generateEndpointSamples } from '../api-samples'
-import { buildEndpointMarkdown } from '../docs-utils'
+import { buildEndpointMarkdown, buildGuideMarkdown } from '../docs-utils'
 
 const origin = 'https://gateway.example'
 describe('copyable API examples', () => {
+  it('shows how to list models with the same API key before sending the first chat request', () => {
+    const markdown = buildGuideMarkdown(quickStart, origin)
+    const examples = [...markdown.matchAll(/```bash\n([\s\S]*?)\n```/g)].map(
+      (match) => match[1]
+    )
+    const list = examples.findIndex((code) =>
+      code.includes(`${origin}/v1/models`)
+    )
+    const chat = examples.findIndex((code) =>
+      code.includes(`${origin}/v1/chat/completions`)
+    )
+    expect(list).toBeGreaterThanOrEqual(0)
+    expect(chat).toBeGreaterThan(list)
+    for (const code of [examples[list], examples[chat]]) {
+      expect(code).toContain('Authorization: Bearer $WANCHUAN_API_KEY')
+    }
+  })
   it('explains persisted image timeouts as queryable failures, not successful or retryable submissions', () => {
     for (const id of ['image-generations', 'image-edits']) {
       const response = getEndpoint(id).responses.find(

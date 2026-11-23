@@ -30,7 +30,7 @@ test('the public console bridge preserves fresh account pool access checks', asy
   expect(typeof tools.accountPoolPage).toBe('function')
   expect(typeof tools.accountPoolDiagnostics).toBe('function')
   expect(typeof tools.affiliatePage).toBe('function')
-  expect(typeof tools.intelligencePage).toBe('function')
+  expect(tools).not.toHaveProperty('intelligencePage')
   expect(typeof tools.loadPartnerApplicationPage).toBe('function')
   expect(typeof tools.loadPartnerApplicationManagementPage).toBe('function')
   const client = new QueryClient()

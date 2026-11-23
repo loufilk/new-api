@@ -16,12 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { MarketKeyDraft } from '../lib/market-key-draft'
 import { ApiKeysDeleteDialog } from './api-keys-delete-dialog'
 import { ApiKeysMutateDrawer } from './api-keys-mutate-drawer'
 import { useApiKeys } from './api-keys-provider'
 import { CCSwitchDialog } from './dialogs/cc-switch-dialog'
 
-export function ApiKeysDialogs() {
+export function ApiKeysDialogs({ draft }: { draft?: MarketKeyDraft }) {
   const { open, setOpen, currentRow, resolvedKey } = useApiKeys()
 
   return (
@@ -35,6 +36,7 @@ export function ApiKeysDialogs() {
         open={open === 'create' || open === 'update'}
         onOpenChange={(isOpen) => !isOpen && setOpen(null)}
         currentRow={open === 'update' ? currentRow || undefined : undefined}
+        draft={open === 'create' ? draft : undefined}
       />
       <ApiKeysDeleteDialog />
       <CCSwitchDialog

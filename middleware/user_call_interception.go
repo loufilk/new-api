@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -97,11 +98,30 @@ func authorizeUserCallReply(c *gin.Context, request *ModelRequest) bool {
 			abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgRelayAccessTokenUnsupported))
 			return false
 		}
-		usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-		if request.Group != "" && request.Group != usingGroup && !service.GroupInUserUsableGroups(usingGroup, request.Group) {
-			abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
-			return false
-		}
+		return authorizePlaygroundGroup(c, request.Group)
+	}
+	return true
+}
+
+func authorizePlaygroundGroup(c *gin.Context, selectedGroup string) bool {
+	guard, err := model.BeginRequestGroupConfigRead(c)
+	if err != nil {
+		abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgGroupConfigChanged), "group_config_changed")
+		return false
+	}
+	defer guard.Close()
+	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	if userGroup == "" {
+		userGroup = common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+	}
+	err = service.ValidateTokenGroupForUser(c.Request.Context(), c.GetInt("id"), userGroup, selectedGroup)
+	if errors.Is(err, service.ErrTokenGroupForbidden) || errors.Is(err, service.ErrTokenGroupDeprecated) {
+		abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
+		return false
+	}
+	if err != nil || guard.Finish() != nil {
+		abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgGroupConfigChanged), "group_config_changed")
+		return false
 	}
 	return true
 }

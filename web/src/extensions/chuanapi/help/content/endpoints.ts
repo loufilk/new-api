@@ -99,7 +99,7 @@ function imageResponses(
 }
 
 const commonAvailabilityNote =
-  '本页是网关路由与协议的静态说明，不代表端点已启用或模型实际可用。实际可用性取决于模型目录、令牌分组、渠道和插件配置及上游能力；请先在模型广场确认 model id。'
+  '本页是网关路由与协议的静态说明，不代表端点已启用或模型实际可用。实际可用性取决于模型目录、令牌分组、渠道和插件配置及上游能力；请用请求所用的密钥查询 GET /v1/models，再用目标协议发起实际调用。'
 
 export const endpointCategories: readonly EndpointCategory[] = [
   {
@@ -112,14 +112,14 @@ export const endpointCategories: readonly EndpointCategory[] = [
         name: '列出模型',
         method: 'GET',
         path: '/v1/models',
-        description: '列出当前令牌分组可访问的模型目录。',
+        description: '列出当前密钥可见的模型。',
         relayFormat: 'OpenAI / Anthropic / Gemini 模型列表兼容格式',
         responseType: 'application/json',
         notes: [
-          '响应会按令牌分组过滤，不保证与未登录定价目录完全相同。',
+          '列表按密钥分组和模型限制等条件过滤。公开定价目录不能替代这份列表。',
           commonAvailabilityNote,
         ],
-        responses: responses('模型列表', '返回可用模型对象数组。', {
+        responses: responses('模型列表', '返回当前密钥可见的模型对象数组。', {
           object: 'list',
           data: [
             {
@@ -140,7 +140,7 @@ export const endpointCategories: readonly EndpointCategory[] = [
         relayFormat: 'OpenAI / Anthropic 模型详情兼容格式',
         responseType: 'application/json',
         notes: [
-          '把路径中的 {model} 替换为定价页显示的完整 model id。',
+          '把路径中的 {model} 替换为同一把密钥查询 GET /v1/models 得到的完整 ID；不可见的模型会返回 404。',
           commonAvailabilityNote,
         ],
         responses: responses('模型详情', '返回单个模型对象。', {

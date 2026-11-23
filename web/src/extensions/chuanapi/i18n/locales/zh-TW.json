@@ -320,6 +320,7 @@
     "Select an invoice category": "請選擇開票類目",
     "This invoice category is currently unavailable": "此開票類目暫不受理",
     "Update the server to edit invoice categories.": "請先更新伺服器，再編輯開票類目。",
-    "Invoice fee refund": "開票手續費退款"
+    "Invoice fee refund": "開票手續費退款",
+    "Site information": "網站資訊"
   }
 }

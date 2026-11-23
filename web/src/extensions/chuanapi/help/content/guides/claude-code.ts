@@ -23,7 +23,7 @@ export const claudeCode: GuideDoc = {
   title: '接入 Claude Code',
   description: '两个环境变量即可让 Claude Code 使用本站。',
   recommended: true,
-  updated: '2026-08-30',
+  updated: '2026-11-23',
   body: `
 > 注意这里的 Base URL 是 \`{{BASE_URL}}\`，**不带 /v1**。Claude Code 会自己拼上 \`/v1/messages\`，多写一层会得到 404。这和 OpenAI SDK 需要带 \`/v1\` 正好相反。
 
@@ -37,7 +37,7 @@ Claude Code 走 Anthropic Messages 协议。本站提供 \`/v1/messages\` 端点
 ## 配置步骤
 
 1. 把密钥写入环境变量 \`WANCHUAN_API_KEY\`，不要硬编码进 shell 配置文件。
-2. 从 [定价页](/pricing) 复制一个真实 model id，替换下面的 \`MODEL_ID\`。
+2. 用准备给 Claude Code 的密钥查询 \`GET /v1/models\`，选择支持 Messages 的模型 ID，替换下面的 \`MODEL_ID\`。
 3. 设置三个环境变量后启动 Claude Code。
 
 \`\`\`bash
@@ -76,13 +76,13 @@ curl {{BASE_URL}}/v1/messages \\
   }'
 \`\`\`
 
-返回 200 且带有模型回答，说明 Base URL、密钥与 model id 三者都对，剩下的问题就只可能出在 Claude Code 自身的配置上。
+收到模型回复说明这把密钥本次能通过 Messages 调用该模型。若 Claude Code 仍报错，再核对它实际读取的密钥、模型和请求参数。
 
 ## 常见问题
 
-- **404**：多半是 \`ANTHROPIC_BASE_URL\` 后面多写了 \`/v1\`，变成了 \`/v1/v1/messages\`；也可能是 model id 不在目录里。
+- **404**：多半是 \`ANTHROPIC_BASE_URL\` 后面多写了 \`/v1\`，变成了 \`/v1/v1/messages\`；也可能是当前分组未配置该模型。
 - **401**：密钥没生效。检查环境变量是否在当前 shell 里真的展开了，以及是否误把 \`Bearer \` 前缀写进了密钥值。
-- **403**：密钥有效，但令牌分组不包含该模型。换一个目录中可用的 model id 再试。
+- **403**：请按响应体核对密钥的模型限制或来源 IP 限制。
 - **429**：触发限流。降低并发后重试，重试策略见 [错误码与排障](/help/guides/troubleshooting)。
 - **官方账号登录态干扰**：如果之前登录过 Claude 官方账号，客户端可能优先用已保存的凭据。退出登录后再用环境变量方式启动。
 

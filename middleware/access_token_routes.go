@@ -41,6 +41,18 @@ func accessTokenScopeRule(scope string) accessTokenRouteRule {
 // Casbin-guarded routes declare themselves through
 // DeclareAccessTokenPermissionRoute when they are registered.
 var accessTokenRouteRules = map[string]accessTokenRouteRule{
+	// Supplier contact and application records are browser-session-only.
+	"GET /api/partner-applications/settings":          accessTokenSessionRule,
+	"GET /api/partner-applications":                   accessTokenSessionRule,
+	"POST /api/partner-applications":                  accessTokenSessionRule,
+	"GET /api/partner-applications/:id":               accessTokenSessionRule,
+	"POST /api/partner-applications/:id/cancel":       accessTokenSessionRule,
+	"GET /api/admin/partner-applications/settings":    accessTokenSessionRule,
+	"PUT /api/admin/partner-applications/settings":    accessTokenSessionRule,
+	"GET /api/admin/partner-applications":             accessTokenSessionRule,
+	"GET /api/admin/partner-applications/:id":         accessTokenSessionRule,
+	"POST /api/admin/partner-applications/:id/review": accessTokenSessionRule,
+
 	// Private customer invoice records and finance actions are session-only.
 	"GET /api/invoice/config":                                 accessTokenSessionRule,
 	"GET /api/invoice/summary":                                accessTokenSessionRule,
@@ -173,18 +185,22 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/models/bonus_eligible/audits": accessTokenScopeRule("model:read"),
 	"POST /api/models/bonus_eligible/batch": accessTokenScopeRule("model:write"),
 	// Management PATs must not obtain inference access through the playground.
-	"GET /api/user/playground/bootstrap":         accessTokenSessionRule,
-	"POST /api/user/playground/chat":             accessTokenSessionRule,
-	"GET /api/user/account-pool":                 accessTokenSessionRule,
-	"GET /api/option/account-pool":               accessTokenSessionRule,
-	"GET /api/user/model-tests":                  accessTokenSessionRule,
-	"GET /api/user/model-tests/site":             accessTokenSessionRule,
-	"GET /api/model-tests/settings":              accessTokenSessionRule,
-	"PUT /api/model-tests/settings":              accessTokenSessionRule,
-	"POST /api/user/model-tests/estimate":        accessTokenSessionRule,
-	"POST /api/user/model-tests/runs":            accessTokenSessionRule,
-	"GET /api/user/model-tests/runs/:id":         accessTokenSessionRule,
-	"POST /api/user/model-tests/runs/:id/cancel": accessTokenSessionRule,
+	"GET /api/user/playground/bootstrap":            accessTokenSessionRule,
+	"POST /api/user/playground/chat":                accessTokenSessionRule,
+	"GET /api/user/account-pool":                    accessTokenSessionRule,
+	"GET /api/option/account-pool":                  accessTokenSessionRule,
+	"GET /api/user/model-tests":                     accessTokenSessionRule,
+	"GET /api/user/key-diagnostics/options":         accessTokenSessionRule,
+	"GET /api/user/key-diagnostics/keys/:id/models": accessTokenSessionRule,
+	"POST /api/user/key-diagnostics/runs":           accessTokenSessionRule,
+	"GET /api/user/key-diagnostics/runs/:id":        accessTokenSessionRule,
+	"GET /api/user/model-tests/site":                accessTokenSessionRule,
+	"GET /api/model-tests/settings":                 accessTokenSessionRule,
+	"PUT /api/model-tests/settings":                 accessTokenSessionRule,
+	"POST /api/user/model-tests/estimate":           accessTokenSessionRule,
+	"POST /api/user/model-tests/runs":               accessTokenSessionRule,
+	"GET /api/user/model-tests/runs/:id":            accessTokenSessionRule,
+	"POST /api/user/model-tests/runs/:id/cancel":    accessTokenSessionRule,
 	// Support has no dedicated PAT scope. Require login sessions rather than
 	// grant ticket access through unrelated profile or user permissions.
 	"GET /api/support/tickets":                                      accessTokenSessionRule,
@@ -250,12 +266,18 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"DELETE /api/subscription/admin/user_subscriptions/:id":          accessTokenScopeRule("billing:write"),
 
 	// router/api-router.go: /api/option
+	"GET /api/option/group-catalog":                              accessTokenSessionRule,
+	"PATCH /api/option/group-catalog":                            accessTokenSessionRule,
+	"GET /api/option/group-entitlements/:user_id":                accessTokenSessionRule,
+	"PUT /api/option/group-entitlements/:user_id":                accessTokenSessionRule,
 	"GET /api/option/":                                           accessTokenScopeRule("option:read"),
 	"GET /api/option/request_policy":                             accessTokenScopeRule("option:read"),
 	"PATCH /api/option/request_policy":                           accessTokenScopeRule("option:write"),
 	"PUT /api/option/":                                           accessTokenScopeRule("option:write"),
 	"PUT /api/option/passkey/domains":                            accessTokenScopeRule("option:write"),
 	"GET /api/option/model_pricing":                              accessTokenScopeRule("option:read"),
+	"GET /api/option/user-group-pricing":                         accessTokenScopeRule("option:read"),
+	"PUT /api/option/user-group-pricing":                         accessTokenScopeRule("option:write"),
 	"GET /api/option/model_pricing/issues":                       accessTokenScopeRule("option:read"),
 	"PATCH /api/option/model_pricing":                            accessTokenScopeRule("option:write"),
 	"POST /api/option/model_pricing/convert":                     accessTokenScopeRule("option:read"),

@@ -1125,6 +1125,9 @@ func (user *User) delete(identity *AuthSessionIdentity, guards ...*AdminUserMuta
 		if err != nil {
 			return err
 		}
+		if err := deleteUserGroupEntitlementsTx(tx, user.Id); err != nil {
+			return err
+		}
 		return tx.Delete(user).Error
 	}); err != nil {
 		return 0, err
@@ -1168,6 +1171,9 @@ func (user *User) hardDelete(guard *AdminUserMutationGuard) (int64, error) {
 			}
 		}
 		if err := deleteUserAuthenticationData(tx, user.Id); err != nil {
+			return err
+		}
+		if err := deleteUserGroupEntitlementsTx(tx, user.Id); err != nil {
 			return err
 		}
 		return tx.Unscoped().Delete(user).Error

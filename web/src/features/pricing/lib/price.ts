@@ -65,13 +65,16 @@ export function calculateTokenPrice(
   type: PriceType,
   ratio: number
 ): number {
+  if (!hasRatio(model.model_ratio)) return Number.NaN
   const base = model.model_ratio * 2 * ratio
 
   switch (type) {
     case 'input':
       return base
     case 'output':
-      return base * model.completion_ratio
+      return hasRatio(model.completion_ratio)
+        ? base * model.completion_ratio
+        : Number.NaN
     case 'cache':
       return hasRatio(model.cache_ratio)
         ? base * Number(model.cache_ratio)
@@ -165,6 +168,7 @@ export function formatPrice(
     usdExchangeRate
   )
 
+  if (!Number.isFinite(priceInUSD) || priceInUSD < 0) return '-'
   const price = priceInUSD / TOKEN_UNIT_DIVISORS[tokenUnit]
   return formatBillingCurrencyFromUSD(price, {
     showSymbol: showCurrencySymbol,
@@ -201,6 +205,7 @@ export function formatGroupPrice(
     usdExchangeRate
   )
 
+  if (!Number.isFinite(priceInUSD) || priceInUSD < 0) return '-'
   const price = priceInUSD / TOKEN_UNIT_DIVISORS[tokenUnit]
   return formatBillingCurrencyFromUSD(price, {
     digitsLarge: 4,
@@ -220,7 +225,11 @@ export function formatFixedPrice(
   usdExchangeRate = 1,
   groupRatio: Record<string, number>
 ): string {
-  if (model.quota_type !== QUOTA_TYPE_VALUES.REQUEST) {
+  if (
+    model.quota_type !== QUOTA_TYPE_VALUES.REQUEST ||
+    !Number.isFinite(model.model_price) ||
+    (model.model_price ?? -1) < 0
+  ) {
     return '-'
   }
 
@@ -252,7 +261,11 @@ export function formatRequestPrice(
   selectedGroup?: string,
   showCurrencySymbol = true
 ): string {
-  if (model.quota_type !== QUOTA_TYPE_VALUES.REQUEST) {
+  if (
+    model.quota_type !== QUOTA_TYPE_VALUES.REQUEST ||
+    !Number.isFinite(model.model_price) ||
+    (model.model_price ?? -1) < 0
+  ) {
     return '-'
   }
 
