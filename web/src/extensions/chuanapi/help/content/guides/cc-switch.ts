@@ -23,7 +23,7 @@ export const ccSwitch: GuideDoc = {
   title: 'CC Switch 一键配置',
   description:
     '用开源工具 CC Switch 把本站保存为供应商，在多个中转站之间一键切换。',
-  updated: '2026-08-30',
+  updated: '2026-11-23',
   body: `
 > CC Switch 是第三方开源桌面工具（[GitHub](https://github.com/farion1231/cc-switch)），用于管理 Claude Code / Codex CLI 的供应商配置并一键切换。它把你手动改环境变量、改 config.toml 的工作变成了点选。
 
@@ -45,7 +45,7 @@ export const ccSwitch: GuideDoc = {
    - **API Key**：控制台创建的令牌
 4. 把新供应商设为当前生效项，重启 Claude Code / Codex CLI 生效。
 
-模型名填 [定价页](/pricing) 中的真实 model id，不要沿用其他平台的名称。
+用这里配置的密钥查询 \`GET /v1/models\`，从列表中选择支持客户端协议的模型 ID。
 
 ## 验证
 
@@ -63,7 +63,7 @@ curl {{BASE_URL}}/v1/messages \\
 
 - **切换后客户端仍连旧供应商**：客户端进程没重启，或 shell 里残留了手动 export 的 \`ANTHROPIC_BASE_URL\` 等变量覆盖了工具写入的配置。
 - **404**：Base URL 带没带 \`/v1\` 与客户端类型不匹配，见上面第 3 步的区分。
-- **401 / 403**：令牌拼错或分组不含该模型，见 [认证与密钥](/help/guides/authentication)。
+- **401 / 403**：401 先检查密钥输入，403 按响应体检查模型或 IP 限制，见 [认证与密钥](/help/guides/authentication)。
 
 本页基于 2026-08-30 校订。CC Switch 为第三方工具，界面与字段名随版本变化，以其官方文档为准；本站与该工具无隶属关系。
 `.trim(),
