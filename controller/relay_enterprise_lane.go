@@ -163,6 +163,10 @@ func maybeRelayEnterpriseLane(c *gin.Context, format types.RelayFormat) bool {
 }
 
 func serveEnterpriseLane(c *gin.Context, format types.RelayFormat, identity model.EnterpriseLaneIdentity) {
+	timing := model.BeginEnterpriseLaneTiming(common.GetContextKeyTime(c, constant.ContextKeyGatewayIngressTime))
+	if timing != nil {
+		defer func() { timing.Finish(c.Writer.Status()) }()
+	}
 	channelID, modelName, ok := middleware.EnterpriseLaneRoutePolicy(c)
 	liveChannel := common.GetContextKeyInt(c, constant.ContextKeyChannelId)
 	selectedModel := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
@@ -228,6 +232,8 @@ func serveEnterpriseLane(c *gin.Context, format types.RelayFormat, identity mode
 		enterpriseLaneReplyError(c, http.StatusServiceUnavailable, "enterprise_lane_admission_unavailable")
 		return
 	}
+	timing.Mark(model.EnterpriseLaneTimingPreflight)
+	billingCtx := timing.WithContext(ctx)
 	// Prepare a nonreplayable POST before allocating/claiming. A positive content
 	// length and nil GetBody prevent Transport retry; no credential/header from
 	// the client or channel is sent to the synthetic provider.
@@ -241,10 +247,22 @@ func serveEnterpriseLane(c *gin.Context, format types.RelayFormat, identity mode
 	req.ContentLength = int64(len(wire))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
-	reservation, cancel := context.WithTimeout(ctx, enterpriseLaneSQLTime)
+	permit, denial := middleware.AcquireEnterpriseLaneAdmission(c)
+	if denial != "" {
+		enterpriseLaneReplyError(c, http.StatusServiceUnavailable, denial)
+		return
+	}
+	defer permit.Release() // Panic safety; ordinary paths release before writing a response.
+	if permit.Waited() && !recheckEnterpriseLaneAfterWait(c, identity, liveChannel, groupName, endpoint, text.String(), chat, price, promptCap, completionCap, cap) {
+		permit.Release()
+		enterpriseLaneReplyError(c, http.StatusServiceUnavailable, "enterprise_lane_admission_stale")
+		return
+	}
+	reservation, cancel := context.WithTimeout(billingCtx, enterpriseLaneSQLTime)
 	_, err = model.ReserveEnterpriseLane(reservation, model.DB, identity, id, cap)
 	cancel()
 	if err != nil {
+		permit.Release()
 		status := http.StatusServiceUnavailable
 		if errors.Is(err, model.ErrEnterpriseLaneCapacity) {
 			status = http.StatusTooManyRequests
@@ -255,15 +273,18 @@ func serveEnterpriseLane(c *gin.Context, format types.RelayFormat, identity mode
 	if ctx.Err() != nil || model.CheckRequestGroupConfigVersion(c) != nil || service.CheckModelTestAccess(c) != nil || middleware.RecheckEnterpriseLaneAuthorization(c) != nil {
 		// No mark has been attempted here. Refund itself must prove the owner
 		// remained undispatched, so even a conflicting proof cannot release it.
-		refundCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), enterpriseLaneSQLTime)
+		refundCtx, stop := context.WithTimeout(context.WithoutCancel(billingCtx), enterpriseLaneSQLTime)
 		_, _ = model.RefundEnterpriseLane(refundCtx, model.DB, identity, id)
 		stop()
+		permit.Release()
 		enterpriseLaneReplyError(c, http.StatusServiceUnavailable, "enterprise_lane_admission_unavailable")
 		return
 	}
-	dispatch, cancel := context.WithTimeout(ctx, enterpriseLaneSQLTime)
+	timing.Mark(model.EnterpriseLaneTimingRecheck)
+	dispatch, cancel := context.WithTimeout(billingCtx, enterpriseLaneSQLTime)
 	_, err = model.MarkEnterpriseLaneDispatched(dispatch, model.DB, identity, id)
 	cancel()
+	permit.Release() // Mark has returned; never keep an intake permit across any upstream or client I/O.
 	if err != nil {
 		// A lost dispatch ACK is not a resend nor a refund grant.
 		enterpriseLaneReplyError(c, http.StatusServiceUnavailable, "enterprise_lane_dispatch_unconfirmed")
@@ -272,7 +293,7 @@ func serveEnterpriseLane(c *gin.Context, format types.RelayFormat, identity mode
 	unknown := true
 	defer func() {
 		if unknown {
-			markCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), enterpriseLaneSQLTime)
+			markCtx, stop := context.WithTimeout(context.WithoutCancel(billingCtx), enterpriseLaneSQLTime)
 			defer stop()
 			if _, err := model.MarkEnterpriseLaneDeliveryUnknown(markCtx, model.DB, identity, id); err != nil {
 				common.SysError("enterprise lane delivery remains unresolved")
@@ -282,6 +303,7 @@ func serveEnterpriseLane(c *gin.Context, format types.RelayFormat, identity mode
 	if ctx.Err() != nil {
 		return
 	}
+	timing.Mark(model.EnterpriseLaneTimingProviderDo)
 	resp, err := enterpriseLaneHTTP.Do(req)
 	if err != nil {
 		enterpriseLaneReplyError(c, http.StatusBadGateway, "enterprise_lane_delivery_unconfirmed")
@@ -293,7 +315,10 @@ func serveEnterpriseLane(c *gin.Context, format types.RelayFormat, identity mode
 		enterpriseLaneReplyError(c, http.StatusBadGateway, "enterprise_lane_delivery_unconfirmed")
 		return
 	}
-	terminal, err := readEnterpriseLaneStream(resp.Body, modelName, promptCap, completionCap, func(frame []byte) { writeEnterpriseLaneFrame(c, frame) })
+	terminal, err := readEnterpriseLaneStream(resp.Body, modelName, promptCap, completionCap, func(frame []byte) {
+		timing.Mark(model.EnterpriseLaneTimingFirstOutputAttempt)
+		writeEnterpriseLaneFrame(c, frame)
+	})
 	if err != nil {
 		enterpriseLaneReplyError(c, http.StatusBadGateway, "enterprise_lane_usage_unconfirmed")
 		return
@@ -303,8 +328,9 @@ func serveEnterpriseLane(c *gin.Context, format types.RelayFormat, identity mode
 		enterpriseLaneReplyError(c, http.StatusBadGateway, "enterprise_lane_usage_out_of_bounds")
 		return
 	}
+	timing.Mark(model.EnterpriseLaneTimingUsageConfirmed)
 	unknown = false // verified evidence may already be durable on a lost ACK
-	settle, cancel := context.WithTimeout(context.WithoutCancel(ctx), enterpriseLaneSQLTime)
+	settle, cancel := context.WithTimeout(context.WithoutCancel(billingCtx), enterpriseLaneSQLTime)
 	usage := model.EnterpriseLaneUsage{ChannelID: liveChannel, PromptTokens: terminal.prompt, CompletionTokens: terminal.completion, Model: modelName, Group: groupName, ObservedAt: time.Now().Unix()}
 	owner, err := model.SettleEnterpriseLaneWithUsage(settle, model.DB, identity, id, actual, usage)
 	cancel()
@@ -312,6 +338,7 @@ func serveEnterpriseLane(c *gin.Context, format types.RelayFormat, identity mode
 		enterpriseLaneReplyError(c, http.StatusServiceUnavailable, "enterprise_lane_settlement_unconfirmed")
 		return
 	}
+	timing.Mark(model.EnterpriseLaneTimingTerminalAttempt)
 	writeEnterpriseLaneFrame(c, terminal.finishFrame)
 	writeEnterpriseLaneFrame(c, terminal.usageFrame)
 	writeEnterpriseLaneFrame(c, []byte("[DONE]"))

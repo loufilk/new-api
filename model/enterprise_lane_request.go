@@ -24,7 +24,10 @@ func enterpriseLaneValidateRequest(db *gorm.DB, identity EnterpriseLaneIdentity,
 
 func lockEnterpriseLaneRequest(tx *gorm.DB, identity EnterpriseLaneIdentity, requestID string) (EnterpriseLaneRequest, error) {
 	var request EnterpriseLaneRequest
-	if err := lockForUpdate(tx).Where("request_id = ?", requestID).Take(&request).Error; err != nil {
+	lockTiming := startEnterpriseLaneLockTiming(tx, false)
+	err := lockForUpdate(tx).Where("request_id = ?", requestID).Take(&request).Error
+	lockTiming.finish(err == nil)
+	if err != nil {
 		return request, err
 	}
 	if request.EnterpriseLaneIdentity != identity || request.Held <= 0 || request.Held > common.MaxQuota || request.Actual < 0 || request.Actual > common.MaxQuota {
@@ -71,7 +74,7 @@ func ReserveEnterpriseLane(ctx context.Context, db *gorm.DB, identity Enterprise
 	if target <= 0 || target > common.MaxQuota {
 		return request, ErrEnterpriseLaneCapacity
 	}
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := enterpriseLaneTimedTransaction(ctx, db, enterpriseLaneTimingReserve, func(tx *gorm.DB) error {
 		request = EnterpriseLaneRequest{RequestID: requestID, EnterpriseLaneIdentity: identity, Held: target, State: EnterpriseLaneHeld}
 		claim := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "request_id"}}, DoNothing: true}).Create(&request)
 		if claim.Error != nil {
@@ -126,7 +129,7 @@ func ReserveEnterpriseLane(ctx context.Context, db *gorm.DB, identity Enterprise
 // grant. A lost ACK or replay does not grant a second upstream attempt and
 // never authorizes a refund. Stop blocks new dispatch claims for the lane.
 func MarkEnterpriseLaneDispatched(ctx context.Context, db *gorm.DB, identity EnterpriseLaneIdentity, requestID string) (EnterpriseLaneRequest, error) {
-	return updateEnterpriseLaneRequest(ctx, db, identity, requestID, func(tx *gorm.DB, request *EnterpriseLaneRequest) error {
+	return updateEnterpriseLaneRequest(ctx, db, identity, requestID, enterpriseLaneTimingDispatch, func(tx *gorm.DB, request *EnterpriseLaneRequest) error {
 		if request.State != EnterpriseLaneHeld {
 			return ErrEnterpriseLaneState
 		}
@@ -145,7 +148,7 @@ func MarkEnterpriseLaneDispatched(ctx context.Context, db *gorm.DB, identity Ent
 // MarkEnterpriseLaneDeliveryUnknown permanently blocks automatic refund and
 // settlement of a dispatched request whose provider result could not be proven.
 func MarkEnterpriseLaneDeliveryUnknown(ctx context.Context, db *gorm.DB, identity EnterpriseLaneIdentity, requestID string) (EnterpriseLaneRequest, error) {
-	return updateEnterpriseLaneRequest(ctx, db, identity, requestID, func(tx *gorm.DB, request *EnterpriseLaneRequest) error {
+	return updateEnterpriseLaneRequest(ctx, db, identity, requestID, enterpriseLaneTimingUnknown, func(tx *gorm.DB, request *EnterpriseLaneRequest) error {
 		switch request.State {
 		case EnterpriseLaneUnknown:
 			return nil
@@ -173,7 +176,7 @@ func settleEnterpriseLane(ctx context.Context, db *gorm.DB, identity EnterpriseL
 	if actual < 0 || actual > common.MaxQuota {
 		return EnterpriseLaneRequest{}, ErrEnterpriseLaneExposure
 	}
-	frozen, err := updateEnterpriseLaneRequest(ctx, db, identity, requestID, func(tx *gorm.DB, request *EnterpriseLaneRequest) error {
+	frozen, err := updateEnterpriseLaneRequest(ctx, db, identity, requestID, enterpriseLaneTimingFreeze, func(tx *gorm.DB, request *EnterpriseLaneRequest) error {
 		switch request.State {
 		case EnterpriseLaneDispatch:
 			request.Actual, request.State, request.Usage = actual, EnterpriseLaneObserved, usage
@@ -203,7 +206,7 @@ func settleEnterpriseLane(ctx context.Context, db *gorm.DB, identity EnterpriseL
 }
 
 func completeEnterpriseLaneObserved(ctx context.Context, db *gorm.DB, identity EnterpriseLaneIdentity, requestID string, expected *EnterpriseLaneRequest) (EnterpriseLaneRequest, error) {
-	return updateEnterpriseLaneRequest(ctx, db, identity, requestID, func(tx *gorm.DB, request *EnterpriseLaneRequest) error {
+	return updateEnterpriseLaneRequest(ctx, db, identity, requestID, enterpriseLaneTimingSettle, func(tx *gorm.DB, request *EnterpriseLaneRequest) error {
 		if request.State == EnterpriseLaneReview {
 			return ErrEnterpriseLaneExposure
 		}
@@ -233,7 +236,7 @@ func completeEnterpriseLaneObserved(ctx context.Context, db *gorm.DB, identity E
 // prevents a later claim. A dispatched zero-actual response must be settled
 // with explicit measured evidence instead of reusing this refund transition.
 func RefundEnterpriseLane(ctx context.Context, db *gorm.DB, identity EnterpriseLaneIdentity, requestID string) (EnterpriseLaneRequest, error) {
-	return updateEnterpriseLaneRequest(ctx, db, identity, requestID, func(tx *gorm.DB, request *EnterpriseLaneRequest) error {
+	return updateEnterpriseLaneRequest(ctx, db, identity, requestID, enterpriseLaneTimingRefund, func(tx *gorm.DB, request *EnterpriseLaneRequest) error {
 		if request.State == EnterpriseLaneRefunded && request.RefundProof == EnterpriseLaneRefundNeverDispatched {
 			return nil
 		}
@@ -264,12 +267,12 @@ func releaseEnterpriseLaneRequestHold(tx *gorm.DB, request EnterpriseLaneRequest
 	return saveEnterpriseLane(tx, lane)
 }
 
-func updateEnterpriseLaneRequest(ctx context.Context, db *gorm.DB, identity EnterpriseLaneIdentity, requestID string, update func(*gorm.DB, *EnterpriseLaneRequest) error) (EnterpriseLaneRequest, error) {
+func updateEnterpriseLaneRequest(ctx context.Context, db *gorm.DB, identity EnterpriseLaneIdentity, requestID string, op enterpriseLaneTimingOp, update func(*gorm.DB, *EnterpriseLaneRequest) error) (EnterpriseLaneRequest, error) {
 	var request EnterpriseLaneRequest
 	if err := enterpriseLaneValidateRequest(db, identity, requestID); err != nil {
 		return request, err
 	}
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := enterpriseLaneTimedTransaction(ctx, db, op, func(tx *gorm.DB) error {
 		var err error
 		request, err = lockEnterpriseLaneRequest(tx, identity, requestID)
 		if err != nil {

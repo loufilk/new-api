@@ -72,21 +72,35 @@ func TestEnterpriseLaneGatewayNegativePostgres(t *testing.T) {
 	}
 
 	for key, val := range map[string]string{
-		"SQL_DSN":                            dsn,
-		"LOG_SQL_DSN":                        "",
-		"REDIS_CONN_STRING":                  "",
-		"HTTP_BIND_ADDRESS":                  "127.0.0.1",
-		"TRUSTED_PROXIES":                    "none",
-		"ENTERPRISE_LANE_LAB_ENABLED":        "true",
-		"ENTERPRISE_LANE_LAB_STOP":           "false",
-		"ENTERPRISE_LANE_LAB_TOKEN_ID":       "701",
-		"ENTERPRISE_LANE_LAB_COUNT":          "1",
-		"ENTERPRISE_LANE_LAB_PAID_PER_LANE":  "200",
-		"ENTERPRISE_LANE_LAB_TOKEN_PER_LANE": "200",
-		"ENTERPRISE_LANE_LAB_CHANNEL_ID":     "702",
-		"ENTERPRISE_LANE_LAB_MODEL":          "gpt-4o",
+		"SQL_DSN":                                dsn,
+		"LOG_SQL_DSN":                            "",
+		"REDIS_CONN_STRING":                      "",
+		"HTTP_BIND_ADDRESS":                      "127.0.0.1",
+		"TRUSTED_PROXIES":                        "none",
+		"ENTERPRISE_LANE_LAB_ENABLED":            "true",
+		"ENTERPRISE_LANE_LAB_STOP":               "false",
+		"ENTERPRISE_LANE_LAB_TOKEN_ID":           "701",
+		"ENTERPRISE_LANE_LAB_COUNT":              "1",
+		"ENTERPRISE_LANE_LAB_PAID_PER_LANE":      "200",
+		"ENTERPRISE_LANE_LAB_TOKEN_PER_LANE":     "200",
+		"ENTERPRISE_LANE_LAB_CHANNEL_ID":         "702",
+		"ENTERPRISE_LANE_LAB_MODEL":              "gpt-4o",
+		"ENTERPRISE_LANE_LAB_ADMISSION_GLOBAL":   "1",
+		"ENTERPRISE_LANE_LAB_ADMISSION_PER_LANE": "1",
 	} {
 		t.Setenv(key, val)
+	}
+	waitScenario := os.Getenv("TEST_ENTERPRISE_LANE_ROUTER_WAIT_SCENARIO")
+	switch waitScenario {
+	case "":
+	case "positive", "revoked":
+		// Stay within the same 50 ms runtime hard bound; establish actual
+		// queuing with an admission counter and a PG lock barrier.
+		t.Setenv("ENTERPRISE_LANE_LAB_ADMISSION_WAIT_MS", "50")
+		t.Setenv("ENTERPRISE_LANE_LAB_ADMISSION_QUEUE_GLOBAL", "1")
+		t.Setenv("ENTERPRISE_LANE_LAB_ADMISSION_QUEUE_PER_LANE", "1")
+	default:
+		t.Fatalf("unsupported isolated wait fixture")
 	}
 	// Validate all isolation preconditions BEFORE opening a database handle.
 	require.NoError(t, middleware.PrepareEnterpriseLaneGateway(false))
@@ -196,6 +210,114 @@ func TestEnterpriseLaneGatewayNegativePostgres(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, unsupported.StatusCode, "%s", unsupportedBody)
 	assert.Zero(t, upstreamCalls.Load())
 
+	if waitScenario != "" {
+		// The holder holds the only gate permit, pending on this real lane
+		// row. The second request must enter the separate pre-DB queue. The
+		// gate counter proves it did not simply enter TokenAuth late.
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		defer cancel()
+		blocker := db.WithContext(ctx).Begin()
+		require.NoError(t, blocker.Error)
+		defer blocker.Rollback()
+		var lane model.EnterpriseLane
+		require.NoError(t, blocker.Clauses(clause.Locking{Strength: "UPDATE"}).First(&lane).Error)
+		var pgPID int
+		require.NoError(t, blocker.Raw("SELECT pg_backend_pid()").Scan(&pgPID).Error)
+		type response struct {
+			resp *http.Response
+			err  error
+		}
+		start := func(ctx context.Context) <-chan response {
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, gateway.URL+chatPath, strings.NewReader(body))
+			require.NoError(t, err)
+			req.Header.Set("Authorization", "Bearer sk-"+token.Key)
+			req.Header.Set("Content-Type", "application/json")
+			out := make(chan response, 1)
+			go func() { r, err := gateway.Client().Do(req); out <- response{r, err} }()
+			return out
+		}
+		holderCtx, cancelHolder := context.WithCancel(ctx)
+		defer cancelHolder()
+		holder := start(holderCtx)
+		require.EventuallyWithT(t, func(c *assert.CollectT) {
+			var blocked bool
+			err := db.WithContext(ctx).Raw("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid)))", pgPID).Scan(&blocked).Error
+			assert.NoError(c, err)
+			assert.True(c, blocked)
+		}, time.Second, time.Millisecond)
+		waiter := start(ctx)
+		require.Eventually(t, func() bool {
+			stat := middleware.EnterpriseLaneAdmissionWaitSnapshot()
+			return stat != nil && len(stat.Slots) == 1 && stat.Slots[0].Enqueued == 1
+		}, time.Second, time.Millisecond)
+		if waitScenario == "revoked" {
+			require.NoError(t, db.WithContext(ctx).Model(&token).Update("status", common.TokenStatusDisabled).Error)
+		}
+		cancelHolder()
+		select {
+		case result := <-holder:
+			if result.resp != nil {
+				_ = result.resp.Body.Close()
+			}
+			require.ErrorIs(t, result.err, context.Canceled)
+		case <-ctx.Done():
+			t.Fatal("holder did not cancel")
+		}
+		require.NoError(t, blocker.Commit().Error)
+		var result response
+		select {
+		case result = <-waiter:
+			require.NoError(t, result.err)
+			require.NotNil(t, result.resp)
+		case <-ctx.Done():
+			t.Fatal("queued HTTP request did not return")
+		}
+		defer result.resp.Body.Close()
+		if waitScenario == "positive" {
+			unblock()
+		}
+		full, err := io.ReadAll(result.resp.Body)
+		require.NoError(t, err)
+		rid := result.resp.Header.Get(common.RequestIdKey)
+		require.NotEmpty(t, rid)
+		waitMetric := middleware.EnterpriseLaneAdmissionWaitSnapshot()
+		require.EqualValues(t, 1, waitMetric.Slots[0].Granted, "request must have actually waited and reached the controller freshness path")
+		require.Zero(t, waitMetric.Slots[0].Timeout)
+		require.Zero(t, waitMetric.Pending)
+		require.Zero(t, waitMetric.Active)
+		if waitScenario == "revoked" {
+			require.Equal(t, http.StatusServiceUnavailable, result.resp.StatusCode, "%s", full)
+			require.Contains(t, string(full), "enterprise_lane_admission_stale")
+			require.Zero(t, upstreamCalls.Load())
+			var owners int64
+			require.NoError(t, db.Model(&model.EnterpriseLaneRequest{}).Count(&owners).Error)
+			require.Zero(t, owners)
+			require.NoError(t, db.Model(&model.BillingFinalization{}).Count(&owners).Error)
+			require.Zero(t, owners)
+			require.NoError(t, db.First(&lane, "lane_key = ?", lane.LaneKey).Error)
+			require.Zero(t, lane.Held)
+			require.Zero(t, lane.Spent)
+			require.Equal(t, 200, lane.PaidAvailable)
+			require.Equal(t, 200, lane.TokenAvailable)
+			return
+		}
+		require.Equal(t, http.StatusOK, result.resp.StatusCode, "%s", full)
+		require.Contains(t, string(full), finish)
+		require.Contains(t, string(full), usage)
+		require.Contains(t, string(full), "data: [DONE]")
+		require.EqualValues(t, 1, upstreamCalls.Load())
+		owner := readOwner(rid)
+		require.Equal(t, model.EnterpriseLaneSettled, owner.State)
+		require.Equal(t, 3, owner.Actual)
+		require.True(t, owner.UsageProjectionPending)
+		require.NoError(t, db.First(&lane, "lane_key = ?", lane.LaneKey).Error)
+		require.Zero(t, lane.Held)
+		require.Equal(t, 3, lane.Spent)
+		require.Equal(t, 197, lane.PaidAvailable)
+		require.Equal(t, 197, lane.TokenAvailable)
+		return
+	}
+
 	first := post(chatPath)
 	require.Equal(t, http.StatusOK, first.StatusCode)
 	rid := first.Header.Get(common.RequestIdKey)
@@ -228,6 +350,36 @@ func TestEnterpriseLaneGatewayNegativePostgres(t *testing.T) {
 	require.NoError(t, blocker.Clauses(clause.Locking{Strength: "UPDATE"}).First(&lane).Error)
 	var pid int
 	require.NoError(t, blocker.Raw("SELECT pg_backend_pid()").Scan(&pid).Error)
+	// Keep another intake holding the only permit as it waits on the
+	// financial row. New work must fail before its reservation transaction.
+	reserveCtx, cancelReserve := context.WithCancel(blockCtx)
+	defer cancelReserve()
+	waiting, err := http.NewRequestWithContext(reserveCtx, http.MethodPost, gateway.URL+chatPath, strings.NewReader(body))
+	require.NoError(t, err)
+	waiting.Header.Set("Authorization", "Bearer sk-"+token.Key)
+	waiting.Header.Set("Content-Type", "application/json")
+	reserveDone := make(chan error, 1)
+	go func() {
+		response, err := gateway.Client().Do(waiting)
+		if response != nil {
+			_ = response.Body.Close()
+		}
+		reserveDone <- err
+	}()
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		var blocked bool
+		err := db.WithContext(blockCtx).Raw("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid)))", pid).Scan(&blocked).Error
+		assert.NoError(c, err)
+		assert.True(c, blocked)
+	}, 2*time.Second, 10*time.Millisecond)
+	busy := post(chatPath)
+	busyBody, err := io.ReadAll(busy.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusServiceUnavailable, busy.StatusCode, "%s", busyBody)
+	require.Contains(t, string(busyBody), "enterprise_lane_admission_busy")
+	assert.EqualValues(t, 1, upstreamCalls.Load())
+	require.NoError(t, db.Model(&model.EnterpriseLaneRequest{}).Where("request_id = ?", busy.Header.Get(common.RequestIdKey)).Count(&rejectedOwners).Error)
+	require.Zero(t, rejectedOwners)
 	tail := make(chan string, 1)
 	go func() {
 		out, _ := io.ReadAll(reader)
@@ -240,7 +392,21 @@ func TestEnterpriseLaneGatewayNegativePostgres(t *testing.T) {
 		assert.NoError(c, err)
 		assert.True(c, blocked)
 	}, 2*time.Second, 10*time.Millisecond)
-	require.Equal(t, model.EnterpriseLaneObserved, readOwner(rid).State)
+	// Even at full intake capacity, the existing stream can freeze usage.
+	// Its final settlement is still correctly blocked on this same PG lock.
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		var owner model.EnterpriseLaneRequest
+		err := db.WithContext(blockCtx).Where("request_id = ?", rid).Take(&owner).Error
+		assert.NoError(c, err)
+		assert.Equal(c, model.EnterpriseLaneObserved, owner.State)
+	}, 2*time.Second, 10*time.Millisecond)
+	cancelReserve()
+	select {
+	case err := <-reserveDone:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-blockCtx.Done():
+		t.Fatal("canceled intake did not return")
+	}
 	select {
 	case <-terminalAttempt:
 		t.Fatal("the server attempted a terminal write before settlement")
@@ -259,6 +425,9 @@ func TestEnterpriseLaneGatewayNegativePostgres(t *testing.T) {
 	require.Equal(t, model.EnterpriseLaneSettled, settled.State)
 	require.Equal(t, 3, settled.Actual)
 	require.True(t, settled.UsageProjectionPending)
+	var totalOwners int64
+	require.NoError(t, db.Model(&model.EnterpriseLaneRequest{}).Count(&totalOwners).Error)
+	require.EqualValues(t, 1, totalOwners, "canceled or denied admissions must not commit an owner")
 
 	missing := post(chatPath)
 	missingBody, err := io.ReadAll(missing.Body)

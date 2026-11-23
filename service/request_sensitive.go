@@ -21,7 +21,7 @@ import (
 // request body/header/query group. An exemption applies to the actual selected
 // channel and group and is revalidated on every attempt (including Auto retries).
 func ShouldCheckRequestSensitive(c *gin.Context) (shouldCheck bool) {
-	guard, err := model.BeginRequestGroupConfigRead(c)
+	guard, err := model.BeginRequestGroupConfigDecision(c)
 	if err != nil {
 		return true
 	}

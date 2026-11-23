@@ -35,7 +35,7 @@ func modelPriceNotConfiguredError(c *gin.Context, modelName string, userId int) 
 
 // HandleGroupRatio checks for "auto_group" in the context and updates the group ratio and relayInfo.UsingGroup if present
 func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) (ratio hosttypes.GroupRatioInfo, err error) {
-	groupRead, err := model.BeginRequestGroupConfigRead(ctx)
+	groupRead, err := model.BeginRequestGroupConfigDecision(ctx)
 	if err != nil {
 		return ratio, model.ErrGroupConfigChanged
 	}

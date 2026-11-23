@@ -780,6 +780,19 @@ func SumUsedQuota(filter LogFilter) (stat Stat, err error) {
 		return stat, err
 	}
 
+	// On PostgreSQL each aggregate produces exactly one row. Keep each
+	// filter and its independent time range intact while using one client
+	// round trip and one read snapshot; the planner can still choose an
+	// index strategy separately for the historical and recent parts.
+	if common.UsingLogDatabase(common.DatabaseTypePostgreSQL) {
+		if err := LOG_DB.Raw(`SELECT historical.quota, recent.rpm, recent.tpm
+			FROM (?) AS historical CROSS JOIN (?) AS recent`, tx, rpmTpmQuery).Scan(&stat).Error; err != nil {
+			common.SysError(common.LogText("failed to query log stat: %s", err.Error()))
+			return stat, common.NewMessage("Failed to query statistics")
+		}
+		return stat, nil
+	}
+
 	// 执行查询
 	if err := tx.Scan(&stat).Error; err != nil {
 		common.SysError(common.LogText("failed to query log stat: %s", err.Error()))

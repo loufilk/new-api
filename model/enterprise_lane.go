@@ -153,7 +153,10 @@ func (lane EnterpriseLane) valid() bool {
 
 func lockEnterpriseLane(tx *gorm.DB, identity EnterpriseLaneIdentity) (EnterpriseLane, error) {
 	var lane EnterpriseLane
-	if err := lockForUpdate(tx).Where("lane_key = ?", identity.laneKey()).Take(&lane).Error; err != nil {
+	lockTiming := startEnterpriseLaneLockTiming(tx, true)
+	err := lockForUpdate(tx).Where("lane_key = ?", identity.laneKey()).Take(&lane).Error
+	lockTiming.finish(err == nil)
+	if err != nil {
 		return lane, err
 	}
 	if lane.EnterpriseLaneIdentity != identity || !lane.valid() {

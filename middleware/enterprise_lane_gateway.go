@@ -23,14 +23,16 @@ import (
 )
 
 const (
-	laneEnabledEnv     = "ENTERPRISE_LANE_LAB_ENABLED"
-	laneStopEnv        = "ENTERPRISE_LANE_LAB_STOP"
-	laneTokenIDEnv     = "ENTERPRISE_LANE_LAB_TOKEN_ID"
-	laneCountEnv       = "ENTERPRISE_LANE_LAB_COUNT"
-	lanePaidBudgetEnv  = "ENTERPRISE_LANE_LAB_PAID_PER_LANE"
-	laneTokenBudgetEnv = "ENTERPRISE_LANE_LAB_TOKEN_PER_LANE"
-	laneChannelEnv     = "ENTERPRISE_LANE_LAB_CHANNEL_ID"
-	laneModelEnv       = "ENTERPRISE_LANE_LAB_MODEL"
+	laneEnabledEnv          = "ENTERPRISE_LANE_LAB_ENABLED"
+	laneStopEnv             = "ENTERPRISE_LANE_LAB_STOP"
+	laneTokenIDEnv          = "ENTERPRISE_LANE_LAB_TOKEN_ID"
+	laneCountEnv            = "ENTERPRISE_LANE_LAB_COUNT"
+	lanePaidBudgetEnv       = "ENTERPRISE_LANE_LAB_PAID_PER_LANE"
+	laneTokenBudgetEnv      = "ENTERPRISE_LANE_LAB_TOKEN_PER_LANE"
+	laneChannelEnv          = "ENTERPRISE_LANE_LAB_CHANNEL_ID"
+	laneModelEnv            = "ENTERPRISE_LANE_LAB_MODEL"
+	laneAdmissionGlobalEnv  = "ENTERPRISE_LANE_LAB_ADMISSION_GLOBAL"
+	laneAdmissionPerLaneEnv = "ENTERPRISE_LANE_LAB_ADMISSION_PER_LANE"
 
 	enterpriseLaneGatewayContextKey = "enterprise_lane_gateway_authorized"
 )
@@ -40,6 +42,9 @@ type enterpriseLaneGatewayConfig struct {
 	modelName                              string
 	stop                                   bool
 	lanes                                  []model.EnterpriseLaneIdentity
+	admissionGlobal, admissionPerLane      int
+	admissionWait                          enterpriseLaneWaitConfig
+	admission                              *enterpriseLaneAdmission
 }
 
 type enterpriseLaneGatewayAuthorization struct {
@@ -47,13 +52,15 @@ type enterpriseLaneGatewayAuthorization struct {
 	channelID int
 	modelName string
 	revision  int64
+	laneSlot  int
+	admission *enterpriseLaneAdmission
 }
 
 var enterpriseLaneGatewayLaunch *enterpriseLaneGatewayConfig
 var enterpriseLaneGatewayRuntime atomic.Pointer[enterpriseLaneGatewayConfig]
 
 func EnterpriseLaneGatewayLaunchKeys() []string {
-	return []string{laneEnabledEnv, laneStopEnv, laneTokenIDEnv, laneCountEnv, lanePaidBudgetEnv, laneTokenBudgetEnv, laneChannelEnv, laneModelEnv}
+	return []string{laneEnabledEnv, laneStopEnv, laneTokenIDEnv, laneCountEnv, lanePaidBudgetEnv, laneTokenBudgetEnv, laneChannelEnv, laneModelEnv, laneAdmissionGlobalEnv, laneAdmissionPerLaneEnv, laneAdmissionWaitMSEnv, laneAdmissionQueueTotalEnv, laneAdmissionQueueLaneEnv}
 }
 
 func enterpriseLaneLoopbackURL(raw string, sql bool) bool {
@@ -102,6 +109,9 @@ func PrepareEnterpriseLaneGateway(migrating bool) error {
 		if stop := os.Getenv(laneStopEnv); stop != "" && stop != "false" {
 			return errors.New("enterprise lane lab stop requires explicit isolated opt-in")
 		}
+		if os.Getenv(laneAdmissionGlobalEnv) != "" || os.Getenv(laneAdmissionPerLaneEnv) != "" || os.Getenv(laneAdmissionWaitMSEnv) != "" || os.Getenv(laneAdmissionQueueTotalEnv) != "" || os.Getenv(laneAdmissionQueueLaneEnv) != "" {
+			return errors.New("enterprise lane admission requires explicit isolated opt-in")
+		}
 		return nil
 	}
 	if flag != "true" || migrating || os.Getenv("HTTP_BIND_ADDRESS") != "127.0.0.1" || os.Getenv("TRUSTED_PROXIES") != "none" ||
@@ -135,6 +145,15 @@ func PrepareEnterpriseLaneGateway(migrating bool) error {
 	default:
 		return errors.New("invalid enterprise lane lab stop mode")
 	}
+	var err error
+	config.admissionGlobal, config.admissionPerLane, err = parseEnterpriseLaneAdmission(config.count, os.Getenv(laneAdmissionGlobalEnv), os.Getenv(laneAdmissionPerLaneEnv))
+	if err != nil {
+		return err
+	}
+	config.admissionWait, err = parseEnterpriseLaneWait(config.count, config.admissionGlobal, os.Getenv(laneAdmissionWaitMSEnv), os.Getenv(laneAdmissionQueueTotalEnv), os.Getenv(laneAdmissionQueueLaneEnv))
+	if err != nil {
+		return err
+	}
 	enterpriseLaneGatewayLaunch = &config
 	return nil
 }
@@ -148,7 +167,18 @@ func ConfigureEnterpriseLaneGateway(ctx context.Context) (stop bool, err error) 
 	if pending == nil {
 		return false, model.CheckEnterpriseLaneGatewayDisabled(ctx, model.DB)
 	}
+	var admission *enterpriseLaneAdmission
 	if !pending.stop {
+		if pending.admissionGlobal > 0 {
+			if model.DB == nil {
+				return false, errors.New("enterprise lane admission requires an initialized primary DB")
+			}
+			pool, err := model.DB.DB()
+			if err != nil || pool.Stats().MaxOpenConnections <= pending.admissionGlobal {
+				return false, errors.New("enterprise lane admission must leave capacity below the finite primary pool limit")
+			}
+			admission = &enterpriseLaneAdmission{globalLimit: pending.admissionGlobal, laneLimit: pending.admissionPerLane, wait: pending.admissionWait}
+		}
 		if !common.LogConsumeEnabled || model.LOG_DB != model.DB {
 			return false, errors.New("enterprise lane lab requires enabled same-database usage logs")
 		}
@@ -177,6 +207,7 @@ func ConfigureEnterpriseLaneGateway(ctx context.Context) (stop bool, err error) 
 	}
 	runtime := *pending
 	runtime.lanes = lanes
+	runtime.admission = admission
 	enterpriseLaneGatewayRuntime.Store(&runtime)
 	return false, nil
 }
@@ -205,7 +236,8 @@ func authorizeEnterpriseLaneGateway(c *gin.Context, token *model.Token, keyParts
 	}
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(requestID))
-	lane := config.lanes[h.Sum32()%uint32(len(config.lanes))]
+	slot := int(h.Sum32() % uint32(len(config.lanes)))
+	lane := config.lanes[slot]
 	if err := model.AuthorizeEnterpriseLaneGateway(c.Request.Context(), model.DB, lane, token.CacheRevision); err != nil {
 		if errors.Is(err, model.ErrEnterpriseLaneIdentity) {
 			abortWithOpenAiMessage(c, http.StatusUnauthorized, i18n.T(c, i18n.MsgTokenInvalid))
@@ -214,7 +246,8 @@ func authorizeEnterpriseLaneGateway(c *gin.Context, token *model.Token, keyParts
 		}
 		return true
 	}
-	c.Set(enterpriseLaneGatewayContextKey, enterpriseLaneGatewayAuthorization{lane: lane, channelID: config.channelID, modelName: config.modelName, revision: token.CacheRevision})
+	c.Set(enterpriseLaneGatewayContextKey, enterpriseLaneGatewayAuthorization{lane: lane, channelID: config.channelID, modelName: config.modelName, revision: token.CacheRevision, laneSlot: slot, admission: config.admission})
+	model.PermitDeferredGroupConfigDecision(c)
 	c.Next()
 	return true
 }

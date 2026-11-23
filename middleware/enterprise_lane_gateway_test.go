@@ -3,11 +3,13 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -15,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestEnterpriseLaneGatewayLaunchIsolation(t *testing.T) {
@@ -23,6 +26,10 @@ func TestEnterpriseLaneGatewayLaunchIsolation(t *testing.T) {
 	}
 	t.Cleanup(func() { enterpriseLaneGatewayLaunch = nil })
 	require.NoError(t, PrepareEnterpriseLaneGateway(false))
+	require.Nil(t, enterpriseLaneGatewayLaunch)
+	t.Setenv(laneAdmissionGlobalEnv, "4")
+	t.Setenv(laneAdmissionPerLaneEnv, "1")
+	require.Error(t, PrepareEnterpriseLaneGateway(false))
 	require.Nil(t, enterpriseLaneGatewayLaunch)
 	for k, v := range map[string]string{
 		laneEnabledEnv: "true", laneTokenIDEnv: "1", laneCountEnv: "4", lanePaidBudgetEnv: "200", laneTokenBudgetEnv: "100", laneChannelEnv: "9", laneModelEnv: "gpt-4o",
@@ -33,6 +40,8 @@ func TestEnterpriseLaneGatewayLaunchIsolation(t *testing.T) {
 	}
 	require.NoError(t, PrepareEnterpriseLaneGateway(false))
 	require.NotNil(t, enterpriseLaneGatewayLaunch)
+	require.Equal(t, 4, enterpriseLaneGatewayLaunch.admissionGlobal)
+	require.Equal(t, 1, enterpriseLaneGatewayLaunch.admissionPerLane)
 	require.Error(t, PrepareEnterpriseLaneGateway(true))
 	for _, tc := range []struct{ key, value string }{
 		{"HTTP_BIND_ADDRESS", "0.0.0.0"}, {"TRUSTED_PROXIES", "127.0.0.1"},
@@ -97,6 +106,15 @@ func TestEnterpriseLaneGatewayCanonicalAuthorizationPostgres(t *testing.T) {
 	require.NoError(t, model.DB.First(&bound, bound.Id).Error)
 	require.Zero(t, bound.RemainQuota)
 
+	decisionReads, traceDecision := 0, false
+	const traceGroupConfig = "trace_authorized_lane_group_decision"
+	require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register(traceGroupConfig, func(tx *gorm.DB) {
+		if traceDecision && tx.Statement.Table == "options" {
+			decisionReads++
+		}
+	}))
+	t.Cleanup(func() { require.NoError(t, model.DB.Callback().Query().Remove(traceGroupConfig)) })
+
 	engine := gin.New()
 	require.NoError(t, engine.SetTrustedProxies(nil))
 	engine.Use(RequestId())
@@ -113,6 +131,18 @@ func TestEnterpriseLaneGatewayCanonicalAuthorizationPostgres(t *testing.T) {
 		} else {
 			require.False(t, hasLane)
 		}
+		before := decisionReads
+		traceDecision = true
+		defer func() { traceDecision = false }()
+		guard, err := model.BeginRequestGroupConfigDecision(c)
+		require.NoError(t, err)
+		defer guard.Close()
+		require.NoError(t, guard.Finish())
+		wantReads := 2
+		if hasLane {
+			wantReads = 1
+		}
+		require.Equal(t, wantReads, decisionReads-before, "only canonically authorized lane ingress may omit the opening read")
 		c.Status(http.StatusNoContent)
 	})
 	engine.POST("/v1/responses", TokenAuth(), func(c *gin.Context) {
@@ -137,6 +167,74 @@ func TestEnterpriseLaneGatewayCanonicalAuthorizationPostgres(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, send("POST", "/v1/responses", bound.Key, "127.0.0.1"))
 	require.Equal(t, http.StatusForbidden, send("GET", "/v1/realtime", bound.Key, "127.0.0.1"))
 	require.NotEqual(t, http.StatusNoContent, send("POST", "/v1/chat/completions", bound.Key+"-9", "127.0.0.1"))
+
+	t.Run("queued revoked key is denied by a fresh primary check", func(t *testing.T) {
+		previous := enterpriseLaneGatewayRuntime.Load()
+		runtime := *previous
+		// The launch parser independently enforces a maximum 50 ms. This
+		// private fixture budget is longer to make the PG mutation barrier
+		// deterministic under environmental jitter, not to test performance.
+		a := &enterpriseLaneAdmission{globalLimit: 1, laneLimit: 1, wait: enterpriseLaneWaitConfig{budget: 2 * time.Second, total: 1, perLane: 1}}
+		runtime.admission = a
+		enterpriseLaneGatewayRuntime.Store(&runtime)
+		defer enterpriseLaneGatewayRuntime.Store(previous)
+		hold, _ := a.tryAcquire(0)
+		defer hold.Release()
+		type observed struct {
+			waited bool
+			err    error
+		}
+		result := make(chan observed, 1)
+		router := gin.New()
+		require.NoError(t, router.SetTrustedProxies(nil))
+		router.Use(RequestId())
+		router.POST("/v1/chat/completions", TokenAuth(), func(c *gin.Context) {
+			permit, denial := AcquireEnterpriseLaneAdmission(c)
+			defer permit.Release()
+			if denial != "" {
+				result <- observed{err: errors.New(denial)}
+				c.Status(http.StatusServiceUnavailable)
+				return
+			}
+			err := RecheckEnterpriseLaneAuthorization(c)
+			result <- observed{waited: permit.Waited(), err: err}
+			if err != nil {
+				c.Status(http.StatusUnauthorized)
+				return
+			}
+			c.Status(http.StatusNoContent)
+		})
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(t.Context())
+		req.Header.Set("Authorization", "Bearer sk-"+bound.Key)
+		req.RemoteAddr = "127.0.0.1:54545"
+		rec := httptest.NewRecorder()
+		done := make(chan struct{})
+		go func() { router.ServeHTTP(rec, req); close(done) }()
+		require.Eventually(t, func() bool {
+			var queued uint64
+			if snapshot := EnterpriseLaneAdmissionWaitSnapshot(); snapshot != nil {
+				for _, slot := range snapshot.Slots {
+					queued += slot.Enqueued
+				}
+			}
+			return queued == 1
+		}, time.Second, time.Millisecond)
+		require.NoError(t, model.DB.Model(&bound).Update("status", common.TokenStatusDisabled).Error)
+		t.Cleanup(func() { require.NoError(t, model.DB.Model(&bound).Update("status", common.TokenStatusEnabled).Error) })
+		hold.Release()
+		select {
+		case <-done:
+			require.Equal(t, http.StatusUnauthorized, rec.Code)
+			got := <-result
+			require.True(t, got.waited)
+			require.ErrorIs(t, got.err, model.ErrEnterpriseLaneIdentity)
+		case <-time.After(2 * time.Second):
+			t.Fatal("queued request did not return")
+		}
+		var total int64
+		require.NoError(t, model.DB.Model(&model.EnterpriseLaneRequest{}).Count(&total).Error)
+		require.Zero(t, total, "revoked waiter must not create a billing owner")
+	})
 
 	common.LogConsumeEnabled = false
 	require.Equal(t, http.StatusServiceUnavailable, send("POST", "/v1/chat/completions", bound.Key, "127.0.0.1"))

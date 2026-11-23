@@ -101,6 +101,55 @@ func BeginRequestGroupConfigRead(c *gin.Context) (*GroupConfigRead, error) {
 	return guard, nil
 }
 
+const groupConfigDecisionVersionContextKey = "group_config_decision_version"
+
+// PermitDeferredGroupConfigDecision binds the optimization to the exact
+// group version that a trusted ingress has already checked on the primary.
+// Only the build-tagged enterprise lane ingress opts in, after canonical
+// authorization. The marker is request-local and never grants access.
+func PermitDeferredGroupConfigDecision(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	value, _ := c.Get(GroupConfigVersionContextKey)
+	if version, ok := value.(int64); ok && version >= 0 {
+		c.Set(groupConfigDecisionVersionContextKey, version)
+	}
+}
+
+// BeginRequestGroupConfigDecision is for short, read-only calculations whose
+// result and effects are withheld until Finish succeeds. Do not use it around
+// upstream I/O, routing selection, reservations, or externally visible effects.
+// A bounded primary read and request-local scratch state are fine. For opted
+// in requests, the local read lock pins runtime state at the admitted version;
+// Finish still reads the authoritative version from the primary. Versions
+// only advance, so a missed remote invalidation is rejected even when it
+// committed before this calculation. Other requests keep both SQL fences.
+func BeginRequestGroupConfigDecision(c *gin.Context) (*GroupConfigRead, error) {
+	if c != nil {
+		if value, enabled := c.Get(groupConfigDecisionVersionContextKey); enabled {
+			version, ok := value.(int64)
+			if !ok || version < 0 {
+				return nil, ErrGroupConfigChanged
+			}
+			guard, err := lockRequestGroupConfigRead(c)
+			if err != nil {
+				return nil, err
+			}
+			if !guard.locked || guard.Version != version {
+				guard.Close()
+				return nil, ErrGroupConfigChanged
+			}
+			if err := guard.ctx.Err(); err != nil {
+				guard.Close()
+				return nil, err
+			}
+			return guard, nil
+		}
+	}
+	return BeginRequestGroupConfigRead(c)
+}
+
 // CheckRequestGroupConfigVersion is a point-in-time fence. Use Begin and
 // Finish instead when there are intervening policy or routing reads.
 func CheckRequestGroupConfigVersion(c *gin.Context) error {

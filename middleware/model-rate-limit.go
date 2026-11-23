@@ -116,7 +116,7 @@ func modelRequestSucceeded(c *gin.Context) bool {
 // ModelRequestRateLimit 模型请求限流中间件
 func ModelRequestRateLimit() func(c *gin.Context) {
 	return func(c *gin.Context) {
-		guard, err := model.BeginRequestGroupConfigRead(c)
+		guard, err := model.BeginRequestGroupConfigDecision(c)
 		if err != nil {
 			abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgGroupConfigChanged), "group_config_changed")
 			return
