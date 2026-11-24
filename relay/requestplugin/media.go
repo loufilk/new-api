@@ -46,6 +46,15 @@ var processImageEncoders = sync.OnceValue(func() *imageReencodePool {
 	return &imageReencodePool{slots: semaphore.NewWeighted(int64(limit)), encode: reencodeMedia}
 })
 
+// Pixel admission is independent of CPU slots: a high-core process must not
+// decode one maximum-size image per core at once. Keep capacity at least the
+// per-image limit so every otherwise accepted image can eventually proceed.
+// This bounds active source pixels, not total RSS or codec scratch allocations.
+var processImagePixelBudget = sync.OnceValue(func() *semaphore.Weighted {
+	limit := max(maxReencodePixels, common.GetEnvOrDefault("IMAGE_REENCODE_MAX_ACTIVE_PIXELS", 2*maxReencodePixels))
+	return semaphore.NewWeighted(int64(limit))
+})
+
 // inlineMedia is one inline media string of a JSON body: a base64 data URL,
 // or the data of a Claude base64 source, a Gemini inline data part or a chat
 // input_audio part, whose mime type or audio format is a sibling member.
@@ -251,9 +260,13 @@ func reencodeMedia(ctx context.Context, item inlineMedia, effect requestpatch.Ef
 			return nil, nil, fmt.Errorf("media %s cannot be decoded", item.path)
 		}
 	}
-	if err = ctx.Err(); err != nil {
+	pixels := int64(config.Width) * int64(config.Height)
+	budget := processImagePixelBudget()
+	if err = budget.Acquire(ctx, pixels); err != nil {
 		return nil, nil, err
 	}
+	// Keep the permit through scaling and encoding, including failure or panic.
+	defer budget.Release(pixels)
 	img, _, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {
 		return nil, nil, fmt.Errorf("media %s cannot be decoded", item.path)
