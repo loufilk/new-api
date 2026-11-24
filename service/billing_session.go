@@ -583,6 +583,7 @@ func (s *BillingSession) syncRelayInfo() {
 
 // NewBillingSession 根据用户计费偏好创建 BillingSession，处理 subscription_first / wallet_first 的回退。
 func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preConsumedQuota int) (*BillingSession, *types.NewAPIError) {
+	observeLaneFunding(c, relayInfo, "", nil, 0, 0, 0)
 	if relayInfo == nil {
 		return nil, types.NewError(fmt.Errorf("relayInfo is nil"), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
@@ -611,6 +612,7 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 		if balanceErr != nil {
 			return nil, types.NewError(balanceErr, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
 		}
+		observeLaneFunding(c, relayInfo, BillingSourceWallet, debitOrder, paid, bonus, reward)
 		if WalletBonusEligible(relayInfo) {
 			if paid+bonus+reward < preConsumedQuota {
 				return nil, types.NewErrorWithStatusCode(
@@ -645,6 +647,7 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 	}
 
 	trySubscription := func() (*BillingSession, *types.NewAPIError) {
+		observeLaneFunding(c, relayInfo, BillingSourceSubscription, nil, 0, 0, 0)
 		subConsume := int64(preConsumedQuota)
 		if subConsume <= 0 {
 			subConsume = 1
