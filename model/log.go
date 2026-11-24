@@ -761,11 +761,17 @@ type Stat struct {
 	Tpm   int `json:"tpm"`
 }
 
-func SumUsedQuota(filter LogFilter) (stat Stat, err error) {
+func SumUsedQuota(filter LogFilter) (Stat, error) {
+	return SumUsedQuotaAt(LOG_DB, filter, time.Now())
+}
+
+// SumUsedQuotaAt accepts the caller's context-bearing log DB and sampling time.
+// This remains a read-only aggregate, never a source for balance decisions.
+func SumUsedQuotaAt(db *gorm.DB, filter LogFilter, sampledAt time.Time) (stat Stat, err error) {
 	// Preserve the existing usage-stat contract: consume rows only, irrespective
 	// of the displayed log type. All identity and request filters still apply.
 	filter.Type = LogTypeConsume
-	tx, err := filter.apply(LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota"))
+	tx, err := filter.apply(db.Table("logs").Select("COALESCE(sum(quota), 0) quota"))
 	if err != nil {
 		return stat, err
 	}
@@ -773,9 +779,9 @@ func SumUsedQuota(filter LogFilter) (stat Stat, err error) {
 	// RPM/TPM describe the rolling last minute, not the selected historical
 	// time range. Reuse the same identity/request filters for both queries.
 	rateFilter := filter
-	rateFilter.StartTimestamp = time.Now().Add(-60 * time.Second).Unix()
+	rateFilter.StartTimestamp = sampledAt.Add(-60 * time.Second).Unix()
 	rateFilter.EndTimestamp = 0
-	rpmTpmQuery, err := rateFilter.apply(LOG_DB.Table("logs").Select("count(*) rpm, COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) tpm"))
+	rpmTpmQuery, err := rateFilter.apply(db.Table("logs").Select("count(*) rpm, COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) tpm"))
 	if err != nil {
 		return stat, err
 	}
@@ -785,7 +791,7 @@ func SumUsedQuota(filter LogFilter) (stat Stat, err error) {
 	// round trip and one read snapshot; the planner can still choose an
 	// index strategy separately for the historical and recent parts.
 	if common.UsingLogDatabase(common.DatabaseTypePostgreSQL) {
-		if err := LOG_DB.Raw(`SELECT historical.quota, recent.rpm, recent.tpm
+		if err := db.Raw(`SELECT historical.quota, recent.rpm, recent.tpm
 			FROM (?) AS historical CROSS JOIN (?) AS recent`, tx, rpmTpmQuery).Scan(&stat).Error; err != nil {
 			common.SysError(common.LogText("failed to query log stat: %s", err.Error()))
 			return stat, common.NewMessage("Failed to query statistics")
@@ -809,6 +815,22 @@ func SumUsedQuota(filter LogFilter) (stat Stat, err error) {
 	stat.Rpm = rateStat.Rpm
 	stat.Tpm = rateStat.Tpm
 
+	return stat, nil
+}
+
+// SumRecentLogRateAt refreshes rolling rates without repeating a potentially
+// expensive historical scan. Historical start/end never constrain these rates.
+func SumRecentLogRateAt(db *gorm.DB, filter LogFilter, sampledAt time.Time) (stat Stat, err error) {
+	filter.Type = LogTypeConsume
+	filter.StartTimestamp, filter.EndTimestamp = sampledAt.Add(-time.Minute).Unix(), 0
+	tx, err := filter.apply(db.Table("logs").Select("count(*) rpm, COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) tpm"))
+	if err != nil {
+		return stat, err
+	}
+	if err := tx.Scan(&stat).Error; err != nil {
+		common.SysError(common.LogText("failed to query rpm/tpm stat: %s", err.Error()))
+		return stat, common.NewMessage("Failed to query statistics")
+	}
 	return stat, nil
 }
 

@@ -71,15 +71,27 @@ func logFilterFromQuery(c *gin.Context, admin bool) (model.LogFilter, error) {
 // the longest log time range. A missing start reaches back the whole range, and
 // time after now does not count toward it.
 func limitLogTimeRange(startTimestamp int64, endTimestamp int64) (int64, error) {
-	maxRange := operation_setting.GetLogSetting().MaxRangeSeconds()
+	return limitLogTimeRangeWithMax(startTimestamp, endTimestamp, operation_setting.GetLogSetting().MaxRangeSeconds())
+}
+
+func limitLogTimeRangeWithMax(startTimestamp, endTimestamp, maxRange int64) (int64, error) {
+	if maxRange <= 0 {
+		return 0, common.NewMessage("Invalid parameters")
+	}
 	end := common.GetTimestamp()
 	if endTimestamp != 0 {
 		end = min(end, endTimestamp)
 	}
-	if startTimestamp == 0 {
-		return end - maxRange, nil
+	// Timestamps supplied by a caller may be MinInt64. Subtraction must
+	// not wrap and admit an unbounded range (or fabricate a future start).
+	lower := int64(math.MinInt64)
+	if end >= math.MinInt64+maxRange {
+		lower = end - maxRange
 	}
-	if end-startTimestamp > maxRange {
+	if startTimestamp == 0 {
+		return lower, nil
+	}
+	if startTimestamp < lower {
 		return 0, common.NewMessage("The time range cannot exceed {{days}} days", map[string]any{"days": maxRange / (24 * 60 * 60)})
 	}
 	return startTimestamp, nil
@@ -296,13 +308,16 @@ func GetLogsSelfStat(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusUnauthorized, err)
 		return
 	}
-	if c.GetInt("role") < common.RoleAdminUser {
-		if filter.StartTimestamp, err = limitLogTimeRange(filter.StartTimestamp, filter.EndTimestamp); err != nil {
+	role := c.GetInt("role")
+	maxRange := operation_setting.GetLogSetting().MaxRangeSeconds()
+	defaultStart := filter.StartTimestamp == 0 && role < common.RoleAdminUser
+	if role < common.RoleAdminUser {
+		if filter.StartTimestamp, err = limitLogTimeRangeWithMax(filter.StartTimestamp, filter.EndTimestamp, maxRange); err != nil {
 			common.ApiError(c, err)
 			return
 		}
 	}
-	quotaNum, err := model.SumUsedQuota(filter)
+	quotaNum, err := service.GetSelfLogStat(c.Request.Context(), filter, role, maxRange, defaultStart)
 	if err != nil {
 		common.ApiError(c, err)
 		return
