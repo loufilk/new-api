@@ -53,7 +53,7 @@ func reconcileLaneEpayCapture(ctx context.Context, scope laneEpaySettlementScope
 }
 
 func settleLaneEpay(ctx context.Context, scope laneEpaySettlementScope, received *laneVerifiedEpayCapture) (laneEpaySettlementResult, error) {
-	return settleLaneEpayWithAuthority(ctx, scope, nil, nil, received)
+	return settleLaneEpayWithAuthority(ctx, scope, nil, received)
 }
 
 func validLaneEpaySettlementScope(ctx context.Context, scope laneEpaySettlementScope) bool {
@@ -66,7 +66,7 @@ func validLaneEpaySettlementScope(ctx context.Context, scope laneEpaySettlementS
 // A live-capable binding has no ordinary issuer yet. Internal fixture
 // callsites preserve their existing constraint; the opaque new callback and
 // recovery adapter always supplies and checks the same-transaction authority.
-func settleLaneEpayWithAuthority(ctx context.Context, scope laneEpaySettlementScope, authority laneEpayTxAuthority, signer *laneEpayOrderSigner, received *laneVerifiedEpayCapture) (laneEpaySettlementResult, error) {
+func settleLaneEpayWithAuthority(ctx context.Context, scope laneEpaySettlementScope, bound *BoundLaneEpayOrder, received *laneVerifiedEpayCapture) (laneEpaySettlementResult, error) {
 	var empty laneEpaySettlementResult
 	if !validLaneEpaySettlementScope(ctx, scope) || (received != nil && scope.tradeNo != received.tradeNo) {
 		return empty, ErrSharedWalletScope
@@ -76,13 +76,13 @@ func settleLaneEpayWithAuthority(ctx context.Context, scope laneEpaySettlementSc
 	var outcome laneEpaySettlementResult
 	prepared := false
 	err := scope.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if authority != nil {
-			if err := authority.CheckTx(tx, scope.db, LOG_DB, scope.walletEpoch); err != nil {
+		if bound != nil {
+			if err := bound.authority.CheckTx(tx, scope.db, LOG_DB, scope.walletEpoch); err != nil {
 				return err
 			}
 		}
 		var settleErr error
-		outcome, settleErr = settleLaneEpayCaptureTx(tx, scope, received, authority != nil, signer)
+		outcome, settleErr = settleLaneEpayCaptureTx(tx, scope, received, bound)
 		prepared = settleErr == nil
 		return settleErr
 	})
@@ -100,7 +100,7 @@ func settleLaneEpayWithAuthority(ctx context.Context, scope laneEpaySettlementSc
 	return outcome, nil
 }
 
-func settleLaneEpayCaptureTx(tx *gorm.DB, scope laneEpaySettlementScope, received *laneVerifiedEpayCapture, authorityBound bool, signer *laneEpayOrderSigner) (laneEpaySettlementResult, error) {
+func settleLaneEpayCaptureTx(tx *gorm.DB, scope laneEpaySettlementScope, received *laneVerifiedEpayCapture, bound *BoundLaneEpayOrder) (laneEpaySettlementResult, error) {
 	var empty laneEpaySettlementResult
 	walletScope := laneWalletCustodyScope{tx: tx, schema: scope.schema, userID: scope.userID, walletEpoch: scope.walletEpoch}
 	t, err := walletScope.lockableTx(tx, scope.userID)
@@ -112,8 +112,8 @@ func settleLaneEpayCaptureTx(tx *gorm.DB, scope laneEpaySettlementScope, receive
 		return empty, err
 	}
 	pending := common.TopUpStatusPending
-	if authorityBound {
-		if err := verifyLaneEpayOrderBindingTx(t, scope, order, signer); err != nil {
+	if bound != nil {
+		if err := verifyLaneEpayOrderBindingTx(t, scope, order, bound); err != nil {
 			return empty, err
 		}
 		pending = laneEpayPendingCapture

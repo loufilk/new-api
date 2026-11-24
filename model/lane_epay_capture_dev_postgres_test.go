@@ -38,7 +38,9 @@ func laneEpayCaptureFixtureWithMode(t *testing.T, useRedis, managed bool) (*gorm
 		QuotedPaymentScope: merchant, QuotedPaymentEnvironment: "test"}
 	scope := laneEpaySettlementScope{db, schema, user, epoch, order.TradeNo}
 	bound := &BoundLaneEpayOrder{scope: scope, orderSigner: laneEpaySyntheticSigner(),
-		authority: laneEpayFixtureAuthority{check: func(*gorm.DB, *gorm.DB, *gorm.DB, int64) error { return nil }}}
+		authority:         laneEpayFixtureAuthority{check: func(*gorm.DB, *gorm.DB, *gorm.DB, int64) error { return nil }},
+		checkoutRequestID: "SYNTHETIC_REQUEST_ID"}
+	bound.checkoutNamespace = installLaneCheckoutNamespaceFixture(t, db, bound)
 	if managed {
 		order.Status = ""
 		var err error

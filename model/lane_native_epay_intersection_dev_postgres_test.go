@@ -63,8 +63,9 @@ func TestLaneNativeDisplayAndEpayShareExactWalletHeadroomPostgres(t *testing.T) 
 		QuotedPaymentScope: "631210", QuotedPaymentEnvironment: "test"}
 	bound := &BoundLaneEpayOrder{
 		scope: laneEpaySettlementScope{db, schema, id.UserID, b.WalletEpoch, order.TradeNo}, authority: custody,
-		orderSigner: laneEpaySyntheticSigner(),
+		orderSigner: laneEpaySyntheticSigner(), checkoutRequestID: "SYNTHETIC_NATIVE_REQUEST_ID",
 	}
+	bound.checkoutNamespace = installLaneCheckoutNamespaceFixture(t, db, bound)
 	order, err = createBoundLaneEpayOrder(ctx, bound, order)
 	require.NoError(t, err)
 

@@ -43,9 +43,11 @@ type laneEpayTxAuthority interface {
 // and a canonical co-located store. A zero value is not an order or authority.
 // No untagged runtime constructor or HTTP entry point enrolls it in this stage.
 type BoundLaneEpayOrder struct {
-	scope       laneEpaySettlementScope
-	authority   laneEpayTxAuthority
-	orderSigner *laneEpayOrderSigner
+	scope             laneEpaySettlementScope
+	authority         laneEpayTxAuthority
+	orderSigner       *laneEpayOrderSigner
+	checkoutNamespace *laneCheckoutNamespaceV1
+	checkoutRequestID string
 }
 
 func (b *BoundLaneEpayOrder) ApplyVerified(ctx context.Context, notification LaneEpayVerifiedNotification) (LaneEpayOutcome, error) {
@@ -62,7 +64,7 @@ func (b *BoundLaneEpayOrder) settle(ctx context.Context, received *laneVerifiedE
 	if b == nil || b.authority == nil {
 		return LaneEpayOutcome{}, ErrLaneStoreAuthorityUnavailable
 	}
-	out, err := settleLaneEpayWithAuthority(ctx, b.scope, b.authority, b.orderSigner, received)
+	out, err := settleLaneEpayWithAuthority(ctx, b.scope, b, received)
 	if err != nil {
 		return LaneEpayOutcome{}, err
 	}
@@ -97,7 +99,7 @@ func (b *BoundLaneEpayOrder) Status(ctx context.Context) (LaneEpayOrderStatus, e
 		if err != nil {
 			return err
 		}
-		if err := verifyLaneEpayOrderBindingTx(t, scope, order, b.orderSigner); err != nil {
+		if err := verifyLaneEpayOrderBindingTx(t, scope, order, b); err != nil {
 			return err
 		}
 		switch order.Status {

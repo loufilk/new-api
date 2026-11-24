@@ -128,6 +128,7 @@ func TestLaneEpayExclusiveRequiresOriginalSignedQuoteAndNewPreflightPostgres(t *
 
 	newScope := *bound
 	newScope.scope.tradeNo = "SYNTHETIC_OVER_CEILING_BEFORE_FORM"
+	newScope.checkoutRequestID = "SYNTHETIC_OVER_CEILING_REQUEST"
 	draft := TopUp{UserId: order.UserId, Amount: 1, Money: 1, TradeNo: newScope.scope.tradeNo,
 		PaymentMethod: order.PaymentMethod, PaymentProvider: order.PaymentProvider,
 		QuotedWalletQuota: 76, QuotedPaymentMinor: order.QuotedPaymentMinor, QuotedPaymentCurrency: order.QuotedPaymentCurrency,
@@ -175,6 +176,7 @@ func TestLaneEpayExclusiveRejectsSubscriptionTopUpCollisionPostgres(t *testing.T
 
 	blocked := *bound
 	blocked.scope.tradeNo = "SYNTHETIC_EXISTING_SUBSCRIPTION_BEFORE_FORM"
+	blocked.checkoutRequestID = "SYNTHETIC_EXISTING_SUBSCRIPTION_REQUEST"
 	require.NoError(t, db.Create(&SubscriptionOrder{
 		UserId: order.UserId, PlanId: 1, Money: 1, TradeNo: blocked.scope.tradeNo, PaymentMethod: order.PaymentMethod,
 		PaymentProvider: order.PaymentProvider, Status: common.TopUpStatusPending,

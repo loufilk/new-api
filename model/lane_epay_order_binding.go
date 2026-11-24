@@ -64,8 +64,8 @@ func (s *laneEpayOrderSigner) mac(scope laneEpaySettlementScope, order TopUp) (s
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func verifyLaneEpayOrderBindingTx(tx *gorm.DB, scope laneEpaySettlementScope, order TopUp, signer *laneEpayOrderSigner) error {
-	if !signer.valid() || (order.Status != laneEpayPendingCapture && order.Status != laneEpayCaptureWaiting && order.Status != common.TopUpStatusSuccess) {
+func verifyLaneEpayOrderBindingTx(tx *gorm.DB, scope laneEpaySettlementScope, order TopUp, bound *BoundLaneEpayOrder) error {
+	if bound == nil || !bound.orderSigner.valid() || (order.Status != laneEpayPendingCapture && order.Status != laneEpayCaptureWaiting && order.Status != common.TopUpStatusSuccess) {
 		return ErrLaneEpayExclusiveOrder
 	}
 	var binding laneEpayOrderBindingV1
@@ -75,6 +75,7 @@ func verifyLaneEpayOrderBindingTx(tx *gorm.DB, scope laneEpaySettlementScope, or
 		}
 		return err
 	}
+	signer := bound.orderSigner
 	want, err := signer.mac(scope, order)
 	if err != nil {
 		return err
@@ -83,7 +84,11 @@ func verifyLaneEpayOrderBindingTx(tx *gorm.DB, scope laneEpaySettlementScope, or
 		binding.WalletEpoch != scope.walletEpoch || binding.KeyID != signer.keyID || !hmac.Equal([]byte(binding.MAC), []byte(want)) {
 		return ErrLaneEpayExclusiveOrder
 	}
-	return nil
+	request, err := laneEpayCheckoutRequest(bound.checkoutRequestID, order)
+	if err != nil {
+		return err
+	}
+	return bound.checkoutNamespace.verifyTx(tx, scope.db, scope, request)
 }
 
 // createBoundLaneEpayOrder may be used only before constructing or emitting
@@ -92,7 +97,7 @@ func verifyLaneEpayOrderBindingTx(tx *gorm.DB, scope laneEpaySettlementScope, or
 // order of any kind is never adopted, even while its raw status is pending.
 // The clean copy never leaves this function after an uncertain COMMIT.
 func createBoundLaneEpayOrder(ctx context.Context, b *BoundLaneEpayOrder, draft TopUp) (TopUp, error) {
-	if b == nil || b.authority == nil || !b.orderSigner.valid() {
+	if b == nil || b.authority == nil || !b.orderSigner.valid() || b.checkoutNamespace == nil {
 		return TopUp{}, ErrLaneStoreAuthorityUnavailable
 	}
 	scope := b.scope
@@ -116,25 +121,24 @@ func createBoundLaneEpayOrder(ctx context.Context, b *BoundLaneEpayOrder, draft 
 		if err != nil {
 			return err
 		}
-		// The same order lock used by ordinary manual/callback writers. The
-		// unique insert also fences a concurrent writer when no old row
-		// was visible. No UPDATE-to-enroll or duplicate-key recovery.
-		var prior TopUp
-		err = lockForUpdate(t).Select("id").Where("trade_no = ?", draft.TradeNo).Take(&prior).Error
-		if err == nil {
-			return ErrLaneEpayExclusiveOrder
+		// Shared trade/request identity is locked before family order/user
+		// rows. Only the current enrolled namespace signer may create one.
+		if ns := b.checkoutNamespace; !ns.signer.valid() || ns.signer.keyID != b.orderSigner.keyID ||
+			!hmac.Equal(ns.signer.key[:], b.orderSigner.key[:]) {
+			return errLaneCheckoutIssuer
 		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
+		request, err := laneEpayCheckoutRequest(b.checkoutRequestID, draft)
+		if err != nil {
 			return err
 		}
-		// This does not allocate a global cross-provider trade namespace;
-		// just reject an already-known subscription collision before offer.
-		var subscriptions []SubscriptionOrder
-		if err := t.Select("id").Where("trade_no = ?", draft.TradeNo).Limit(1).Find(&subscriptions).Error; err != nil {
+		_, replay, err := b.checkoutNamespace.allocateTx(t, scope.db, scope, request)
+		if err != nil {
 			return err
 		}
-		if len(subscriptions) != 0 {
-			return ErrLaneEpayExclusiveOrder
+		// The recorded identity is reusable as evidence, not fresh authority
+		// to expose a payable form again after a lost checkout response.
+		if replay {
+			return errLaneCheckoutConflict
 		}
 		draft.Status, draft.CreateTime = laneEpayPendingCapture, common.GetTimestamp()
 		if err := t.Create(&draft).Error; err != nil {
