@@ -250,7 +250,8 @@ func TestEnterpriseLaneOwnerIsolationContractPostgres(t *testing.T) {
 			after := before
 			if laneFirst {
 				code, class := BillingRefundErrorCode(loserErr)
-				assert.Equal(t, "identity_mismatch", code)
+				assert.ErrorIs(t, loserErr, ErrBillingRequestOwnerConflict)
+				assert.Equal(t, "terminal_owner_conflict", code)
 				assert.Equal(t, billingRefundReview, class)
 				assert.Zero(t, applied.Load(), "ordinary debit callback must never run")
 				assert.Equal(t, contractLaneState, owner.State)

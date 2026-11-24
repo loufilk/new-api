@@ -151,6 +151,9 @@ func claimBillingFinalizationTx(tx *gorm.DB, receipt BillingFinalization) (*Bill
 	if err := lockForUpdate(tx).Where("request_id = ?", receipt.RequestID).First(&stored).Error; err != nil {
 		return nil, err
 	}
+	if isLaneBillingOwnerMarker(stored) {
+		return nil, ErrBillingRequestOwnerConflict
+	}
 	if !sameBillingIdentity(stored, receipt) {
 		return nil, billingRefundReviewError("identity_mismatch", "billing finalization identity mismatch")
 	}

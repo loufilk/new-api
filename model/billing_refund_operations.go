@@ -41,7 +41,7 @@ func BillingRefundErrorCode(err error) (code, class string) {
 		return "canceled", billingRefundRetryable
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		return "missing_record", billingRefundReview
-	case errors.Is(err, ErrBillingFinalized):
+	case errors.Is(err, ErrBillingFinalized), errors.Is(err, ErrBillingRequestOwnerConflict):
 		return "terminal_owner_conflict", billingRefundReview
 	case errors.Is(err, ErrLedgerIdempotencyConflict), errors.Is(err, ErrLedgerInvalidEntry):
 		return "ledger_evidence", billingRefundReview

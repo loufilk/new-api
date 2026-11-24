@@ -73,6 +73,9 @@ func ReserveBillingFinalization(ctx context.Context, authorization BillingFinali
 		if err := lockForUpdate(tx).Where("request_id = ?", authorization.RequestID).First(&stored).Error; err != nil {
 			return err
 		}
+		if isLaneBillingOwnerMarker(stored) {
+			return ErrBillingRequestOwnerConflict
+		}
 		if !sameBillingAuthorization(stored, authorization) {
 			return billingRefundReviewError("identity_mismatch", "billing reservation authorization mismatch")
 		}
@@ -175,6 +178,9 @@ func ReadBillingReservation(ctx context.Context, authorization BillingFinalizati
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := lockForUpdate(tx).Where("request_id = ?", authorization.RequestID).First(&stored).Error; err != nil {
 			return err
+		}
+		if isLaneBillingOwnerMarker(stored) {
+			return ErrBillingRequestOwnerConflict
 		}
 		if !sameBillingAuthorization(stored, authorization) {
 			return billingRefundReviewError("identity_mismatch", "billing reservation authorization mismatch")
