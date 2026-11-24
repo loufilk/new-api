@@ -18,7 +18,7 @@ func (a laneEpayFixtureAuthority) CheckTx(tx, primary, log *gorm.DB, walletEpoch
 }
 
 func TestLaneEpayBoundOrderRequiresSameDBTxAndObservesWithoutCreditPostgres(t *testing.T) {
-	db, scope, order, client := laneEpayCaptureFixture(t, false)
+	db, scope, order, client, bound := laneEpayCaptureFixtureWithMode(t, false, true)
 	capture, _ := verifiedLaneEpayFixture(t, client, order, "1.00", "SYNTHETIC_SCOPED_CAPTURE")
 	input := LaneEpayVerifiedNotification{capture.tradeNo, capture.method, capture.money, capture.facts}
 	var zero BoundLaneEpayOrder
@@ -30,7 +30,7 @@ func TestLaneEpayBoundOrderRequiresSameDBTxAndObservesWithoutCreditPostgres(t *t
 	require.ErrorIs(t, err, ErrLaneStoreAuthorityUnavailable)
 	checks := 0
 	allow := false
-	bound := &BoundLaneEpayOrder{scope: scope, authority: laneEpayFixtureAuthority{
+	bound.authority = laneEpayFixtureAuthority{
 		check: func(tx, primary, log *gorm.DB, epoch int64) error {
 			_, txOK := tx.Statement.ConnPool.(gorm.TxCommitter)
 			require.True(t, txOK)
@@ -43,7 +43,7 @@ func TestLaneEpayBoundOrderRequiresSameDBTxAndObservesWithoutCreditPostgres(t *t
 			}
 			return nil
 		},
-	}}
+	}
 	_, err = bound.ApplyVerified(t.Context(), input)
 	require.ErrorIs(t, err, ErrLaneStoreAuthorityState)
 	_, err = bound.Status(t.Context())

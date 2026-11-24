@@ -53,7 +53,7 @@ func reconcileLaneEpayCapture(ctx context.Context, scope laneEpaySettlementScope
 }
 
 func settleLaneEpay(ctx context.Context, scope laneEpaySettlementScope, received *laneVerifiedEpayCapture) (laneEpaySettlementResult, error) {
-	return settleLaneEpayWithAuthority(ctx, scope, nil, received)
+	return settleLaneEpayWithAuthority(ctx, scope, nil, nil, received)
 }
 
 func validLaneEpaySettlementScope(ctx context.Context, scope laneEpaySettlementScope) bool {
@@ -66,7 +66,7 @@ func validLaneEpaySettlementScope(ctx context.Context, scope laneEpaySettlementS
 // A live-capable binding has no ordinary issuer yet. Internal fixture
 // callsites preserve their existing constraint; the opaque new callback and
 // recovery adapter always supplies and checks the same-transaction authority.
-func settleLaneEpayWithAuthority(ctx context.Context, scope laneEpaySettlementScope, authority laneEpayTxAuthority, received *laneVerifiedEpayCapture) (laneEpaySettlementResult, error) {
+func settleLaneEpayWithAuthority(ctx context.Context, scope laneEpaySettlementScope, authority laneEpayTxAuthority, signer *laneEpayOrderSigner, received *laneVerifiedEpayCapture) (laneEpaySettlementResult, error) {
 	var empty laneEpaySettlementResult
 	if !validLaneEpaySettlementScope(ctx, scope) || (received != nil && scope.tradeNo != received.tradeNo) {
 		return empty, ErrSharedWalletScope
@@ -82,7 +82,7 @@ func settleLaneEpayWithAuthority(ctx context.Context, scope laneEpaySettlementSc
 			}
 		}
 		var settleErr error
-		outcome, settleErr = settleLaneEpayCaptureTx(tx, scope, received)
+		outcome, settleErr = settleLaneEpayCaptureTx(tx, scope, received, authority != nil, signer)
 		prepared = settleErr == nil
 		return settleErr
 	})
@@ -100,7 +100,7 @@ func settleLaneEpayWithAuthority(ctx context.Context, scope laneEpaySettlementSc
 	return outcome, nil
 }
 
-func settleLaneEpayCaptureTx(tx *gorm.DB, scope laneEpaySettlementScope, received *laneVerifiedEpayCapture) (laneEpaySettlementResult, error) {
+func settleLaneEpayCaptureTx(tx *gorm.DB, scope laneEpaySettlementScope, received *laneVerifiedEpayCapture, authorityBound bool, signer *laneEpayOrderSigner) (laneEpaySettlementResult, error) {
 	var empty laneEpaySettlementResult
 	walletScope := laneWalletCustodyScope{tx: tx, schema: scope.schema, userID: scope.userID, walletEpoch: scope.walletEpoch}
 	t, err := walletScope.lockableTx(tx, scope.userID)
@@ -110,6 +110,13 @@ func settleLaneEpayCaptureTx(tx *gorm.DB, scope laneEpaySettlementScope, receive
 	order, err := loadLaneEpayOrderTx(t, scope, true)
 	if err != nil {
 		return empty, err
+	}
+	pending := common.TopUpStatusPending
+	if authorityBound {
+		if err := verifyLaneEpayOrderBindingTx(t, scope, order, signer); err != nil {
+			return empty, err
+		}
+		pending = laneEpayPendingCapture
 	}
 	if received != nil {
 		if received.method != order.PaymentMethod {
@@ -141,7 +148,7 @@ func settleLaneEpayCaptureTx(tx *gorm.DB, scope laneEpaySettlementScope, receive
 			return empty, err
 		}
 		return laneEpaySettlementResult{state: order.Status, replayed: true, receiptID: order.PaymentReceiptID}, nil
-	case common.TopUpStatusPending, laneEpayCaptureWaiting:
+	case pending, laneEpayCaptureWaiting:
 		if order.CompleteTime != 0 {
 			return empty, errLaneEpayCaptureEvidence
 		}
@@ -149,12 +156,11 @@ func settleLaneEpayCaptureTx(tx *gorm.DB, scope laneEpaySettlementScope, receive
 		return empty, ErrTopUpStatusInvalid
 	}
 	statusBefore := order.Status
-	if statusBefore == common.TopUpStatusPending {
+	if statusBefore == pending {
 		if received == nil {
 			return empty, ErrTopUpStatusInvalid
 		}
-		if order.PaymentReceiptID != 0 || order.PaidProviderReference != "" || order.PaidMerchantScope != "" ||
-			order.PaidEnvironment != "" || order.PaidCurrency != "" || order.PaidCurrencyExponent != 0 || order.PaidAmountMinor != 0 {
+		if !laneEpayHasNoPaidFacts(order) {
 			return empty, errLaneEpayCaptureEvidence
 		}
 		if err := claimLaneEpayReceiptTx(t, scope, &order, received.facts); err != nil {
@@ -235,14 +241,18 @@ func loadLaneEpayOrderTx(tx *gorm.DB, scope laneEpaySettlementScope, lock bool) 
 	if err := tx.Where("trade_no = ?", scope.tradeNo).Take(&order).Error; err != nil {
 		return TopUp{}, err
 	}
-	if order.Id <= 0 || order.UserId != scope.userID || order.TradeNo != scope.tradeNo ||
-		order.PaymentProvider != PaymentProviderEpay || order.PaymentMethod == "" ||
-		order.NewUserBenefit || order.AgentSimpleTopUp || order.Amount <= 0 || order.QuotedWalletQuota <= 0 ||
-		order.QuotedWalletQuota > common.MaxWalletQuota || order.QuotedPaymentMinor <= 0 || order.QuotedPaymentCurrency != "CNY" ||
-		order.QuotedPaymentScope == "" || (order.QuotedPaymentEnvironment != "test" && order.QuotedPaymentEnvironment != "live") {
+	if order.Id <= 0 || !laneEpayQuoteMatchesScope(scope, order) {
 		return TopUp{}, errLaneEpayCaptureEvidence
 	}
 	return order, nil
+}
+
+func laneEpayQuoteMatchesScope(scope laneEpaySettlementScope, order TopUp) bool {
+	return order.UserId == scope.userID && order.TradeNo == scope.tradeNo &&
+		order.PaymentProvider == PaymentProviderEpay && order.PaymentMethod != "" &&
+		!order.NewUserBenefit && !order.AgentSimpleTopUp && order.Amount > 0 && order.QuotedWalletQuota > 0 &&
+		order.QuotedWalletQuota <= common.MaxWalletQuota && order.QuotedPaymentMinor > 0 && order.QuotedPaymentCurrency == "CNY" &&
+		order.QuotedPaymentScope != "" && (order.QuotedPaymentEnvironment == "test" || order.QuotedPaymentEnvironment == "live")
 }
 
 func validateLaneEpayQuoteFacts(order *TopUp, facts VerifiedPaymentFacts) error {

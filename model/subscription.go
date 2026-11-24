@@ -784,7 +784,7 @@ func upsertSubscriptionTopUpTx(tx *gorm.DB, order *SubscriptionOrder) error {
 	}
 	now := common.GetTimestamp()
 	var topup TopUp
-	if err := tx.Where("trade_no = ?", order.TradeNo).First(&topup).Error; err != nil {
+	if err := lockForUpdate(tx).Where("trade_no = ?", order.TradeNo).First(&topup).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			topup = TopUp{
 				UserId:        order.UserId,
@@ -799,6 +799,15 @@ func upsertSubscriptionTopUpTx(tx *gorm.DB, order *SubscriptionOrder) error {
 			return tx.Create(&topup).Error
 		}
 		return err
+	}
+	// Subscription orders and standalone top-ups have separate rows.
+	// Never let a same-trade subscription overwrite reserved capture
+	// states or the funded success of a standalone quoted Epay order.
+	if laneEpayReservedFromOrdinary(topup.Status) {
+		return ErrLaneEpayExclusiveOrder
+	}
+	if topup.PaymentProvider == PaymentProviderEpay && topup.QuotedWalletQuota > 0 && topup.Amount > 0 {
+		return ErrPaymentMethodMismatch
 	}
 	topup.Money = order.Money
 	if topup.PaymentMethod == "" {

@@ -194,6 +194,9 @@ func creditTopUpQuotaWithHeadroom(tx *gorm.DB, entry LedgerEntry, approval *lane
 		if err := tx.Where("trade_no = ? AND user_id = ?", entry.ReferenceId, entry.UserId).First(&topUp).Error; err != nil {
 			return nil, err
 		}
+		if laneEpayReservedFromOrdinary(topUp.Status) {
+			return nil, ErrLaneEpayExclusiveOrder
+		}
 		if topUp.NewUserBenefit {
 			return nil, ErrNewUserBenefitPaymentRequired
 		}
@@ -292,6 +295,9 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 		if expectedPaymentProvider != "" && topUp.PaymentProvider != expectedPaymentProvider {
 			return ErrPaymentMethodMismatch
 		}
+		if laneEpayReservedFromOrdinary(topUp.Status) {
+			return ErrLaneEpayExclusiveOrder
+		}
 		if topUp.NewUserBenefit {
 			// Epay has no confirmed cancellation contract. A local timeout must
 			// not release or invalidate an externally payable benefit promise.
@@ -341,6 +347,9 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, actualMoney string
 		}
 		if topUp.PaymentProvider != PaymentProviderEpay {
 			return ErrPaymentMethodMismatch
+		}
+		if laneEpayReservedFromOrdinary(topUp.Status) {
+			return ErrLaneEpayExclusiveOrder
 		}
 		if topUp.NewUserBenefit {
 			var benefitErr error
@@ -712,6 +721,9 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		// 行级锁，避免并发补单
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
 			return common.NewMessage("Top-up order does not exist")
+		}
+		if laneEpayReservedFromOrdinary(topUp.Status) {
+			return ErrLaneEpayExclusiveOrder
 		}
 		if topUp.NewUserBenefit {
 			return ErrNewUserBenefitPaymentRequired

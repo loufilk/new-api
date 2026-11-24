@@ -3,6 +3,7 @@
 package model
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"testing"
@@ -15,23 +16,42 @@ import (
 )
 
 func laneEpayCaptureFixture(t *testing.T, useRedis bool) (*gorm.DB, laneEpaySettlementScope, TopUp, *epay.Client) {
+	db, scope, order, client, _ := laneEpayCaptureFixtureWithMode(t, useRedis, false)
+	return db, scope, order, client
+}
+
+func laneEpaySyntheticSigner() *laneEpayOrderSigner {
+	return &laneEpayOrderSigner{keyID: "synthetic-v1", key: sha256.Sum256([]byte("synthetic-only-order-proof-key-not-configured"))}
+}
+
+func laneEpayCaptureFixtureWithMode(t *testing.T, useRedis, managed bool) (*gorm.DB, laneEpaySettlementScope, TopUp, *epay.Client, *BoundLaneEpayOrder) {
 	t.Helper()
 	db, user, epoch, schema := laneWalletHeadroomFixture(t, 24)
 	oldMain, oldLog := DB, LOG_DB
 	DB, LOG_DB = db, db
 	t.Cleanup(func() { DB, LOG_DB = oldMain, oldLog })
-	require.NoError(t, db.AutoMigrate(&TopUp{}, &PaymentReceipt{}, &AgentCommissionOutbox{}, &SubscriptionOrder{}, &Log{}))
+	require.NoError(t, db.AutoMigrate(&TopUp{}, &PaymentReceipt{}, &AgentCommissionOutbox{}, &SubscriptionOrder{}, &Log{}, &laneEpayOrderBindingV1{}))
 	merchant := "631210"
 	order := TopUp{UserId: user, Amount: 1, Money: 1, TradeNo: "SYNTHETIC_EPAY_LANE_ORDER",
 		PaymentMethod: "alipay", PaymentProvider: PaymentProviderEpay, Status: common.TopUpStatusPending,
 		QuotedWalletQuota: 80, QuotedPaymentMinor: 100, QuotedPaymentCurrency: "CNY",
 		QuotedPaymentScope: merchant, QuotedPaymentEnvironment: "test"}
-	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		if err := validateTopUpQuotaCapacity(tx, user, order.QuotedWalletQuota, &laneWalletCustodyScope{tx, schema, user, epoch}); err != nil {
-			return err
-		}
-		return tx.Create(&order).Error
-	}))
+	scope := laneEpaySettlementScope{db, schema, user, epoch, order.TradeNo}
+	bound := &BoundLaneEpayOrder{scope: scope, orderSigner: laneEpaySyntheticSigner(),
+		authority: laneEpayFixtureAuthority{check: func(*gorm.DB, *gorm.DB, *gorm.DB, int64) error { return nil }}}
+	if managed {
+		order.Status = ""
+		var err error
+		order, err = createBoundLaneEpayOrder(t.Context(), bound, order)
+		require.NoError(t, err)
+	} else {
+		require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+			if err := validateTopUpQuotaCapacity(tx, user, order.QuotedWalletQuota, &laneWalletCustodyScope{tx, schema, user, epoch}); err != nil {
+				return err
+			}
+			return tx.Create(&order).Error
+		}))
+	}
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		entry := LedgerEntry{UserId: user, Account: AccountPaid, Delta: 25, Reason: LedgerReasonAdminAdd, IdempotencyKey: "uses-epay-headroom-before-capture"}
 		_, err := creditQuotaTx(tx, entry, laneHeadroomApproval(t, tx, schema, epoch, entry))
@@ -62,7 +82,7 @@ func laneEpayCaptureFixture(t *testing.T, useRedis bool) (*gorm.DB, laneEpaySett
 	}
 	client, err := epay.NewClient(&epay.Config{PartnerID: merchant, Key: "SYNTHETIC_NO_PROVIDER_KEY"}, "http://127.0.0.1:1/")
 	require.NoError(t, err) // neither SignParams nor Verify performs network I/O
-	return db, laneEpaySettlementScope{db, schema, user, epoch, order.TradeNo}, order, client
+	return db, scope, order, client, bound
 }
 
 func verifiedLaneEpayFixture(t *testing.T, client *epay.Client, order TopUp, price, ref string) (laneVerifiedEpayCapture, map[string]string) {

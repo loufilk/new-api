@@ -24,7 +24,7 @@ func TestLaneNativeDisplayAndEpayShareExactWalletHeadroomPostgres(t *testing.T) 
 	oldDB, oldLog := DB, LOG_DB
 	DB, LOG_DB = db, db
 	t.Cleanup(func() { DB, LOG_DB = oldDB, oldLog })
-	require.NoError(t, db.AutoMigrate(&TopUp{}, &PaymentReceipt{}, &AgentCommissionOutbox{}, &SubscriptionOrder{}, &Log{}))
+	require.NoError(t, db.AutoMigrate(&TopUp{}, &PaymentReceipt{}, &AgentCommissionOutbox{}, &SubscriptionOrder{}, &Log{}, &laneEpayOrderBindingV1{}))
 	custody, err := InstallLaneCustodyFixtureV1(ctx, db, db, release, b.WalletEpoch)
 	require.NoError(t, err)
 	var schema string
@@ -58,15 +58,16 @@ func TestLaneNativeDisplayAndEpayShareExactWalletHeadroomPostgres(t *testing.T) 
 	require.Equal(t, 100, wallet.Available)
 	credit("fill-native-epay-wallet", common.MaxWalletQuota-room-user.Quota-wallet.Available)
 	order := TopUp{UserId: id.UserID, Amount: 1, Money: 1, TradeNo: "SYNTHETIC_NATIVE_EPAY_INTERSECTION",
-		PaymentMethod: "alipay", PaymentProvider: PaymentProviderEpay, Status: common.TopUpStatusPending,
+		PaymentMethod: "alipay", PaymentProvider: PaymentProviderEpay,
 		QuotedWalletQuota: room, QuotedPaymentMinor: 100, QuotedPaymentCurrency: "CNY",
 		QuotedPaymentScope: "631210", QuotedPaymentEnvironment: "test"}
-	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		if err := validateTopUpQuotaCapacity(tx, user.Id, room, &laneWalletCustodyScope{tx, schema, user.Id, b.WalletEpoch}); err != nil {
-			return err
-		}
-		return tx.Create(&order).Error
-	}))
+	bound := &BoundLaneEpayOrder{
+		scope: laneEpaySettlementScope{db, schema, id.UserID, b.WalletEpoch, order.TradeNo}, authority: custody,
+		orderSigner: laneEpaySyntheticSigner(),
+	}
+	order, err = createBoundLaneEpayOrder(ctx, bound, order)
+	require.NoError(t, err)
+
 	credit("use-one-room-after-epay-quote", 1)
 	require.NoError(t, db.Take(&user, id.UserID).Error)
 	token := finiteKeyDevReadOriginal(t, db, id)
@@ -99,9 +100,6 @@ func TestLaneNativeDisplayAndEpayShareExactWalletHeadroomPostgres(t *testing.T) 
 	client, err := epay.NewClient(&epay.Config{PartnerID: order.QuotedPaymentScope, Key: "SYNTHETIC_NO_PROVIDER_KEY"}, "http://127.0.0.1:1/")
 	require.NoError(t, err)
 	capture, _ := verifiedLaneEpayFixture(t, client, order, "1.00", "SYNTHETIC_NATIVE_CAPTURE")
-	bound := &BoundLaneEpayOrder{
-		scope: laneEpaySettlementScope{db, schema, id.UserID, b.WalletEpoch, order.TradeNo}, authority: custody,
-	}
 	parked, err := bound.ApplyVerified(ctx, LaneEpayVerifiedNotification{
 		TradeNo: order.TradeNo, Method: capture.method, Money: capture.money, Facts: capture.facts,
 	})
