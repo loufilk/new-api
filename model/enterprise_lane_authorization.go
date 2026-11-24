@@ -17,49 +17,6 @@ import (
 // and its admission statistics. It is not a default lane count.
 const EnterpriseLaneGatewayMaxLanes = 32
 
-// CheckEnterpriseLaneGatewayDisabled prevents a tagged server from silently
-// reverting to ordinary wallet traffic on a database with live lab escrow.
-// Normal builds do not know about the lab; never mix them in this fixture.
-func CheckEnterpriseLaneGatewayDisabled(ctx context.Context, db *gorm.DB) error {
-	if db == nil || db.Dialector.Name() != "postgres" {
-		return nil
-	}
-	var exists bool
-	// to_regclass is PostgreSQL-only; bind the current schema explicitly so
-	// a shadow table in a later search-path entry cannot decide this gate.
-	if err := db.WithContext(ctx).Raw("SELECT to_regclass(quote_ident(current_schema()) || '.enterprise_lanes') IS NOT NULL").Scan(&exists).Error; err != nil {
-		return ErrEnterpriseLaneUnavailable
-	}
-	if !exists {
-		return nil
-	}
-	var count int64
-	if err := db.WithContext(ctx).Model(&EnterpriseLane{}).Where("state <> ?", EnterpriseLaneDrained).Count(&count).Error; err != nil {
-		return ErrEnterpriseLaneUnavailable
-	}
-	if count > 0 {
-		return ErrEnterpriseLaneState
-	}
-	var projectionColumn bool
-	if err := db.WithContext(ctx).Raw(`SELECT EXISTS (SELECT 1 FROM information_schema.columns
-		WHERE table_schema = current_schema() AND table_name = 'enterprise_lane_requests' AND column_name = 'usage_projection_pending')`).Scan(&projectionColumn).Error; err != nil {
-		return ErrEnterpriseLaneUnavailable
-	}
-	if projectionColumn {
-		// P3 has no projection column, but any P4 settled receipt still
-		// awaiting projection must keep downgrade disabled after financial drain.
-		var pending EnterpriseLaneRequest
-		result := db.WithContext(ctx).Select("request_id").Where("usage_projection_pending").Limit(1).Find(&pending)
-		if result.Error != nil {
-			return ErrEnterpriseLaneUnavailable
-		}
-		if result.RowsAffected != 0 {
-			return ErrEnterpriseLaneState
-		}
-	}
-	return nil
-}
-
 func enterpriseLaneGatewayManifest(id EnterpriseLaneIdentity, count int) []EnterpriseLaneIdentity {
 	lanes := make([]EnterpriseLaneIdentity, count)
 	for i := range lanes {

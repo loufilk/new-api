@@ -13,11 +13,9 @@ import (
 )
 
 var (
-	ErrEnterpriseLaneUnavailable = errors.New("enterprise lane lab requires the isolated PostgreSQL database")
-	ErrEnterpriseLaneIdentity    = errors.New("enterprise lane identity or funding mismatch")
-	ErrEnterpriseLaneCapacity    = errors.New("enterprise lane paid or finite-token budget exhausted")
-	ErrEnterpriseLaneState       = errors.New("enterprise lane transition not permitted")
-	ErrEnterpriseLaneExposure    = errors.New("measured usage exceeds the reserved enterprise request cap; review required")
+	ErrEnterpriseLaneIdentity = errors.New("enterprise lane identity or funding mismatch")
+	ErrEnterpriseLaneCapacity = errors.New("enterprise lane paid or finite-token budget exhausted")
+	ErrEnterpriseLaneExposure = errors.New("measured usage exceeds the reserved enterprise request cap; review required")
 )
 
 const (
