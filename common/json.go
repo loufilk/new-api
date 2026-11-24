@@ -5,6 +5,7 @@ import (
 	stdjson "encoding/json"
 	"errors"
 	"io"
+	"reflect"
 
 	"github.com/MoeForge/moego/json"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
@@ -127,4 +128,68 @@ func GetJsonType(data RawMessage) string {
 // JsonRawMessageToString returns JSON strings as their decoded value and other JSON values as raw text.
 func JsonRawMessageToString(data RawMessage) string {
 	return kitutil.JsonRawMessageToString(data)
+}
+
+// DecodeJsonExactShape decodes one typed configuration record, rejects
+// duplicate keys, and requires every exact JSON key declared by v. Unlike the
+// standard decoder, casing aliases are not accepted. Order and whitespace
+// remain irrelevant. Use for bounded, closed-schema control-plane inputs.
+func DecodeJsonExactShape(data []byte, v any) error {
+	if err := DecodeJsonStrict(bytes.NewReader(data), v); err != nil {
+		return err
+	}
+	expected, err := Marshal(v)
+	if err != nil {
+		return err
+	}
+	actualKeys, err := jsonKeyShape(stdjson.NewDecoder(bytes.NewReader(data)))
+	if err != nil {
+		return err
+	}
+	expectedKeys, err := jsonKeyShape(stdjson.NewDecoder(bytes.NewReader(expected)))
+	if err != nil || !reflect.DeepEqual(actualKeys, expectedKeys) {
+		return errors.New("JSON keys do not match the exact configuration shape")
+	}
+	return nil
+}
+
+func jsonKeyShape(d *stdjson.Decoder) (any, error) {
+	x, err := d.Token()
+	if err != nil {
+		return nil, err
+	}
+	switch x {
+	case stdjson.Delim('{'):
+		m := map[string]any{}
+		for d.More() {
+			k, err := d.Token()
+			if err != nil {
+				return nil, err
+			}
+			key, ok := k.(string)
+			if _, duplicate := m[key]; !ok || duplicate {
+				return nil, errors.New("duplicate or invalid JSON object key")
+			}
+			value, err := jsonKeyShape(d)
+			if err != nil {
+				return nil, err
+			}
+			m[key] = value
+		}
+		_, err = d.Token()
+		return m, err
+	case stdjson.Delim('['):
+		out := make([]any, 0)
+		for d.More() {
+			value, err := jsonKeyShape(d)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, value)
+		}
+		_, err = d.Token()
+		return out, err
+	default:
+		return nil, nil
+	}
 }
