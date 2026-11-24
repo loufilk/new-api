@@ -339,6 +339,9 @@ async function renderKeysPage(
 ) {
   let currentKey = { ...key, status, ...overrides }
   vi.mocked(api.get).mockImplementation(async (url) => {
+    if (url.startsWith('/api/user/tokens/7/models?')) {
+      return { data: { success: true, data: ['example-model'] } }
+    }
     if (url.startsWith('/api/token/')) {
       return {
         data: { success: true, data: { items: [currentKey], total: 1 } },
@@ -617,6 +620,33 @@ it.each([true, false])(
     }
   }
 )
+
+it('ignores cached Chat presets yet opens the independent CC Switch action', async () => {
+  const cachedStatus = JSON.stringify({
+    chats: [{ 'Retired client': 'https://retired.invalid/?key={key}' }],
+  })
+  localStorage.setItem('status', cachedStatus)
+  const launch = vi.spyOn(window, 'open').mockReturnValue(null)
+  const { post } = await renderKeysPage(1, {}, true, '/keys/', true)
+  const user = userEvent.setup()
+
+  await user.click(screen.getByRole('button', { name: 'Open menu' }))
+  expect(
+    screen.queryByRole('menuitem', { name: 'Chat' })
+  ).not.toBeInTheDocument()
+  expect(screen.queryByText('Retired client')).not.toBeInTheDocument()
+  expect(post).not.toHaveBeenCalled()
+  expect(launch).not.toHaveBeenCalled()
+
+  await user.click(screen.getByRole('menuitem', { name: 'CC Switch' }))
+  expect(
+    await screen.findByRole('dialog', { name: 'Import to CC Switch' })
+  ).toBeVisible()
+  expect(post).toHaveBeenCalledWith('/api/token/7/key', undefined, {
+    signal: expect.any(AbortSignal),
+  })
+  expect(launch).not.toHaveBeenCalled()
+})
 
 it('keeps full mobile information without group or quota section headings', async () => {
   const matchMedia = window.matchMedia

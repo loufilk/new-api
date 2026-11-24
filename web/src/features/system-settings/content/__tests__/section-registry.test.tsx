@@ -48,7 +48,6 @@ const settings: ContentSettings = {
   DataExportEnabled: false,
   DataExportDefaultTime: 'hour',
   DataExportInterval: 5,
-  Chats: '[]',
   DrawingEnabled: false,
   MjNotifyEnabled: false,
   MjAccountFilterEnabled: false,
@@ -71,17 +70,21 @@ afterEach(() => useAuthStore.getState().auth.reset())
 
 test('combined settings retire model settings while retaining support, pool and announcement deep links', () => {
   const nav = getContentSectionNavItems(i18next.t)
-  for (const section of [
-    'support-email',
-    'account-pool',
-    'announcements',
-  ]) {
+  for (const section of ['support-email', 'account-pool', 'announcements']) {
     expect(
       nav.filter((item) => item.url === `/system-settings/content/${section}`)
     ).toHaveLength(1)
     expect(CONTENT_SECTION_IDS).toContain(section)
   }
   expect(CONTENT_SECTION_IDS).not.toContain('model-tests')
+  expect(CONTENT_DEFAULT_SECTION).toBe('dashboard')
+})
+
+test('content settings no longer offer a preset editor', () => {
+  expect(CONTENT_SECTION_IDS).not.toContain('chat')
+  expect(getContentSectionNavItems(i18next.t)).not.toContainEqual(
+    expect.objectContaining({ url: '/system-settings/content/chat' })
+  )
   expect(CONTENT_DEFAULT_SECTION).toBe('dashboard')
 })
 

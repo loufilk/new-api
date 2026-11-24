@@ -108,11 +108,6 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             url: '/image',
             icon: ImageIcon,
           },
-          {
-            title: t('Third-party'),
-            icon: PlugZap,
-            type: 'chat-presets',
-          },
         ],
       },
       {

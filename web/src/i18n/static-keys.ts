@@ -716,7 +716,6 @@ export const STATIC_I18N_KEYS = [
   '{{count}} of {{max}} images',
   'No matching history.',
   'AI model testing environment',
-  'Chat session management',
   'No content to copy',
   'Please wait for the current generation to complete',
   'An unknown error occurred',
@@ -778,11 +777,6 @@ export const STATIC_I18N_KEYS = [
   'Official documentation',
   'Violation deduction amount',
   'Base amount. Actual deduction = base amount × system group rate.',
-
-  // Chat2Link
-  'No available Web chat links',
-  'No enabled tokens available',
-  'Redirecting to chat page...',
 
   // Channel upstream updates
   'No processable upstream model updates for this channel',

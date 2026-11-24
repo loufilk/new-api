@@ -37,7 +37,6 @@ const legacyConsoleRoutes: Record<string, string> = {
 const legacySettingsTabs: Record<string, string> = {
   operation: '/system-settings/operations/behavior',
   dashboard: '/system-settings/content/dashboard',
-  chats: '/system-settings/content/chat',
   drawing: '/system-settings/content/drawing',
   payment: '/system-settings/billing/payment',
   ratio: '/system-settings/billing/model-pricing',
@@ -83,15 +82,15 @@ export function resolveLegacyRoute(rawHref: string): string | null {
   }
   if (pathname === '/console/setting') {
     const tab = source.searchParams.get('tab') ?? ''
+    if (tab === 'chats') {
+      return '/system-settings/content/dashboard'
+    }
     const target = legacySettingsTabs[tab] ?? '/system-settings'
     return buildTargetHref(target, source)
   }
-  if (pathname === '/console/chat') {
-    return buildTargetHref('/dashboard', source)
-  }
-  if (pathname.startsWith('/console/chat/')) {
-    const chatID = pathname.slice('/console/chat/'.length)
-    return buildTargetHref(chatID ? `/chat/${chatID}` : '/dashboard', source)
+  // Retired client-launch bookmarks never carry launch input into the console.
+  if (/^\/(?:console\/)?(?:chat|chat2link)(?:\/|$)/.test(pathname)) {
+    return '/dashboard'
   }
 
   const target = legacyConsoleRoutes[pathname]
