@@ -598,6 +598,10 @@ func GetTokenStatus(c *gin.Context) {
 }
 
 func GetTokenUsage(c *gin.Context) {
+	getTokenUsage(c, nil)
+}
+
+func getTokenUsage(c *gin.Context, source *model.LaneBillingDisplayV1) {
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -615,13 +619,21 @@ func GetTokenUsage(c *gin.Context) {
 		})
 		return
 	}
-	tokenKey := parts[1]
-
-	token, err := model.GetTokenByKey(strings.TrimPrefix(tokenKey, "sk-"), false)
+	scopedView, scoped, err := readLaneBillingToken(c, source)
 	if err != nil {
-		common.SysError(common.LogText("failed to get token by key: %s", err.Error()))
 		common.ApiErrorI18n(c, i18n.MsgTokenGetInfoFailed)
 		return
+	}
+	token := &scopedView.Token
+	available, used := scopedView.Available, scopedView.Used
+	if !scoped {
+		token, err = model.GetTokenByKey(strings.TrimPrefix(parts[1], "sk-"), false)
+		if err != nil {
+			common.SysError(common.LogText("failed to get token by key: %s", err.Error()))
+			common.ApiErrorI18n(c, i18n.MsgTokenGetInfoFailed)
+			return
+		}
+		available, used = token.RemainQuota, token.UsedQuota
 	}
 
 	expiredAt := token.ExpiredTime
@@ -632,16 +644,21 @@ func GetTokenUsage(c *gin.Context) {
 	data := gin.H{
 		"object":               "token_usage",
 		"name":                 token.Name,
-		"total_granted":        token.RemainQuota + token.UsedQuota,
-		"total_used":           token.UsedQuota,
-		"total_available":      token.RemainQuota,
+		"total_granted":        available + used,
+		"total_used":           used,
+		"total_available":      available,
 		"unlimited_quota":      token.UnlimitedQuota,
 		"model_limits":         token.GetModelLimitsMap(),
 		"model_limits_enabled": token.ModelLimitsEnabled,
 		"expires_at":           expiredAt,
 	}
 	// 用户额度只在令牌允许时返回；IP 白名单已由 TokenAuthReadOnly 检查。
-	if token.AllowUserQuotaQuery {
+	if scopedView.Account != nil {
+		data["user_quota"] = gin.H{
+			"total_available": scopedView.Account.Available,
+			"total_used":      scopedView.Account.Used,
+		}
+	} else if !scoped && token.AllowUserQuotaQuery {
 		userQuota, err := model.GetUserQuota(token.UserId, false)
 		var userUsedQuota int
 		if err == nil {

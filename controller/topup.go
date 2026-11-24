@@ -397,6 +397,13 @@ func UnlockOrder(tradeNo string) {
 }
 
 func EpayNotify(c *gin.Context) {
+	epayNotify(c, nil)
+}
+
+// The registered handler deliberately passes nil. A future trusted
+// cutover may pass an exclusive ordinary-order binding; a selected scope
+// must never fall through to another wallet/payment-code writer on error.
+func epayNotify(c *gin.Context, scope laneEpayCallbackScope) {
 	if !isEpayWebhookEnabled() {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("易支付 webhook 被拒绝 reason=webhook_disabled path=%q client_ip=%s", c.Request.URL.Path, c.ClientIP()))
 		_, _ = c.Writer.Write([]byte("fail"))
@@ -422,6 +429,10 @@ func EpayNotify(c *gin.Context) {
 			r[t] = c.Request.URL.Query().Get(t)
 			return r
 		}, map[string]string{})
+	}
+	if scope != nil && !singleValuedLaneEpayForm(c.Request) {
+		_, _ = c.Writer.Write([]byte("fail"))
+		return
 	}
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 webhook 收到请求 path=%q client_ip=%s method=%s parameter_count=%d signature_present=%t", c.Request.URL.Path, c.ClientIP(), c.Request.Method, len(params), params["sign"] != ""))
 
@@ -456,6 +467,11 @@ func EpayNotify(c *gin.Context) {
 		return
 	}
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 webhook 验签成功 trade_no=%s callback_type=%s trade_status=%s callback_money=%s client_ip=%s", verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.TradeStatus, verifyInfo.Money, c.ClientIP()))
+
+	if scope != nil {
+		writeBoundLaneEpayAcknowledgement(c, scope, verifyInfo, params)
+		return
+	}
 
 	if verifyInfo.TradeStatus == epay.StatusTradeSuccess {
 		// Payment-code orders use the same verified provider callback but must not

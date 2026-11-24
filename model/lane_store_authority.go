@@ -147,6 +147,11 @@ func laneStorePGHandleOK(db *gorm.DB) bool {
 // A legacy PostgreSQL schema with no store evidence and non-PG startup retain
 // ordinary behavior. It does not fence already-running or older binaries.
 func CheckLaneStoreOrdinaryStartup(ctx context.Context, db *gorm.DB) error {
+	// Even a mistakenly rebuilt capable binary must not fall through
+	// to ordinary startup without a real independently enforced writer fence.
+	if LaneStoreRuntimeCapable {
+		return ErrLaneCustodyFleetFenceRequired
+	}
 	if ctx == nil || db == nil || db.Config == nil || db.Statement == nil || db.Dialector == nil || db.DryRun {
 		return ErrLaneStoreAuthorityUnavailable
 	}
@@ -164,6 +169,10 @@ func CheckLaneStoreOrdinaryStartup(ctx context.Context, db *gorm.DB) error {
 }
 
 func checkLaneStoreOrdinaryStartupTx(tx *gorm.DB) error {
+	// The managed migrate/serve commands also use this lower-level entry.
+	if LaneStoreRuntimeCapable {
+		return ErrLaneCustodyFleetFenceRequired
+	}
 	tx = tx.Session(&gorm.Session{NewDB: true, Logger: logger.Discard, SkipHooks: true})
 	c, err := inspectLaneStoreCatalogTx(tx)
 	if err != nil || c.table == "" {
@@ -272,7 +281,7 @@ func withLaneStoreMetadataTx(ctx context.Context, db *gorm.DB, run func(*gorm.DB
 }
 
 func laneStoreAuthorityError(ctx context.Context, err error) error {
-	if err == nil || errors.Is(err, ErrLaneStoreAuthorityUnavailable) || errors.Is(err, ErrLaneStoreAuthorityState) || errors.Is(err, ErrLaneStoreAuthorityEvidence) {
+	if err == nil || errors.Is(err, ErrLaneStoreAuthorityUnavailable) || errors.Is(err, ErrLaneStoreAuthorityState) || errors.Is(err, ErrLaneStoreAuthorityEvidence) || errors.Is(err, ErrLaneCustodyFleetFenceRequired) {
 		return err
 	}
 	if ctx != nil && ctx.Err() != nil {

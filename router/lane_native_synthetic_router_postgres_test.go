@@ -250,9 +250,11 @@ func TestLaneNativeSyntheticPublicRouterPostgres(t *testing.T) {
 	require.NoError(t, db.Take(&user, id.UserID).Error)
 	require.NoError(t, db.Take(&token, id.TokenID).Error)
 	release := laneRouterDevRelease()
+	custody, err := model.InstallLaneCustodyFixtureV1(t.Context(), db, model.LOG_DB, release, 17)
+	require.NoError(t, err)
 	var revokeBeforeBind atomic.Bool
 	plan := relay.LaneNativeSyntheticPlan{
-		DB: db, Group: "default", Model: laneRouterDevModel, ProviderOrigin: upstream.URL, SyntheticProviderKey: laneRouterDevUpstreamKey,
+		DB: db, Custody: custody, Group: "default", Model: laneRouterDevModel, ProviderOrigin: upstream.URL, SyntheticProviderKey: laneRouterDevUpstreamKey,
 		FrozenWireHMACKey: sha256.Sum256([]byte("isolated synthetic native router HMAC")),
 		Verifier: laneRouterDevBeforeBind(func(ctx context.Context) error {
 			if !revokeBeforeBind.Load() {

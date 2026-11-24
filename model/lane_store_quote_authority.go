@@ -31,6 +31,7 @@ type LaneStoreQuoteAuthorityV1 struct {
 	schema, userGroup string
 	settingsSHA256    [sha256.Size]byte
 	custody           bool
+	custodyAuthority  *LaneCustodyAuthorityV1
 }
 
 func (q LaneStoreQuoteAuthorityV1) MatchesPreparedRequest(requestID, group string, revision int64) bool {

@@ -53,12 +53,22 @@ func reconcileLaneEpayCapture(ctx context.Context, scope laneEpaySettlementScope
 }
 
 func settleLaneEpay(ctx context.Context, scope laneEpaySettlementScope, received *laneVerifiedEpayCapture) (laneEpaySettlementResult, error) {
+	return settleLaneEpayWithAuthority(ctx, scope, nil, received)
+}
+
+func validLaneEpaySettlementScope(ctx context.Context, scope laneEpaySettlementScope) bool {
+	return ctx != nil && scope.db != nil && scope.db == DB && scope.db == LOG_DB &&
+		laneStorePGHandleOK(scope.db) && common.UsingLogDatabase(common.DatabaseTypePostgreSQL) &&
+		scope.userID > 0 && scope.walletEpoch > 0 && len(scope.tradeNo) <= 128 &&
+		strings.TrimSpace(scope.tradeNo) == scope.tradeNo && scope.tradeNo != ""
+}
+
+// A live-capable binding has no ordinary issuer yet. Internal fixture
+// callsites preserve their existing constraint; the opaque new callback and
+// recovery adapter always supplies and checks the same-transaction authority.
+func settleLaneEpayWithAuthority(ctx context.Context, scope laneEpaySettlementScope, authority laneEpayTxAuthority, received *laneVerifiedEpayCapture) (laneEpaySettlementResult, error) {
 	var empty laneEpaySettlementResult
-	if ctx == nil || scope.db == nil || scope.db != DB || scope.db != LOG_DB ||
-		!laneStorePGHandleOK(scope.db) || !common.UsingLogDatabase(common.DatabaseTypePostgreSQL) ||
-		scope.userID <= 0 || scope.walletEpoch <= 0 || len(scope.tradeNo) > 128 ||
-		strings.TrimSpace(scope.tradeNo) != scope.tradeNo || scope.tradeNo == "" ||
-		(received != nil && scope.tradeNo != received.tradeNo) {
+	if !validLaneEpaySettlementScope(ctx, scope) || (received != nil && scope.tradeNo != received.tradeNo) {
 		return empty, ErrSharedWalletScope
 	}
 	ctx, cancel := context.WithTimeout(ctx, laneBillingOwnerTimeout)
@@ -66,6 +76,11 @@ func settleLaneEpay(ctx context.Context, scope laneEpaySettlementScope, received
 	var outcome laneEpaySettlementResult
 	prepared := false
 	err := scope.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if authority != nil {
+			if err := authority.CheckTx(tx, scope.db, LOG_DB, scope.walletEpoch); err != nil {
+				return err
+			}
+		}
 		var settleErr error
 		outcome, settleErr = settleLaneEpayCaptureTx(tx, scope, received)
 		prepared = settleErr == nil
@@ -92,16 +107,9 @@ func settleLaneEpayCaptureTx(tx *gorm.DB, scope laneEpaySettlementScope, receive
 	if err != nil {
 		return empty, err
 	}
-	var order TopUp
-	if err := lockForUpdate(t).Where("trade_no = ?", scope.tradeNo).Take(&order).Error; err != nil {
+	order, err := loadLaneEpayOrderTx(t, scope, true)
+	if err != nil {
 		return empty, err
-	}
-	if order.Id <= 0 || order.UserId != scope.userID || order.TradeNo != scope.tradeNo ||
-		order.PaymentProvider != PaymentProviderEpay || order.PaymentMethod == "" ||
-		order.NewUserBenefit || order.AgentSimpleTopUp || order.Amount <= 0 || order.QuotedWalletQuota <= 0 ||
-		order.QuotedWalletQuota > common.MaxWalletQuota || order.QuotedPaymentMinor <= 0 || order.QuotedPaymentCurrency != "CNY" ||
-		order.QuotedPaymentScope == "" || (order.QuotedPaymentEnvironment != "test" && order.QuotedPaymentEnvironment != "live") {
-		return empty, errLaneEpayCaptureEvidence
 	}
 	if received != nil {
 		if received.method != order.PaymentMethod {
@@ -218,6 +226,25 @@ func settleLaneEpayCaptureTx(tx *gorm.DB, scope laneEpaySettlementScope, receive
 	return laneEpaySettlementResult{state: order.Status, receiptID: order.PaymentReceiptID}, nil
 }
 
+// The same frozen original-order contract applies to mutation and observation.
+func loadLaneEpayOrderTx(tx *gorm.DB, scope laneEpaySettlementScope, lock bool) (TopUp, error) {
+	var order TopUp
+	if lock {
+		tx = lockForUpdate(tx)
+	}
+	if err := tx.Where("trade_no = ?", scope.tradeNo).Take(&order).Error; err != nil {
+		return TopUp{}, err
+	}
+	if order.Id <= 0 || order.UserId != scope.userID || order.TradeNo != scope.tradeNo ||
+		order.PaymentProvider != PaymentProviderEpay || order.PaymentMethod == "" ||
+		order.NewUserBenefit || order.AgentSimpleTopUp || order.Amount <= 0 || order.QuotedWalletQuota <= 0 ||
+		order.QuotedWalletQuota > common.MaxWalletQuota || order.QuotedPaymentMinor <= 0 || order.QuotedPaymentCurrency != "CNY" ||
+		order.QuotedPaymentScope == "" || (order.QuotedPaymentEnvironment != "test" && order.QuotedPaymentEnvironment != "live") {
+		return TopUp{}, errLaneEpayCaptureEvidence
+	}
+	return order, nil
+}
+
 func validateLaneEpayQuoteFacts(order *TopUp, facts VerifiedPaymentFacts) error {
 	if facts.Provider != PaymentProviderEpay || facts.ExternalReference == "" || facts.CurrencyExponent != 2 ||
 		facts.CheckoutSubtotalMinor != 0 || facts.CheckoutDiscountMinor != 0 {
@@ -273,18 +300,23 @@ func claimLaneEpayReceiptTx(tx *gorm.DB, scope laneEpaySettlementScope, order *T
 }
 
 func readLaneEpayReceiptTx(tx *gorm.DB, scope laneEpaySettlementScope, order *TopUp) (VerifiedPaymentFacts, error) {
+	facts, _, err := inspectLaneEpayReceiptTx(tx, scope, order)
+	return facts, err
+}
+
+func inspectLaneEpayReceiptTx(tx *gorm.DB, scope laneEpaySettlementScope, order *TopUp) (VerifiedPaymentFacts, int64, error) {
 	var empty VerifiedPaymentFacts
 	if order.PaymentReceiptID <= 0 {
-		return empty, errLaneEpayCaptureEvidence
+		return empty, 0, errLaneEpayCaptureEvidence
 	}
 	var receipt PaymentReceipt
 	if err := tx.First(&receipt, order.PaymentReceiptID).Error; err != nil {
-		return empty, err
+		return empty, 0, err
 	}
 	facts := order.verifiedAgentPaymentFacts()
 	hash, err := laneEpayEvidenceHash(scope, order, facts)
 	if err != nil {
-		return empty, err
+		return empty, 0, err
 	}
 	identity := sha256.Sum256([]byte(facts.Provider + "\x00" + facts.ExternalReference))
 	if receipt.ReceiptKey != hex.EncodeToString(identity[:]) || receipt.EvidenceHash != hash || ValidatePaymentReceipt(&receipt) != nil || receipt.Purpose != "topup" || receipt.LocalOrderKey != order.TradeNo ||
@@ -292,9 +324,9 @@ func readLaneEpayReceiptTx(tx *gorm.DB, scope laneEpaySettlementScope, order *To
 		receipt.MerchantScope != facts.MerchantScope || receipt.Environment != facts.Environment ||
 		receipt.Currency != facts.Currency || receipt.CurrencyExponent != facts.CurrencyExponent || receipt.PaidMinor != facts.PaidMinor ||
 		validateLaneEpayQuoteFacts(order, facts) != nil {
-		return empty, errLaneEpayCaptureEvidence
+		return empty, 0, errLaneEpayCaptureEvidence
 	}
-	return facts, nil
+	return facts, receipt.PaidAt, nil
 }
 
 func writeLaneEpayOrderTx(tx *gorm.DB, order *TopUp, expected string) error {

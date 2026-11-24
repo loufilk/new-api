@@ -387,6 +387,10 @@ func GetAffCode(c *gin.Context) {
 }
 
 func GetSelf(c *gin.Context) {
+	getSelf(c, nil)
+}
+
+func getSelf(c *gin.Context, source *model.LaneBillingDisplayV1) {
 	id := c.GetInt("id")
 	userRole := c.GetInt("role")
 	user, err := model.GetSelfUserById(id)
@@ -398,7 +402,19 @@ func GetSelf(c *gin.Context) {
 	// capabilities. If the authenticated role and the current row differ, neither
 	// a stale elevated cache nor a newer elevated row may expand this request's
 	// permissions beyond the lower of the two authoritative snapshots.
+	var view model.LaneAccountBillingDisplay
+	var scoped bool
+	if source != nil {
+		view, scoped, err = source.ReadUser(c.Request.Context(), id, c.GetInt64("auth_version"))
+		if err != nil {
+			common.ApiErrorI18n(c, i18n.MsgDatabaseError)
+			return
+		}
+	}
 	responseData := buildSelfUserDataWithRole(user, min(user.Role, userRole))
+	if scoped {
+		responseData["quota"], responseData["used_quota"], responseData["request_count"] = view.Available, view.Used, view.Requests
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

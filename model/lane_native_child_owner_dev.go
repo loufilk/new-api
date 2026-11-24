@@ -34,8 +34,8 @@ func inspectLaneNativeChildFixtureCatalogTx(tx *gorm.DB) (laneStoreCatalog, erro
 // CaptureLaneNativeChildQuoteDev is isolated prehold evidence for the normal
 // native route rehearsal. It never opens the fixture on an ordinary build and
 // does not confer a hold, a dispatch grant, or permission to start this DB.
-func CaptureLaneNativeChildQuoteDev(ctx context.Context, db *gorm.DB, input LaneStoreQuoteInputV1) (LaneStoreQuoteAuthorityV1, error) {
-	if ctx == nil || !laneStorePGHandleOK(db) {
+func CaptureLaneNativeChildQuoteDev(ctx context.Context, db *gorm.DB, input LaneStoreQuoteInputV1, authority *LaneCustodyAuthorityV1) (LaneStoreQuoteAuthorityV1, error) {
+	if ctx == nil || !laneStorePGHandleOK(db) || authority == nil || authority.primary != db || authority.catalog.LaneStoreReleaseV1 != input.Release {
 		return LaneStoreQuoteAuthorityV1{}, ErrLaneBillingOwnerUnavailable
 	}
 	ctx, done := context.WithTimeout(ctx, laneBillingOwnerTimeout)
@@ -44,7 +44,14 @@ func CaptureLaneNativeChildQuoteDev(ctx context.Context, db *gorm.DB, input Lane
 	if err := db.Session(&gorm.Session{NewDB: true, Context: ctx, Logger: logger.Discard}).Transaction(func(tx *gorm.DB) error {
 		var err error
 		q, err = lockLaneStoreQuoteWithCatalogV1Tx(tx, input, 0, inspectLaneNativeChildFixtureCatalogTx, true)
-		return err
+		if err != nil {
+			return err
+		}
+		if err := authority.CheckTx(tx, db, db, authority.catalog.WalletEpoch); err != nil {
+			return err
+		}
+		q.custodyAuthority = authority
+		return nil
 	}); err != nil {
 		return LaneStoreQuoteAuthorityV1{}, ErrLaneBillingOwnerEvidence
 	}
@@ -52,11 +59,13 @@ func CaptureLaneNativeChildQuoteDev(ctx context.Context, db *gorm.DB, input Lane
 }
 
 func revalidateLaneNativeChildQuoteDevTx(tx *gorm.DB, q LaneStoreQuoteAuthorityV1) error {
-	if !q.custody || q.schema == "" {
+	a := q.custodyAuthority
+	if !q.custody || q.schema == "" || a == nil {
 		return ErrLaneBillingOwnerEvidence
 	}
 	got, err := lockLaneStoreQuoteWithCatalogV1Tx(tx, q.input, 0, inspectLaneNativeChildFixtureCatalogTx, true)
-	if err != nil || q != got {
+	got.custodyAuthority = a
+	if err != nil || q != got || a.CheckTx(tx, a.primary, a.primary, a.catalog.WalletEpoch) != nil {
 		return ErrLaneBillingOwnerEvidence
 	}
 	return nil
@@ -82,16 +91,18 @@ func (s *laneNativeChildDevStore) ReserveLaneBillingReceiptTx(tx *gorm.DB, id La
 func ReserveLaneNativeChildDev(ctx context.Context, db *gorm.DB, q LaneStoreQuoteAuthorityV1, in LaneBillingChildDevBinding, cap int) (*LaneBillingChildDev, error) {
 	b := laneBillingChildBinding(in)
 	i := q.input
-	if ctx == nil || !q.custody || !b.valid() || b.Owner.RequestID != i.RequestID || b.Owner.UserID != i.UserID ||
+	if ctx == nil || !q.custody || q.custodyAuthority == nil || q.custodyAuthority.catalog.WalletEpoch != b.WalletEpoch || !b.valid() || b.Owner.RequestID != i.RequestID || b.Owner.UserID != i.UserID ||
 		b.Owner.TokenID != i.TokenID || b.Owner.TokenFingerprint != i.TokenFingerprint || b.Owner.Epoch != i.Release.Epoch {
 		return nil, ErrLaneBillingOwnerEvidence
 	}
 	// Epoch is in the dedicated owner fields. Bind the release/build/store
 	// identity as well, without an additional table or bearer credentials.
 	policy, err := common.Marshal(struct {
-		Release LaneStoreReleaseV1
-		Policy  string
-	}{i.Release, b.FundingPolicySHA256})
+		Release        LaneStoreReleaseV1
+		CatalogVersion int
+		WalletEpoch    int64
+		Policy         string
+	}{i.Release, laneCustodyVersion, b.WalletEpoch, b.FundingPolicySHA256})
 	if err != nil {
 		return nil, ErrLaneBillingOwnerEvidence
 	}

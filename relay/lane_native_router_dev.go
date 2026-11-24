@@ -35,6 +35,7 @@ type laneNativeSyntheticPlanContextKey struct{}
 // No production provider auth, funding selector, or exposure proof is implied.
 type LaneNativeSyntheticPlan struct {
 	DB                                   *gorm.DB
+	Custody                              *model.LaneCustodyAuthorityV1
 	Owner                                model.LaneBillingChildDevBinding
 	Quote                                model.LaneStoreQuoteInputV1
 	Group, Model                         string
@@ -142,7 +143,7 @@ func armLaneNativeSyntheticBilling(c *gin.Context, info *relaycommon.RelayInfo) 
 		info.UserId != b.Owner.UserID || info.TokenId != b.Owner.TokenID || info.TokenUnlimited ||
 		model.BillingTokenFingerprint(info.TokenKey) != b.Owner.TokenFingerprint || info.TokenGroup != p.Group || info.UsingGroup != p.Group ||
 		info.OriginModelName != p.Model || info.UserSetting.BillingPreference != "wallet_only" || p.SyntheticProviderKey == "" ||
-		p.DB == nil || p.DB != model.DB || p.Verifier == nil ||
+		p.DB == nil || p.DB != model.DB || p.DB != model.LOG_DB || p.Custody == nil || p.Verifier == nil ||
 		b.Owner.RequestID != "" {
 		return true, newAPIErrorLaneSyntheticUnsupported()
 	}
@@ -169,7 +170,7 @@ func armLaneNativeSyntheticBilling(c *gin.Context, info *relaycommon.RelayInfo) 
 	if !ok {
 		return true, newAPIErrorLaneSyntheticUnsupported()
 	}
-	facts, err := model.CaptureLaneNativeChildQuoteDev(c.Request.Context(), p.DB, route.Input)
+	facts, err := model.CaptureLaneNativeChildQuoteDev(c.Request.Context(), p.DB, route.Input, p.Custody)
 	if err != nil {
 		return true, newAPIErrorLaneSyntheticUnsupported()
 	}

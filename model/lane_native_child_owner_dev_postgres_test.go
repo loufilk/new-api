@@ -3,6 +3,9 @@
 package model
 
 import (
+	"context"
+	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 
@@ -18,13 +21,16 @@ func TestLaneNativeChildOwnerOneTransactionPostgres(t *testing.T) {
 	db, b, _ := finiteKeyDevFixture(t, r)
 	b.Owner.Epoch = r.Epoch
 	id := finiteKeyDevIdentity(b)
+	require.NoError(t, db.AutoMigrate(&Log{}))
+	custody, err := InstallLaneCustodyFixtureV1(ctx, db, db, r, b.WalletEpoch)
+	require.NoError(t, err)
 	var user User
 	require.NoError(t, db.Take(&user, b.Owner.UserID).Error)
 	user.SetSetting(dto.UserSetting{BillingPreference: "wallet_only"})
 	require.NoError(t, db.Model(&User{}).Where("id = ?", user.Id).UpdateColumns(map[string]any{"group": "default", "auth_version": 2, "cache_revision": 3, "setting": user.Setting}).Error)
 	require.NoError(t, db.Model(&Token{}).Where("id = ?", id.TokenID).UpdateColumns(map[string]any{"group": "default", "cache_revision": 5}).Error)
 	require.NoError(t, EnrollLaneBillingFiniteKeyDev(ctx, db, id))
-	_, _, err := ApplyLaneBillingFiniteKeyDevTransfer(ctx, db, LaneBillingFiniteKeyTransfer{Identity: id, OperationID: "native-owner-grant", Slot: b.KeySlot, Direction: "grant", Amount: 80})
+	_, _, err = ApplyLaneBillingFiniteKeyDevTransfer(ctx, db, LaneBillingFiniteKeyTransfer{Identity: id, OperationID: "native-owner-grant", Slot: b.KeySlot, Direction: "grant", Amount: 80})
 	require.NoError(t, err)
 	// Keep the selected slots at 100/80, but grant the remaining raw
 	// balances into sibling slots through their real cold writers.
@@ -41,19 +47,47 @@ func TestLaneNativeChildOwnerOneTransactionPostgres(t *testing.T) {
 	quote := func(binding laneBillingChildBinding) LaneStoreQuoteAuthorityV1 {
 		q, err := CaptureLaneNativeChildQuoteDev(ctx, db, LaneStoreQuoteInputV1{Release: r, RequestID: binding.Owner.RequestID, UserID: user.Id, TokenID: id.TokenID,
 			TokenFingerprint: id.TokenFingerprint, UserAuthVersion: user.AuthVersion, UserCacheRevision: user.CacheRevision,
-			TokenCacheRevision: token.CacheRevision, Group: "default"})
+			TokenCacheRevision: token.CacheRevision, Group: "default"}, custody)
 		require.NoError(t, err)
 		return q
 	}
 	require.ErrorIs(t, CheckLaneStoreOrdinaryStartup(ctx, db), ErrLaneStoreAuthorityState, "coexisting synthetic custody must never start ordinary runtime")
 	q := quote(b)
+	require.NoError(t, db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return custody.CheckReadTx(tx, db, db, b.WalletEpoch)
+	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}))
+	require.ErrorIs(t, db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return custody.CheckReadTx(tx, db, db, b.WalletEpoch)
+	}), ErrLaneStoreAuthorityEvidence, "mutable snapshots do not act as custody read authority")
+	undo := errors.New("restore the synthetic physical catalogue")
+	require.ErrorIs(t, db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		require.NoError(t, tx.Exec("ALTER TABLE lane_custody_catalog_v1 RENAME TO synthetic_custody_catalog_original").Error)
+		require.NoError(t, tx.Exec("CREATE TABLE lane_custody_catalog_v1 (LIKE synthetic_custody_catalog_original INCLUDING ALL)").Error)
+		require.NoError(t, tx.Exec("INSERT INTO lane_custody_catalog_v1 SELECT * FROM synthetic_custody_catalog_original").Error)
+		require.ErrorIs(t, custody.CheckTx(tx, db, db, b.WalletEpoch), ErrLaneStoreAuthorityEvidence,
+			"replacing a physical manifest with an equal-content clone cannot reuse the old scope")
+		return undo
+	}), undo)
+	wrongEpoch := b
+	wrongEpoch.WalletEpoch++
+	bad, err := ReserveLaneNativeChildDev(ctx, db, q, LaneBillingChildDevBinding(wrongEpoch), 15)
+	require.ErrorIs(t, err, ErrLaneBillingOwnerEvidence)
+	require.Nil(t, bad)
+	require.NoError(t, db.Exec("UPDATE lane_custody_catalog_v1 SET wallet_epoch = wallet_epoch + 1").Error)
+	bad, err = ReserveLaneNativeChildDev(ctx, db, q, LaneBillingChildDevBinding(b), 15)
+	require.ErrorIs(t, err, ErrLaneBillingOwnerEvidence, "changed physical catalogue blocks even an exact prehold quote")
+	require.Nil(t, bad)
+	var n int64
+	require.NoError(t, db.Model(&BillingFinalization{}).Where("request_id = ?", b.Owner.RequestID).Count(&n).Error)
+	require.Zero(t, n)
+	require.NoError(t, db.Exec("UPDATE lane_custody_catalog_v1 SET wallet_epoch = wallet_epoch - 1").Error)
+
 	wallet, key := childStoreBalances(t, db, b)
 	require.NoError(t, db.Model(&SharedWalletShare{}).Where("user_id = ? AND epoch = ? AND slot = ?", user.Id, b.WalletEpoch, b.WalletSlot).
 		UpdateColumn("last_operation_id", "unknown-transfer-tip").Error)
 	res, err := ReserveLaneNativeChildDev(ctx, db, q, LaneBillingChildDevBinding(b), 15)
 	require.ErrorIs(t, err, ErrLaneBillingOwnerEvidence)
 	require.Nil(t, res)
-	var n int64
 	require.NoError(t, db.Model(&BillingFinalization{}).Where("request_id = ?", b.Owner.RequestID).Count(&n).Error)
 	require.Zero(t, n, "wallet evidence error rolls back the canonical marker")
 	require.NoError(t, db.Model(&laneBillingChildReceiptV1{}).Where("request_id = ?", b.Owner.RequestID).Count(&n).Error)
@@ -79,7 +113,7 @@ func TestLaneNativeChildOwnerOneTransactionPostgres(t *testing.T) {
 	pool, err := db.DB()
 	require.NoError(t, err)
 	lost := db.Session(&gorm.Session{NewDB: true, Context: ctx})
-	lost.Statement.ConnPool = loseQuotaCommitAck{pool}
+	lost.Statement.ConnPool = laneCustodyLoseCommitAck{pool}
 	res, err = ReserveLaneNativeChildDev(ctx, lost, q, LaneBillingChildDevBinding(b), 15)
 	require.ErrorIs(t, err, ErrLaneBillingOwnerCommitUncertain)
 	require.Nil(t, res, "no dispatch capability from a lost acknowledgement")
@@ -139,3 +173,19 @@ func TestLaneNativeChildOwnerOneTransactionPostgres(t *testing.T) {
 	require.Equal(t, 5, walletNow.Spent)
 	require.Equal(t, 5, keyNow.Spent)
 }
+
+// The synthetic lost-ACK wrapper still attests its underlying genuine pool.
+type laneCustodyLoseCommitAck struct{ *sql.DB }
+type laneCustodyCommitTx struct {
+	*quotaCommittedWithoutAck
+	pool *sql.DB
+}
+
+func (p laneCustodyLoseCommitAck) BeginTx(ctx context.Context, options *sql.TxOptions) (gorm.ConnPool, error) {
+	tx, err := p.DB.BeginTx(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+	return &laneCustodyCommitTx{quotaCommittedWithoutAck: &quotaCommittedWithoutAck{tx}, pool: p.DB}, nil
+}
+func (t *laneCustodyCommitTx) GetDBConn() (*sql.DB, error) { return t.pool, nil }
