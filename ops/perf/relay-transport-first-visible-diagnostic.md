@@ -63,6 +63,10 @@ describes the last acquisition for that one dispatch; a transparent transport
 retry can still occur. Header byte timing can include HTTP interim headers.
 Successful HTTP headers do not prove the SSE stream completed.
 
+Optional controller-work fields are reported independently in microseconds
+for all sampled requests, including those that ended before dispatch. Old
+samples omit these fields; do not compare a missed phase to zero.
+
 Gateway event/usable-flush distributions remain separate from client timing.
 Gateway first usable flush is native Chat and includes reasoning, refusal,
 audio and tool deltas; it is **not** first visible client text. Paired client

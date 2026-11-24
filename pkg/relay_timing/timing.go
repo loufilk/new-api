@@ -42,6 +42,9 @@ type Sample struct {
 	ingress, entered     time.Time
 	initialRouteSelected time.Time
 	billingMS            *int64
+	decodeValidateUS     *int64
+	tokenMetadataUS      *int64
+	tokenEstimateUS      *int64
 	upstreamAttempts     int
 	upstreams            []UpstreamReport
 }
@@ -50,6 +53,9 @@ type Report struct {
 	IngressToRelayMS              *int64           `json:"ingress_to_relay_ms,omitempty"`
 	IngressToRouteSelectionMS     *int64           `json:"ingress_to_route_selection_ms,omitempty"`
 	BillingPrepareMS              *int64           `json:"billing_prepare_ms,omitempty"`
+	RequestDecodeValidateUS       *int64           `json:"request_decode_validate_us,omitempty"`
+	BillingTokenMetadataUS        *int64           `json:"billing_token_metadata_us,omitempty"`
+	BillingTokenEstimateUS        *int64           `json:"billing_token_estimate_us,omitempty"`
 	RelayHandlerMS                *int64           `json:"relay_handler_ms,omitempty"`
 	IngressToFirstUpstreamEventMS *int64           `json:"ingress_to_first_upstream_event_ms,omitempty"`
 	IngressToFirstUsableOutputMS  *int64           `json:"ingress_to_first_usable_output_ms,omitempty"`
@@ -89,6 +95,29 @@ func (s *Sample) RecordBillingPreparation(start time.Time) {
 	s.billingMS = elapsedMS(start, time.Now())
 }
 
+// These sampled stages are elapsed wall time, not CPU attribution.
+func (s *Sample) RecordRequestDecodeValidation(elapsed time.Duration) {
+	s.recordMicroseconds(&s.decodeValidateUS, elapsed)
+}
+
+func (s *Sample) RecordBillingTokenMetadata(elapsed time.Duration) {
+	s.recordMicroseconds(&s.tokenMetadataUS, elapsed)
+}
+
+func (s *Sample) RecordBillingTokenEstimate(elapsed time.Duration) {
+	s.recordMicroseconds(&s.tokenEstimateUS, elapsed)
+}
+
+func (s *Sample) recordMicroseconds(target **int64, elapsed time.Duration) {
+	if elapsed < 0 {
+		return
+	}
+	us := elapsed.Microseconds()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	*target = &us
+}
+
 // Finish is read after the relay/stream handler returns. The downstream
 // marker is optional: native Chat records it after a successful flush of
 // content, reasoning, a refusal, audio or a tool delta.
@@ -99,6 +128,9 @@ func (s *Sample) Finish(status int, relayError bool, firstUpstreamEvent, firstUs
 		IngressToRelayMS:              elapsedMS(s.ingress, s.entered),
 		IngressToRouteSelectionMS:     elapsedMS(s.ingress, s.initialRouteSelected),
 		BillingPrepareMS:              s.billingMS,
+		RequestDecodeValidateUS:       s.decodeValidateUS,
+		BillingTokenMetadataUS:        s.tokenMetadataUS,
+		BillingTokenEstimateUS:        s.tokenEstimateUS,
 		RelayHandlerMS:                elapsedMS(s.entered, time.Now()),
 		IngressToFirstUpstreamEventMS: elapsedMS(s.ingress, firstUpstreamEvent),
 		IngressToFirstUsableOutputMS:  elapsedMS(s.ingress, firstUsableOutput),

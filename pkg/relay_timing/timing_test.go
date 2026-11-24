@@ -119,3 +119,28 @@ func TestRelayTimingTraceBoundsRetriesAndOmitsMissedStages(t *testing.T) {
 	require.NotNil(t, report.Upstreams[0].ConnectionReused)
 	assert.False(t, *report.Upstreams[0].ConnectionReused)
 }
+
+func TestRelayTimingWorkFieldsAreOptionalNumericMicroseconds(t *testing.T) {
+	s := &Sample{entered: time.Now()}
+	first := s.Finish(http.StatusBadRequest, true, time.Time{}, time.Time{})
+	assert.Nil(t, first.RequestDecodeValidateUS)
+	assert.Nil(t, first.BillingTokenMetadataUS)
+	assert.Nil(t, first.BillingTokenEstimateUS)
+
+	s.RecordRequestDecodeValidation(1549 * time.Nanosecond)
+	s.RecordBillingTokenMetadata(218 * time.Microsecond)
+	s.RecordBillingTokenEstimate(-time.Second)
+	partial := s.Finish(http.StatusBadRequest, true, time.Time{}, time.Time{})
+	require.NotNil(t, partial.RequestDecodeValidateUS)
+	require.NotNil(t, partial.BillingTokenMetadataUS)
+	assert.EqualValues(t, 1, *partial.RequestDecodeValidateUS)
+	assert.EqualValues(t, 218, *partial.BillingTokenMetadataUS)
+	assert.Nil(t, partial.BillingTokenEstimateUS)
+
+	s.RecordBillingTokenEstimate(0)
+	encoded, err := common.Marshal(s.Finish(http.StatusBadRequest, true, time.Time{}, time.Time{}))
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"billing_token_estimate_us":0`)
+	assert.Contains(t, string(encoded), `"request_decode_validate_us":1`)
+	assert.Contains(t, string(encoded), `"billing_token_metadata_us":218`)
+}

@@ -186,7 +186,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
+	var decodeStarted time.Time
+	if timings != nil {
+		decodeStarted = time.Now()
+	}
 	request, err := helper.GetAndValidateRequest(c, relayFormat)
+	if timings != nil {
+		timings.RecordRequestDecodeValidation(time.Since(decodeStarted))
+	}
 	if err != nil {
 		// Map "request body too large" to 413 so clients can handle it correctly
 		if common.IsRequestBodyTooLargeError(err) || errors.Is(err, common.ErrRequestBodyTooLarge) {
@@ -228,7 +235,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	if timings != nil {
 		billingStarted = time.Now()
 	}
-	newAPIError = relay.PrepareRequestBilling(c, relayInfo)
+	newAPIError = relay.PrepareRequestBillingWithTiming(c, relayInfo, timings)
 	if timings != nil {
 		timings.RecordBillingPreparation(billingStarted)
 	}

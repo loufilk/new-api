@@ -16,6 +16,7 @@ REPORT_FIELDS = (
     "ingress_to_first_upstream_event_ms",
     "ingress_to_first_usable_output_ms",
 )
+CONTROLLER_WORK_US_FIELDS = ("request_decode_validate_us", "billing_token_metadata_us", "billing_token_estimate_us")
 TRANSPORT_FIELDS = (
     "relay_to_dispatch_ms",
     "get_connection_ms",
@@ -91,11 +92,14 @@ def normalized_row(row):
     if "relay" not in row:
         return row
     relay = row["relay"]
-    shape(relay, ("status", "relay_api_error", "upstream_attempts"), (*REPORT_FIELDS, "upstreams"))
+    shape(relay, ("status", "relay_api_error", "upstream_attempts"), (*REPORT_FIELDS, *CONTROLLER_WORK_US_FIELDS, "upstreams"))
     bounded_int(relay["status"], 100, 599)
     expect(type(relay["relay_api_error"]) is bool)
     bounded_int(relay["upstream_attempts"], 0, MAX_ROWS)
     milliseconds(relay, REPORT_FIELDS)
+    for field in CONTROLLER_WORK_US_FIELDS:
+        if field in relay:
+            bounded_int(relay[field], 0, MAX_DURATION_MS * 1000)
     attempts = relay.get("upstreams", [])
     expect(type(attempts) is list and len(attempts) == min(8, relay["upstream_attempts"]))
     for attempt in attempts:
@@ -159,6 +163,7 @@ def summarize(rows):
     )})
     cohorts = defaultdict(list)
     selected = []
+    sampled = []
     for row in rows:
         client, relay = row["client"], row.get("relay")
         count[client["outcome"]] += 1
@@ -166,6 +171,7 @@ def summarize(rows):
             coverage["relay_unsampled"] += 1
             continue
         coverage["relay_sampled"] += 1
+        sampled.append(relay)
         coverage["relay_api_errors"] += relay["relay_api_error"]
         n = relay["upstream_attempts"]
         coverage["observed_http_attempts"] += n
@@ -197,6 +203,7 @@ def summarize(rows):
             key: {"requests": len(group), "stages_ms": stages(group, TRANSPORT_FIELDS)}
             for key, group in sorted(cohorts.items())
         },
+        "controller_work_all_sampled_us": stages(sampled, CONTROLLER_WORK_US_FIELDS),
         "gateway_event_and_usable_flush_single_successful_http_ms": stages(selected, REPORT_FIELDS[-2:]),
         "client_completed_text_ms": stages(clients, CLIENT_FIELDS),
     }

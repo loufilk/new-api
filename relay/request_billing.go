@@ -5,12 +5,14 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/relay_timing"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -30,7 +32,17 @@ const requestBillingNotSubmittedKey = "request_billing_not_submitted"
 // provide the current request body through BodyStorage or BillingRequestInput;
 // channel retries retain the resulting billing session and pricing snapshot.
 func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
+	return PrepareRequestBillingWithTiming(c, info, nil)
+}
+
+// PrepareRequestBillingWithTiming uses the existing request sample. A nil
+// sample (including WebSocket callers) reads no clock and records nothing.
+func PrepareRequestBillingWithTiming(c *gin.Context, info *relaycommon.RelayInfo, sample *relay_timing.Sample) *types.NewAPIError {
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
+	var metadataStarted time.Time
+	if sample != nil {
+		metadataStarted = time.Now()
+	}
 	meta := &types.TokenCountMeta{TokenType: types.TokenTypeTokenizer}
 	if info.Request != nil && (needSensitiveCheck || constant.CountToken) {
 		meta = info.Request.GetTokenCountMeta()
@@ -48,13 +60,24 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 		}
 	}
 
+	if sample != nil {
+		sample.RecordBillingTokenMetadata(time.Since(metadataStarted))
+	}
+
 	if meta != nil {
 		if apiErr := service.CheckRequestSensitiveText(c, meta.CombineText); apiErr != nil {
 			return apiErr
 		}
 	}
 
+	var estimateStarted time.Time
+	if sample != nil {
+		estimateStarted = time.Now()
+	}
 	tokens, err := service.EstimateRequestToken(c, meta, info)
+	if sample != nil {
+		sample.RecordBillingTokenEstimate(time.Since(estimateStarted))
+	}
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeCountTokenFailed)
 	}

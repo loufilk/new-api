@@ -18,6 +18,20 @@ payload is added. The regular server log prefix carries the gateway request ID.
   `billing_prepare_ms` measures request estimation, quote and precharge, not
   later settlement. `relay_handler_ms` is the controller's end-to-end duration
   including streaming and its cleanup.
+- Optional microsecond wall intervals on that same HTTP sample:
+  `request_decode_validate_us` is parsing/body access and validation after
+  ingress plugins; `billing_token_metadata_us` is metadata derivation
+  (including the cheap count-disabled path); `billing_token_estimate_us`
+  wraps the estimator call, including its fast return when token counting is
+  disabled. Otherwise it may include URL media retrieval, MIME detection,
+  image dimensions or audio parsing as well as tokenization. Prompt safety,
+  pricing and precharge are not in either token interval. A selected channel
+  or retry can rebuild prompt metadata for a sensitive-content check later;
+  that work is outside the initial metadata interval. A failed request keeps
+  phases it reached; an unvisited phase is omitted. Never interpret
+  these as CPU or subtract unpaired quantiles. The existing flag remains off
+  by default; unsampled requests add no clock reads, context lookups, locks,
+  allocations, or log entries for these intervals.
 - The first eight HTTP dispatches have independent timings. Connection
   acquisition (`get_connection_ms`) includes dialing for a fresh connection;
   compare reused and fresh samples separately. `written_to_first_header_byte_ms`
@@ -46,7 +60,20 @@ loopback fixture provider, holding all other settings constant. Compare the
 baseline and candidate at the same sample rate, after the transports are warmed.
 Keep sampling modest: output uses the normal synchronous server logger, so 100%
 sampling can perturb latency. Collect capacity headline results with timing
-disabled as a separate run.
+disabled as a separate run. For phase A/B, put identical instrumentation on
+both candidates before measuring. Compare process CPU and client-visible
+text on their own clocks and keep all failure/no-text counts alongside the
+distributions.
+
+For the next diagnosis run, use separate cohorts: short text, long mixed
+Chinese/English with tool schemas, and loopback media. Split the media cohort
+into cold and warm file-cache windows. Keep fixture upstream, generated
+response, price rules, arrivals and concurrency matched within each pair.
+Collect CPU profiles separately to avoid profile interference. Compare
+otherwise matched sampling-off and sampled runs before treating a small
+difference as a tuning target. High estimator wall time on cold media alone
+does not establish tokenizer CPU cost.
+
 Export all lines containing `relay_timing `, remove the logger prefix and
 calculate p50/p95/p99 for fields that are present. Correlate with test-client
 TTFT, achieved arrival rate, status/stream failures, DB wait deltas and

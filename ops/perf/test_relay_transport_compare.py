@@ -35,6 +35,28 @@ class TransportCompareTest(unittest.TestCase):
             return subprocess.run([sys.executable, "-B", str(Path(compare.__file__)), "--baseline", str(a),
                                    "--candidate", str(b)], capture_output=True, text=True, check=False)
 
+    def test_microsecond_work_stages_include_failure_without_inventing_missed_phases(self):
+        old = sample()
+        failed = {
+            "path": "direct", "case": 1,
+            "client": {"outcome": "http_error", "status": 400, "duration_ms": 10, "first_header_ms": 9},
+            "relay": {"status": 400, "relay_api_error": True, "upstream_attempts": 0,
+                      "request_decode_validate_us": 1140, "billing_token_metadata_us": 0},
+        }
+        proc = self.invoke([old], [failed])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        direct = json.loads(proc.stdout)["paths"]["direct"]
+        before = direct["baseline"]["controller_work_all_sampled_us"]
+        after = direct["candidate"]["controller_work_all_sampled_us"]
+        self.assertEqual(0, before["request_decode_validate_us"]["n"])
+        self.assertEqual(1, after["request_decode_validate_us"]["n"])
+        self.assertEqual(1140, after["request_decode_validate_us"]["p50"])
+        self.assertEqual(0, after["billing_token_metadata_us"]["p50"])
+        self.assertEqual(0, after["billing_token_estimate_us"]["n"])
+        self.assertEqual(0, direct["candidate"]["selection_coverage"]["selected_single_successful_http"])
+        failed["relay"]["billing_token_metadata_us"] = True
+        self.assertEqual(2, self.invoke([old], [failed]).returncode)
+
     def test_fresh_and_reuse_do_not_merge_protocol_or_caddy(self):
         a = [sample(1), sample(2, reused=True, proto=2), sample(3, path="caddy", reused=True, proto=1)]
         b = copy.deepcopy(a)
