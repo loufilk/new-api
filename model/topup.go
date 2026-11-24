@@ -135,13 +135,36 @@ func (topUp *TopUp) validateQuotedPayment(facts []VerifiedPaymentFacts) error {
 // ValidateTopUpQuotaCapacity performs the user-facing pre-payment check. The
 // settlement path repeats the invariant under the wallet row lock.
 func ValidateTopUpQuotaCapacity(userId int, creditedQuota int) error {
+	return validateTopUpQuotaCapacity(DB, userId, creditedQuota, nil)
+}
+
+// Scoped pre-order checks are advisory: the checked amount is not reserved
+// and no transaction/lock may survive a call to a payment provider.
+func validateTopUpQuotaCapacity(db *gorm.DB, userId int, creditedQuota int, scope *laneWalletCustodyScope) error {
 	maxCurrentQuota, err := topUpQuotaMaxCurrent(creditedQuota)
 	if err != nil {
 		return err
 	}
 
 	var user User
-	if err := DB.Select("quota").Where("id = ?", userId).First(&user).Error; err != nil {
+	if scope != nil {
+		tx, err := scope.lockableTx(db, userId)
+		if err != nil {
+			return err
+		}
+		if err := lockForUpdate(tx).First(&user, userId).Error; err != nil {
+			return err
+		}
+		wallet, err := readLockedLaneWalletCustodyTx(tx, &user, scope.walletEpoch)
+		if err != nil {
+			return err
+		}
+		if creditedQuota > wallet.headroom {
+			return ErrTopUpQuotaLimitExceeded
+		}
+		return nil
+	}
+	if err := db.Select("quota").Where("id = ?", userId).First(&user).Error; err != nil {
 		return err
 	}
 	if user.Quota > maxCurrentQuota {
@@ -155,6 +178,17 @@ func ValidateTopUpQuotaCapacity(userId int, creditedQuota int) error {
 // holds the user row lock; returning an error after its result rolls the entire
 // caller transaction back, including the order status and ledger rows.
 func creditTopUpQuota(tx *gorm.DB, entry LedgerEntry) (*LedgerResult, error) {
+	return creditTopUpQuotaWithHeadroom(tx, entry, nil)
+}
+
+// Provider callbacks still use nil. A verified callback on active custody
+// additionally needs a durable captured-but-not-credited disposition before
+// it can pass a scope. A capacity rejection is NOT callback success.
+func creditTopUpQuotaWithHeadroom(tx *gorm.DB, entry LedgerEntry, approval *laneNetCreditApproval) (*LedgerResult, error) {
+	if approval != nil && (entry.Account != AccountPaid || entry.ReferenceType != ReferralReferenceTopUp ||
+		(entry.Reason != LedgerReasonTopup && entry.Reason != LedgerReasonAdminTopup)) {
+		return nil, ErrSharedWalletScope
+	}
 	if entry.ReferenceType == ReferralReferenceTopUp {
 		var topUp TopUp
 		if err := tx.Where("trade_no = ? AND user_id = ?", entry.ReferenceId, entry.UserId).First(&topUp).Error; err != nil {
@@ -164,6 +198,9 @@ func creditTopUpQuota(tx *gorm.DB, entry LedgerEntry) (*LedgerResult, error) {
 			return nil, ErrNewUserBenefitPaymentRequired
 		}
 		if topUp.AgentSimpleTopUp {
+			if approval != nil {
+				return nil, ErrSharedWalletScope
+			}
 			paidQuota, err := common.WalletQuotaFromDecimalStrict(
 				decimal.NewFromFloat(topUp.Money).Mul(decimal.NewFromInt(int64(common.QuotaPerUnit))),
 			)
@@ -187,7 +224,7 @@ func creditTopUpQuota(tx *gorm.DB, entry LedgerEntry) (*LedgerResult, error) {
 	if _, err := topUpQuotaMaxCurrent(entry.Delta); err != nil {
 		return nil, err
 	}
-	result, err := CreditQuotaTx(tx, entry)
+	result, err := creditQuotaTx(tx, entry, approval)
 
 	if err != nil {
 		if errors.Is(err, ErrWalletQuotaLimitExceeded) {

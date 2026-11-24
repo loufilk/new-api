@@ -16,9 +16,9 @@ func finiteKeyDevIdentity(b laneBillingChildBinding) LaneBillingFiniteKeyIdentit
 		Epoch: b.KeyEpoch, TokenFingerprint: b.Owner.TokenFingerprint}
 }
 
-func finiteKeyDevFixture(t *testing.T) (*gorm.DB, laneBillingChildBinding, laneBillingChildBinding) {
+func finiteKeyDevFixture(t *testing.T, releases ...LaneStoreReleaseV1) (*gorm.DB, laneBillingChildBinding, laneBillingChildBinding) {
 	t.Helper()
-	db, a, b := childStoreFixture(t)
+	db, a, b := childStoreFixture(t, releases...)
 	// The old child-store fixture seeds budgets directly. Remove just those
 	// two fixture rows so this suite derives all Key funding from enrollment.
 	for _, binding := range []laneBillingChildBinding{a, b} {

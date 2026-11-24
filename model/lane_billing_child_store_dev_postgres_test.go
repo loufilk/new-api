@@ -17,7 +17,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func childStoreFixture(t *testing.T) (*gorm.DB, laneBillingChildBinding, laneBillingChildBinding) {
+func childStoreFixture(t *testing.T, releases ...LaneStoreReleaseV1) (*gorm.DB, laneBillingChildBinding, laneBillingChildBinding) {
 	t.Helper()
 	if !common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
 		t.Skip("requires disposable loopback PostgreSQL TEST_MODEL_POSTGRES_DSN")
@@ -39,6 +39,11 @@ func childStoreFixture(t *testing.T) (*gorm.DB, laneBillingChildBinding, laneBil
 	require.ErrorIs(t, installLaneBillingChildDevSchema(t.Context(), db), ErrLaneBillingOwnerUnavailable)
 	fixtures := append([]any{&BillingFinalization{}, &User{}, &Token{}, &BalanceLedger{}, &BalanceLedgerOperation{}}, SharedWalletTreasuryModels()...)
 	fixtures = append(fixtures, BonusSourceModels()...)
+	if len(releases) != 0 {
+		require.Len(t, releases, 1)
+		require.NoError(t, InstallLaneStoreAuthorityV1(t.Context(), db, releases[0]))
+		fixtures = append(fixtures, &Option{})
+	}
 	require.NoError(t, db.AutoMigrate(fixtures...))
 	for range 2 {
 		require.NoError(t, installLaneBillingChildDevSchema(t.Context(), db))

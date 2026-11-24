@@ -17,9 +17,10 @@ import (
 type LaneBillingChildDevBinding laneBillingChildBinding
 
 type LaneBillingChildDev struct {
-	db      *gorm.DB
-	binding laneBillingChildBinding
-	cap     int
+	db           *gorm.DB
+	binding      laneBillingChildBinding
+	cap          int
+	releaseQuote LaneStoreQuoteAuthorityV1
 }
 
 // LaneBillingMeasuredDev retains the sanitized immutable measured receipt.
@@ -99,6 +100,11 @@ func (s *LaneBillingChildDev) transition(ctx context.Context, apply func(*gorm.D
 }
 
 func (s *LaneBillingChildDev) ClaimDispatch(ctx context.Context, wireSHA256 string) error {
+	if s.releaseQuote.custody {
+		return claimEnrolledLaneBillingChildDispatchWithFence(ctx, s.db, s.binding, wireSHA256, func(tx *gorm.DB) error {
+			return revalidateLaneNativeChildQuoteDevTx(tx, s.releaseQuote)
+		})
+	}
 	return claimEnrolledLaneBillingChildDispatch(ctx, s.db, s.binding, wireSHA256)
 }
 

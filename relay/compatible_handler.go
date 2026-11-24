@@ -177,22 +177,21 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		}
 
 		observeLaneNativeReleaseFinalWire(c, info, adaptor, jsonData)
-		if !hasLaneNativeSyntheticBilling(c) {
+		if hasLaneNativeSyntheticBilling(c) {
+			requestBody, newAPIError = bindLaneNativeSyntheticBilling(c, info, adaptor, jsonData)
+			if newAPIError != nil {
+				return newAPIError
+			}
+		} else {
 			logger.LogDebug(c, "text request body: %s", jsonData)
+			body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			}
+			defer closer.Close()
+			requestBody = body
 		}
-
-		body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-		}
-		defer closer.Close()
 		jsonData = nil
-		requestBody = body
-	}
-
-	requestBody, newAPIError = bindLaneNativeSyntheticBilling(c, info, adaptor, requestBody)
-	if newAPIError != nil {
-		return newAPIError
 	}
 	var httpResp *http.Response
 	resp, err := adaptor.DoRequest(c, info, requestBody)

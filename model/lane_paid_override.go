@@ -36,10 +36,7 @@ type lanePaidOverrideCustody struct {
 // The caller must rollback on error and invalidate the ordinary mirror only
 // after the parent transaction commits (or reports an uncertain commit).
 func applyLanePaidOverrideTx(tx *gorm.DB, custody lanePaidOverrideCustody, entry LedgerEntry) (*LedgerResult, error) {
-	if tx == nil || tx != custody.tx || tx.Config == nil || tx.Statement == nil || tx.Dialector == nil ||
-		tx.Dialector.Name() != "postgres" || tx.DryRun || !common.UsingMainDatabase(common.DatabaseTypePostgreSQL) ||
-		entry.UserId != custody.userID || custody.walletEpoch < 1 || !laneBillingOwnerIDValid(custody.schema) ||
-		entry.Account != AccountPaid || entry.Reason != LedgerReasonAdminOverride ||
+	if entry.UserId != custody.userID || entry.Account != AccountPaid || entry.Reason != LedgerReasonAdminOverride ||
 		entry.Delta != custody.target || entry.Delta > common.MaxWalletQuota ||
 		entry.OperatorId <= 0 || entry.OperatorId != custody.operatorID ||
 		entry.ReferenceType != "admin_quota" || entry.ReferenceId != custody.requestID ||
@@ -47,13 +44,9 @@ func applyLanePaidOverrideTx(tx *gorm.DB, custody lanePaidOverrideCustody, entry
 		entry.IdempotencyKey != fmt.Sprintf("admin_quota:%d:%s", custody.operatorID, custody.requestID) {
 		return nil, ErrLanePaidOverrideAuthority
 	}
-	if _, ok := tx.Statement.ConnPool.(gorm.TxCommitter); !ok {
-		return nil, ErrLanePaidOverrideAuthority
-	}
-	tx = tx.Session(&gorm.Session{NewDB: true})
-	var isolated bool
-	if err := tx.Raw(`SELECT pg_catalog.current_schemas(false) = ARRAY[CAST(? AS name)]
-		AND pg_catalog.pg_my_temp_schema() = 0`, custody.schema).Row().Scan(&isolated); err != nil || !isolated {
+	scope := laneWalletCustodyScope{tx: custody.tx, schema: custody.schema, userID: custody.userID, walletEpoch: custody.walletEpoch}
+	tx, err := scope.lockableTx(tx, entry.UserId)
+	if err != nil {
 		return nil, ErrLanePaidOverrideAuthority
 	}
 	if err := validateOverrideEntry(entry); err != nil {
@@ -72,60 +65,20 @@ func applyLanePaidOverrideTx(tx *gorm.DB, custody lanePaidOverrideCustody, entry
 }
 
 func reclaimPaidOverrideIdleTx(tx *gorm.DB, custody lanePaidOverrideCustody, entry LedgerEntry, u *User) error {
-	if u.Id != custody.userID || u.Quota < 0 || u.Quota > common.MaxWalletQuota ||
-		u.QuotaPaid < 0 || u.QuotaPaid > common.MaxWalletQuota || u.QuotaBonus < 0 || u.QuotaBonus > common.MaxWalletQuota ||
-		u.QuotaReward < 0 || u.QuotaReward > common.MaxWalletQuota || u.QuotaPaid+u.QuotaBonus+u.QuotaReward != u.Quota {
+	if u.Id != custody.userID {
 		return ErrSharedWalletEvidence
+	}
+	wallet, err := readLockedLaneWalletCustodyTx(tx, u, custody.walletEpoch)
+	if err != nil {
+		return err
+	}
+	if wallet.held != 0 {
+		return ErrLanePaidOverrideHeld
 	}
 	if entry.Delta > common.MaxWalletQuota-u.QuotaBonus-u.QuotaReward {
 		return ErrWalletQuotaLimitExceeded
 	}
-	var slots []SharedWalletShare
-	if err := lockForUpdate(tx).Where("user_id = ?", u.Id).Order("epoch, slot").
-		Limit(SharedWalletMaxSlots + 1).Find(&slots).Error; err != nil {
-		return err
-	}
-	if len(slots) == 0 || len(slots) > SharedWalletMaxSlots {
-		return ErrSharedWalletEvidence
-	}
-	var outside bool
-	if err := tx.Raw(`SELECT EXISTS (
-		SELECT FROM shared_wallet_transfers WHERE user_id = ? AND (epoch, slot) < (?, 0)
-	) OR EXISTS (
-		SELECT FROM shared_wallet_transfers WHERE user_id = ? AND (epoch, slot) >= (?, ?)
-	)`, u.Id, custody.walletEpoch, u.Id, custody.walletEpoch, SharedWalletMaxSlots).Row().Scan(&outside); err != nil || outside {
-		return ErrSharedWalletEvidence
-	}
-	// Independently fetch the latest transfer for every slot, including
-	// missing slots. A row's own last_operation_id is not freshness proof.
-	var tips []SharedWalletTransfer
-	if err := tx.Raw(`SELECT tip.* FROM generate_series(0, ?) AS slots(slot)
-		CROSS JOIN LATERAL (
-			SELECT * FROM shared_wallet_transfers
-			WHERE user_id = ? AND epoch = ? AND slot = slots.slot
-			ORDER BY share_version DESC LIMIT 1
-		) AS tip ORDER BY tip.slot`, SharedWalletMaxSlots-1, u.Id, custody.walletEpoch).Scan(&tips).Error; err != nil || len(tips) != len(slots) {
-		return ErrSharedWalletEvidence
-	}
-	idle := 0
-	for i, s := range slots {
-		tip := tips[i]
-		if !s.valid() || s.UserID != u.Id || s.Epoch != custody.walletEpoch ||
-			tip.UserID != s.UserID || tip.Epoch != s.Epoch || tip.Slot != s.Slot ||
-			tip.OperationID != s.LastOperationID || tip.ShareVersion > s.Version ||
-			tip.GrantedAfter != s.Granted || tip.ReturnedAfter != s.Returned ||
-			verifySharedWalletTransferEvidenceTx(tx.Limit(2), tip) != nil {
-			return ErrSharedWalletEvidence
-		}
-		if s.Held != 0 {
-			return ErrLanePaidOverrideHeld
-		}
-		if s.Available > common.MaxWalletQuota-u.Quota-idle {
-			return ErrWalletQuotaLimitExceeded
-		}
-		idle += s.Available
-	}
-	for _, s := range slots {
+	for _, s := range wallet.slots {
 		if s.Available == 0 {
 			continue
 		}
@@ -145,7 +98,7 @@ func reclaimPaidOverrideIdleTx(tx *gorm.DB, custody lanePaidOverrideCustody, ent
 	if err := tx.Select("id", "quota", "quota_paid", "quota_bonus", "quota_reward").First(&actual, u.Id).Error; err != nil {
 		return err
 	}
-	if actual.Quota != u.Quota+idle || actual.QuotaPaid != u.QuotaPaid+idle ||
+	if actual.Quota != u.Quota+wallet.idle || actual.QuotaPaid != u.QuotaPaid+wallet.idle ||
 		actual.QuotaBonus != u.QuotaBonus || actual.QuotaReward != u.QuotaReward {
 		return ErrSharedWalletEvidence
 	}

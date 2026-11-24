@@ -5,7 +5,6 @@ package relay
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -25,7 +24,7 @@ func TestLaneNativeSyntheticStickyIntent(t *testing.T) {
 	require.True(t, relaycommon.BillingHTTPDispatchOwned(c, nil))
 	require.True(t, relaycommon.BillingHTTPDispatchOwned(c, info))
 	assert.NotNil(t, PrepareSelectedRelayBilling(c, info))
-	body, bindErr := bindLaneNativeSyntheticBilling(c, info, nil, strings.NewReader("{}"))
+	body, bindErr := bindLaneNativeSyntheticBilling(c, info, nil, []byte("{}"))
 	assert.Nil(t, body)
 	assert.NotNil(t, bindErr)
 	assert.NotNil(t, relaycommon.ClaimBillingHTTPDispatch(c, nil, c.Request))

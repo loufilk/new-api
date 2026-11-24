@@ -501,11 +501,15 @@ func authorizeLaneBillingEnrolledKeyTx(tx *gorm.DB, b laneBillingChildBinding) e
 	if !originalLaneBillingFiniteKey(id, token) || !liveLaneBillingFiniteKey(user, token) {
 		return ErrLaneBillingFiniteKeyIdentity
 	}
-	e, err := lockLaneBillingKeyEnrollmentTx(tx, id, "SHARE")
-	if err != nil {
+	// While the original User and Key rows are locked, require the newest
+	// enrollment, not any still-active generation restored beside it.
+	var e laneBillingFiniteKeyEnrollmentV1
+	if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).
+		Where("user_id = ? AND token_id = ?", id.UserID, id.TokenID).
+		Order("epoch DESC").Take(&e).Error; err != nil {
 		return err
 	}
-	if e.State != LaneBillingFiniteKeyActive {
+	if !e.valid() || e.identity() != id || e.State != LaneBillingFiniteKeyActive {
 		return ErrLaneBillingFiniteKeyState
 	}
 	// A preseeded slot cannot become an enrolled slot. All cold mutations
@@ -550,6 +554,10 @@ func (s *laneBillingEnrolledPGChildStore) LockLaneBillingReceiptTx(tx *gorm.DB, 
 }
 
 func (s *laneBillingEnrolledPGChildStore) ReserveLaneBillingReceiptTx(tx *gorm.DB, id LaneBillingOwnerIdentity, target int) (bool, error) {
+	return s.reserveAfterCustodyFence(tx, id, target, nil)
+}
+
+func (s *laneBillingEnrolledPGChildStore) reserveAfterCustodyFence(tx *gorm.DB, id LaneBillingOwnerIdentity, target int, custody func(*gorm.DB) error) (bool, error) {
 	if tx == nil || tx.Statement == nil || tx.Statement.Context == nil || !s.binding.valid() || s.binding.Owner != id {
 		return false, ErrLaneBillingOwnerEvidence
 	}
@@ -559,6 +567,11 @@ func (s *laneBillingEnrolledPGChildStore) ReserveLaneBillingReceiptTx(tx *gorm.D
 	}
 	if err := authorizeLaneBillingEnrolledKeyTx(tx, s.binding); err != nil {
 		return false, ErrLaneBillingOwnerEvidence
+	}
+	if custody != nil {
+		if err := custody(tx); err != nil {
+			return false, ErrLaneBillingOwnerEvidence
+		}
 	}
 	fresh, err := s.laneBillingPGChildStore.ReserveLaneBillingReceiptTx(tx, id, target)
 	if err != nil || !fresh {
@@ -573,6 +586,10 @@ func (s *laneBillingEnrolledPGChildStore) ReserveLaneBillingReceiptTx(tx *gorm.D
 }
 
 func claimEnrolledLaneBillingChildDispatch(ctx context.Context, db *gorm.DB, b laneBillingChildBinding, verifiedWireSHA256 string) error {
+	return claimEnrolledLaneBillingChildDispatchWithFence(ctx, db, b, verifiedWireSHA256, nil)
+}
+
+func claimEnrolledLaneBillingChildDispatchWithFence(ctx context.Context, db *gorm.DB, b laneBillingChildBinding, verifiedWireSHA256 string, fence func(*gorm.DB) error) error {
 	if subtle.ConstantTimeCompare([]byte(b.FinalWireSHA256), []byte(verifiedWireSHA256)) != 1 {
 		return ErrLaneBillingOwnerEvidence
 	}
@@ -582,6 +599,11 @@ func claimEnrolledLaneBillingChildDispatch(ctx context.Context, db *gorm.DB, b l
 		}
 		if err := requireLaneBillingEnrolledChildProofTx(tx, b.Owner.RequestID); err != nil {
 			return err
+		}
+		if fence != nil {
+			if err := fence(tx); err != nil {
+				return ErrLaneBillingOwnerEvidence
+			}
 		}
 		if err := authorizeLaneBillingEnrolledKeyTx(tx, b); err != nil {
 			return ErrLaneBillingOwnerEvidence

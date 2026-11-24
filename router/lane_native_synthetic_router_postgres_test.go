@@ -75,6 +75,20 @@ func (laneRouterDevPromptVerifier) VerifyNativeChatPromptBound(_ context.Context
 	return 13, nil
 }
 
+func laneRouterDevRelease() model.LaneStoreReleaseV1 {
+	return model.LaneStoreReleaseV1{StoreID: strings.Repeat("1", 32), ReleaseID: strings.Repeat("2", 32), BinarySHA256: strings.Repeat("3", 64), Epoch: 1}
+}
+
+type laneRouterDevBeforeBind func(context.Context) error
+
+func (f laneRouterDevBeforeBind) VerifyNativeChatPromptBound(ctx context.Context, route service.LaneNativeChatRoute, final []byte, cap int) (int, error) {
+	bound, err := (laneRouterDevPromptVerifier{}).VerifyNativeChatPromptBound(ctx, route, final, cap)
+	if err != nil {
+		return 0, err
+	}
+	return bound, f(ctx)
+}
+
 func laneRouterDevTestDatabase(t *testing.T, dsn string, syntheticCustody bool) *gorm.DB {
 	t.Helper()
 	u, err := url.Parse(dsn)
@@ -130,9 +144,7 @@ func laneRouterDevTestDatabase(t *testing.T, dsn string, syntheticCustody bool) 
 		&model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.TokenRoutingMetric{},
 		&model.UserSubscription{}, &model.SubscriptionPreConsumeRecord{}, &model.QuotaData{}}
 	fixtures = append(fixtures, model.BonusSourceModels()...)
-	if syntheticCustody {
-		fixtures = append(fixtures, model.SharedWalletTreasuryModels()...)
-	}
+
 	require.NoError(t, db.AutoMigrate(fixtures...))
 	ratio_setting.InitRatioSettings()
 	model.InitOptionMap()
@@ -145,6 +157,8 @@ func laneRouterDevTestDatabase(t *testing.T, dsn string, syntheticCustody bool) 
 	require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(`{"gpt-4o-mini":1}`))
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
 	if syntheticCustody {
+		require.NoError(t, model.InstallLaneStoreAuthorityV1(t.Context(), db, laneRouterDevRelease()))
+		require.NoError(t, db.AutoMigrate(model.SharedWalletTreasuryModels()...))
 		require.NoError(t, model.InstallLaneBillingSyntheticDevSchema(t.Context(), db))
 	}
 	service.InitHttpClient()
@@ -173,6 +187,7 @@ func TestLaneNativeSyntheticPublicRouterPostgres(t *testing.T) {
 		t.Log(string(out))
 		return
 	}
+	t.Setenv(model.UserGroupPricingEnabledEnv, "false")
 	db := laneRouterDevTestDatabase(t, dsn, true)
 	var calls atomic.Int32
 	var omitDone, cutUsage, gateTerminal atomic.Bool
@@ -211,10 +226,10 @@ func TestLaneNativeSyntheticPublicRouterPostgres(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	user := model.User{Id: laneRouterDevUserID, Username: "synthetic-native-router", AffCode: "native-router", Role: common.RoleCommonUser,
-		Status: common.UserStatusEnabled, Group: "default", Quota: laneRouterDevPaid, QuotaPaid: laneRouterDevPaid}
+		Status: common.UserStatusEnabled, Group: "default", Quota: laneRouterDevPaid, QuotaPaid: laneRouterDevPaid, AuthVersion: 8, CacheRevision: 9}
 	user.SetSetting(dto.UserSetting{BillingPreference: "wallet_only"})
 	token := model.Token{Id: laneRouterDevTokenID, UserId: user.Id, Key: laneRouterDevToken, Status: common.TokenStatusEnabled,
-		ExpiredTime: -1, RemainQuota: laneRouterDevPaid, Group: "default", UsedQuota: 11}
+		ExpiredTime: -1, RemainQuota: laneRouterDevPaid, Group: "default", UsedQuota: 11, CacheRevision: 11}
 	patch := `{"max_completion_tokens":6}`
 	ch := model.Channel{Id: laneRouterDevChannelID, Name: "synthetic-native-router", Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled,
 		Key: laneRouterDevUpstreamKey, Group: "default", Models: laneRouterDevModel, BaseURL: &upstream.URL, ParamOverride: &patch}
@@ -231,11 +246,27 @@ func TestLaneNativeSyntheticPublicRouterPostgres(t *testing.T) {
 		OperationID: "synthetic-router-paid-grant", Direction: "grant", Amount: laneRouterDevGrant})
 	require.NoError(t, err)
 
+	// Grants alter balances; pin the actual post-grant original versions.
+	require.NoError(t, db.Take(&user, id.UserID).Error)
+	require.NoError(t, db.Take(&token, id.TokenID).Error)
+	release := laneRouterDevRelease()
+	var revokeBeforeBind atomic.Bool
 	plan := relay.LaneNativeSyntheticPlan{
 		DB: db, Group: "default", Model: laneRouterDevModel, ProviderOrigin: upstream.URL, SyntheticProviderKey: laneRouterDevUpstreamKey,
-		FrozenWireHMACKey: sha256.Sum256([]byte("isolated synthetic native router HMAC")), Verifier: laneRouterDevPromptVerifier{},
+		FrozenWireHMACKey: sha256.Sum256([]byte("isolated synthetic native router HMAC")),
+		Verifier: laneRouterDevBeforeBind(func(ctx context.Context) error {
+			if !revokeBeforeBind.Load() {
+				return nil
+			}
+			// This runs after the prehold snapshot but before canonical bind.
+			// The strict ordinary catalogue must never revoke/install here.
+			return db.WithContext(ctx).Exec("UPDATE lane_store_authority_v1 SET state='revoked', epoch=epoch+1 WHERE singleton=1").Error
+		}),
+		Quote: model.LaneStoreQuoteInputV1{Release: release, UserID: user.Id, TokenID: token.Id,
+			TokenFingerprint: id.TokenFingerprint, UserAuthVersion: user.AuthVersion, UserCacheRevision: user.CacheRevision,
+			TokenCacheRevision: token.CacheRevision, Group: "default"},
 		Owner: model.LaneBillingChildDevBinding{
-			Owner:       model.LaneBillingOwnerIdentity{LaneID: "synthetic-native-router-slot-3", Epoch: 88, UserID: id.UserID, TokenID: id.TokenID, TokenFingerprint: id.TokenFingerprint},
+			Owner:       model.LaneBillingOwnerIdentity{LaneID: "synthetic-native-router-slot-3", Epoch: release.Epoch, UserID: id.UserID, TokenID: id.TokenID, TokenFingerprint: id.TokenFingerprint},
 			WalletEpoch: 17, WalletSlot: 3, KeyEpoch: id.Epoch, KeySlot: 2, ChannelID: ch.Id, FundingPolicySHA256: strings.Repeat("a", 64),
 		},
 	}
@@ -402,6 +433,15 @@ func TestLaneNativeSyntheticPublicRouterPostgres(t *testing.T) {
 	require.NoError(t, db.Model(&model.Log{}).Where("request_id IN ? AND type = ?", []string{unknownID, cutID}, model.LogTypeConsume).Count(&unknownLogs).Error)
 	assert.Zero(t, unknownLogs)
 
+	revokeBeforeBind.Store(true)
+	revokedID, revokedStatus, _ := post(laneRouterDevWire, laneRouterDevToken)
+	require.Equal(t, http.StatusServiceUnavailable, revokedStatus)
+	require.NoError(t, db.Model(&model.BillingFinalization{}).Where("request_id = ?", revokedID).Count(&measuredRows).Error)
+	require.Zero(t, measuredRows, "invalidated prehold quote rolls back the canonical request PK")
+	require.NoError(t, db.Table("lane_billing_child_receipts_v1").Where("request_id = ?", revokedID).Count(&measuredRows).Error)
+	require.Zero(t, measuredRows, "no child or lane hold after revoked epoch")
+	require.EqualValues(t, 3, calls.Load(), "no upstream or fallback after bind refused")
+	revokeBeforeBind.Store(false)
 	armSynthetic.Store(false)
 	omitDone.Store(false)
 	ordinaryID, ordinaryStatus, ordinaryBody := post(laneRouterDevWire, laneRouterDevToken)

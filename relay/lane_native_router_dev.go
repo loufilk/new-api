@@ -13,11 +13,11 @@ import (
 	"net/netip"
 	"net/url"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -25,7 +25,6 @@ import (
 )
 
 const laneNativeSyntheticPath = "/v1/chat/completions"
-const laneNativeSyntheticMaxBody = 64 << 10
 
 var errLaneNativeSyntheticUnavailable = errors.New("synthetic native Chat billing is unavailable")
 
@@ -37,6 +36,7 @@ type laneNativeSyntheticPlanContextKey struct{}
 type LaneNativeSyntheticPlan struct {
 	DB                                   *gorm.DB
 	Owner                                model.LaneBillingChildDevBinding
+	Quote                                model.LaneStoreQuoteInputV1
 	Group, Model                         string
 	ProviderOrigin, SyntheticProviderKey string
 	FrozenWireHMACKey                    [32]byte
@@ -76,8 +76,10 @@ func isLaneNativeFixtureClient(r *http.Request) bool {
 
 type laneNativeSyntheticOwner struct {
 	p           LaneNativeSyntheticPlan
-	quote       service.LaneNativeChatPreparedPrice
-	version     int64
+	prepared    service.LaneNativeReleasePreparedV1
+	route       LaneNativeReleaseObservationPlanV1
+	attempt     uint64
+	routeConfig [32]byte
 	proof       service.LaneNativeChatProof
 	child       *model.LaneBillingChildDev
 	measurement service.LaneNativeChatMeasurement
@@ -149,12 +151,34 @@ func armLaneNativeSyntheticBilling(c *gin.Context, info *relaycommon.RelayInfo) 
 	if !exists || !allowed || model.CheckRequestGroupConfigVersion(c) != nil {
 		return true, newAPIErrorLaneSyntheticUnsupported()
 	}
+	attempt, hasAttempt := common.GetContextKeyType[uint64](c, constant.ContextKeyChannelEgressAttempt)
 	quote, err := service.PrepareLaneNativeChatPrice(info, v)
+	if err != nil || !hasAttempt || attempt != 1 || p.Quote.RequestID != "" || p.Quote.UserID != b.Owner.UserID ||
+		p.Quote.TokenID != b.Owner.TokenID || p.Quote.TokenFingerprint != b.Owner.TokenFingerprint ||
+		p.Quote.Group != p.Group || p.Quote.GroupConfigRevision != v || p.Quote.Release.Epoch != b.Owner.Epoch {
+		return true, newAPIErrorLaneSyntheticUnsupported()
+	}
+	h := sha256.Sum256([]byte("synthetic-native-loopback:v1\x00" + p.ProviderOrigin + laneNativeSyntheticPath))
+	route := LaneNativeReleaseObservationPlanV1{Input: p.Quote,
+		Route: service.LaneNativeChatRoute{ChannelID: b.ChannelID, ChannelType: constant.ChannelTypeOpenAI,
+			Group: p.Group, Model: p.Model, Path: laneNativeSyntheticPath, AuthoritySHA256: hex.EncodeToString(h[:])},
+		ExpectedOrigin: p.ProviderOrigin, ExpectedProviderKeyTag: LaneNativeReleaseProviderKeyTagV1(p.FrozenWireHMACKey, p.SyntheticProviderKey),
+		WireHMACKey: p.FrozenWireHMACKey, Verifier: p.Verifier}
+	route.Input.RequestID = info.RequestId
+	config, ok := laneNativeReleaseSelectedRoute(c, route)
+	if !ok {
+		return true, newAPIErrorLaneSyntheticUnsupported()
+	}
+	facts, err := model.CaptureLaneNativeChildQuoteDev(c.Request.Context(), p.DB, route.Input)
+	if err != nil {
+		return true, newAPIErrorLaneSyntheticUnsupported()
+	}
+	prepared, err := service.PrepareLaneNativeReleaseV1(quote, facts, route.Route)
 	if err != nil {
 		return true, newAPIErrorLaneSyntheticUnsupported()
 	}
 	relaycommon.PinLaneNativeSyntheticHTTPIntent(c)
-	info.Billing = &laneNativeSyntheticOwner{p: p, quote: quote, version: v}
+	info.Billing = &laneNativeSyntheticOwner{p: p, prepared: prepared, route: route, attempt: attempt, routeConfig: config}
 	info.BillingSource = service.BillingSourceWallet
 	info.DisablePing = true
 	return true, nil
@@ -188,55 +212,35 @@ func (b laneNativeSyntheticBody) NewReader() (io.ReadCloser, error) {
 	return io.NopCloser(b.proof.OpenBody()), nil
 }
 
-func bindLaneNativeSyntheticBilling(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, body io.Reader) (io.Reader, *types.NewAPIError) {
+func bindLaneNativeSyntheticBilling(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, final []byte) (io.Reader, *types.NewAPIError) {
 	if !hasLaneNativeSyntheticBilling(c) {
-		return body, nil
+		return nil, nil
 	}
 	if info == nil {
 		return nil, newAPIErrorLaneSyntheticUnsupported()
 	}
 	o, ok := info.Billing.(*laneNativeSyntheticOwner)
-	if !ok || o == nil {
+	if !ok || o == nil || o.child != nil ||
+		!laneNativeReleaseFinalRouteMatches(c, info, adaptor, o.route, o.attempt, o.routeConfig) ||
+		model.CheckRequestGroupConfigVersion(c) != nil {
 		return nil, newAPIErrorLaneSyntheticUnsupported()
 	}
-	p := o.p
-	if o.child != nil || adaptor == nil || body == nil || info.RetryIndex != 0 || info.ChannelMeta == nil ||
-		info.RelayMode != relayconstant.RelayModeChatCompletions || info.ChannelType != constant.ChannelTypeOpenAI ||
-		info.ChannelId != p.Owner.ChannelID || info.UpstreamModelName != p.Model || info.IsModelMapped || info.UsingGroup != p.Group ||
-		info.ChannelIsMultiKey || info.ApiKey != p.SyntheticProviderKey || info.Organization != "" || info.ChannelSetting.Proxy != "" ||
-		len(info.HeadersOverride) != 0 || info.ChannelBaseUrl != p.ProviderOrigin || model.CheckRequestGroupConfigVersion(c) != nil {
-		return nil, newAPIErrorLaneSyntheticUnsupported()
-	}
-	routeURL, err := adaptor.GetRequestURL(info)
-	if err != nil || routeURL != p.ProviderOrigin+laneNativeSyntheticPath {
-		return nil, newAPIErrorLaneSyntheticUnsupported()
-	}
-	quote, err := service.PrepareLaneNativeChatPrice(info, o.version)
-	if err != nil || quote != o.quote {
-		return nil, newAPIErrorLaneSyntheticUnsupported()
-	}
-	final, err := io.ReadAll(io.LimitReader(body, laneNativeSyntheticMaxBody+1))
-	if err != nil || len(final) > laneNativeSyntheticMaxBody {
-		return nil, newAPIErrorLaneSyntheticUnsupported()
-	}
-	h := sha256.Sum256([]byte("synthetic-native-loopback:v1\x00" + routeURL))
-	route := service.LaneNativeChatRoute{ChannelID: info.ChannelId, ChannelType: info.ChannelType, Group: info.UsingGroup, Model: p.Model,
-		Path: laneNativeSyntheticPath, AuthoritySHA256: hex.EncodeToString(h[:])}
-	proof, err := o.quote.VerifyFinalWire(c.Request.Context(), route, final, p.FrozenWireHMACKey, p.Verifier)
+	current, err := service.PrepareLaneNativeChatPrice(info, o.route.Input.GroupConfigRevision)
 	if err != nil {
 		return nil, newAPIErrorLaneSyntheticUnsupported()
 	}
-	binding, evidence := p.Owner, proof.Evidence()
-	binding.Owner.RequestID = evidence.RequestID
-	binding.FrozenPriceSHA256 = evidence.FrozenPriceSHA256
-	binding.RouteSHA256 = evidence.RouteSHA256
-	binding.FinalWireSHA256 = evidence.FinalWireSHA256
-	child, err := model.ReserveLaneBillingChildDev(c.Request.Context(), p.DB, binding, evidence.QuotaCap)
+	sealed, err := o.prepared.SealFinalWire(c.Request.Context(), current, o.route.Route, final, o.route.WireHMACKey, o.route.Verifier)
+	if err != nil {
+		return nil, newAPIErrorLaneSyntheticUnsupported()
+	}
+	child, proof, err := sealed.BindLaneNativeReleaseDev(c.Request.Context(), o.p.DB, o.p.Owner)
 	if err != nil || child == nil {
+		// Pinned before any reservation attempt: an error or unknown COMMIT
+		// never permits ordinary fallback, retry, or an extra outbound send.
 		return nil, newAPIErrorLaneSyntheticUnsupported()
 	}
 	o.proof, o.child = proof, child
-	info.FinalPreConsumedQuota = evidence.QuotaCap
+	info.FinalPreConsumedQuota = proof.Evidence().QuotaCap
 	return laneNativeSyntheticBody{Reader: proof.OpenBody(), proof: proof}, nil
 }
 

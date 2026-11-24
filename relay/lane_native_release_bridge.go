@@ -177,25 +177,7 @@ func observeLaneNativeReleaseFinalWire(c *gin.Context, info *relaycommon.RelayIn
 	}
 	o.ready = false // attempts after the first can never overwrite this artifact
 	p := o.plan
-	attempt, ok := common.GetContextKeyType[uint64](c, constant.ContextKeyChannelEgressAttempt)
-	if !ok || attempt != o.egress || info.RetryIndex != 0 || info.ChannelMeta == nil || info.ChannelId != p.Route.ChannelID ||
-		info.ChannelType != p.Route.ChannelType || info.UpstreamModelName != p.Route.Model || info.IsModelMapped ||
-		info.ChannelIsMultiKey || info.ChannelBaseUrl != p.ExpectedOrigin || info.ChannelSetting.Proxy != "" ||
-		info.ChannelSetting.TLSInsecureSkipVerify || info.Organization != "" || len(info.HeadersOverride) != 0 ||
-		len(relaycommon.GetEffectiveHeaderOverride(info)) != 0 || len(info.RequestPluginHeaders) != 0 || len(info.RequestPluginRecord) != 0 {
-		return
-	}
-	selectedConfig, validSelected := laneNativeReleaseSelectedRoute(c, p)
-	adaptorConfig, validAdaptor := laneNativeReleaseRouteConfig(p.WireHMACKey, info.ChannelSetting, info.ChannelOtherSettings, info.ParamOverride)
-	if !validSelected || !validAdaptor || selectedConfig != o.routeConfig || adaptorConfig != o.routeConfig {
-		return
-	}
-	tag := LaneNativeReleaseProviderKeyTagV1(p.WireHMACKey, info.ApiKey)
-	if !hmac.Equal(tag[:], p.ExpectedProviderKeyTag[:]) {
-		return
-	}
-	upstream, err := adaptor.GetRequestURL(info)
-	if err != nil || upstream != p.ExpectedOrigin+p.Route.Path {
+	if !laneNativeReleaseFinalRouteMatches(c, info, adaptor, p, o.egress, o.routeConfig) {
 		return
 	}
 	price, err := service.PrepareLaneNativeChatPrice(info, p.Input.GroupConfigRevision)
@@ -203,4 +185,32 @@ func observeLaneNativeReleaseFinalWire(c *gin.Context, info *relaycommon.RelayIn
 		return
 	}
 	o.sealed, _ = o.prepared.SealFinalWire(c.Request.Context(), price, p.Route, final, p.WireHMACKey, p.Verifier)
+}
+
+// Both the shadow observer and the isolated concrete owner check the same
+// conversion, settings, route, and credential at the adaptor handoff.
+func laneNativeReleaseFinalRouteMatches(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor,
+	p LaneNativeReleaseObservationPlanV1, expectedAttempt uint64, expectedConfig [32]byte) bool {
+	attempt, ok := common.GetContextKeyType[uint64](c, constant.ContextKeyChannelEgressAttempt)
+	if !ok || info == nil || adaptor == nil || attempt != expectedAttempt || info.RetryIndex != 0 || info.ChannelMeta == nil || info.ChannelId != p.Route.ChannelID ||
+		info.ChannelType != p.Route.ChannelType || info.UpstreamModelName != p.Route.Model || info.IsModelMapped ||
+		info.ChannelIsMultiKey || info.ChannelBaseUrl != p.ExpectedOrigin || info.ChannelSetting.Proxy != "" ||
+		info.ChannelSetting.TLSInsecureSkipVerify || info.Organization != "" || len(info.HeadersOverride) != 0 ||
+		len(relaycommon.GetEffectiveHeaderOverride(info)) != 0 || len(info.RequestPluginHeaders) != 0 || len(info.RequestPluginRecord) != 0 {
+		return false
+	}
+	selectedConfig, validSelected := laneNativeReleaseSelectedRoute(c, p)
+	adaptorConfig, validAdaptor := laneNativeReleaseRouteConfig(p.WireHMACKey, info.ChannelSetting, info.ChannelOtherSettings, info.ParamOverride)
+	if !validSelected || !validAdaptor || selectedConfig != expectedConfig || adaptorConfig != expectedConfig {
+		return false
+	}
+	tag := LaneNativeReleaseProviderKeyTagV1(p.WireHMACKey, info.ApiKey)
+	if !hmac.Equal(tag[:], p.ExpectedProviderKeyTag[:]) {
+		return false
+	}
+	upstream, err := adaptor.GetRequestURL(info)
+	if err != nil || upstream != p.ExpectedOrigin+p.Route.Path {
+		return false
+	}
+	return true
 }

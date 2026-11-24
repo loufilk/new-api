@@ -30,6 +30,7 @@ type LaneStoreQuoteAuthorityV1 struct {
 	input             LaneStoreQuoteInputV1
 	schema, userGroup string
 	settingsSHA256    [sha256.Size]byte
+	custody           bool
 }
 
 func (q LaneStoreQuoteAuthorityV1) MatchesPreparedRequest(requestID, group string, revision int64) bool {
@@ -58,7 +59,7 @@ func CaptureLaneStoreQuoteAuthorityV1Tx(tx *gorm.DB, input LaneStoreQuoteInputV1
 // build it proves current dormant metadata and original paid/key raw backing
 // only, never wallet escrow or permission to bind. No result is a hold.
 func RevalidateLaneStoreQuoteAuthorityV1Tx(tx *gorm.DB, q LaneStoreQuoteAuthorityV1, capQuota int) error {
-	if q.schema == "" || capQuota <= 0 || capQuota > common.MaxQuota {
+	if q.custody || q.schema == "" || capQuota <= 0 || capQuota > common.MaxQuota {
 		return ErrLaneStoreAuthorityEvidence
 	}
 	now, err := lockLaneStoreQuoteAuthorityV1Tx(tx, q.input, capQuota)
@@ -93,6 +94,13 @@ type laneStoreAuthorityToken struct {
 // and new writer activation require the common order, escrow conservation,
 // complete writer inventory and an independent immutable route authority.
 func lockLaneStoreQuoteAuthorityV1Tx(tx *gorm.DB, input LaneStoreQuoteInputV1, capQuota int) (LaneStoreQuoteAuthorityV1, error) {
+	return lockLaneStoreQuoteWithCatalogV1Tx(tx, input, capQuota, inspectLaneStoreCatalogTx, false)
+}
+
+// The caller must pin an independently validated catalogue before reading any
+// facts. A custody quote does not treat the raw wallet or Key as backing.
+func lockLaneStoreQuoteWithCatalogV1Tx(tx *gorm.DB, input LaneStoreQuoteInputV1, capQuota int,
+	catalog func(*gorm.DB) (laneStoreCatalog, error), custody bool) (LaneStoreQuoteAuthorityV1, error) {
 	var empty LaneStoreQuoteAuthorityV1
 	if !input.valid() {
 		return empty, ErrLaneStoreAuthorityEvidence
@@ -117,7 +125,7 @@ func lockLaneStoreQuoteAuthorityV1Tx(tx *gorm.DB, input LaneStoreQuoteInputV1, c
 	if err := tx.Exec("SELECT pg_catalog.pg_advisory_xact_lock_shared(?)", groupNamespaceAdvisoryLockID).Error; err != nil {
 		return empty, laneStoreAuthorityError(ctx, err)
 	}
-	c, err := inspectLaneStoreCatalogTx(tx)
+	c, err := catalog(tx)
 	if err != nil {
 		return empty, err
 	}
@@ -139,7 +147,7 @@ func lockLaneStoreQuoteAuthorityV1Tx(tx *gorm.DB, input LaneStoreQuoteInputV1, c
 	}
 	if userResult.RowsAffected != 1 || user.ID != input.UserID || !user.Live || user.Status != common.UserStatusEnabled ||
 		user.AuthVersion != input.UserAuthVersion || user.CacheRevision != input.UserCacheRevision ||
-		user.QuotaPaid <= 0 || user.QuotaPaid > common.MaxWalletQuota || user.Quota != user.QuotaPaid ||
+		user.QuotaPaid < 0 || (!custody && user.QuotaPaid == 0) || user.QuotaPaid > common.MaxWalletQuota || user.Quota != user.QuotaPaid ||
 		user.QuotaBonus != 0 || user.QuotaReward != 0 || user.QuotaPaid < capQuota {
 		return empty, ErrLaneStoreAuthorityEvidence
 	}
@@ -166,10 +174,10 @@ func lockLaneStoreQuoteAuthorityV1Tx(tx *gorm.DB, input LaneStoreQuoteInputV1, c
 	}
 	if tokenResult.RowsAffected != 1 || !token.Live || token.ID != input.TokenID || token.UserID != input.UserID ||
 		token.Status != common.TokenStatusEnabled || token.CacheRevision != input.TokenCacheRevision || token.UnlimitedQuota ||
-		token.Group != input.Group || token.SmartRouting || token.CrossGroupRetry || token.RemainQuota <= 0 || token.RemainQuota > common.MaxWalletQuota ||
+		token.Group != input.Group || token.SmartRouting || token.CrossGroupRetry || token.RemainQuota < 0 || (!custody && token.RemainQuota == 0) || token.RemainQuota > common.MaxWalletQuota ||
 		token.RemainQuota < capQuota || (token.ExpiredTime != -1 && token.ExpiredTime <= time.Now().Unix()) || token.Key == "" ||
 		subtle.ConstantTimeCompare([]byte(BillingTokenFingerprint(token.Key)), []byte(input.TokenFingerprint)) != 1 {
 		return empty, ErrLaneStoreAuthorityEvidence
 	}
-	return LaneStoreQuoteAuthorityV1{input: input, schema: c.schema, userGroup: user.Group, settingsSHA256: sha256.Sum256([]byte(user.Setting))}, nil
+	return LaneStoreQuoteAuthorityV1{input: input, schema: c.schema, userGroup: user.Group, settingsSHA256: sha256.Sum256([]byte(user.Setting)), custody: custody}, nil
 }

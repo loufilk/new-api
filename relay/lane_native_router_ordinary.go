@@ -22,8 +22,8 @@ func prepareLaneNativeSyntheticSelectedBilling(*gin.Context, *relaycommon.RelayI
 	return false, nil
 }
 
-func bindLaneNativeSyntheticBilling(_ *gin.Context, _ *relaycommon.RelayInfo, _ channel.Adaptor, body io.Reader) (io.Reader, *types.NewAPIError) {
-	return body, nil
+func bindLaneNativeSyntheticBilling(*gin.Context, *relaycommon.RelayInfo, channel.Adaptor, []byte) (io.Reader, *types.NewAPIError) {
+	return nil, nil
 }
 
 func observeLaneNativeSyntheticTerminal(*gin.Context, *relaycommon.RelayInfo, *http.Response) *types.NewAPIError {

@@ -259,6 +259,7 @@ func ApplySharedWalletTransferTx(tx *gorm.DB, op SharedWalletTransfer) (receipt 
 		err = ErrSharedWalletCapacity
 		return
 	}
+	beforeTransfer := share
 	if op.Direction == "grant" {
 		if user.Status != common.UserStatusEnabled || op.Amount > common.MaxWalletQuota-share.Granted || share.Version >= common.MaxWalletQuota-1 {
 			err = ErrSharedWalletCapacity
@@ -288,7 +289,7 @@ func ApplySharedWalletTransferTx(tx *gorm.DB, op SharedWalletTransfer) (receipt 
 	if op.Direction == "grant" {
 		result, err = DebitQuotaTx(tx, entry, AccountPaid)
 	} else {
-		result, err = CreditQuotaTx(tx, entry)
+		result, err = creditLaneWalletNeutralReturnTx(tx, receipt, beforeTransfer, share)
 	}
 	if err != nil {
 		return
@@ -313,4 +314,21 @@ func ApplySharedWalletTransferTx(tx *gorm.DB, op SharedWalletTransfer) (receipt 
 	}
 	err = tx.Create(&receipt).Error
 	return
+}
+
+// The separate cold transfer path merely moves existing ownership. Only
+// the treasury's locked debit/credit pair can skip incoming headroom. In
+// particular, a net credit cannot opt out by copying the ledger reason.
+func creditLaneWalletNeutralReturnTx(tx *gorm.DB, receipt SharedWalletTransfer, before, after SharedWalletShare) (*LedgerResult, error) {
+	if !receipt.valid() || receipt.Direction != "reclaim" || !before.valid() || !after.valid() ||
+		before.UserID != receipt.UserID || before.Epoch != receipt.Epoch || before.Slot != receipt.Slot ||
+		after.UserID != before.UserID || after.Epoch != before.Epoch || after.Slot != before.Slot ||
+		after.Held != before.Held || after.Spent != before.Spent || after.Granted != before.Granted ||
+		receipt.Amount > before.Available || after.Available != before.Available-receipt.Amount ||
+		after.Returned != before.Returned+receipt.Amount || after.Version != before.Version+1 ||
+		receipt.ShareVersion != after.Version || receipt.ReturnedAfter != after.Returned || receipt.GrantedAfter != after.Granted ||
+		receipt.OperationID != after.LastOperationID || receipt.PreviousOperationID != before.LastOperationID {
+		return nil, ErrSharedWalletEvidence
+	}
+	return CreditQuotaTx(tx, receipt.ledgerEntry())
 }

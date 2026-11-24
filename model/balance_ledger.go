@@ -517,17 +517,49 @@ func CreditQuota(entry LedgerEntry) (*LedgerResult, error) {
 
 // CreditQuotaTx 在调用方事务内单账户入账。调用方负责在自身事务提交后刷新缓存。
 func CreditQuotaTx(tx *gorm.DB, entry LedgerEntry) (*LedgerResult, error) {
+	return creditQuotaTx(tx, entry, nil)
+}
+
+// A non-nil approval marks new net value entering verified wallet custody.
+// Neutral treasury returns have a separate exact transfer receipt path.
+func creditQuotaTx(tx *gorm.DB, entry LedgerEntry, approval *laneNetCreditApproval) (*LedgerResult, error) {
 	if err := validateCreditEntry(entry); err != nil {
 		return nil, err
 	}
 	if entry.Delta == 0 {
+		if approval != nil {
+			return nil, ErrSharedWalletScope
+		}
 		return &LedgerResult{}, nil
 	}
 	key, err := entry.resolveKey(ledgerOpCredit)
 	if err != nil {
 		return nil, err
 	}
-	return applyLedgerTx(tx, entry, key, ledgerOpCredit, func(tx *gorm.DB, user *User) ([]accountDelta, error) {
+	var checks *ledgerApplyChecks
+	if approval != nil {
+		if approval.ledgerKey != key || approval.signature != ledgerOperationSignature(entry, ledgerOpCredit) {
+			return nil, ErrSharedWalletScope
+		}
+		tx, err = approval.scope.lockableTx(tx, entry.UserId)
+		if err != nil {
+			return nil, err
+		}
+		checks = &ledgerApplyChecks{
+			beforePlan: func(tx *gorm.DB, user *User) error {
+				custody, err := readLockedLaneWalletCustodyTx(tx, user, approval.scope.walletEpoch)
+				if err != nil {
+					return err
+				}
+				if entry.Delta > custody.headroom {
+					return ErrWalletQuotaLimitExceeded
+				}
+				return nil
+			},
+			validReplay: validLaneNetCreditReplay,
+		}
+	}
+	return applyLedgerTxWithCheck(tx, entry, key, ledgerOpCredit, checks, func(tx *gorm.DB, user *User) ([]accountDelta, error) {
 		return []accountDelta{{account: entry.Account, delta: entry.Delta}}, nil
 	})
 }
@@ -1036,6 +1068,17 @@ func normalizeLegacyQuotaTx(tx *gorm.DB, user *User) error {
 // applyLedgerTx 在事务内执行：行锁 -> 幂等重放判定 -> 余额更新 -> 账本插入。
 // 余额更新与账本插入任一步失败都会导致调用方整体回滚。
 func applyLedgerTx(tx *gorm.DB, entry LedgerEntry, key string, op ledgerOpKind, plan ledgerPlanFunc) (*LedgerResult, error) {
+	return applyLedgerTxWithCheck(tx, entry, key, op, nil, plan)
+}
+
+// The optional check runs on the locked wallet after exact replay, but
+// before normalization, bonus expiry, or any new balance/ledger mutation.
+type ledgerApplyChecks struct {
+	beforePlan  func(tx *gorm.DB, user *User) error
+	validReplay func(LedgerEntry, *BalanceLedgerOperation, []BalanceLedger) bool
+}
+
+func applyLedgerTxWithCheck(tx *gorm.DB, entry LedgerEntry, key string, op ledgerOpKind, checks *ledgerApplyChecks, plan ledgerPlanFunc) (*LedgerResult, error) {
 	user := User{}
 	if err := lockForUpdate(tx).Where("id = ?", entry.UserId).First(&user).Error; err != nil {
 		return nil, err
@@ -1043,14 +1086,15 @@ func applyLedgerTx(tx *gorm.DB, entry LedgerEntry, key string, op ledgerOpKind, 
 
 	// 加锁后读取全局幂等头。已存在时只接受完全相同的操作签名。
 	lookup := lockForUpdate(tx)
-	if op == ledgerOpLanePaidSet {
-		// This specific accounting operation expects at most one detail.
+	if op == ledgerOpLanePaidSet || checks != nil && checks.validReplay != nil {
+		// These exact accounting operations expect at most one detail.
 		lookup = lookup.Limit(2)
 	}
 	existingOperation, existingRows, err := loadLedgerOperation(lookup, key)
 	if err == nil {
 		if verifyReplay(existingOperation, entry, op) {
-			if op == ledgerOpLanePaidSet && !validLanePaidOverrideReplay(entry, existingOperation, existingRows) {
+			if op == ledgerOpLanePaidSet && !validLanePaidOverrideReplay(entry, existingOperation, existingRows) ||
+				checks != nil && checks.validReplay != nil && !checks.validReplay(entry, existingOperation, existingRows) {
 				return nil, ErrSharedWalletEvidence
 			}
 			return replayResult(existingOperation, existingRows), nil
@@ -1068,6 +1112,11 @@ func applyLedgerTx(tx *gorm.DB, entry LedgerEntry, key string, op ledgerOpKind, 
 		return nil, ErrLanePaidOverrideAuthority
 	}
 
+	if checks != nil && checks.beforePlan != nil {
+		if err := checks.beforePlan(tx, &user); err != nil {
+			return nil, err
+		}
+	}
 	if err := normalizeLegacyQuotaTx(tx, &user); err != nil {
 		if errors.Is(err, ErrLedgerDuplicate) {
 			return nil, err
