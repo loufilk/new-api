@@ -54,7 +54,9 @@ func ReserveBillingFinalization(ctx context.Context, authorization BillingFinali
 		result = stored
 		return nil
 	}
+	timing := beginWalletLockTiming(DB, authorization.Source, "reservation")
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		timing.enterTransaction()
 		var nonce [8]byte
 		if _, err := rand.Read(nonce[:]); err != nil {
 			return err
@@ -74,7 +76,7 @@ func ReserveBillingFinalization(ctx context.Context, authorization BillingFinali
 		if !sameBillingAuthorization(stored, authorization) {
 			return billingRefundReviewError("identity_mismatch", "billing reservation authorization mismatch")
 		}
-		if err := LockFinancialUserTx(tx, stored.UserID); err != nil {
+		if err := timing.lockFinancialUser(tx, stored.UserID); err != nil {
 			return err
 		}
 		fresh := stored.State == claim.State
@@ -115,6 +117,7 @@ func ReserveBillingFinalization(ctx context.Context, authorization BillingFinali
 		attempt.FreshInitialPrepared = fresh && previous == nil
 		return nil
 	})
+	timing.finish(err)
 	attempt.Applied = attempt.Applied && err == nil
 	return result, attempt, err
 }
@@ -138,7 +141,7 @@ func ReserveBillingTokenTx(tx *gorm.DB, r *BillingFinalization, amount int, unli
 	if !unlimited && token.RemainQuota < amount {
 		return ErrBillingTokenInsufficient
 	}
-	return ApplyTokenQuotaDeltaTx(tx, token.Id, token.Key, -amount)
+	return applyLockedTokenQuotaDeltaTx(tx, token, -amount)
 }
 
 var ErrBillingTokenInsufficient = errors.New("token quota is not enough")

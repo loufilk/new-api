@@ -78,7 +78,7 @@ func GetOptions(c *gin.Context) {
 	optionValues := make(map[string]string)
 	common.OptionMapRWMutex.Lock()
 	for k, v := range common.OptionMap {
-		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" || k == "google.client_secret_configured" {
+		if k == model.ModelTestEnabledKey || k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" || k == "google.client_secret_configured" {
 			continue
 		}
 		value := common.Interface2String(v)
@@ -186,17 +186,11 @@ func UpdateOption(c *gin.Context) {
 		return
 	}
 	if strings.EqualFold(strings.TrimSpace(option.Key), model.ModelTestEnabledKey) {
-		// The general option API also accepts management PATs. This opt-in
-		// capability is controlled only from a live root dashboard session.
 		if _, ok := requireBrowserSession(c); !ok {
 			return
 		}
-		// Reject aliases instead of normalizing every option key. This also
-		// prevents accidental collisions on case-insensitive SQL collations.
-		if option.Key != model.ModelTestEnabledKey {
-			common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
-			return
-		}
+		RetiredModelTests(c)
+		return
 	}
 	switch option.Value.(type) {
 	case bool:
@@ -330,6 +324,11 @@ func UpdateOption(c *gin.Context) {
 	case "gemini.safety_settings":
 		err = model_setting.ValidateGeminiSafetySettings(option.Value.(string))
 		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	case "gemini.version_settings":
+		if err := model_setting.ValidateGeminiVersionSettings(option.Value.(string)); err != nil {
 			common.ApiError(c, err)
 			return
 		}

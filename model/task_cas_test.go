@@ -77,6 +77,7 @@ func TestMain(m *testing.M) {
 		&Task{},
 		&Option{},
 		&GroupRenameOperation{},
+		&UserGroupEntitlement{},
 		&ModelTestGate{},
 		&ModelFingerprintSiteConfig{},
 		&ModelFingerprintSiteAudit{},

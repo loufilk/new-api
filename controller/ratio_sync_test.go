@@ -45,6 +45,7 @@ func TestPricingSyncExpressionPriority(t *testing.T) {
 }
 
 func TestRatioConfigExportsEffectiveExpressions(t *testing.T) {
+	setupTokenControllerTestDB(t)
 	before := config.GlobalConfig.ExportAllConfigs()
 	expose := ratio_setting.IsExposeRatioEnabled()
 	t.Cleanup(func() {

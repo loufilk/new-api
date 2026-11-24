@@ -82,6 +82,8 @@ export type PricingModel = {
   tags?: string
   supported_endpoint_types?: string[]
   key?: string
+  group_keys_are_display_only?: boolean
+  group_catalog?: MarketGroupCatalog
   group_ratio?: Record<string, number>
   /** Billing mode (e.g. "tiered_expr") used to flag dynamic pricing */
   billing_mode?: string
@@ -127,7 +129,19 @@ export type ModelCapability =
   | 'caching'
   | 'embeddings'
 
+export interface MarketGroup {
+  label?: string
+  description?: string
+  platform?: string
+  sort_order?: number
+  exclusive?: boolean
+  badges?: string[]
+}
+export type MarketGroupCatalog = Record<string, MarketGroup>
+
 export type PricingData = {
+  group_keys_are_display_only?: boolean
+  group_catalog?: MarketGroupCatalog
   success: boolean
   message?: string
   data: PricingModel[]

@@ -44,7 +44,8 @@ type BillingSession struct {
 	billingIdentity         *model.BillingFinalization
 	terminalReceipt         *model.BillingFinalization
 	settlementUncertain     bool
-	settlementIntent        *int // Frozen observed charge, even if persisting it fails.
+	settlementIntent        *int                             // Frozen observed charge, even if persisting it fails.
+	settlementRecovery      *model.BillingSettlementRecovery // Explicit measured text usage only.
 	reservationUncertain    bool
 	subscriptionSupplements map[string]bool
 	realtime                *realtimeBillingState

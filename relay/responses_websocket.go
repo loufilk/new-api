@@ -249,6 +249,7 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 }
 
 func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState, create responsesWSCreateRequest) (apiErr *types.NewAPIError) {
+	appmodel.ResetRequestUserGroupPricing(c)
 	// Opening the socket does not submit a generation. Only response.create
 	// writes below can turn a failed send into unknown upstream delivery.
 	c.Set(requestBillingNotSubmittedKey, true)

@@ -3,7 +3,9 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"sort"
 
 	"github.com/QuantumNous/new-api/common"
@@ -96,7 +98,16 @@ func PlaygroundBootstrap(c *gin.Context) {
 		return
 	}
 
-	groups := service.GetUserUsableGroups(userCache.Group)
+	groups, err := service.GetUserUsableGroupsForUser(c.Request.Context(), userID, userCache.Group)
+	if err != nil {
+		groupConfigReadFailure(c)
+		return
+	}
+	rates, err := service.LoadEffectiveGroupRates(c.Request.Context(), userID, userCache.Group, slices.Collect(maps.Keys(groups)))
+	if err != nil {
+		groupConfigReadFailure(c)
+		return
+	}
 	// 复用定价目录投影：仅返回已通过状态、计费可用性与能力投影的模型，
 	// 再与各分组的可路由模型求交集，避免引入定价目录外的模型。
 	pricing := model.GetPricing()
@@ -109,7 +120,7 @@ func PlaygroundBootstrap(c *gin.Context) {
 	modelsByGroup := make(map[string][]string, len(groups))
 	modelSet := make(map[string]struct{})
 	for name, desc := range groups {
-		groupInfos = append(groupInfos, playgroundGroupInfo{Name: name, Desc: desc, Ratio: service.GetUserGroupRatio(userCache.Group, name)})
+		groupInfos = append(groupInfos, playgroundGroupInfo{Name: name, Desc: desc, Ratio: rates[name].GroupRatio})
 		groupModels := playgroundModelsForGroup(name, pricingSet)
 		modelsByGroup[name] = groupModels
 		for _, modelName := range groupModels {

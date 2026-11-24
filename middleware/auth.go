@@ -703,7 +703,11 @@ func TokenAuth() func(c *gin.Context) {
 			// Only the virtual Auto gate is bypassed. Candidate selection still
 			// intersects every request with the user's live concrete permissions.
 			tokenGroup = "auto"
-		} else if err := service.ValidateTokenRoutingScope(userGroup, token); err != nil {
+		} else if err := service.ValidateTokenRoutingScopeForUser(c.Request.Context(), token.UserId, userGroup, token); err != nil {
+			if !errors.Is(err, service.ErrTokenGroupForbidden) && !errors.Is(err, service.ErrTokenGroupDeprecated) {
+				abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgGroupConfigChanged), "group_config_changed")
+				return
+			}
 			message := i18n.MsgAuthTokenGroupForbidden
 			if errors.Is(err, service.ErrTokenGroupDeprecated) {
 				message = i18n.MsgAuthTokenGroupDeprecated

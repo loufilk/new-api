@@ -155,9 +155,9 @@ describe('automatic announcement dialog', () => {
     expect(
       within(dialog).getByRole('button', { name: 'Close Today' })
     ).toBeVisible()
-    expect(useNotificationStore.getState().readAnnouncementKeys).toContain(
-      'id:1'
-    )
+    expect(useNotificationStore.getState().readAnnouncementKeys).toEqual([
+      expect.stringMatching(/^v2:[a-f0-9]{64}$/),
+    ])
   })
 
   test('regular close stays closed through header remounts and the bell can reopen it', async () => {
@@ -177,6 +177,21 @@ describe('automatic announcement dialog', () => {
     await user.click(screen.getByRole('button', { name: 'Notifications' }))
     expect(await screen.findByRole('dialog')).toBeVisible()
     expect(await screen.findByText('Platform announcement')).toBeVisible()
+  })
+
+  test('the same already-read announcement does not reopen on a new page session', async () => {
+    const view = renderNotifications()
+    await screen.findByRole('dialog')
+    await waitFor(() => {
+      expect(useNotificationStore.getState().readAnnouncementKeys).toHaveLength(
+        1
+      )
+    })
+    view.unmount()
+    act(() => useNotificationStore.setState({ autoPopupShown: false }))
+    const second = renderNotifications()
+    await waitFor(() => expect(second.client.isFetching()).toBe(0))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   test('Close Today survives a new page session but still allows manual reopening', async () => {

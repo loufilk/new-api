@@ -16,20 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import {
-  MODEL_DISPLAY_CATEGORIES,
-  modelDisplayCategoriesSchema,
-} from '@/lib/model-display-categories'
+import type { ModelDisplayCategory } from '@/lib/model-display-categories'
 
 import type { PricingModel } from '../types'
-
-export const MODEL_CATEGORIES = [...MODEL_DISPLAY_CATEGORIES, 'all'] as const
-export type ModelCategory = (typeof MODEL_CATEGORIES)[number]
 
 /** Catalog evidence only: names, tags, prices and default wire protocols are not capabilities. */
 export function getAutomaticModelCategories(
   model: PricingModel
-): Exclude<ModelCategory, 'all'>[] {
+): ModelDisplayCategory[] {
   const outputs = new Set(model.output_modalities ?? [])
   const inputs = new Set(model.input_modalities ?? [])
   const capabilities = new Set(model.capabilities ?? [])
@@ -54,7 +48,7 @@ export function getAutomaticModelCategories(
     'function_calling',
     'tools'
   )
-  const categories: Exclude<ModelCategory, 'all'>[] = []
+  const categories: ModelDisplayCategory[] = []
   if (explicitText || (outputs.has('text') && !speechRecognition)) {
     categories.push('text')
   }
@@ -92,27 +86,4 @@ export function getAutomaticModelCategories(
     categories.push('vectors')
   }
   return categories
-}
-
-/** Display-only override. Never use it as evidence for protocols or playgrounds. */
-export function getModelCategories(
-  model: PricingModel
-): Exclude<ModelCategory, 'all'>[] {
-  const override = modelDisplayCategoriesSchema.safeParse(
-    model.display_categories
-  )
-  if (override.success && override.data.length > 0) {
-    return MODEL_DISPLAY_CATEGORIES.filter((category) =>
-      override.data.includes(category)
-    )
-  }
-  return getAutomaticModelCategories(model)
-}
-
-export function filterByCategory(
-  models: PricingModel[],
-  category: ModelCategory
-): PricingModel[] {
-  if (category === 'all') return models
-  return models.filter((model) => getModelCategories(model).includes(category))
 }

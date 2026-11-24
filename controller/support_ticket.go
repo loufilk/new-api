@@ -196,6 +196,38 @@ func markSupportTicketRead(c *gin.Context, adminView bool) {
 	common.ApiSuccess(c, nil)
 }
 
+func MarkObservedSupportTicketRead(c *gin.Context) {
+	markObservedSupportTicketRead(c, false)
+}
+
+func MarkAdminObservedSupportTicketRead(c *gin.Context) {
+	markObservedSupportTicketRead(c, true)
+}
+
+func markObservedSupportTicketRead(c *gin.Context, adminView bool) {
+	id, ok := supportTicketID(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		ThroughMessageID *int64 `json:"through_message_id"`
+		ObservedStatus   string `json:"observed_status"`
+	}
+	if err := common.DecodeJsonStrict(http.MaxBytesReader(c.Writer, c.Request.Body, 1024), &request); err != nil || request.ThroughMessageID == nil {
+		supportTicketError(c, service.ErrSupportTicketInvalidInput)
+		return
+	}
+	acknowledged, err := service.MarkObservedSupportTicketRead(c.Request.Context(), c.GetInt("id"), adminView, id, model.SupportTicketReadSnapshot{
+		MessageID: *request.ThroughMessageID,
+		Status:    request.ObservedStatus,
+	})
+	if err != nil {
+		supportTicketError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"acknowledged": acknowledged})
+}
+
 // Stream bounded multipart into memory; never create pre-ticket uploads or
 // temporary public files. JSON remains available to existing text-only clients.
 func readSupportTicketRequest(c *gin.Context, create bool) (supportTicketCreateRequest, []model.SupportTicketAttachment, error) {

@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { CheckCircle2, Loader2, Send } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
@@ -60,6 +60,7 @@ interface TicketDetailProps {
   detail: SupportTicketDetail
   replyPending: boolean
   statusPending: boolean
+  onLatestSeen?: () => void
   onReply: (submission: SupportTicketSubmission) => Promise<void>
   onStatusChange: (status: SupportTicketStatus) => Promise<void>
 }
@@ -71,6 +72,10 @@ export function TicketDetail(props: TicketDetailProps) {
   const { get: requestId, reset: resetRequestId } = useSupportRequestId()
   const submitting = useRef(false)
   const [localPending, setLocalPending] = useState(false)
+  const conversation = useRef<HTMLDivElement>(null)
+  const followsLatest = useRef(true)
+  const latestMessageId = props.detail.messages.at(-1)?.id
+  const onLatestSeen = props.onLatestSeen
   const form = useForm<ReplySupportTicketValues>({
     resolver: zodResolver(replySupportTicketSchema),
     defaultValues: { message: '' },
@@ -82,7 +87,17 @@ export function TicketDetail(props: TicketDetailProps) {
     resetRequestId()
   }, [form, props.detail.ticket.id, clearImages, resetRequestId])
 
-  const submitReply = form.handleSubmit(async (values) => {
+  useLayoutEffect(() => {
+    const view = conversation.current
+    // Follow new messages only if the reader was already at the end.
+    if (view && followsLatest.current) view.scrollTop = view.scrollHeight
+  }, [latestMessageId])
+
+  useEffect(() => {
+    if (followsLatest.current) onLatestSeen?.()
+  }, [latestMessageId, onLatestSeen])
+
+  const submitReply = async (values: ReplySupportTicketValues) => {
     if (submitting.current || props.replyPending || props.statusPending) return
     submitting.current = true
     setLocalPending(true)
@@ -105,7 +120,7 @@ export function TicketDetail(props: TicketDetailProps) {
       submitting.current = false
       setLocalPending(false)
     }
-  })
+  }
   const busy =
     props.replyPending ||
     props.statusPending ||
@@ -136,7 +151,11 @@ export function TicketDetail(props: TicketDetailProps) {
           <Badge
             variant={supportTicketStatusVariant(props.detail.ticket.status)}
           >
-            {supportTicketStatusLabel(t, props.detail.ticket.status)}
+            {supportTicketStatusLabel(
+              t,
+              props.detail.ticket.status,
+              props.admin
+            )}
           </Badge>
         </div>
         <div className='text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 text-xs'>
@@ -153,7 +172,19 @@ export function TicketDetail(props: TicketDetailProps) {
         </div>
       </CardHeader>
       <CardContent className='flex min-h-0 flex-col gap-4'>
-        <div className='max-h-[45vh] space-y-3 overflow-y-auto pr-1'>
+        <div
+          ref={conversation}
+          role='log'
+          aria-label={t('Ticket #{{id}}', { id: props.detail.ticket.id })}
+          tabIndex={0}
+          className='max-h-[45vh] space-y-3 overflow-y-auto pr-1'
+          onScroll={(event) => {
+            const { scrollHeight, scrollTop, clientHeight } =
+              event.currentTarget
+            followsLatest.current = scrollHeight - scrollTop - clientHeight <= 2
+            if (followsLatest.current) onLatestSeen?.()
+          }}
+        >
           {props.detail.messages.map((message) => {
             const fromAdmin = message.author_role === 'admin'
             return (
@@ -205,7 +236,10 @@ export function TicketDetail(props: TicketDetailProps) {
             </p>
           </div>
         ) : (
-          <form onSubmit={submitReply} className='space-y-2'>
+          <form
+            onSubmit={(event) => void form.handleSubmit(submitReply)(event)}
+            className='space-y-2'
+          >
             <Field>
               <FieldLabel htmlFor='support-ticket-reply'>
                 {t('Reply')}

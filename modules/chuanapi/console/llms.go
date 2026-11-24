@@ -78,11 +78,13 @@ var llmsEndpointCatalog = []llmsEndpoint{
 }
 
 func GetLlmsIndex(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	data := buildLlmsPageData(c)
 	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(renderLlmsIndex(data)))
 }
 
 func GetLlmsFull(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	data := buildLlmsPageData(c)
 	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(renderLlmsFull(data)))
 }
@@ -182,7 +184,7 @@ func buildLlmsPageData(c *gin.Context) llmsPageData {
 		}
 	}
 
-	catalog := buildPublicCatalog()
+	catalog, _ := readPublicCatalog(c.Request.Context()) // No model information on policy read failure.
 
 	return llmsPageData{
 		SystemName:    common.SystemName,

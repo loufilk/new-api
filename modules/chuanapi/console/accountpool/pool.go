@@ -161,6 +161,11 @@ func (s *Service) List(c *gin.Context) {
 		return
 	}
 	allowed := s.usableGroups(user.Group)
+	pricing, err := model.GetRequestUserGroupPricing(c, user.Id, user.Group)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "Account pool is unavailable"})
+		return
+	}
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 	if page < 1 {
@@ -181,6 +186,10 @@ func (s *Service) List(c *gin.Context) {
 		for _, g := range item.Groups {
 			if _, ok := allowed[g.Name]; ok {
 				g.Ratio = s.groupRatio(user.Group, g.Name)
+				quote := pricing.ResolveGroupRatio(user.Group, g.Name)
+				if quote.UserGroupPriceOverride != nil {
+					g.Ratio = quote.GroupRatio
+				}
 				visible = append(visible, g)
 			}
 		}

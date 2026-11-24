@@ -37,6 +37,10 @@ import {
   isUnconfiguredTaskUsageModel,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
+import {
+  activeBillingExpressions,
+  marketGroupLabel,
+} from '../lib/market-groups'
 import type { ModelEndpointMap } from '../lib/model-endpoints'
 import { isTokenBasedModel } from '../lib/model-helpers'
 import { withBasePricing } from '../lib/plugin-pricing'
@@ -70,13 +74,16 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   const isTokenBased = isTokenBasedModel(model)
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
   const tags = parseTags(props.model.tags)
-  const groups = props.model.enable_groups || []
+  const groups = (props.model.enable_groups || []).map((group) =>
+    marketGroupLabel(group, props.model.group_catalog)
+  )
   const endpoints = props.model.supported_endpoint_types || []
   const modelIconKey = props.model.icon || props.model.vendor_icon
   const modelIcon = modelIconKey ? getLobeIcon(modelIconKey, 28) : null
   const initial = props.model.model_name?.charAt(0).toUpperCase() || '?'
   const isUnconfiguredTaskUsage = isUnconfiguredTaskUsageModel(model)
-  const billingTime = useBillingTime(model.billing_expr)
+  const expressions = useMemo(() => activeBillingExpressions([model]), [model])
+  const billingTime = useBillingTime(expressions)
   const currency = useSystemConfigStore((state) => state.config.currency)
   const dynamicPriceOptions = useMemo(
     () => ({
@@ -407,6 +414,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
           <ModelApiActions
             model={props.model}
             endpointMap={props.endpointMap}
+            selectedGroup={props.selectedGroup}
           />
         )}
       </CardContent>

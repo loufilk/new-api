@@ -171,15 +171,6 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
                 },
               ]
             : []),
-          ...(user
-            ? [
-                {
-                  title: t('intelligence.title'),
-                  url: '/intelligence',
-                  icon: FlaskConical,
-                },
-              ]
-            : []),
           {
             title: t('Invitation Rewards'),
             url: '/affiliate',
@@ -287,5 +278,6 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
   return applySidebarNavigationExtensions(sidebar, {
     isAuthenticated: Boolean(user),
     role: user?.role,
+    user,
   })
 }

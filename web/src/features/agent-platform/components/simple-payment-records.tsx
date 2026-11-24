@@ -23,6 +23,7 @@ import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
+import { toIntlLocale } from '@/i18n/languages'
 import { formatTimestampToDate } from '@/lib/format'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
@@ -35,22 +36,33 @@ import { ActionForm } from './action-form'
 import { SimpleRecordPager } from './simple-record-pager'
 
 export function SimplePaymentRecords(props: { agentUserId?: number }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const viewerId = useAuthStore((state) => state.auth.user?.id)
+  const viewerRole = useAuthStore((state) => state.auth.user?.role)
+  const sessionId = useAuthStore((state) => state.auth.session?.sid)
   const [page, setPage] = useState(1)
   const query = useQuery({
     queryKey: [
       'agent-platform',
       'simple-payment-orders',
+      viewerId,
+      viewerRole,
+      sessionId,
       props.agentUserId,
       page,
     ],
-    queryFn: () =>
-      getSimplePaymentOrders({
-        agent_user_id: props.agentUserId,
-        p: page,
-        page_size: 20,
-      }),
+    enabled: !!viewerId,
+    queryFn: ({ signal }) =>
+      getSimplePaymentOrders(
+        {
+          agent_user_id: props.agentUserId,
+          p: page,
+          page_size: 20,
+        },
+        signal
+      ),
   })
+  if (!viewerId) return null
   if (query.isPending) return <LoadingState />
   if (query.isError) {
     return (
@@ -63,18 +75,40 @@ export function SimplePaymentRecords(props: { agentUserId?: number }) {
   }
   return (
     <div className='space-y-3'>
-      <div className='flex items-center justify-between gap-2'>
+      <div className='flex flex-wrap items-center justify-between gap-2'>
         <h2 className='text-sm font-semibold'>
           {t('Customer payment records')}
         </h2>
         <span className='text-muted-foreground text-xs'>
           {t('{{count}} records', { count: query.data.total })}
         </span>
+        {viewerRole === ROLE.SUPER_ADMIN && (
+          <div className='flex flex-wrap items-center gap-2'>
+            <p className='text-muted-foreground text-xs' role='status'>
+              {t('Last updated:')}{' '}
+              {new Date(query.dataUpdatedAt).toLocaleString(
+                toIntlLocale(i18n.resolvedLanguage || i18n.language)
+              )}
+            </p>
+            <Button
+              type='button'
+              size='sm'
+              variant='outline'
+              disabled={query.isFetching}
+              onClick={() => void query.refetch()}
+            >
+              {t('Refresh')}
+            </Button>
+          </div>
+        )}
       </div>
       {query.data.items.length ? (
         <div className='divide-border overflow-hidden rounded-lg border'>
           {query.data.items.map((row) => (
-            <SimplePaymentRow key={row.id} row={row} />
+            <SimplePaymentRow
+              key={`${viewerId}:${viewerRole}:${sessionId ?? ''}:${row.id}`}
+              row={row}
+            />
           ))}
         </div>
       ) : (

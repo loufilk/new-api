@@ -17,10 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { SidebarData } from '@/components/layout/types'
+import type { AuthUser } from '@/stores/auth-store'
 
 export type SidebarNavigationContext = {
   isAuthenticated: boolean
   role?: number
+  user?: AuthUser | null
 }
 
 export type SidebarNavigationExtension = {
@@ -37,7 +39,9 @@ export function setSidebarNavigationExtensions(
   extensions: readonly SidebarNavigationExtension[]
 ) {
   if (sidebarNavigationExtensions.length > 0) {
-    throw new Error('frontend sidebar navigation extensions are already configured')
+    throw new Error(
+      'frontend sidebar navigation extensions are already configured'
+    )
   }
   sidebarNavigationExtensions = Object.freeze([...extensions])
 }

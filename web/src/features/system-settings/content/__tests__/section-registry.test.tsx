@@ -69,10 +69,9 @@ function SelectedSection(props: { section: ContentSectionId }) {
 
 afterEach(() => useAuthStore.getState().auth.reset())
 
-test('combined settings retain separate model, support, pool and announcement deep links', () => {
+test('combined settings retire model settings while retaining support, pool and announcement deep links', () => {
   const nav = getContentSectionNavItems(i18next.t)
   for (const section of [
-    'model-tests',
     'support-email',
     'account-pool',
     'announcements',
@@ -82,10 +81,11 @@ test('combined settings retain separate model, support, pool and announcement de
     ).toHaveLength(1)
     expect(CONTENT_SECTION_IDS).toContain(section)
   }
+  expect(CONTENT_SECTION_IDS).not.toContain('model-tests')
   expect(CONTENT_DEFAULT_SECTION).toBe('dashboard')
 })
 
-test('switching between registered support and model settings saves only the selected capability', async () => {
+test('saving support settings does not touch retired model settings', async () => {
   useAuthStore.getState().auth.setUser({ id: 7, username: 'owner', role: 100 })
   const client = new QueryClient({
     defaultOptions: {
@@ -165,30 +165,14 @@ test('switching between registered support and model settings saves only the sel
     expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
   )
   expect(status.model_test_enabled).toBe(false)
-  view.rerender(ui('model-tests'))
-  const modelSwitch = await screen.findByRole('switch', {
-    name: 'Enable model intelligence monitoring',
-  })
-  expect(modelSwitch).not.toBeChecked()
-  expect(
-    screen.queryByRole('switch', { name: 'Enable support email notifications' })
-  ).not.toBeInTheDocument()
-  await user.click(modelSwitch)
-  await user.click(screen.getByRole('button', { name: 'Save Changes' }))
-  await waitFor(() =>
-    expect(put).toHaveBeenLastCalledWith(
-      '/api/model-tests/settings',
-      expect.objectContaining({ enabled: true, expected_version: 1 })
-    )
-  )
   expect(support.enabled).toBe(true)
   expect(client.getQueryData(['status'])).toMatchObject({
-    model_test_enabled: true,
+    model_test_enabled: false,
     account_pool_enabled: true,
     google_oauth: true,
   })
   expect(client.getQueryData(['system-options'])).toEqual(optionsBefore)
-  expect(put).toHaveBeenCalledTimes(2)
+  expect(put).toHaveBeenCalledTimes(1)
   view.unmount()
   client.clear()
 })

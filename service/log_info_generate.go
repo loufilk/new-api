@@ -168,6 +168,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	other.SetPublic("cache_ratio", cacheRatio)
 	other.SetPublic("model_price", modelPrice)
 	other.SetPublic("user_group_ratio", userGroupRatio)
+	appendGroupPricingInfo(other, relayInfo.PriceData.GroupRatioInfo)
 	other.SetPublic("frt", float64(relayInfo.FirstResponseTime.UnixMilli()-relayInfo.StartTime.UnixMilli()))
 	if relayInfo.ReasoningEffort != "" {
 		other.SetPublic("reasoning_effort", relayInfo.ReasoningEffort)
@@ -398,9 +399,28 @@ func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData hosttypes.P
 	if priceData.GroupRatioInfo.HasSpecialRatio {
 		other.SetPublic("user_group_ratio", priceData.GroupRatioInfo.GroupSpecialRatio)
 	}
+	appendGroupPricingInfo(other, priceData.GroupRatioInfo)
 	appendRequestPath(nil, relayInfo, other)
 	appendRequestPluginRecord(relayInfo, other)
 	return other
+}
+
+// Log from the settled quote, not from any current group or user policy.
+func appendGroupPricingInfo(other *model.LogOther, price hosttypes.GroupRatioInfo) {
+	if price.RateSource == "" {
+		return
+	}
+	other.SetPublic("group_ratio_source", price.RateSource)
+	if price.UserPricingRevision > 0 {
+		other.SetPublic("user_group_pricing_revision", price.UserPricingRevision)
+	}
+	if price.UserGroupPriceOverride != nil {
+		other.SetPublic("user_group_price_override", *price.UserGroupPriceOverride)
+		other.SetPublic("inherited_group_ratio", price.InheritedGroupRatio)
+		// Legacy console readers picked user_group_ratio over group_ratio.
+		// Keep them on the actually charged value during the rollout.
+		other.SetPublic("user_group_ratio", price.GroupRatio)
+	}
 }
 
 // InjectTieredBillingInfo overlays tiered billing fields onto an existing

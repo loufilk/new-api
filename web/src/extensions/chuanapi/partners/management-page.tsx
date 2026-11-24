@@ -17,7 +17,6 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { SimpleRecordPager } from '@/features/agent-platform/components/simple-record-pager'
-import { hasPermission } from '@/lib/admin-permissions'
 import { formatTimestamp } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { useAuthStore } from '@/stores/auth-store'
@@ -31,6 +30,7 @@ import {
   saveAdminPartnerSettings,
 } from './api'
 import { PartnerApplicationDetailDialog } from './application-detail-dialog'
+import { partnerManagementAccess } from './permissions'
 import type {
   PartnerApplication,
   PartnerApplicationStatus,
@@ -123,6 +123,60 @@ function PartnerSettings(props: { settings: PartnerApplicationSettings }) {
             </Button>
           </div>
         </FieldGroup>
+      </CardContent>
+    </Card>
+  )
+}
+
+function PartnerSettingsPanel(props: { reviewer: number; canEdit: boolean }) {
+  const { t } = useTranslation()
+  const settings = useQuery({
+    ...privateRead,
+    queryKey: [...partnerKey, 'admin', 'settings', props.reviewer],
+    queryFn: ({ signal }) => getAdminPartnerSettings(signal),
+  })
+
+  if (settings.isPending) return <LoadingState className='min-h-24' />
+  if (settings.isError) {
+    return (
+      <ErrorState
+        className='min-h-28'
+        title={t('Unable to load partner application settings')}
+        onRetry={() => void settings.refetch()}
+      />
+    )
+  }
+  if (props.canEdit) {
+    return (
+      <PartnerSettings key={settings.data.revision} settings={settings.data} />
+    )
+  }
+  return (
+    <Card className='min-w-0'>
+      <CardHeader>
+        <CardTitle>{t('Partner application settings')}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <dl className='flex flex-col gap-4 text-sm'>
+          <div>
+            <dt className='text-muted-foreground'>
+              {t('Accept partner applications')}
+            </dt>
+            <dd>
+              <Badge variant='outline'>
+                {t(settings.data.partner_enabled ? 'Enabled' : 'Disabled')}
+              </Badge>
+            </dd>
+          </div>
+          <div>
+            <dt className='text-muted-foreground'>
+              {t('Application instructions')}
+            </dt>
+            <dd className='break-words whitespace-pre-wrap'>
+              {settings.data.partner_instructions || t('Not provided')}
+            </dd>
+          </div>
+        </dl>
       </CardContent>
     </Card>
   )
@@ -298,13 +352,7 @@ function ReviewQueue(props: { reviewer: number; canReview: boolean }) {
 export default function PartnerApplicationManagementPage() {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
-  const reviewer = user?.id ?? 0
-  const canReview = hasPermission(user, 'partner_applications', 'review')
-  const settings = useQuery({
-    ...privateRead,
-    queryKey: [...partnerKey, 'admin', 'settings'],
-    queryFn: ({ signal }) => getAdminPartnerSettings(signal),
-  })
+  const access = partnerManagementAccess(user)
 
   return (
     <SectionPageLayout>
@@ -312,34 +360,33 @@ export default function PartnerApplicationManagementPage() {
         {t('Partner applications')}
       </SectionPageLayout.Title>
       <SectionPageLayout.Content>
-        <div className='flex flex-col gap-6'>
-          {settings.isPending && <LoadingState className='min-h-24' />}
-          {settings.isError && (
-            <ErrorState
-              className='min-h-28'
-              title={t('Unable to load partner application settings')}
-              onRetry={() => void settings.refetch()}
-            />
-          )}
-          {settings.data && (
-            <PartnerSettings
-              key={settings.data.revision}
-              settings={settings.data}
-            />
-          )}
-          <Card className='min-w-0'>
-            <CardHeader>
-              <CardTitle>{t('Application review')}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ReviewQueue
-                key={reviewer}
-                reviewer={reviewer}
-                canReview={canReview}
+        {user && access.open ? (
+          <div className='flex flex-col gap-6'>
+            {access.readSettings && (
+              <PartnerSettingsPanel
+                key={user.id}
+                reviewer={user.id}
+                canEdit={access.editSettings}
               />
-            </CardContent>
-          </Card>
-        </div>
+            )}
+            {access.readApplications && (
+              <Card className='min-w-0'>
+                <CardHeader>
+                  <CardTitle>{t('Application review')}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ReviewQueue
+                    key={user.id}
+                    reviewer={user.id}
+                    canReview={access.reviewApplications}
+                  />
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        ) : (
+          <EmptyState title={t('Access Forbidden')} bordered />
+        )}
       </SectionPageLayout.Content>
     </SectionPageLayout>
   )

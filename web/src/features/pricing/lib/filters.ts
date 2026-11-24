@@ -35,8 +35,7 @@ import {
   hasTaskUsageSchema,
   isUnconfiguredTaskUsageModel,
 } from './dynamic-price'
-import { filterByCategory, type ModelCategory } from './model-categories'
-import { isTokenBasedModel } from './model-helpers'
+import { getDisplayGroupRatio, isTokenBasedModel } from './model-helpers'
 import { withBasePricing } from './plugin-pricing'
 import { calculateTokenPrice } from './price'
 
@@ -53,13 +52,21 @@ export function filterBySearch(
 ): PricingModel[] {
   if (!query) return models
 
-  const lowerQuery = query.toLowerCase()
+  const lowerQuery = query.trim().toLowerCase()
   return models.filter(
     (m) =>
       m.model_name?.toLowerCase().includes(lowerQuery) ||
       m.description?.toLowerCase().includes(lowerQuery) ||
       m.tags?.toLowerCase().includes(lowerQuery) ||
-      m.vendor_name?.toLowerCase().includes(lowerQuery)
+      m.vendor_name?.toLowerCase().includes(lowerQuery) ||
+      m.supported_endpoint_types?.some((type) =>
+        type.toLowerCase().includes(lowerQuery)
+      ) ||
+      m.enable_groups?.some(
+        (group) =>
+          group.toLowerCase().includes(lowerQuery) ||
+          m.group_catalog?.[group]?.label?.toLowerCase().includes(lowerQuery)
+      )
   )
 }
 
@@ -163,14 +170,15 @@ const PRICE_SORTS: Partial<
  */
 function getSortPrice(
   listedModel: PricingModel,
-  kind: SortPriceKind
+  kind: SortPriceKind,
+  now?: Date
 ): number | undefined {
   const model = withBasePricing(listedModel)
   if (kind === 'request') {
-    const example = getCardExamplePrice(model, { tokenUnit: 'M' })
+    const example = getCardExamplePrice(model, { tokenUnit: 'M', now })
     if (example) return example.total
   }
-  const summary = getDynamicPricingSummary(model, { tokenUnit: 'M' })
+  const summary = getDynamicPricingSummary(model, { tokenUnit: 'M', now })
   if (kind === 'request') {
     if (summary) {
       return summary.entries.find(
@@ -206,7 +214,9 @@ function isValidSortPrice(value: unknown): value is number {
  */
 export function sortModels(
   models: PricingModel[],
-  sortBy: string
+  sortBy: string,
+  selectedGroup?: string,
+  now?: Date
 ): PricingModel[] {
   const sorted = [...models]
 
@@ -216,8 +226,11 @@ export function sortModels(
     // Extracting the price parses the billing expression, so compute once
     const price = new Map(
       sorted.map((m) => {
-        const value = getSortPrice(m, priceSort.kind)
-        return [m, isValidSortPrice(value) ? value : undefined] as const
+        const base = getSortPrice(m, priceSort.kind, now)
+        const value = isValidSortPrice(base)
+          ? base * getDisplayGroupRatio(m, selectedGroup)
+          : undefined
+        return [m, value] as const
       })
     )
     // Models without this kind of price stay last in both directions
@@ -250,23 +263,22 @@ export function filterAndSortModels(
   models: PricingModel[],
   filters: {
     search: string
-    vendor: string
+    vendor?: string
     group: string
     quotaType: string
     endpointType: string
-    tag: string
+    tag?: string
     sortBy: string
-    category?: ModelCategory
+    now?: Date
   }
 ): PricingModel[] {
   let result = filterBySearch(models, filters.search)
-  result = filterByVendor(result, filters.vendor)
+  if (filters.vendor) result = filterByVendor(result, filters.vendor)
   result = filterByGroup(result, filters.group)
   result = filterByQuotaType(result, filters.quotaType)
   result = filterByEndpointType(result, filters.endpointType)
-  result = filterByTag(result, filters.tag)
-  result = filterByCategory(result, filters.category ?? 'all')
-  result = sortModels(result, filters.sortBy)
+  if (filters.tag) result = filterByTag(result, filters.tag)
+  result = sortModels(result, filters.sortBy, filters.group, filters.now)
 
   return result
 }

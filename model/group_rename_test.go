@@ -22,6 +22,7 @@ import (
 
 func captureGroupRenameRuntimeState(t *testing.T) {
 	t.Helper()
+	t.Setenv(common.IM21RolloutModeEnv, "active")
 	previousBuckets := groupRateLimitBuckets.Load()
 	groupRateLimitBuckets.Store(nil)
 	t.Cleanup(func() { groupRateLimitBuckets.Store(previousBuckets) })

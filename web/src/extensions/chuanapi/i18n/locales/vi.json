@@ -252,6 +252,7 @@
     "Select an invoice category": "Chọn hạng mục xuất hóa đơn",
     "This invoice category is currently unavailable": "Hạng mục xuất hóa đơn này hiện không khả dụng",
     "Update the server to edit invoice categories.": "Hãy cập nhật máy chủ để có thể chỉnh sửa các hạng mục xuất hóa đơn.",
-    "Invoice fee refund": "Hoàn phí xuất hóa đơn"
+    "Invoice fee refund": "Hoàn phí xuất hóa đơn",
+    "Site information": "Thông tin trang web"
   }
 }

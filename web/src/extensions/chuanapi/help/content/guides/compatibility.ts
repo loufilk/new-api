@@ -23,7 +23,7 @@ export const compatibility: GuideDoc = {
   title: '协议兼容总览',
   description:
     'OpenAI / Anthropic / Gemini 协议的端点边界、Chat Completions 与 Responses 的差异与客户端排查。',
-  updated: '2026-08-30',
+  updated: '2026-11-23',
   body: `
 > 「OpenAI 兼容」指调用协议兼容，不等于 OpenAI 的全部接口都存在。账号、组织与 Assistants 等管理面接口不在兼容范围内。
 
@@ -63,7 +63,7 @@ client = OpenAI(
 
 - 不提供 OpenAI 的组织管理、Assistants 等管理面接口。
 - 模型能力（工具调用、视觉、推理）随模型而异，以 [定价页](/pricing) 该模型的标注为准，不能假设所有模型都具备。
-- 模型名不通用。必须使用本站目录中的 model id，照搬其他平台的名称会返回 404。
+- 模型名不通用。先用客户端的密钥查询 \`GET /v1/models\`，再用目标协议验证选定的 ID。
 - 优先使用标准 \`Authorization: Bearer\` 认证；自定义 Header 不保证透传。
 - \`max_tokens\` 等参数的上限随模型而变，超出会返回 400。
 
@@ -71,7 +71,7 @@ client = OpenAI(
 
 1. 确认客户端真的允许自定义 base URL，且没有把路径写死成其他厂商域名。
 2. 确认 base URL 带 \`/v1\`；有些客户端会自行追加，重复后会变成 \`/v1/v1\` 而 404。
-3. 用 [快速开始](/help/guides/quick-start) 里的 curl 先验证账号与模型可用，再排查客户端本身。
+3. 用 [快速开始](/help/guides/quick-start) 里的 curl 先用客户端的同一把密钥验证目标模型，再排查客户端本身。
 4. 状态码含义见 [错误码与排障](/help/guides/troubleshooting)。
 `.trim(),
 }

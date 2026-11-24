@@ -67,6 +67,7 @@ import { updateApiKeyStatus } from '../api'
 import { API_KEY_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import type { ApiKey } from '../types'
 import { useApiKeys } from './api-keys-provider'
+import { KeyDiagnosticButton } from './key-diagnostic-dialog'
 
 function getServerAddress(): string {
   // Connection info must point API clients at the API origin.
@@ -244,6 +245,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         <TooltipContent>{t('Edit')}</TooltipContent>
       </Tooltip>
 
+      <KeyDiagnosticButton tokenId={apiKey.id} disabled={!isEnabled} />
       <DataTableRowActionMenu
         ariaLabel={t('Open menu')}
         contentClassName='w-[200px]'

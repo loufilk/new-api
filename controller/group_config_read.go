@@ -21,6 +21,22 @@ func beginControllerGroupConfigRead(c *gin.Context) (*model.GroupConfigRead, boo
 	return guard, true
 }
 
+// Optional authentication does not take an admission snapshot. Public catalogue
+// projections must still synchronize against the primary database, including
+// when a node missed a group invalidation. Never replace an existing admission.
+func beginPublicGroupConfigRead(c *gin.Context) (*model.GroupConfigRead, bool) {
+	if _, admitted := c.Get(model.GroupConfigVersionContextKey); admitted {
+		return beginControllerGroupConfigRead(c)
+	}
+	guard, err := model.BeginGroupConfigRead(c.Request.Context())
+	if err != nil {
+		groupConfigReadFailure(c)
+		return nil, false
+	}
+	c.Set(model.GroupConfigVersionContextKey, guard.Version)
+	return guard, true
+}
+
 func finishControllerGroupConfigRead(c *gin.Context, guard *model.GroupConfigRead) bool {
 	if err := guard.Finish(); err != nil {
 		groupConfigReadFailure(c)

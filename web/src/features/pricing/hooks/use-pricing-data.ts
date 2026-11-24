@@ -62,9 +62,9 @@ export function usePricingData(enabled = true) {
   )
 
   const models = useMemo(() => {
-    if (!data?.data || !data?.vendors) return []
+    if (!data?.data) return []
 
-    const vendorMap = new Map(data.vendors.map((v) => [v.id, v]))
+    const vendorMap = new Map((data.vendors ?? []).map((v) => [v.id, v]))
 
     return data.data.map((model) => {
       const vendor = model.vendor_id
@@ -77,9 +77,12 @@ export function usePricingData(enabled = true) {
         vendor_icon: vendor?.icon,
         vendor_description: vendor?.description,
         group_ratio: data.group_ratio,
+        group_catalog: data.group_catalog,
+        group_keys_are_display_only:
+          !isAuthenticated || data.group_keys_are_display_only,
       }
     })
-  }, [data])
+  }, [data, isAuthenticated])
 
   return {
     models,
@@ -88,7 +91,9 @@ export function usePricingData(enabled = true) {
     usableGroup: data?.usable_group ?? {},
     endpointMap: data?.supported_endpoint ?? {},
     autoGroups: data?.auto_groups ?? [],
-    isLoading,
+    isLoading: isLoading || !identityResolved,
+    groupCatalog: data?.group_catalog,
+    scope: isAuthenticated ? `user:${userID}:${sessionSID ?? ''}` : 'public',
     error,
     refetch,
     priceRate,

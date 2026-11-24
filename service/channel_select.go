@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -368,6 +369,26 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 			common.SetContextKey(c, constant.ContextKeyAutoGroup, group)
 			return channel, group, nil
 		}
+		scope := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+		if retry != nil && retry.TokenGroup != "" {
+			scope = retry.TokenGroup
+		}
+		if common.GetContextKeyBool(c, constant.ContextKeyTokenSmartRouting) {
+			scope = "auto"
+		}
+		if model.IsExclusiveGroup(scope) || slices.ContainsFunc(channel.GetGroups(), model.IsExclusiveGroup) {
+			group, err := authorizeExclusiveChannelPin(c, channel.Id, modelName, scope)
+			if errors.Is(err, ErrTokenGroupForbidden) || errors.Is(err, ErrTokenGroupDeprecated) {
+				return nil, "", &ChannelSelectError{StatusCode: http.StatusForbidden, Code: types.ErrorCodeAccessDenied, MessageID: i18n.MsgDistributorGroupAccessDenied}
+			}
+			if err != nil {
+				return nil, "", &ChannelSelectError{StatusCode: http.StatusServiceUnavailable, Code: "group_config_changed", MessageID: i18n.MsgGroupConfigChanged}
+			}
+			if scope == "auto" {
+				common.SetContextKey(c, constant.ContextKeyAutoGroup, group)
+				return channel, group, nil
+			}
+		}
 		return channel, "", nil
 	}
 
@@ -449,6 +470,41 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 		}
 	}
 	return channel, selectGroup, nil
+}
+
+// A pin is a channel preference, not a new grant. For channels involving a
+// private group, require a live ability in the caller's concrete scope.
+// Legacy pins remain unchanged when neither side involves a private group.
+func authorizeExclusiveChannelPin(c *gin.Context, channelID int, name, scope string) (string, error) {
+	if c.Request == nil || name == "" || scope == "" {
+		return "", ErrTokenGroupForbidden
+	}
+	if common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) {
+		limits, _ := common.GetContextKeyType[map[string]bool](c, constant.ContextKeyTokenModelLimit)
+		if !TokenModelLimitAllows(limits, name) {
+			return "", ErrTokenGroupForbidden
+		}
+	}
+	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	var groups []string
+	if scope == "auto" {
+		groups = GetRequestAutoGroups(c, userGroup)
+	} else {
+		if err := ValidateTokenGroupForUser(c.Request.Context(), c.GetInt("id"), userGroup, scope); err != nil {
+			return "", err
+		}
+		groups = []string{scope}
+	}
+	available, err := model.EnabledGroupsForOriginChannel(c.Request.Context(), channelID, name, groups)
+	if err != nil {
+		return "", err
+	}
+	for _, group := range groups {
+		if slices.Contains(available, group) {
+			return group, nil
+		}
+	}
+	return "", ErrTokenGroupForbidden
 }
 
 // Origin-task pins report a fixed code so task polling can tell a retired

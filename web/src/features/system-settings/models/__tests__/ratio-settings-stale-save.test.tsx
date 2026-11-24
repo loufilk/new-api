@@ -106,7 +106,7 @@ afterEach(() => {
   actionsContainer = null
 })
 
-function renderCard() {
+function renderCard(workspace?: 'pricing' | 'advanced') {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
@@ -122,6 +122,7 @@ function renderCard() {
           groupDefaults={groupDefaults}
           toolPricesDefault='{}'
           visibleTabs={['groups']}
+          groupWorkspacePanel={workspace}
         />
       </SettingsPageProvider>
     </QueryClientProvider>
@@ -185,6 +186,51 @@ test('an equivalent options refresh keeps the draft, but changed group defaults 
   })
   expect(await screen.findByDisplayValue('enterprise')).toBeInTheDocument()
   expect(screen.queryByDisplayValue('vip2')).not.toBeInTheDocument()
+})
+
+test('workspace refresh leaves the dirty ratio and its original CAS baseline intact', async () => {
+  renameSystemGroupsMock.mockRejectedValue(staleAxiosError())
+  const { updateDefaults } = renderCard('pricing')
+  const ratio = await screen.findByRole('spinbutton', { name: 'Ratio' })
+  fireEvent.change(ratio, { target: { value: '0.67' } })
+  updateDefaults({ ...GROUP_DEFAULTS, GroupRatio: '{"vip":2}' })
+  expect(ratio).toHaveValue(0.67)
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+  await waitFor(() =>
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(STALE_MESSAGE)
+  )
+  const [payload] = renameSystemGroupsMock.mock.calls[0]
+  expect(JSON.parse(payload.expected.GroupRatio)).toEqual({ vip: 1 })
+  expect(JSON.parse(payload.options.GroupRatio)).toEqual({ vip: 0.67 })
+  expect(ratio).toHaveValue(0.67)
+})
+
+test('workspace freezes both editor input and Save until acknowledgement', async () => {
+  let resolve: (value: unknown) => void = () => undefined
+  renameSystemGroupsMock.mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolve = done
+      })
+  )
+  renderCard('pricing')
+  const ratio = await screen.findByRole('spinbutton', { name: 'Ratio' })
+  fireEvent.change(ratio, { target: { value: '0.75' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+  await waitFor(() => expect(ratio.closest('[inert]')).not.toBeNull())
+  expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled()
+  await act(async () => {
+    resolve({
+      success: true,
+      data: { applied_options: { GroupRatio: '{"vip":0.75}' } },
+    })
+  })
+  await waitFor(() =>
+    expect(
+      screen.getByRole('spinbutton', { name: 'Ratio' }).closest('[inert]')
+    ).toBeNull()
+  )
+  expect(screen.getByRole('spinbutton', { name: 'Ratio' })).toHaveValue(0.75)
 })
 
 describe('group settings save conflict handling', () => {

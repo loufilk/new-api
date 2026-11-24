@@ -43,6 +43,20 @@ export function normalizeJsonString(value: string) {
   }
 }
 
+export function validateGeminiVersionOverrides(value: string) {
+  return validateJsonString(value, {
+    allowEmpty: false,
+    predicate: (parsed) =>
+      parsed !== null &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed) &&
+      Object.values(parsed).every(
+        (v) => v === 'v1' || v === 'v1beta' || v === 'v1alpha'
+      ),
+    predicateMessage: 'Invalid JSON format or values out of allowed range',
+  })
+}
+
 type JsonValidationOptions = {
   allowEmpty?: boolean
   predicate?: (value: unknown) => boolean

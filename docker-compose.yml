@@ -41,6 +41,15 @@ services:
       - SQL_DSN=${SQL_DSN:?SQL_DSN is required}
 #      - SQL_DSN=REPLACE_MYSQL_DSN  # Point to the mysql service, uncomment if using MySQL
       - LOG_SQL_DSN # Optional pass-through; preserve an existing separate log DSN
+      # Empty values retain the application's defaults and log-pool inheritance.
+      - SQL_MAX_OPEN_CONNS=${SQL_MAX_OPEN_CONNS:-}
+      - SQL_MAX_IDLE_CONNS=${SQL_MAX_IDLE_CONNS:-}
+      - SQL_MAX_LIFETIME=${SQL_MAX_LIFETIME:-}
+      - SQL_MAX_IDLE_TIME=${SQL_MAX_IDLE_TIME:-}
+      - LOG_SQL_MAX_OPEN_CONNS=${LOG_SQL_MAX_OPEN_CONNS:-}
+      - LOG_SQL_MAX_IDLE_CONNS=${LOG_SQL_MAX_IDLE_CONNS:-}
+      - LOG_SQL_MAX_LIFETIME=${LOG_SQL_MAX_LIFETIME:-}
+      - LOG_SQL_MAX_IDLE_TIME=${LOG_SQL_MAX_IDLE_TIME:-}
 #      - LOG_SQL_CLICKHOUSE_TTL_DAYS=0 # OPTIONAL: ClickHouse log retention days. Unset or 0 disables automatic deletion; set to e.g. 30 to keep 30 days
       - REDIS_CONN_STRING=${REDIS_CONN_STRING:?REDIS_CONN_STRING is required}
       - SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET is required}
@@ -56,6 +65,12 @@ services:
       - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
       - SHUTDOWN_TIMEOUT_SECONDS # Optional pass-through; application default is 120s
       - BATCH_UPDATE_ENABLED=true  # 是否启用批量更新 (Whether to enable batch update)
+      # CORE im.21 release guard: explicit roles; migrate is for one-shot compose run only.
+      - NODE_TYPE=${NODE_TYPE:-master}
+      - CORE_IM21_ROLLOUT_MODE=${CORE_IM21_ROLLOUT_MODE:-locked}
+      - CORE_IM21_MIGRATION_MODE=serve
+      - CORE_IM21_RELEASE_ID
+      - USER_GROUP_PRICING_ENABLED
       - NODE_NAME=${NODE_NAME:-new-api-node-1}  # 节点名称，用于审计日志中标识节点身份；多节点/容器部署时建议设置 (Node name used in audit logs; recommended when running multiple instances or in containers)
 #      - DEFAULT_LANGUAGE=zh-CN  # 默认语言：日志输出，以及对方没有指定语言时返回的提示、邮件和通知；可选 en、zh-CN、zh-TW，不设置为 en (Default language of logs and of messages, emails and notifications when the reader states none: en, zh-CN or zh-TW; en if unset)
 #      - STREAMING_TIMEOUT=300  # 流模式无响应超时时间，单位秒，默认120秒，如果出现空补全可以尝试改为更大值 （Streaming timeout in seconds, default is 120s. Increase if experiencing empty completions）
@@ -88,6 +103,46 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # Opt-in pre-traffic job. It must use the exact same app image and stores
+  # as the managed serving nodes; the job never publishes an HTTP port.
+  new-api-migrate:
+    profiles: [core-im21-migration]
+    image: ${NEW_API_IMAGE:?NEW_API_IMAGE must be pinned to a digest}
+    restart: "no"
+    init: true
+    logging: *default-logging
+    command: --log-dir /app/logs
+    environment:
+      - SQL_DSN=${SQL_DSN:?SQL_DSN is required}
+      - LOG_SQL_DSN
+      - SQL_MAX_OPEN_CONNS=${SQL_MAX_OPEN_CONNS:-}
+      - SQL_MAX_IDLE_CONNS=${SQL_MAX_IDLE_CONNS:-}
+      - SQL_MAX_LIFETIME=${SQL_MAX_LIFETIME:-}
+      - SQL_MAX_IDLE_TIME=${SQL_MAX_IDLE_TIME:-}
+      - LOG_SQL_MAX_OPEN_CONNS=${LOG_SQL_MAX_OPEN_CONNS:-}
+      - LOG_SQL_MAX_IDLE_CONNS=${LOG_SQL_MAX_IDLE_CONNS:-}
+      - LOG_SQL_MAX_LIFETIME=${LOG_SQL_MAX_LIFETIME:-}
+      - LOG_SQL_MAX_IDLE_TIME=${LOG_SQL_MAX_IDLE_TIME:-}
+      - REDIS_CONN_STRING=${REDIS_CONN_STRING:?REDIS_CONN_STRING is required}
+      - SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET is required}
+      - CRYPTO_SECRET
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:?SESSION_COOKIE_SECURE is required}
+      - SESSION_COOKIE_TRUSTED_URL=${SESSION_COOKIE_TRUSTED_URL:?SESSION_COOKIE_TRUSTED_URL is required}
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:?TRUSTED_PROXIES is required}
+      - NODE_NAME=${CORE_IM21_MIGRATOR_NAME:-core-im21-migrator}
+      - NODE_TYPE=master
+      - CORE_IM21_ROLLOUT_MODE=locked
+      - CORE_IM21_MIGRATION_MODE=migrate
+      - CORE_IM21_RELEASE_ID
+      - USER_GROUP_PRICING_ENABLED=false
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - new-api-network
 
   redis:
     image: ${REDIS_IMAGE:?REDIS_IMAGE must be pinned to a digest}

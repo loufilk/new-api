@@ -59,6 +59,20 @@ async function renderActions(
 }
 
 describe('model API actions', () => {
+  it('never passes display-only anonymous price-band aliases as a key binding', async () => {
+    await renderActions({ enable_groups: ['rate-1'], group_keys_are_display_only: true }, {})
+    const link = screen.getByRole('link', { name: 'Create API Key' })
+    expect(link).toHaveAttribute('href', '/keys?create=true&model=MODEL_ID')
+  })
+
+  it('avoids links leaking exclusive group or model identifiers', async () => {
+    await renderActions({ model_name:'private-model', enable_groups:['private-group'],
+      group_catalog:{ 'private-group':{ exclusive:true } } }, {})
+    expect(screen.getByRole('button', {name:'Create API Key'})).toBeVisible()
+    expect(screen.queryByRole('link',{name:'Create API Key'})).not.toBeInTheDocument()
+    expect(document.querySelector('a[href*="private-group"], a[href*="private-model"]')).toBeNull()
+  })
+
   it('copies the actual video endpoint and links video docs without offering a nonexistent video playground', async () => {
     const user = userEvent.setup()
     const writeText = vi.spyOn(navigator.clipboard, 'writeText')

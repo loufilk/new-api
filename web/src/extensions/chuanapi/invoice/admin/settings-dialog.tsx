@@ -65,6 +65,32 @@ export function SettingsDialog(props: SettingsDialogProps) {
     meta: { redirectOnInternalServerError: false, errorToast: false },
   })
   const loaded = query.data ?? null
+  const intakeMessages = {
+    center_off: label(
+      'The saved invoice center switch is off.',
+      '已保存的开票中心总开关处于关闭状态。'
+    ),
+    deployment_off: label(
+      'Invoice intake is disabled by this node’s deployment settings.',
+      '当前服务节点的部署配置禁用了开票申请。'
+    ),
+    merchant_not_configured: label(
+      'This node has no valid invoice merchant scope configured.',
+      '当前服务节点未配置有效的开票商户范围。'
+    ),
+    no_invoice_types: label(
+      'No invoice type is currently enabled.',
+      '当前没有启用任何发票类型。'
+    ),
+    no_categories: label(
+      'No invoice category is currently enabled.',
+      '当前没有启用任何开票类目。'
+    ),
+    configured: label(
+      'This node’s saved settings allow new applications. Order and payment eligibility still apply.',
+      '当前服务节点的已保存配置允许新申请，仍需满足订单与付款资格。'
+    ),
+  }
   const client = useQueryClient()
   const [reloading, setReloading] = useState(false)
   const [stale, setStale] = useState(false)
@@ -192,6 +218,13 @@ export function SettingsDialog(props: SettingsDialogProps) {
             onSubmit={submit}
             noValidate
           >
+            {loaded.intake_state && (
+              <Alert role='status'>
+                <AlertDescription>
+                  {intakeMessages[loaded.intake_state]}
+                </AlertDescription>
+              </Alert>
+            )}
             {loaded.center_enabled !== undefined && (
               <Controller
                 control={form.control}

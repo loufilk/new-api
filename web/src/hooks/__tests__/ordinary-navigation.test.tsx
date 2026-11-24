@@ -220,14 +220,14 @@ it('refreshes fresh cached invoice visibility when the ordinary customer returns
 })
 
 it.each([1, 5, 10, 100])(
-  'role %s sees read-only model history even when new tests are disabled without hiding playground',
+  'role %s never sees the retired model monitor but keeps playground',
   async (role) => {
     await renderNavigation(role, true, 'true')
     expect(
       screen
         .getAllByRole('link')
         .some((link) => link.getAttribute('href') === '/intelligence')
-    ).toBe(true)
+    ).toBe(false)
     expect(
       screen.getByRole('link', { name: 'Text Generation' })
     ).toHaveAttribute('href', '/playground')
@@ -237,7 +237,7 @@ it.each([1, 5, 10, 100])(
       screen
         .getAllByRole('link')
         .filter((link) => link.getAttribute('href') === '/intelligence')
-    ).toHaveLength(1)
+    ).toHaveLength(0)
     expect(
       screen
         .getAllByRole('link')

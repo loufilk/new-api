@@ -40,6 +40,7 @@ import { Toaster, toast } from 'sonner'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { PageFooterProvider } from '@/components/layout/components/page-footer'
+import { ApiKeys } from '@/features/keys'
 import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 import { flexRender, useConsoleTable } from '@/lib/console-table'
@@ -333,7 +334,8 @@ async function renderKeysPage(
     routing_strategy?: unknown
   } = {},
   waitForRow = true,
-  initialEntry = '/keys/'
+  initialEntry = '/keys/',
+  fullPage = false
 ) {
   let currentKey = { ...key, status, ...overrides }
   vi.mocked(api.get).mockImplementation(async (url) => {
@@ -342,9 +344,17 @@ async function renderKeysPage(
         data: { success: true, data: { items: [currentKey], total: 1 } },
       }
     }
-    return { data: { success: true, data: { default: { ratio: 1 } } } }
+    return {
+      data: {
+        success: true,
+        data: { default: { ratio: 1, desc: 'Public group' } },
+      },
+    }
   })
   const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url === '/api/token/models') {
+      return { data: { success: true, data: ['example-model'] } }
+    }
     if (url.startsWith('/api/token/search')) {
       return {
         data: { success: true, data: { items: [currentKey], total: 1 } },
@@ -372,7 +382,7 @@ async function renderKeysPage(
   const keysRoute = createRoute({
     getParentRoute: () => auth,
     path: 'keys/',
-    component: KeysPage,
+    component: fullPage ? ApiKeys : KeysPage,
     validateSearch: KeysRoute.options.validateSearch,
     beforeLoad: KeysRoute.options.beforeLoad as unknown as (args: {
       location: { searchStr: string }
@@ -631,7 +641,7 @@ it('keeps full mobile information without group or quota section headings', asyn
       screen.queryByText(zh.translation['Group'], { exact: true })
     ).not.toBeInTheDocument()
     expect(screen.getByText('default')).toBeInTheDocument()
-    expect(screen.getByText('1x')).toBeInTheDocument()
+    expect(screen.getByText('1×')).toBeInTheDocument()
     expect(screen.getByText(zh.translation['Models'])).toBeInTheDocument()
     expect(
       screen.getByText(zh.translation['IP Restriction'])
@@ -757,5 +767,32 @@ it('freezes the confirmed deletion target when the server reorders the current p
   await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
   await waitFor(() =>
     expect(post).toHaveBeenCalledWith('/api/token/batch', { ids: [7] })
+  )
+})
+
+it('opens and consumes a catalogue create link, without writing or reopening after cancel', async () => {
+  const { post, router } = await renderKeysPage(
+    1,
+    {},
+    false,
+    '/keys/?create=true&group=default&model=example-model',
+    true
+  )
+  const dialog = await screen.findByRole('dialog', { name: 'Create API Key' })
+  await waitFor(() =>
+    expect(within(dialog).getByRole('radio', { name: /default/ })).toBeChecked()
+  )
+  await waitFor(() => {
+    expect(post).toHaveBeenCalledWith('/api/token/models', { group: 'default' })
+    expect(router.history.location.href).not.toContain('create=')
+  })
+  expect(router.history.location.href).not.toContain('group=')
+  expect(router.history.location.href).not.toContain('model=')
+  expect(post).not.toHaveBeenCalledWith('/api/token/', expect.anything())
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('dialog', { name: 'Create API Key' })
+    ).not.toBeInTheDocument()
   )
 })

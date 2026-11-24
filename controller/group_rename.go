@@ -32,6 +32,10 @@ func RenameGroups(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusForbidden, model.ErrGroupRenamePermission)
 		return
 	}
+	if len(request.Renames) != 0 && !common.IM21RolloutActive() {
+		im21RolloutLocked(c)
+		return
+	}
 	result, err := model.ApplyGroupRename(model.GroupRenameApplyRequest{
 		Identity:  &identity,
 		Mappings:  request.Renames,
@@ -45,6 +49,9 @@ func RenameGroups(c *gin.Context) {
 		status := http.StatusBadRequest
 		code := "GROUP_RENAME_REJECTED"
 		switch {
+		case errors.Is(err, common.ErrIM21RolloutLocked):
+			im21RolloutLocked(c)
+			return
 		case errors.Is(err, model.ErrGroupRenamePermission):
 			status = http.StatusForbidden
 			code = "GROUP_RENAME_PERMISSION"

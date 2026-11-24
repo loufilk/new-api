@@ -97,3 +97,35 @@ func TestValidateGeminiSafetySettings(t *testing.T) {
 		assert.Error(t, ValidateGeminiSafetySettings(value), value)
 	}
 }
+
+func TestGeminiVersionSettingsFallback(t *testing.T) {
+	original := geminiSettings.VersionSettings
+	t.Cleanup(func() { geminiSettings.VersionSettings = original })
+	for _, tc := range []struct {
+		name     string
+		settings map[string]string
+		want     string
+	}{
+		{"missing configuration", nil, "v1beta"},
+		{"model-only override", map[string]string{"model": "v1alpha"}, "v1alpha"},
+		{"unmapped model", map[string]string{"other": "v1"}, "v1beta"},
+		{"configured default", map[string]string{"default": "v1"}, "v1"},
+		{"invalid historical override", map[string]string{"model": "unknown", "default": "v1"}, "v1"},
+		{"invalid historical default", map[string]string{"default": "unknown"}, "v1beta"},
+		{"valid override with invalid default", map[string]string{"model": "v1", "default": ""}, "v1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			geminiSettings.VersionSettings = tc.settings
+			assert.Equal(t, tc.want, GetGeminiVersionSetting("model"))
+		})
+	}
+}
+
+func TestValidateGeminiVersionSettings(t *testing.T) {
+	for _, value := range []string{`{}`, `{"model":"v1alpha"}`, `{"default":"v1beta","model":"v1"}`} {
+		require.NoError(t, ValidateGeminiVersionSettings(value), value)
+	}
+	for _, value := range []string{"", `null`, `[]`, `{"default":""}`, `{"model":null}`, `{"model":3}`, `{"model":"v9"}`, `{"model":"v1/models"}`} {
+		require.Error(t, ValidateGeminiVersionSettings(value), value)
+	}
+}

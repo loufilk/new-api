@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -210,6 +211,8 @@ func sendGotifyNotify(gotifyUrl string, gotifyToken string, priority int, data d
 
 	// 构建完整的 Gotify API URL
 	// 确保 URL 以 /message 结尾
+	// URLs contain a write credential. Never return URL or upstream errors
+	// from this function: alert callers log the returned error verbatim.
 	finalURL := strings.TrimSuffix(gotifyUrl, "/") + "/message?token=" + url.QueryEscape(gotifyToken)
 
 	// Gotify优先级范围0-10，如果超出范围则使用默认值5
@@ -233,7 +236,7 @@ func sendGotifyNotify(gotifyUrl string, gotifyToken string, priority int, data d
 	// 序列化为 JSON
 	payloadBytes, err := common.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal gotify payload: %v", err)
+		return errors.New("gotify_payload_invalid")
 	}
 
 	var req *http.Request
@@ -254,24 +257,24 @@ func sendGotifyNotify(gotifyUrl string, gotifyToken string, priority int, data d
 
 		resp, err = DoWorkerRequest(workerReq)
 		if err != nil {
-			return fmt.Errorf("failed to send gotify request through worker: %v", err)
+			return errors.New("gotify_worker_failed")
 		}
 		defer resp.Body.Close()
 
 		// 检查响应状态
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return fmt.Errorf("gotify request failed with status code: %d", resp.StatusCode)
+			return fmt.Errorf("gotify_http_%d", resp.StatusCode)
 		}
 	} else {
 		// SSRF防护：验证Gotify URL（非Worker模式）
 		if err := ValidateSSRFProtectedFetchURL(finalURL); err != nil {
-			return fmt.Errorf("request reject: %v", err)
+			return errors.New("gotify_destination_rejected")
 		}
 
 		// 直接发送请求
 		req, err = http.NewRequest(http.MethodPost, finalURL, bytes.NewBuffer(payloadBytes))
 		if err != nil {
-			return fmt.Errorf("failed to create gotify request: %v", err)
+			return errors.New("gotify_destination_invalid")
 		}
 
 		// 设置请求头
@@ -282,13 +285,13 @@ func sendGotifyNotify(gotifyUrl string, gotifyToken string, priority int, data d
 		client := GetSSRFProtectedHTTPClient()
 		resp, err = client.Do(req)
 		if err != nil {
-			return fmt.Errorf("failed to send gotify request: %v", err)
+			return errors.New("gotify_transport_failed")
 		}
 		defer resp.Body.Close()
 
 		// 检查响应状态
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return fmt.Errorf("gotify request failed with status code: %d", resp.StatusCode)
+			return fmt.Errorf("gotify_http_%d", resp.StatusCode)
 		}
 	}
 

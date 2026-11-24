@@ -63,6 +63,14 @@ describe('ChuanAPI cross-shell navigation', () => {
     const admin = chuanapiSidebarNavigationExtension.apply(sidebar, {
       isAuthenticated: true,
       role: ROLE.ADMIN,
+      user: {
+        id: 12,
+        username: 'reader',
+        role: ROLE.ADMIN,
+        permissions: {
+          admin_permissions: { partner_applications: { read: true } },
+        },
+      },
     })
     expect(admin.navGroups[1]?.items).toEqual(
       expect.arrayContaining([
@@ -74,9 +82,44 @@ describe('ChuanAPI cross-shell navigation', () => {
       ])
     )
 
+    const deniedAdmin = chuanapiSidebarNavigationExtension.apply(sidebar, {
+      isAuthenticated: true,
+      role: ROLE.ADMIN,
+      user: {
+        id: 13,
+        username: 'no-supplier-access',
+        role: ROLE.ADMIN,
+        permissions: {
+          admin_permissions: {
+            partner_applications: { read: false, review: true },
+          },
+        },
+      },
+    })
+    expect(deniedAdmin.navGroups[1]?.items).toHaveLength(0)
+
+    const settingsReader = chuanapiSidebarNavigationExtension.apply(sidebar, {
+      isAuthenticated: true,
+      role: ROLE.ADMIN,
+      user: {
+        id: 14,
+        username: 'settings-reader',
+        role: ROLE.ADMIN,
+        permissions: {
+          admin_permissions: { partner_settings: { read: true } },
+        },
+      },
+    })
+    expect(settingsReader.navGroups[1]?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ url: '/partner-application-management' }),
+      ])
+    )
+
     const root = chuanapiSidebarNavigationExtension.apply(sidebar, {
       isAuthenticated: true,
       role: ROLE.SUPER_ADMIN,
+      user: { id: 1, username: 'root', role: ROLE.SUPER_ADMIN },
     })
     expect(root.navGroups[1]?.items).toEqual(
       expect.arrayContaining([

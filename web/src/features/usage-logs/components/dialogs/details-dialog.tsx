@@ -75,6 +75,7 @@ import { cn } from '@/lib/utils'
 
 import { AuditDetailFields } from '../../audit/components/audit-detail-fields'
 import type { UsageLog } from '../../data/schema'
+import { getLogGroupPrice } from '../../lib/group-price'
 import {
   parseLogOther,
   getParamOverrideActionLabel,
@@ -125,6 +126,8 @@ function timingTextColorClass(
 }
 
 function formatRatio(ratio: number | undefined): string {
+  if (typeof ratio === 'number' && ratio > 0 && ratio < 0.0001)
+    return String(ratio)
   if (ratio == null) return '-'
   return ratio.toFixed(4)
 }
@@ -242,12 +245,10 @@ function BillingBreakdown(props: {
     }
   }
 
-  const userGR = other.user_group_ratio
-  const isUserGR = userGR != null && Number.isFinite(userGR) && userGR !== -1
-  const effectiveGR = isUserGR ? userGR : other.group_ratio
-  if (effectiveGR != null && Number.isFinite(effectiveGR)) {
+  const { ratio: effectiveGR, label: ratioLabel } = getLogGroupPrice(other)
+  if (effectiveGR != null) {
     rows.push({
-      label: isUserGR ? t('User Exclusive Ratio') : t('Group Ratio'),
+      label: t(ratioLabel),
       value: `${formatRatio(effectiveGR)}x`,
     })
   }

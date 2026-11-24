@@ -3,6 +3,7 @@ package common
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -31,6 +32,7 @@ type fakeSMTPServer struct {
 	port              int
 	cert              tls.Certificate
 	advertiseSTARTTLS bool
+	quitReply         string
 	authMechanisms    []string
 	messages          chan string
 	authCommands      chan string
@@ -42,6 +44,11 @@ func newFakeSMTPServer(t *testing.T) *fakeSMTPServer {
 }
 
 func newFakeSMTPServerWithSTARTTLSAdvertisement(t *testing.T, advertiseSTARTTLS bool) *fakeSMTPServer {
+	t.Helper()
+	return newFakeSMTPServerWithReply(t, advertiseSTARTTLS, "221 2.0.0 Bye")
+}
+
+func newFakeSMTPServerWithReply(t *testing.T, advertiseSTARTTLS bool, quitReply string) *fakeSMTPServer {
 	t.Helper()
 
 	cert, err := newTestTLSCertificate()
@@ -60,6 +67,7 @@ func newFakeSMTPServerWithSTARTTLSAdvertisement(t *testing.T, advertiseSTARTTLS 
 		host:              host,
 		port:              port,
 		cert:              cert,
+		quitReply:         quitReply,
 		advertiseSTARTTLS: advertiseSTARTTLS,
 		authMechanisms:    []string{"PLAIN", "LOGIN"},
 		messages:          make(chan string, 1),
@@ -89,6 +97,7 @@ func newFakeImplicitTLSSMTPServer(t *testing.T) *fakeSMTPServer {
 		host:              host,
 		port:              port,
 		cert:              cert,
+		quitReply:         "221 2.0.0 Bye",
 		advertiseSTARTTLS: false,
 		authMechanisms:    []string{"PLAIN", "LOGIN"},
 		messages:          make(chan string, 1),
@@ -199,7 +208,7 @@ func (s *fakeSMTPServer) serve() {
 				return
 			}
 		case upperCommand == "QUIT":
-			_ = writeSMTPLine(rw, "221 2.0.0 Bye")
+			_ = writeSMTPLine(rw, s.quitReply)
 			return
 		default:
 			if err := writeSMTPLine(rw, "502 5.5.1 Command not implemented"); err != nil {
@@ -312,6 +321,7 @@ func TestBuildEmailMessageCreatesReadableMultipartAlternative(t *testing.T) {
 	SystemName = "万川智能"
 
 	message, err := buildEmailMessage(
+		SMTPFrom,
 		"邮箱验证码",
 		"receiver@example.com",
 		"您好：\n\n验证码：123456",
@@ -425,7 +435,7 @@ func TestSMTPPlainAuthRejectsRemotePlaintextConnection(t *testing.T) {
 	client, err := smtp.NewClient(conn, SMTPServer)
 	require.NoError(t, err)
 
-	err = client.Auth(getSMTPAuth())
+	err = client.Auth(AutoSMTPAuth(SMTPAccount, SMTPToken))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unencrypted connection")
 
@@ -447,7 +457,7 @@ func TestNewSMTPClientHonorsExplicitStartTLSWhenPortIs465(t *testing.T) {
 	SMTPStartTLSEnabled = true
 	SMTPInsecureSkipVerify = true
 
-	client, err := newSMTPClient(fmt.Sprintf("%s:%d", server.host, server.port))
+	client, err := newSMTPClient(t.Context(), net.JoinHostPort(server.host, strconv.Itoa(server.port)), smtpConfigSnapshotLocked())
 	require.NoError(t, err)
 	defer client.Close()
 
@@ -470,7 +480,7 @@ func TestNewSMTPClientKeepsImplicitTLSForLegacyPort465(t *testing.T) {
 	SMTPStartTLSEnabled = false
 	SMTPInsecureSkipVerify = true
 
-	client, err := newSMTPClient(fmt.Sprintf("%s:%d", server.host, server.port))
+	client, err := newSMTPClient(t.Context(), net.JoinHostPort(server.host, strconv.Itoa(server.port)), smtpConfigSnapshotLocked())
 	require.NoError(t, err)
 	defer client.Close()
 }
@@ -616,4 +626,44 @@ func TestSendEmailExplicitStartTLSRejectsUntrustedCertificateByDefault(t *testin
 	err := SendEmail("Verification", "receiver@example.com", "<p>123456</p>")
 	require.Error(t, err)
 	require.Contains(t, fmt.Sprint(err), "certificate")
+}
+
+func TestSendEmailAcceptedDATAIgnoresQUITFailure(t *testing.T) {
+	server := newFakeSMTPServerWithReply(t, false, "500 provider details")
+	defer server.close()
+	withSMTPSettings(t)
+	SMTPServer, SMTPPort, SMTPFrom = server.host, server.port, "sender@example.invalid"
+	SMTPSSLEnabled, SMTPStartTLSEnabled, SMTPInsecureSkipVerify = false, false, false
+	SMTPAccount, SMTPToken = "", ""
+	require.NoError(t, SendEmail("subject", "receiver@example.invalid", "<p>message</p>"))
+	select {
+	case message := <-server.messages:
+		require.Contains(t, message, "<p>message</p>")
+	default:
+		t.Fatal("the SMTP server did not accept DATA")
+	}
+}
+
+func TestNewSMTPClientBoundsReadOfInitialGreeting(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer listener.Close()
+	closed := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			closed <- err
+			return
+		}
+		defer conn.Close()
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		var scratch [1]byte
+		_, err = conn.Read(scratch[:])
+		closed <- err
+	}()
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	_, err = newSMTPClient(ctx, listener.Addr().String(), SMTPDeliveryConfig{Server: "127.0.0.1"})
+	require.Error(t, err)
+	require.ErrorIs(t, <-closed, io.EOF)
 }

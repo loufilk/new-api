@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -41,7 +42,72 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 			groupsCopy[userGroup] = "User group"
 		}
 	}
+	for group := range groupsCopy {
+		if model.IsExclusiveGroup(group) {
+			delete(groupsCopy, group)
+		}
+	}
 	return groupsCopy
+}
+
+// GetUserUsableGroupsForUser exposes exclusive groups to their exact grants
+// only. The legacy resolver intentionally excludes them from Auto/Smart even
+// for users who have an explicit grant.
+func GetUserUsableGroupsForUser(ctx context.Context, userID int, userGroup string) (map[string]string, error) {
+	groups := GetUserUsableGroups(userGroup)
+	grants, err := model.ListUserExclusiveGroups(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for _, group := range grants {
+		if model.IsExclusiveGroup(group) && ratio_setting.ContainsGroupRatio(group) {
+			groups[group] = setting.GetUsableGroupDescription(group)
+		}
+	}
+	return groups, nil
+}
+
+func ValidateTokenGroupForUser(ctx context.Context, userID int, userGroup, tokenGroup string) error {
+	if tokenGroup == "" && model.IsExclusiveGroup(userGroup) {
+		// Private routes require an explicit request; empty legacy selections
+		// must neither grant a group nor enroll this account implicitly.
+		return ErrTokenGroupForbidden
+	}
+	if !model.IsExclusiveGroup(tokenGroup) {
+		return ValidateTokenGroup(userGroup, tokenGroup)
+	}
+	if !ratio_setting.ContainsGroupRatio(tokenGroup) {
+		return ErrTokenGroupDeprecated
+	}
+	granted, err := model.HasUserExclusiveGroup(ctx, userID, tokenGroup)
+	if err != nil {
+		return err
+	}
+	if !granted {
+		return ErrTokenGroupForbidden
+	}
+	return nil
+}
+
+func ValidateTokenRoutingScopeForUser(ctx context.Context, userID int, userGroup string, token *model.Token) error {
+	if token == nil || token.Group == "auto" {
+		return ValidateTokenRoutingScope(userGroup, token)
+	}
+	return ValidateTokenGroupForUser(ctx, userID, userGroup, token.Group)
+}
+
+func GetTokenEffectiveGroupsForUser(ctx context.Context, userID int, userGroup string, token *model.Token) ([]string, error) {
+	if token == nil || token.SmartRouting || token.Group == "auto" ||
+		(!model.IsExclusiveGroup(token.Group) && !(token.Group == "" && model.IsExclusiveGroup(userGroup))) {
+		return GetTokenEffectiveGroups(userGroup, token)
+	}
+	if err := ValidateTokenRoutingScopeForUser(ctx, userID, userGroup, token); err != nil {
+		if errors.Is(err, ErrTokenGroupForbidden) || errors.Is(err, ErrTokenGroupDeprecated) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+	return []string{token.Group}, nil
 }
 
 func GroupInUserUsableGroups(userGroup, groupName string) bool {

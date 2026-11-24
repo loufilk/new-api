@@ -343,3 +343,117 @@ func TestSupportTicketRoutesEnforceAuthAndOwnership(t *testing.T) {
 	revoked := supportHTTPRequest(t, fixture, http.MethodGet, destPath, "192.0.2.50", 401, nil)
 	assert.Equal(t, http.StatusUnauthorized, revoked.Code, "a revoked session must fail at the support endpoint")
 }
+
+func TestSupportTicketObservedReadRequiresBrowserSession(t *testing.T) {
+	for _, key := range []string{
+		"POST /api/support/tickets/:id/read-observed",
+		"POST /api/admin/support/tickets/:id/read-observed",
+	} {
+		rule, ok := middleware.AccessTokenRouteRule(key)
+		require.True(t, ok)
+		assert.Equal(t, "session", rule.Kind(), key)
+	}
+}
+
+func TestSupportTicketReadAcknowledgesOnlyCurrentSnapshot(t *testing.T) {
+	if os.Getenv("TEST_POSTGRES_DSN") == "" {
+		t.Skip("requires isolated PostgreSQL")
+	}
+	fixture := newSupportHTTPFixture(t, supportHTTPOptions{
+		globalLimitNum:   1000,
+		criticalLimitNum: 1000,
+		users: []supportHTTPUser{
+			{id: 501, role: common.RoleCommonUser},
+			{id: 502, role: common.RoleCommonUser},
+			{id: 599, role: common.RoleAdminUser},
+		},
+	})
+	owner, admin := fixture.userIDs[501], fixture.userIDs[599]
+	created, err := service.CreateSupportTicket(owner, "Observed conversation", "Please advise")
+	require.NoError(t, err)
+	id := created.Ticket.ID
+	ownerPath := fmt.Sprintf("/api/support/tickets/%d/read-observed", id)
+	adminPath := fmt.Sprintf("/api/admin/support/tickets/%d/read-observed", id)
+
+	current := func() *service.SupportTicketDetail {
+		detail, err := service.GetSupportTicket(owner, false, id)
+		require.NoError(t, err)
+		require.NotEmpty(t, detail.Messages)
+		return detail
+	}
+	snapshot := func(detail *service.SupportTicketDetail) map[string]any {
+		return map[string]any{
+			"through_message_id": detail.Messages[len(detail.Messages)-1].ID,
+			"observed_status":    detail.Ticket.Status,
+		}
+	}
+	ack := func(path string, userID int, body any) (bool, *bool) {
+		response := supportHTTPRequest(t, fixture, http.MethodPost, path, "192.0.2.51", userID, body)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var payload struct {
+			Success bool `json:"success"`
+			Data    *struct {
+				Acknowledged bool `json:"acknowledged"`
+			} `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
+		if payload.Data == nil {
+			return payload.Success, nil
+		}
+		return payload.Success, &payload.Data.Acknowledged
+	}
+	assertAck := func(path string, userID int, body any, want bool) {
+		t.Helper()
+		ok, accepted := ack(path, userID, body)
+		require.True(t, ok)
+		require.NotNil(t, accepted)
+		assert.Equal(t, want, *accepted)
+	}
+
+	_, err = service.ReplySupportTicket(admin, true, id, "First staff reply")
+	require.NoError(t, err)
+	old := snapshot(current())
+	_, err = service.ReplySupportTicket(admin, true, id, "New staff reply with unchanged status")
+	require.NoError(t, err)
+	latest := snapshot(current())
+	assertAck(ownerPath, 501, old, false)
+	assert.True(t, current().Ticket.UserUnread)
+
+	ok, result := ack(ownerPath, 502, latest)
+	assert.False(t, ok, "another account must not acknowledge the ticket")
+	assert.Nil(t, result)
+	assert.True(t, current().Ticket.UserUnread)
+
+	ok, result = ack(ownerPath, 501, map[string]any{"through_message_id": latest["through_message_id"]})
+	assert.False(t, ok, "partial input must not fall back to the legacy clear")
+	assert.Nil(t, result)
+	assert.True(t, current().Ticket.UserUnread)
+	assertAck(ownerPath, 501, latest, true)
+	assertAck(ownerPath, 501, latest, true)
+	assert.False(t, current().Ticket.UserUnread)
+
+	_, err = service.SetSupportTicketStatus(id, model.SupportTicketStatusResolved)
+	require.NoError(t, err)
+	assertAck(ownerPath, 501, latest, false)
+	assert.True(t, current().Ticket.UserUnread)
+	ok, result = ack(ownerPath, 501, nil)
+	assert.False(t, ok, "the observed route requires a request body")
+	assert.Nil(t, result)
+	assert.True(t, current().Ticket.UserUnread)
+	ok, result = ack(fmt.Sprintf("/api/support/tickets/%d/read", id), 501, nil)
+	assert.True(t, ok, "legacy read route still accepts an empty body")
+	assert.Nil(t, result)
+	assert.False(t, current().Ticket.UserUnread)
+
+	_, err = service.SetSupportTicketStatus(id, model.SupportTicketStatusProcessing)
+	require.NoError(t, err)
+	_, err = service.ReplySupportTicket(owner, false, id, "First customer follow-up")
+	require.NoError(t, err)
+	adminOld := snapshot(current())
+	_, err = service.ReplySupportTicket(owner, false, id, "New customer follow-up")
+	require.NoError(t, err)
+	assertAck(adminPath, 599, adminOld, false)
+	assert.True(t, current().Ticket.AdminUnread)
+	assertAck(adminPath, 599, snapshot(current()), true)
+	assert.False(t, current().Ticket.AdminUnread)
+}

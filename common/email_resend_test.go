@@ -2,11 +2,13 @@ package common
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -49,4 +51,26 @@ func TestResendFailuresKeepCredentialsAndEmailContentsOutOfLogs(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestQueuedResendRequiresOneRecipientAndHonorsContext(t *testing.T) {
+	previous := resendEmailClient
+	t.Cleanup(func() { resendEmailClient = previous })
+	calls := 0
+	resendEmailClient = &http.Client{Transport: resendTestTransport(func(req *http.Request) (*http.Response, error) {
+		calls++
+		<-req.Context().Done()
+		return nil, errors.New("sensitive upstream text")
+	})}
+	for _, recipient := range []string{"list@example.invalid;another@example.invalid", "User <user@example.invalid>"} {
+		require.Error(t, SendQueuedResend(t.Context(), "test", "from@example.invalid", "safe", recipient, "plain", "html", "event"))
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.ErrorIs(t, SendQueuedResend(ctx, "test", "from@example.invalid", "safe", "to@example.invalid", "plain", "html", "event"), context.Canceled)
+	assert.Zero(t, calls)
+	ctx, stop := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer stop()
+	require.ErrorIs(t, SendQueuedResend(ctx, "test", "from@example.invalid", "safe", "to@example.invalid", "plain", "html", "event"), context.DeadlineExceeded)
+	assert.Equal(t, 1, calls)
 }

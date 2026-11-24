@@ -8,6 +8,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net"
+	"net/http"
 	"net/mail"
 	"net/textproto"
 	"os"
@@ -108,7 +109,7 @@ func setupSupportEmailService(t *testing.T, fixture *supportSMTPFixture) *model.
 	require.NoError(t, model.DB.Create(u).Error)
 	_, port, err := net.SplitHostPort(fixture.listener.Addr().String())
 	require.NoError(t, err)
-	for key, value := range map[string]string{"EmailProvider": "smtp", "SMTPServer": "127.0.0.1", "SMTPPort": port, "SMTPFrom": "notify@example.invalid", "SMTPAccount": "", "SMTPToken": "", "SMTPSSLEnabled": "false", "SMTPStartTLSEnabled": "false", "SMTPInsecureSkipVerify": "false"} {
+	for key, value := range map[string]string{"EmailProvider": "smtp", "SMTPServer": "127.0.0.1", "SMTPPort": port, "SMTPFrom": "notify@example.invalid", "SMTPAccount": "", "SMTPToken": "", "ResendApiKey": "", "ResendFrom": "", "SMTPSSLEnabled": "false", "SMTPStartTLSEnabled": "false", "SMTPInsecureSkipVerify": "false"} {
 		require.NoError(t, model.DB.Clauses(clause.OnConflict{UpdateAll: true}).Create(&model.Option{Key: key, Value: value}).Error)
 	}
 	return u
@@ -226,7 +227,7 @@ func TestSupportEmailWorkerPostgresResendSelectionDoesNotFallbackToSMTP(t *testi
 	_, err = RunSupportEmailOnce(t.Context())
 	require.NoError(t, err)
 	assert.Zero(t, smtp.connections.Load())
-	assert.Equal(t, "smtp_not_configured", supportServiceOutbox(t)[0].LastErrorCode)
+	assert.Equal(t, "resend_not_configured", supportServiceOutbox(t)[0].LastErrorCode)
 }
 
 func TestSupportEmailSMTPContextCancellationClosesInFlightSocket(t *testing.T) {
@@ -296,7 +297,7 @@ func TestSupportEmailWorkerPostgresProviderSwitchBeforeAdmissionUsesCurrentConfi
 	require.NoError(t, holder.Commit().Error)
 	require.NoError(t, <-done)
 	assert.Zero(t, smtp.connections.Load())
-	assert.Equal(t, "smtp_not_configured", supportServiceOutbox(t)[0].LastErrorCode)
+	assert.Equal(t, "resend_not_configured", supportServiceOutbox(t)[0].LastErrorCode)
 }
 
 func TestSupportEmailSMTPExpiredAdmissionDeadlineNeverDials(t *testing.T) {
@@ -316,9 +317,106 @@ func TestSupportEmailSMTPConfigPreservesExistingUnsavedPortDefault(t *testing.T)
 	smtp := newSupportSMTPFixture(t, 0, false)
 	setupSupportEmailService(t, smtp)
 	require.NoError(t, model.DB.Where(map[string]any{"key": "SMTPPort"}).Delete(&model.Option{}).Error)
-	config, configured, err := SupportEmailSMTPConfig(t.Context())
+	config, err := readSupportEmailDelivery(t.Context())
 	require.NoError(t, err)
-	require.True(t, configured)
-	assert.Equal(t, 587, config.Port)
+	require.True(t, config.configured)
+	assert.Equal(t, 587, config.smtp.Port)
+	assert.Zero(t, smtp.connections.Load())
+}
+
+type supportEmailHTTPTransport func(*http.Request) (*http.Response, error)
+
+func (f supportEmailHTTPTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestSupportEmailWorkerPostgresResendRetrySingleVerifiedRecipient(t *testing.T) {
+	smtp := newSupportSMTPFixture(t, 0, false)
+	user := setupSupportEmailService(t, smtp)
+	contact := "reference@example.invalid"
+	ticket, err := CreateSupportTicketWithOptions(user.Id, SupportTicketCreateInput{Subject: "PRIVATE title", Message: "PRIVATE initial message", ContactEmail: &contact})
+	require.NoError(t, err)
+	require.NoError(t, model.SaveSupportEmailSettings(t.Context(), true, []string{"admin@example.invalid"}, "https://trusted.example.invalid"))
+	for k, v := range map[string]string{"EmailProvider": "resend", "ResendApiKey": "synthetic-key", "ResendFrom": "fake@example.invalid"} {
+		require.NoError(t, model.DB.Model(&model.Option{}).Where(map[string]any{"key": k}).Update("value", v).Error)
+	}
+	var keys []string
+	var bodies []string
+	old := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = old })
+	http.DefaultTransport = supportEmailHTTPTransport(func(request *http.Request) (*http.Response, error) {
+		assert.Equal(t, "https://api.resend.com/emails", request.URL.String())
+		assert.Equal(t, "Bearer synthetic-key", request.Header.Get("Authorization"))
+		assert.Equal(t, http.MethodPost, request.Method)
+		deadline, ok := request.Context().Deadline()
+		assert.True(t, ok)
+		assert.LessOrEqual(t, time.Until(deadline), 20*time.Second)
+		keys = append(keys, request.Header.Get("Idempotency-Key"))
+		payload, err := io.ReadAll(request.Body)
+		require.NoError(t, err)
+		bodies = append(bodies, string(payload))
+		var msg struct {
+			To         []string
+			Text, HTML string
+			Headers    map[string]string
+		}
+		require.NoError(t, common.Unmarshal(payload, &msg))
+		assert.Equal(t, []string{user.Email}, msg.To)
+		assert.Contains(t, msg.Text, fmt.Sprintf("/support?ticket=%d", ticket.Ticket.ID))
+		assert.Contains(t, msg.HTML, fmt.Sprintf("/support?ticket=%d", ticket.Ticket.ID))
+		assert.Equal(t, "auto-generated", msg.Headers["Auto-Submitted"])
+		for _, secret := range []string{"PRIVATE", contact, "admin@example.invalid", "synthetic-key"} {
+			assert.NotContains(t, string(payload), secret)
+		}
+		if len(keys) == 1 {
+			return &http.Response{StatusCode: 429, Body: io.NopCloser(strings.NewReader("private-provider-text"))}, nil
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"id":"synthetic-id"}`))}, nil
+	})
+	_, err = ReplySupportTicket(999, true, ticket.Ticket.ID, "PRIVATE reply")
+	require.NoError(t, err)
+	require.Empty(t, keys)
+	handled, err := RunSupportEmailOnce(t.Context())
+	require.NoError(t, err)
+	require.True(t, handled)
+	rows := supportServiceOutbox(t)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "retry", rows[0].Status)
+	assert.Equal(t, "resend_rate_limited", rows[0].LastErrorCode)
+	require.NoError(t, model.DB.Model(&rows[0]).Update("next_attempt_at", time.Now().Unix()).Error)
+	require.NoError(t, model.DB.Model(&model.SupportEmailRate{}).Where(map[string]any{"key": rows[0].RecipientKey}).Update("next_at", 0).Error)
+	_, err = RunSupportEmailOnce(t.Context())
+	require.NoError(t, err)
+	require.Len(t, keys, 2)
+	assert.NotEmpty(t, keys[0])
+	assert.Equal(t, keys[0], keys[1])
+	assert.Equal(t, bodies[0], bodies[1])
+	assert.Equal(t, "sent", supportServiceOutbox(t)[0].Status)
+	assert.Zero(t, smtp.connections.Load())
+}
+
+func TestSupportEmailWorkerPostgresResendNoReplayAfterIdempotencyWindow(t *testing.T) {
+	smtp := newSupportSMTPFixture(t, 0, false)
+	u := setupSupportEmailService(t, smtp)
+	require.NoError(t, model.SaveSupportEmailSettings(t.Context(), true, []string{"admin@example.invalid"}, "https://trusted.example.invalid"))
+	_, err := CreateSupportTicket(u.Id, "subject", "message")
+	require.NoError(t, err)
+	for k, v := range map[string]string{"EmailProvider": "resend", "ResendApiKey": "test", "ResendFrom": "fake@example.invalid"} {
+		require.NoError(t, model.DB.Model(&model.Option{}).Where(map[string]any{"key": k}).Update("value", v).Error)
+	}
+	rows := supportServiceOutbox(t)
+	require.Len(t, rows, 1)
+	require.NoError(t, model.DB.Model(&rows[0]).Updates(map[string]any{"attempts": 1, "created_at": time.Now().Add(-25 * time.Hour).Unix()}).Error)
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	http.DefaultTransport = supportEmailHTTPTransport(func(*http.Request) (*http.Response, error) {
+		t.Fatal("stale attempt must not contact the provider")
+		return nil, fmt.Errorf("unexpected call")
+	})
+	handled, err := RunSupportEmailOnce(t.Context())
+	require.NoError(t, err)
+	assert.True(t, handled)
+	got := supportServiceOutbox(t)[0]
+	assert.Equal(t, "cancelled", got.Status)
+	assert.Equal(t, model.SupportEmailReplayWindowElapsed, got.LastErrorCode)
+	require.ErrorIs(t, model.ManageSupportEmail(t.Context(), got.ID, true), model.ErrSupportEmailState)
 	assert.Zero(t, smtp.connections.Load())
 }

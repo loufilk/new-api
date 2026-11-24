@@ -22,7 +22,6 @@ import { useTranslation } from 'react-i18next'
 
 import { StatusBadge } from '@/components/status-badge'
 import { Checkbox } from '@/components/ui/checkbox'
-import { useMediaQuery } from '@/hooks'
 import { toIntlLocale } from '@/i18n/languages'
 import { getUserGroups } from '@/lib/api'
 import type { ColumnDef } from '@/lib/console-table'
@@ -46,9 +45,10 @@ import {
 } from './api-keys-cells'
 import { DataTableRowActions } from './data-table-row-actions'
 
-const EMPTY_GROUP_RATIOS: Record<string, number | string> = {}
+type GroupListInfo = { ratio: number | string; label?: string }
+const EMPTY_GROUP_INFO: Record<string, GroupListInfo> = {}
 
-function useGroupRatios(): Record<string, number | string> {
+function useGroupInfo(): Record<string, GroupListInfo> {
   const userId = useAuthStore((state) => state.auth.user?.id ?? null)
   const { data } = useQuery({
     queryKey: ['user-groups', userId],
@@ -56,17 +56,20 @@ function useGroupRatios(): Record<string, number | string> {
     staleTime: 0,
     select: (res) => {
       if (!res.success || !res.data) return {}
-      const ratios: Record<string, number | string> = {}
+      const details: Record<string, GroupListInfo> = {}
       for (const [group, info] of Object.entries(res.data)) {
         if (typeof info.ratio === 'number' || typeof info.ratio === 'string') {
-          ratios[group] = info.ratio
+          details[group] = {
+            ratio: info.ratio,
+            label: info.catalog?.label,
+          }
         }
       }
-      return ratios
+      return details
     },
   })
 
-  return data ?? EMPTY_GROUP_RATIOS
+  return data ?? EMPTY_GROUP_INFO
 }
 
 export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
@@ -74,8 +77,7 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
   useSystemConfigStore((state) => state.config.currency)
   const { meta: currency } = getCurrencyDisplay()
   const quotaUnit = currency.kind === 'tokens' ? t('Tokens') : currency.symbol
-  const groupRatios = useGroupRatios()
-  const shouldReduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
+  const groupInfo = useGroupInfo()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const justNowLabel = t('Just now')
   return useMemo<ColumnDef<ApiKey>[]>(
@@ -160,15 +162,14 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
         header: t('Group'),
         cell: ({ row }) => {
           const apiKey = row.original
-          const group = row.getValue('group') as string
+          const group = apiKey.group ?? ''
           return (
             <ApiKeyGroupCell
               group={group}
-              ratio={groupRatios[group]}
-              crossGroupRetry={apiKey.cross_group_retry}
+              label={groupInfo[group]?.label}
+              ratio={groupInfo[group]?.ratio}
+              autoGroups={apiKey.auto_groups ?? undefined}
               smartRouting={apiKey.smart_routing}
-              routingStrategy={apiKey.routing_strategy}
-              shouldReduceMotion={shouldReduceMotion}
             />
           )
         },
@@ -242,6 +243,6 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
         meta: { pinned: 'right' as const },
       },
     ],
-    [t, quotaUnit, now, groupRatios, shouldReduceMotion, locale, justNowLabel]
+    [t, quotaUnit, now, groupInfo, locale, justNowLabel]
   )
 }

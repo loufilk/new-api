@@ -26,23 +26,24 @@ describe('partnerApplicationSchema', () => {
     )
   })
 
-  const invalidApplications: Array<[string, Partial<typeof validApplication>]> = [
-    ['non-HTTPS URL', { site_url: 'http://provider.example' }],
-    ['invalid email contact', { contact: 'not-an-email' }],
+  const invalidApplications: Array<[string, Partial<typeof validApplication>]> =
     [
-      'rate over the supported range',
-      { quotes: [{ ...validApplication.quotes[0], rate: '1000.1' }] },
-    ],
-    [
-      'duplicate group names ignoring case',
-      {
-        quotes: [
-          validApplication.quotes[0],
-          { ...validApplication.quotes[0], group: 'STANDARD' },
-        ],
-      },
-    ],
-  ]
+      ['non-HTTPS URL', { site_url: 'http://provider.example' }],
+      ['invalid email contact', { contact: 'not-an-email' }],
+      [
+        'rate over the supported range',
+        { quotes: [{ ...validApplication.quotes[0], rate: '1000.1' }] },
+      ],
+      [
+        'duplicate group names ignoring case',
+        {
+          quotes: [
+            validApplication.quotes[0],
+            { ...validApplication.quotes[0], group: 'STANDARD' },
+          ],
+        },
+      ],
+    ]
 
   it.each(invalidApplications)('rejects %s', (_name, override) => {
     expect(
@@ -52,4 +53,30 @@ describe('partnerApplicationSchema', () => {
       }).success
     ).toBe(false)
   })
+})
+
+it('retains globally unique group names even across different platforms', () => {
+  const quote = validApplication.quotes[0]
+  const result = partnerApplicationSchema.safeParse({
+    ...validApplication,
+    quotes: [quote, { ...quote, platform: 'sglang', group: '  StAnDaRd  ' }],
+  })
+  expect(result.success).toBe(false)
+  expect(result.error?.issues[0]?.path).toEqual(['quotes', 1, 'group'])
+})
+
+it('accepts up to 20 quote groups, and rejects a twenty-first', () => {
+  const quotes = Array.from({ length: 21 }, (_, i) => ({
+    ...validApplication.quotes[0],
+    group: String(i),
+  }))
+  expect(
+    partnerApplicationSchema.safeParse({
+      ...validApplication,
+      quotes: quotes.slice(0, 20),
+    }).success
+  ).toBe(true)
+  expect(
+    partnerApplicationSchema.safeParse({ ...validApplication, quotes }).success
+  ).toBe(false)
 })

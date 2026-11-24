@@ -16,9 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Inbox, LifeBuoy, Plus, Search } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import {
+  focusManager,
+  onlineManager,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
+import { Inbox, LifeBuoy, Plus, RefreshCw, Search } from 'lucide-react'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -40,7 +46,9 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { useIsAdmin } from '@/hooks/use-admin'
+import { getAuthSessionEpoch } from '@/lib/auth-session'
 import { handleServerError } from '@/lib/handle-server-error'
+import { getServerErrorStatus } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
@@ -49,6 +57,7 @@ import {
   listSupportTickets,
   markSupportTicketRead,
   replySupportTicket,
+  SupportTicketQueryRejected,
   updateSupportTicketStatus,
 } from './api'
 import { CreateTicketDialog } from './components/create-ticket-dialog'
@@ -59,9 +68,30 @@ import {
   supportTicketStatusLabel,
   supportTicketStatusVariant,
 } from './lib/status'
-import type { SupportTicket, SupportTicketStatus } from './types'
+import type { SupportTicketListData, SupportTicketStatus } from './types'
 
 const PAGE_SIZE = 20
+const TICKET_LIST_POLL_MS = 60_000
+const TICKET_DETAIL_POLL_MS = 20_000
+
+function cannotShowCachedTicketData(error: unknown): boolean {
+  const status = getServerErrorStatus(error)
+  return (
+    error instanceof SupportTicketQueryRejected ||
+    status === 401 ||
+    status === 403 ||
+    status === 404
+  )
+}
+
+// Background checks must not redirect the page or repeatedly show toasts.
+// The page still offers its own error states and manual Refresh.
+const supportRefreshOptions = {
+  refetchOnWindowFocus: 'always',
+  refetchIntervalInBackground: false,
+  retry: false,
+  meta: { errorToast: false, redirectOnInternalServerError: false },
+} as const
 
 export function SupportCenter(
   props: { ticketId?: number; onTicketSelect?: (ticketId: number) => void } = {}
@@ -77,15 +107,13 @@ export function SupportCenter(
   )
   const [unreadOnly, setUnreadOnly] = useState(false)
   const [page, setPage] = useState(1)
-  const [selectedId, setSelectedId] = useState<number | null>(
-    props.ticketId ?? null
-  )
-  useEffect(() => {
-    setSelectedId(props.ticketId ?? null)
-  }, [props.ticketId])
+  const [localSelection, setLocalSelection] = useState(props.ticketId ?? null)
+  const selectedId = props.onTicketSelect
+    ? (props.ticketId ?? null)
+    : localSelection
   const selectTicket = (ticketId: number) => {
-    setSelectedId(ticketId)
-    props.onTicketSelect?.(ticketId)
+    if (props.onTicketSelect) props.onTicketSelect(ticketId)
+    else setLocalSelection(ticketId)
   }
   const [createOpen, setCreateOpen] = useState(false)
 
@@ -98,10 +126,17 @@ export function SupportCenter(
     unreadOnly,
     page,
   ] as const
-  const listQuery = useQuery({
+  const listQuery = useQuery<SupportTicketListData>({
+    ...supportRefreshOptions,
+    enabled: userId != null,
+    refetchInterval: (query) =>
+      cannotShowCachedTicketData(query.state.error)
+        ? false
+        : TICKET_LIST_POLL_MS,
     queryKey: listQueryKey,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       listSupportTickets({
+        signal,
         admin,
         keyword,
         status: statusFilter === 'all' ? undefined : statusFilter,
@@ -111,14 +146,22 @@ export function SupportCenter(
       }),
   })
   const detailQuery = useQuery({
+    ...supportRefreshOptions,
     queryKey: ['support-ticket', userId, admin, selectedId],
-    queryFn: () => getSupportTicket(admin, selectedId as number),
-    enabled: selectedId != null,
+    queryFn: ({ signal }) =>
+      getSupportTicket(admin, selectedId as number, signal),
+    enabled: userId != null && selectedId != null,
+    refetchInterval: (query) =>
+      cannotShowCachedTicketData(query.state.error)
+        ? false
+        : TICKET_DETAIL_POLL_MS,
   })
 
   const refreshTickets = async (ticketId?: number) => {
     const tasks: Promise<unknown>[] = [
-      queryClient.invalidateQueries({ queryKey: ['support-tickets'] }),
+      queryClient.invalidateQueries({
+        queryKey: ['support-tickets', userId, admin],
+      }),
     ]
     if (ticketId != null) {
       tasks.push(
@@ -156,21 +199,78 @@ export function SupportCenter(
     },
     onError: (error) => handleServerError(error),
   })
-  const readMutation = useMutation({
-    mutationFn: markSupportTicketRead,
-    onSuccess: async (_, input) => {
-      await refreshTickets(input.ticketId)
+  const { mutate: acknowledgeRead } = useMutation({
+    // An automatic acknowledgement should never be queued for later replay.
+    networkMode: 'always',
+    mutationFn: async (
+      input: Parameters<typeof markSupportTicketRead>[0] & {
+        userId: number
+        sessionEpoch: number
+      }
+    ) => {
+      if (getAuthSessionEpoch() !== input.sessionEpoch) return
+      return markSupportTicketRead(input)
+    },
+    onSuccess: async (result, input) => {
+      if (!result || getAuthSessionEpoch() !== input.sessionEpoch) return
+      const refetchType = focusManager.isFocused() ? 'active' : 'none'
+      const tasks = [
+        queryClient.invalidateQueries({
+          queryKey: [
+            'support-ticket',
+            input.userId,
+            input.admin,
+            input.ticketId,
+          ],
+          refetchType,
+        }),
+      ]
+      if (result.acknowledged) {
+        tasks.push(
+          queryClient.invalidateQueries({
+            queryKey: ['support-tickets', input.userId, input.admin],
+            refetchType,
+          })
+        )
+      }
+      await Promise.all(tasks)
     },
     onError: (error) => handleServerError(error),
   })
 
-  const handleTicketSelect = (ticket: SupportTicket) => {
-    selectTicket(ticket.id)
-    const unread = admin ? ticket.admin_unread : ticket.user_unread
-    if (unread && !readMutation.isPending) {
-      readMutation.mutate({ admin, ticketId: ticket.id })
+  const lastAcknowledgment = useRef<string | null>(null)
+  const detail = detailQuery.data
+  const detailReady = detailQuery.isSuccess && !detailQuery.isFetching
+  const onLatestSeen = useCallback(() => {
+    if (
+      !detailReady ||
+      !focusManager.isFocused() ||
+      !onlineManager.isOnline() ||
+      !detail ||
+      userId == null
+    ) {
+      return
     }
-  }
+    const { ticket, messages } = detail
+    const latest = messages.at(-1)
+    const unread = admin ? ticket.admin_unread : ticket.user_unread
+    if (ticket.id !== selectedId || !unread || !latest) return
+    // Only acknowledge the snapshot that was actually displayed. The server
+    // rejects it if the ticket changes before this request reaches it.
+    const sessionEpoch = getAuthSessionEpoch()
+    const snapshot = `${sessionEpoch}:${userId}:${admin}:${ticket.id}:${latest.id}:${ticket.status}:${ticket.updated_at}`
+    if (lastAcknowledgment.current === snapshot) return
+    lastAcknowledgment.current = snapshot
+    acknowledgeRead({
+      userId,
+      sessionEpoch,
+      admin,
+      ticketId: ticket.id,
+      throughMessageId: latest.id,
+      observedStatus: ticket.status,
+    })
+  }, [acknowledgeRead, admin, detail, detailReady, selectedId, userId])
+
   const totalPages = Math.max(
     1,
     Math.ceil((listQuery.data?.total ?? 0) / PAGE_SIZE)
@@ -189,7 +289,7 @@ export function SupportCenter(
     )
   } else if (detailQuery.isLoading) {
     detailContent = <LoadingState message={t('Loading conversation...')} />
-  } else if (detailQuery.isError || !detailQuery.data) {
+  } else if (!detail || cannotShowCachedTicketData(detailQuery.error)) {
     detailContent = (
       <ErrorState
         description={t('Failed to load ticket conversation')}
@@ -199,9 +299,10 @@ export function SupportCenter(
   } else {
     detailContent = (
       <TicketDetail
-        key={`${userId}:${admin}:${detailQuery.data.ticket.id}`}
+        key={`${userId}:${admin}:${detail.ticket.id}`}
         admin={admin}
-        detail={detailQuery.data}
+        detail={detail}
+        onLatestSeen={onLatestSeen}
         replyPending={replyMutation.isPending}
         statusPending={statusMutation.isPending}
         onReply={(submission) =>
@@ -220,19 +321,19 @@ export function SupportCenter(
 
   const hasNoTickets = listQuery.data?.items.length === 0
 
-  let ticketContent: ReactNode
+  let listContent: ReactNode
   if (listQuery.isLoading) {
-    ticketContent = <LoadingState message={t('Loading tickets...')} />
-  } else if (listQuery.isError) {
-    ticketContent = (
+    listContent = <LoadingState message={t('Loading tickets...')} />
+  } else if (!listQuery.data || cannotShowCachedTicketData(listQuery.error)) {
+    listContent = (
       <ErrorState
         description={t('Failed to load tickets')}
         onRetry={() => void listQuery.refetch()}
       />
     )
-  } else if (hasNoTickets && selectedId == null) {
+  } else if (hasNoTickets && page === 1) {
     const hasFilters = keyword || statusFilter !== 'all' || unreadOnly
-    ticketContent = (
+    listContent = (
       <EmptyState
         icon={Inbox}
         title={t('No tickets found')}
@@ -255,82 +356,99 @@ export function SupportCenter(
       />
     )
   } else {
-    ticketContent = (
-      <div className='grid min-h-0 gap-4 lg:grid-cols-[minmax(280px,0.85fr)_minmax(0,1.6fr)]'>
-        <div className='flex min-h-0 flex-col gap-2'>
-          {listQuery.data?.items.map((ticket) => (
-            <Button
-              key={ticket.id}
-              variant={selectedId === ticket.id ? 'secondary' : 'outline'}
-              className='h-auto w-full justify-start px-3 py-3 text-left whitespace-normal'
-              onClick={() => handleTicketSelect(ticket)}
-            >
-              <div className='min-w-0 flex-1'>
-                <div className='flex items-start justify-between gap-2'>
-                  <span className='line-clamp-2 font-medium'>
-                    {ticket.subject}
-                  </span>
-                  {(admin ? ticket.admin_unread : ticket.user_unread) && (
-                    <span
-                      className='bg-primary mt-1 size-2 shrink-0 rounded-full'
-                      aria-label={t('Unread')}
-                    />
-                  )}
-                </div>
-                <div className='mt-2 flex flex-wrap items-center gap-2'>
-                  <Badge variant={supportTicketStatusVariant(ticket.status)}>
-                    {supportTicketStatusLabel(t, ticket.status)}
-                  </Badge>
-                  <span className='text-muted-foreground text-xs'>
-                    {t('Ticket #{{id}}', { id: ticket.id })}
-                    {' · '}
-                    {supportTicketCategoryLabel(t, ticket.category)}
-                  </span>
-                  {admin && (
-                    <span className='text-muted-foreground text-xs'>
-                      {t('User #{{id}}', { id: ticket.user_id })}
-                    </span>
-                  )}
-                </div>
+    listContent = (
+      <div className='flex min-h-0 flex-col gap-2'>
+        {listQuery.data?.items.map((ticket) => (
+          <Button
+            key={ticket.id}
+            variant={selectedId === ticket.id ? 'secondary' : 'outline'}
+            className='h-auto w-full justify-start px-3 py-3 text-left whitespace-normal'
+            onClick={() => selectTicket(ticket.id)}
+          >
+            <div className='min-w-0 flex-1'>
+              <div className='flex items-start justify-between gap-2'>
+                <span className='line-clamp-2 font-medium'>
+                  {ticket.subject}
+                </span>
+                {(admin ? ticket.admin_unread : ticket.user_unread) && (
+                  <span
+                    className='bg-primary mt-1 size-2 shrink-0 rounded-full'
+                    aria-label={t('Unread')}
+                  />
+                )}
               </div>
-            </Button>
-          ))}
-          {totalPages > 1 && (
-            <div className='mt-1 flex items-center justify-between gap-2'>
-              <Button
-                variant='outline'
-                size='sm'
-                disabled={page <= 1}
-                onClick={() => setPage((current) => Math.max(1, current - 1))}
-              >
-                {t('Previous')}
-              </Button>
-              <span className='text-muted-foreground text-xs'>
-                {t('Page {{page}} of {{total}}', { page, total: totalPages })}
-              </span>
-              <Button
-                variant='outline'
-                size='sm'
-                disabled={page >= totalPages}
-                onClick={() =>
-                  setPage((current) => Math.min(totalPages, current + 1))
-                }
-              >
-                {t('Next')}
-              </Button>
+              <div className='mt-2 flex flex-wrap items-center gap-2'>
+                <Badge variant={supportTicketStatusVariant(ticket.status)}>
+                  {supportTicketStatusLabel(t, ticket.status, admin)}
+                </Badge>
+                <span className='text-muted-foreground text-xs'>
+                  {t('Ticket #{{id}}', { id: ticket.id })}
+                  {' · '}
+                  {supportTicketCategoryLabel(t, ticket.category)}
+                </span>
+                {admin && (
+                  <span className='text-muted-foreground text-xs'>
+                    {t('User #{{id}}', { id: ticket.user_id })}
+                  </span>
+                )}
+              </div>
             </div>
-          )}
-        </div>
-        {detailContent}
+          </Button>
+        ))}
+        {(totalPages > 1 || page > 1) && (
+          <div className='mt-1 flex items-center justify-between gap-2'>
+            <Button
+              variant='outline'
+              size='sm'
+              disabled={page <= 1}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+            >
+              {t('Previous')}
+            </Button>
+            <span className='text-muted-foreground text-xs'>
+              {t('Page {{page}} of {{total}}', { page, total: totalPages })}
+            </span>
+            <Button
+              variant='outline'
+              size='sm'
+              disabled={page >= totalPages}
+              onClick={() =>
+                setPage((current) => Math.min(totalPages, current + 1))
+              }
+            >
+              {t('Next')}
+            </Button>
+          </div>
+        )}
       </div>
     )
   }
+
+  const showDetailPane =
+    selectedId != null ||
+    (!hasNoTickets &&
+      !!listQuery.data &&
+      !cannotShowCachedTicketData(listQuery.error))
 
   return (
     <>
       <SectionPageLayout stackActionsOnMobile>
         <SectionPageLayout.Title>{t('Support Center')}</SectionPageLayout.Title>
         <SectionPageLayout.Actions>
+          <Button
+            type='button'
+            variant='outline'
+            disabled={
+              userId == null || listQuery.isFetching || detailQuery.isFetching
+            }
+            onClick={() => {
+              void listQuery.refetch()
+              if (selectedId != null) void detailQuery.refetch()
+            }}
+          >
+            <RefreshCw aria-hidden='true' />
+            {t('Refresh')}
+          </Button>
           {!admin && (
             <Button onClick={() => setCreateOpen(true)}>
               <Plus aria-hidden='true' />
@@ -348,7 +466,7 @@ export function SupportCenter(
                 loading={listQuery.isLoading}
               />
               <StatusCounter
-                label={t('Waiting for your reply')}
+                label={supportTicketStatusLabel(t, 'awaiting_user', admin)}
                 count={counts?.awaiting_user ?? 0}
                 loading={listQuery.isLoading}
               />
@@ -403,7 +521,7 @@ export function SupportCenter(
                       {t('Platform processing')}
                     </SelectItem>
                     <SelectItem value='awaiting_user'>
-                      {t('Waiting for your reply')}
+                      {supportTicketStatusLabel(t, 'awaiting_user', admin)}
                     </SelectItem>
                     <SelectItem value='resolved'>{t('Resolved')}</SelectItem>
                   </SelectContent>
@@ -427,7 +545,14 @@ export function SupportCenter(
               </CardContent>
             </Card>
 
-            {ticketContent}
+            {showDetailPane ? (
+              <div className='grid min-h-0 gap-4 lg:grid-cols-[minmax(280px,0.85fr)_minmax(0,1.6fr)]'>
+                {listContent}
+                {detailContent}
+              </div>
+            ) : (
+              listContent
+            )}
           </div>
         </SectionPageLayout.Content>
       </SectionPageLayout>

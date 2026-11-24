@@ -47,6 +47,9 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 		&PasskeyCredential{},
 		&Option{},
 		&GroupRenameOperation{},
+		&UserGroupEntitlement{},
+		&UserGroupPricing{},
+		&UserGroupPricingAudit{},
 		&LoginEncryptionKey{},
 		&Redemption{},
 		&RedemptionMutation{},
@@ -116,8 +119,8 @@ func TestMainAutoMigrateModelsPreservesPreRegistrySequence(t *testing.T) {
 
 func TestMainAutoMigrateModelsWithoutRegistryKeepsCoreModels(t *testing.T) {
 	models := mainAutoMigrateModels(nil)
-	require.Len(t, models, 71)
+	require.Len(t, models, 74)
 	assert.IsType(t, &Channel{}, models[0])
-	assert.IsType(t, &ReferralRewardInbox{}, models[65])
+	assert.IsType(t, &ReferralRewardInbox{}, models[68])
 	assert.IsType(t, &QuotaDataFlushCursor{}, models[len(models)-1])
 }

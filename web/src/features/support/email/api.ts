@@ -29,11 +29,13 @@ export const supportEmailSettingsSchema = z.object({
   admin_recipients: z.array(z.string()).max(5),
   site_origin: z.string(),
   smtp_configured: z.boolean(),
+  delivery_provider: z.enum(['smtp', 'resend', 'unsupported']).optional(),
+  delivery_configured: z.boolean().optional(),
 })
 export type SupportEmailSettings = z.infer<typeof supportEmailSettingsSchema>
 export type SupportEmailSettingsInput = Omit<
   SupportEmailSettings,
-  'smtp_configured'
+  'smtp_configured' | 'delivery_provider' | 'delivery_configured'
 >
 
 export const supportEmailPreferencesSchema = z.object({
@@ -114,11 +116,16 @@ export async function saveSupportEmailPreferences(
 
 export async function getSupportEmailOutbox(
   page: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  ticketID?: number
 ): Promise<z.infer<typeof outboxSchema>> {
   const response = await api.get('/api/support-email/outbox', {
     signal,
-    params: { p: page, page_size: 20 },
+    params: {
+      p: page,
+      page_size: 20,
+      ...(ticketID !== undefined && { ticket_id: ticketID }),
+    },
   })
   return outboxSchema.parse(responseData(response.data))
 }

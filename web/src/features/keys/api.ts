@@ -28,7 +28,6 @@ import {
   type SearchApiKeysParams,
   type ApiKeyFormData,
   type ApiKeyUpdateData,
-  type TokenAutoGroupsConfig,
   type CCSwitchApp,
 } from './types'
 
@@ -86,22 +85,19 @@ export async function getApiKey(id: number): Promise<ApiResponse<ApiKey>> {
   return { ...response, data: parsed.data }
 }
 
-// Get the current user's global Auto order and the per-token selection limit.
-export async function getTokenAutoGroups(): Promise<
-  ApiResponse<TokenAutoGroupsConfig>
-> {
-  const res = await api.get('/api/token/auto-groups')
-  return res.data
-}
-
 // Models routable by the API key routing scope currently selected in the form.
 export async function getApiKeyScopeModels(data: {
   group: string
-  smart_routing?: boolean
-  auto_groups_mode: 'inherit' | 'custom'
-  auto_groups: string[]
 }): Promise<ApiResponse<string[]>> {
   const res = await api.post('/api/token/models', data)
+  return res.data
+}
+
+// Effective models for an existing key, including its persisted allowlist.
+export async function getSavedApiKeyModels(
+  id: number
+): Promise<ApiResponse<string[]>> {
+  const res = await api.get(`/api/token/${id}/models`)
   return res.data
 }
 

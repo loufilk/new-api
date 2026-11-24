@@ -237,45 +237,15 @@ func verifyModelTestConfirmation(value string, userID int, selection modelTestSe
 	return &ticket, true
 }
 
+// Compatibility surface is read-only. Never repopulate a runnable catalogue
+// from old persisted settings during or after cutover.
 func GetModelTests(c *gin.Context) {
 	items, err := model.ListModelTestRuns(c.GetInt("id"))
 	if err != nil {
 		modelTestError(c, 503, "history_unavailable")
 		return
 	}
-	effectivePoints, effectiveErr := model.ListEffectiveModelTestRuns(c.GetInt("id"))
-	if effectiveErr != nil {
-		modelTestError(c, 503, "history_unavailable")
-		return
-	}
-	enabled, settingsErr := model.ModelTestEnabled(c.Request.Context())
-	availabilityError := ""
-	if settingsErr != nil {
-		availabilityError = "model_test_settings_unavailable"
-	}
-	catalogue := map[string][]string{}
-	if enabled {
-		// Owner history does not depend on routing configuration. A catalogue
-		// does, so acquire a fresh primary-store guard without an auth snapshot.
-		guard, guardErr := model.BeginGroupConfigRead(c.Request.Context())
-		if guardErr == nil {
-			catalogue, guardErr = modelTestCatalogue(c.GetInt("id"))
-			if finishErr := guard.Finish(); guardErr == nil {
-				guardErr = finishErr
-			}
-		}
-		if guardErr != nil {
-			enabled = false
-			catalogue = map[string][]string{}
-			availabilityError = "model_test_settings_unavailable"
-		}
-	}
-	tokens, tokenErr := modelTestTokens(c, catalogue)
-	if tokenErr != nil {
-		enabled = false
-		availabilityError = "token_catalogue_unavailable"
-	}
-	common.ApiSuccess(c, gin.H{"effective_points": effectivePoints, "eligible_tokens_by_group": tokens, "enabled": enabled, "availability_error": availabilityError, "benchmark": gin.H{"id": modelTestVersion, "name": "Local statistical model fingerprint", "public_prompt": true, "assessment": "statistical-not-proof", "sample_count": 3}, "limits": gin.H{"max_output_tokens": 0, "default_output_tokens": 0, "allowed_output_tokens": []int{0}, "timeout_seconds": int(modelTestTimeout.Seconds()), "sample_timeout_seconds": int(modelTestSampleTimeout.Seconds()), "runs_per_hour": 3, "concurrency_per_user": 1, "concurrency_global": 4}, "eligible_models_by_group": catalogue, "site_results": []any{}, "items": items})
+	common.ApiSuccess(c, gin.H{"enabled": false, "availability_error": "fingerprint_retired", "eligible_models_by_group": gin.H{}, "eligible_tokens_by_group": gin.H{}, "site_results": []any{}, "effective_points": []any{}, "items": items})
 }
 
 // Reads primary storage every time; neither a signed quote nor an administrator
@@ -643,6 +613,7 @@ type modelTestWriter struct {
 	status   int
 	written  bool
 	overflow bool
+	limit    int
 	cancel   context.CancelFunc
 }
 
@@ -655,7 +626,11 @@ func (w *modelTestWriter) WriteHeader(code int) {
 func (w *modelTestWriter) WriteHeaderNow() { w.written = true }
 func (w *modelTestWriter) Write(value []byte) (int, error) {
 	w.written = true
-	if w.body.Len()+len(value) > modelTestResponseLimit {
+	limit := w.limit
+	if limit == 0 {
+		limit = modelTestResponseLimit
+	}
+	if w.body.Len()+len(value) > limit {
 		w.overflow = true
 		w.cancel()
 		return 0, errors.New("model test response exceeds limit")

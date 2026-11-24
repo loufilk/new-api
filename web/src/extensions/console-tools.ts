@@ -29,7 +29,6 @@ export type ConsoleToolsExtension = {
   accountPoolDiagnostics: () => ReactNode
   verifyAccountPoolAccess: (client: QueryClient) => Promise<boolean>
   affiliatePage: () => ReactNode
-  intelligencePage: () => ReactNode
   loadInvoicePage: ConsolePageLoader
   loadInvoiceManagementPage: ConsolePageLoader
   loadPartnerApplicationPage: ConsolePageLoader

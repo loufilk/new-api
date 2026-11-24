@@ -21,6 +21,6 @@ import { createFileRoute, redirect } from '@tanstack/react-router'
 // Preserve bookmarked URLs without retaining the retired third-party monitor.
 export const Route = createFileRoute('/model-monitor/')({
   beforeLoad: () => {
-    throw redirect({ to: '/intelligence', replace: true })
+    throw redirect({ to: '/keys', replace: true })
   },
 })

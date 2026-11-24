@@ -154,7 +154,6 @@ describe('security sidebar visibility', () => {
         ?.items.flatMap((item) => ('url' in item ? [item.url] : []))
     ).toEqual([
       '/wallet',
-      '/intelligence',
       '/affiliate',
       '/support',
       '/profile',
