@@ -468,139 +468,155 @@ func ApplyLaneBillingFiniteKeyDevTransfer(ctx context.Context, db *gorm.DB, op L
 	}
 	replay := false
 	err := withLaneBillingFiniteKeyDevTx(ctx, db, func(tx *gorm.DB) error {
-		id := op.Identity
-		user, err := lockLaneBillingFiniteKeyUserTx(tx, id, "UPDATE")
-		if err != nil {
-			return err
+		return applyLaneBillingFiniteKeyDevTransferTx(tx, op, false, &out, &replay)
+	})
+	if err != nil {
+		return LaneBillingFiniteKeyTransferReceipt{}, false, err
+	}
+	return out, replay, nil
+}
+
+// The ordinary bridge is the sole caller permitted to reclaim active idle
+// escrow. Its canonical ordinary owner transaction holds the original user
+// against new lane admissions. Never catch and commit a partial transfer.
+func applyLaneBillingFiniteKeyDevTransferTx(tx *gorm.DB, op LaneBillingFiniteKeyTransfer, ordinaryReclaim bool, out *LaneBillingFiniteKeyTransferReceipt, replay *bool) error {
+	if !op.valid() || ordinaryReclaim && op.Direction != "reclaim" {
+		return ErrLaneBillingFiniteKeyIdentity
+	}
+	if tx == nil || tx.Statement == nil {
+		return ErrLaneBillingOwnerUnavailable
+	}
+	if _, owned := tx.Statement.ConnPool.(gorm.TxCommitter); !owned {
+		return ErrLaneBillingOwnerUnavailable
+	}
+	id := op.Identity
+	user, err := lockLaneBillingFiniteKeyUserTx(tx, id, "UPDATE")
+	if err != nil {
+		return err
+	}
+	token, tokenErr := lockLaneBillingFiniteKeyTokenTx(tx, id, "UPDATE")
+	if tokenErr != nil && !errors.Is(tokenErr, gorm.ErrRecordNotFound) {
+		return tokenErr
+	}
+	var recorded laneBillingFiniteKeyTransferV1
+	err = tx.Where("operation_id = ?", op.OperationID).Take(&recorded).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	existing := err == nil
+	if existing && (!recorded.valid() || recorded.receipt().Transfer != op) {
+		return ErrLaneBillingFiniteKeyConflict
+	}
+	e, err := lockLaneBillingKeyEnrollmentTx(tx, id, "UPDATE")
+	if err != nil {
+		return err
+	}
+	if !existing {
+		if tokenErr != nil || !originalLaneBillingFiniteKey(id, token) {
+			return ErrLaneBillingFiniteKeyIdentity
 		}
-		token, tokenErr := lockLaneBillingFiniteKeyTokenTx(tx, id, "UPDATE")
-		if tokenErr != nil && !errors.Is(tokenErr, gorm.ErrRecordNotFound) {
-			return tokenErr
+		if op.Direction == "grant" && (e.State != LaneBillingFiniteKeyActive || !liveLaneBillingFiniteKey(user, token)) ||
+			op.Direction == "reclaim" && e.State == LaneBillingFiniteKeyActive && !ordinaryReclaim {
+			return ErrLaneBillingFiniteKeyState
 		}
-		var recorded laneBillingFiniteKeyTransferV1
-		err = tx.Where("operation_id = ?", op.OperationID).Take(&recorded).Error
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		existing := err == nil
-		if existing && (!recorded.valid() || recorded.receipt().Transfer != op) {
-			return ErrLaneBillingFiniteKeyConflict
-		}
-		e, err := lockLaneBillingKeyEnrollmentTx(tx, id, "UPDATE")
-		if err != nil {
-			return err
-		}
-		if !existing {
-			if tokenErr != nil || !originalLaneBillingFiniteKey(id, token) {
-				return ErrLaneBillingFiniteKeyIdentity
-			}
-			if op.Direction == "grant" && (e.State != LaneBillingFiniteKeyActive || !liveLaneBillingFiniteKey(user, token)) ||
-				op.Direction == "reclaim" && e.State == LaneBillingFiniteKeyActive {
-				return ErrLaneBillingFiniteKeyState
-			}
-			if token.CacheRevision < 1 || token.CacheRevision >= maxPermissionRevision {
-				return ErrLaneBillingOwnerEvidence
-			}
-			if err := laneBillingKeyUnspentBoundsTx(tx, id, token.RemainQuota); err != nil {
-				return err
-			}
-		}
-		var row laneBillingFiniteKeyShareV1
-		const shareWhere = "user_id = ? AND token_id = ? AND epoch = ? AND slot = ?"
-		err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(shareWhere, id.UserID, id.TokenID, id.Epoch, op.Slot).Take(&row).Error
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		hasShare := err == nil
-		last, err := latestLaneBillingKeyTransferTx(tx, id, op.Slot)
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		if hasShare != (err == nil) || hasShare && !laneBillingKeySlotTransferMatches(id, row, last) {
+		if token.CacheRevision < 1 || token.CacheRevision >= maxPermissionRevision {
 			return ErrLaneBillingOwnerEvidence
 		}
-		if existing {
-			if !hasShare || recorded.ShareVersion > last.ShareVersion ||
-				recorded.GrantedAfter > last.GrantedAfter || recorded.ReturnedAfter > last.ReturnedAfter {
-				return ErrLaneBillingOwnerEvidence
-			}
-			out, replay = recorded.receipt(), true
-			return nil
+		if err := laneBillingKeyUnspentBoundsTx(tx, id, token.RemainQuota); err != nil {
+			return err
 		}
-		next := row
-		if !hasShare {
-			next = laneBillingFiniteKeyShareV1{
-				UserID: id.UserID, TokenID: id.TokenID, Epoch: id.Epoch, Slot: op.Slot, TokenFingerprint: id.TokenFingerprint,
-			}
-		}
-		raw := token.RemainQuota
-		if op.Direction == "grant" {
-			if raw < op.Amount {
-				return ErrBillingTokenInsufficient
-			}
-			if next.Granted > common.MaxWalletQuota-op.Amount {
-				return ErrLaneBillingOwnerEvidence
-			}
-			raw -= op.Amount
-			next.Granted += op.Amount
-			next.Available += op.Amount
-		} else {
-			if !hasShare || op.Amount > next.Available {
-				return ErrBillingTokenInsufficient
-			}
-			if raw > common.MaxWalletQuota-op.Amount {
-				return ErrLaneBillingOwnerEvidence
-			}
-			raw += op.Amount
-			next.Available -= op.Amount
-			next.Returned += op.Amount
-		}
-		next.Version++
-		if !next.valid() {
+	}
+	var row laneBillingFiniteKeyShareV1
+	const shareWhere = "user_id = ? AND token_id = ? AND epoch = ? AND slot = ?"
+	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(shareWhere, id.UserID, id.TokenID, id.Epoch, op.Slot).Take(&row).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	hasShare := err == nil
+	last, err := latestLaneBillingKeyTransferTx(tx, id, op.Slot)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	if hasShare != (err == nil) || hasShare && !laneBillingKeySlotTransferMatches(id, row, last) {
+		return ErrLaneBillingOwnerEvidence
+	}
+	if existing {
+		if !hasShare || recorded.ShareVersion > last.ShareVersion ||
+			recorded.GrantedAfter > last.GrantedAfter || recorded.ReturnedAfter > last.ReturnedAfter {
 			return ErrLaneBillingOwnerEvidence
 		}
-		result := tx.Unscoped().Model(&Token{}).
-			Where("id = ? AND user_id = ? AND cache_revision = ?", id.TokenID, id.UserID, token.CacheRevision).
-			UpdateColumns(map[string]any{"remain_quota": raw, "cache_revision": token.CacheRevision + 1})
+		*out, *replay = recorded.receipt(), true
+		return nil
+	}
+	next := row
+	if !hasShare {
+		next = laneBillingFiniteKeyShareV1{
+			UserID: id.UserID, TokenID: id.TokenID, Epoch: id.Epoch, Slot: op.Slot, TokenFingerprint: id.TokenFingerprint,
+		}
+	}
+	raw := token.RemainQuota
+	if op.Direction == "grant" {
+		if raw < op.Amount {
+			return ErrBillingTokenInsufficient
+		}
+		if next.Granted > common.MaxWalletQuota-op.Amount {
+			return ErrLaneBillingOwnerEvidence
+		}
+		raw -= op.Amount
+		next.Granted += op.Amount
+		next.Available += op.Amount
+	} else {
+		if !hasShare || op.Amount > next.Available {
+			return ErrBillingTokenInsufficient
+		}
+		if raw > common.MaxWalletQuota-op.Amount {
+			return ErrLaneBillingOwnerEvidence
+		}
+		raw += op.Amount
+		next.Available -= op.Amount
+		next.Returned += op.Amount
+	}
+	next.Version++
+	if !next.valid() {
+		return ErrLaneBillingOwnerEvidence
+	}
+	result := tx.Unscoped().Model(&Token{}).
+		Where("id = ? AND user_id = ? AND cache_revision = ?", id.TokenID, id.UserID, token.CacheRevision).
+		UpdateColumns(map[string]any{"remain_quota": raw, "cache_revision": token.CacheRevision + 1})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrLaneBillingOwnerEvidence
+	}
+	if !hasShare {
+		if err := tx.Create(&next).Error; err != nil {
+			return err
+		}
+	} else {
+		result = tx.Model(&laneBillingFiniteKeyShareV1{}).Where(shareWhere+" AND version = ?", id.UserID, id.TokenID, id.Epoch, op.Slot, row.Version).
+			UpdateColumns(map[string]any{"granted": next.Granted, "available": next.Available, "returned": next.Returned, "version": next.Version})
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
 			return ErrLaneBillingOwnerEvidence
 		}
-		if !hasShare {
-			if err := tx.Create(&next).Error; err != nil {
-				return err
-			}
-		} else {
-			result = tx.Model(&laneBillingFiniteKeyShareV1{}).Where(shareWhere+" AND version = ?", id.UserID, id.TokenID, id.Epoch, op.Slot, row.Version).
-				UpdateColumns(map[string]any{"granted": next.Granted, "available": next.Available, "returned": next.Returned, "version": next.Version})
-			if result.Error != nil {
-				return result.Error
-			}
-			if result.RowsAffected != 1 {
-				return ErrLaneBillingOwnerEvidence
-			}
-		}
-		recorded = laneBillingFiniteKeyTransferV1{
-			UserID: id.UserID, TokenID: id.TokenID, Epoch: id.Epoch, TokenFingerprint: id.TokenFingerprint,
-			OperationID: op.OperationID, Slot: op.Slot, Direction: op.Direction, Amount: op.Amount,
-			RawBefore: token.RemainQuota, RawAfter: raw, ShareVersion: next.Version, GrantedAfter: next.Granted, ReturnedAfter: next.Returned,
-		}
-		recorded.Proof = recorded.checksum()
-		if !recorded.valid() {
-			return ErrLaneBillingOwnerEvidence
-		}
-		if err := tx.Create(&recorded).Error; err != nil {
-			return err
-		}
-		out = recorded.receipt()
-		return nil
-	})
-	if err != nil {
-		return LaneBillingFiniteKeyTransferReceipt{}, false, err
 	}
-	return out, replay, nil
+	recorded = laneBillingFiniteKeyTransferV1{
+		UserID: id.UserID, TokenID: id.TokenID, Epoch: id.Epoch, TokenFingerprint: id.TokenFingerprint,
+		OperationID: op.OperationID, Slot: op.Slot, Direction: op.Direction, Amount: op.Amount,
+		RawBefore: token.RemainQuota, RawAfter: raw, ShareVersion: next.Version, GrantedAfter: next.Granted, ReturnedAfter: next.Returned,
+	}
+	recorded.Proof = recorded.checksum()
+	if !recorded.valid() {
+		return ErrLaneBillingOwnerEvidence
+	}
+	if err := tx.Create(&recorded).Error; err != nil {
+		return err
+	}
+	*out = recorded.receipt()
+	return nil
 }
 
 func authorizeLaneBillingEnrolledKeyTx(tx *gorm.DB, b laneBillingChildBinding) error {

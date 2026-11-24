@@ -286,7 +286,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				}
 			}
 		}
-		if billingErr := service.PrepareTieredBillingForSelectedGroup(c, relayInfo); billingErr != nil {
+		if billingErr := relay.PrepareSelectedRelayBilling(c, relayInfo); billingErr != nil {
 			newAPIError = billingErr
 			break
 		}

@@ -73,6 +73,9 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 	if apiErr := service.CheckModelTestAccess(c); apiErr != nil {
 		return apiErr
 	}
+	if armed, apiErr := armLaneNativeSyntheticBilling(c, info); armed {
+		return apiErr
+	}
 	if priceData.FreeModel {
 		if info.RelayFormat == types.RelayFormatOpenAIRealtime {
 			return service.PreConsumeFreeRealtimeBilling(c, info)
@@ -81,6 +84,16 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 		return nil
 	}
 	return service.PreConsumeBilling(c, priceData.QuotaToPreConsume, info)
+}
+
+// PrepareSelectedRelayBilling preserves the ordinary selected-group policy.
+// The isolated tagged fixture has already armed a fixed-group frozen quote;
+// it never lets the ordinary reprice path establish a second owner.
+func PrepareSelectedRelayBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
+	if armed, err := prepareLaneNativeSyntheticSelectedBilling(c, info); armed {
+		return err
+	}
+	return service.PrepareTieredBillingForSelectedGroup(c, info)
 }
 
 // RefundFailedRequestBilling applies the common final-failure policy after all

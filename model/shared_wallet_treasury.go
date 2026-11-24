@@ -107,6 +107,12 @@ func (op SharedWalletTransfer) ledgerEntry() LedgerEntry {
 }
 
 func verifySharedWalletTransferTx(tx *gorm.DB, receipt SharedWalletTransfer) error {
+	return verifySharedWalletTransferEvidenceTx(lockForUpdate(tx), receipt)
+}
+
+// The caller owns the consistency boundary: existing treasury mutations
+// retain their row locks; a read-only repeatable-read view uses its snapshot.
+func verifySharedWalletTransferEvidenceTx(tx *gorm.DB, receipt SharedWalletTransfer) error {
 	if !receipt.valid() || receipt.ShareVersion < 1 || receipt.ShareVersion >= common.MaxWalletQuota || receipt.GrantedAfter <= 0 || receipt.GrantedAfter > common.MaxWalletQuota || receipt.ReturnedAfter < 0 || receipt.ReturnedAfter > receipt.GrantedAfter || receipt.PreviousOperationID == receipt.OperationID {
 		return ErrSharedWalletEvidence
 	}
@@ -116,7 +122,7 @@ func verifySharedWalletTransferTx(tx *gorm.DB, receipt SharedWalletTransfer) err
 		kind = ledgerOpDebit
 		delta = -delta
 	}
-	operation, rows, err := loadLedgerOperation(lockForUpdate(tx), entry.IdempotencyKey)
+	operation, rows, err := loadLedgerOperation(tx, entry.IdempotencyKey)
 	if err != nil || !verifyReplay(operation, entry, kind) || len(rows) != 1 {
 		return ErrSharedWalletEvidence
 	}

@@ -33,7 +33,7 @@ const billingHTTPDispatchAttemptKey = "billing_http_dispatch_owner_attempt"
 // dispatch claim. The sticky request marker also survives a replaced RelayInfo
 // or Billing field; later transport errors cannot return it to ordinary funding.
 func BillingHTTPDispatchOwned(c *gin.Context, info *RelayInfo) bool {
-	if c != nil && c.GetBool(billingHTTPDispatchAttemptKey) {
+	if (c != nil && c.GetBool(billingHTTPDispatchAttemptKey)) || laneNativeSyntheticHTTPIntentPinned(c) {
 		return true
 	}
 	if info == nil {
@@ -52,10 +52,16 @@ func ClaimBillingHTTPDispatch(c *gin.Context, info *RelayInfo, req *http.Request
 		return billingHTTPDispatchError(errors.New("billing HTTP dispatch was already attempted"))
 	}
 	if info == nil {
+		if laneNativeSyntheticHTTPIntentPinned(c) {
+			return billingHTTPDispatchError(errors.New("pinned billing owner is absent"))
+		}
 		return nil
 	}
 	claimer, owned := info.Billing.(BillingHTTPDispatchClaimer)
 	if !owned {
+		if laneNativeSyntheticHTTPIntentPinned(c) {
+			return billingHTTPDispatchError(errors.New("pinned billing owner is absent"))
+		}
 		return nil
 	}
 	if c == nil || c.Request == nil {

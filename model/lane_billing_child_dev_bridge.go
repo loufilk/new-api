@@ -22,9 +22,9 @@ type LaneBillingChildDev struct {
 	cap     int
 }
 
-// LaneBillingMeasuredDev is a sanitized synthetic projection receipt, not a
-// sales/usage log. A separate worker would have to consume only ready receipts;
-// no such worker or real reporting mutation is registered here.
+// LaneBillingMeasuredDev retains the sanitized immutable measured receipt.
+// Ready marks committed spending, not a display projection. An outbox payload
+// is created in the same transaction and is consumed only by an explicit pass.
 type LaneBillingMeasuredDev struct {
 	RequestID           string `gorm:"type:varchar(64);primaryKey"`
 	ChannelID           int    `gorm:"not null"`
@@ -158,8 +158,11 @@ func (s *LaneBillingChildDev) SettleMeasured(ctx context.Context, m LaneBillingM
 			return errLaneBillingChildState
 		}
 		ready, err := readMeasurement(tx, r)
-		if err != nil || ready {
+		if err != nil {
 			return err
+		}
+		if ready {
+			return verifyLaneBillingUsageOutboxTx(tx, r, m)
 		}
 		if err := changeLaneChildSlots(tx, s.binding, r.Cap, r.Actual, true); err != nil {
 			return err
@@ -174,6 +177,6 @@ func (s *LaneBillingChildDev) SettleMeasured(ctx context.Context, m LaneBillingM
 		if put.RowsAffected != 1 {
 			return ErrLaneBillingOwnerEvidence
 		}
-		return nil
+		return createLaneBillingUsageOutboxTx(tx, r, m)
 	})
 }

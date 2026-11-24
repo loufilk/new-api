@@ -29,7 +29,7 @@ func installLaneBillingChildDevSchema(ctx context.Context, db *gorm.DB) error {
 		if !tx.Migrator().HasTable(&BillingFinalization{}) || !tx.Migrator().HasTable(&SharedWalletShare{}) || !tx.Migrator().HasTable(&SharedWalletTransfer{}) {
 			return ErrLaneBillingOwnerUnavailable
 		}
-		if err := tx.AutoMigrate(&laneBillingChildReceiptV1{}, &laneBillingFiniteKeyShareV1{}, &LaneBillingMeasuredDev{}); err != nil {
+		if err := tx.AutoMigrate(&laneBillingChildReceiptV1{}, &laneBillingFiniteKeyShareV1{}, &LaneBillingMeasuredDev{}, &laneBillingUsageOutboxDev{}); err != nil {
 			return ErrLaneBillingOwnerStore
 		}
 		return nil

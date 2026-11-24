@@ -38,6 +38,12 @@ type BillingReservationAttempt struct {
 // this never-dispatched attempt may request a refund through the owner barrier.
 // Replaying an existing owner never grants that failed-initial authority.
 func ReserveBillingFinalization(ctx context.Context, authorization BillingFinalization, previous *BillingFinalization, target int, apply func(*gorm.DB, *BillingFinalization) error, inspect ...func(*gorm.DB, BillingFinalization) error) (BillingFinalization, BillingReservationAttempt, error) {
+	return reserveBillingFinalizationWithDB(ctx, DB, authorization, previous, target, nil, apply, inspect...)
+}
+
+// Explicit-handle seam for an isolated caller. Ordinary reservation has no
+// scope callback; the same statements, lock ordering and replay rules apply.
+func reserveBillingFinalizationWithDB(ctx context.Context, db *gorm.DB, authorization BillingFinalization, previous *BillingFinalization, target int, scope func(*gorm.DB) error, apply func(*gorm.DB, *BillingFinalization) error, inspect ...func(*gorm.DB, BillingFinalization) error) (BillingFinalization, BillingReservationAttempt, error) {
 	var result BillingFinalization
 	if authorization.RequestID == "" || authorization.UserID <= 0 || target < 0 || target > common.MaxQuota || apply == nil {
 		return result, BillingReservationAttempt{}, errors.New("invalid billing reservation")
@@ -54,9 +60,14 @@ func ReserveBillingFinalization(ctx context.Context, authorization BillingFinali
 		result = stored
 		return nil
 	}
-	timing := beginWalletLockTiming(DB, authorization.Source, "reservation")
-	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	timing := beginWalletLockTiming(db, authorization.Source, "reservation")
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		timing.enterTransaction()
+		if scope != nil {
+			if err := scope(tx); err != nil {
+				return err
+			}
+		}
 		var nonce [8]byte
 		if _, err := rand.Read(nonce[:]); err != nil {
 			return err

@@ -79,6 +79,9 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		!passThroughGlobal &&
 		!info.ChannelSetting.PassThroughBodyEnabled &&
 		service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) {
+		if hasLaneNativeSyntheticBilling(c) {
+			return newAPIErrorLaneSyntheticUnsupported()
+		}
 		applySystemPromptIfNeeded(c, info, request)
 		usage, newApiErr := textRequestViaResponses(c, info, adaptor, request)
 		if newApiErr != nil {
@@ -100,6 +103,9 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	var requestBody io.Reader
 
 	if passThroughGlobal || info.ChannelSetting.PassThroughBodyEnabled {
+		if hasLaneNativeSyntheticBilling(c) {
+			return newAPIErrorLaneSyntheticUnsupported()
+		}
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -170,7 +176,9 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			return newAPIError
 		}
 
-		logger.LogDebug(c, "text request body: %s", jsonData)
+		if !hasLaneNativeSyntheticBilling(c) {
+			logger.LogDebug(c, "text request body: %s", jsonData)
+		}
 
 		body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
 		if err != nil {
@@ -181,6 +189,10 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		requestBody = body
 	}
 
+	requestBody, newAPIError = bindLaneNativeSyntheticBilling(c, info, adaptor, requestBody)
+	if newAPIError != nil {
+		return newAPIError
+	}
 	var httpResp *http.Response
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
@@ -200,6 +212,9 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		}
 	}
 
+	if newAPIError = observeLaneNativeSyntheticTerminal(c, info, httpResp); newAPIError != nil {
+		return newAPIError
+	}
 	usage, newApiErr := adaptor.DoResponse(c, httpResp, info)
 	if newApiErr != nil {
 		consumePartialTextStreamQuota(c, info, usage)
