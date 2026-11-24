@@ -16,42 +16,98 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMutation, useQuery } from '@tanstack/react-query'
-import { FlaskConical } from 'lucide-react'
-import { useId, useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Brain } from 'lucide-react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
 import { EmptyState } from '@/components/empty-state'
 import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Combobox } from '@/components/ui/combobox'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { toIntlLocale } from '@/i18n/languages'
-import { api } from '@/lib/api'
+import { getAuthSessionEpoch } from '@/lib/auth-session'
 import { formatNumber } from '@/lib/format'
-import {
-  requireServerSuccess,
-  getServerErrorMessage,
-} from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
-type Question = { id: string; prompt: string; max_output_tokens: number }
-type Options = { keys: { id: number; name: string }[]; questions: Question[] }
-type Result = {
-  id: string
-  status: string
-  error_code: string
-  request_id: string
-  answer: string
-}
-type Response<T> = { success: boolean; data: T }
+import {
+  type DiagnosticDraft,
+  type DiagnosticOptions,
+  type DiagnosticQuestion,
+  clearDiagnosticDraft,
+  diagnosticInProgress,
+  diagnosticQuestionLabels,
+  diagnosticStatusLabels,
+  isDiagnosticConflict,
+  isDiagnosticMissing,
+  isDiagnosticRejected,
+  loadDiagnosticDraft,
+  markDiagnosticDraftRejected,
+  matchesDiagnosticRun,
+  readDiagnosticHistory,
+  readDiagnosticModels,
+  readDiagnosticOptions,
+  readDiagnosticRun,
+  saveDiagnosticDraft,
+  submitDiagnostic,
+} from '../lib/key-diagnostic'
+import { KeyDiagnosticResult } from './key-diagnostic-result'
 
-const endpoint = '/api/user/key-diagnostics'
-async function read<T>(path: string, signal?: AbortSignal) {
-  return requireServerSuccess(
-    (await api.get<Response<T>>(endpoint + path, { signal })).data
-  ).data
+const routingLabels = {
+  auto: 'Automatic',
+  success_rate: 'Success rate first',
+  price: 'Price first',
+  speed: 'Speed first',
+} as const
+
+function KeyRouting({
+  selected,
+}: {
+  selected: DiagnosticOptions['keys'][number]
+}) {
+  const { t } = useTranslation()
+  if (selected.smart_routing) {
+    return (
+      <p className='text-muted-foreground text-xs'>
+        {t('Smart Routing')}
+        {selected.routing_strategy
+          ? `: ${t(routingLabels[selected.routing_strategy])}`
+          : ''}
+        {' · '}
+        {t('The selected route determines the group price.')}
+      </p>
+    )
+  }
+  if (selected.group === 'auto') {
+    return (
+      <p className='text-muted-foreground text-xs'>
+        {t('Auto group')}
+        {selected.auto_groups?.length
+          ? `: ${selected.auto_groups.join(', ')}`
+          : ''}
+        {' · '}
+        {t('The selected route determines the group price.')}
+      </p>
+    )
+  }
+  return (
+    <p className='text-muted-foreground text-xs'>
+      {selected.group ? (
+        <>
+          {t('Group')}: {selected.group}
+          {' · '}
+          {t('The Key group price applies.')}
+        </>
+      ) : (
+        t('Group not available')
+      )}
+    </p>
+  )
 }
 
 export function KeyDiagnosticButton(props: {
@@ -59,7 +115,8 @@ export function KeyDiagnosticButton(props: {
   disabled?: boolean
 }) {
   const { t } = useTranslation()
-  const owner = useAuthStore((s) => s.auth.user?.id)
+  const owner = useAuthStore((state) => state.auth.user?.id)
+  const sessionId = useAuthStore((state) => state.auth.session?.sid)
   const [open, setOpen] = useState(false)
   return (
     <>
@@ -69,15 +126,20 @@ export function KeyDiagnosticButton(props: {
         size={props.tokenId ? 'icon-sm' : 'sm'}
         title={t('Key diagnostic')}
         aria-label={t('Key diagnostic')}
-        disabled={props.disabled}
+        disabled={props.disabled || !owner}
         onClick={() => setOpen(true)}
       >
-        <FlaskConical aria-hidden='true' />
+        <Brain
+          className='text-violet-600 dark:text-violet-400'
+          aria-hidden='true'
+        />
         {!props.tokenId && t('Key diagnostic')}
       </Button>
-      {open && (
+      {open && owner && (
         <KeyDiagnosticDialog
-          key={owner}
+          key={`${owner}:${sessionId ?? ''}`}
+          owner={owner}
+          sessionId={sessionId}
           tokenId={props.tokenId}
           onClose={() => setOpen(false)}
         />
@@ -86,255 +148,500 @@ export function KeyDiagnosticButton(props: {
   )
 }
 
-function KeyDiagnosticDialog(props: { tokenId?: number; onClose: () => void }) {
+function KeyDiagnosticDialog(props: {
+  owner: number
+  sessionId?: string
+  tokenId?: number
+  onClose: () => void
+}) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const prefix = useId()
-  const owner = useAuthStore((s) => s.auth.user?.id)
-  const storageKey =
-    'key-diagnostic:last:' + owner + ':' + (props.tokenId ?? 'picker')
+  const queryClient = useQueryClient()
+  const [epoch] = useState(getAuthSessionEpoch)
+  const { owner, sessionId } = props
+  const queryNamespace = ['key-diagnostics', owner, epoch] as const
+  const [draft, setDraft] = useState(() =>
+    loadDiagnosticDraft(owner, sessionId)
+  )
+  const [viewId, setViewId] = useState(draft?.id ?? null)
   const [tokenId, setTokenId] = useState(props.tokenId ?? 0)
-  const [questionId, setQuestionId] = useState('pelican-svg-v1')
-  const [model, setModel] = useState('')
-  const [attempt, setAttempt] = useState<string | null>(() => {
-    try {
-      return sessionStorage.getItem(storageKey)
-    } catch {
-      return null
-    }
-  })
-  const submitted = useRef(!!attempt)
-  const [result, setResult] = useState<Result>()
+  const [questionId, setQuestion] =
+    useState<DiagnosticQuestion>('pelican-svg-v1')
+  const [selection, setSelection] = useState<{
+    model: string
+    revision: number
+  } | null>(null)
+  const [approved, setApproved] = useState(false)
+  const [localError, setLocalError] = useState<'storage' | null>(null)
+  const submitting = useRef(false)
+
   const options = useQuery({
-    queryKey: ['key-diagnostic-options', owner],
-    queryFn: ({ signal }) => read<Options>('/options', signal),
+    queryKey: [...queryNamespace, 'options'],
+    queryFn: ({ signal }) => readDiagnosticOptions(signal),
     staleTime: 0,
     gcTime: 0,
+    retry: false,
     meta: { errorToast: false },
   })
-  const selected = options.data?.keys.find((k) => k.id === tokenId)
+  const selected = options.data?.keys.find((key) => key.id === tokenId)
   const models = useQuery({
-    queryKey: ['key-diagnostic-models', owner, tokenId],
-    enabled: !!selected,
-    queryFn: ({ signal }) =>
-      read<string[]>('/keys/' + tokenId + '/models', signal),
+    queryKey: [...queryNamespace, 'models', tokenId],
+    enabled: !!selected && !viewId,
+    queryFn: ({ signal }) => readDiagnosticModels(tokenId, signal),
     staleTime: 0,
+    gcTime: 0,
+    retry: false,
+    refetchOnWindowFocus: false,
+    meta: { errorToast: false },
+  })
+  const question = options.data?.questions.find(
+    (item) => item.id === questionId
+  )
+  // A refreshed catalogue cannot resurrect a previously rejected selection.
+  const model =
+    models.isSuccess &&
+    selection?.revision === models.dataUpdatedAt &&
+    models.data.includes(selection.model)
+      ? selection.model
+      : ''
+  const history = useQuery({
+    queryKey: [...queryNamespace, 'history'],
+    queryFn: ({ signal }) => readDiagnosticHistory(signal),
+    retry: false,
     gcTime: 0,
     meta: { errorToast: false },
   })
-  const question = options.data?.questions.find((q) => q.id === questionId)
-  const run = useMutation({
-    retry: false,
-    meta: { errorToast: false },
-    mutationFn: async (id: string) =>
-      requireServerSuccess(
-        (
-          await api.post<Response<Result>>(
-            endpoint + '/runs',
-            {
-              request_id: id,
-              token_id: tokenId,
-              model,
-              question: questionId,
-              confirmed: true,
-            },
-            { singleUseAuthorization: true, timeout: 185000 }
-          )
-        ).data
-      ).data,
-    onSuccess: setResult,
-  })
-  const check = useMutation({
-    retry: false,
-    meta: { errorToast: false },
-    mutationFn: (id: string) => read<Result>('/runs/' + encodeURIComponent(id)),
-    onSuccess: setResult,
-  })
-  const pending = run.isPending || check.isPending
-  const start = () => {
-    if (
-      submitted.current ||
-      !selected ||
-      !question ||
-      !models.data?.includes(model)
+  function hasConsentSession() {
+    const auth = useAuthStore.getState().auth
+    return (
+      !!sessionId &&
+      getAuthSessionEpoch() === epoch &&
+      auth.user?.id === owner &&
+      auth.session?.sid === sessionId
     )
+  }
+
+  const submission = useMutation({
+    mutationFn: ({ attempt }: { attempt: DiagnosticDraft; retry: boolean }) => {
+      if (!hasConsentSession()) throw new Error('Diagnostic login changed')
+      return submitDiagnostic(attempt, epoch)
+    },
+    retry: false,
+    gcTime: 0,
+    meta: { errorToast: false },
+    onError: (error, { attempt, retry }) => {
+      if (!retry && hasConsentSession() && isDiagnosticRejected(error)) {
+        markDiagnosticDraftRejected(owner, sessionId, attempt)
+      }
+    },
+    onSuccess: (run, { attempt }) => {
+      if (!hasConsentSession()) return
+      clearDiagnosticDraft(owner, sessionId, attempt.id)
+      queryClient.setQueryData([...queryNamespace, 'run', attempt.id], run)
+      void queryClient.invalidateQueries({
+        queryKey: [...queryNamespace, 'history'],
+      })
+    },
+    onSettled: () => {
+      submitting.current = false
+    },
+  })
+  const detail = useQuery({
+    queryKey: [...queryNamespace, 'run', viewId],
+    enabled: viewId !== null && !submission.isPending,
+    queryFn: ({ signal }) => readDiagnosticRun(viewId ?? '', signal),
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+    refetchInterval: ({ state }) =>
+      state.data && diagnosticInProgress(state.data.status) ? 2500 : false,
+    meta: { errorToast: false },
+  })
+  const found =
+    detail.data ??
+    (submission.data?.id === viewId ? submission.data : undefined)
+  const draftWasViewed = draft?.id === viewId
+  const mismatch = !!(
+    found &&
+    draft &&
+    draftWasViewed &&
+    !matchesDiagnosticRun(found, draft)
+  )
+  const run = mismatch ? undefined : found
+  const accepted = !!(run && draft && matchesDiagnosticRun(run, draft))
+  useEffect(() => {
+    if (accepted && draft) clearDiagnosticDraft(owner, sessionId, draft.id)
+  }, [accepted, draft, owner, sessionId])
+
+  const conflict =
+    mismatch || (draftWasViewed && isDiagnosticConflict(submission.error))
+  const missing = !run && isDiagnosticMissing(detail.error)
+  const canChoose = !!(
+    sessionId &&
+    options.isSuccess &&
+    !options.isFetching &&
+    selected &&
+    models.isSuccess &&
+    !models.isFetching
+  )
+  const canStart = !!(
+    canChoose &&
+    question &&
+    model &&
+    approved &&
+    !submission.isPending
+  )
+  const knownNotSaved =
+    draft?.state === 'rejected-before-save' ||
+    (submission.variables?.retry === false &&
+      isDiagnosticRejected(submission.error))
+  const rejected = draftWasViewed && missing && knownNotSaved
+  const canRetry = !!(
+    sessionId &&
+    draft &&
+    draftWasViewed &&
+    missing &&
+    !detail.isFetching &&
+    !conflict &&
+    !rejected &&
+    !submission.isPending
+  )
+  let recoveryMessage = t('Loading...')
+  if (rejected) {
+    recoveryMessage = t(
+      'The server rejected this test before saving it. Review your selection.'
+    )
+  } else if (canRetry) {
+    recoveryMessage = t(
+      'No saved result yet. Retrying keeps the same request ID.'
+    )
+  } else if (detail.isError || submission.isError) {
+    recoveryMessage = t(
+      'Submission could not be confirmed. Check this request before starting another test.'
+    )
+  }
+
+  function send(attempt: DiagnosticDraft, retry = false) {
+    if (submitting.current || !hasConsentSession() || (retry && !canRetry)) {
       return
-    const id = crypto.randomUUID()
-    submitted.current = true
-    setAttempt(id)
-    try {
-      sessionStorage.setItem(storageKey, id)
-    } catch {
-      /* private storage unavailable */
     }
-    run.mutate(id)
-  }
-  const reset = () => {
-    submitted.current = false
-    try {
-      sessionStorage.removeItem(storageKey)
-    } catch {
-      /* private storage unavailable */
+    if (retry) {
+      const stored = loadDiagnosticDraft(owner, sessionId)
+      if (!stored || !matchesDiagnosticRun(stored, attempt)) return
+      if (stored.state === 'rejected-before-save') {
+        setDraft(stored)
+        return
+      }
     }
-    setAttempt(null)
-    setResult(undefined)
-    run.reset()
-    check.reset()
+    submitting.current = true
+    submission.mutate({ attempt, retry })
   }
-  const err = check.error ?? run.error ?? options.error ?? models.error
+
+  function start() {
+    if (
+      !canStart ||
+      submitting.current ||
+      !hasConsentSession() ||
+      !selected ||
+      !question
+    ) {
+      return
+    }
+    setLocalError(null)
+    const existing = loadDiagnosticDraft(owner, sessionId)
+    if (existing) {
+      // A list/row reopen (or another tab) must not silently replace an unconfirmed request.
+      setDraft(existing)
+      setViewId(existing.id)
+      return
+    }
+    if (typeof globalThis.crypto?.randomUUID !== 'function') {
+      setLocalError('storage')
+      return
+    }
+    const attempt = {
+      id: crypto.randomUUID(),
+      token_id: selected.id,
+      model,
+      question: question.id,
+    }
+    if (!saveDiagnosticDraft(owner, sessionId, attempt)) {
+      setLocalError('storage')
+      return
+    }
+    setDraft(attempt)
+    setViewId(attempt.id)
+    setApproved(false)
+    send(attempt)
+  }
+
+  function setup() {
+    if (!hasConsentSession()) return
+    if (draft && (accepted || conflict || rejected)) {
+      clearDiagnosticDraft(owner, sessionId, draft.id)
+    }
+    if (rejected) {
+      // Preflight rejected the published choice. Refresh both catalogues
+      // before exposing a new paid confirmation; do not replay this tuple.
+      void queryClient.invalidateQueries({
+        queryKey: [...queryNamespace, 'options'],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [...queryNamespace, 'models'],
+      })
+    }
+    setDraft(loadDiagnosticDraft(owner, sessionId))
+    setSelection(null)
+    setApproved(false)
+    setViewId(null)
+    submission.reset()
+  }
+
   return (
     <Dialog
       open
-      onOpenChange={(next) => {
-        if (!next && !pending) props.onClose()
-      }}
-      showCloseButton={!pending}
+      onOpenChange={(next) => !next && props.onClose()}
       title={t('Key diagnostic')}
       description={t(
         'This sends one paid request with your selected API key. Your normal account balance and group price apply. A single answer does not verify model identity.'
       )}
+      contentClassName='sm:max-w-2xl'
       bodyClassName='space-y-4'
       footer={
         <>
-          <Button variant='outline' disabled={pending} onClick={props.onClose}>
+          <Button variant='outline' onClick={props.onClose}>
             {t('Close')}
           </Button>
-          {!attempt && (
-            <Button
-              disabled={
-                pending ||
-                !selected ||
-                !question ||
-                !models.data?.includes(model)
-              }
-              onClick={start}
-            >
+          {!viewId && (
+            <Button disabled={!canStart} onClick={start}>
               {t('Start test')}
             </Button>
           )}
-          {attempt && (
-            <Button
-              variant='outline'
-              disabled={pending}
-              onClick={() => check.mutate(attempt)}
-            >
-              {t('Check result')}
-            </Button>
-          )}
-          {attempt && !pending && result?.status !== 'running' && (
-            <Button variant='outline' onClick={reset}>
-              {t('New test')}
-            </Button>
+          {viewId && !submission.isPending && (
+            <>
+              {(!draftWasViewed || accepted || conflict || rejected) && (
+                <Button variant='outline' onClick={setup}>
+                  {t('New test')}
+                </Button>
+              )}
+              <Button
+                variant='outline'
+                disabled={detail.isFetching}
+                onClick={() => void detail.refetch()}
+              >
+                {t('Check result')}
+              </Button>
+              {canRetry && draft && (
+                <Button onClick={() => send(draft, true)}>
+                  {t('Retry same request')}
+                </Button>
+              )}
+            </>
           )}
         </>
       }
     >
-      {options.isPending && <LoadingState inline message={t('Loading...')} />}
-      {err && (
-        <p role='alert' className='text-destructive'>
-          {getServerErrorMessage(err)}
-        </p>
-      )}
-      {!attempt && options.data && (
+      {!viewId && (
         <>
-          <div className='space-y-1'>
-            <Label htmlFor={prefix + 'key'}>{t('API Key')}</Label>
-            <NativeSelect
-              id={prefix + 'key'}
-              value={tokenId || ''}
-              disabled={!!props.tokenId}
-              onChange={(e) => {
-                setTokenId(Number(e.target.value))
-                setModel('')
-              }}
-            >
-              <NativeSelectOption value=''>
-                {t('Select API key')}
-              </NativeSelectOption>
-              {options.data.keys.map((k) => (
-                <NativeSelectOption value={k.id} key={k.id}>
-                  {k.name || '#' + k.id} (#{k.id})
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </div>
-          {(!options.data.keys.length || (props.tokenId && !selected)) && (
-            <EmptyState title={t('No eligible API key')} />
+          {localError && (
+            <p role='alert' className='text-destructive text-sm'>
+              {t(
+                'This browser could not save the request for recovery. No test was sent.'
+              )}
+            </p>
           )}
-          <div className='space-y-1'>
-            <Label htmlFor={prefix + 'model'}>{t('Model')}</Label>
-            <NativeSelect
-              id={prefix + 'model'}
-              value={model}
-              disabled={!selected || models.isPending}
-              onChange={(e) => setModel(e.target.value)}
-            >
-              <NativeSelectOption value=''>
-                {t('Select model')}
-              </NativeSelectOption>
-              {models.data?.map((m) => (
-                <NativeSelectOption key={m} value={m}>
-                  {m}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-            {selected && models.isPending && (
-              <LoadingState inline message={t('Loading...')} />
-            )}
-            {selected && models.data?.length === 0 && (
-              <p>{t('No eligible chat models for this key.')}</p>
-            )}
-          </div>
-          <div className='space-y-1'>
-            <Label htmlFor={prefix + 'question'}>{t('Test question')}</Label>
-            <NativeSelect
-              id={prefix + 'question'}
-              value={questionId}
-              onChange={(e) => setQuestionId(e.target.value)}
-            >
-              {options.data.questions.map((q) => (
-                <NativeSelectOption key={q.id} value={q.id}>
-                  {q.id === 'pelican-svg-v1'
-                    ? t('Cycling pelican (SVG animation)')
-                    : t('Drawing candies (logic puzzle)')}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </div>
-          {question && (
-            <section className='bg-muted rounded-md p-3 text-sm'>
-              <p className='whitespace-pre-wrap'>{question.prompt}</p>
-              <p className='text-muted-foreground mt-2'>
-                {t('Output limit')}:{' '}
-                {formatNumber(question.max_output_tokens, locale)} tokens
-              </p>
-            </section>
+          {draft && (
+            <Button variant='outline' onClick={() => setViewId(draft.id)}>
+              {t('Resume previous test')}
+            </Button>
+          )}
+          {options.isPending && (
+            <LoadingState inline message={t('Loading...')} />
+          )}
+          {options.isError && (
+            <p role='alert' className='text-destructive text-sm'>
+              {t('Could not load test options.')}
+            </p>
+          )}
+          {options.data && (
+            <>
+              <div className='space-y-2'>
+                <Label htmlFor={`${prefix}key`}>{t('API Key')}</Label>
+                <NativeSelect
+                  id={`${prefix}key`}
+                  value={tokenId || ''}
+                  disabled={!!props.tokenId}
+                  onChange={(event) => {
+                    setTokenId(Number(event.target.value))
+                    setSelection(null)
+                    setApproved(false)
+                  }}
+                >
+                  <NativeSelectOption value=''>
+                    {t('Select API key')}
+                  </NativeSelectOption>
+                  {options.data.keys.map((key) => (
+                    <NativeSelectOption key={key.id} value={key.id}>
+                      {(key.name || `#${key.id}`) +
+                        (key.group
+                          ? ` · ${key.group === 'auto' ? t('Auto group') : key.group}`
+                          : '')}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+                {selected && <KeyRouting selected={selected} />}
+              </div>
+              {(!options.data.keys.length || (props.tokenId && !selected)) && (
+                <EmptyState title={t('No eligible API key')} />
+              )}
+              <fieldset className='space-y-2'>
+                <legend className='text-sm font-medium'>
+                  {t('Test question')}
+                </legend>
+                <RadioGroup
+                  value={questionId}
+                  onValueChange={(value) => {
+                    if (
+                      value !== 'pelican-svg-v1' &&
+                      value !== 'candy-logic-v1'
+                    ) {
+                      return
+                    }
+                    setQuestion(value)
+                    setApproved(false)
+                  }}
+                  className='flex flex-wrap gap-x-5 gap-y-2'
+                >
+                  {options.data.questions.map((item) => (
+                    <div key={item.id} className='flex items-center gap-2'>
+                      <RadioGroupItem id={prefix + item.id} value={item.id} />
+                      <Label htmlFor={prefix + item.id}>
+                        {t(diagnosticQuestionLabels[item.id])}
+                      </Label>
+                    </div>
+                  ))}
+                </RadioGroup>
+              </fieldset>
+              {question && (
+                <div className='space-y-2'>
+                  <div className='bg-muted/50 max-h-48 overflow-auto rounded-lg border p-3 text-sm whitespace-pre-wrap'>
+                    {question.prompt}
+                  </div>
+                  <p className='text-muted-foreground text-xs'>
+                    {t('Output limit')}:{' '}
+                    {formatNumber(question.max_output_tokens, locale)}{' '}
+                    {t('tokens')}
+                  </p>
+                </div>
+              )}
+              <div className='space-y-2'>
+                <Label htmlFor={`${prefix}model`}>{t('Model')}</Label>
+                <Combobox
+                  id={`${prefix}model`}
+                  options={(models.data ?? []).map((value) => ({
+                    value,
+                    label: value,
+                  }))}
+                  value={model}
+                  searchPlaceholder={t('Search models')}
+                  disabled={!canChoose}
+                  onValueChange={(value) => {
+                    setSelection(
+                      value
+                        ? { model: value, revision: models.dataUpdatedAt }
+                        : null
+                    )
+                    setApproved(false)
+                  }}
+                />
+                {selected && models.isPending && (
+                  <LoadingState inline message={t('Loading...')} />
+                )}
+                {selected && models.isError && (
+                  <p role='alert' className='text-destructive text-sm'>
+                    {t('Could not load models for this key.')}
+                  </p>
+                )}
+                {selected && models.data?.length === 0 && (
+                  <p className='text-muted-foreground text-sm'>
+                    {t('No eligible chat models for this key.')}
+                  </p>
+                )}
+              </div>
+              <div className='flex items-start gap-2'>
+                <Checkbox
+                  id={`${prefix}consent`}
+                  checked={approved && !!model}
+                  disabled={!canChoose || !model || !question}
+                  onCheckedChange={(checked) => setApproved(checked === true)}
+                />
+                <Label htmlFor={`${prefix}consent`} className='leading-snug'>
+                  {t('I agree to one paid test with this API key.')}
+                </Label>
+              </div>
+            </>
           )}
         </>
       )}
-      {pending && <LoadingState inline message={t('Loading...')} />}
-      {attempt && !result && !pending && (
-        <p role='status'>
-          {t(
-            'Check the existing request before starting another test. Checking does not send a model request.'
+      {viewId && (
+        <>
+          {submission.isPending && (
+            <p role='status'>
+              {t('Submitting test. You can close this window and check later.')}
+            </p>
           )}
-        </p>
-      )}
-      {result && (
-        <section aria-live='polite' className='space-y-2'>
-          <p>
-            {t('Status')}: {t(result.status)} {result.error_code}
-          </p>
-          <p className='text-muted-foreground text-xs break-all'>
-            {t('Request ID')}: {result.request_id}
-          </p>
-          {result.answer && (
-            <pre className='bg-muted max-h-80 overflow-auto rounded-md p-3 text-xs break-words whitespace-pre-wrap'>
-              {result.answer}
-            </pre>
+          {conflict && (
+            <p role='alert' className='text-destructive text-sm'>
+              {t(
+                'This request ID belongs to a different selection. It was not retried.'
+              )}
+            </p>
           )}
-        </section>
+          {!conflict && !run && !submission.isPending && (
+            <p role='status' className='text-sm'>
+              {recoveryMessage}
+            </p>
+          )}
+          {run && <KeyDiagnosticResult run={run} />}
+        </>
       )}
+      <details className='rounded-lg border p-3'>
+        <summary className='cursor-pointer text-sm font-medium'>
+          {t('Recent tests')}
+        </summary>
+        <div className='mt-2 max-h-48 space-y-1 overflow-auto'>
+          {history.isPending && (
+            <LoadingState inline message={t('Loading...')} />
+          )}
+          {history.isError && (
+            <p className='text-muted-foreground text-sm'>
+              {t('Could not load recent tests.')}
+            </p>
+          )}
+          {history.data?.length === 0 && (
+            <p className='text-muted-foreground text-sm'>
+              {t('No previous tests')}
+            </p>
+          )}
+          {history.data?.map((item) => (
+            <Button
+              key={item.id}
+              variant={viewId === item.id ? 'secondary' : 'ghost'}
+              size='sm'
+              className='w-full justify-between gap-2'
+              aria-pressed={viewId === item.id}
+              disabled={submission.isPending}
+              onClick={() => setViewId(item.id)}
+            >
+              <span className='truncate'>{item.model ?? item.id}</span>
+              <span className='text-muted-foreground text-xs'>
+                {t(diagnosticStatusLabels[item.status])}
+              </span>
+            </Button>
+          ))}
+        </div>
+      </details>
     </Dialog>
   )
 }

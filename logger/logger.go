@@ -92,12 +92,17 @@ func LogError(ctx context.Context, msg string) {
 // LogDebug formats msg with common.LogText only when debug logging is on, so
 // callers pass the format and its arguments instead of a formatted string.
 func LogDebug(ctx context.Context, msg string, args ...any) {
-	if common.DebugEnabled {
+	if common.DebugEnabled && !common.IsPrivateKeyDiagnosticLog(ctx) {
 		logHelper(ctx, loggerDebug, common.LogText(msg, args...))
 	}
 }
 
 func logHelper(ctx context.Context, level string, msg string) {
+	if common.IsPrivateKeyDiagnosticLog(ctx) {
+		// Relay adaptors can format raw provider bodies/errors at any log
+		// level. Keep a correlated event without arbitrary provider text.
+		msg = "key diagnostic relay event"
+	}
 	var id any = "SYSTEM"
 	if ctx != nil {
 		if requestID := ctx.Value(common.RequestIdKey); requestID != nil {

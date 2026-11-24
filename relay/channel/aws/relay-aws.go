@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -62,6 +63,26 @@ func newAwsInvokeError(requestContext context.Context, err error, operation stri
 	)
 }
 
+// Bedrock bypasses the common channel HTTP dispatcher. Restrict only the
+// private diagnostic client; ordinary SDK requests keep their existing policy.
+type keyDiagnosticAWSHTTPClient struct {
+	inner *http.Client
+	sent  atomic.Bool
+}
+
+func (c *keyDiagnosticAWSHTTPClient) Do(request *http.Request) (*http.Response, error) {
+	if !c.sent.CompareAndSwap(false, true) {
+		return nil, errors.New("key diagnostic Bedrock request was already dispatched")
+	}
+	once := request.Clone(request.Context())
+	once.GetBody = nil
+	response, err := service.DoRequestWithoutRedirects(c.inner, once)
+	if err == nil && response.Body != nil {
+		response.Body = http.MaxBytesReader(nil, response.Body, 512<<10)
+	}
+	return response, err
+}
+
 func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.Client, error) {
 	httpClient, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
 	if err != nil {
@@ -77,6 +98,10 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 		common.GetContextKeyBool(c, constant.ContextKeyModelTestSingleAttempt) {
 		retryer = aws.NopRetryer{}
 	}
+	var wireClient aws.HTTPClient = httpClient
+	if common.IsPrivateKeyDiagnosticLog(c) {
+		wireClient = &keyDiagnosticAWSHTTPClient{inner: httpClient}
+	}
 	var client *bedrockruntime.Client
 	switch len(awsSecret) {
 	case 2:
@@ -85,7 +110,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 		client = bedrockruntime.New(bedrockruntime.Options{
 			Region:                  region,
 			BearerAuthTokenProvider: bearer.StaticTokenProvider{Token: bearer.Token{Value: apiKey}},
-			HTTPClient:              httpClient,
+			HTTPClient:              wireClient,
 			Retryer:                 retryer,
 		})
 	case 3:
@@ -95,7 +120,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 		client = bedrockruntime.New(bedrockruntime.Options{
 			Region:      region,
 			Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(ak, sk, "")),
-			HTTPClient:  httpClient,
+			HTTPClient:  wireClient,
 			Retryer:     retryer,
 		})
 	default:

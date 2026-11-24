@@ -693,6 +693,23 @@ export const STATIC_I18N_KEYS = [
   'Validity',
   'Actions',
 
+  // Key diagnostic question, result, and routing labels
+  'Cycling pelican (SVG animation)',
+  'Drawing candies (logic puzzle)',
+  'Queued',
+  'Running',
+  'Completed',
+  'Failed',
+  'Intercepted',
+  'Result unknown',
+  'Correct answer',
+  'Incorrect answer',
+  'Answer not recognized',
+  'Automatic',
+  'Success rate first',
+  'Price first',
+  'Speed first',
+
   // Sidebar modules
   'Chat Area',
   'Text Generation and chat functions',

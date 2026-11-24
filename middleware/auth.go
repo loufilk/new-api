@@ -592,6 +592,17 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 }
 
 func TokenAuth() func(c *gin.Context) {
+	return relayTokenAuth(nil)
+}
+
+// KeyDiagnosticTokenAuth runs only on the non-registered, in-process
+// diagnostic relay. Its trusted resolver revalidates the selected owned row;
+// the worker never encodes the user's Key into a synthetic HTTP header.
+func KeyDiagnosticTokenAuth(resolve func(*gin.Context) (*model.Token, error)) func(c *gin.Context) {
+	return relayTokenAuth(resolve)
+}
+
+func relayTokenAuth(resolve func(*gin.Context) (*model.Token, error)) func(c *gin.Context) {
 	return func(c *gin.Context) {
 		groupRead, groupErr := model.BeginGroupConfigRead(c.Request.Context())
 		if groupErr != nil {
@@ -600,49 +611,55 @@ func TokenAuth() func(c *gin.Context) {
 		}
 		defer groupRead.Close()
 
-		// 先检测是否为ws
-		applyWebSocketSubprotocolAuthorization(c.Request.Header)
-		// 检查path包含/v1/messages 或 /v1/models
-		if strings.Contains(c.Request.URL.Path, "/v1/messages") || strings.Contains(c.Request.URL.Path, "/v1/models") {
-			anthropicKey := c.Request.Header.Get("x-api-key")
-			if anthropicKey != "" {
-				c.Request.Header.Set("Authorization", "Bearer "+anthropicKey)
+		var token *model.Token
+		var err error
+		var parts []string
+		if resolve != nil {
+			token, err = resolve(c)
+		} else {
+			// 先检测是否为ws
+			applyWebSocketSubprotocolAuthorization(c.Request.Header)
+			// 检查path包含/v1/messages 或 /v1/models
+			if strings.Contains(c.Request.URL.Path, "/v1/messages") || strings.Contains(c.Request.URL.Path, "/v1/models") {
+				anthropicKey := c.Request.Header.Get("x-api-key")
+				if anthropicKey != "" {
+					c.Request.Header.Set("Authorization", "Bearer "+anthropicKey)
+				}
 			}
-		}
-		// gemini api 从query中获取key
-		if c.Request.URL.Path == "/v1/models" ||
-			strings.HasPrefix(c.Request.URL.Path, "/v1beta/models") ||
-			strings.HasPrefix(c.Request.URL.Path, "/v1beta/openai/models") ||
-			strings.HasPrefix(c.Request.URL.Path, "/v1/models/") {
-			skKey := c.Query("key")
-			if skKey != "" {
-				c.Request.Header.Set("Authorization", "Bearer "+skKey)
+			// gemini api 从query中获取key
+			if c.Request.URL.Path == "/v1/models" ||
+				strings.HasPrefix(c.Request.URL.Path, "/v1beta/models") ||
+				strings.HasPrefix(c.Request.URL.Path, "/v1beta/openai/models") ||
+				strings.HasPrefix(c.Request.URL.Path, "/v1/models/") {
+				skKey := c.Query("key")
+				if skKey != "" {
+					c.Request.Header.Set("Authorization", "Bearer "+skKey)
+				}
+				// 从x-goog-api-key header中获取key
+				xGoogKey := c.Request.Header.Get("x-goog-api-key")
+				if xGoogKey != "" {
+					c.Request.Header.Set("Authorization", "Bearer "+xGoogKey)
+				}
 			}
-			// 从x-goog-api-key header中获取key
-			xGoogKey := c.Request.Header.Get("x-goog-api-key")
-			if xGoogKey != "" {
-				c.Request.Header.Set("Authorization", "Bearer "+xGoogKey)
-			}
-		}
-		key := c.Request.Header.Get("Authorization")
-		parts := make([]string, 0)
-		if strings.HasPrefix(key, "Bearer ") || strings.HasPrefix(key, "bearer ") {
-			key = strings.TrimSpace(key[7:])
-		}
-		if key == "" || key == "midjourney-proxy" {
-			key = c.Request.Header.Get("mj-api-secret")
+			key := c.Request.Header.Get("Authorization")
 			if strings.HasPrefix(key, "Bearer ") || strings.HasPrefix(key, "bearer ") {
 				key = strings.TrimSpace(key[7:])
 			}
-			key = strings.TrimPrefix(key, "sk-")
-			parts = strings.Split(key, "-")
-			key = parts[0]
-		} else {
-			key = strings.TrimPrefix(key, "sk-")
-			parts = strings.Split(key, "-")
-			key = parts[0]
+			if key == "" || key == "midjourney-proxy" {
+				key = c.Request.Header.Get("mj-api-secret")
+				if strings.HasPrefix(key, "Bearer ") || strings.HasPrefix(key, "bearer ") {
+					key = strings.TrimSpace(key[7:])
+				}
+				key = strings.TrimPrefix(key, "sk-")
+				parts = strings.Split(key, "-")
+				key = parts[0]
+			} else {
+				key = strings.TrimPrefix(key, "sk-")
+				parts = strings.Split(key, "-")
+				key = parts[0]
+			}
+			token, err = model.ValidateUserTokenIdentity(key)
 		}
-		token, err := model.ValidateUserTokenIdentity(key)
 		if token != nil {
 			id := c.GetInt("id")
 			if id == 0 {
@@ -651,7 +668,9 @@ func TokenAuth() func(c *gin.Context) {
 		}
 		if err != nil {
 			if errors.Is(err, model.ErrDatabase) {
-				common.SysLog(common.LogText("TokenAuth ValidateUserToken database error: %s", err.Error()))
+				if resolve == nil {
+					common.SysLog(common.LogText("TokenAuth ValidateUserToken database error: %s", err.Error()))
+				}
 				abortWithOpenAiMessage(c, http.StatusInternalServerError,
 					common.TranslateMessage(c, i18n.MsgDatabaseError))
 			} else {

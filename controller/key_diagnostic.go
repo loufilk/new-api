@@ -1,8 +1,6 @@
 package controller
 
 import (
-	"bytes"
-	"context"
 	"errors"
 	"net"
 	"net/http"
@@ -49,18 +47,27 @@ func GetKeyDiagnosticOptions(c *gin.Context) {
 	}
 	var tokens []model.Token
 	// Read only non-secret columns, scoped to the dashboard identity.
-	if err := model.DB.WithContext(c.Request.Context()).Select("id", "user_id", "name", "status", "expired_time", "remain_quota", "unlimited_quota", "allow_ips").Where("user_id = ? AND status = ?", identity.UserID, common.TokenStatusEnabled).Order("id DESC").Find(&tokens).Error; err != nil {
-		modelTestError(c, 503, "catalogue_unavailable")
+	if err := model.DB.WithContext(c.Request.Context()).Select("id", "user_id", "name", "status", "expired_time", "remain_quota", "unlimited_quota", "allow_ips", "group", "smart_routing", "routing_strategy", "auto_groups").Where("user_id = ? AND status = ?", identity.UserID, common.TokenStatusEnabled).Order("id DESC").Find(&tokens).Error; err != nil {
+		keyDiagnosticError(c, 503, "catalogue_unavailable")
 		return
 	}
 	type keyOption struct {
-		ID   int    `json:"id"`
-		Name string `json:"name"`
+		ID              int      `json:"id"`
+		Name            string   `json:"name"`
+		Group           string   `json:"group"`
+		SmartRouting    bool     `json:"smart_routing"`
+		RoutingStrategy string   `json:"routing_strategy"`
+		AutoGroups      []string `json:"auto_groups"`
 	}
 	keys := make([]keyOption, 0, len(tokens))
 	for i := range tokens {
 		if usableDiagnosticToken(&tokens[i], identity.UserID, c.ClientIP()) {
-			keys = append(keys, keyOption{tokens[i].Id, tokens[i].Name})
+			token := &tokens[i]
+			groups, err := token.GetAutoGroups()
+			if err != nil || groups == nil {
+				groups = []string{}
+			}
+			keys = append(keys, keyOption{token.Id, token.Name, token.Group, token.SmartRouting, token.GetRoutingStrategy(), groups})
 		}
 	}
 	common.ApiSuccess(c, gin.H{"keys": keys, "questions": keyDiagnosticQuestions})
@@ -72,19 +79,20 @@ func keyDiagnosticModels(c *gin.Context, tokenID, owner int) (*model.Token, []st
 		return nil, nil, false
 	}
 	defer guard.Close()
-	token, err := model.GetTokenByIds(tokenID, owner)
+	token := &model.Token{}
+	err := model.DB.WithContext(c.Request.Context()).Omit("key").Where("id = ? AND user_id = ?", tokenID, owner).First(token).Error
 	if err != nil || !usableDiagnosticToken(token, owner, c.ClientIP()) {
-		modelTestError(c, 403, "token_unavailable")
+		keyDiagnosticError(c, 403, "token_unavailable")
 		return nil, nil, false
 	}
 	user, err := model.GetUserCache(owner)
 	if err != nil || user.Status != common.UserStatusEnabled {
-		modelTestError(c, 403, "token_unavailable")
+		keyDiagnosticError(c, 403, "token_unavailable")
 		return nil, nil, false
 	}
 	groups, err := service.GetTokenEffectiveGroupsForUser(c.Request.Context(), owner, user.Group, token)
 	if err != nil {
-		modelTestError(c, 503, "catalogue_unavailable")
+		keyDiagnosticError(c, 503, "catalogue_unavailable")
 		return nil, nil, false
 	}
 	allowsChat := model.NewPlaygroundChannelFilter(constant.EndpointTypeOpenAI)
@@ -93,7 +101,7 @@ func keyDiagnosticModels(c *gin.Context, tokenID, owner int) (*model.Token, []st
 		return diagnosticChannelSupported(ch.Type) && allowsChat(ch, name) && (!token.ModelLimitsEnabled || middleware.TokenModelLimitAllows(limits, name))
 	})
 	if err != nil {
-		modelTestError(c, 503, "catalogue_unavailable")
+		keyDiagnosticError(c, 503, "catalogue_unavailable")
 		return nil, nil, false
 	}
 	if !finishControllerGroupConfigRead(c, guard) {
@@ -120,7 +128,7 @@ func GetKeyDiagnosticModels(c *gin.Context) {
 	}
 	tokenID, err := strconv.Atoi(c.Param("id"))
 	if err != nil || tokenID <= 0 {
-		modelTestError(c, 400, "invalid_selection")
+		keyDiagnosticError(c, 400, "invalid_selection")
 		return
 	}
 	_, models, ok := keyDiagnosticModels(c, tokenID, identity.UserID)
@@ -134,15 +142,70 @@ type keyDiagnosticRequest struct {
 	Model     string `json:"model"`
 	Question  string `json:"question"`
 	Confirmed bool   `json:"confirmed"`
-	RequestID string `json:"request_id"`
+	ClientID  string `json:"client_request_id"`
 }
 
-func diagnosticResponse(c *gin.Context, run *model.ModelTestRun) {
+type keyDiagnosticAdmission struct {
+	input    keyDiagnosticRequest
+	identity service.AuthIdentity
+	question keyDiagnosticQuestion
+	ip       string
+}
+
+type keyDiagnosticView struct {
+	ID          string                    `json:"id"`
+	TokenID     int                       `json:"token_id"`
+	Model       string                    `json:"model"`
+	Question    string                    `json:"question"`
+	Status      string                    `json:"status"`
+	ErrorCode   string                    `json:"error_code,omitempty"`
+	RequestID   string                    `json:"request_id"`
+	Answer      string                    `json:"answer,omitempty"`
+	CreatedAt   int64                     `json:"created_at"`
+	CompletedAt int64                     `json:"completed_at,omitempty"`
+	ElapsedMS   *int64                    `json:"elapsed_ms,omitempty"`
+	HTTPStatus  int                       `json:"http_status,omitempty"`
+	CandyResult string                    `json:"candy_result,omitempty"`
+	Billing     model.KeyDiagnosticBill   `json:"billing"`
+	Usage       *model.KeyDiagnosticUsage `json:"usage,omitempty"`
+}
+
+func diagnosticView(run model.ModelTestRun, bill model.KeyDiagnosticBill) keyDiagnosticView {
+	d := model.ReadKeyDiagnosticDetails(run)
 	status, code := run.Status, run.ErrorCode
-	if status == "running" && run.ExpiresAt < time.Now().Unix() {
-		status, code = "unknown", "worker_interrupted"
+	if run.ExpiresAt <= time.Now().Unix() {
+		switch status {
+		case model.KeyDiagnosticQueued:
+			status, code = "failed", "worker_not_dispatched"
+		case model.KeyDiagnosticRunning:
+			status, code = "unknown", "worker_interrupted"
+		}
 	}
-	common.ApiSuccess(c, gin.H{"id": run.ID, "status": status, "error_code": code, "request_id": run.RequestID, "answer": run.ArtworkHTML})
+	if bill.Status == "" {
+		bill.Status = "unconfirmed"
+	}
+	bill.Scope = "generation"
+	var elapsed *int64
+	if d.Version == 1 && run.CompletedAt > 0 && status != "queued" && status != "running" {
+		elapsed = &d.ElapsedMS
+	}
+	return keyDiagnosticView{ID: d.ClientID, TokenID: run.TokenID, Model: run.Model, Question: run.BenchmarkID,
+		Status: status, ErrorCode: code, RequestID: run.RequestID, Answer: run.ArtworkHTML,
+		CreatedAt: run.CreatedAt, CompletedAt: run.CompletedAt, ElapsedMS: elapsed, HTTPStatus: d.HTTPStatus,
+		CandyResult: d.CandyResult, Billing: bill, Usage: bill.Usage}
+}
+
+func diagnosticResponse(c *gin.Context, status int, run *model.ModelTestRun) {
+	var bill model.KeyDiagnosticBill
+	if status == http.StatusOK {
+		bill = model.ReadKeyDiagnosticBills(c.Request.Context(), run.UserID, []model.ModelTestRun{*run})[run.RequestID]
+	}
+	c.JSON(status, gin.H{"success": true, "message": "", "data": diagnosticView(*run, bill)})
+}
+
+func parseKeyDiagnosticID(raw string) bool {
+	id, err := uuid.Parse(raw)
+	return err == nil && id != uuid.Nil && id.String() == raw
 }
 
 func PrepareKeyDiagnostic(c *gin.Context) {
@@ -152,23 +215,59 @@ func PrepareKeyDiagnostic(c *gin.Context) {
 		return
 	}
 	var input keyDiagnosticRequest
+	// client_request_id is intentionally distinct from the prior synchronous
+	// handler's request_id. Its strict decoder won't dispatch it on old nodes.
 	if c.ContentType() != "application/json" || common.DecodeJsonStrict(http.MaxBytesReader(c.Writer, c.Request.Body, 4096), &input) != nil || !input.Confirmed {
-		modelTestError(c, 400, "confirmation_required")
+		keyDiagnosticError(c, 400, "confirmation_required")
 		return
 	}
-	id, err := uuid.Parse(input.RequestID)
 	qi := slices.IndexFunc(keyDiagnosticQuestions, func(q keyDiagnosticQuestion) bool { return q.ID == input.Question })
-	if err != nil || id.String() != input.RequestID || id == uuid.Nil || qi < 0 || input.TokenID <= 0 || strings.TrimSpace(input.Model) == "" || len(input.Model) > 255 {
-		modelTestError(c, 400, "invalid_selection")
+	if !parseKeyDiagnosticID(input.ClientID) || qi < 0 || input.TokenID <= 0 || strings.TrimSpace(input.Model) == "" || len(input.Model) > 255 {
+		keyDiagnosticError(c, 400, "invalid_selection")
 		return
 	}
 	question := keyDiagnosticQuestions[qi]
-	token, models, ok := keyDiagnosticModels(c, input.TokenID, identity.UserID)
+	if prior, err := model.GetKeyDiagnosticRun(c.Request.Context(), identity.UserID, input.ClientID); err == nil {
+		if !model.KeyDiagnosticSameInput(prior, input.TokenID, input.Model, input.Question, question.Limit) {
+			keyDiagnosticError(c, 409, "request_id_conflict")
+			return
+		}
+		c.Abort()
+		diagnosticResponse(c, http.StatusOK, prior)
+		return
+	} else if errors.Is(err, model.ErrModelTestConflict) {
+		keyDiagnosticError(c, 409, "request_id_conflict")
+		return
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		keyDiagnosticError(c, 503, "history_unavailable")
+		return
+	}
+	ip := net.ParseIP(c.ClientIP())
+	if ip == nil {
+		keyDiagnosticError(c, 403, "client_ip_unavailable")
+		return
+	}
+	c.Set("key_diagnostic_admission", keyDiagnosticAdmission{input, identity, question, ip.String()})
+	c.Next()
+}
+
+func SaveKeyDiagnostic(c *gin.Context) {
+	accepted, ok := c.Get("key_diagnostic_admission")
+	admit, valid := accepted.(keyDiagnosticAdmission)
+	if !ok || !valid {
+		keyDiagnosticError(c, 400, "invalid_selection")
+		return
+	}
+	if keyDiagnosticWorkers.Load() == nil {
+		keyDiagnosticError(c, 503, "worker_unavailable")
+		return
+	}
+	token, models, ok := keyDiagnosticModels(c, admit.input.TokenID, admit.identity.UserID)
 	if !ok {
 		return
 	}
-	if !slices.Contains(models, input.Model) {
-		modelTestError(c, 403, "model_or_group_unavailable")
+	if !slices.Contains(models, admit.input.Model) {
+		keyDiagnosticError(c, 403, "model_or_group_unavailable")
 		return
 	}
 	group := token.Group
@@ -176,78 +275,38 @@ func PrepareKeyDiagnostic(c *gin.Context) {
 		group = "auto"
 	}
 	now := time.Now()
-	run := &model.ModelTestRun{ID: input.RequestID, Source: model.KeyDiagnosticSource, UserID: identity.UserID, TokenID: input.TokenID, Model: input.Model, Group: group, BenchmarkID: question.ID, Status: "running", Assessment: "unassessed", CreatedAt: now.Unix(), ExpiresAt: now.Add(modelTestTimeout + 30*time.Second).Unix(), MaxOutputTokens: question.Limit, RequestID: c.GetString(common.RequestIdKey)}
-	replayed, err := model.CreateModelTestRun(run)
+	run := model.ModelTestRun{UserID: admit.identity.UserID, TokenID: admit.input.TokenID, Model: admit.input.Model, Group: group,
+		BenchmarkID: admit.question.ID, Assessment: "unassessed", CreatedAt: now.Unix(),
+		ExpiresAt: now.Add(keyDiagnosticAdmissionTTL).Unix(), MaxOutputTokens: admit.question.Limit, RequestID: "diag-" + model.KeyDiagnosticRowID(admit.identity.UserID, admit.input.ClientID)}
+	replayed, err := model.CreateKeyDiagnosticRun(c.Request.Context(), &run, admit.input.ClientID)
 	switch {
 	case errors.Is(err, model.ErrModelTestConflict):
-		modelTestError(c, 409, "request_id_conflict")
-		return
+		keyDiagnosticError(c, 409, "request_id_conflict")
 	case errors.Is(err, model.ErrModelTestLimit):
-		modelTestError(c, 429, "rate_or_concurrency_limit")
-		return
+		keyDiagnosticError(c, 429, "rate_or_concurrency_limit")
+	case errors.Is(err, model.ErrKeyDiagnosticNotAuthorized):
+		keyDiagnosticError(c, 403, "token_unavailable")
 	case err != nil:
-		modelTestError(c, 503, "history_unavailable")
-		return
+		keyDiagnosticError(c, 503, "history_unavailable")
 	case replayed:
-		c.Abort()
-		diagnosticResponse(c, run)
-		return
-	}
-	// Standard TokenAuth must see the actual originating IP. Build a new request,
-	// not a clone: cookies, URL parameters and all client credentials are dropped.
-	ctx, cancel := context.WithTimeout(c.Request.Context(), modelTestTimeout)
-	defer cancel()
-	body, _ := common.Marshal(gin.H{"model": input.Model, "stream": false, "max_tokens": question.Limit, "messages": []gin.H{{"role": "user", "content": question.Prompt}}})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
-	req.RemoteAddr = net.JoinHostPort(c.ClientIP(), "0")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer sk-"+token.Key)
-	originalRequest, originalWriter := c.Request, c.Writer
-	buffer := &modelTestWriter{ResponseWriter: originalWriter, header: make(http.Header), status: 200, cancel: cancel, limit: 512 << 10}
-	common.CleanupBodyStorage(c)
-	c.Set(common.KeyRequestBody, body)
-	c.Request, c.Writer = req, buffer
-	defer func() { c.Request, c.Writer = originalRequest, originalWriter }()
-	c.Set("key_diagnostic_owner", identity.UserID)
-	common.SetContextKey(c, constant.ContextKeyKeyDiagnosticTokenID, token.Id)
-	common.SetContextKey(c, constant.ContextKeyModelTestSingleAttempt, true)
-	common.SetContextKey(c, constant.ContextKeyModelTestOutputLimit, question.Limit)
-	c.Next()
-	c.Request, c.Writer = originalRequest, originalWriter
-	run.CompletedAt = time.Now().Unix()
-	switch {
-	case buffer.header.Get("X-Newapi-Call-Intercepted") == "true":
-		run.Status, run.ErrorCode = "intercepted", "user_call_intercepted"
-	case ctx.Err() != nil || buffer.overflow:
-		run.Status, run.ErrorCode = "unknown", "response_interrupted"
-	case c.GetString("model_test_error_code") != "":
-		run.Status, run.ErrorCode = "failed", c.GetString("model_test_error_code")
-	case buffer.status < 200 || buffer.status >= 300:
-		run.Status, run.ErrorCode = "failed", "relay_"+strconv.Itoa(buffer.status)
+		diagnosticResponse(c, http.StatusOK, &run)
 	default:
-		var result struct {
-			Choices []struct {
-				Message struct {
-					Content string `json:"content"`
-				} `json:"message"`
-			} `json:"choices"`
+		// No goroutine owns the caller's request, response, credentials or
+		// cancellation. Only the issuer of this committed new row can submit.
+		if !submitKeyDiagnostic(run, admit, token.CacheRevision) {
+			run = finishKeyDiagnosticBeforeClaim(run, "worker_not_dispatched")
 		}
-		if common.Unmarshal(buffer.body.Bytes(), &result) != nil || len(result.Choices) == 0 || result.Choices[0].Message.Content == "" {
-			run.Status, run.ErrorCode = "failed", "incomplete_response"
-		} else {
-			run.Status, run.ArtworkHTML = "completed", result.Choices[0].Message.Content
-		}
+		diagnosticResponse(c, http.StatusAccepted, &run)
 	}
-	if err := model.FinishKeyDiagnostic(run); err != nil {
-		modelTestError(c, 503, "result_persistence_failed")
-		return
-	}
-	diagnosticResponse(c, run)
+}
+
+func keyDiagnosticError(c *gin.Context, status int, code string) {
+	c.AbortWithStatusJSON(status, gin.H{"success": false, "message": "Key diagnostic request could not be completed", "code": code})
 }
 
 func RunKeyDiagnostic(c *gin.Context) {
 	if !diagnosticChannelSupported(common.GetContextKeyInt(c, constant.ContextKeyChannelType)) {
-		modelTestError(c, 400, "output_budget_not_supported")
+		keyDiagnosticError(c, 400, "output_budget_not_supported")
 		c.Set("model_test_error_code", "output_budget_not_supported")
 		return
 	}
@@ -255,11 +314,11 @@ func RunKeyDiagnostic(c *gin.Context) {
 }
 
 func KeyDiagnosticTokenAdmitted(c *gin.Context) {
-	// TokenAuth has resolved the actual secret. Neither downstream channel
-	// overrides nor request plugins should be able to read it from user headers.
+	// The in-process resolver never creates an Authorization header; keep this
+	// boundary explicit before any channel overrides or plugins run.
 	c.Request.Header.Del("Authorization")
 	if id := common.GetContextKeyInt(c, constant.ContextKeyKeyDiagnosticTokenID); id <= 0 || id != c.GetInt("token_id") || c.GetInt("key_diagnostic_owner") != c.GetInt("id") {
-		modelTestError(c, 403, "token_unavailable")
+		keyDiagnosticError(c, 403, "token_unavailable")
 		return
 	}
 	c.Next()
@@ -273,14 +332,37 @@ func GetKeyDiagnostic(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var run model.ModelTestRun
-	if err := model.DB.WithContext(c.Request.Context()).Where("id = ? AND user_id = ? AND source = ?", c.Param("id"), identity.UserID, model.KeyDiagnosticSource).First(&run).Error; err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			modelTestError(c, 503, "history_unavailable")
-			return
-		}
-		modelTestError(c, 404, "run_not_found")
+	clientID := c.Param("id")
+	if !parseKeyDiagnosticID(clientID) {
+		keyDiagnosticError(c, 404, "run_not_found")
 		return
 	}
-	diagnosticResponse(c, &run)
+	run, err := model.GetKeyDiagnosticRun(c.Request.Context(), identity.UserID, clientID)
+	if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, model.ErrModelTestConflict) {
+		keyDiagnosticError(c, 404, "run_not_found")
+		return
+	}
+	if err != nil {
+		keyDiagnosticError(c, 503, "history_unavailable")
+		return
+	}
+	diagnosticResponse(c, http.StatusOK, run)
+}
+
+func ListKeyDiagnostics(c *gin.Context) {
+	identity, ok := requireBrowserSession(c)
+	if !ok {
+		return
+	}
+	runs, err := model.ListKeyDiagnosticRuns(c.Request.Context(), identity.UserID)
+	if err != nil {
+		keyDiagnosticError(c, 503, "history_unavailable")
+		return
+	}
+	bills := model.ReadKeyDiagnosticBills(c.Request.Context(), identity.UserID, runs)
+	views := make([]keyDiagnosticView, 0, len(runs))
+	for _, row := range runs {
+		views = append(views, diagnosticView(row, bills[row.RequestID]))
+	}
+	common.ApiSuccess(c, views)
 }

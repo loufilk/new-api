@@ -520,8 +520,9 @@ func registerPlaygroundRoutes(apiRouter *gin.RouterGroup) {
 	diagnostics := apiRouter.Group("/user/key-diagnostics", middleware.DisableCache(), middleware.UserAuth())
 	diagnostics.GET("/options", controller.GetKeyDiagnosticOptions)
 	diagnostics.GET("/keys/:id/models", controller.GetKeyDiagnosticModels)
+	diagnostics.GET("/runs", controller.ListKeyDiagnostics)
 	diagnostics.GET("/runs/:id", controller.GetKeyDiagnostic)
-	diagnostics.POST("/runs", middleware.SessionCookieOriginGuard(), middleware.UserCriticalRateLimit("key-diagnostic"), middleware.SystemPerformanceCheck(), controller.PrepareKeyDiagnostic, middleware.TokenAuth(), controller.KeyDiagnosticTokenAdmitted, middleware.ModelRequestRateLimit(), middleware.Distribute(), controller.RunKeyDiagnostic)
+	diagnostics.POST("/runs", middleware.SessionCookieOriginGuard(), controller.PrepareKeyDiagnostic, middleware.UserCriticalRateLimit("key-diagnostic"), controller.SaveKeyDiagnostic)
 	playgroundRoute := apiRouter.Group("/user/playground")
 	playgroundRoute.Use(middleware.UserAuth())
 	{

@@ -23,9 +23,12 @@ func CheckModelTestAccess(c *gin.Context) *types.NewAPIError {
 	// The manual Key diagnostic passed both live dashboard authorization and
 	// ordinary TokenAuth. Its authority is the owned key, never legacy site settings.
 	if selected := common.GetContextKeyInt(c, constant.ContextKeyKeyDiagnosticTokenID); selected > 0 {
-		if c.GetInt("token_id") == selected && c.GetInt("key_diagnostic_owner") > 0 && c.GetInt("key_diagnostic_owner") == c.GetInt("id") {
+		check, _ := common.GetContextKeyType[func() bool](c, constant.ContextKeyKeyDiagnosticAuthority)
+		if c.GetInt("token_id") == selected && c.GetInt("key_diagnostic_owner") > 0 &&
+			c.GetInt("key_diagnostic_owner") == c.GetInt("id") && check != nil && check() {
 			return nil
 		}
+		c.Set("model_test_error_code", "token_unavailable")
 		return types.NewErrorWithStatusCode(errors.New("Key diagnostic owner unavailable"), types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
 	}
 	err := model.RequireModelTestTarget(c.Request.Context(),

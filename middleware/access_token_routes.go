@@ -192,6 +192,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/user/model-tests":                     accessTokenSessionRule,
 	"GET /api/user/key-diagnostics/options":         accessTokenSessionRule,
 	"GET /api/user/key-diagnostics/keys/:id/models": accessTokenSessionRule,
+	"GET /api/user/key-diagnostics/runs":            accessTokenSessionRule,
 	"POST /api/user/key-diagnostics/runs":           accessTokenSessionRule,
 	"GET /api/user/key-diagnostics/runs/:id":        accessTokenSessionRule,
 	"GET /api/user/model-tests/site":                accessTokenSessionRule,

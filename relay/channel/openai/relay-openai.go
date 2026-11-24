@@ -476,7 +476,11 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		if enterpriseResponse.Success {
 			responseBody = enterpriseResponse.Data
 		} else {
-			logger.LogError(c, common.LogText("openrouter enterprise response success=false, data: %s", enterpriseResponse.Data))
+			if common.IsPrivateKeyDiagnosticLog(c) {
+				logger.LogError(c, "openrouter enterprise request unsuccessful")
+			} else {
+				logger.LogError(c, common.LogText("openrouter enterprise response success=false, data: %s", enterpriseResponse.Data))
+			}
 			return nil, types.NewOpenAIError(fmt.Errorf("openrouter response success=false"), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 		}
 	}
@@ -515,6 +519,11 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 
 	usageModified := false
 	if simpleResponse.Usage.PromptTokens == 0 {
+		if common.IsPrivateKeyDiagnosticLog(c) {
+			// Otherwise the diagnostic's read-only consume-log projection
+			// could confuse ordinary token estimation with measured usage.
+			common.SetContextKey(c, constant.ContextKeyLocalCountTokens, true)
+		}
 		completionTokens := simpleResponse.Usage.CompletionTokens
 		if completionTokens == 0 {
 			for _, choice := range simpleResponse.Choices {

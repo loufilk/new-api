@@ -97,6 +97,9 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	}
 	if !requestStopped && ShouldDisableChannel(err) && channelError.AutoBan {
 		reason := err.MaskSensitiveErrorWithStatusCode(upstreamURLs...)
+		if common.IsPrivateKeyDiagnosticLog(c) {
+			reason = fmt.Sprintf("Key diagnostic relay HTTP status %d", err.StatusCode)
+		}
 		gopool.Go(func() {
 			DisableChannel(channelError, reason)
 		})
