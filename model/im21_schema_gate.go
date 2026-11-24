@@ -194,6 +194,10 @@ func InitIM21Databases(mode string) error {
 	migrate := mode == IM21Migrate
 	runID := releaseID + ":" + rand.Text()
 	return im21SchemaTransaction(primary.WithContext(ctx), migrate, func(mainTx *gorm.DB) error {
+		// Stop before invalidating a prior receipt or writing ordinary migrations.
+		if err := checkLaneStoreOrdinaryStartupTx(mainTx); err != nil {
+			return err
+		}
 		if migrate {
 			if err := invalidateIM21Receipt(primary.WithContext(ctx)); err != nil {
 				return err
@@ -208,6 +212,11 @@ func InitIM21Databases(mode string) error {
 		}
 		LOG_DB = logDB
 		logStep := func(logTx *gorm.DB) error {
+			if logDB != primary {
+				if err := checkLaneStoreOrdinaryStartupTx(logTx); err != nil {
+					return err
+				}
+			}
 			if !migrate {
 				mainID, err := readIM21Receipt(mainTx, "primary", digest, releaseID)
 				if err != nil {

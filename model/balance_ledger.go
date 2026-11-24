@@ -647,6 +647,12 @@ func DebitQuota(entry LedgerEntry, order ...LedgerAccount) (*LedgerResult, error
 
 // DebitQuotaTx 在调用方事务内钱包扣款。调用方负责在自身事务提交后刷新缓存。
 func DebitQuotaTx(tx *gorm.DB, entry LedgerEntry, order ...LedgerAccount) (*LedgerResult, error) {
+	return debitQuotaTx(tx, entry, nil, order...)
+}
+
+// Only the existing isolated native rehearsal supplies a non-nil plan.
+// Ordinary debits retain the same idempotency, expiry, SQL and account order.
+func debitQuotaTx(tx *gorm.DB, entry LedgerEntry, paidIdle *walletPaidIdleDebit, order ...LedgerAccount) (*LedgerResult, error) {
 	order = defaultDebitOrder(order)
 	entry.DebitOrder = append([]LedgerAccount(nil), order...)
 	if err := validateDebitEntry(entry, order); err != nil {
@@ -660,6 +666,15 @@ func DebitQuotaTx(tx *gorm.DB, entry LedgerEntry, order ...LedgerAccount) (*Ledg
 		return nil, err
 	}
 	return applyLedgerTx(tx, entry, key, ledgerOpDebit, func(tx *gorm.DB, user *User) ([]accountDelta, error) {
+		if paidIdle != nil {
+			// Resolve the escrow operation from the exact same stable
+			// ledger key used above for the ordinary replay decision.
+			witness := entry
+			witness.IdempotencyKey = key
+			if err := paidIdle.prepare(tx, witness, user, order); err != nil {
+				return nil, err
+			}
+		}
 		return planDebit(user, entry.Delta, order)
 	})
 }
@@ -776,6 +791,10 @@ func validateDebitEntry(entry LedgerEntry, order []LedgerAccount) error {
 	if entry.Delta < 0 {
 		return fmt.Errorf("%w: negative debit delta", ErrLedgerInvalidEntry)
 	}
+	return validateDebitOrder(order)
+}
+
+func validateDebitOrder(order []LedgerAccount) error {
 	seen := make(map[LedgerAccount]struct{}, len(order))
 	for _, acc := range order {
 		if !validAccount(acc) {

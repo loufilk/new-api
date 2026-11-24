@@ -3,17 +3,20 @@
 package router
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -168,7 +171,8 @@ func TestLaneNativeSyntheticPublicRouterPostgres(t *testing.T) {
 	}
 	db := laneRouterDevTestDatabase(t, dsn)
 	var calls atomic.Int32
-	var omitDone atomic.Bool
+	var omitDone, cutUsage, gateTerminal atomic.Bool
+	releaseTerminal := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		raw, err := io.ReadAll(io.LimitReader(r.Body, 8193))
@@ -179,7 +183,23 @@ func TestLaneNativeSyntheticPublicRouterPostgres(t *testing.T) {
 		assert.EqualValues(t, len(raw), r.ContentLength)
 		assert.EqualValues(t, 6, gjson.GetBytes(raw, "max_completion_tokens").Int(), "same finalized parameter override reaches the wire")
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, laneRouterDevSSEPrefix+laneRouterDevUsage+"}\n\n")
+		first, rest, _ := strings.Cut(laneRouterDevSSEPrefix, "\n\n")
+		_, _ = io.WriteString(w, first+"\n\n")
+		w.(http.Flusher).Flush()
+		if gateTerminal.Load() {
+			select {
+			case <-releaseTerminal:
+			case <-r.Context().Done():
+				return
+			case <-time.After(8 * time.Second):
+				return // no false pass if the path buffers
+			}
+		}
+		if cutUsage.Load() {
+			_, _ = io.WriteString(w, rest+`{"prompt_tokens":3,`)
+			return
+		}
+		_, _ = io.WriteString(w, rest+laneRouterDevUsage+"}\n\n")
 		if !omitDone.Load() {
 			_, _ = io.WriteString(w, "data: [DONE]\n\n")
 		}
@@ -210,7 +230,6 @@ func TestLaneNativeSyntheticPublicRouterPostgres(t *testing.T) {
 	plan := relay.LaneNativeSyntheticPlan{
 		DB: db, Group: "default", Model: laneRouterDevModel, ProviderOrigin: upstream.URL, SyntheticProviderKey: laneRouterDevUpstreamKey,
 		FrozenWireHMACKey: sha256.Sum256([]byte("isolated synthetic native router HMAC")), Verifier: laneRouterDevPromptVerifier{},
-		TerminalPrefix: laneRouterDevSSEPrefix,
 		Owner: model.LaneBillingChildDevBinding{
 			Owner:       model.LaneBillingOwnerIdentity{LaneID: "synthetic-native-router-slot-3", Epoch: 88, UserID: id.UserID, TokenID: id.TokenID, TokenFingerprint: id.TokenFingerprint},
 			WalletEpoch: 17, WalletSlot: 3, KeyEpoch: id.Epoch, KeySlot: 2, ChannelID: ch.Id, FundingPolicySHA256: strings.Repeat("a", 64),
@@ -229,8 +248,12 @@ func TestLaneNativeSyntheticPublicRouterPostgres(t *testing.T) {
 	SetRelayRouter(engine)
 	gateway := httptest.NewServer(engine)
 	t.Cleanup(gateway.Close)
+	endpoint := gateway.URL
+	if os.Getenv("TEST_LANE_REQUIRE_CADDY") == "1" {
+		endpoint = laneRouterDevCaddy(t, gateway.URL)
+	}
 	post := func(body, key string) (requestID string, status int, response string) {
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, gateway.URL+laneRouterDevSendPath, strings.NewReader(body))
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, endpoint+laneRouterDevSendPath, strings.NewReader(body))
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer sk-"+key)
@@ -238,9 +261,34 @@ func TestLaneNativeSyntheticPublicRouterPostgres(t *testing.T) {
 		resp, err := gateway.Client().Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		b, err := io.ReadAll(io.LimitReader(resp.Body, 65537))
+		reader := bufio.NewReader(resp.Body)
+		var seen strings.Builder
+		if gateTerminal.Load() {
+			// Client must decode a complete semantic content event before allowing
+			// the upstream to write any finish, usage, or [DONE] bytes.
+			marker := false
+			for seen.Len() < 16384 {
+				line, err := reader.ReadString('\n')
+				require.NoError(t, err, "no content event before terminal release")
+				seen.WriteString(line)
+				data, ok := strings.CutPrefix(strings.TrimSpace(line), "data: ")
+				if ok && gjson.Get(data, "choices.0.delta.content").String() == "fixture reply" {
+					blank, err := reader.ReadString('\n')
+					require.NoError(t, err)
+					require.Empty(t, strings.TrimSpace(blank))
+					seen.WriteString(blank)
+					marker = true
+					break
+				}
+			}
+			require.True(t, marker, "first content must be decoded from an actual SSE event")
+			close(releaseTerminal)
+			gateTerminal.Store(false)
+			t.Log("decoded first content event before releasing upstream terminal")
+		}
+		b, err := io.ReadAll(io.LimitReader(reader, 65537))
 		require.NoError(t, err)
-		return resp.Header.Get(common.RequestIdKey), resp.StatusCode, string(b)
+		return resp.Header.Get(common.RequestIdKey), resp.StatusCode, seen.String() + string(b)
 	}
 	readOwner := func(requestID string) (ordinary model.BillingFinalization, childState string) {
 		require.NoError(t, db.Where("request_id = ?", requestID).Take(&ordinary).Error)
@@ -270,10 +318,11 @@ func TestLaneNativeSyntheticPublicRouterPostgres(t *testing.T) {
 	assert.Zero(t, calls.Load())
 	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", ch.Id).UpdateColumn("setting", nil).Error)
 
+	gateTerminal.Store(true)
 	requestID, status, body := post(laneRouterDevWire, laneRouterDevToken)
 	require.Equal(t, http.StatusOK, status, "%s", body)
 	require.Contains(t, body, "fixture reply")
-	require.Contains(t, body, "[DONE]")
+	require.Equal(t, 1, strings.Count(body, "data: [DONE]"))
 	owner, state := readOwner(requestID)
 	assert.Equal(t, "lane_owner_v1", owner.State)
 	assert.Zero(t, owner.SourceHeld)
@@ -287,19 +336,39 @@ func TestLaneNativeSyntheticPublicRouterPostgres(t *testing.T) {
 	assert.Equal(t, 5, measured.ActualQuota)
 
 	omitDone.Store(true)
-	unknownID, unknownStatus, _ := post(laneRouterDevWire, laneRouterDevToken)
-	require.NotEqual(t, http.StatusOK, unknownStatus)
+	unknownID, unknownStatus, unknownBody := post(laneRouterDevWire, laneRouterDevToken)
+	require.Equal(t, http.StatusOK, unknownStatus, "already-committed content cannot change HTTP status")
+	require.Contains(t, unknownBody, "fixture reply")
+	require.NotContains(t, unknownBody, "data: [DONE]")
 	unknownOwner, unknownState := readOwner(unknownID)
 	assert.Equal(t, "lane_owner_v1", unknownOwner.State)
 	assert.Equal(t, "delivery_unknown", unknownState)
 	assert.EqualValues(t, 2, calls.Load())
+	cutUsage.Store(true)
+	cutID, cutStatus, cutBody := post(laneRouterDevWire, laneRouterDevToken)
+	require.Equal(t, http.StatusOK, cutStatus)
+	require.Contains(t, cutBody, "fixture reply")
+	require.NotContains(t, cutBody, "data: [DONE]")
+	_, cutState := readOwner(cutID)
+	require.Equal(t, "delivery_unknown", cutState)
+	cutUsage.Store(false)
 	var measuredRows int64
 	require.NoError(t, db.Model(&model.LaneBillingMeasuredDev{}).Count(&measuredRows).Error)
 	assert.EqualValues(t, 1, measuredRows, "incomplete usage cannot be projected as known")
 	var priorWallet model.SharedWalletShare
 	require.NoError(t, db.Take(&priorWallet).Error)
 	assert.Equal(t, 5, priorWallet.Spent)
-	assert.Positive(t, priorWallet.Held)
+	var caps []int
+	require.NoError(t, db.Table("lane_billing_child_receipts_v1").Where("request_id IN ? AND actual=0 AND usage_sha256='' AND state='delivery_unknown'", []string{unknownID, cutID}).Pluck("cap", &caps).Error)
+	require.Len(t, caps, 2)
+	require.Positive(t, caps[0])
+	require.Equal(t, caps[0], caps[1])
+	assert.Equal(t, caps[0]+caps[1], priorWallet.Held)
+	var keyShare struct{ Available, Held, Spent int }
+	require.NoError(t, db.Table("lane_billing_key_shares_v1").Select("available,held,spent").Where("user_id=? AND token_id=? AND epoch=? AND slot=2", id.UserID, id.TokenID, id.Epoch).Take(&keyShare).Error)
+	assert.Equal(t, priorWallet.Available, keyShare.Available)
+	assert.Equal(t, priorWallet.Held, keyShare.Held)
+	assert.Equal(t, priorWallet.Spent, keyShare.Spent)
 	assert.Equal(t, laneRouterDevGrant, priorWallet.Available+priorWallet.Spent+priorWallet.Held)
 	var before model.User
 	require.NoError(t, db.Take(&before, user.Id).Error)
@@ -326,7 +395,7 @@ func TestLaneNativeSyntheticPublicRouterPostgres(t *testing.T) {
 	assert.Equal(t, id.TokenID, consume.TokenId)
 	assert.Equal(t, ch.Id, consume.ChannelId)
 	var unknownLogs int64
-	require.NoError(t, db.Model(&model.Log{}).Where("request_id = ? AND type = ?", unknownID, model.LogTypeConsume).Count(&unknownLogs).Error)
+	require.NoError(t, db.Model(&model.Log{}).Where("request_id IN ? AND type = ?", []string{unknownID, cutID}, model.LogTypeConsume).Count(&unknownLogs).Error)
 	assert.Zero(t, unknownLogs)
 
 	armSynthetic.Store(false)
@@ -337,8 +406,39 @@ func TestLaneNativeSyntheticPublicRouterPostgres(t *testing.T) {
 	assert.Equal(t, model.BillingSettled, ordinary.State)
 	assert.Equal(t, "wallet", ordinary.Source)
 	assert.Empty(t, ordinaryChild, "client header cannot arm a dev lane")
-	assert.EqualValues(t, 3, calls.Load())
+	assert.EqualValues(t, 4, calls.Load())
 	var finalWallet model.SharedWalletShare
 	require.NoError(t, db.Take(&finalWallet).Error)
 	assert.Equal(t, priorWallet, finalWallet, "ordinary flow cannot spend the synthetic lane pool")
+}
+
+// TEST_LANE_REQUIRE_CADDY=1 makes a real local Caddy and its proxy path
+// mandatory (not a silent skip). No admin endpoint, public listener or TLS.
+func laneRouterDevCaddy(t *testing.T, gateway string) string {
+	t.Helper()
+	bin, err := exec.LookPath("caddy")
+	require.NoError(t, err)
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := listener.Addr().String()
+	require.NoError(t, listener.Close())
+	u, err := url.Parse(gateway)
+	require.NoError(t, err)
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "caddy.json")
+	require.NoError(t, os.WriteFile(cfg, []byte(fmt.Sprintf(`{"admin":{"disabled":true},"apps":{"http":{"servers":{"lane":{"listen":[%q],"routes":[{"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":%q}],"flush_interval":-1}]}]}}}}}`, addr, u.Host)), 0600))
+	cmd := exec.Command(bin, "run", "--config", cfg)
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+dir, "XDG_DATA_HOME="+dir)
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	require.Eventually(t, func() bool {
+		c, err := net.DialTimeout("tcp4", addr, 100*time.Millisecond)
+		if err != nil {
+			return false
+		}
+		_ = c.Close()
+		return true
+	}, 5*time.Second, 25*time.Millisecond)
+	t.Log("using real loopback Caddy reverse proxy; flush_interval=-1")
+	return "http://" + addr
 }

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -201,6 +202,13 @@ func InitDB() (err error) {
 		if common.DebugEnabled {
 			db = db.Debug()
 		}
+		if err := CheckLaneStoreOrdinaryStartup(context.Background(), db); err != nil {
+			pool, poolErr := db.DB()
+			if poolErr == nil {
+				_ = pool.Close()
+			}
+			return err
+		}
 		DB = db
 		if _, err := AgentSimpleCutoverPreflight(DB); err != nil {
 			return err
@@ -262,6 +270,13 @@ func InitLogDB() (err error) {
 		initCol()
 		if common.DebugEnabled {
 			db = db.Debug()
+		}
+		if err := CheckLaneStoreOrdinaryStartup(context.Background(), db); err != nil {
+			pool, poolErr := db.DB()
+			if poolErr == nil {
+				_ = pool.Close()
+			}
+			return err
 		}
 		LOG_DB = db
 		// If log DB is MySQL, also ensure Chinese-capable charset

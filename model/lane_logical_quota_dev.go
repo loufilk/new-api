@@ -89,6 +89,22 @@ type laneLogicalQuotaDevSnapshot struct {
 	view   LaneLogicalQuotaDevView
 }
 
+// Two index range seeks cover all out-of-scope history. An operation that
+// survives its share must not look like an empty slot, even in another epoch.
+const laneWalletDevOutsideScopeSQL = `SELECT EXISTS (
+	SELECT FROM shared_wallet_transfers WHERE user_id = ? AND (epoch, slot) < (?, 0)
+) OR EXISTS (
+	SELECT FROM shared_wallet_transfers WHERE user_id = ? AND (epoch, slot) >= (?, ?)
+)`
+
+// Enumerate the fixed slot domain, not this user's lifetime transfers.
+const laneWalletDevTipsSQL = `SELECT tip.* FROM generate_series(0, ?) AS slots(slot)
+	CROSS JOIN LATERAL (
+		SELECT * FROM shared_wallet_transfers
+		WHERE user_id = ? AND epoch = ? AND slot = slots.slot
+		ORDER BY share_version DESC LIMIT 1
+	) AS tip ORDER BY tip.slot`
+
 // For a debit, the canonical ordinary owner already owns the user lock.
 // Pin user -> original token -> current Key enrollment -> ordered wallet
 // slots -> ordered Key slots. Never acquire a new wallet slot after any
@@ -134,17 +150,31 @@ func readLaneLogicalQuotaDevTx(tx *gorm.DB, scope LaneLogicalQuotaDevScope, lock
 	if len(s.wallet) > SharedWalletMaxSlots {
 		return s, ErrSharedWalletEvidence
 	}
+	var outside bool
+	if err := tx.Raw(laneWalletDevOutsideScopeSQL, id.UserID, scope.WalletEpoch, id.UserID, scope.WalletEpoch, SharedWalletMaxSlots).Scan(&outside).Error; err != nil {
+		return s, err
+	}
+	if outside {
+		return s, ErrSharedWalletEvidence
+	}
+	var walletTips []SharedWalletTransfer
+	if err := tx.Raw(laneWalletDevTipsSQL, SharedWalletMaxSlots-1, id.UserID, scope.WalletEpoch).Scan(&walletTips).Error; err != nil {
+		return s, err
+	}
+	if len(walletTips) != len(s.wallet) {
+		return s, ErrSharedWalletEvidence
+	}
 	walletUnspentBound := common.MaxWalletQuota - u.Quota
-	for _, slot := range s.wallet {
+	for i, slot := range s.wallet {
 		if slot.UserID != id.UserID || slot.Epoch != scope.WalletEpoch || !slot.valid() ||
 			slot.Available+slot.Held > walletUnspentBound {
 			return s, ErrSharedWalletEvidence
 		}
-		var tip SharedWalletTransfer
-		err := tx.Where("user_id = ? AND operation_id = ?", id.UserID, slot.LastOperationID).Take(&tip).Error
-		if err != nil || tip.Epoch != slot.Epoch || tip.Slot != slot.Slot || tip.ShareVersion > slot.Version ||
+		tip := walletTips[i]
+		if tip.UserID != slot.UserID || tip.Epoch != slot.Epoch || tip.Slot != slot.Slot ||
+			tip.OperationID != slot.LastOperationID || tip.ShareVersion > slot.Version ||
 			tip.GrantedAfter != slot.Granted || tip.ReturnedAfter != slot.Returned ||
-			verifySharedWalletTransferEvidenceTx(tx, tip) != nil {
+			verifySharedWalletTransferEvidenceTx(tx.Limit(2), tip) != nil {
 			return s, ErrSharedWalletEvidence
 		}
 		walletUnspentBound -= slot.Available + slot.Held
@@ -258,28 +288,6 @@ func ReserveLaneLogicalWalletFirstDev(ctx context.Context, db *gorm.DB, scope La
 			if s.view.KeyRemainAvailable < amount {
 				return ErrBillingTokenInsufficient
 			}
-			walletNeed := amount - s.view.WalletPaidRaw
-			for _, slot := range s.wallet {
-				if walletNeed <= 0 {
-					break
-				}
-				n := min(slot.Available, walletNeed)
-				if n > 0 {
-					_, replayed, _, err := ApplySharedWalletTransferTx(tx, SharedWalletTransfer{UserID: id.UserID, Epoch: slot.Epoch, Slot: slot.Slot,
-						OperationID: laneLogicalReclaimOperationDevID("paid", requestID, id.UserID, 0, slot.Epoch, slot.Slot),
-						Direction:   "reclaim", Amount: n})
-					if err != nil {
-						return err
-					}
-					if replayed {
-						return ErrSharedWalletEvidence
-					}
-					walletNeed -= n
-				}
-			}
-			if walletNeed > 0 {
-				return ErrSharedWalletEvidence
-			}
 			keyNeed := amount - s.view.KeyRemainRaw
 			for _, slot := range s.key {
 				if keyNeed <= 0 {
@@ -306,7 +314,9 @@ func ReserveLaneLogicalWalletFirstDev(ctx context.Context, db *gorm.DB, scope La
 			}
 			entry := LedgerEntry{UserId: id.UserID, Delta: amount, Reason: LedgerReasonBillingPreConsume,
 				RequestId: requestID, ReferenceType: "relay", ReferenceId: requestID, IdempotencyKey: "billing:preconsume:" + requestID}
-			debit, err := DebitQuotaTx(tx, entry, AccountPaid)
+			debit, err := debitQuotaTx(tx, entry, &walletPaidIdleDebit{
+				tx: tx, userID: id.UserID, epoch: scope.WalletEpoch, request: requestID, slots: s.wallet,
+			}, AccountPaid)
 			if err != nil {
 				return err
 			}

@@ -3,7 +3,6 @@
 package relay
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,7 +12,6 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
-	"strings"
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
@@ -43,9 +41,6 @@ type LaneNativeSyntheticPlan struct {
 	ProviderOrigin, SyntheticProviderKey string
 	FrozenWireHMACKey                    [32]byte
 	Verifier                             service.LaneNativeChatPromptBound
-	// Complete expected synthetic prefix, including prior output and finish
-	// frames. Usage JSON and closing terminal suffix are verified independently.
-	TerminalPrefix string
 }
 
 func WithLaneNativeSyntheticPlan(ctx context.Context, p LaneNativeSyntheticPlan) context.Context {
@@ -145,7 +140,7 @@ func armLaneNativeSyntheticBilling(c *gin.Context, info *relaycommon.RelayInfo) 
 		info.UserId != b.Owner.UserID || info.TokenId != b.Owner.TokenID || info.TokenUnlimited ||
 		model.BillingTokenFingerprint(info.TokenKey) != b.Owner.TokenFingerprint || info.TokenGroup != p.Group || info.UsingGroup != p.Group ||
 		info.OriginModelName != p.Model || info.UserSetting.BillingPreference != "wallet_only" || p.SyntheticProviderKey == "" ||
-		p.DB == nil || p.DB != model.DB || p.Verifier == nil || !strings.HasPrefix(p.TerminalPrefix, "data: ") || len(p.TerminalPrefix) > 8192 ||
+		p.DB == nil || p.DB != model.DB || p.Verifier == nil ||
 		b.Owner.RequestID != "" {
 		return true, newAPIErrorLaneSyntheticUnsupported()
 	}
@@ -262,24 +257,19 @@ func observeLaneNativeSyntheticTerminal(c *gin.Context, info *relaycommon.RelayI
 		_ = response.Body.Close()
 		return newAPIErrorLaneSyntheticUnsupported()
 	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, laneNativeSyntheticMaxBody+1))
-	closeErr := response.Body.Close()
-	if err != nil || closeErr != nil || len(raw) > laneNativeSyntheticMaxBody || response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "text/event-stream" {
+	if response.StatusCode != http.StatusOK || len(response.Header.Values("Content-Type")) != 1 ||
+		response.Header.Get("Content-Type") != "text/event-stream" {
+		_ = response.Body.Close()
 		return newAPIErrorLaneSyntheticUnsupported()
 	}
-	const suffix = "}\n\ndata: [DONE]\n\n"
-	prefix := o.p.TerminalPrefix
-	if !bytes.HasPrefix(raw, []byte(prefix)) || !bytes.HasSuffix(raw, []byte(suffix)) || len(raw) <= len(prefix)+len(suffix) {
-		return newAPIErrorLaneSyntheticUnsupported()
-	}
-	measurement, err := o.proof.VerifyTerminalUsage(raw[len(prefix) : len(raw)-len(suffix)])
-	if err != nil {
-		return newAPIErrorLaneSyntheticUnsupported()
-	}
-	o.measurement = measurement
-	// Buffering is fixture-only. The unchanged native adapter emits and decodes
-	// the same bytes. A production streaming path needs raw terminal proof
-	// without buffering or sacrificing first-token latency.
-	response.Body = io.NopCloser(bytes.NewReader(raw))
+	// The ordinary adapter remains the sole downstream writer. It joins its
+	// scanner before settlement. No runtime or client installs this fixture.
+	response.Body = newLaneNativeTerminalBody(response.Body, o.p.Model, func(raw []byte) bool {
+		measurement, err := o.proof.VerifyTerminalUsage(raw)
+		if err == nil {
+			o.measurement = measurement
+		}
+		return err == nil
+	})
 	return nil
 }

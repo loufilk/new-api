@@ -175,68 +175,74 @@ func InstallLaneBillingUsageLogDevSchema(ctx context.Context, db *gorm.DB) (stri
 // No-log settings are deliberately unsupported in this synthetic adapter;
 // they must not claim ordinary usage/counter parity on an activated route.
 func ProjectLaneBillingUsageDev(ctx context.Context, mainDB, logDB *gorm.DB, destination string, limit int) (int, error) {
-	if ctx == nil || logDB == nil || logDB.Config == nil || logDB.Dialector == nil || logDB.Dialector.Name() != "postgres" || logDB.DryRun ||
+	page, err := projectLaneBillingUsagePageDev(ctx, laneUsageStoreDev{db: mainDB}, laneUsageStoreDev{db: logDB}, destination, limit)
+	return page.Acknowledged, err
+}
+
+func projectLaneBillingUsagePageDev(ctx context.Context, main, logs laneUsageStoreDev, destination string, limit int) (laneUsagePageDev, error) {
+	var page laneUsagePageDev
+	if ctx == nil || logs.db == nil || logs.db.Config == nil || logs.db.Dialector == nil || logs.db.Dialector.Name() != "postgres" || logs.db.DryRun ||
 		!common.LogConsumeEnabled || !laneChildSHAValid(destination) || limit < 1 || limit > 32 {
-		return 0, ErrLaneBillingOwnerUnavailable
+		return page, ErrLaneBillingOwnerUnavailable
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	var candidates []string
-	err := withLaneBillingFiniteKeyDevTx(ctx, mainDB, func(tx *gorm.DB) error {
+	err := main.tx(ctx, func(tx *gorm.DB) error {
 		return tx.Model(&laneBillingUsageOutboxDev{}).Where("state = ? AND due_at <= EXTRACT(EPOCH FROM statement_timestamp())::bigint", laneUsagePending).
 			Order("due_at, request_id").Limit(limit).Pluck("request_id", &candidates).Error
 	})
-	if err != nil || len(candidates) == 0 {
-		return 0, err
+	page.Candidates = len(candidates)
+	if err != nil || (len(candidates) == 0 && logs.scope == nil) {
+		return page, err
 	}
 	// Never pin an unbound row to a guessed destination. If the real target
 	// cannot be contacted, record delayed retry without binding a new ID.
-	targetErr := withLaneBillingFiniteKeyDevTx(ctx, logDB, func(tx *gorm.DB) error {
+	targetErr := logs.tx(ctx, func(tx *gorm.DB) error {
 		return verifyLaneUsageLogDestinationTx(tx, destination)
 	})
-	if errors.Is(targetErr, ErrLaneBillingOwnerUnavailable) {
-		return 0, targetErr // invalid scope, install or identity: no lease mutation
+	if len(candidates) == 0 || errors.Is(targetErr, ErrLaneBillingOwnerUnavailable) {
+		return page, targetErr // invalid scope, install or identity: no lease mutation
 	}
-	completed := 0
 	for _, requestID := range candidates {
-		claim, err := claimLaneUsageProjection(ctx, mainDB, requestID, destination, targetErr == nil)
+		claim, err := main.claim(ctx, requestID, destination, targetErr == nil)
 		if err != nil {
-			return completed, err
+			return page, err
 		}
 		if claim == nil { // other worker or already finalized
 			continue
 		}
 		if targetErr != nil {
-			return completed, targetErr
+			return page, targetErr
 		}
-		proof, err := projectLaneUsageLog(ctx, logDB, *claim)
+		proof, err := logs.writeLog(ctx, *claim)
 		if errors.Is(err, ErrLaneBillingOwnerEvidence) {
-			_, finishErr := finishLaneUsageProjection(ctx, mainDB, *claim, nil, true)
-			return completed, errors.Join(ErrLaneBillingUsageProjectionConflict, finishErr)
+			_, finishErr := main.finish(ctx, *claim, nil, true)
+			return page, errors.Join(ErrLaneBillingUsageProjectionConflict, finishErr)
 		}
 		if err != nil {
 			// The durable lease already set a delayed retry on the main DB.
-			return completed, err
+			return page, err
 		}
-		applied, err := finishLaneUsageProjection(ctx, mainDB, *claim, proof, false)
+		applied, err := main.finish(ctx, *claim, proof, false)
 		if errors.Is(err, ErrLaneBillingOwnerEvidence) {
-			_, finishErr := finishLaneUsageProjection(ctx, mainDB, *claim, nil, true)
-			return completed, errors.Join(ErrLaneBillingUsageProjectionConflict, finishErr)
+			_, finishErr := main.finish(ctx, *claim, nil, true)
+			return page, errors.Join(ErrLaneBillingUsageProjectionConflict, finishErr)
 		}
 		if err != nil {
-			return completed, err
+			return page, err
 		}
 		if applied {
-			completed++
+			page.Acknowledged++
 		}
 	}
-	return completed, nil
+	return page, nil
 }
 
-func claimLaneUsageProjection(ctx context.Context, db *gorm.DB, requestID, destination string, targetVerified bool) (*laneBillingUsageOutboxDev, error) {
+func (s laneUsageStoreDev) claim(ctx context.Context, requestID, destination string, targetVerified bool) (*laneBillingUsageOutboxDev, error) {
 	var claimed *laneBillingUsageOutboxDev
 	var conflict bool
-	err := withLaneBillingFiniteKeyDevTx(ctx, db, func(tx *gorm.DB) error {
+	err := s.tx(ctx, func(tx *gorm.DB) error {
 		var row laneBillingUsageOutboxDev
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
 			Where("request_id = ? AND state = ? AND due_at <= EXTRACT(EPOCH FROM statement_timestamp())::bigint", requestID, laneUsagePending).Take(&row).Error
@@ -362,9 +368,9 @@ func verifyLaneUsageLogDestinationTx(tx *gorm.DB, expected string) error {
 	return nil
 }
 
-func projectLaneUsageLog(ctx context.Context, db *gorm.DB, claim laneBillingUsageOutboxDev) (*laneUsageLogProjectionProof, error) {
+func (s laneUsageStoreDev) writeLog(ctx context.Context, claim laneBillingUsageOutboxDev) (*laneUsageLogProjectionProof, error) {
 	var proof laneUsageLogProjectionProof
-	err := withLaneBillingFiniteKeyDevTx(ctx, db, func(tx *gorm.DB) error {
+	err := s.tx(ctx, func(tx *gorm.DB) error {
 		if err := verifyLaneUsageLogDestinationTx(tx, claim.Destination); err != nil {
 			return err
 		}
@@ -428,12 +434,12 @@ func projectLaneUsageLog(ctx context.Context, db *gorm.DB, claim laneBillingUsag
 	return &proof, nil
 }
 
-func finishLaneUsageProjection(ctx context.Context, db *gorm.DB, claim laneBillingUsageOutboxDev, proof *laneUsageLogProjectionProof, conflict bool) (bool, error) {
+func (s laneUsageStoreDev) finish(ctx context.Context, claim laneBillingUsageOutboxDev, proof *laneUsageLogProjectionProof, conflict bool) (bool, error) {
 	if !conflict && (proof == nil || proof.RequestID != claim.Payload.RequestID || proof.PayloadSHA != claim.PayloadSHA || proof.Destination != claim.Destination || proof.LogID <= 0) {
 		return false, ErrLaneBillingOwnerEvidence
 	}
 	completed := false
-	err := withLaneBillingFiniteKeyDevTx(ctx, db, func(tx *gorm.DB) error {
+	err := s.tx(ctx, func(tx *gorm.DB) error {
 		var row laneBillingUsageOutboxDev
 		if err := lockForUpdate(tx).Where("request_id = ?", claim.Payload.RequestID).Take(&row).Error; err != nil {
 			return err

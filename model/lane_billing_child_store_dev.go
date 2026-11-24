@@ -11,7 +11,8 @@ import (
 
 // The integration fixture owns this opt-in DDL, not ordinary startup. It only
 // accepts dedicated lane_billing_dev_* schemas on loopback PostgreSQL. It does
-// not create or change ordinary owner/treasury tables or provision any grants.
+// not provision any grants. It adds a transfer-tip index and fences raw
+// absolute overrides under retained custody, only within this fixture.
 func installLaneBillingChildDevSchema(ctx context.Context, db *gorm.DB) error {
 	if ctx == nil || db == nil || db.Config == nil || db.DryRun || db.Dialector == nil || db.Dialector.Name() != "postgres" || db.Statement == nil {
 		return ErrLaneBillingOwnerUnavailable
@@ -32,6 +33,10 @@ func installLaneBillingChildDevSchema(ctx context.Context, db *gorm.DB) error {
 		if err := tx.AutoMigrate(&laneBillingChildReceiptV1{}, &laneBillingFiniteKeyShareV1{}, &LaneBillingMeasuredDev{}, &laneBillingUsageOutboxDev{}); err != nil {
 			return ErrLaneBillingOwnerStore
 		}
-		return nil
+		if err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_lane_dev_wallet_transfer_slot_version
+			ON shared_wallet_transfers (user_id, epoch, slot, share_version)`).Error; err != nil {
+			return err
+		}
+		return installLaneAdminOverrideFenceDevTx(tx)
 	})
 }
