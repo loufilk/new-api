@@ -228,7 +228,7 @@ func PreserveUnknownTaskDelivery(info *relaycommon.RelayInfo) {
 // PreserveUnknownBillingDelivery retains the original held evidence whenever
 // external delivery/measurement cannot safely justify settlement or refund.
 func PreserveUnknownBillingDelivery(info *relaycommon.RelayInfo) {
-	if info == nil {
+	if info == nil || PreserveUnknownLaneNativeChatBilling(context.Background(), info) {
 		return
 	}
 	s, ok := info.Billing.(*BillingSession)

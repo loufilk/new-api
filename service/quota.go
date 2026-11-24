@@ -278,6 +278,15 @@ func CalcOpenRouterCacheCreateTokens(usage dto.Usage, priceData types.PriceData)
 }
 
 func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []*common.Message) {
+	// Audio is outside the bound native-text contract. In particular, do not
+	// emit an ordinary billing log or charge from a different source.
+	if owner, ok := relayInfo.Billing.(LaneNativeChatObservedExecution); ok {
+		preserveUnknownLaneNativeChat(ctx.Request.Context(), owner)
+		return
+	}
+	if relaycommon.BillingHTTPDispatchOwned(ctx, relayInfo) {
+		return
+	}
 	if usage == nil {
 		usage = &dto.Usage{PromptTokens: relayInfo.GetEstimatePromptTokens(), TotalTokens: relayInfo.GetEstimatePromptTokens()}
 	}

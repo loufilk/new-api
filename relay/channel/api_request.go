@@ -56,7 +56,7 @@ func ApplyUpstreamBodyMetadata(req *http.Request, body io.Reader) {
 // connection recovery before a body is sent remains the transport's concern.
 func applySingleAttemptTransportPolicy(c *gin.Context, req *http.Request) {
 	if req != nil && (common2.GetContextKeyBool(c, appconstant.ContextKeyTokenNoRetryWithinGroup) ||
-		common2.GetContextKeyBool(c, appconstant.ContextKeyModelTestSingleAttempt)) {
+		common2.GetContextKeyBool(c, appconstant.ContextKeyModelTestSingleAttempt) || common.BillingHTTPDispatchOwned(c, nil)) {
 		req.GetBody = nil
 	}
 }
@@ -452,6 +452,9 @@ type WebSocketPreparer interface {
 // request context, and reports a rejected handshake as a *types.NewAPIError
 // carrying the upstream status code (types.NewError preserves it).
 func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*websocket.Conn, error) {
+	if common.BillingHTTPDispatchOwned(c, info) {
+		return nil, types.NewError(errors.New("billing HTTP owner cannot use WebSocket transport"), "billing_dispatch_unavailable", types.ErrOptionWithSkipRetry())
+	}
 	beginChannelDispatch(c)
 	dialer := *websocket.DefaultDialer
 	proxyURL, _, err := common2.ParseProxyURLRuntime(info.ChannelSetting.Proxy)
@@ -621,11 +624,12 @@ func doPreparedChannelHTTPRequest(c *gin.Context, req *http.Request, info *commo
 			policy.String())
 	}
 
+	dispatchOwned := common.BillingHTTPDispatchOwned(c, info)
 	if info.IsStream {
 		helper.SetEventStreamHeaders(c)
 		// 处理流式请求的 ping 保活
 		generalSettings := operation_setting.GetGeneralSetting()
-		if generalSettings.PingIntervalEnabled && !info.DisablePing {
+		if !dispatchOwned && generalSettings.PingIntervalEnabled && !info.DisablePing {
 			pingInterval := time.Duration(generalSettings.PingIntervalSeconds) * time.Second
 			stopPinger := helper.StartStreamKeepAlive(c, pingInterval)
 			defer stopPinger()
@@ -639,6 +643,18 @@ func doPreparedChannelHTTPRequest(c *gin.Context, req *http.Request, info *commo
 	if apiErr := service.CheckModelTestAccess(c); apiErr != nil {
 		common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, true)
 		return nil, apiErr
+	}
+	if apiErr := common.ClaimBillingHTTPDispatch(c, info, req); apiErr != nil {
+		return nil, apiErr
+	}
+	// A potentially slow durable claim must not commit SSE output first.
+	// Keep the existing pinger timing unchanged for ordinary billing.
+	if dispatchOwned && info.IsStream {
+		generalSettings := operation_setting.GetGeneralSetting()
+		if generalSettings.PingIntervalEnabled && !info.DisablePing {
+			stopPinger := helper.StartStreamKeepAlive(c, time.Duration(generalSettings.PingIntervalSeconds)*time.Second)
+			defer stopPinger()
+		}
 	}
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestOrigin, req.URL.Scheme+"://"+req.URL.Host)
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, false)

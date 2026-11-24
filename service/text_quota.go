@@ -398,6 +398,16 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) 
 }
 
 func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []*common.Message) {
+	if owner, ok := relayInfo.Billing.(LaneNativeChatObservedExecution); ok {
+		settleLaneNativeChatObserved(ctx, relayInfo, usage, owner)
+		return
+	}
+	if relaycommon.BillingHTTPDispatchOwned(ctx, relayInfo) {
+		// An already attempted special owner cannot become ordinary when
+		// the billing field is missing, replaced, or lacks measured settlement.
+		logger.LogError(ctx, "native Chat lane settlement owner unavailable")
+		return
+	}
 	originUsage := usage
 	billingUsage := effectiveBillingUsage(usage)
 	if usage == nil {

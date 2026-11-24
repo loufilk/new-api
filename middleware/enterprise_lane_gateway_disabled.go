@@ -26,6 +26,8 @@ func PrepareEnterpriseLaneGateway(bool) error {
 	return nil
 }
 
-func ConfigureEnterpriseLaneGateway(context.Context) (bool, error)             { return false, nil }
+func ConfigureEnterpriseLaneGateway(ctx context.Context) (bool, error) {
+	return false, model.CheckEnterpriseLaneGatewayDisabled(ctx, model.DB)
+}
 func authorizeEnterpriseLaneGateway(*gin.Context, *model.Token, []string) bool { return false }
 func EnterpriseLaneGatewayEnabled() bool                                       { return false }

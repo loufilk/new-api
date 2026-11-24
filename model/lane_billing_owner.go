@@ -94,6 +94,14 @@ func laneBillingOwnerIDValid(s string) bool {
 	return true
 }
 
+type laneBillingFreshClaimContextKey struct{}
+
+type laneBillingFreshClaim struct {
+	identity LaneBillingOwnerIdentity
+	target   int
+	tx       *gorm.DB
+}
+
 // ReserveLaneBillingOwner is an internal kernel with no existing runtime
 // caller. The original ordinary owner PK arbitrates both modes. This call
 // owns the top-level transaction so errors roll back marker, receipt, and
@@ -144,7 +152,12 @@ func ReserveLaneBillingOwner(ctx context.Context, db *gorm.DB, id LaneBillingOwn
 			if err == nil {
 				return ErrLaneBillingOwnerEvidence // no foreign history adoption
 			}
-			freshChild, reserveErr := store.ReserveLaneBillingReceiptTx(tx, id, target)
+			// The in-package concrete store refuses direct writers without
+			// this fresh canonical claim, bound to this exact transaction.
+			freshClaim := &laneBillingFreshClaim{identity: id, target: target}
+			claimCtx := context.WithValue(tx.Statement.Context, laneBillingFreshClaimContextKey{}, freshClaim)
+			freshClaim.tx = tx.WithContext(claimCtx)
+			freshChild, reserveErr := store.ReserveLaneBillingReceiptTx(freshClaim.tx, id, target)
 			if reserveErr != nil {
 				return reserveErr
 			}
