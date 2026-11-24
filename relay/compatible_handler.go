@@ -176,6 +176,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			return newAPIError
 		}
 
+		observeLaneNativeReleaseFinalWire(c, info, adaptor, jsonData)
 		if !hasLaneNativeSyntheticBilling(c) {
 			logger.LogDebug(c, "text request body: %s", jsonData)
 		}

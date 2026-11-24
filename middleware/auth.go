@@ -592,6 +592,12 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 }
 
 func TokenAuth() func(c *gin.Context) {
+	return tokenAuthWithLaneKeyAvailability(nil)
+}
+
+// Only gateway construction can provide an availability reader; no client
+// header, context flag or option can opt into the scoped decision.
+func tokenAuthWithLaneKeyAvailability(availability *model.LaneKeyAvailabilityV1) func(c *gin.Context) {
 	return func(c *gin.Context) {
 		groupRead, groupErr := model.BeginGroupConfigRead(c.Request.Context())
 		if groupErr != nil {
@@ -735,7 +741,13 @@ func TokenAuth() func(c *gin.Context) {
 		if authorizeEnterpriseLaneGateway(c, token, parts) {
 			return
 		}
-		if err := model.ValidateUserTokenQuota(token); err != nil {
+		scoped, err := availability.Validate(c.Request.Context(), token, userCache, groupRead.Version)
+		if !scoped {
+			err = model.ValidateUserTokenQuota(token)
+		} else if c.GetInt("id") != token.UserId {
+			err = model.ErrTokenInvalid
+		}
+		if err != nil {
 			abortWithOpenAiMessage(c, http.StatusUnauthorized, common.TranslateMessage(c, i18n.MsgTokenInvalid))
 			return
 		}

@@ -4,11 +4,8 @@ package model
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"net/netip"
 	"strings"
 
@@ -18,129 +15,6 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-const (
-	LaneBillingFiniteKeyActive  = "active"
-	LaneBillingFiniteKeyPaused  = "paused"
-	LaneBillingFiniteKeyRevoked = "revoked"
-)
-
-var (
-	ErrLaneBillingFiniteKeyState    = errors.New("finite Key generation does not authorize this operation")
-	ErrLaneBillingFiniteKeyIdentity = errors.New("original finite Key identity does not match")
-	ErrLaneBillingFiniteKeyConflict = errors.New("finite Key transfer operation identity conflicts with persisted evidence")
-)
-
-// LaneBillingFiniteKeyIdentity identifies an original existing Key. The
-// caller supplies an authenticated original fingerprint, never a bearer key.
-type LaneBillingFiniteKeyIdentity struct {
-	UserID           int
-	TokenID          int
-	Epoch            int64
-	TokenFingerprint string `json:"-"`
-}
-
-func (id LaneBillingFiniteKeyIdentity) valid() bool {
-	return id.UserID > 0 && id.TokenID > 0 && id.Epoch > 0 && laneChildSHAValid(id.TokenFingerprint)
-}
-
-// Enrollment is separate from the existing Stage 5 bucket. Once a generation
-// is paused or revoked it cannot be reopened under the same epoch.
-type laneBillingFiniteKeyEnrollmentV1 struct {
-	UserID           int    `gorm:"primaryKey;autoIncrement:false"`
-	TokenID          int    `gorm:"primaryKey;autoIncrement:false"`
-	Epoch            int64  `gorm:"primaryKey;autoIncrement:false"`
-	TokenFingerprint string `gorm:"type:varchar(64);not null" json:"-"`
-	State            string `gorm:"type:varchar(8);not null;check:ck_lane_key_enrollment_state,state IN ('active','paused','revoked')"`
-}
-
-func (laneBillingFiniteKeyEnrollmentV1) TableName() string { return "lane_billing_key_enrollments_v1" }
-
-func (e laneBillingFiniteKeyEnrollmentV1) identity() LaneBillingFiniteKeyIdentity {
-	return LaneBillingFiniteKeyIdentity{UserID: e.UserID, TokenID: e.TokenID, Epoch: e.Epoch, TokenFingerprint: e.TokenFingerprint}
-}
-
-func (e laneBillingFiniteKeyEnrollmentV1) valid() bool {
-	return e.identity().valid() && (e.State == LaneBillingFiniteKeyActive || e.State == LaneBillingFiniteKeyPaused || e.State == LaneBillingFiniteKeyRevoked)
-}
-
-// OperationID is unique in the dev store, including across sibling Keys.
-type LaneBillingFiniteKeyTransfer struct {
-	Identity    LaneBillingFiniteKeyIdentity
-	OperationID string
-	Slot        int
-	Direction   string
-	Amount      int
-}
-
-func (t LaneBillingFiniteKeyTransfer) valid() bool {
-	return t.Identity.valid() && laneBillingOwnerIDValid(t.OperationID) && t.Slot >= 0 && t.Slot < SharedWalletMaxSlots &&
-		(t.Direction == "grant" || t.Direction == "reclaim") && t.Amount > 0 && t.Amount <= common.MaxWalletQuota
-}
-
-// LaneBillingFiniteKeyTransferReceipt is exact historical evidence of a
-// non-consumption move. A replay is not permission to reserve or dispatch.
-type LaneBillingFiniteKeyTransferReceipt struct {
-	Transfer      LaneBillingFiniteKeyTransfer
-	RawBefore     int
-	RawAfter      int
-	ShareVersion  int64
-	GrantedAfter  int
-	ReturnedAfter int
-}
-
-type laneBillingFiniteKeyTransferV1 struct {
-	UserID           int    `gorm:"not null;uniqueIndex:idx_lane_key_transfer_slot_version,priority:1"`
-	TokenID          int    `gorm:"not null;uniqueIndex:idx_lane_key_transfer_slot_version,priority:2"`
-	OperationID      string `gorm:"type:varchar(64);primaryKey"`
-	Epoch            int64  `gorm:"not null;uniqueIndex:idx_lane_key_transfer_slot_version,priority:3"`
-	Slot             int    `gorm:"not null;uniqueIndex:idx_lane_key_transfer_slot_version,priority:4;check:ck_lane_key_transfer_slot,slot >= 0 AND slot < 32"`
-	ShareVersion     int64  `gorm:"not null;uniqueIndex:idx_lane_key_transfer_slot_version,priority:5"`
-	TokenFingerprint string `gorm:"type:varchar(64);not null" json:"-"`
-	Direction        string `gorm:"type:varchar(8);not null"`
-	Amount           int    `gorm:"type:bigint;not null"`
-	RawBefore        int    `gorm:"type:bigint;not null"`
-	RawAfter         int    `gorm:"type:bigint;not null"`
-	GrantedAfter     int    `gorm:"type:bigint;not null"`
-	ReturnedAfter    int    `gorm:"type:bigint;not null"`
-	Proof            string `gorm:"type:varchar(64);not null"`
-}
-
-func (laneBillingFiniteKeyTransferV1) TableName() string            { return "lane_billing_key_transfers_v1" }
-func (*laneBillingFiniteKeyTransferV1) BeforeUpdate(*gorm.DB) error { return ErrLedgerImmutable }
-func (*laneBillingFiniteKeyTransferV1) BeforeDelete(*gorm.DB) error { return ErrLedgerImmutable }
-
-func (r laneBillingFiniteKeyTransferV1) receipt() LaneBillingFiniteKeyTransferReceipt {
-	return LaneBillingFiniteKeyTransferReceipt{
-		Transfer: LaneBillingFiniteKeyTransfer{
-			Identity:    LaneBillingFiniteKeyIdentity{UserID: r.UserID, TokenID: r.TokenID, Epoch: r.Epoch, TokenFingerprint: r.TokenFingerprint},
-			OperationID: r.OperationID, Slot: r.Slot, Direction: r.Direction, Amount: r.Amount,
-		},
-		RawBefore: r.RawBefore, RawAfter: r.RawAfter, ShareVersion: r.ShareVersion, GrantedAfter: r.GrantedAfter, ReturnedAfter: r.ReturnedAfter,
-	}
-}
-
-// This checksum binds exact arithmetic and identity, not external authority or
-// an attestation against a database writer who can rewrite both records.
-func (r laneBillingFiniteKeyTransferV1) checksum() string {
-	h := sha256.Sum256([]byte(fmt.Sprintf("finite-key-transfer-v1|%d|%d|%d|%s|%s|%d|%s|%d|%d|%d|%d|%d|%d",
-		r.UserID, r.TokenID, r.Epoch, r.TokenFingerprint, r.OperationID, r.Slot, r.Direction, r.Amount,
-		r.RawBefore, r.RawAfter, r.ShareVersion, r.GrantedAfter, r.ReturnedAfter)))
-	return hex.EncodeToString(h[:])
-}
-
-func (r laneBillingFiniteKeyTransferV1) valid() bool {
-	if !r.receipt().Transfer.valid() || r.ShareVersion < 1 || r.ShareVersion >= common.MaxWalletQuota ||
-		r.GrantedAfter <= 0 || r.GrantedAfter > common.MaxWalletQuota || r.ReturnedAfter < 0 || r.ReturnedAfter > r.GrantedAfter ||
-		r.RawBefore < 0 || r.RawBefore > common.MaxWalletQuota || r.RawAfter < 0 || r.RawAfter > common.MaxWalletQuota ||
-		subtle.ConstantTimeCompare([]byte(r.Proof), []byte(r.checksum())) != 1 {
-		return false
-	}
-	if r.Direction == "grant" {
-		return r.RawBefore-r.RawAfter == r.Amount && r.GrantedAfter-r.ReturnedAfter >= r.Amount
-	}
-	return r.RawAfter-r.RawBefore == r.Amount && r.ReturnedAfter >= r.Amount
-}
-
 // Unlike the ordinary serving configuration, all of these paths are tagged
 // and restricted to one explicitly named, isolated loopback dev schema. Do
 // not let a missing synthetic table fall through to public or pg_temp.
@@ -148,6 +22,11 @@ func laneBillingFiniteKeyDevScopeTx(tx *gorm.DB) error {
 	if common.RedisEnabled || !common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
 		return ErrLaneBillingOwnerUnavailable
 	}
+	_, err := laneBillingDevPGSchemaTx(tx)
+	return err
+}
+
+func laneBillingDevPGSchemaTx(tx *gorm.DB) (string, error) {
 	var scope struct {
 		SchemaName string
 		ServerIP   string
@@ -158,9 +37,9 @@ func laneBillingFiniteKeyDevScopeTx(tx *gorm.DB) error {
 	ip, parseErr := netip.ParseAddr(scope.ServerIP)
 	if err != nil || parseErr != nil || !ip.IsLoopback() || !scope.Isolated ||
 		!strings.HasPrefix(scope.SchemaName, "lane_billing_dev_") || !laneBillingOwnerIDValid(scope.SchemaName) {
-		return ErrLaneBillingOwnerUnavailable
+		return "", ErrLaneBillingOwnerUnavailable
 	}
-	return nil
+	return scope.SchemaName, nil
 }
 
 func withLaneBillingFiniteKeyDevTx(ctx context.Context, db *gorm.DB, apply func(*gorm.DB) error) error {
@@ -245,16 +124,6 @@ func lockLaneBillingFiniteKeyTokenTx(tx *gorm.DB, id LaneBillingFiniteKeyIdentit
 	return token, err
 }
 
-func originalLaneBillingFiniteKey(id LaneBillingFiniteKeyIdentity, token Token) bool {
-	return token.Id == id.TokenID && token.UserId == id.UserID && !token.UnlimitedQuota && token.Key != "" &&
-		subtle.ConstantTimeCompare([]byte(BillingTokenFingerprint(token.Key)), []byte(id.TokenFingerprint)) == 1
-}
-
-func liveLaneBillingFiniteKey(user User, token Token) bool {
-	return !user.DeletedAt.Valid && user.Status == common.UserStatusEnabled && !token.DeletedAt.Valid &&
-		token.Status == common.TokenStatusEnabled && (token.ExpiredTime == -1 || token.ExpiredTime > common.GetTimestamp())
-}
-
 func lockLaneBillingKeyEnrollmentTx(tx *gorm.DB, id LaneBillingFiniteKeyIdentity, strength string) (laneBillingFiniteKeyEnrollmentV1, error) {
 	var e laneBillingFiniteKeyEnrollmentV1
 	err := tx.Clauses(clause.Locking{Strength: strength}).Where("user_id = ? AND token_id = ? AND epoch = ?", id.UserID, id.TokenID, id.Epoch).Take(&e).Error
@@ -275,12 +144,6 @@ func latestLaneBillingKeyTransferTx(tx *gorm.DB, id LaneBillingFiniteKeyIdentity
 	err := tx.Where("user_id = ? AND token_id = ? AND epoch = ? AND slot = ?", id.UserID, id.TokenID, id.Epoch, slot).
 		Order("share_version DESC").Take(&last).Error
 	return last, err
-}
-
-func laneBillingKeySlotTransferMatches(id LaneBillingFiniteKeyIdentity, row laneBillingFiniteKeyShareV1, last laneBillingFiniteKeyTransferV1) bool {
-	return row.valid() && row.UserID == id.UserID && row.TokenID == id.TokenID && row.Epoch == id.Epoch && row.TokenFingerprint == id.TokenFingerprint &&
-		last.valid() && last.receipt().Transfer.Identity == id && last.Slot == row.Slot && last.ShareVersion <= row.Version &&
-		last.GrantedAfter == row.Granted && last.ReturnedAfter == row.Returned
 }
 
 // A finished first-generation without spending can be rolled safely in this

@@ -89,6 +89,27 @@ func TestLaneStoreBindingDraftStaysDisabledPostgres(t *testing.T) {
 		})
 		return out, err
 	}
+	prepared, err := PrepareLaneNativeReleaseV1(price, facts, route)
+	require.NoError(t, err)
+	tamperedRoute := route
+	tamperedRoute.AuthoritySHA256 = strings.Repeat("d", 64)
+	_, err = prepared.SealFinalWire(t.Context(), price, tamperedRoute, sealed.body, key, laneSettlementPromptBound{})
+	require.ErrorIs(t, err, model.ErrLaneStoreAuthorityEvidence)
+	tamperedPrice := price
+	tamperedPrice.quote.CompletionRatio *= 2
+	_, err = prepared.SealFinalWire(t.Context(), tamperedPrice, route, sealed.body, key, laneSettlementPromptBound{})
+	require.ErrorIs(t, err, model.ErrLaneStoreAuthorityEvidence)
+	_, err = prepared.SealFinalWire(t.Context(), price, route, []byte("{}"), key, laneSettlementPromptBound{})
+	require.ErrorIs(t, err, ErrLaneNativeChatProof)
+	exactWire, err := prepared.SealFinalWire(t.Context(), price, route, sealed.body, key, laneSettlementPromptBound{})
+	require.NoError(t, err)
+	require.Equal(t, proof.Evidence(), exactWire.Evidence())
+	require.NoError(t, inTx(func(tx *gorm.DB) error {
+		result, err := exactWire.RevalidateTx(tx)
+		assert.True(t, result.DefaultEligible)
+		assert.False(t, result.CanBind)
+		return err
+	}))
 	got, err := evaluate(proof)
 	require.NoError(t, err)
 	assert.True(t, got.DefaultEligible)
@@ -106,6 +127,13 @@ func TestLaneStoreBindingDraftStaysDisabledPostgres(t *testing.T) {
 	got, err = evaluate(proof)
 	require.ErrorIs(t, err, model.ErrLaneStoreAuthorityEvidence)
 	assert.Zero(t, got)
+	require.NoError(t, db.Model(&model.Token{}).Where("id = ?", token.Id).UpdateColumn("status", common.TokenStatusEnabled).Error)
+	require.NoError(t, model.RevokeLaneStoreAuthorityV1(t.Context(), db, release))
+	require.ErrorIs(t, inTx(func(tx *gorm.DB) error {
+		result, err := exactWire.RevalidateTx(tx)
+		assert.Zero(t, result)
+		return err
+	}), model.ErrLaneStoreAuthorityEvidence)
 	var owners int64
 	require.NoError(t, db.Model(&model.BillingFinalization{}).Count(&owners).Error)
 	assert.Zero(t, owners)

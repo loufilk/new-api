@@ -404,6 +404,8 @@ type LedgerEntry struct {
 	DebitOrder     []LedgerAccount // 仅内部使用：参与 debit 幂等签名
 	TargetAccount  LedgerAccount   // 仅内部使用：参与 transfer 幂等签名
 	CreditShares   []LedgerShare   // 仅内部使用：参与多账户 credit 幂等签名
+
+	lanePaidSetEpoch int64
 }
 
 // SetMetadata 便捷方法：将 map 序列化为 metadata JSON 字符串。
@@ -453,10 +455,11 @@ func validAccount(account LedgerAccount) bool {
 type ledgerOpKind string
 
 const (
-	ledgerOpCredit   ledgerOpKind = "credit"
-	ledgerOpDebit    ledgerOpKind = "debit"
-	ledgerOpOverride ledgerOpKind = "override"
-	ledgerOpTransfer ledgerOpKind = "transfer"
+	ledgerOpCredit      ledgerOpKind = "credit"
+	ledgerOpDebit       ledgerOpKind = "debit"
+	ledgerOpOverride    ledgerOpKind = "override"
+	ledgerOpLanePaidSet ledgerOpKind = "lane_paid_set"
+	ledgerOpTransfer    ledgerOpKind = "transfer"
 )
 
 func (e LedgerEntry) resolveKey(op ledgerOpKind) (string, error) {
@@ -920,6 +923,9 @@ func ledgerOperationSignature(entry LedgerEntry, op ledgerOpKind) string {
 		entry.ReferenceId,
 		entry.OperatorId,
 	)
+	if op == ledgerOpLanePaidSet {
+		payload += fmt.Sprintf("|wallet_epoch=%d|metadata_sha256=%x", entry.lanePaidSetEpoch, sha256.Sum256([]byte(entry.Metadata)))
+	}
 	if grant := entry.bonusGrant; grant != nil {
 		payload += fmt.Sprintf("|bonus_source=%d:%d:%d:%t", grant.CampaignID, grant.ClaimID, grant.ExpiresAt, grant.Revocable)
 	}
@@ -1036,15 +1042,30 @@ func applyLedgerTx(tx *gorm.DB, entry LedgerEntry, key string, op ledgerOpKind, 
 	}
 
 	// 加锁后读取全局幂等头。已存在时只接受完全相同的操作签名。
-	existingOperation, existingRows, err := loadLedgerOperation(lockForUpdate(tx), key)
+	lookup := lockForUpdate(tx)
+	if op == ledgerOpLanePaidSet {
+		// This specific accounting operation expects at most one detail.
+		lookup = lookup.Limit(2)
+	}
+	existingOperation, existingRows, err := loadLedgerOperation(lookup, key)
 	if err == nil {
 		if verifyReplay(existingOperation, entry, op) {
+			if op == ledgerOpLanePaidSet && !validLanePaidOverrideReplay(entry, existingOperation, existingRows) {
+				return nil, ErrSharedWalletEvidence
+			}
 			return replayResult(existingOperation, existingRows), nil
 		}
 		return nil, fmt.Errorf("%w: key=%s user=%d", ErrLedgerIdempotencyConflict, key, entry.UserId)
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
+	}
+
+	// An enabled lane store must route new paid absolute writes through a
+	// separately authorized custody transaction. Never reinterpret an
+	// unscoped amount as raw, even when its raw delta would be zero.
+	if LaneStoreRuntimeCapable && op == ledgerOpOverride && entry.Account == AccountPaid {
+		return nil, ErrLanePaidOverrideAuthority
 	}
 
 	if err := normalizeLegacyQuotaTx(tx, &user); err != nil {

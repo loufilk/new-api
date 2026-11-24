@@ -182,42 +182,12 @@ func readLaneLogicalQuotaDevTx(tx *gorm.DB, scope LaneLogicalQuotaDevScope, lock
 	}
 	s.view.WalletPaidAvailable = s.view.WalletPaidRaw + s.view.WalletPaidIdle
 
-	if err := query().Where("user_id = ? AND token_id = ? AND epoch = ?", id.UserID, id.TokenID, id.Epoch).
-		Order("slot").Limit(SharedWalletMaxSlots + 1).Find(&s.key).Error; err != nil {
+	custody, err := readLaneFiniteKeyCustodyTx(tx, id, token.RemainQuota, lock)
+	if err != nil {
 		return s, err
 	}
-	if len(s.key) > SharedWalletMaxSlots {
-		return s, ErrLaneBillingOwnerEvidence
-	}
-	// Bounded indexed tip probes include empty slots, so an operation-only
-	// claim cannot be mistaken for an untouched Key. Never scan old history.
-	var tips []laneBillingFiniteKeyTransferV1
-	if err := tx.Raw(`SELECT tip.* FROM generate_series(0, ?) AS slots(slot)
-		CROSS JOIN LATERAL (
-			SELECT * FROM lane_billing_key_transfers_v1
-			WHERE user_id = ? AND token_id = ? AND epoch = ? AND slot = slots.slot
-			ORDER BY share_version DESC LIMIT 1
-		) AS tip`, SharedWalletMaxSlots-1, id.UserID, id.TokenID, id.Epoch).Scan(&tips).Error; err != nil {
-		return s, err
-	}
-	if len(tips) != len(s.key) {
-		return s, ErrLaneBillingOwnerEvidence
-	}
-	tipBySlot := make(map[int]laneBillingFiniteKeyTransferV1, len(tips))
-	for _, tip := range tips {
-		tipBySlot[tip.Slot] = tip
-	}
-	keyUnspentBound := common.MaxWalletQuota - token.RemainQuota
-	for _, slot := range s.key {
-		if !laneBillingKeySlotTransferMatches(id, slot, tipBySlot[slot.Slot]) ||
-			slot.Available+slot.Held > keyUnspentBound {
-			return s, ErrLaneBillingOwnerEvidence
-		}
-		keyUnspentBound -= slot.Available + slot.Held
-		s.view.KeyIdle += slot.Available
-		s.view.KeyHeld += slot.Held
-		s.view.KeyUnprojectedSpent += slot.Spent
-	}
+	s.key = custody.slots
+	s.view.KeyIdle, s.view.KeyHeld, s.view.KeyUnprojectedSpent = custody.idle, custody.held, custody.spent
 	// At most 32 independently bounded bigint slots contribute here.
 	if s.view.KeyUsedRaw > math.MaxInt-s.view.KeyHeld-s.view.KeyUnprojectedSpent {
 		return s, ErrLaneBillingOwnerEvidence

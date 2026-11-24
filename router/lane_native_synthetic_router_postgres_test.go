@@ -75,7 +75,7 @@ func (laneRouterDevPromptVerifier) VerifyNativeChatPromptBound(_ context.Context
 	return 13, nil
 }
 
-func laneRouterDevTestDatabase(t *testing.T, dsn string) *gorm.DB {
+func laneRouterDevTestDatabase(t *testing.T, dsn string, syntheticCustody bool) *gorm.DB {
 	t.Helper()
 	u, err := url.Parse(dsn)
 	require.NoError(t, err)
@@ -130,7 +130,9 @@ func laneRouterDevTestDatabase(t *testing.T, dsn string) *gorm.DB {
 		&model.BalanceLedger{}, &model.BalanceLedgerOperation{}, &model.BillingFinalization{}, &model.TokenRoutingMetric{},
 		&model.UserSubscription{}, &model.SubscriptionPreConsumeRecord{}, &model.QuotaData{}}
 	fixtures = append(fixtures, model.BonusSourceModels()...)
-	fixtures = append(fixtures, model.SharedWalletTreasuryModels()...)
+	if syntheticCustody {
+		fixtures = append(fixtures, model.SharedWalletTreasuryModels()...)
+	}
 	require.NoError(t, db.AutoMigrate(fixtures...))
 	ratio_setting.InitRatioSettings()
 	model.InitOptionMap()
@@ -142,7 +144,9 @@ func laneRouterDevTestDatabase(t *testing.T, dsn string) *gorm.DB {
 	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-4o-mini":1}`))
 	require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(`{"gpt-4o-mini":1}`))
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
-	require.NoError(t, model.InstallLaneBillingSyntheticDevSchema(t.Context(), db))
+	if syntheticCustody {
+		require.NoError(t, model.InstallLaneBillingSyntheticDevSchema(t.Context(), db))
+	}
 	service.InitHttpClient()
 	return db
 }
@@ -169,7 +173,7 @@ func TestLaneNativeSyntheticPublicRouterPostgres(t *testing.T) {
 		t.Log(string(out))
 		return
 	}
-	db := laneRouterDevTestDatabase(t, dsn)
+	db := laneRouterDevTestDatabase(t, dsn, true)
 	var calls atomic.Int32
 	var omitDone, cutUsage, gateTerminal atomic.Bool
 	releaseTerminal := make(chan struct{})

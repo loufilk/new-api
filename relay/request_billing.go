@@ -76,6 +76,7 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 	if armed, apiErr := armLaneNativeSyntheticBilling(c, info); armed {
 		return apiErr
 	}
+	observeLaneNativeReleasePrehold(c, info)
 	if priceData.FreeModel {
 		if info.RelayFormat == types.RelayFormatOpenAIRealtime {
 			return service.PreConsumeFreeRealtimeBilling(c, info)
