@@ -175,11 +175,17 @@ func checkLaneStoreOrdinaryStartupTx(tx *gorm.DB) error {
 	}
 	tx = tx.Session(&gorm.Session{NewDB: true, Logger: logger.Discard, SkipHooks: true})
 	c, err := inspectLaneStoreCatalogTx(tx)
-	if err != nil || c.table == "" {
+	if err != nil {
 		return err
 	}
-	_, err = readLaneStoreAuthorityRowTx(tx, c, "")
-	return err
+	var base laneStoreAuthorityRow
+	if c.table != "" {
+		base, err = readLaneStoreAuthorityRowTx(tx, c, "")
+		if err != nil {
+			return err
+		}
+	}
+	return checkLaneOrdinaryCustodyMarkerTx(tx, c, base)
 }
 
 // InstallLaneStoreAuthorityV1 is an explicit versioned schema step. Ordinary

@@ -161,3 +161,37 @@ PostgreSQL references: [activity visibility](https://www.postgresql.org/docs/18/
 [role edge options](https://www.postgresql.org/docs/18/catalog-pg-auth-members.html),
 [prepared work](https://www.postgresql.org/docs/18/view-pg-prepared-xacts.html),
 [control functions](https://www.postgresql.org/docs/18/functions-info.html).
+
+## Handoff worksheet (no authorization)
+
+Use a private, access-controlled change record. For each line, attach the
+independent record ID/digest, responsible operator and UTC observation time.
+Do not put DSNs, credentials, private addresses or customer balances in Git.
+An empty line means **stop**, not “none.”
+
+| Required input | Evidence needed; not established by the CLI |
+| --- | --- |
+| Same-version population | Artifact digest + source for **every** serving, draining, scheduled and restartable replica/job; record disabled older templates, rollback and autoscaling paths. Hashing one offline binary does not measure a fleet. |
+| Writable routes | Fleet and DB owners agree on the full MAIN/LOG endpoint and failover/restore/pool inventory. V1 supports only one direct shared primary; do not discard other routes to fit it. |
+| Old writer exclusion | For every app, payment callback, admin, worker, migration and direct SQL identity: credential reference/version (not value), revoked routes, drained connections, disabled restart, independently verified denial and owner. Record how the embargo stays enforced after sampling. |
+| In-flight obligations | Account for every backend and prepared transaction across the cluster. Unknown payment, held quota or uncertain dispatch remains held for its original owner; never refund, replay or discard a liability to make a gate pass. |
+| Recovery and stopping | Record who holds the freeze, physical backup/restore verification, exact cutback conditions, and who independently controls the next credentials. Drift or a failover invalidates this handoff. No mixed writer epochs. |
+
+Attach the signed change record first, put its digest in the V1 inventory,
+then archive the exact inventory bytes and audit output. The receipt's
+`input_sha256` must match those bytes. Its result is an observation;
+`custody_authorized` and `external_coverage_verified` must both be false.
+A test fixture or a filled-out worksheet is not evidence that any real
+deployment was stopped. **There is no activation step in this branch.**
+
+Ordinary startup does not read this receipt. Without a visible custody
+catalogue it retains the existing store checks. If a marker is visible,
+ordinary startup accepts only a persistent, unfiltered, non-inherited base
+table in the expected schema, with the declared no-custody record for
+the dormant release (or its exact one-step revocation). A surviving marker
+without its authority table, a fixture marker, or a mismatched release is
+not a clean legacy store. This is a local startup check, not an audit of the
+historic migration or proof against a previously running or older writer.
+Managed migrate may already have invalidated its previous primary migration
+receipt before refusing a separately configured LOG store; it does not erase
+balances or grant custody.

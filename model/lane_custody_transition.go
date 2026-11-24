@@ -182,6 +182,50 @@ func laneCustodyPreparedRow(s laneCustodySpaceV1, input LaneCustodyTransitionV1)
 		BaseReleaseID: input.BaseReleaseID, BaseBinarySHA256: input.BaseBinarySHA256, MigrationRunID: input.MigrationRunID}
 }
 
+// A partial restore can leave just the custody catalogue, with none of the
+// wallet/share tables that otherwise fence ordinary startup. Check only at
+// startup: ordinary requests take no extra locks or SQL. A clean historical
+// no-custody marker does not authorize a handover or authenticate a fleet.
+func checkLaneOrdinaryCustodyMarkerTx(tx *gorm.DB, c laneStoreCatalog, base laneStoreAuthorityRow) error {
+	var count int
+	var plain bool
+	err := tx.Raw(`SELECT count(*), coalesce(bool_and(n.nspname=? AND r.relkind='r'
+		AND r.relpersistence='p' AND NOT (r.relrowsecurity OR r.relforcerowsecurity OR r.relispartition)
+		AND NOT EXISTS (SELECT FROM pg_catalog.pg_inherits i WHERE i.inhparent=r.oid OR i.inhrelid=r.oid)), false)
+		FROM pg_catalog.pg_class r JOIN pg_catalog.pg_namespace n ON n.oid=r.relnamespace
+		WHERE r.relname=? AND n.nspname=ANY(pg_catalog.current_schemas(true))`,
+		c.schema, laneCustodyRelation).Row().Scan(&count, &plain)
+	if err != nil {
+		return ErrLaneStoreAuthorityUnavailable
+	}
+	if count == 0 {
+		return nil
+	}
+	if count != 1 || !plain || c.table == "" {
+		return ErrLaneStoreAuthorityState
+	}
+	space, err := laneCustodySpaceTx(tx)
+	if err != nil {
+		return err
+	}
+	row, exists, err := readLaneCustodyRowTx(tx, space, false)
+	if err != nil {
+		return err
+	}
+	// Revocation increments the dormant epoch once and never reopens it.
+	// The immutable no-custody marker still identifies the preceding epoch.
+	release := base.LaneStoreReleaseV1
+	if base.State == laneStoreAuthorityRevoked {
+		release.Epoch--
+	}
+	input := LaneCustodyTransitionV1{Release: release, BaseReleaseID: row.BaseReleaseID,
+		BaseBinarySHA256: row.BaseBinarySHA256, MigrationRunID: row.MigrationRunID}
+	if !exists || !input.valid() || row != laneCustodyPreparedRow(space, input) {
+		return ErrLaneStoreAuthorityState
+	}
+	return nil
+}
+
 // InstallLaneCustodyTransitionV1 deliberately writes only no-custody metadata.
 // Both existing role receipts must match on one configured PostgreSQL handle.
 // No ordinary startup calls it. It creates no writer/owner/wallet authority.
