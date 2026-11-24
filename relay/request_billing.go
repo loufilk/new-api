@@ -93,7 +93,9 @@ func RefundFailedRequestBilling(c *gin.Context, info *relaycommon.RelayInfo, api
 		apiErr = service.NormalizeViolationFeeError(apiErr, info.ChannelType)
 	}
 	apiErr = PreserveFailedRequestBilling(c, info, apiErr)
-	if c.GetBool(requestBillingDeliveryUnknownKey) {
+	if c.GetBool(requestBillingDeliveryUnknownKey) || relaycommon.BillingHTTPDispatchOwned(c, info) {
+		// This owner must reconcile its own durable claim, including a lost
+		// acknowledgement. A transport rejection is not ordinary refund authority.
 		return apiErr
 	}
 	if info.Billing != nil {
@@ -109,6 +111,11 @@ func RefundFailedRequestBilling(c *gin.Context, info *relaycommon.RelayInfo, api
 func PreserveFailedRequestBilling(c *gin.Context, info *relaycommon.RelayInfo, apiErr *types.NewAPIError) *types.NewAPIError {
 	if apiErr == nil {
 		return nil
+	}
+	if relaycommon.BillingHTTPDispatchOwned(c, info) {
+		// Even DNS failure or an explicit rejection cannot grant a second
+		// dispatch or switch a bound financial owner back to ordinary funding.
+		return types.NewError(apiErr, apiErr.GetErrorCode(), types.ErrOptionWithSkipRetry())
 	}
 	if !c.GetBool(requestBillingUsageObservedKey) && !c.GetBool(requestBillingDeliveryUnknownKey) {
 		if common.GetContextKeyBool(c, constant.ContextKeyUpstreamSubmissionPending) {
