@@ -9974,6 +9974,19 @@
     "Plugin indexes are fetched by your browser. Installing runs the same review and admission pipeline as a manual upload.": "Plugin indexes are fetched by your browser. Installing runs the same review and admission pipeline as a manual upload.",
     "Disable task plugins?": "Disable task plugins?",
     "Stopped waiting for the image response": "Stopped waiting for the image response",
-    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key"
+    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key",
+    "Add to Magpie": "Add to Magpie",
+    "Import this API Key into the Magpie desktop app.": "Import this API Key into the Magpie desktop app.",
+    "Destination API": "Destination API",
+    "Your browser will pass this key to the desktop app registered for Magpie. Confirm adding the provider in Magpie.": "Your browser will pass this key to the desktop app registered for Magpie. Confirm adding the provider in Magpie.",
+    "Prepare import": "Prepare import",
+    "Open Magpie": "Open Magpie",
+    "Open this page in a desktop browser with Magpie installed to import a key.": "Open this page in a desktop browser with Magpie installed to import a key.",
+    "The configured API address is not suitable for a secure Magpie import.": "The configured API address is not suitable for a secure Magpie import.",
+    "Use an enabled, unexpired API Key to import into Magpie.": "Use an enabled, unexpired API Key to import into Magpie.",
+    "Could not prepare or open the Magpie import. Try again or open Magpie help.": "Could not prepare or open the Magpie import. Try again or open Magpie help.",
+    "The import expired. Prepare it again to continue.": "The import expired. Prepare it again to continue.",
+    "Check your browser and Magpie for a confirmation. If nothing opened, install Magpie or open Magpie help.": "Check your browser and Magpie for a confirmation. If nothing opened, install Magpie or open Magpie help.",
+    "Magpie help": "Magpie help"
   }
 }

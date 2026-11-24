@@ -9974,6 +9974,19 @@
     "Plugin indexes are fetched by your browser. Installing runs the same review and admission pipeline as a manual upload.": "Les index de plugins sont récupérés par votre navigateur. L’installation suit exactement le même circuit d’examen et d’admission qu’un import manuel.",
     "Disable task plugins?": "Désactiver les plugins de tâche ?",
     "Stopped waiting for the image response": "Attente de la réponse d’image arrêtée",
-    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "La vérification de l’identité de paiement des nouveaux utilisateurs nécessite une passerelle Alipay HTTPS avec une clé de consultation des commandes"
+    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "La vérification de l’identité de paiement des nouveaux utilisateurs nécessite une passerelle Alipay HTTPS avec une clé de consultation des commandes",
+    "Add to Magpie": "Ajouter à Magpie",
+    "Import this API Key into the Magpie desktop app.": "Importez cette clé API dans l’application de bureau Magpie.",
+    "Destination API": "API de destination",
+    "Your browser will pass this key to the desktop app registered for Magpie. Confirm adding the provider in Magpie.": "Votre navigateur transmettra cette clé à l’application de bureau associée à Magpie. Confirmez l’ajout du fournisseur dans Magpie.",
+    "Prepare import": "Préparer l’importation",
+    "Open Magpie": "Ouvrir Magpie",
+    "Open this page in a desktop browser with Magpie installed to import a key.": "Pour importer une clé, ouvrez cette page dans un navigateur de bureau où Magpie est installé.",
+    "The configured API address is not suitable for a secure Magpie import.": "L’adresse API configurée ne convient pas à une importation sécurisée dans Magpie.",
+    "Use an enabled, unexpired API Key to import into Magpie.": "Utilisez une clé API activée et non expirée pour l’importer dans Magpie.",
+    "Could not prepare or open the Magpie import. Try again or open Magpie help.": "Impossible de préparer ou d’ouvrir l’importation Magpie. Réessayez ou consultez l’aide de Magpie.",
+    "The import expired. Prepare it again to continue.": "L’importation a expiré. Préparez-la de nouveau pour continuer.",
+    "Check your browser and Magpie for a confirmation. If nothing opened, install Magpie or open Magpie help.": "Vérifiez les demandes de confirmation dans votre navigateur et dans Magpie. Si rien ne s’est ouvert, installez Magpie ou consultez son aide.",
+    "Magpie help": "Aide Magpie"
   }
 }

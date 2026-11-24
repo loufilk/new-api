@@ -9974,6 +9974,19 @@
     "Plugin indexes are fetched by your browser. Installing runs the same review and admission pipeline as a manual upload.": "Chỉ mục plugin do trình duyệt của bạn tải. Việc cài đặt đi qua đúng quy trình xem xét và kiểm duyệt như khi tải lên thủ công.",
     "Disable task plugins?": "Tắt plugin tác vụ?",
     "Stopped waiting for the image response": "Đã dừng chờ phản hồi hình ảnh",
-    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "Xác minh danh tính thanh toán cho ưu đãi người dùng mới yêu cầu cổng Alipay HTTPS có khóa truy vấn đơn hàng"
+    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "Xác minh danh tính thanh toán cho ưu đãi người dùng mới yêu cầu cổng Alipay HTTPS có khóa truy vấn đơn hàng",
+    "Add to Magpie": "Thêm vào Magpie",
+    "Import this API Key into the Magpie desktop app.": "Nhập khóa API này vào ứng dụng Magpie dành cho máy tính.",
+    "Destination API": "API đích",
+    "Your browser will pass this key to the desktop app registered for Magpie. Confirm adding the provider in Magpie.": "Trình duyệt sẽ chuyển khóa này cho ứng dụng máy tính đã đăng ký mở liên kết Magpie. Hãy xác nhận thêm nhà cung cấp trong Magpie.",
+    "Prepare import": "Chuẩn bị nhập",
+    "Open Magpie": "Mở Magpie",
+    "Open this page in a desktop browser with Magpie installed to import a key.": "Để nhập khóa, hãy mở trang này trong trình duyệt máy tính đã cài đặt Magpie.",
+    "The configured API address is not suitable for a secure Magpie import.": "Địa chỉ API đã cấu hình không phù hợp để nhập an toàn vào Magpie.",
+    "Use an enabled, unexpired API Key to import into Magpie.": "Hãy dùng khóa API đã bật và chưa hết hạn để nhập vào Magpie.",
+    "Could not prepare or open the Magpie import. Try again or open Magpie help.": "Không thể chuẩn bị hoặc mở bản nhập Magpie. Hãy thử lại hoặc mở trợ giúp Magpie.",
+    "The import expired. Prepare it again to continue.": "Bản nhập đã hết hạn. Hãy chuẩn bị lại để tiếp tục.",
+    "Check your browser and Magpie for a confirmation. If nothing opened, install Magpie or open Magpie help.": "Hãy kiểm tra lời nhắc xác nhận trong trình duyệt và Magpie. Nếu không có gì mở ra, hãy cài Magpie hoặc mở trợ giúp.",
+    "Magpie help": "Trợ giúp Magpie"
   }
 }

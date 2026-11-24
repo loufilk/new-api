@@ -9974,6 +9974,19 @@
     "Plugin indexes are fetched by your browser. Installing runs the same review and admission pipeline as a manual upload.": "プラグインのインデックスはブラウザが取得します。インストール時の確認と受け入れの流れは手動アップロードと全く同じです。",
     "Disable task plugins?": "タスクプラグインを無効化しますか？",
     "Stopped waiting for the image response": "画像の応答の待機を停止しました",
-    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "新規ユーザー特典の決済本人確認には、注文照会キーを設定した HTTPS Alipay ゲートウェイが必要です"
+    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "新規ユーザー特典の決済本人確認には、注文照会キーを設定した HTTPS Alipay ゲートウェイが必要です",
+    "Add to Magpie": "Magpie に追加",
+    "Import this API Key into the Magpie desktop app.": "この API キーを Magpie デスクトップアプリにインポートします。",
+    "Destination API": "接続先 API",
+    "Your browser will pass this key to the desktop app registered for Magpie. Confirm adding the provider in Magpie.": "ブラウザーはこのキーを、Magpie のリンクを開くように登録されたデスクトップアプリに渡します。Magpie でプロバイダーの追加を確認してください。",
+    "Prepare import": "インポートを準備",
+    "Open Magpie": "Magpie を開く",
+    "Open this page in a desktop browser with Magpie installed to import a key.": "キーをインポートするには、Magpie がインストールされたパソコンのブラウザーでこのページを開いてください。",
+    "The configured API address is not suitable for a secure Magpie import.": "設定済みの API アドレスは Magpie に安全にインポートできません。",
+    "Use an enabled, unexpired API Key to import into Magpie.": "Magpie にインポートするには、有効で期限切れでない API キーを使用してください。",
+    "Could not prepare or open the Magpie import. Try again or open Magpie help.": "Magpie へのインポートを準備または開始できませんでした。再試行するか、Magpie のヘルプを開いてください。",
+    "The import expired. Prepare it again to continue.": "インポートの有効期限が切れました。続行するにはもう一度準備してください。",
+    "Check your browser and Magpie for a confirmation. If nothing opened, install Magpie or open Magpie help.": "ブラウザーと Magpie の確認画面を確認してください。何も開かない場合は、Magpie をインストールするか、ヘルプを開いてください。",
+    "Magpie help": "Magpie のヘルプ"
   }
 }

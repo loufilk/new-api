@@ -9974,6 +9974,19 @@
     "Plugin indexes are fetched by your browser. Installing runs the same review and admission pipeline as a manual upload.": "Индексы плагинов загружает ваш браузер. Установка проходит тот же путь проверки и допуска, что и загрузка вручную.",
     "Disable task plugins?": "Отключить плагины задач?",
     "Stopped waiting for the image response": "Ожидание ответа с изображением остановлено",
-    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "Проверка платёжной личности для бонуса новым пользователям требует HTTPS-шлюз Alipay с ключом для запроса заказов"
+    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "Проверка платёжной личности для бонуса новым пользователям требует HTTPS-шлюз Alipay с ключом для запроса заказов",
+    "Add to Magpie": "Добавить в Magpie",
+    "Import this API Key into the Magpie desktop app.": "Импортируйте этот ключ API в настольное приложение Magpie.",
+    "Destination API": "Целевой API",
+    "Your browser will pass this key to the desktop app registered for Magpie. Confirm adding the provider in Magpie.": "Браузер передаст этот ключ настольному приложению, зарегистрированному для открытия ссылок Magpie. Подтвердите добавление провайдера в Magpie.",
+    "Prepare import": "Подготовить импорт",
+    "Open Magpie": "Открыть Magpie",
+    "Open this page in a desktop browser with Magpie installed to import a key.": "Чтобы импортировать ключ, откройте эту страницу в браузере на компьютере с установленным Magpie.",
+    "The configured API address is not suitable for a secure Magpie import.": "Указанный адрес API не подходит для безопасного импорта в Magpie.",
+    "Use an enabled, unexpired API Key to import into Magpie.": "Для импорта в Magpie используйте активный ключ API с неистёкшим сроком действия.",
+    "Could not prepare or open the Magpie import. Try again or open Magpie help.": "Не удалось подготовить или открыть импорт в Magpie. Повторите попытку или откройте справку Magpie.",
+    "The import expired. Prepare it again to continue.": "Время импорта истекло. Чтобы продолжить, подготовьте импорт снова.",
+    "Check your browser and Magpie for a confirmation. If nothing opened, install Magpie or open Magpie help.": "Проверьте запросы подтверждения в браузере и Magpie. Если ничего не открылось, установите Magpie или откройте справку.",
+    "Magpie help": "Справка Magpie"
   }
 }

@@ -44,6 +44,10 @@ type ApiKeysContextType = {
   resolvedKey: string
   setResolvedKey: React.Dispatch<React.SetStateAction<string>>
   resolveRealKey: (id: number) => Promise<string | null>
+  resolveTransientKey: (
+    id: number,
+    signal: AbortSignal
+  ) => Promise<string | null>
   resolveRealKeysBatch: (ids: number[]) => Promise<Record<number, string>>
   resolvedKeys: Record<number, string>
   loadingKeys: Record<number, boolean>
@@ -157,6 +161,23 @@ function SessionApiKeysProvider({
     [resolvedKeys, t, isCurrentOwner]
   )
 
+  // Use the existing owner-scoped endpoint and epoch checks, but never fill
+  // the ordinary session cache or report a response body for local import.
+  const resolveTransientKey = useCallback(
+    async (id: number, signal: AbortSignal): Promise<string | null> => {
+      if (!isCurrentOwner() || signal.aborted) return null
+      try {
+        const res = await fetchTokenKey(id, { signal })
+        if (!isCurrentOwner() || signal.aborted) return null
+        const raw = res.success ? res.data?.key : null
+        return typeof raw === 'string' && raw.length > 0 ? `sk-${raw}` : null
+      } catch {
+        return null
+      }
+    },
+    [isCurrentOwner]
+  )
+
   const resolveRealKeysBatch = useCallback(
     async (ids: number[]): Promise<Record<number, string>> => {
       if (!isCurrentOwner()) return {}
@@ -224,6 +245,7 @@ function SessionApiKeysProvider({
         resolvedKey,
         setResolvedKey,
         resolveRealKey,
+        resolveTransientKey,
         resolveRealKeysBatch,
         resolvedKeys,
         loadingKeys,

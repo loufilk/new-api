@@ -9996,6 +9996,19 @@
     "Plugin indexes are fetched by your browser. Installing runs the same review and admission pipeline as a manual upload.": "外掛索引由你的瀏覽器取得。安裝時走的審查與准入流程與手動上傳完全一致。",
     "Disable task plugins?": "停用任務外掛？",
     "Stopped waiting for the image response": "已停止等待圖片回應",
-    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "新使用者福利支付身分驗證需要使用 HTTPS 支付寶閘道並設定訂單查詢金鑰"
+    "New user benefit payment identity checks require an HTTPS Alipay gateway with an order query key": "新使用者福利支付身分驗證需要使用 HTTPS 支付寶閘道並設定訂單查詢金鑰",
+    "Add to Magpie": "新增至 Magpie",
+    "Import this API Key into the Magpie desktop app.": "將此 API 金鑰匯入 Magpie 桌面應用程式。",
+    "Destination API": "目標 API",
+    "Your browser will pass this key to the desktop app registered for Magpie. Confirm adding the provider in Magpie.": "瀏覽器會將此金鑰交給系統中註冊用於開啟 Magpie 連結的桌面應用程式。請在 Magpie 中確認新增供應商。",
+    "Prepare import": "準備匯入",
+    "Open Magpie": "開啟 Magpie",
+    "Open this page in a desktop browser with Magpie installed to import a key.": "請在已安裝 Magpie 的桌面裝置上使用瀏覽器開啟此頁面，再匯入金鑰。",
+    "The configured API address is not suitable for a secure Magpie import.": "目前設定的 API 位址不適合安全匯入 Magpie。",
+    "Use an enabled, unexpired API Key to import into Magpie.": "請使用已啟用且未過期的 API 金鑰匯入 Magpie。",
+    "Could not prepare or open the Magpie import. Try again or open Magpie help.": "無法準備或開啟 Magpie 匯入。請重試或查看 Magpie 說明。",
+    "The import expired. Prepare it again to continue.": "匯入已逾期。請重新準備後再繼續。",
+    "Check your browser and Magpie for a confirmation. If nothing opened, install Magpie or open Magpie help.": "請查看瀏覽器與 Magpie 的確認提示。若未開啟，請安裝 Magpie 或查看 Magpie 說明。",
+    "Magpie help": "Magpie 說明"
   }
 }

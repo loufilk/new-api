@@ -21,6 +21,7 @@ import { ApiKeysDeleteDialog } from './api-keys-delete-dialog'
 import { ApiKeysMutateDrawer } from './api-keys-mutate-drawer'
 import { useApiKeys } from './api-keys-provider'
 import { CCSwitchDialog } from './dialogs/cc-switch-dialog'
+import { MagpieImportDialog } from './dialogs/magpie-import-dialog'
 
 export function ApiKeysDialogs({ draft }: { draft?: MarketKeyDraft }) {
   const { open, setOpen, currentRow, resolvedKey } = useApiKeys()
@@ -45,6 +46,13 @@ export function ApiKeysDialogs({ draft }: { draft?: MarketKeyDraft }) {
         tokenKey={resolvedKey}
         token={currentRow}
       />
+      {open === 'magpie' && currentRow ? (
+        <MagpieImportDialog
+          key={currentRow.id}
+          token={currentRow}
+          onClose={() => setOpen(null)}
+        />
+      ) : null}
     </>
   )
 }

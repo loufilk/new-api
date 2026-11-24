@@ -648,6 +648,47 @@ it('ignores cached Chat presets yet opens the independent CC Switch action', asy
   expect(launch).not.toHaveBeenCalled()
 })
 
+it('puts Magpie directly after standalone CC Switch and defers the Key read', async () => {
+  const { post } = await renderKeysPage(1, {}, true, '/keys/', true)
+  const user = userEvent.setup()
+
+  await user.click(screen.getByRole('button', { name: 'Open menu' }))
+  const items = screen.getAllByRole('menuitem')
+  const ccSwitch = screen.getByRole('menuitem', { name: 'CC Switch' })
+  const magpie = screen.getByRole('menuitem', { name: 'Add to Magpie' })
+  expect(items[items.indexOf(ccSwitch) + 1]).toBe(magpie)
+  await user.click(magpie)
+  expect(
+    await screen.findByRole('dialog', { name: 'Add to Magpie' })
+  ).toBeVisible()
+  expect(post).not.toHaveBeenCalled()
+})
+
+it.each([
+  { status: 2, expired_time: -1 },
+  { status: 1, expired_time: 1 },
+])(
+  'only offers disabled Magpie menu item for an inactive Key, %o',
+  async (token) => {
+    const { post } = await renderKeysPage(
+      token.status,
+      { expired_time: token.expired_time },
+      true,
+      '/keys/',
+      true
+    )
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    const magpie = screen.getByRole('menuitem', { name: 'Add to Magpie' })
+    expect(magpie).toHaveAttribute('aria-disabled', 'true')
+    await user.click(magpie)
+    expect(
+      screen.queryByRole('dialog', { name: 'Add to Magpie' })
+    ).not.toBeInTheDocument()
+    expect(post).not.toHaveBeenCalled()
+  }
+)
+
 it('keeps full mobile information without group or quota section headings', async () => {
   const matchMedia = window.matchMedia
   vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({

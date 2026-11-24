@@ -23,6 +23,7 @@ import {
   Power,
   PowerOff,
   ArrowRightLeft,
+  Bird,
   Copy,
   Link,
   Loader2,
@@ -51,6 +52,7 @@ import { handleServerError } from '@/lib/handle-server-error'
 
 import { updateApiKeyStatus } from '../api'
 import { API_KEY_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
+import { isMagpieEligibleKey } from '../lib/magpie-import'
 import type { ApiKey } from '../types'
 import { useApiKeys } from './api-keys-provider'
 import { KeyDiagnosticButton } from './key-diagnostic-dialog'
@@ -219,6 +221,19 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           {t('CC Switch')}
           <DropdownMenuShortcut>
             <ArrowRightLeft size={16} />
+          </DropdownMenuShortcut>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          disabled={!isMagpieEligibleKey(apiKey)}
+          onClick={() => {
+            if (!isMagpieEligibleKey(apiKey)) return
+            setCurrentRow(apiKey)
+            setOpen('magpie')
+          }}
+        >
+          {t('Add to Magpie')}
+          <DropdownMenuShortcut>
+            <Bird size={16} aria-hidden='true' />
           </DropdownMenuShortcut>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
