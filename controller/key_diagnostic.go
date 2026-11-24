@@ -27,9 +27,47 @@ type keyDiagnosticQuestion struct {
 	Limit  int    `json:"max_output_tokens"`
 }
 
+const (
+	keyDiagnosticPelicanV1 = "pelican-svg-v1"
+	keyDiagnosticCandyV1   = "candy-logic-v1"
+	keyDiagnosticPelicanV2 = "pelican-svg-v2"
+	keyDiagnosticCandyV2   = "candy-logic-v2"
+)
+
 var keyDiagnosticQuestions = []keyDiagnosticQuestion{
-	{"pelican-svg-v1", "请用一个独立的 SVG 动画描绘一只鹈鹕骑着自行车前进。让车轮转动，脚和踏板配合，长嘴、身体和自行车清晰可辨。只返回完整 SVG 源码，不使用 JavaScript、外链或外部资源。", 32000},
-	{"candy-logic-v1", "袋中有 7 颗红糖、5 颗蓝糖和 3 颗绿糖。闭眼一次摸出一颗，不放回。至少要摸出多少颗，才能保证其中既有两颗同色的糖，又有两颗不同色的糖？请给出答案，并用最坏情形说明为什么不能更少。", 8192},
+	{keyDiagnosticPelicanV2, `请生成可直接运行的单文件HTML，使用内联SVG绘制鹈鹕骑自行车的二维循环动画。画面以鹈鹕和自行车为主体，展示清晰的身体结构、踩踏动作和车轮转动，配合协调的背景、配色与层次。动画应流畅自然、衔接连续，并适配不同屏幕尺寸。禁止依赖外部资源，只输出完整HTML，不要代码围栏或解释文字。`, 32000},
+	{keyDiagnosticCandyV2, `在一个不透明的袋子中有三种口味、两种形状的糖果，数量分布如下：
+
+圆形：苹果味 7 颗、桃子味 9 颗、西瓜味 8 颗
+
+五角星形：苹果味 7 颗、桃子味 6 颗、西瓜味 4 颗
+
+参赛者只能靠手感分辨形状，无法分辨口味。请问：至少要摸出多少颗糖果，才能保证手中同时拥有不同形状的"苹果味"与"桃子味"糖果？（即满足以下任一组合即可：① 圆形苹果味 + 五角星桃子味；② 五角星苹果味 + 圆形桃子味）。
+
+要求：给出计算步骤并标明最终数字。
+
+请在回答的最后单独一行写：最终答案：数字`, 8192},
+}
+
+// Historical consent continues to identify the original prompt and limit.
+// These definitions may match admitted receipts but cannot admit new calls.
+var retiredKeyDiagnosticQuestions = []keyDiagnosticQuestion{
+	{keyDiagnosticPelicanV1, "请用一个独立的 SVG 动画描绘一只鹈鹕骑着自行车前进。让车轮转动，脚和踏板配合，长嘴、身体和自行车清晰可辨。只返回完整 SVG 源码，不使用 JavaScript、外链或外部资源。", 32000},
+	{keyDiagnosticCandyV1, "袋中有 7 颗红糖、5 颗蓝糖和 3 颗绿糖。闭眼一次摸出一颗，不放回。至少要摸出多少颗，才能保证其中既有两颗同色的糖，又有两颗不同色的糖？请给出答案，并用最坏情形说明为什么不能更少。", 8192},
+}
+
+func lookupKeyDiagnosticQuestion(id string) (keyDiagnosticQuestion, bool) {
+	for _, q := range keyDiagnosticQuestions {
+		if q.ID == id {
+			return q, true
+		}
+	}
+	for _, q := range retiredKeyDiagnosticQuestions {
+		if q.ID == id {
+			return q, false
+		}
+	}
+	return keyDiagnosticQuestion{}, false
 }
 
 func usableDiagnosticToken(token *model.Token, owner int, ip string) bool {
@@ -221,12 +259,11 @@ func PrepareKeyDiagnostic(c *gin.Context) {
 		keyDiagnosticError(c, 400, "confirmation_required")
 		return
 	}
-	qi := slices.IndexFunc(keyDiagnosticQuestions, func(q keyDiagnosticQuestion) bool { return q.ID == input.Question })
-	if !parseKeyDiagnosticID(input.ClientID) || qi < 0 || input.TokenID <= 0 || strings.TrimSpace(input.Model) == "" || len(input.Model) > 255 {
+	question, active := lookupKeyDiagnosticQuestion(input.Question)
+	if !parseKeyDiagnosticID(input.ClientID) || question.ID == "" || input.TokenID <= 0 || strings.TrimSpace(input.Model) == "" || len(input.Model) > 255 {
 		keyDiagnosticError(c, 400, "invalid_selection")
 		return
 	}
-	question := keyDiagnosticQuestions[qi]
 	if prior, err := model.GetKeyDiagnosticRun(c.Request.Context(), identity.UserID, input.ClientID); err == nil {
 		if !model.KeyDiagnosticSameInput(prior, input.TokenID, input.Model, input.Question, question.Limit) {
 			keyDiagnosticError(c, 409, "request_id_conflict")
@@ -240,6 +277,10 @@ func PrepareKeyDiagnostic(c *gin.Context) {
 		return
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		keyDiagnosticError(c, 503, "history_unavailable")
+		return
+	}
+	if !active {
+		keyDiagnosticError(c, http.StatusBadRequest, "question_retired")
 		return
 	}
 	ip := net.ParseIP(c.ClientIP())

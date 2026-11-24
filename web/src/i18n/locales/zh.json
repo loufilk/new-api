@@ -10050,6 +10050,8 @@
     "Token usage": "Token 用量",
     "Generation charge": "生成费用",
     "Generation charge refunded": "生成费用已退回",
-    "Generation settlement only. Other fees are not confirmed here.": "这里只显示生成结算，其他费用未在此确认。"
+    "Generation settlement only. Other fees are not confirmed here.": "这里只显示生成结算，其他费用未在此确认。",
+    "No saved result was found for the old question. The earlier outcome is not confirmed.": "未找到这道旧题的已保存结果。此前的执行情况仍未确认。",
+    "Only the isolated SVG is previewed. Do not run untrusted original HTML.": "预览只显示隔离的 SVG。不要运行不可信的原始 HTML。"
   }
 }

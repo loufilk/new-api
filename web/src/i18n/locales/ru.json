@@ -10028,6 +10028,8 @@
     "Token usage": "Расход токенов",
     "Generation charge": "Стоимость генерации",
     "Generation charge refunded": "Плата за генерацию возвращена",
-    "Generation settlement only. Other fees are not confirmed here.": "Показан только расчёт за генерацию. Другие сборы здесь не подтверждены."
+    "Generation settlement only. Other fees are not confirmed here.": "Показан только расчёт за генерацию. Другие сборы здесь не подтверждены.",
+    "No saved result was found for the old question. The earlier outcome is not confirmed.": "Сохранённый результат для старого вопроса не найден. Исход предыдущего запроса не подтверждён.",
+    "Only the isolated SVG is previewed. Do not run untrusted original HTML.": "В предпросмотре виден только изолированный SVG. Не запускайте исходный HTML из недоверенного источника."
   }
 }

@@ -10028,6 +10028,8 @@
     "Token usage": "Token usage",
     "Generation charge": "Generation charge",
     "Generation charge refunded": "Generation charge refunded",
-    "Generation settlement only. Other fees are not confirmed here.": "Generation settlement only. Other fees are not confirmed here."
+    "Generation settlement only. Other fees are not confirmed here.": "Generation settlement only. Other fees are not confirmed here.",
+    "No saved result was found for the old question. The earlier outcome is not confirmed.": "No saved result was found for the old question. The earlier outcome is not confirmed.",
+    "Only the isolated SVG is previewed. Do not run untrusted original HTML.": "Only the isolated SVG is previewed. Do not run untrusted original HTML."
   }
 }

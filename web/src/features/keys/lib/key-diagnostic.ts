@@ -30,6 +30,8 @@ import {
 export const diagnosticQuestionLabels = {
   'pelican-svg-v1': 'Cycling pelican (SVG animation)',
   'candy-logic-v1': 'Drawing candies (logic puzzle)',
+  'pelican-svg-v2': 'Cycling pelican (SVG animation)',
+  'candy-logic-v2': 'Drawing candies (logic puzzle)',
 } as const
 
 export const diagnosticStatusLabels = {
@@ -42,7 +44,12 @@ export const diagnosticStatusLabels = {
 } as const
 
 export const diagnosticEndpoint = '/api/user/key-diagnostics'
-const question = z.enum(['pelican-svg-v1', 'candy-logic-v1'])
+const activeQuestion = z.enum(['pelican-svg-v2', 'candy-logic-v2'])
+const question = z.enum([
+  'pelican-svg-v1',
+  'candy-logic-v1',
+  ...activeQuestion.options,
+])
 const operationId = z
   .string()
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
@@ -72,14 +79,14 @@ const options = z.object({
   questions: z.array(
     z
       .object({
-        id: question,
+        id: activeQuestion,
         prompt: z.string(),
         max_output_tokens: safeInt,
       })
       .refine(
         (item) =>
           item.max_output_tokens ===
-          (item.id === 'pelican-svg-v1' ? 32000 : 8192)
+          (item.id === 'pelican-svg-v2' ? 32000 : 8192)
       )
   ),
 })
@@ -124,6 +131,21 @@ export type PendingDiagnosticDraft = z.infer<typeof pendingDraft>
 export type DiagnosticOptions = z.infer<typeof options>
 export type DiagnosticRun = z.infer<typeof run>
 export type DiagnosticQuestion = z.infer<typeof question>
+export type ActiveDiagnosticQuestion = z.infer<typeof activeQuestion>
+
+export function isActiveDiagnosticQuestion(
+  value: string
+): value is ActiveDiagnosticQuestion {
+  return activeQuestion.safeParse(value).success
+}
+
+export function isPelicanDiagnosticQuestion(value?: DiagnosticQuestion) {
+  return value === 'pelican-svg-v1' || value === 'pelican-svg-v2'
+}
+
+export function isCandyDiagnosticQuestion(value?: DiagnosticQuestion) {
+  return value === 'candy-logic-v1' || value === 'candy-logic-v2'
+}
 
 type Response<T> = { success: boolean; data: T }
 
@@ -218,7 +240,9 @@ export function isDiagnosticRejected(error: unknown): boolean {
   return getServerErrorSources(error).some(
     ({ code }) =>
       (status === 400 &&
-        (code === 'invalid_selection' || code === 'confirmation_required')) ||
+        (code === 'invalid_selection' ||
+          code === 'confirmation_required' ||
+          code === 'question_retired')) ||
       (status === 403 &&
         (code === 'token_unavailable' || code === 'model_or_group_unavailable'))
   )

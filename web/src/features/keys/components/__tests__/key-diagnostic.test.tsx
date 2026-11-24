@@ -27,6 +27,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import {
   type DiagnosticRun,
   loadDiagnosticDraft,
+  saveDiagnosticDraft,
 } from '../../lib/key-diagnostic'
 import { KeyDiagnosticButton } from '../key-diagnostic-dialog'
 import { KeyDiagnosticResult } from '../key-diagnostic-result'
@@ -35,6 +36,7 @@ const endpoint = '/api/user/key-diagnostics'
 const firstSession = 'synthetic-login-one'
 const secondSession = 'synthetic-login-two'
 const testID = '01234567-89ab-4cde-89ab-0123456789ab'
+const testRunURL = `${endpoint}/runs/${testID}`
 const eligibleKeys = [
   { id: 9, name: 'Personal', group: 'group-a' },
   {
@@ -50,12 +52,12 @@ const options = {
   keys: eligibleKeys,
   questions: [
     {
-      id: 'pelican-svg-v1',
+      id: 'pelican-svg-v2',
       prompt: 'Draw a cycling pelican in SVG.',
       max_output_tokens: 32000,
     },
     {
-      id: 'candy-logic-v1',
+      id: 'candy-logic-v2',
       prompt: 'Draw the candies.',
       max_output_tokens: 8192,
     },
@@ -190,7 +192,7 @@ test('row entry preselects the Key, presents flat fixed questions, and persists 
     `${endpoint}/runs`,
     {
       token_id: 9,
-      question: 'candy-logic-v1',
+      question: 'candy-logic-v2',
       model: 'chat-model',
       confirmed: true,
       client_request_id: expect.any(String),
@@ -247,7 +249,7 @@ test('loading again under the same login only retries the same ID on explicit ac
   expect(loadDiagnosticDraft(51, firstSession)).toMatchObject({
     token_id: 9,
     model: 'chat-model',
-    question: 'pelican-svg-v1',
+    question: 'pelican-svg-v2',
   })
   expect(loadDiagnosticDraft(52, firstSession)).toBeNull()
   expect(loadDiagnosticDraft(51, secondSession)).toBeNull()
@@ -424,6 +426,150 @@ test('a stale-model retry cannot discard an earlier ambiguous request', async ()
   )
   expect(post).toHaveBeenCalledTimes(2)
   expect(post.mock.calls[1]?.[1]).toEqual(post.mock.calls[0]?.[1])
+})
+
+test('an uncertain draft for a retired question keeps its UUID and permits only reads', async () => {
+  const old = {
+    id: testID,
+    token_id: 9,
+    model: 'chat-model',
+    question: 'candy-logic-v1',
+  } as const
+  expect(saveDiagnosticDraft(51, firstSession, old)).toBe(true)
+  const { user, get, post, runs } = setup(9)
+  await user.click(screen.getByRole('button', { name: 'Key diagnostic' }))
+  expect(
+    await screen.findByText(/No saved result was found for the old question/)
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('button', { name: 'Retry same request' })
+  ).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Start test' })).toBeNull()
+  expect(loadDiagnosticDraft(51, firstSession)).toEqual(old)
+  expect(get.mock.calls.some(([url]) => url === testRunURL)).toBe(true)
+
+  runs.set(testID, {
+    ...old,
+    status: 'completed',
+    answer: '答案：8 颗。',
+    candy_result: 'correct',
+  })
+  await user.click(screen.getByRole('button', { name: 'Check result' }))
+  expect(await screen.findByText('Correct answer')).toBeVisible()
+  expect(screen.getByText('答案：8 颗。')).toBeVisible()
+  expect(screen.getByText('Version')).toBeVisible()
+  expect(screen.getByText('1')).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'New test' }))
+  await selectModel(user, 'chat-model')
+  expect(screen.getByRole('button', { name: 'Start test' })).toBeDisabled()
+  expect(post).not.toHaveBeenCalled()
+})
+
+test('a retired 404 permits only an explicit new setup and separately confirmed v2 UUID', async () => {
+  const old = {
+    id: testID,
+    token_id: 9,
+    model: 'chat-model',
+    question: 'candy-logic-v1',
+  } as const
+  expect(saveDiagnosticDraft(51, firstSession, old)).toBe(true)
+  const { user, post } = setup(9)
+  await user.click(screen.getByRole('button', { name: 'Key diagnostic' }))
+  await screen.findByText(/The earlier outcome is not confirmed/)
+  expect(loadDiagnosticDraft(51, firstSession)).toEqual(old)
+  expect(post).not.toHaveBeenCalled()
+  await user.click(await screen.findByRole('button', { name: 'New test' }))
+  expect(loadDiagnosticDraft(51, firstSession)).toBeNull()
+  await selectModel(user, 'chat-model')
+  expect(screen.getByRole('button', { name: 'Start test' })).toBeDisabled()
+  expect(post).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('checkbox'))
+  await user.click(screen.getByRole('button', { name: 'Start test' }))
+  expect(await screen.findByText(/running in the background/)).toBeVisible()
+  expect(post).toHaveBeenCalledTimes(1)
+  expect(post.mock.calls[0]?.[1]).toMatchObject({
+    question: 'pelican-svg-v2',
+    confirmed: true,
+  })
+  expect(
+    (post.mock.calls[0]?.[1] as Submit | undefined)?.client_request_id
+  ).not.toBe(testID)
+})
+
+test('an unverified old result does not allow clearing prior consent', async () => {
+  const draft = {
+    id: testID,
+    token_id: 9,
+    model: 'chat-model',
+    question: 'candy-logic-v1',
+  } as const
+  expect(saveDiagnosticDraft(51, firstSession, draft)).toBe(true)
+  const { user, get, post } = setup(9)
+  const route = get.getMockImplementation()
+  if (!route) throw new Error('Missing diagnostic fixture')
+  get.mockImplementation(async (url: string, config) => {
+    if (url === testRunURL) {
+      throw { response: { status: 503, data: { code: 'history_unavailable' } } }
+    }
+    return route(url, config)
+  })
+  await user.click(screen.getByRole('button', { name: 'Key diagnostic' }))
+  expect(
+    await screen.findByText(/Submission could not be confirmed/)
+  ).toBeVisible()
+  expect(screen.queryByRole('button', { name: 'New test' })).toBeNull()
+  expect(
+    screen.queryByRole('button', { name: 'Retry same request' })
+  ).toBeNull()
+  expect(loadDiagnosticDraft(51, firstSession)).toEqual(draft)
+  expect(post).not.toHaveBeenCalled()
+})
+
+test('29 is incorrect for the new question and its original reply remains visible', () => {
+  render(
+    <KeyDiagnosticResult
+      run={{
+        id: testID,
+        status: 'completed',
+        question: 'candy-logic-v2',
+        answer: '最终答案：29',
+        candy_result: 'incorrect',
+      }}
+    />
+  )
+  expect(screen.getByText('Incorrect answer')).toBeVisible()
+  expect(screen.getByText('最终答案：29')).toBeVisible()
+  expect(screen.getByText('2')).toBeVisible()
+  expect(screen.queryByText('Answer not recognized')).not.toBeInTheDocument()
+})
+
+test('the reference HTML reply is never mounted; user can explicitly copy original source', async () => {
+  const user = userEvent.setup()
+  const answer =
+    '<!DOCTYPE html><html><head><script>fetch("https://outside.invalid/script")</script></head>' +
+    '<body><iframe src="https://outside.invalid/frame"></iframe>' +
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" onload="alert(1)">' +
+    '<image href="https://outside.invalid/img"/><circle cx="5" cy="5" r="2"/></svg></body></html>'
+  const { container } = render(
+    <KeyDiagnosticResult
+      run={{
+        id: testID,
+        question: 'pelican-svg-v2',
+        status: 'completed',
+        answer,
+      }}
+    />
+  )
+  const src = screen.getByAltText('Isolated SVG preview').getAttribute('src')
+  expect(src).toMatch(/^data:image\/svg\+xml/)
+  const isolated = decodeURIComponent(src?.split(',')[1] ?? '')
+  expect(isolated).toContain('<circle')
+  expect(isolated).not.toMatch(/outside\.invalid|onload|<script|<iframe/i)
+  expect(container.querySelector('iframe,script,[onload]')).toBeNull()
+  expect(screen.getByText(/Do not run untrusted original HTML/)).toBeVisible()
+  expect(await navigator.clipboard.readText()).toBe('')
+  await user.click(screen.getByRole('button', { name: 'Copy original source' }))
+  expect(await navigator.clipboard.readText()).toBe(answer)
 })
 
 test('owner history opens a confirmed result without another paid request', async () => {

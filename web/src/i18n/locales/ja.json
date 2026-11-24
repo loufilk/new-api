@@ -10028,6 +10028,8 @@
     "Token usage": "トークン使用量",
     "Generation charge": "生成料金",
     "Generation charge refunded": "生成料金は返金済み",
-    "Generation settlement only. Other fees are not confirmed here.": "ここでは生成料金の精算のみを表示します。ほかの費用は未確認です。"
+    "Generation settlement only. Other fees are not confirmed here.": "ここでは生成料金の精算のみを表示します。ほかの費用は未確認です。",
+    "No saved result was found for the old question. The earlier outcome is not confirmed.": "旧問題の保存済み結果は見つかりませんでした。以前の結果は確認できていません。",
+    "Only the isolated SVG is previewed. Do not run untrusted original HTML.": "プレビューには隔離された SVG だけを表示します。信頼できない元の HTML は実行しないでください。"
   }
 }

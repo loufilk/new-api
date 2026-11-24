@@ -29,6 +29,8 @@ import {
   diagnosticInProgress,
   diagnosticQuestionLabels,
   diagnosticStatusLabels,
+  isCandyDiagnosticQuestion,
+  isPelicanDiagnosticQuestion,
 } from '../lib/key-diagnostic'
 import { diagnosticSvgImage } from '../lib/key-diagnostic-svg'
 
@@ -41,14 +43,13 @@ const candyLabels = {
 export function KeyDiagnosticResult({ run }: { run: DiagnosticRun }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const isPelican = isPelicanDiagnosticQuestion(run.question)
   const artwork = useMemo(
     () =>
-      run.status === 'completed' &&
-      run.question === 'pelican-svg-v1' &&
-      run.answer
+      run.status === 'completed' && isPelican && run.answer
         ? diagnosticSvgImage(run.answer)
         : null,
-    [run.status, run.question, run.answer]
+    [run.status, isPelican, run.answer]
   )
   const pending = diagnosticInProgress(run.status)
   const usage = run.usage
@@ -65,7 +66,7 @@ export function KeyDiagnosticResult({ run }: { run: DiagnosticRun }) {
       abbreviate: false,
     })
   }
-  const isCandy = run.question === 'candy-logic-v1'
+  const isCandy = isCandyDiagnosticQuestion(run.question)
   const verdict =
     isCandy && run.status === 'completed' ? run.candy_result : undefined
   return (
@@ -106,6 +107,8 @@ export function KeyDiagnosticResult({ run }: { run: DiagnosticRun }) {
           <>
             <dt>{t('Test question')}</dt>
             <dd>{t(diagnosticQuestionLabels[run.question])}</dd>
+            <dt>{t('Version')}</dt>
+            <dd>{run.question.split('-v').at(-1)}</dd>
           </>
         )}
         {run.elapsed_ms !== undefined && (
@@ -165,19 +168,24 @@ export function KeyDiagnosticResult({ run }: { run: DiagnosticRun }) {
       )}
       {run.answer && (
         <>
-          {run.status === 'completed' &&
-            run.question === 'pelican-svg-v1' &&
-            !artwork && (
-              <p className='text-muted-foreground text-sm'>
-                {t(
-                  'A safe SVG preview is not available. The original reply is shown below.'
-                )}
-              </p>
-            )}
+          {run.status === 'completed' && isPelican && !artwork && (
+            <p className='text-muted-foreground text-sm'>
+              {t(
+                'A safe SVG preview is not available. The original reply is shown below.'
+              )}
+            </p>
+          )}
+          {run.question === 'pelican-svg-v2' && (
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Only the isolated SVG is previewed. Do not run untrusted original HTML.'
+              )}
+            </p>
+          )}
           <div className='space-y-1'>
             <div className='flex items-center justify-between gap-2'>
               <p className='text-sm font-medium'>{t('Model reply')}</p>
-              {run.question === 'pelican-svg-v1' && (
+              {isPelican && (
                 <CopyButton
                   value={run.answer}
                   variant='outline'

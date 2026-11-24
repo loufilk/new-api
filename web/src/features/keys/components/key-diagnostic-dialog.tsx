@@ -38,11 +38,12 @@ import { useAuthStore } from '@/stores/auth-store'
 import {
   type DiagnosticDraft,
   type DiagnosticOptions,
-  type DiagnosticQuestion,
+  type ActiveDiagnosticQuestion,
   clearDiagnosticDraft,
   diagnosticInProgress,
   diagnosticQuestionLabels,
   diagnosticStatusLabels,
+  isActiveDiagnosticQuestion,
   isDiagnosticConflict,
   isDiagnosticMissing,
   isDiagnosticRejected,
@@ -167,7 +168,7 @@ function KeyDiagnosticDialog(props: {
   const [viewId, setViewId] = useState(draft?.id ?? null)
   const [tokenId, setTokenId] = useState(props.tokenId ?? 0)
   const [questionId, setQuestion] =
-    useState<DiagnosticQuestion>('pelican-svg-v1')
+    useState<ActiveDiagnosticQuestion>('pelican-svg-v2')
   const [selection, setSelection] = useState<{
     model: string
     revision: number
@@ -297,6 +298,19 @@ function KeyDiagnosticDialog(props: {
     (submission.variables?.retry === false &&
       isDiagnosticRejected(submission.error))
   const rejected = draftWasViewed && missing && knownNotSaved
+  const retiredDraft =
+    draft && draftWasViewed && !isActiveDiagnosticQuestion(draft.question)
+  const canStartAfterRetired = !!(
+    retiredDraft &&
+    missing &&
+    !conflict &&
+    !detail.isFetching &&
+    !submission.isPending &&
+    options.isSuccess &&
+    !options.isFetching &&
+    options.data.questions.some(({ id }) => id === 'pelican-svg-v2') &&
+    options.data.questions.some(({ id }) => id === 'candy-logic-v2')
+  )
   const canRetry = !!(
     sessionId &&
     draft &&
@@ -305,12 +319,17 @@ function KeyDiagnosticDialog(props: {
     !detail.isFetching &&
     !conflict &&
     !rejected &&
+    !retiredDraft &&
     !submission.isPending
   )
   let recoveryMessage = t('Loading...')
   if (rejected) {
     recoveryMessage = t(
       'The server rejected this test before saving it. Review your selection.'
+    )
+  } else if (retiredDraft && missing) {
+    recoveryMessage = t(
+      'No saved result was found for the old question. The earlier outcome is not confirmed.'
     )
   } else if (canRetry) {
     recoveryMessage = t(
@@ -323,7 +342,12 @@ function KeyDiagnosticDialog(props: {
   }
 
   function send(attempt: DiagnosticDraft, retry = false) {
-    if (submitting.current || !hasConsentSession() || (retry && !canRetry)) {
+    if (
+      submitting.current ||
+      !hasConsentSession() ||
+      !isActiveDiagnosticQuestion(attempt.question) ||
+      (retry && !canRetry)
+    ) {
       return
     }
     if (retry) {
@@ -378,7 +402,7 @@ function KeyDiagnosticDialog(props: {
 
   function setup() {
     if (!hasConsentSession()) return
-    if (draft && (accepted || conflict || rejected)) {
+    if (draft && (accepted || conflict || rejected || canStartAfterRetired)) {
       clearDiagnosticDraft(owner, sessionId, draft.id)
     }
     if (rejected) {
@@ -420,7 +444,11 @@ function KeyDiagnosticDialog(props: {
           )}
           {viewId && !submission.isPending && (
             <>
-              {(!draftWasViewed || accepted || conflict || rejected) && (
+              {(!draftWasViewed ||
+                accepted ||
+                conflict ||
+                rejected ||
+                canStartAfterRetired) && (
                 <Button variant='outline' onClick={setup}>
                   {t('New test')}
                 </Button>
@@ -502,12 +530,7 @@ function KeyDiagnosticDialog(props: {
                 <RadioGroup
                   value={questionId}
                   onValueChange={(value) => {
-                    if (
-                      value !== 'pelican-svg-v1' &&
-                      value !== 'candy-logic-v1'
-                    ) {
-                      return
-                    }
+                    if (!isActiveDiagnosticQuestion(value)) return
                     setQuestion(value)
                     setApproved(false)
                   }}

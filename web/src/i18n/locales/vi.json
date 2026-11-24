@@ -10028,6 +10028,8 @@
     "Token usage": "Mức sử dụng token",
     "Generation charge": "Phí tạo nội dung",
     "Generation charge refunded": "Đã hoàn phí tạo nội dung",
-    "Generation settlement only. Other fees are not confirmed here.": "Chỉ quyết toán tạo nội dung. Các khoản phí khác chưa được xác nhận ở đây."
+    "Generation settlement only. Other fees are not confirmed here.": "Chỉ quyết toán tạo nội dung. Các khoản phí khác chưa được xác nhận ở đây.",
+    "No saved result was found for the old question. The earlier outcome is not confirmed.": "Không tìm thấy kết quả đã lưu của câu hỏi cũ. Kết quả lần trước chưa được xác nhận.",
+    "Only the isolated SVG is previewed. Do not run untrusted original HTML.": "Bản xem trước chỉ hiển thị SVG cách ly. Không chạy HTML gốc không đáng tin cậy."
   }
 }

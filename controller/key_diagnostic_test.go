@@ -3,6 +3,7 @@ package controller
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -51,6 +52,25 @@ func TestKeyDiagnosticCandyClearWrongAndUnrecognized(t *testing.T) {
 	}
 }
 
+func TestKeyDiagnosticReferenceCandyOnlyGradesFinalLine(t *testing.T) {
+	for answer, want := range map[string]string{
+		"在任意抽取的情况下是29，但这里可选择形状。\n最终答案：21": "correct",
+		"推导略。\r\n**最终答案：二十一颗。**\r\n":      "correct",
+		"最终答案：29":          "incorrect",
+		"**最终答案：二十九 颗**":   "incorrect",
+		"最终答案：8 颗":         "incorrect",
+		"最终答案：+０２１":        "correct",
+		"最终答案：1000":        "incorrect",
+		"最终答案：十一一":         "unrecognized",
+		"结论：21 颗。":         "unrecognized",
+		"最终答案：21或29":       "unrecognized",
+		"最终答案：21\n还有另一种可能": "unrecognized",
+		"21": "unrecognized",
+	} {
+		assert.Equal(t, want, classifyReferenceCandyAnswer(answer), answer)
+	}
+}
+
 func TestKeyDiagnosticPostgresOneConfirmedRequestUsesOwnedKeyAndReplaysReceipt(t *testing.T) {
 	db, userID := setupModelTestSwitchExecution(t)
 	require.NoError(t, db.AutoMigrate(&model.UserSession{}))
@@ -94,8 +114,15 @@ func TestKeyDiagnosticPostgresOneConfirmedRequestUsesOwnedKeyAndReplaysReceipt(t
 		}
 		if assert.NoError(t, common.DecodeJson(r.Body, &input)) && assert.Len(t, input.Messages, 1) {
 			assert.Equal(t, "gpt-4o-mini", input.Model)
-			assert.Equal(t, 8192, input.MaxTokens)
-			assert.Contains(t, input.Messages[0].Content, "糖")
+			questionID := keyDiagnosticCandyV2
+			if forceFailure.Load() {
+				questionID = keyDiagnosticPelicanV2
+			}
+			expected, active := lookupKeyDiagnosticQuestion(questionID)
+			assert.True(t, active)
+			assert.Equal(t, expected.Limit, input.MaxTokens)
+			assert.Equal(t, "user", input.Messages[0].Role)
+			assert.Equal(t, expected.Prompt, input.Messages[0].Content)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if forceFailure.Load() {
@@ -104,7 +131,7 @@ func TestKeyDiagnosticPostgresOneConfirmedRequestUsesOwnedKeyAndReplaysReceipt(t
 			fmt.Fprint(w, `{"error":{"type":"server_error","message":"fixture error body echo synthetic-not-a-real-key syntheticownercredential"}}`)
 			return
 		}
-		fmt.Fprint(w, `{"id":"local-response","object":"chat.completion","model":"gpt-4o-mini","choices":[{"index":0,"message":{"role":"assistant","content":"答案：8 颗。 Secret echo: syntheticownercredential"},"finish_reason":"stop"}],"usage":{"prompt_tokens":80,"completion_tokens":3,"total_tokens":83}}`)
+		fmt.Fprint(w, `{"id":"local-response","object":"chat.completion","model":"gpt-4o-mini","choices":[{"index":0,"message":{"role":"assistant","content":"Secret echo: syntheticownercredential\n最终答案：21"},"finish_reason":"stop"}],"usage":{"prompt_tokens":80,"completion_tokens":3,"total_tokens":83}}`)
 	}))
 	defer upstream.Close()
 	defer release.Do(func() { close(allowUpstream) })
@@ -151,10 +178,22 @@ func TestKeyDiagnosticPostgresOneConfirmedRequestUsesOwnedKeyAndReplaysReceipt(t
 	get := request(context.Background(), "GET", "/options", "", "192.0.2.4", false)
 	require.Equal(t, 200, get.Code, get.Body.String())
 	assert.NotContains(t, get.Body.String(), "syntheticownercredential")
-	assert.Contains(t, get.Body.String(), `"max_output_tokens":32000`)
+	var published struct {
+		Data struct {
+			Questions []keyDiagnosticQuestion
+		}
+	}
+	require.NoError(t, common.Unmarshal(get.Body.Bytes(), &published))
+	assert.Equal(t, keyDiagnosticQuestions, published.Data.Questions)
+	require.Len(t, published.Data.Questions, 2)
+	assert.Equal(t, 32000, published.Data.Questions[0].Limit)
+	assert.Equal(t, 8192, published.Data.Questions[1].Limit)
+	// Digests pin the exact two transcriptions, including punctuation.
+	assert.Equal(t, "3b8cb2b57eae95d991f2954afcb66a24f3b1a7d02d68f2a60bb23f36b9b7b8ab", fmt.Sprintf("%x", sha256.Sum256([]byte(published.Data.Questions[0].Prompt))))
+	assert.Equal(t, "371cc073a59ba4e6d086de24edb2dc796cf69435559b7628c892124c6b7fbb9d", fmt.Sprintf("%x", sha256.Sum256([]byte(published.Data.Questions[1].Prompt))))
 	assert.Zero(t, calls.Load())
 	id := uuid.NewString()
-	selection := keyDiagnosticRequest{TokenID: token.Id, Model: "gpt-4o-mini", Question: "candy-logic-v1", ClientID: id, Confirmed: true}
+	selection := keyDiagnosticRequest{TokenID: token.Id, Model: "gpt-4o-mini", Question: keyDiagnosticCandyV2, ClientID: id, Confirmed: true}
 	post := func(ctx context.Context, s keyDiagnosticRequest, ip string) *httptest.ResponseRecorder {
 		data, err := common.Marshal(s)
 		require.NoError(t, err)
@@ -167,6 +206,34 @@ func TestKeyDiagnosticPostgresOneConfirmedRequestUsesOwnedKeyAndReplaysReceipt(t
 	denied.Model = "not-in-group"
 	assert.Equal(t, 403, post(context.Background(), denied, "192.0.2.4").Code)
 	assert.Equal(t, 403, post(context.Background(), selection, "203.0.113.4").Code, "an untrusted forwarded header cannot bypass selected Key IP policy")
+	assert.Zero(t, calls.Load())
+
+	// The earlier question can be replayed only if this exact receipt exists.
+	// An old browser cannot spend against its retired prompt or use that UUID
+	// for a different revision. The raw previous outcome is not recomputed.
+	legacy := selection
+	legacy.Question, legacy.ClientID = keyDiagnosticCandyV1, uuid.NewString()
+	stale := post(context.Background(), legacy, "192.0.2.4")
+	assert.Equal(t, http.StatusBadRequest, stale.Code)
+	assert.Contains(t, stale.Body.String(), "question_retired")
+	assert.Equal(t, http.StatusNotFound, request(context.Background(), "GET", "/runs/"+legacy.ClientID, "", "192.0.2.4", false).Code)
+	historicalTime := time.Now().Add(-2 * time.Hour).Unix()
+	legacyRow := model.ModelTestRun{UserID: userID, TokenID: token.Id, Model: legacy.Model, Group: token.Group,
+		BenchmarkID: legacy.Question, MaxOutputTokens: 8192, CreatedAt: historicalTime, ExpiresAt: historicalTime + 60, RequestID: "synthetic-v1-receipt"}
+	_, err := model.CreateKeyDiagnosticRun(context.Background(), &legacyRow, legacy.ClientID)
+	require.NoError(t, err)
+	legacyRow.Status, legacyRow.CompletedAt, legacyRow.ArtworkHTML = "completed", historicalTime+2, "答案：8 颗。"
+	legacyDetails := model.ReadKeyDiagnosticDetails(legacyRow)
+	legacyDetails.CandyResult = "correct"
+	require.NoError(t, model.FinishSavedKeyDiagnostic(context.Background(), legacyRow, model.KeyDiagnosticQueued, legacyDetails))
+	oldResult := post(context.Background(), legacy, "203.0.113.4")
+	assert.Equal(t, http.StatusOK, oldResult.Code, oldResult.Body.String())
+	assert.Contains(t, oldResult.Body.String(), `"question":"candy-logic-v1"`)
+	assert.Contains(t, oldResult.Body.String(), `"candy_result":"correct"`)
+	assert.Contains(t, oldResult.Body.String(), "答案：8 颗。")
+	crossVersion := legacy
+	crossVersion.Question = keyDiagnosticCandyV2
+	assert.Equal(t, http.StatusConflict, post(context.Background(), crossVersion, "192.0.2.4").Code)
 	assert.Zero(t, calls.Load())
 
 	client, cancel := context.WithCancel(context.Background())
@@ -191,7 +258,7 @@ func TestKeyDiagnosticPostgresOneConfirmedRequestUsesOwnedKeyAndReplaysReceipt(t
 	assert.Contains(t, otherList.Body.String(), `"data":[]`)
 	assert.Equal(t, 200, post(context.Background(), selection, "203.0.113.4").Code, "receipt status recovery does not require the old dispatch IP")
 	denied = selection
-	denied.Question = "pelican-svg-v1"
+	denied.Question = keyDiagnosticPelicanV2
 	assert.Equal(t, 409, post(context.Background(), denied, "192.0.2.4").Code)
 	denied = selection
 	denied.ClientID = uuid.NewString()
@@ -260,6 +327,7 @@ func TestKeyDiagnosticPostgresOneConfirmedRequestUsesOwnedKeyAndReplaysReceipt(t
 	require.NoError(t, db.Model(&token).Update("status", common.TokenStatusEnabled).Error)
 	failure := selection
 	failure.ClientID = uuid.NewString()
+	failure.Question = keyDiagnosticPelicanV2
 	forceFailure.Store(true)
 	require.Equal(t, http.StatusAccepted, post(context.Background(), failure, "192.0.2.4").Code)
 	var failed string

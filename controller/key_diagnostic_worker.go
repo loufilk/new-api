@@ -138,8 +138,11 @@ func executeKeyDiagnostic(parent context.Context, job keyDiagnosticWorkerJob) {
 		if receipt.answer != "" {
 			status, code = "completed", ""
 			run.ArtworkHTML = receipt.answer
-			if run.BenchmarkID == "candy-logic-v1" {
+			switch run.BenchmarkID {
+			case keyDiagnosticCandyV1:
 				d.CandyResult = classifyCandyAnswer(run.ArtworkHTML)
+			case keyDiagnosticCandyV2:
+				d.CandyResult = classifyReferenceCandyAnswer(run.ArtworkHTML)
 			}
 		}
 	}
@@ -256,6 +259,35 @@ func classifyCandyAnswer(answer string) string {
 		return "unrecognized"
 	}
 	if m[1] == "8" || m[1] == "八" {
+		return "correct"
+	}
+	return "incorrect"
+}
+
+// Only the requested final nonempty line is eligible for a v2 verdict.
+// Neither worked calculations nor opening prose can become the answer.
+var referenceCandyFinalLine = regexp.MustCompile(`^[>#*_ \t]*最终答案[ \t]*[:：][*_ \t]*([+-]?[0-9]+|[零一二两三四五六七八九]|[一二两三四五六七八九]?十[一二三四五六七八九]?)[*_ \t]*(?:颗(?:糖果?)?|粒(?:糖果?)?)?[*_ \t]*(?:[。.!！])?[*_ \t]*$`)
+
+func classifyReferenceCandyAnswer(answer string) string {
+	answer = strings.TrimSpace(answer)
+	if i := strings.LastIndexByte(answer, '\n'); i >= 0 {
+		answer = answer[i+1:]
+	}
+	answer = strings.Map(func(r rune) rune {
+		if r >= '０' && r <= '９' {
+			return r - '０' + '0'
+		}
+		return r
+	}, strings.TrimSpace(answer))
+	match := referenceCandyFinalLine.FindStringSubmatch(answer)
+	if len(match) != 2 {
+		return "unrecognized"
+	}
+	number, err := strconv.Atoi(match[1])
+	if (err == nil && number == 21) || match[1] == "二十一" || match[1] == "两十一" {
+		// With shape choice, 9 rounds include apple or peach, and 12
+		// stars include both. A worst order within each shape makes 20
+		// insufficient. The approved reference answer is 21 only.
 		return "correct"
 	}
 	return "incorrect"

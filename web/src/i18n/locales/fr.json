@@ -10028,6 +10028,8 @@
     "Token usage": "Utilisation des tokens",
     "Generation charge": "Frais de génération",
     "Generation charge refunded": "Frais de génération remboursés",
-    "Generation settlement only. Other fees are not confirmed here.": "Seule la génération est comptabilisée. Les autres frais ne sont pas confirmés ici."
+    "Generation settlement only. Other fees are not confirmed here.": "Seule la génération est comptabilisée. Les autres frais ne sont pas confirmés ici.",
+    "No saved result was found for the old question. The earlier outcome is not confirmed.": "Aucun résultat enregistré n’a été trouvé pour l’ancienne question. L’issue précédente n’est pas confirmée.",
+    "Only the isolated SVG is previewed. Do not run untrusted original HTML.": "Seul le SVG isolé est prévisualisé. N’exécutez pas le HTML original non fiable."
   }
 }
