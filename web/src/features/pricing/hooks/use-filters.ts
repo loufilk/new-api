@@ -77,6 +77,18 @@ export function useFilters(
       ? platformKey
       : FILTER_ALL
 
+  const platformPriceGroups = useMemo(
+    () =>
+      platform === FILTER_ALL
+        ? undefined
+        : new Set(
+            (availableGroups ?? []).filter(
+              (group) => groupPlatform(groupCatalog?.[group]) === platform
+            )
+          ),
+    [availableGroups, groupCatalog, platform]
+  )
+
   const searchInput = filterState.search || ''
   const debouncedSearchInput = useDebounce(searchInput, 200)
   const sortBy = normalizeSortOption(filterState.sort)
@@ -195,11 +207,13 @@ export function useFilters(
         quotaType: quotaTypeFilter,
         endpointType: endpointTypeFilter,
         sortBy,
+        platformPriceGroups,
         now: clock === undefined ? undefined : new Date(clock),
       }),
     [
       models,
       debouncedSearchInput,
+      platformPriceGroups,
       groupFilter,
       quotaTypeFilter,
       endpointTypeFilter,
@@ -233,6 +247,7 @@ export function useFilters(
 
   return {
     platform,
+    platformPriceGroups,
     setPlatform,
     searchInput,
     sortBy,

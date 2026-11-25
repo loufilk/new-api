@@ -24,6 +24,9 @@ import { runInNewContext } from 'node:vm'
 import { act, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
+import { CatalogModelIcon } from '@/components/catalog-model-icon'
+
+import { catalogIconID, catalogIconVariants } from '../catalog-icon-registry'
 import { getLobeIcon, getLobeIconNames } from '../lobe-icon'
 
 vi.mock(
@@ -157,5 +160,52 @@ describe('Lobe icons', () => {
         'Wan',
       ])
     )
+  })
+})
+
+describe('catalog icon display', () => {
+  it('publishes the same local registry as the installed picker', () => {
+    const manifest = JSON.parse(
+      readFileSync(
+        resolve(import.meta.dirname, '../../../../model/catalog_icon_ids.json'),
+        'utf8'
+      )
+    )
+    expect(manifest).toEqual(Object.fromEntries(catalogIconVariants))
+  })
+
+  it.each([
+    ['Claude.Color', 'Claude.Color'],
+    [' OpenAI.Color ', 'OpenAI'],
+    ["Claude.Avatar.type={'platform'}", 'Claude.Avatar'],
+    ["Claude.Color.size={32}.aria-label='old icon'", 'Claude.Color'],
+    ['Gemma.Simple', 'Gemma.Simple'],
+    ['LobeHub.Morden', 'LobeHub.Morden'],
+    ['Sub2API', 'Sub2API'],
+    ['https://unavailable.invalid/logo.svg', ''],
+    ['Claude.Color.href=https://unavailable.invalid', ''],
+    ['data:image/svg+xml,<svg/>', ''],
+    ['constructor', ''],
+    ['NoSuchVendor', ''],
+  ])('resolves stored key %s to local key %s', (raw, key) => {
+    expect(catalogIconID(raw)).toBe(key)
+  })
+
+  it('uses valid vendor metadata for unsupported overrides, otherwise the model initial', async () => {
+    const { rerender } = render(
+      <CatalogModelIcon
+        icon='bad-key'
+        vendorIcon='Claude.Color'
+        name='demo'
+        size={21}
+      />
+    )
+    expect((await screen.findByTitle('Claude')).parentElement).toHaveAttribute(
+      'width',
+      '21'
+    )
+    rerender(<CatalogModelIcon vendorIcon='bad-key' name='demo' size={21} />)
+    expect(screen.getByText('D')).toBeVisible()
+    expect(screen.queryByTitle('Claude')).not.toBeInTheDocument()
   })
 })

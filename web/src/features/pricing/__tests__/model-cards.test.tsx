@@ -159,15 +159,8 @@ describe('model cards', () => {
   it('shows missing values without placeholder bars when metrics are unavailable', () => {
     render(<ModelCard model={pricingModel()} onClick={vi.fn()} />)
     const metrics = screen.getByLabelText('Performance')
-    expect(within(metrics).getAllByText('—')).toHaveLength(2)
-    expect(within(metrics).getByText('—s')).toBeVisible()
-    expect(within(metrics).getByText('—t/s')).toBeVisible()
-    expect(within(metrics).queryByText(/100/)).not.toBeInTheDocument()
-    const statusStrip = within(metrics).getByRole('img', {
-      name: 'No performance data available',
-    })
-    expect(statusStrip).toHaveTextContent('—')
-    expect(statusStrip.querySelectorAll('[aria-hidden]')).toHaveLength(0)
+    expect(within(metrics).getAllByText('Unavailable')).toHaveLength(4)
+    expect(within(metrics).queryByRole('img')).not.toBeInTheDocument()
     expect(screen.getByText('No description available.')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Details' })).toBeEnabled()
   })
@@ -189,13 +182,13 @@ describe('model cards', () => {
       />
     )
     const statusStrip = screen.getByRole('img', {
-      name: 'Latest reported samples',
+      name: 'Request success rate sampled over the last 24 hours',
     })
     expect(statusStrip).toHaveClass('gap-px')
     expect(statusStrip).not.toHaveClass('justify-between')
   })
 
-  it('shows server history for idle models while preserving the current window metrics', async () => {
+  it('keeps seven-day history out of both active and idle model results', async () => {
     const request = vi.spyOn(api, 'get').mockResolvedValue({
       data: {
         success: true,
@@ -204,6 +197,7 @@ describe('model cards', () => {
             {
               model_name: 'active-model',
               avg_latency_ms: 1200,
+              has_latency: true,
               avg_tps: 42,
               success_rate: 99.8,
               recent_success_series: [{ ts: 7200, success_rate: 0 }],
@@ -232,24 +226,18 @@ describe('model cards', () => {
     )
     await screen.findByText('99.80%')
     expect(request).toHaveBeenCalledWith('/api/perf-metrics/summary', {
-      params: { hours: 24, recent_model: ['active-model', 'idle-model'] },
+      params: { hours: 24, recent_model: undefined },
       paramsSerializer: { indexes: null },
     })
     const [active, idle] = screen.getAllByLabelText('Performance')
     expect(within(active).getByText('1.20s')).toBeVisible()
     expect(
-      within(active).getByRole('img', { name: 'Latest reported samples' })
-        .children[0]
-    ).toHaveClass('bg-emerald-500')
-    const samples = within(idle).getByRole('img', {
-      name: 'Latest reported samples',
-    }).children
-    expect(samples).toHaveLength(2)
-    expect(samples[0]).toHaveClass('bg-red-500')
-    expect(samples[1]).toHaveClass('bg-emerald-500')
-    expect(within(idle).getByText('—')).toBeVisible()
-    expect(within(idle).getByText('—s')).toBeVisible()
-    expect(within(idle).getByText('—t/s')).toBeVisible()
+      within(active).getByRole('img', {
+        name: 'Request success rate sampled over the last 24 hours',
+      }).children[0]
+    ).toHaveClass('bg-red-500')
+    expect(within(idle).queryByRole('img')).not.toBeInTheDocument()
+    expect(within(idle).getAllByText('Unavailable')).toHaveLength(4)
   })
 
   it('keeps group, endpoint and tag overflow counts with their own metadata', () => {
@@ -267,6 +255,7 @@ describe('model cards', () => {
       <ModelCard
         model={pricingModel({
           enable_groups: groups,
+          group_ratio: { [groups[0]]: 1, premium: 2, internal: 3 },
           supported_endpoint_types: endpoints,
           tags: tags.join(','),
         })}
@@ -317,7 +306,7 @@ describe('model cards', () => {
   it.each([
     { success_rate: 0, expected: '0.00%' },
     { success_rate: 99.8, expected: '99.80%' },
-    { success_rate: Number.NaN, expected: '—' },
+    { success_rate: Number.NaN, expected: 'Unavailable' },
   ])(
     'shows $expected for the reported request success rate $success_rate',
     ({ success_rate, expected }) => {
@@ -325,14 +314,22 @@ describe('model cards', () => {
         <ModelCard
           model={pricingModel()}
           onClick={vi.fn()}
-          perf={{ avg_latency_ms: 1200, avg_tps: 42, success_rate }}
+          perf={{
+            has_latency: true,
+            avg_latency_ms: 1200,
+            has_tps: true,
+            avg_tps: 42,
+            has_ttft: true,
+            avg_ttft_ms: 0,
+            success_rate,
+          }}
         />
       )
       const metrics = screen.getByLabelText('Performance')
       expect(within(metrics).getAllByText(expected)[0]).toBeVisible()
-      expect(within(metrics).getByText('Status')).toBeVisible()
+      expect(within(metrics).getByText('0ms')).toBeVisible()
       expect(within(metrics).getByText('1.20s')).toBeVisible()
-      expect(within(metrics).getByText('42.0t/s')).toBeVisible()
+      expect(within(metrics).getByText('42.0 t/s')).toBeVisible()
     }
   )
 
@@ -601,20 +598,15 @@ describe('model cards', () => {
     )
     await waitFor(() =>
       expect(
-        queryClient.getQueryState([
-          'market-perf-summary',
-          'public',
-          24,
-          ['example-model'],
-        ])?.status
+        queryClient.getQueryState(['market-perf-summary', 'public', 24])?.status
       ).toBe('error')
     )
     expect(request).toHaveBeenCalledWith('/api/perf-metrics/summary', {
-      params: { hours: 24, recent_model: ['example-model'] },
+      params: { hours: 24, recent_model: undefined },
       paramsSerializer: { indexes: null },
     })
     expect(
-      within(screen.getByLabelText('Performance')).getAllByText(/^—/)
+      within(screen.getByLabelText('Performance')).getAllByText('Unavailable')
     ).toHaveLength(4)
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Details' }))
@@ -639,7 +631,7 @@ describe('model cards', () => {
     expect(request).toHaveBeenCalledWith('/api/perf-metrics/summary', {
       params: {
         hours: 24,
-        recent_model: models.slice(0, 20).map((model) => model.model_name),
+        recent_model: undefined,
       },
       paramsSerializer: { indexes: null },
     })
@@ -647,7 +639,7 @@ describe('model cards', () => {
     expect(screen.getAllByRole('heading', { level: 3 })).toHaveLength(1)
     expect(screen.getByRole('heading', { name: 'model-21' })).toBeVisible()
     expect(request).toHaveBeenLastCalledWith('/api/perf-metrics/summary', {
-      params: { hours: 24, recent_model: ['model-21'] },
+      params: { hours: 24, recent_model: undefined },
       paramsSerializer: { indexes: null },
     })
     expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled()
@@ -656,13 +648,10 @@ describe('model cards', () => {
   })
 
   it('switches the card grid to three columns at the xl breakpoint instead of 2xl', () => {
-    queryClient.setQueryData(
-      ['market-perf-summary', 'public', 24, ['example-model']],
-      {
-        success: true,
-        data: { models: [] },
-      }
-    )
+    queryClient.setQueryData(['market-perf-summary', 'public', 24], {
+      success: true,
+      data: { models: [] },
+    })
     render(
       <QueryClientProvider client={queryClient}>
         <ModelCardGrid models={[pricingModel()]} onModelClick={vi.fn()} />
@@ -701,7 +690,7 @@ describe('model cards', () => {
 
     const spans = [
       ...screen.getByRole('img', {
-        name: 'Latest reported samples',
+        name: 'Request success rate sampled over the last 24 hours',
       }).children,
     ]
     expect(spans).toHaveLength(3)
@@ -740,7 +729,7 @@ describe('model cards', () => {
 
     const spans = [
       ...screen.getByRole('img', {
-        name: 'Latest reported samples',
+        name: 'Request success rate sampled over the last 24 hours',
       }).children,
     ]
     expect(spans).toHaveLength(2)
@@ -773,7 +762,7 @@ describe('model cards', () => {
 
     const spans = [
       ...screen.getByRole('img', {
-        name: 'Latest reported samples',
+        name: 'Request success rate sampled over the last 24 hours',
       }).children,
     ]
     expect(spans).toHaveLength(24)
@@ -799,11 +788,11 @@ describe('model cards', () => {
         />
       )
 
-      const statusStrip = screen.getByRole('img', {
-        name: 'No performance data available',
-      })
-      expect(statusStrip).toHaveTextContent('—')
-      expect(statusStrip.querySelectorAll('[aria-hidden]')).toHaveLength(0)
+      expect(
+        screen.queryByRole('img', {
+          name: 'Request success rate sampled over the last 24 hours',
+        })
+      ).not.toBeInTheDocument()
     }
   )
 
@@ -830,7 +819,7 @@ describe('model cards', () => {
 
     const spans = [
       ...screen.getByRole('img', {
-        name: 'Latest reported samples',
+        name: 'Request success rate sampled over the last 24 hours',
       }).children,
     ]
     expect(spans).toHaveLength(1)

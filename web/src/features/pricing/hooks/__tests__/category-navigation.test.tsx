@@ -54,19 +54,34 @@ const models: PricingModel[] = [
     model_name: 'image-only',
     supported_endpoint_types: ['image-generation'],
   },
-  { ...base, id: 3, model_name: 'mixed', output_modalities: ['text', 'image'] },
+  {
+    ...base,
+    id: 3,
+    model_name: 'mixed',
+    enable_groups: ['premium', 'second', 'private_id'],
+    group_ratio: { premium: 8, second: 3, private_id: 0 },
+    output_modalities: ['text', 'image'],
+  },
   {
     ...base,
     id: 4,
     model_name: 'unknown',
+    enable_groups: ['unavailable'],
     supported_endpoint_types: ['openai'],
   },
 ]
 function FilterFixture() {
-  const filters = useFilters(models, {
-    premium: { platform: 'openai' },
-    private_id: { exclusive: true },
-  })
+  const filters = useFilters(
+    models,
+    {
+      premium: { platform: 'openai' },
+      second: { platform: 'openai' },
+      unavailable: { platform: 'openai' },
+      private_id: { exclusive: true },
+    },
+    'public',
+    ['premium', 'second', 'private_id']
+  )
   return (
     <>
       <Button onClick={() => filters.setPlatform('openai')}>OpenAI</Button>
@@ -129,6 +144,14 @@ describe('marketplace navigation', () => {
       expect(screen.getByLabelText('Group')).toHaveTextContent('premium')
     )
   })
+  it('intersects the platform with available groups, counts a shared model once, and sorts by its matching price', async () => {
+    await renderFilters('/pricing/?platform=openai&sort=input-price-low')
+    expect(screen.getByLabelText('Results').textContent).toBe(
+      'text-only,image-only,mixed'
+    )
+    expect(screen.getByLabelText('Group')).toHaveTextContent('all')
+  })
+
   it('keeps private group identifiers out of URL and history state, retaining only a live scoped reference', async () => {
     const router = await renderFilters()
     await userEvent.click(screen.getByRole('button', { name: 'Private' }))

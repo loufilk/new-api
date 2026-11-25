@@ -24,6 +24,7 @@ const pricingVersion = "public-catalog-v2"
 // Operator notes, routing identities, plugin identities and future host fields
 // must be explicitly reviewed before they can become public.
 type publicCatalogModel struct {
+	Icon                   string                       `json:"icon,omitempty"`
 	ModelName              string                       `json:"model_name"`
 	VendorID               int                          `json:"vendor_id"`
 	QuotaType              int                          `json:"quota_type"`
@@ -138,7 +139,7 @@ func GetPublicPricing(c *gin.Context) {
 		if !publicVendorIDs[vendor.ID] {
 			continue
 		}
-		vendors = append(vendors, gin.H{"id": vendor.ID, "name": vendor.Name, "icon": vendor.Icon})
+		vendors = append(vendors, gin.H{"id": vendor.ID, "name": vendor.Name, "icon": model.PublicCatalogIconID(vendor.Icon)})
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -172,7 +173,7 @@ func publicPricingRows(rows []model.Pricing, aliases map[string]string) []public
 			continue
 		}
 		result = append(result, publicCatalogModel{
-			ModelName: row.ModelName, VendorID: row.VendorID,
+			ModelName: row.ModelName, VendorID: row.VendorID, Icon: model.PublicCatalogIconID(row.Icon),
 			QuotaType: row.QuotaType, ModelRatio: row.ModelRatio,
 			ModelPrice: row.ModelPrice, CompletionRatio: row.CompletionRatio,
 			CacheRatio: row.CacheRatio, CreateCacheRatio: row.CreateCacheRatio,

@@ -25,6 +25,7 @@ import {
   PricingToolbar,
   type PricingToolbarProps,
 } from '../components/pricing-toolbar'
+import { SearchBar } from '../components/search-bar'
 import { filterByQuotaType } from '../lib/filters'
 import type { PricingModel } from '../types'
 
@@ -65,9 +66,6 @@ function filterProps() {
         badges: ['benefit'],
       },
     },
-    hasActiveFilters: false,
-    onClearFilters: vi.fn(),
-    search: { value: '', onChange: vi.fn(), onClear: vi.fn() },
     models: [],
   }
 }
@@ -261,6 +259,42 @@ describe('pricing controls', () => {
     expect(row.queryByText('basic')).toBeNull()
   })
 
+  it('identifies platform numbers as group counts even when there are no matching models', () => {
+    render(<PricingSidebar {...filterProps()} />)
+    expect(
+      screen.getByRole('group', { name: 'Platform' })
+    ).toHaveAccessibleDescription('Available group counts')
+  })
+
+  it('keeps the selected group visible when a long mobile list is collapsed', async () => {
+    const media = window.matchMedia
+    const query = vi
+      .spyOn(window, 'matchMedia')
+      .mockImplementation((value) => ({
+        ...media(value),
+        matches: value === '(max-width: 639px)' || media(value).matches,
+      }))
+    try {
+      const props = filterProps()
+      const groups = ['a', 'b', 'c', 'd', 'e', 'f', 'z']
+      render(<PricingSidebar {...props} groups={groups} groupFilter='z' />)
+      const row = within(screen.getByRole('group', { name: 'Group' }))
+      const active = row.getByRole('button', { name: 'z' })
+      expect(active).toHaveAttribute('aria-pressed', 'true')
+      expect(row.queryByRole('button', { name: 'f' })).toBeNull()
+      const expand = row.getByRole('button', { name: 'Expand' })
+      expect(expand).toHaveAttribute('aria-expanded', 'false')
+      expand.focus()
+      await userEvent.keyboard('{Enter}')
+      expect(row.getByRole('button', { name: 'f' })).toBeVisible()
+      await userEvent.click(row.getByRole('button', { name: 'Collapse' }))
+      expect(active).toBeVisible()
+      expect(row.queryByRole('button', { name: 'f' })).toBeNull()
+    } finally {
+      query.mockRestore()
+    }
+  })
+
   it('counts duplicated endpoint declarations once and exposes custom protocol chips', () => {
     const props = filterProps()
     render(
@@ -281,6 +315,40 @@ describe('pricing controls', () => {
     )
     expect(screen.getByRole('button', { name: 'audio-speech 1' })).toBeVisible()
     expect(screen.queryByRole('group', { name: 'Model Tags' })).toBeNull()
+  })
+
+  it('announces filtered model totals and offers reset only when there is something to clear', async () => {
+    const props = toolbarProps()
+    const reset = vi.fn()
+    const { rerender } = render(
+      <PricingToolbar {...props} onClearFilters={reset} />
+    )
+    expect(screen.getByRole('status')).toHaveTextContent('Matching models2')
+    expect(screen.queryByRole('button', { name: 'Reset filters' })).toBeNull()
+    rerender(
+      <PricingToolbar
+        {...props}
+        filteredCount={0}
+        hasActiveFilters
+        onClearFilters={reset}
+      />
+    )
+    expect(screen.getByRole('status')).toHaveTextContent('Matching models0/ 2')
+    await userEvent.click(screen.getByRole('button', { name: 'Reset filters' }))
+    expect(reset).toHaveBeenCalledOnce()
+  })
+
+  it('focuses the standalone search with Ctrl+K and returns focus to it after clearing', async () => {
+    const onClear = vi.fn()
+    render(<SearchBar value='sample' onChange={vi.fn()} onClear={onClear} />)
+    const search = within(screen.getByRole('search', { name: 'Search models' }))
+    const field = search.getByRole('textbox', { name: 'Search models' })
+    const user = userEvent.setup()
+    await user.keyboard('{Control>}k{/Control}')
+    expect(field).toHaveFocus()
+    await user.click(search.getByRole('button', { name: 'Clear search' }))
+    expect(onClear).toHaveBeenCalledOnce()
+    expect(field).toHaveFocus()
   })
 
   it('changes the token unit and keeps the selected unit pressed when clicked again', async () => {

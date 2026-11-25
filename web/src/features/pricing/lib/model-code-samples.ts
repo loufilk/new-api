@@ -28,201 +28,217 @@ type SampleContext = {
   modelName: string
   endpointType: string
   endpointPath: string
+  method?: string
 }
 
-function buildChatSample(
-  lang: ModelSampleLanguage,
-  ctx: SampleContext
-): string {
-  const url = `${ctx.baseUrl}${ctx.endpointPath}`
-  const isResponses = ctx.endpointType === 'openai-response'
-  const userMessage = 'Explain quantum entanglement in one paragraph.'
-
-  const bodyJson = isResponses
-    ? JSON.stringify({ model: ctx.modelName, input: userMessage }, null, 2)
-    : JSON.stringify(
-        {
-          model: ctx.modelName,
-          messages: [{ role: 'user', content: userMessage }],
-        },
-        null,
-        2
-      )
-
-  const fnCall = isResponses ? 'responses.create' : 'chat.completions.create'
-
-  if (lang === 'curl') {
-    return [
-      `curl ${url} \\`,
-      `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
-      `  -H "Content-Type: application/json" \\`,
-      `  -d '${bodyJson.replaceAll('\n', '\n     ')}'`,
-    ].join('\n')
+export function modelEndpointAuth(
+  type: string
+): 'bearer' | 'anthropic' | 'gemini' | undefined {
+  if (type === 'anthropic' || type === 'gemini') return type
+  if (
+    [
+      'openai',
+      'openai-response',
+      'openai-response-compact',
+      'embeddings',
+      'image-generation',
+      'jina-rerank',
+      'openai-video',
+      'audio-speech',
+      'audio-transcription',
+      'audio-translation',
+      'realtime',
+    ].includes(type)
+  ) {
+    return 'bearer'
   }
+  return undefined
+}
 
+function sampleBody(
+  type: string,
+  model: string
+): Record<string, unknown> | undefined {
+  const text = 'Explain quantum entanglement in one paragraph.'
+  const messages = [{ role: 'user', content: text }]
+  switch (type) {
+    case 'openai':
+      return { model, messages }
+    case 'openai-response':
+      return { model, input: text }
+    case 'openai-response-compact':
+      return { model, input: messages }
+    case 'anthropic':
+      return { model, max_tokens: 1024, messages }
+    case 'gemini':
+      return { contents: [{ parts: [{ text }] }] }
+    case 'embeddings':
+      return { model, input: 'A short sentence to embed.' }
+    case 'image-generation':
+      return { model, prompt: 'A serene koi pond at sunset.', n: 1 }
+    case 'openai-video':
+      return { model, prompt: 'A slow aerial view of a mountain lake.' }
+    case 'jina-rerank':
+      return {
+        model,
+        query: 'What is idempotency?',
+        documents: ['A duplicate-safe operation.', 'A rendering technique.'],
+        top_n: 2,
+      }
+    default:
+      return undefined
+  }
+}
+
+// SDK methods choose their own URL. Use them only for their canonical routes;
+// a site may advertise a different path for the very same protocol.
+const sdkRoutes = new Map([
+  [
+    'openai',
+    {
+      path: '/v1/chat/completions',
+      operation: 'chat.completions.create',
+      result: 'choices[0].message.content',
+    },
+  ],
+  [
+    'openai-response',
+    {
+      path: '/v1/responses',
+      operation: 'responses.create',
+      result: 'output_text',
+    },
+  ],
+  [
+    'anthropic',
+    {
+      path: '/v1/messages',
+      operation: 'messages.create',
+      result: 'content[0].text',
+    },
+  ],
+  [
+    'embeddings',
+    {
+      path: '/v1/embeddings',
+      operation: 'embeddings.create',
+      result: 'data[0].embedding',
+    },
+  ],
+  [
+    'image-generation',
+    {
+      path: '/v1/images/generations',
+      operation: 'images.generate',
+      result: 'data',
+    },
+  ],
+])
+
+function canonicalSdkSample(
+  lang: ModelSampleLanguage,
+  ctx: SampleContext,
+  endpointType: string,
+  body: Record<string, unknown>
+): string | undefined {
+  const route = sdkRoutes.get(endpointType)
+  if (
+    !route ||
+    route.path !== ctx.endpointPath ||
+    (lang !== 'python' && lang !== 'typescript')
+  ) {
+    return undefined
+  }
+  const isAnthropic = endpointType === 'anthropic'
+  const base = JSON.stringify(isAnthropic ? ctx.baseUrl : `${ctx.baseUrl}/v1`)
   if (lang === 'python') {
-    return [
-      'from openai import OpenAI',
-      '',
-      'client = OpenAI(',
-      `    base_url="${ctx.baseUrl}/v1",`,
-      `    api_key="<YOUR_API_KEY>",`,
-      ')',
-      '',
-      isResponses
-        ? `response = client.${fnCall}(\n    model="${ctx.modelName}",\n    input="${userMessage}",\n)\n\nprint(response.output_text)`
-        : `completion = client.${fnCall}(\n    model="${ctx.modelName}",\n    messages=[\n        {"role": "user", "content": "${userMessage}"}\n    ],\n)\n\nprint(completion.choices[0].message.content)`,
-    ].join('\n')
-  }
-
-  if (lang === 'typescript') {
-    return [
-      `import OpenAI from 'openai'`,
-      '',
-      `const client = new OpenAI({`,
-      `  baseURL: '${ctx.baseUrl}/v1',`,
-      `  apiKey: process.env.${ctx.apiKeyEnv},`,
-      `})`,
-      '',
-      isResponses
-        ? `const response = await client.${fnCall}({\n  model: '${ctx.modelName}',\n  input: '${userMessage}',\n})\n\nconsole.log(response.output_text)`
-        : `const completion = await client.${fnCall}({\n  model: '${ctx.modelName}',\n  messages: [{ role: 'user', content: '${userMessage}' }],\n})\n\nconsole.log(completion.choices[0].message.content)`,
-    ].join('\n')
-  }
-
-  return [
-    `const response = await fetch('${url}', {`,
-    `  method: 'POST',`,
-    `  headers: {`,
-    `    Authorization: \`Bearer \${process.env.${ctx.apiKeyEnv}}\`,`,
-    `    'Content-Type': 'application/json',`,
-    `  },`,
-    `  body: JSON.stringify(${bodyJson}),`,
-    `})`,
-    '',
-    `const data = await response.json()`,
-    `console.log(data)`,
-  ].join('\n')
-}
-
-function buildAnthropicSample(
-  lang: ModelSampleLanguage,
-  ctx: SampleContext
-): string {
-  const url = `${ctx.baseUrl}${ctx.endpointPath}`
-  const userMessage = 'Explain quantum entanglement in one paragraph.'
-
-  if (lang === 'curl') {
-    const body = JSON.stringify(
-      {
-        model: ctx.modelName,
-        max_tokens: 1024,
-        messages: [{ role: 'user', content: userMessage }],
-      },
-      null,
-      2
+    // The five known SDK payloads contain only string, integer, list and
+    // string-keyed dictionary literals, valid in both JSON and Python.
+    const args = Object.entries(body).map(
+      ([key, value]) => `    ${key}=${JSON.stringify(value)},`
     )
     return [
-      `curl ${url} \\`,
-      `  -H "x-api-key: $${ctx.apiKeyEnv}" \\`,
-      `  -H "anthropic-version: 2023-06-01" \\`,
-      `  -H "Content-Type: application/json" \\`,
-      `  -d '${body.replaceAll('\n', '\n     ')}'`,
-    ].join('\n')
-  }
-  if (lang === 'python') {
-    return [
-      'import anthropic',
+      'import os',
+      isAnthropic
+        ? 'from anthropic import Anthropic'
+        : 'from openai import OpenAI',
       '',
-      'client = anthropic.Anthropic(',
-      `    base_url="${ctx.baseUrl}",`,
-      `    api_key="<YOUR_API_KEY>",`,
+      `client = ${isAnthropic ? 'Anthropic' : 'OpenAI'}(base_url=${base}, api_key=os.environ["${ctx.apiKeyEnv}"])`,
+      '',
+      `response = client.${route.operation}(`,
+      ...args,
       ')',
-      '',
-      `message = client.messages.create(`,
-      `    model="${ctx.modelName}",`,
-      `    max_tokens=1024,`,
-      `    messages=[{"role": "user", "content": "${userMessage}"}],`,
-      ')',
-      '',
-      'print(message.content[0].text)',
+      `print(response.${route.result})`,
     ].join('\n')
   }
-  if (lang === 'typescript') {
-    return [
-      `import Anthropic from '@anthropic-ai/sdk'`,
-      '',
-      `const client = new Anthropic({`,
-      `  baseURL: '${ctx.baseUrl}',`,
-      `  apiKey: process.env.${ctx.apiKeyEnv},`,
-      `})`,
-      '',
-      `const message = await client.messages.create({`,
-      `  model: '${ctx.modelName}',`,
-      `  max_tokens: 1024,`,
-      `  messages: [{ role: 'user', content: '${userMessage}' }],`,
-      `})`,
-      '',
-      `console.log(message.content[0].text)`,
-    ].join('\n')
-  }
+  const sdk = isAnthropic ? 'Anthropic' : 'OpenAI'
+  // Anthropic's SDK returns a union of content blocks; text isn't a property
+  // of all blocks. Keep the example valid under strict TypeScript.
+  const output = isAnthropic
+    ? "for (const block of response.content) if (block.type === 'text') console.log(block.text)"
+    : `console.log(response.${route.result})`
   return [
-    `const response = await fetch('${url}', {`,
-    `  method: 'POST',`,
-    `  headers: {`,
-    `    'x-api-key': process.env.${ctx.apiKeyEnv},`,
-    `    'anthropic-version': '2023-06-01',`,
-    `    'Content-Type': 'application/json',`,
-    `  },`,
-    `  body: JSON.stringify({`,
-    `    model: '${ctx.modelName}',`,
-    `    max_tokens: 1024,`,
-    `    messages: [{ role: 'user', content: '${userMessage}' }],`,
-    `  }),`,
-    `})`,
+    `import ${sdk} from '${isAnthropic ? '@anthropic-ai/sdk' : 'openai'}'`,
     '',
-    `const data = await response.json()`,
-    `console.log(data.content[0].text)`,
+    `const apiKey = process.env.${ctx.apiKeyEnv}`,
+    `if (!apiKey) throw new Error('Set ${ctx.apiKeyEnv}')`,
+    `const client = new ${sdk}({ baseURL: ${base}, apiKey })`,
+    '',
+    `const response = await client.${route.operation}(${JSON.stringify(body, null, 2)})`,
+    output,
   ].join('\n')
 }
 
-function buildGeminiSample(
+// Samples target the catalog's actual method and path, including custom prefixes.
+// Unknown protocols, incompatible methods, and non-JSON formats link to docs instead.
+export function buildModelCodeSample(
   lang: ModelSampleLanguage,
+  endpointType: string,
   ctx: SampleContext
-): string {
-  const url = `${ctx.baseUrl}${ctx.endpointPath}`
-  const body = JSON.stringify(
-    {
-      contents: [
-        { parts: [{ text: 'Explain quantum entanglement in one paragraph.' }] },
-      ],
-    },
-    null,
-    2
-  )
-
-  // Use the gateway's native HTTP route in every language. Default Google SDK
-  // clients target Google directly, and credentials must not be put in the URL.
+): string | null {
+  const body = sampleBody(endpointType, ctx.modelName)
+  const auth = modelEndpointAuth(endpointType)
+  if (!body || !auth || (ctx.method ?? 'POST').toUpperCase() !== 'POST') {
+    return null
+  }
+  const url = ctx.baseUrl + ctx.endpointPath
+  const env = ctx.apiKeyEnv
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(env)) return null
+  const sdk = canonicalSdkSample(lang, ctx, endpointType, body)
+  if (sdk) return sdk
+  const header = {
+    anthropic: 'x-api-key',
+    gemini: 'x-goog-api-key',
+    bearer: 'Authorization',
+  }[auth]
+  const version = auth === 'anthropic'
+  const json = JSON.stringify(body, null, 2)
   if (lang === 'curl') {
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
     return [
-      `curl '${url.replaceAll("'", "'\\''")}' \\`,
-      `  -H "x-goog-api-key: $${ctx.apiKeyEnv}" \\`,
-      `  -H 'Content-Type: application/json' \\`,
-      `  -d '${body.replaceAll('\n', '\n     ')}'`,
-    ].join('\n')
+      `curl -X POST ${quote(url)}`,
+      `  -H "${header}: ${auth === 'bearer' ? 'Bearer ' : ''}$${env}"`,
+      ...(version ? ["  -H 'anthropic-version: 2023-06-01'"] : []),
+      "  -H 'Content-Type: application/json'",
+      `  -d ${quote(json)}`,
+    ].join(' \\\n')
   }
   if (lang === 'python') {
     return [
+      'import json',
       'import os',
       'import requests',
       '',
       'response = requests.post(',
       `    ${JSON.stringify(url)},`,
       '    headers={',
-      `        "x-goog-api-key": os.environ["${ctx.apiKeyEnv}"],`,
+      `        "${header}": ${
+        auth === 'bearer' ? '"Bearer " + ' : ''
+      }os.environ["${env}"],`,
+      ...(version ? ['        "anthropic-version": "2023-06-01",'] : []),
       '        "Content-Type": "application/json",',
       '    },',
-      `    json=${body},`,
+      `    json=json.loads(${JSON.stringify(json)}),`,
       '    timeout=120,',
       ')',
       'response.raise_for_status()',
@@ -230,223 +246,21 @@ function buildGeminiSample(
     ].join('\n')
   }
   return [
-    `const apiKey = process.env.${ctx.apiKeyEnv}`,
-    `if (!apiKey) throw new Error('Set ${ctx.apiKeyEnv}')`,
+    `const apiKey = process.env.${env}`,
+    `if (!apiKey) throw new Error('Set ${env}')`,
     '',
     `const response = await fetch(${JSON.stringify(url)}, {`,
-    `  method: 'POST',`,
-    `  headers: {`,
-    `    'x-goog-api-key': apiKey,`,
-    `    'Content-Type': 'application/json',`,
-    `  },`,
-    `  body: JSON.stringify(${body}),`,
-    `})`,
-    '',
-    `if (!response.ok) throw new Error(await response.text())`,
-    `console.log(await response.json())`,
+    "  method: 'POST',",
+    '  headers: {',
+    `    ${JSON.stringify(header)}: ${
+      auth === 'bearer' ? "'Bearer ' + apiKey" : 'apiKey'
+    },`,
+    ...(version ? ["    'anthropic-version': '2023-06-01',"] : []),
+    "    'Content-Type': 'application/json',",
+    '  },',
+    `  body: JSON.stringify(${json}),`,
+    '})',
+    'if (!response.ok) throw new Error(await response.text())',
+    'console.log(await response.json())',
   ].join('\n')
-}
-
-function buildEmbeddingSample(
-  lang: ModelSampleLanguage,
-  ctx: SampleContext
-): string {
-  const url = `${ctx.baseUrl}${ctx.endpointPath}`
-  const text = 'The food was delicious and the waiter…'
-
-  if (lang === 'curl') {
-    const body = JSON.stringify({ model: ctx.modelName, input: text }, null, 2)
-    return [
-      `curl ${url} \\`,
-      `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
-      `  -H "Content-Type: application/json" \\`,
-      `  -d '${body.replaceAll('\n', '\n     ')}'`,
-    ].join('\n')
-  }
-  if (lang === 'python') {
-    return [
-      'from openai import OpenAI',
-      '',
-      `client = OpenAI(base_url="${ctx.baseUrl}/v1", api_key="<YOUR_API_KEY>")`,
-      '',
-      'response = client.embeddings.create(',
-      `    model="${ctx.modelName}",`,
-      `    input="${text}",`,
-      ')',
-      '',
-      'print(response.data[0].embedding[:8])',
-    ].join('\n')
-  }
-  if (lang === 'typescript') {
-    return [
-      `import OpenAI from 'openai'`,
-      '',
-      `const client = new OpenAI({`,
-      `  baseURL: '${ctx.baseUrl}/v1',`,
-      `  apiKey: process.env.${ctx.apiKeyEnv},`,
-      `})`,
-      '',
-      `const response = await client.embeddings.create({`,
-      `  model: '${ctx.modelName}',`,
-      `  input: '${text}',`,
-      `})`,
-      '',
-      `console.log(response.data[0].embedding.slice(0, 8))`,
-    ].join('\n')
-  }
-  return [
-    `const response = await fetch('${url}', {`,
-    `  method: 'POST',`,
-    `  headers: {`,
-    `    Authorization: \`Bearer \${process.env.${ctx.apiKeyEnv}}\`,`,
-    `    'Content-Type': 'application/json',`,
-    `  },`,
-    `  body: JSON.stringify({`,
-    `    model: '${ctx.modelName}',`,
-    `    input: '${text}',`,
-    `  }),`,
-    `})`,
-    '',
-    `const data = await response.json()`,
-    `console.log(data.data[0].embedding.slice(0, 8))`,
-  ].join('\n')
-}
-
-function buildImageSample(
-  lang: ModelSampleLanguage,
-  ctx: SampleContext
-): string {
-  const url = `${ctx.baseUrl}${ctx.endpointPath}`
-  const prompt = 'A serene koi pond at sunset, ukiyo-e style.'
-
-  if (lang === 'curl') {
-    const body = JSON.stringify({ model: ctx.modelName, prompt, n: 1 }, null, 2)
-    return [
-      `curl ${url} \\`,
-      `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
-      `  -H "Content-Type: application/json" \\`,
-      `  -d '${body.replaceAll('\n', '\n     ')}'`,
-    ].join('\n')
-  }
-  if (lang === 'python') {
-    return [
-      'from openai import OpenAI',
-      '',
-      `client = OpenAI(base_url="${ctx.baseUrl}/v1", api_key="<YOUR_API_KEY>")`,
-      '',
-      'response = client.images.generate(',
-      `    model="${ctx.modelName}",`,
-      `    prompt="${prompt}",`,
-      `    n=1,`,
-      ')',
-      '',
-      'print(response.data)',
-    ].join('\n')
-  }
-  if (lang === 'typescript') {
-    return [
-      `import OpenAI from 'openai'`,
-      '',
-      `const client = new OpenAI({`,
-      `  baseURL: '${ctx.baseUrl}/v1',`,
-      `  apiKey: process.env.${ctx.apiKeyEnv},`,
-      `})`,
-      '',
-      `const response = await client.images.generate({`,
-      `  model: '${ctx.modelName}',`,
-      `  prompt: '${prompt}',`,
-      `  n: 1,`,
-      `})`,
-      '',
-      `console.log(response.data)`,
-    ].join('\n')
-  }
-  return [
-    `const response = await fetch('${url}', {`,
-    `  method: 'POST',`,
-    `  headers: {`,
-    `    Authorization: \`Bearer \${process.env.${ctx.apiKeyEnv}}\`,`,
-    `    'Content-Type': 'application/json',`,
-    `  },`,
-    `  body: JSON.stringify({`,
-    `    model: '${ctx.modelName}',`,
-    `    prompt: '${prompt}',`,
-    `    n: 1,`,
-    `  }),`,
-    `})`,
-    '',
-    `const data = await response.json()`,
-    `console.log(data.data)`,
-  ].join('\n')
-}
-
-export function buildModelCodeSample(
-  lang: ModelSampleLanguage,
-  endpointType: string,
-  ctx: SampleContext
-): string | null {
-  if (endpointType === 'anthropic') return buildAnthropicSample(lang, ctx)
-  if (endpointType === 'gemini') return buildGeminiSample(lang, ctx)
-  if (endpointType === 'embeddings') {
-    return buildEmbeddingSample(lang, ctx)
-  }
-  if (endpointType === 'image-generation') return buildImageSample(lang, ctx)
-  if (endpointType === 'openai' || endpointType === 'openai-response') {
-    return buildChatSample(lang, ctx)
-  }
-  if (endpointType === 'jina-rerank') {
-    return buildStructuredSample(lang, ctx, {
-      model: ctx.modelName,
-      query: 'What is idempotency?',
-      documents: ['A duplicate-safe operation.', 'A rendering technique.'],
-      top_n: 2,
-    })
-  }
-  if (endpointType === 'openai-video') {
-    return buildStructuredSample(lang, ctx, {
-      model: ctx.modelName,
-      prompt: 'A slow aerial view of a mountain lake.',
-    })
-  }
-  return null
-}
-
-function buildStructuredSample(
-  lang: ModelSampleLanguage,
-  ctx: SampleContext,
-  body: Record<string, unknown>
-): string {
-  const url = `${ctx.baseUrl}${ctx.endpointPath}`
-  const json = JSON.stringify(body, null, 2)
-  if (lang === 'curl') {
-    return [
-      `curl -X POST "${url}" \\`,
-      `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
-      `  -H "Content-Type: application/json" \\`,
-      `  -d '${json}'`,
-    ].join('\n')
-  }
-  if (lang === 'python') {
-    return `import json
-import requests
-
-response = requests.post(
-    "${url}",
-    headers={"Authorization": "Bearer <YOUR_API_KEY>"},
-    json=json.loads(${JSON.stringify(json)}),
-    timeout=120,
-)
-response.raise_for_status()
-print(response.json())`
-  }
-  return `const response = await fetch('${url}', {
-  method: 'POST',
-  headers: {
-    Authorization: \`Bearer \${process.env.${ctx.apiKeyEnv}}\`,
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify(${json}),
-})
-if (!response.ok) throw new Error(await response.text())
-console.log(await response.json())`
 }

@@ -49,7 +49,8 @@ import { aggregateUptime, type UptimeDayPoint } from '../lib/mock-stats'
 type SparklineSize = 'sm' | 'md'
 
 type UptimeSparklineProps = {
-  series: UptimeDayPoint[]
+  series: (Pick<UptimeDayPoint, 'date' | 'uptime_pct'> &
+    Partial<Pick<UptimeDayPoint, 'incidents' | 'outage_minutes'>>)[]
   overallSuccessRate?: number
   size?: SparklineSize
   showOverall?: boolean
@@ -119,7 +120,7 @@ export function UptimeSparkline(props: UptimeSparklineProps) {
             <TooltipContent side='top' className='font-mono text-xs'>
               <div className='font-medium'>{day.date}</div>
               <div>{formatUptimePct(day.uptime_pct)}</div>
-              {day.outage_minutes > 0 && (
+              {(day.outage_minutes ?? 0) > 0 && (
                 <div className='text-muted-foreground'>
                   {day.outage_minutes} min outage
                 </div>

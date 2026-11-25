@@ -252,6 +252,8 @@ func QuerySummaryAll(hours int, groups []string, recentModels ...string) (Summar
 	modelBuckets := map[string]map[int64]counters{}
 	for _, row := range rows {
 		value := counters{
+			ttftSumMs:      row.TtftSumMs,
+			ttftCount:      row.TtftCount,
 			requestCount:   row.RequestCount,
 			successCount:   row.SuccessCount,
 			totalLatencyMs: row.TotalLatencyMs,
@@ -307,22 +309,10 @@ func QuerySummaryAll(hours int, groups []string, recentModels ...string) (Summar
 		if total.requestCount == 0 {
 			continue
 		}
-		all.requestCount += total.requestCount
-		all.successCount += total.successCount
-		all.totalLatencyMs += total.totalLatencyMs
-		all.outputTokens += total.outputTokens
-		all.generationMs += total.generationMs
-		avgLatency := total.totalLatencyMs / total.requestCount
-		successRate := float64(total.successCount) / float64(total.requestCount) * 100
-		avgTps := 0.0
-		if total.generationMs > 0 {
-			avgTps = float64(total.outputTokens) / (float64(total.generationMs) / 1000.0)
-		}
+		all.merge(total)
 		models = append(models, ModelSummary{
 			ModelName:           name,
-			AvgLatencyMs:        avgLatency,
-			SuccessRate:         math.Round(successRate*100) / 100,
-			AvgTps:              math.Round(avgTps*100) / 100,
+			Summary:             *summarize(total),
 			RecentSuccessSeries: recentSuccessSeries(modelBuckets[name]),
 			RequestCount:        total.requestCount,
 		})
@@ -337,11 +327,7 @@ func QuerySummaryAll(hours int, groups []string, recentModels ...string) (Summar
 	}, nil
 }
 
-func mergeModelTotals(totals map[string]counters, modelName string, value counters) {
-	if value.requestCount == 0 {
-		return
-	}
-	current := totals[modelName]
+func (current *counters) merge(value counters) {
 	current.requestCount += value.requestCount
 	current.successCount += value.successCount
 	current.totalLatencyMs += value.totalLatencyMs
@@ -349,6 +335,14 @@ func mergeModelTotals(totals map[string]counters, modelName string, value counte
 	current.ttftCount += value.ttftCount
 	current.outputTokens += value.outputTokens
 	current.generationMs += value.generationMs
+}
+
+func mergeModelTotals(totals map[string]counters, modelName string, value counters) {
+	if value.requestCount == 0 {
+		return
+	}
+	current := totals[modelName]
+	current.merge(value)
 	totals[modelName] = current
 }
 
@@ -360,13 +354,7 @@ func mergeModelBucket(modelBuckets map[string]map[int64]counters, modelName stri
 		modelBuckets[modelName] = map[int64]counters{}
 	}
 	current := modelBuckets[modelName][bucketTs]
-	current.requestCount += value.requestCount
-	current.successCount += value.successCount
-	current.totalLatencyMs += value.totalLatencyMs
-	current.ttftSumMs += value.ttftSumMs
-	current.ttftCount += value.ttftCount
-	current.outputTokens += value.outputTokens
-	current.generationMs += value.generationMs
+	current.merge(value)
 	modelBuckets[modelName][bucketTs] = current
 }
 
@@ -429,13 +417,7 @@ func mergeCounters(merged map[bucketKey]counters, key bucketKey, value counters)
 		return
 	}
 	current := merged[key]
-	current.requestCount += value.requestCount
-	current.successCount += value.successCount
-	current.totalLatencyMs += value.totalLatencyMs
-	current.ttftSumMs += value.ttftSumMs
-	current.ttftCount += value.ttftCount
-	current.outputTokens += value.outputTokens
-	current.generationMs += value.generationMs
+	current.merge(value)
 	merged[key] = current
 }
 
@@ -475,28 +457,15 @@ func buildQueryResult(modelName string, merged map[bucketKey]counters) QueryResu
 		series := make([]BucketPoint, 0, len(timestamps))
 		for _, ts := range timestamps {
 			value := buckets[ts]
-			total.requestCount += value.requestCount
-			total.successCount += value.successCount
-			total.totalLatencyMs += value.totalLatencyMs
-			total.ttftSumMs += value.ttftSumMs
-			total.ttftCount += value.ttftCount
-			total.outputTokens += value.outputTokens
-			total.generationMs += value.generationMs
+			total.merge(value)
 			series = append(series, bucketPoint(ts, value))
 		}
-		all.requestCount += total.requestCount
-		all.successCount += total.successCount
-		all.totalLatencyMs += total.totalLatencyMs
-		all.outputTokens += total.outputTokens
-		all.generationMs += total.generationMs
+		all.merge(total)
 
 		results = append(results, GroupResult{
-			Group:        group,
-			AvgTtftMs:    avg(total.ttftSumMs, total.ttftCount),
-			AvgLatencyMs: avg(total.totalLatencyMs, total.requestCount),
-			SuccessRate:  successRate(total),
-			AvgTps:       avgTps(total),
-			Series:       series,
+			Group:   group,
+			Summary: total.observations(),
+			Series:  series,
 		})
 	}
 
@@ -523,21 +492,26 @@ func summarize(total counters) *Summary {
 	if total.requestCount <= 0 {
 		return nil
 	}
-	return &Summary{
-		AvgLatencyMs: avg(total.totalLatencyMs, total.requestCount),
-		SuccessRate:  math.Round(successRate(total)*100) / 100,
-		AvgTps:       math.Round(avgTps(total)*100) / 100,
-	}
+	result := total.observations()
+	result.SuccessRate = math.Round(result.SuccessRate*100) / 100
+	result.AvgTps = math.Round(result.AvgTps*100) / 100
+	return &result
 }
 
-func bucketPoint(ts int64, value counters) BucketPoint {
-	return BucketPoint{
-		Ts:           ts,
+func (value counters) observations() Summary {
+	return Summary{
+		HasTtft:      value.ttftCount > 0,
+		HasLatency:   value.totalLatencyMs > 0,
+		HasTps:       value.outputTokens > 0 && value.generationMs > 0,
 		AvgTtftMs:    avg(value.ttftSumMs, value.ttftCount),
 		AvgLatencyMs: avg(value.totalLatencyMs, value.requestCount),
 		SuccessRate:  successRate(value),
 		AvgTps:       avgTps(value),
 	}
+}
+
+func bucketPoint(ts int64, value counters) BucketPoint {
+	return BucketPoint{Ts: ts, Summary: value.observations()}
 }
 
 func avg(sum int64, count int64) int64 {

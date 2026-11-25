@@ -48,6 +48,7 @@ type LegacyComboboxProps = {
   searchPlaceholder?: string
   emptyText?: string
   allowCustomValue?: boolean
+  limit?: number
   showSelectedIcon?: boolean
   className?: string
   popupClassName?: string
@@ -109,6 +110,7 @@ function OptionCombobox(props: LegacyComboboxProps) {
   return (
     <ComboboxPrimitive.Root
       items={props.options}
+      limit={props.limit}
       value={selected ?? null}
       name={props.name}
       disabled={props.disabled}

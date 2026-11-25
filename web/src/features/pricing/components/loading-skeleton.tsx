@@ -31,12 +31,9 @@ export function LoadingSkeleton(props: LoadingSkeletonProps) {
       <div className='mx-auto mb-5 flex max-w-3xl flex-col items-center pt-5 sm:mb-10 sm:pt-10'>
         <Skeleton className='h-[clamp(2.3rem,6.325vw,4.025rem)] w-48 max-w-full sm:w-64' />
         <Skeleton className='mt-3 h-5 w-56 max-w-full sm:mt-4 sm:h-6' />
-        <Skeleton className='mt-2 h-5 w-full max-w-xl' />
-        <Skeleton className='mt-4 h-10 w-full max-w-2xl sm:mt-6' />
       </div>
       <div className='grid gap-4'>
         <div className='self-start rounded-xl border p-3'>
-          <Skeleton className='mb-4 h-5 w-24' />
           {Array.from({ length: 4 }, (_, index) => (
             <div key={index} className='flex flex-wrap items-center gap-3 py-2'>
               <Skeleton className='h-4 w-28' />
@@ -48,6 +45,7 @@ export function LoadingSkeleton(props: LoadingSkeletonProps) {
             </div>
           ))}
         </div>
+        <Skeleton className='mx-auto h-11 w-full max-w-2xl rounded-full' />
         <div className='flex min-w-0 flex-col gap-4'>
           <div className='flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3'>
             <Skeleton className='h-7 w-20' />

@@ -99,6 +99,9 @@ describe('model pricing entry', () => {
           },
         }
       }
+      if (url === '/api/pricing') {
+        return { data: { success: true, data: [], vendors: [] } }
+      }
       return { data: { success: true, data: { items: [] } } }
     })
     const post = vi.spyOn(api, 'post')
@@ -188,6 +191,9 @@ describe('model pricing entry', () => {
             },
           },
         }
+      }
+      if (url === '/api/pricing') {
+        return { data: { success: true, data: [], vendors: [] } }
       }
       return { data: { success: true, data: { items: [] } } }
     })
@@ -287,6 +293,9 @@ describe('model pricing entry', () => {
           },
         }
       }
+      if (url === '/api/pricing') {
+        return { data: { success: true, data: [], vendors: [] } }
+      }
       return { data: { success: true, data: { items: [] } } }
     })
     const client = renderModelActions(matchedModel)
@@ -316,6 +325,51 @@ describe('model pricing entry', () => {
 })
 
 describe('metadata editing', () => {
+  it('saves the selected local icon from the row editor without overwriting visibility or vendor', async () => {
+    const record = { ...model, icon: '', status: 0 }
+    vi.spyOn(api, 'get').mockImplementation(async (url) => {
+      if (url === '/api/models/7') {
+        return { data: { success: true, data: record } }
+      }
+      return {
+        data: {
+          success: true,
+          data: { items: [{ id: 3, name: 'Vendor without icon' }] },
+        },
+      }
+    })
+    const put = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue({ data: { success: true } })
+    const client = renderModelActions(record, 10)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Edit' }))
+    expect(await screen.findByText('Default placeholder')).toBeVisible()
+    expect(
+      screen.queryByText('Inherited from Vendor without icon')
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Custom model icon' }))
+    const picker = screen.getByRole('combobox', { name: 'Icon' })
+    await user.click(picker)
+    await user.type(picker, 'SGLang')
+    await user.keyboard('{ArrowDown}{Enter}')
+    expect(picker).toHaveValue('SGLang')
+    await user.click(screen.getByRole('button', { name: 'Save metadata' }))
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith(
+        '/api/models/',
+        expect.objectContaining({
+          id: 7,
+          icon: 'SGLang',
+          vendor_id: 3,
+          status: 0,
+        }),
+        expect.anything()
+      )
+    )
+    client.clear()
+  })
+
   it.each([
     {
       name: 'business rejection',
@@ -494,7 +548,7 @@ describe('metadata editing', () => {
             data: {
               items: [
                 { id: 3, name: 'Existing vendor', icon: 'Gemini.Color' },
-                { id: 4, name: 'Another vendor', icon: 'Gemini.Color' },
+                { id: 4, name: 'Another vendor', icon: 'DeepSeek.Color' },
               ],
             },
           },
@@ -527,9 +581,12 @@ describe('metadata editing', () => {
     expect(screen.getByText('Gemini.Color')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Custom model icon' }))
     const icon = screen.getByRole('combobox', { name: 'Icon' })
-    await user.type(icon, 'Claude.Avatar')
-    await user.keyboard('{Escape}')
-    expect(screen.getByText('Claude.Avatar')).toBeVisible()
+    await user.click(icon)
+    await user.type(icon, 'Claude.Color')
+    await user.click(
+      await screen.findByRole('option', { name: 'Claude.Color' })
+    )
+    expect(screen.getByText('Claude.Color')).toBeVisible()
     await user.click(
       screen.getByRole('button', { name: 'Inherit vendor icon' })
     )
@@ -542,6 +599,7 @@ describe('metadata editing', () => {
     await user.type(vendorInput, 'Another')
     await user.click(screen.getByRole('option', { name: 'Another vendor' }))
     expect(vendorInput).toHaveValue('Another vendor')
+    expect(screen.getByText('DeepSeek.Color')).toBeVisible()
     await user.clear(description)
     await user.type(description, 'Updated metadata')
     await user.click(

@@ -20,10 +20,10 @@ import { ChevronRight } from 'lucide-react'
 import { memo, useMemo, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { CatalogModelIcon } from '@/components/catalog-model-icon'
 import { CopyButton } from '@/components/copy-button'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card'
-import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
@@ -39,14 +39,20 @@ import {
 import { parseTags } from '../lib/filters'
 import {
   activeBillingExpressions,
+  getMarketPriceModel,
   marketGroupLabel,
 } from '../lib/market-groups'
-import type { ModelEndpointMap } from '../lib/model-endpoints'
+import { quotedMarketGroups } from '../lib/market-result-groups'
+import {
+  getModelEndpoints,
+  type ModelEndpointMap,
+} from '../lib/model-endpoints'
 import { isTokenBasedModel } from '../lib/model-helpers'
 import { withBasePricing } from '../lib/plugin-pricing'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import { taskPriceLabel, taskUsageUnitLabel } from '../lib/task-price-display'
 import type { PricingModel, PriceType, TokenUnit } from '../types'
+import { MarketGroupIcon } from './market-group-icon'
 import { ModelApiActions } from './model-api-actions'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
@@ -58,6 +64,7 @@ export interface ModelCardProps {
   usdExchangeRate?: number
   tokenUnit?: TokenUnit
   showRechargePrice?: boolean
+  platformPriceGroups?: ReadonlySet<string>
   selectedGroup?: string
   perf?: ModelPerfBadgeData
   endpointMap?: ModelEndpointMap
@@ -70,17 +77,21 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   const usdExchangeRate = props.usdExchangeRate ?? 1
   const showRechargePrice = props.showRechargePrice ?? false
   // Prices summarise the model-level price when ordinary requests pay it.
-  const model = useMemo(() => withBasePricing(props.model), [props.model])
+  const quote = useMemo(
+    () => getMarketPriceModel(props.model, props.platformPriceGroups),
+    [props.model, props.platformPriceGroups]
+  )
+  const model = useMemo(() => withBasePricing(quote), [quote])
   const isTokenBased = isTokenBasedModel(model)
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
   const tags = parseTags(props.model.tags)
-  const groups = (props.model.enable_groups || []).map((group) =>
+  const groupKeys = quotedMarketGroups(quote, props.selectedGroup)
+  const groups = groupKeys.map((group) =>
     marketGroupLabel(group, props.model.group_catalog)
   )
-  const endpoints = props.model.supported_endpoint_types || []
-  const modelIconKey = props.model.icon || props.model.vendor_icon
-  const modelIcon = modelIconKey ? getLobeIcon(modelIconKey, 28) : null
-  const initial = props.model.model_name?.charAt(0).toUpperCase() || '?'
+  const endpoints = props.endpointMap
+    ? getModelEndpoints(props.model, props.endpointMap).map((ep) => ep.type)
+    : (props.model.supported_endpoint_types ?? [])
   const isUnconfiguredTaskUsage = isUnconfiguredTaskUsageModel(model)
   const expressions = useMemo(() => activeBillingExpressions([model]), [model])
   const billingTime = useBillingTime(expressions)
@@ -280,17 +291,18 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   }
 
   return (
-    <Card className='hover:ring-foreground/20 h-full min-w-0 gap-4 pt-5 transition-colors'>
+    <Card className='hover:ring-foreground/20 @container/market-card h-full min-w-0 gap-4 pt-5 transition-colors'>
       <CardHeader className='flex flex-row items-start gap-3 px-5'>
         <div
           aria-hidden
           className='bg-muted/50 flex size-10 shrink-0 items-center justify-center rounded-lg'
         >
-          {modelIcon || (
-            <span className='text-muted-foreground text-sm font-bold'>
-              {initial}
-            </span>
-          )}
+          <CatalogModelIcon
+            icon={props.model.icon}
+            vendorIcon={props.model.vendor_icon}
+            name={props.model.model_name}
+            size={28}
+          />
         </div>
         <div className='min-w-0 flex-1'>
           <h3
@@ -374,6 +386,10 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
                   {t('Groups')}
                 </dt>
                 <dd className='flex min-w-0 items-baseline gap-1'>
+                  <MarketGroupIcon
+                    meta={props.model.group_catalog?.[groupKeys[0]]}
+                    size={14}
+                  />
                   <span className='truncate' title={groups.join(', ')}>
                     {groups[0]}
                   </span>

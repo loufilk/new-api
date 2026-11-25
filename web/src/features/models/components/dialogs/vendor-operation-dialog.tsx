@@ -21,6 +21,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { CatalogModelIcon } from '@/components/catalog-model-icon'
 import { StaticDataTable } from '@/components/data-table'
 import { Dialog } from '@/components/dialog'
 import { ErrorState } from '@/components/error-state'
@@ -28,7 +29,6 @@ import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
 import { Label } from '@/components/ui/label'
-import { getLobeIcon } from '@/lib/lobe-icon'
 import { createServerError } from '@/lib/server-error-message'
 
 import { getVendors } from '../../api'
@@ -68,14 +68,16 @@ export function VendorOperationDialog(props: {
     (vendor) => ({
       value: String(vendor.id),
       label: vendor.name,
-      icon: getLobeIcon(vendor.icon, 18),
+      icon: (
+        <CatalogModelIcon icon={vendor.icon} name={vendor.name} size={18} />
+      ),
     })
   )
   if (action === 'assign') {
     vendorOptions.unshift({
       value: '0',
       label: t('No vendor'),
-      icon: getLobeIcon('', 18),
+      icon: <CatalogModelIcon size={18} />,
     })
   }
   const request: VendorOperation = {

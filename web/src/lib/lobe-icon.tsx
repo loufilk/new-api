@@ -25,7 +25,6 @@ For commercial licensing, please contact support@quantumnous.com
  * - Chained properties: "OpenAI.Avatar.type={'platform'}"
  * - Size parameter: getLobeIcon("OpenAI", 20)
  */
-import { toc } from '@lobehub/icons/es/toc'
 import {
   lazy,
   Suspense,
@@ -37,6 +36,10 @@ import {
 import sglangLogo from '@/assets/brand-icons/sglang.svg'
 import { IconSub2api } from '@/assets/custom/icon-sub2api'
 import { IconWan } from '@/assets/custom/icon-wan'
+
+import { catalogIconVariants } from './catalog-icon-registry'
+
+export { getLobeIconNames } from './catalog-icon-registry'
 
 const CUSTOM_ICONS: Record<string, ComponentType<{ size?: number }>> = {
   SGLang: (props) => (
@@ -53,17 +56,6 @@ const CUSTOM_ICONS: Record<string, ComponentType<{ size?: number }>> = {
   Wan: IconWan,
 }
 
-const ICON_METADATA = new Map(toc.map((icon) => [icon.id, icon]))
-const ICON_VARIANTS = {
-  Avatar: 'hasAvatar',
-  Brand: 'hasBrand',
-  BrandColor: 'hasBrandColor',
-  Color: 'hasColor',
-  Combine: 'hasCombine',
-  Text: 'hasText',
-  TextCn: 'hasTextCn',
-  TextColor: 'hasTextColor',
-} as const
 const LAZY_ICONS = new Map<
   string,
   LazyExoticComponent<ComponentType<Record<string, unknown>>>
@@ -138,23 +130,14 @@ export function getLobeIcon(
 
   const segments = trimmedName.split('.')
   const baseKey = segments[0]
-  const CustomIcon = CUSTOM_ICONS[baseKey]
+  const CustomIcon = Object.hasOwn(CUSTOM_ICONS, baseKey)
+    ? CUSTOM_ICONS[baseKey]
+    : null
   if (CustomIcon) return <CustomIcon size={size} />
 
-  const metadata = ICON_METADATA.get(baseKey)
-  if (!metadata) return fallback
-
-  const variantKey = segments[1] as keyof typeof ICON_VARIANTS
-  const variantFlag = ICON_VARIANTS[variantKey]
-  let variant: string =
-    variantFlag && metadata.param[variantFlag] ? variantKey : 'Mono'
-  // These published variants are not represented by the package's toc flags.
-  if (
-    (baseKey === 'Gemma' && segments[1] === 'Simple') ||
-    (baseKey === 'LobeHub' && segments[1] === 'Morden')
-  ) {
-    variant = segments[1]
-  }
+  const variants = catalogIconVariants.get(baseKey)
+  if (!variants) return fallback
+  const variant = variants.includes(segments[1]) ? segments[1] : 'Mono'
   const propStartIndex =
     segments.length > 1 && /^[A-Z]/.test(segments[1]) ? 2 : 1
   const cacheKey = `${baseKey}.${variant}`
@@ -215,12 +198,4 @@ export function getLobeIcon(
       <IconComponent {...props} />
     </Suspense>
   )
-}
-
-// The selector uses the same installed icon registry as the renderer.
-export function getLobeIconNames(): string[] {
-  const names = toc.flatMap((icon) =>
-    icon.param.hasColor ? [icon.id, `${icon.id}.Color`] : [icon.id]
-  )
-  return [...new Set([...names, ...Object.keys(CUSTOM_ICONS)])].sort()
 }

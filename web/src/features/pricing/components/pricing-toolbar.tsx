@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { ArrowUpDown, Check } from 'lucide-react'
+import { ArrowUpDown, Check, RotateCcw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { DataTableViewModeToggle } from '@/components/data-table'
@@ -29,6 +29,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { getSortLabels, type SortOption, type ViewMode } from '../constants'
@@ -37,6 +39,9 @@ import type { TokenUnit } from '../types'
 export interface PricingToolbarProps {
   filteredCount: number
   totalCount?: number
+  platformBest?: boolean
+  hasActiveFilters?: boolean
+  onClearFilters?: () => void
   sortBy: string
   onSortChange: (value: string) => void
   tokenUnit: TokenUnit
@@ -48,25 +53,46 @@ export interface PricingToolbarProps {
 }
 
 export function PricingToolbar(props: PricingToolbarProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const sortLabels = getSortLabels(t)
 
   return (
-    <div className='bg-card rounded-xl border p-3'>
-      <div className='flex flex-wrap items-center justify-between gap-3'>
-        <div className='flex items-center gap-2'>
-          <div className='text-muted-foreground flex items-baseline gap-1 text-sm'>
-            <span className='text-foreground font-semibold tabular-nums'>
-              {props.filteredCount.toLocaleString()}
-            </span>
-            <span>{props.filteredCount === 1 ? t('model') : t('models')}</span>
+    <div className='min-w-0 border-b pb-3'>
+      <div className='flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-3'>
+        <div className='flex min-w-0 flex-wrap items-center gap-2'>
+          <p
+            role='status'
+            className='text-muted-foreground flex flex-wrap items-baseline gap-x-1.5 text-sm'
+          >
+            {t('Matching models')}
+            <strong className='text-foreground font-semibold tabular-nums'>
+              {formatNumber(props.filteredCount, locale)}
+            </strong>
             {props.totalCount != null &&
               props.filteredCount !== props.totalCount && (
-                <span className='text-muted-foreground/60 text-xs'>
-                  / {props.totalCount.toLocaleString()}
+                <span className='tabular-nums'>
+                  / {formatNumber(props.totalCount, locale)}
                 </span>
               )}
-          </div>
+          </p>
+          {props.platformBest && (
+            <span className='text-muted-foreground text-xs'>
+              {t('Lowest price on this platform')}
+            </span>
+          )}
+          {props.hasActiveFilters && props.onClearFilters && (
+            <Button
+              type='button'
+              variant='ghost'
+              size='sm'
+              onClick={props.onClearFilters}
+              aria-label={t('Reset filters')}
+            >
+              <RotateCcw aria-hidden className='size-3.5' />
+              {t('Reset')}
+            </Button>
+          )}
         </div>
 
         <div className='flex min-w-0 flex-wrap items-center gap-2'>
@@ -106,12 +132,14 @@ export function PricingToolbar(props: PricingToolbarProps) {
                   type='button'
                   variant='outline'
                   size='sm'
-                  className='h-8 gap-1.5 px-3 text-xs'
+                  className='h-auto min-h-8 max-w-full gap-1.5 px-3 py-1 text-xs'
                 />
               }
             >
-              <ArrowUpDown className='size-3.5' />
-              <span>{sortLabels[props.sortBy as SortOption] || t('Sort')}</span>
+              <ArrowUpDown aria-hidden className='size-3.5' />
+              <span className='min-w-0 [overflow-wrap:anywhere] whitespace-normal'>
+                {sortLabels[props.sortBy as SortOption] || t('Sort')}
+              </span>
             </DropdownMenuTrigger>
             <DropdownMenuContent align='end' className='w-44'>
               <DropdownMenuGroup>

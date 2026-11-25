@@ -23,6 +23,7 @@ import { ArrowDown, ArrowUp, ChevronRight, UserRound } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -32,6 +33,7 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { groupCatalogBadges as badgeOptions } from '@/features/pricing/lib/group-catalog-badges'
 import { searchUsers } from '@/features/users/api'
 import { toIntlLocale } from '@/i18n/languages'
@@ -43,6 +45,8 @@ import {
 } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { GroupDisplayPreview } from './group-display-preview'
+import type { CatalogPanel } from './group-pricing-workspace'
 import { normalizePersonalRatio } from './personal-ratio'
 
 const platforms = [
@@ -63,6 +67,7 @@ type GroupEntry = {
   label: string
   description: string
   platform: string
+  icon?: string
   sort_order: number
   exclusive: boolean
   badges: Badge[]
@@ -127,17 +132,24 @@ function required<T>(response: Envelope<T>): T {
   return value
 }
 
-function groupKeys(groupRatios: string) {
+function configuredBaseRates(groupRatios: string): Record<string, number> {
   try {
     const parsed: unknown = JSON.parse(groupRatios)
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return []
+      return {}
     }
-    return Object.keys(parsed)
-      .filter((key) => !['all', 'auto'].includes(key))
-      .sort((a, b) => a.localeCompare(b))
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        ([group, value]) =>
+          group !== 'all' &&
+          group !== 'auto' &&
+          typeof value === 'number' &&
+          Number.isFinite(value) &&
+          value >= 0
+      )
+    )
   } catch {
-    return []
+    return {}
   }
 }
 
@@ -156,12 +168,16 @@ function ErrorNote({ error }: { error: unknown }) {
 }
 
 function GroupCatalogue({
-  allGroups,
+  baseRates,
+  policy = false,
+  active = true,
   revisionData,
   scope,
   reload,
 }: {
-  allGroups: string[]
+  baseRates: Record<string, number>
+  policy?: boolean
+  active?: boolean
   revisionData: Catalogue
   scope: string
   reload: () => Promise<{ data: Catalogue | undefined; isError: boolean }>
@@ -175,6 +191,8 @@ function GroupCatalogue({
     entries: Catalogue['groups']
     entry: GroupEntry
   }>()
+  const allGroups = Object.keys(baseRates).sort()
+  const [confirmPolicy, setConfirmPolicy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [groupFilter, setGroupFilter] = useState('')
   const [latest, setLatest] = useState<Catalogue>()
@@ -194,11 +212,25 @@ function GroupCatalogue({
         exact: true,
       })
       client.setQueryData(['admin-group-catalog', scope], data)
-      setDraft(undefined)
+      // Keep the selected group and its server-normalized display visible after saving.
+      setDraft((current) => {
+        if (!current || !data.groups?.[current.group]) return undefined
+        const entry = data.groups[current.group]
+        return {
+          group: current.group,
+          revision: data.revision,
+          entries: data.groups,
+          entry: { ...emptyGroup, ...entry, badges: entry.badges ?? [] },
+        }
+      })
       setLatest(undefined)
       setSaved(true)
+      setConfirmPolicy(false)
       await Promise.all([
         client.invalidateQueries({ queryKey: ['pricing'] }),
+        ...(policy
+          ? [client.invalidateQueries({ queryKey: ['user-groups'] })]
+          : []),
         client.invalidateQueries({
           queryKey: ['admin-group-entitlements', scope],
         }),
@@ -267,11 +299,19 @@ function GroupCatalogue({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{t('Group display in the marketplace')}</CardTitle>
+        <CardTitle>
+          {policy
+            ? t('Group visibility policy')
+            : t('Group display in the marketplace')}
+        </CardTitle>
         <CardDescription>
-          {t(
-            'Set the descriptions, badges and order customers see. Badges do not affect pricing or routing.'
-          )}
+          {policy
+            ? t(
+                'Changing visibility may affect requests made with existing keys. Check group usage before saving.'
+              )
+            : t(
+                'Set the descriptions, badges and order customers see. Badges do not affect pricing or routing.'
+              )}
         </CardDescription>
       </CardHeader>
       <CardContent className='space-y-4'>
@@ -312,161 +352,192 @@ function GroupCatalogue({
         </label>
         {draft && (
           <>
-            <div className='grid gap-3 sm:grid-cols-2'>
-              <label className='space-y-1'>
-                <span>{t('Display name')}</span>
-                <Input
-                  value={draft.entry.label}
-                  maxLength={64}
-                  onChange={(e) => change({ label: e.target.value })}
-                  disabled={mutation.isPending}
-                />
-              </label>
-              <label className='space-y-1'>
-                <span>{t('Description')}</span>
-                <Input
-                  value={draft.entry.description}
-                  maxLength={240}
-                  onChange={(e) => change({ description: e.target.value })}
-                  disabled={mutation.isPending}
-                />
-              </label>
-              <label className='space-y-1'>
-                <span>{t('Platform')}</span>
-                <select
-                  className={selectClass}
-                  value={draft.entry.exclusive ? 'other' : draft.entry.platform}
-                  disabled={draft.entry.exclusive || mutation.isPending}
-                  onChange={(e) => change({ platform: e.target.value })}
-                >
-                  {platforms.map(([key, title]) => (
-                    <option key={key} value={key}>
-                      {t(title)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className='space-y-1'>
-                <span>{t('Display order')}</span>
-                <Input
-                  type='number'
-                  step='1'
-                  min={-10000}
-                  max={10000}
-                  value={
-                    Number.isNaN(draft.entry.sort_order)
-                      ? ''
-                      : draft.entry.sort_order
-                  }
-                  onChange={(e) =>
-                    change({ sort_order: e.target.valueAsNumber })
-                  }
-                  disabled={mutation.isPending}
-                />
-                {!validSort && (
-                  <span className='text-destructive block text-xs'>
-                    {t('Enter a whole number from -10000 to 10000.')}
-                  </span>
-                )}
-              </label>
-            </div>
-            <label className='flex items-center gap-2'>
-              <input
-                type='checkbox'
-                checked={draft.entry.exclusive}
-                onChange={(e) => change({ exclusive: e.target.checked })}
-                disabled={mutation.isPending || draft.group === 'default'}
-              />
-              {t('Exclusive group (only visible to authorized users)')}
-            </label>
-            {draft.group === 'default' && (
-              <p className='text-muted-foreground text-xs'>
-                {t('The default group cannot be exclusive.')}
-              </p>
-            )}
-            {draft.entry.exclusive !==
-              !!draft.entries[draft.group]?.exclusive && (
-              <p className='text-muted-foreground'>
-                {t(
-                  'Changing visibility may affect requests made with existing keys. Check group usage before saving.'
-                )}
-              </p>
-            )}
-            <fieldset className='space-y-2' disabled={mutation.isPending}>
-              <legend>{t('Group badges')}</legend>
-              <div className='flex flex-wrap gap-3'>
-                {(Object.keys(badgeOptions) as Badge[]).map((key) => (
-                  <label className='flex items-center gap-1' key={key}>
-                    <input
-                      type='checkbox'
-                      checked={draft.entry.badges.includes(key)}
-                      onChange={(e) =>
-                        change({
-                          badges: e.target.checked
-                            ? [...draft.entry.badges, key]
-                            : draft.entry.badges.filter(
-                                (value) => value !== key
-                              ),
-                        })
-                      }
-                    />
-                    {t(badgeOptions[key].label)}
-                  </label>
-                ))}
-              </div>
-              <div
-                className='flex flex-wrap items-center gap-2 rounded-lg border p-3'
-                aria-label={t('Group display preview')}
-              >
-                {draft.entry.badges.map((key, index) => {
-                  const badge = badgeOptions[key]
-                  if (!badge) return null
-                  return (
-                    <span className='inline-flex items-center gap-1' key={key}>
-                      <span
-                        className={`inline-flex items-center gap-1 rounded px-1.5 text-xs ${badge.color}`}
-                      >
-                        <badge.icon size={12} aria-hidden />
-                        {t(badge.label)}
-                      </span>
-                      <button
-                        type='button'
-                        aria-label={t('Move {{name}} up', {
-                          name: t(badge.label),
-                        })}
-                        disabled={index === 0}
-                        onClick={() => move(index, -1)}
-                      >
-                        <ArrowUp size={14} />
-                      </button>
-                      <button
-                        type='button'
-                        aria-label={t('Move {{name}} down', {
-                          name: t(badge.label),
-                        })}
-                        disabled={index === draft.entry.badges.length - 1}
-                        onClick={() => move(index, 1)}
-                      >
-                        <ArrowDown size={14} />
-                      </button>
+            {!policy && (
+              <div className='grid gap-3 sm:grid-cols-2'>
+                <label className='space-y-1'>
+                  <span>{t('Display name')}</span>
+                  <Input
+                    value={draft.entry.label}
+                    maxLength={64}
+                    onChange={(e) => change({ label: e.target.value })}
+                    disabled={mutation.isPending}
+                  />
+                </label>
+                <label className='space-y-1'>
+                  <span>{t('Description')}</span>
+                  <Input
+                    value={draft.entry.description}
+                    maxLength={240}
+                    onChange={(e) => change({ description: e.target.value })}
+                    disabled={mutation.isPending}
+                  />
+                </label>
+                <label className='space-y-1'>
+                  <span>{t('Platform')}</span>
+                  <select
+                    className={selectClass}
+                    value={
+                      draft.entry.exclusive ? 'other' : draft.entry.platform
+                    }
+                    disabled={draft.entry.exclusive || mutation.isPending}
+                    onChange={(e) => change({ platform: e.target.value })}
+                  >
+                    {platforms.map(([key, title]) => (
+                      <option key={key} value={key}>
+                        {t(title)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className='space-y-1'>
+                  <span>{t('Icon source')}</span>
+                  <NativeSelect
+                    className='w-full'
+                    value={draft.entry.icon ?? ''}
+                    disabled={mutation.isPending}
+                    onChange={(event) => change({ icon: event.target.value })}
+                  >
+                    <NativeSelectOption value=''>
+                      {t('Inherit platform icon')}
+                    </NativeSelectOption>
+                    {platforms
+                      .filter(([key]) => key !== '')
+                      .map(([key, title]) => (
+                        <NativeSelectOption key={key} value={key}>
+                          {t(title)}
+                        </NativeSelectOption>
+                      ))}
+                  </NativeSelect>
+                </label>
+                <label className='space-y-1'>
+                  <span>{t('Display order')}</span>
+                  <Input
+                    type='number'
+                    step='1'
+                    min={-10000}
+                    max={10000}
+                    value={
+                      Number.isNaN(draft.entry.sort_order)
+                        ? ''
+                        : draft.entry.sort_order
+                    }
+                    onChange={(e) =>
+                      change({ sort_order: e.target.valueAsNumber })
+                    }
+                    disabled={mutation.isPending}
+                  />
+                  {!validSort && (
+                    <span className='text-destructive block text-xs'>
+                      {t('Enter a whole number from -10000 to 10000.')}
                     </span>
-                  )
-                })}
-                <span className='font-medium'>
-                  {draft.entry.label || draft.group}
-                </span>
-                <span className='text-muted-foreground text-xs'>
-                  {draft.entry.exclusive
-                    ? t('Visible only to authorized accounts')
-                    : t('Visible according to existing group permissions')}
-                </span>
-                {draft.entry.description && (
-                  <p className='text-muted-foreground w-full text-xs'>
-                    {draft.entry.description}
+                  )}
+                </label>
+              </div>
+            )}
+            {policy && (
+              <>
+                <label className='flex items-center gap-2'>
+                  <input
+                    type='checkbox'
+                    checked={draft.entry.exclusive}
+                    onChange={(e) => change({ exclusive: e.target.checked })}
+                    disabled={mutation.isPending || draft.group === 'default'}
+                  />
+                  {t('Exclusive group (only visible to authorized users)')}
+                </label>
+                {draft.group === 'default' && (
+                  <p className='text-muted-foreground text-xs'>
+                    {t('The default group cannot be exclusive.')}
                   </p>
                 )}
-              </div>
-            </fieldset>
+                {draft.entry.exclusive !==
+                  !!draft.entries[draft.group]?.exclusive && (
+                  <p className='text-muted-foreground'>
+                    {t(
+                      'Changing visibility may affect requests made with existing keys. Check group usage before saving.'
+                    )}
+                  </p>
+                )}
+              </>
+            )}
+            {!policy && (
+              <>
+                <fieldset className='space-y-2' disabled={mutation.isPending}>
+                  <legend>{t('Group badges')}</legend>
+                  <div className='flex flex-wrap gap-3'>
+                    {(Object.keys(badgeOptions) as Badge[]).map((key) => (
+                      <label className='flex items-center gap-1' key={key}>
+                        <input
+                          type='checkbox'
+                          checked={draft.entry.badges.includes(key)}
+                          onChange={(e) =>
+                            change({
+                              badges: e.target.checked
+                                ? [...draft.entry.badges, key]
+                                : draft.entry.badges.filter(
+                                    (value) => value !== key
+                                  ),
+                            })
+                          }
+                        />
+                        {t(badgeOptions[key].label)}
+                      </label>
+                    ))}
+                  </div>
+                  <div
+                    hidden={!draft.entry.badges.length}
+                    className='flex flex-wrap items-center gap-2 rounded-lg border p-3 empty:hidden'
+                    aria-label={t('Group badges')}
+                  >
+                    {draft.entry.badges.map((key, index) => {
+                      const badge = badgeOptions[key]
+                      if (!badge) return null
+                      return (
+                        <span
+                          className='inline-flex items-center gap-1'
+                          key={key}
+                        >
+                          <span
+                            className={`inline-flex items-center gap-1 rounded px-1.5 text-xs ${badge.color}`}
+                          >
+                            <badge.icon size={12} aria-hidden />
+                            {t(badge.label)}
+                          </span>
+                          <button
+                            type='button'
+                            aria-label={t('Move {{name}} up', {
+                              name: t(badge.label),
+                            })}
+                            disabled={index === 0}
+                            onClick={() => move(index, -1)}
+                          >
+                            <ArrowUp size={14} />
+                          </button>
+                          <button
+                            type='button'
+                            aria-label={t('Move {{name}} down', {
+                              name: t(badge.label),
+                            })}
+                            disabled={index === draft.entry.badges.length - 1}
+                            onClick={() => move(index, 1)}
+                          >
+                            <ArrowDown size={14} />
+                          </button>
+                        </span>
+                      )
+                    })}
+                  </div>
+                </fieldset>
+                {active && (
+                  <GroupDisplayPreview
+                    group={draft.group}
+                    entry={draft.entry}
+                    baseRatio={baseRates[draft.group]}
+                    scope={scope}
+                  />
+                )}
+              </>
+            )}
             {stale && (
               <div
                 role='alert'
@@ -527,6 +598,16 @@ function GroupCatalogue({
                         }
                       )}
                     </p>
+                    {!policy && (
+                      <p>
+                        {t('Icon source')}:{' '}
+                        {t(
+                          platforms.find(
+                            ([key]) => key && key === latestEntry.icon
+                          )?.[1] ?? 'Inherit platform icon'
+                        )}
+                      </p>
+                    )}
                     {latestEntry.description && (
                       <p>
                         {t('Description: {{description}}', {
@@ -587,10 +668,12 @@ function GroupCatalogue({
             )}
             <div className='flex flex-wrap gap-2'>
               <Button
-                onClick={() => mutation.mutate(draft)}
+                onClick={() =>
+                  policy ? setConfirmPolicy(true) : mutation.mutate(draft)
+                }
                 disabled={mutation.isPending || !dirty || stale || !validSort}
               >
-                {t('Save group display')}
+                {policy ? t('Save visibility policy') : t('Save group display')}
               </Button>
               {dirty && (
                 <Button
@@ -598,16 +681,53 @@ function GroupCatalogue({
                   onClick={() => pick(draft.group)}
                   disabled={mutation.isPending}
                 >
-                  {t('Discard display draft')}
+                  {policy
+                    ? t('Discard access draft')
+                    : t('Discard display draft')}
                 </Button>
               )}
             </div>
           </>
         )}
+        {policy && draft && (
+          <ConfirmDialog
+            open={active && confirmPolicy}
+            onOpenChange={setConfirmPolicy}
+            title={t('Change group visibility?')}
+            desc={t(
+              'Changing visibility may affect requests made with existing keys. Check group usage before saving.'
+            )}
+            confirmText={t('Save visibility policy')}
+            disabled={stale || !dirty || draft.group === 'default'}
+            isLoading={mutation.isPending}
+            handleConfirm={() => {
+              if (
+                !stale &&
+                dirty &&
+                draft.group !== 'default' &&
+                !mutation.isPending
+              ) {
+                setConfirmPolicy(false)
+                mutation.mutate(draft)
+              }
+            }}
+          >
+            <p className='text-sm break-all'>
+              {draft.group} ·{' '}
+              {draft.entry.exclusive
+                ? t('Visible only to authorized accounts')
+                : t('Visible according to existing group permissions')}
+            </p>
+          </ConfirmDialog>
+        )}
         <ErrorNote
           error={!hasRevisionConflict(mutation.error) && mutation.error}
         />
-        {saved && <p role='status'>{t('Group display saved.')}</p>}
+        {saved && (
+          <p role='status'>
+            {policy ? t('Group visibility saved.') : t('Group display saved.')}
+          </p>
+        )}
       </CardContent>
     </Card>
   )
@@ -615,12 +735,14 @@ function GroupCatalogue({
 
 function UserGroupEditor({
   user,
+  panel,
   exclusiveGroups,
   catalogue,
   scope,
   onEditing,
 }: {
   user: UserChoice
+  panel: CatalogPanel
   exclusiveGroups: string[]
   catalogue: Catalogue['groups']
   scope: string
@@ -633,6 +755,7 @@ function UserGroupEditor({
   const ratesKey = ['admin-personal-pricing', scope, user.id]
   const grants = useQuery({
     queryKey: grantsKey,
+    enabled: panel === 'access',
     queryFn: async ({ signal }) =>
       required(
         (
@@ -645,6 +768,7 @@ function UserGroupEditor({
   })
   const rates = useQuery({
     queryKey: ratesKey,
+    enabled: panel === 'personal',
     queryFn: async ({ signal }) =>
       required(
         (
@@ -788,6 +912,7 @@ function UserGroupEditor({
         </div>
       </div>
       <fieldset
+        hidden={panel !== 'access'}
         className='space-y-2 rounded-2xl border p-3'
         disabled={locked || !grantDraft}
       >
@@ -902,6 +1027,7 @@ function UserGroupEditor({
         </div>
       </fieldset>
       <fieldset
+        hidden={panel !== 'personal'}
         className='space-y-3 rounded-2xl border p-3'
         disabled={locked || !rateData}
       >
@@ -1183,26 +1309,31 @@ function UserGroupEditor({
           </div>
         )}
       </fieldset>
-      {notification && (
-        <p role='status'>
-          {
+      {notification &&
+        (notification === 'access'
+          ? panel === 'access'
+          : panel === 'personal') && (
+          <p role='status'>
             {
-              access: t(
-                'Exclusive group access saved. Personal rates have not changed.'
-              ),
-              checking: t('Personal rate saved. Checking the effective rate…'),
-              saved: t('Personal rate saved.'),
-            }[notification]
-          }
-        </p>
-      )}
+              {
+                access: t(
+                  'Exclusive group access saved. Personal rates have not changed.'
+                ),
+                checking: t(
+                  'Personal rate saved. Checking the effective rate…'
+                ),
+                saved: t('Personal rate saved.'),
+              }[notification]
+            }
+          </p>
+        )}
     </>
   )
 }
 
 type GroupCatalogSettingsProps = {
   groupRatios: string
-  panel?: 'groups' | 'people'
+  panel: CatalogPanel
 }
 
 export function GroupCatalogSettings(props: GroupCatalogSettingsProps) {
@@ -1255,24 +1386,35 @@ function GroupCatalogWorkspace({
     )
   }
 
-  const allGroups = groupKeys(groupRatios)
+  const baseRates = configuredBaseRates(groupRatios)
   const exclusiveGroups = Object.keys(catalogue.data.groups ?? {})
     .filter((key) => catalogue.data.groups[key]?.exclusive)
     .sort()
   return (
     <div className='space-y-4'>
-      <div hidden={panel === 'people'}>
+      <div hidden={panel !== 'groups'}>
         <GroupCatalogue
-          allGroups={allGroups}
+          baseRates={baseRates}
+          active={panel === 'groups'}
           revisionData={catalogue.data}
           scope={scope}
+          reload={catalogue.refetch}
+        />
+      </div>
+      <div hidden={panel !== 'access'}>
+        <GroupCatalogue
+          policy
+          active={panel === 'access'}
+          baseRates={baseRates}
+          scope={scope}
+          revisionData={catalogue.data}
           reload={catalogue.refetch}
         />
       </div>
       <div hidden={panel === 'groups'}>
         <Card>
           <CardHeader>
-            <CardTitle>{t('Account pricing and access')}</CardTitle>
+            <CardTitle>{t('Target user')}</CardTitle>
             <CardDescription>
               {t(
                 'Manage group access and billing rates for each account. Save them separately.'
@@ -1341,6 +1483,7 @@ function GroupCatalogWorkspace({
               <UserGroupEditor
                 key={`${scope}:${user.id}`}
                 user={user}
+                panel={panel}
                 catalogue={catalogue.data.groups ?? {}}
                 exclusiveGroups={exclusiveGroups}
                 scope={scope}

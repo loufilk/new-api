@@ -33,7 +33,7 @@ import { GroupCatalogSettings } from '../group-catalog-settings'
 
 const clients: QueryClient[] = []
 
-async function openEditor(panel: 'groups' | 'people') {
+async function openEditor(panel: 'groups' | 'personal') {
   const instance = createInstance()
   await instance.init({
     lng: 'en',
@@ -56,6 +56,10 @@ async function openEditor(panel: 'groups' | 'people') {
             exclusive: true,
           },
         },
+      }
+    } else if (url === '/api/pricing') {
+      return {
+        data: { success: true, data: [], usable_group: {}, group_ratio: {} },
       }
     } else if (url.startsWith('/api/user/search?')) {
       data = { items: [{ id: 2, username: 'sample' }] }
@@ -120,7 +124,7 @@ it('updates editor labels and badge controls on language switch without changing
 })
 
 it('preserves personal pricing drafts and translates the free rate and rollout lock instead of prompting a revision refresh', async () => {
-  const { instance, user } = await openEditor('people')
+  const { instance, user } = await openEditor('personal')
   await user.type(
     await screen.findByRole('textbox', { name: 'Username or user ID' }),
     'sample'

@@ -98,6 +98,53 @@ describe('pricing endpoint selection', () => {
     expect(apiGet.mock.calls.map((call) => call[0])).toEqual(['/api/pricing'])
   })
 
+  test.each([true, false])(
+    'per-model quota and price source are scoped to a real authenticated group (signed in: %s)',
+    async (loggedIn) => {
+      const policy = {
+        window_minutes: 2,
+        total_requests: 100,
+        successful_requests: 0,
+        scope: 'group',
+      }
+      apiGet.mockResolvedValue({
+        data: {
+          success: true,
+          data: [
+            {
+              id: 1,
+              model_name: 'm',
+              enable_groups: ['allowed', 'not-usable'],
+            },
+          ],
+          usable_group: { allowed: {}, unrelated: {} },
+          group_rate_limits: {
+            allowed: policy,
+            'not-usable': policy,
+            unrelated: policy,
+          },
+          group_rate_source: {
+            allowed: 'personal',
+            'not-usable': 'hidden',
+            unrelated: 'unused',
+          },
+        },
+      })
+      if (loggedIn) {
+        useAuthStore.getState().auth.setBundle(bundleFor(1, 'session-a'))
+      }
+      const { result } = renderPricingData()
+      await waitFor(() => expect(result.current.models).toHaveLength(1))
+      const model = result.current.models[0]
+      expect(model.group_rate_limits).toEqual(
+        loggedIn ? { allowed: policy } : undefined
+      )
+      expect(model.group_rate_source).toEqual(
+        loggedIn ? { allowed: 'personal' } : undefined
+      )
+    }
+  )
+
   test('the identity probe suppresses requests until it resolves', async () => {
     apiGet.mockResolvedValue({ data: { success: true, data: [] } })
     useAuthStore.getState().auth.setBootstrapState('checking')

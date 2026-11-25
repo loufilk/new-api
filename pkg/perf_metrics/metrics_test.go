@@ -271,7 +271,7 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			before, err := Query(QueryParams{Model: "test-model", Hours: 24, AllowedGroups: groups})
 			require.NoError(t, err)
 			require.NotNil(t, before.Summary)
-			assert.Equal(t, Summary{SuccessRate: 99.01, AvgLatencyMs: 1009, AvgTps: 5}, *before.Summary)
+			assert.Equal(t, Summary{SuccessRate: 99.01, AvgLatencyMs: 1009, AvgTps: 5, AvgTtftMs: 100, HasLatency: true, HasTps: true, HasTtft: true}, *before.Summary)
 			assert.Equal(t, start, before.WindowStart)
 			require.Len(t, before.Series, 1)
 			assert.Equal(t, hour, before.Series[0].Ts)
@@ -282,6 +282,11 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, before.Summary, summary.Summary)
 			require.Len(t, summary.Models, 1)
+			assert.Equal(t, *before.Summary, summary.Models[0].Summary)
+			assert.Equal(t, int64(100), before.Series[0].AvgTtftMs)
+			assert.True(t, before.Groups[0].HasTtft)
+			assert.False(t, before.Groups[1].HasTtft, "non-stream failures do not produce TTFT samples")
+			assert.False(t, before.Groups[1].Series[0].HasTps)
 			assert.Equal(t, 99.01, summary.Models[0].SuccessRate)
 			assert.Equal(t, 99.01, summary.Models[0].RecentSuccessSeries[0].SuccessRate)
 			encoded, err := common.Marshal(summary)
@@ -399,7 +404,7 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 					require.Len(t, got.Models, 1, phase)
 					assert.Equal(t, int64(1), got.Models[0].RequestCount, phase)
 					assert.Equal(t, 0.0, got.Models[0].SuccessRate, phase)
-					assert.Equal(t, &Summary{AvgLatencyMs: 200}, got.Summary, phase)
+					assert.Equal(t, &Summary{AvgLatencyMs: 200, HasLatency: true}, got.Summary, phase)
 					assert.Equal(t, []SuccessRatePoint{{Ts: oldHour, SuccessRate: 100}, {Ts: hour}}, got.RecentSuccessSeries[name], phase)
 				}
 			})
@@ -428,5 +433,26 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 				assert.Empty(t, history.RecentSuccessSeries["history-hot-expired"])
 			})
 		})
+	}
+}
+
+func TestSampleAvailabilityRetainsMeasuredZeroWithoutPublishingVolumes(t *testing.T) {
+	m := buildQueryResult("native", map[bucketKey]counters{
+		{model: "native", group: "default", bucketTs: 3600}: {requestCount: 1, ttftCount: 1},
+		{model: "native", group: "default", bucketTs: 7200}: {requestCount: 1},
+	})
+	require.Len(t, m.Series, 2)
+	assert.True(t, m.Series[0].HasTtft)
+	assert.False(t, m.Series[1].HasTtft)
+	assert.Zero(t, m.Series[0].AvgTtftMs)
+	for _, m := range []Summary{*m.Summary, m.Series[0].Summary, m.Groups[0].Summary} {
+		assert.Zero(t, m.SuccessRate)
+		assert.False(t, m.HasLatency)
+		assert.False(t, m.HasTps)
+	}
+	raw, err := common.Marshal(m)
+	require.NoError(t, err)
+	for _, hidden := range []string{"request_count", "success_count", "ttft_count", "generation_ms", "output_tokens"} {
+		assert.NotContains(t, string(raw), hidden)
 	}
 }

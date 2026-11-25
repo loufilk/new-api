@@ -87,3 +87,31 @@ test.each([
     expect(input.validity.rangeUnderflow).toBe(true)
   }
 )
+
+test('base-rate editing changes only configured group rates, not ACL-only or top-up-only entries', () => {
+  const writes: Array<[string, string]> = []
+  render(
+    <GroupRatioVisualEditor
+      section='pricing'
+      workspacePanel='pricing'
+      onSectionChange={() => {}}
+      defaultUseAutoGroupField={null}
+      groupRatio='{"default":2}'
+      userUsableGroups='{"private-availability":"Private"}'
+      topupGroupRatio='{"prepaid":0.5}'
+      groupGroupRatio='{}'
+      autoGroups='[]'
+      groupSpecialUsableGroup='{}'
+      maxTokenAutoGroupsField={null}
+      onChange={(field, value) => writes.push([field, value])}
+    />
+  )
+  const table = within(screen.getByRole('table', { name: 'Pricing groups' }))
+  expect(table.queryByText('private-availability')).toBeNull()
+  expect(table.queryByText('prepaid')).toBeNull()
+  fireEvent.change(table.getByRole('spinbutton', { name: 'Ratio' }), {
+    target: { value: '0' },
+  })
+  expect(writes.map(([key]) => key)).toEqual(['GroupRatio'])
+  expect(JSON.parse(writes[0][1])).toEqual({ default: 0 })
+})

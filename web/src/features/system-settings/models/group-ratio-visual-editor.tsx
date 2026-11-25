@@ -429,8 +429,12 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
       <TabsContent value='pricing' keepMounted>
         <GroupPricingTable
           groupRatio={groupRatio}
-          userUsableGroups={userUsableGroups}
-          topupGroupRatio={topupGroupRatio}
+          userUsableGroups={
+            workspacePanel === 'pricing' ? '{}' : userUsableGroups
+          }
+          topupGroupRatio={
+            workspacePanel === 'pricing' ? '{}' : topupGroupRatio
+          }
           baseOnly={workspacePanel === 'pricing'}
           newGroupSelectable={!workspacePanel}
           pendingRenames={pendingRenames}
@@ -577,21 +581,27 @@ function GroupPricingTable({
     )
   )
 
-  useEffect(() => {
+  const [source, setSource] = useState({
+    groupRatio,
+    userUsableGroups,
+    topupGroupRatio,
+    pendingRenames,
+  })
+  if (
+    groupRatio !== source.groupRatio ||
+    userUsableGroups !== source.userUsableGroups ||
+    topupGroupRatio !== source.topupGroupRatio ||
+    pendingRenames !== source.pendingRenames
+  ) {
+    setSource({ groupRatio, userUsableGroups, topupGroupRatio, pendingRenames })
     const incomingRows = applyPendingRenamesToRows(
       buildGroupPricingRows(groupRatio, userUsableGroups, topupGroupRatio),
       pendingRenames
     )
-    setRows((currentRows) => {
-      if (
-        groupPricingSignature(currentRows) ===
-        groupPricingSignature(incomingRows)
-      ) {
-        return currentRows
-      }
-      return incomingRows
-    })
-  }, [groupRatio, userUsableGroups, topupGroupRatio, pendingRenames])
+    if (groupPricingSignature(rows) !== groupPricingSignature(incomingRows)) {
+      setRows(incomingRows)
+    }
+  }
 
   const renames = useMemo(() => collectGroupRenames(rows), [rows])
   const canEmitRenames =
@@ -613,10 +623,12 @@ function GroupPricingTable({
       }
       const serialized = serializeGroupPricingRows(nextRows)
       onChange('GroupRatio', serialized.GroupRatio)
+      // This editor owns only the existing base-rate map, not the ACL or top-up options.
+      if (baseOnly) return
       onChange('UserUsableGroups', serialized.UserUsableGroups)
       onChange('TopupGroupRatio', serialized.TopupGroupRatio)
     },
-    [onChange, onPricingValidityChange]
+    [baseOnly, onChange, onPricingValidityChange]
   )
 
   const updateRow = useCallback(
@@ -1291,19 +1303,19 @@ function GroupOverrideDialog({
   baseRatioByName,
 }: GroupOverrideDialogProps) {
   const { t } = useTranslation()
-  const [targetGroup, setTargetGroup] = useState<string | null>(null)
-  const [ratio, setRatio] = useState('')
+  const [targetGroup, setTargetGroup] = useState<string | null>(
+    open ? (editData?.targetGroup ?? null) : null
+  )
+  const [ratio, setRatio] = useState(
+    open && editData ? String(editData.ratio) : ''
+  )
 
-  useEffect(() => {
-    if (!open) {
-      setTargetGroup(null)
-      setRatio('')
-      return
-    }
-
-    setTargetGroup(editData?.targetGroup ?? null)
-    setRatio(editData ? String(editData.ratio) : '')
-  }, [editData, open])
+  const [source, setSource] = useState({ open, editData })
+  if (open !== source.open || editData !== source.editData) {
+    setSource({ open, editData })
+    setTargetGroup(open ? (editData?.targetGroup ?? null) : null)
+    setRatio(open && editData ? String(editData.ratio) : '')
+  }
 
   const baseRatio = targetGroup ? baseRatioByName.get(targetGroup) : undefined
 

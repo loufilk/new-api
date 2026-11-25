@@ -27,16 +27,15 @@ import {
   Layers,
   Maximize2,
   Sparkles,
-  Timer,
 } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { CatalogModelIcon } from '@/components/catalog-model-icon'
 import { CopyButton } from '@/components/copy-button'
 import { StaticDataTable } from '@/components/data-table'
 import { sideDrawerContentClassName } from '@/components/drawer-layout'
 import { ErrorState } from '@/components/error-state'
-import { GroupBadge } from '@/components/group-badge'
 import { PublicLayout } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import {
@@ -48,14 +47,7 @@ import {
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import {
-  formatLatency,
-  formatThroughput,
-  formatUptimePct,
-  getSuccessRateTextClass,
-} from '@/features/performance-metrics/lib/format'
 import { PluginIcon } from '@/features/task-plugins/components/plugin-icon'
-import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
@@ -82,6 +74,10 @@ import {
   activeBillingExpressions,
   marketGroupLabel,
 } from '../lib/market-groups'
+import {
+  getModelEndpoints,
+  type ModelEndpointMap,
+} from '../lib/model-endpoints'
 import {
   getAvailableGroups,
   getConfiguredGroupRatio,
@@ -112,10 +108,12 @@ import type {
   PricingModel,
   TokenUnit,
 } from '../types'
+import { CatalogGroupBadge } from './catalog-group-badge'
 import { DynamicPricingBreakdown } from './dynamic-pricing-breakdown'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelDetailsApi } from './model-details-api'
 import { ModelDetailsPerformance } from './model-details-performance'
+import { ModelPerfBadge } from './model-perf-badge'
 
 // ----------------------------------------------------------------------------
 // Local UI helpers
@@ -249,62 +247,20 @@ function normalizeCatalogItems(items?: readonly string[]): string[] {
   return items.filter((item) => item.trim().length > 0)
 }
 
-function OverviewMetric(props: {
-  icon: React.ComponentType<{ className?: string }>
-  label: string
-  value: React.ReactNode
-  valueClassName?: string
-}) {
-  const Icon = props.icon
-
-  return (
-    <div className='flex min-w-0 items-center gap-2 px-3 py-2'>
-      <Icon className='text-muted-foreground/70 size-3.5 shrink-0' />
-      <div className='min-w-0 flex-1'>
-        <div className='text-muted-foreground truncate text-[10px] font-medium tracking-wider uppercase'>
-          {props.label}
-        </div>
-        <div
-          className={cn(
-            'text-foreground truncate font-mono text-sm font-semibold tabular-nums',
-            props.valueClassName
-          )}
-        >
-          {props.value}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function OverviewSummaryGrid(props: { model: PricingModel }) {
-  const { t } = useTranslation()
-  const metricsQuery = useMarketModelMetrics(props.model.model_name)
-
-  const summary = metricsQuery.data?.data.summary
-  const successRate = summary?.success_rate ?? Number.NaN
-  const avgTps = summary?.avg_tps ?? 0
-  const avgLatency = summary?.avg_latency_ms ?? 0
-
+  const result = useMarketModelMetrics(props.model.model_name).data?.data
+  const perf = result?.summary
+    ? {
+        ...result.summary,
+        window_start: result.window_start,
+        window_end: result.window_end,
+      }
+    : undefined
   return (
-    <div className='bg-muted/20 grid overflow-hidden rounded-lg border sm:grid-cols-3 sm:divide-x'>
-      <OverviewMetric
-        icon={Timer}
-        label='TPS'
-        value={formatThroughput(avgTps)}
-      />
-      <OverviewMetric
-        icon={Timer}
-        label={t('Average latency')}
-        value={formatLatency(avgLatency)}
-      />
-      <OverviewMetric
-        icon={HeartPulse}
-        label={t('Success rate')}
-        value={formatUptimePct(successRate)}
-        valueClassName={getSuccessRateTextClass(successRate)}
-      />
-    </div>
+    <ModelPerfBadge
+      perf={perf}
+      className='bg-muted/20 @container/market-card rounded-lg border p-3'
+    />
   )
 }
 
@@ -521,13 +477,18 @@ function ModelBackendSignalsSection(props: { model: PricingModel }) {
   )
 }
 
-function ModelBackendProviderSection(props: { model: PricingModel }) {
+function ModelBackendProviderSection(props: {
+  model: PricingModel
+  endpointMap: ModelEndpointMap
+}) {
   const { t } = useTranslation()
   const model = props.model
   const groups = normalizeCatalogItems(model.enable_groups).map((group) =>
     marketGroupLabel(group, model.group_catalog)
   )
-  const endpoints = normalizeCatalogItems(model.supported_endpoint_types)
+  const endpoints = getModelEndpoints(model, props.endpointMap).map(
+    (endpoint) => endpoint.type
+  )
   const tags = parseTags(model.tags)
   const cells: React.ReactNode[] = []
 
@@ -589,12 +550,18 @@ function ModelBackendProviderSection(props: { model: PricingModel }) {
   )
 }
 
-function ModelBackendDetailsSection(props: { model: PricingModel }) {
+function ModelBackendDetailsSection(props: {
+  model: PricingModel
+  endpointMap: ModelEndpointMap
+}) {
   return (
     <>
       <ModelBackendQuickStats model={props.model} />
       <ModelBackendSignalsSection model={props.model} />
-      <ModelBackendProviderSection model={props.model} />
+      <ModelBackendProviderSection
+        model={props.model}
+        endpointMap={props.endpointMap}
+      />
     </>
   )
 }
@@ -606,15 +573,18 @@ function ModelBackendDetailsSection(props: { model: PricingModel }) {
 function ModelHeader(props: { model: PricingModel }) {
   const { t } = useTranslation()
   const model = props.model
-  const modelIconKey = model.icon || model.vendor_icon
-  const modelIcon = modelIconKey ? getLobeIcon(modelIconKey, 20) : null
   const description = model.description || model.vendor_description || null
 
   return (
     <header className='pb-4'>
       <div className='flex items-center gap-2.5'>
-        {modelIcon}
-        <h1 className='font-mono text-xl font-bold tracking-tight sm:text-2xl'>
+        <CatalogModelIcon
+          icon={model.icon}
+          vendorIcon={model.vendor_icon}
+          name={model.model_name}
+          size={32}
+        />
+        <h1 className='min-w-0 font-mono text-xl font-bold tracking-tight [overflow-wrap:anywhere] sm:text-2xl'>
           {model.model_name}
         </h1>
         <CopyButton
@@ -951,11 +921,7 @@ function AutoGroupChain(props: { model: PricingModel; autoGroups: string[] }) {
       <span className='text-muted-foreground/40'>→</span>
       {autoChain.map((g, idx) => (
         <span key={g} className='flex items-center gap-1'>
-          <GroupBadge
-            group={g}
-            label={marketGroupLabel(g, props.model.group_catalog)}
-            size='sm'
-          />
+          <CatalogGroupBadge group={g} catalog={props.model.group_catalog} />
           {idx < autoChain.length - 1 && (
             <span className='text-muted-foreground/40'>→</span>
           )}
@@ -1247,10 +1213,9 @@ function ProviderGroupPricingSection(
             return (
               <div key={group} className='overflow-hidden rounded-lg border'>
                 <div className='bg-muted/20 flex items-center justify-between gap-3 border-b px-3 py-2'>
-                  <GroupBadge
+                  <CatalogGroupBadge
                     group={group}
-                    label={marketGroupLabel(group, props.model.group_catalog)}
-                    size='sm'
+                    catalog={props.model.group_catalog}
                   />
                   <span className='text-muted-foreground font-mono text-xs'>
                     {ratio}x
@@ -1443,10 +1408,9 @@ function ProviderGroupPricingSection(
             className: thClass,
             cellClassName: 'py-2.5',
             cell: (group) => (
-              <GroupBadge
+              <CatalogGroupBadge
                 group={group}
-                label={marketGroupLabel(group, props.model.group_catalog)}
-                size='sm'
+                catalog={props.model.group_catalog}
               />
             ),
           },
@@ -1608,7 +1572,10 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
             />
           </section>
 
-          <ModelBackendDetailsSection model={props.model} />
+          <ModelBackendDetailsSection
+            model={props.model}
+            endpointMap={props.endpointMap}
+          />
         </TabsContent>
 
         <TabsContent value='performance' className='outline-none'>
@@ -1652,7 +1619,7 @@ export function ModelDetailsDrawer(props: ModelDetailsDrawerProps) {
           <SheetTitle>{props.model.model_name}</SheetTitle>
           <SheetDescription>{t('Model details')}</SheetDescription>
         </SheetHeader>
-        <div className='flex-1 overflow-y-auto px-4 pt-11 pb-5 sm:px-6 sm:pt-12 sm:pb-6'>
+        <div className='min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-11 pb-5 sm:px-6 sm:pt-12 sm:pb-6'>
           <ModelDetailsContent {...contentProps} />
         </div>
       </SheetContent>

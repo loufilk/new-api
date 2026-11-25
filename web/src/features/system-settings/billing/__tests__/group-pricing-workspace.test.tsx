@@ -31,7 +31,7 @@ function RatioPane(props: { panel: string; active: boolean }) {
         {props.panel}:{props.active ? 'active' : 'hidden'}
       </span>
       <input
-        aria-label='Ratio draft'
+        aria-label={`${props.panel} draft`}
         value={value}
         onChange={(event) => setValue(event.target.value)}
       />
@@ -68,49 +68,44 @@ function renderWorkspace() {
 }
 
 describe('group pricing workspace shell', () => {
-  it('keeps a single mounted ratio and catalog editor and preserves their drafts', async () => {
+  it('keeps separate base and advanced forms and preserves each draft across all sections', async () => {
     const user = userEvent.setup()
     const nav = renderWorkspace()
-    const ratio = screen.getByRole('textbox', { name: 'Ratio draft' })
     const catalog = screen.getByRole('textbox', { name: 'Catalog draft' })
-    await user.type(ratio, '0.50')
     await user.type(catalog, 'local draft')
+    await user.click(nav.getByRole('button', { name: 'Base group rates' }))
+    const ratio = screen.getByRole('textbox', { name: 'pricing draft' })
+    await user.type(ratio, '0.50')
+    expect(catalog).not.toBeVisible()
 
     await user.click(nav.getByRole('button', { name: 'Advanced Rules' }))
-    expect(screen.getByRole('region', { name: 'Advanced Rules' })).toBeVisible()
-    expect(screen.getByTestId('ratio-state')).toHaveTextContent(
-      'advanced:active'
-    )
-    expect(screen.queryByRole('textbox', { name: 'Catalog draft' })).toBeNull()
-
-    const people = nav.getByRole('button', {
-      name: 'Personal Pricing and Access',
-    })
-    await user.click(people)
-    expect(people).toHaveAttribute('aria-current', 'true')
-    expect(screen.queryByRole('textbox', { name: 'Ratio draft' })).toBeNull()
-    expect(screen.getByTestId('ratio-state')).toHaveTextContent(
-      'advanced:hidden'
-    )
-    expect(screen.getByTestId('catalog-state')).toHaveTextContent('people')
-    expect(screen.getByRole('textbox', { name: 'Catalog draft' })).toBe(catalog)
-
-    await user.click(nav.getByRole('button', { name: 'Groups' }))
-    expect(screen.getByTestId('ratio-state')).toHaveTextContent(
-      'pricing:active'
-    )
-    expect(screen.getByTestId('catalog-state')).toHaveTextContent('groups')
-    expect(screen.getByRole('textbox', { name: 'Ratio draft' })).toBe(ratio)
-    expect(ratio).toHaveValue('0.50')
+    const advanced = screen.getByRole('textbox', { name: 'advanced draft' })
+    expect(advanced).toHaveValue('')
+    await user.type(advanced, 'different draft')
+    for (const [section, panel] of [
+      ['Exclusive group access', 'access'],
+      ['Personal pricing', 'personal'],
+      ['Marketplace display', 'groups'],
+    ]) {
+      await user.click(nav.getByRole('button', { name: section }))
+      expect(screen.getByTestId('catalog-state')).toHaveTextContent(panel)
+      expect(ratio).not.toBeVisible()
+      expect(advanced).not.toBeVisible()
+    }
     expect(catalog).toHaveValue('local draft')
+    await user.click(nav.getByRole('button', { name: 'Base group rates' }))
+    expect(ratio).toBeVisible()
+    expect(ratio).toHaveValue('0.50')
+    expect(advanced).not.toBeVisible()
+    expect(advanced).toHaveValue('different draft')
   })
 
   it('supports keyboard section discovery and explicit activation', async () => {
     const user = userEvent.setup()
     const nav = renderWorkspace()
-    const groups = nav.getByRole('button', { name: 'Groups' })
+    const groups = nav.getByRole('button', { name: 'Marketplace display' })
     const people = nav.getByRole('button', {
-      name: 'Personal Pricing and Access',
+      name: 'Base group rates',
     })
     const advanced = nav.getByRole('button', { name: 'Advanced Rules' })
 
@@ -125,7 +120,7 @@ describe('group pricing workspace shell', () => {
     expect(people).toHaveAttribute('aria-current', 'true')
     expect(groups).not.toHaveAttribute('aria-current')
     expect(
-      screen.getByRole('region', { name: 'Personal Pricing and Access' })
+      screen.getByRole('region', { name: 'Base group rates' })
     ).toHaveAttribute('id', people.getAttribute('aria-controls'))
 
     await user.keyboard('{End}')

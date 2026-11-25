@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   createMemoryHistory,
   createRootRoute,
@@ -25,6 +26,8 @@ import {
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
+
+import { STATUS_QUERY_KEY } from '@/lib/status-query'
 
 import { ModelApiActions } from '../components/model-api-actions'
 import type { ModelEndpointMap } from '../lib/model-endpoints'
@@ -42,12 +45,20 @@ async function renderActions(
   values: Partial<PricingModel>,
   endpointMap: ModelEndpointMap
 ) {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { staleTime: Infinity, retry: false, gcTime: 0 },
+    },
+  })
+  client.setQueryData(STATUS_QUERY_KEY, {})
   const root = createRootRoute({
     component: () => (
-      <ModelApiActions
-        model={{ ...base, ...values }}
-        endpointMap={endpointMap}
-      />
+      <QueryClientProvider client={client}>
+        <ModelApiActions
+          model={{ ...base, ...values }}
+          endpointMap={endpointMap}
+        />
+      </QueryClientProvider>
     ),
   })
   const router = createRouter({
@@ -60,17 +71,32 @@ async function renderActions(
 
 describe('model API actions', () => {
   it('never passes display-only anonymous price-band aliases as a key binding', async () => {
-    await renderActions({ enable_groups: ['rate-1'], group_keys_are_display_only: true }, {})
+    await renderActions(
+      { enable_groups: ['rate-1'], group_keys_are_display_only: true },
+      {}
+    )
     const link = screen.getByRole('link', { name: 'Create API Key' })
     expect(link).toHaveAttribute('href', '/keys?create=true&model=MODEL_ID')
   })
 
   it('avoids links leaking exclusive group or model identifiers', async () => {
-    await renderActions({ model_name:'private-model', enable_groups:['private-group'],
-      group_catalog:{ 'private-group':{ exclusive:true } } }, {})
-    expect(screen.getByRole('button', {name:'Create API Key'})).toBeVisible()
-    expect(screen.queryByRole('link',{name:'Create API Key'})).not.toBeInTheDocument()
-    expect(document.querySelector('a[href*="private-group"], a[href*="private-model"]')).toBeNull()
+    await renderActions(
+      {
+        model_name: 'private-model',
+        enable_groups: ['private-group'],
+        group_catalog: { 'private-group': { exclusive: true } },
+      },
+      {}
+    )
+    expect(screen.getByRole('button', { name: 'Create API Key' })).toBeVisible()
+    expect(
+      screen.queryByRole('link', { name: 'Create API Key' })
+    ).not.toBeInTheDocument()
+    expect(
+      document.querySelector(
+        'a[href*="private-group"], a[href*="private-model"]'
+      )
+    ).toBeNull()
   })
 
   it('copies the actual video endpoint and links video docs without offering a nonexistent video playground', async () => {

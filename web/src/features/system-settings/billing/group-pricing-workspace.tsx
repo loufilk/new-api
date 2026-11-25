@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import {
   ChevronRight,
   Layers3,
+  Store,
+  ShieldCheck,
   SlidersHorizontal,
   UsersRound,
 } from 'lucide-react'
@@ -33,15 +35,9 @@ import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
 
-type WorkspaceSection = 'groups' | 'people' | 'advanced'
+type WorkspaceSection = 'groups' | 'base' | 'access' | 'personal' | 'advanced'
 type RatioPanel = 'pricing' | 'advanced'
-type CatalogPanel = 'groups' | 'people'
-
-type WorkspaceLocation = {
-  section: WorkspaceSection
-  ratio: RatioPanel
-  catalog: CatalogPanel
-}
+export type CatalogPanel = 'groups' | 'access' | 'personal'
 
 type GroupPricingWorkspaceProps = {
   renderRatio: (panel: RatioPanel, active: boolean) => ReactNode
@@ -53,26 +49,42 @@ export function GroupPricingWorkspace(props: GroupPricingWorkspaceProps) {
   const regionId = useId()
   const headingId = `${regionId}-heading`
   const buttons = useRef(new Map<WorkspaceSection, HTMLButtonElement>())
-  const [location, setLocation] = useState<WorkspaceLocation>({
-    section: 'groups',
-    ratio: 'pricing',
-    catalog: 'groups',
-  })
+  const [sectionId, setSectionId] = useState<WorkspaceSection>('groups')
+  const [visited, setVisited] = useState<ReadonlySet<WorkspaceSection>>(
+    () => new Set(['groups'])
+  )
+  const [catalogPanel, setCatalogPanel] = useState<CatalogPanel>('groups')
 
   const sections = [
     {
       id: 'groups',
-      label: t('Groups'),
+      label: t('Marketplace display'),
       description: t(
-        'Manage group rates, access, and marketplace presentation.'
+        'Set the descriptions, badges and order customers see. Badges do not affect pricing or routing.'
+      ),
+      icon: Store,
+    },
+    {
+      id: 'base',
+      label: t('Base group rates'),
+      description: t(
+        'Base group ratios apply to calls billed to this group. Top-up ratios and availability are in Advanced.'
       ),
       icon: Layers3,
     },
     {
-      id: 'people',
-      label: t('Personal Pricing and Access'),
+      id: 'access',
+      label: t('Exclusive group access'),
       description: t(
-        'Manage exclusive access and rates for a specific account.'
+        'This only controls group access. Revoking access does not remove personal rate rules.'
+      ),
+      icon: ShieldCheck,
+    },
+    {
+      id: 'personal',
+      label: t('Personal pricing'),
+      description: t(
+        'Override the rate for this account and group only. This does not grant access or change past charges.'
       ),
       icon: UsersRound,
     },
@@ -86,21 +98,15 @@ export function GroupPricingWorkspace(props: GroupPricingWorkspaceProps) {
     },
   ] as const
   const selected =
-    sections.find((section) => section.id === location.section) ?? sections[0]
-  const ratioActive = location.section !== 'people'
-  const catalogActive = location.section !== 'advanced'
+    sections.find((section) => section.id === sectionId) ?? sections[0]
+  const catalogActive = sectionId !== 'base' && sectionId !== 'advanced'
 
   function selectSection(section: WorkspaceSection) {
-    setLocation((previous) => {
-      if (section === previous.section) return previous
-      if (section === 'people') {
-        return { ...previous, section, catalog: 'people' }
-      }
-      if (section === 'advanced') {
-        return { ...previous, section, ratio: 'advanced' }
-      }
-      return { section, ratio: 'pricing', catalog: 'groups' }
-    })
+    setSectionId(section)
+    setVisited((previous) =>
+      previous.has(section) ? previous : new Set([...previous, section])
+    )
+    if (section !== 'base' && section !== 'advanced') setCatalogPanel(section)
   }
 
   function moveFocus(event: KeyboardEvent<HTMLButtonElement>, index: number) {
@@ -136,7 +142,7 @@ export function GroupPricingWorkspace(props: GroupPricingWorkspaceProps) {
           className='border-border/70 bg-muted/35 flex min-w-0 flex-col gap-1 rounded-2xl border p-1.5 @min-[760px]:p-2'
         >
           {sections.map((section, index) => {
-            const isCurrent = section.id === location.section
+            const isCurrent = section.id === sectionId
             const Icon = section.icon
             return (
               <button
@@ -190,17 +196,26 @@ export function GroupPricingWorkspace(props: GroupPricingWorkspaceProps) {
               {selected.description}
             </p>
           </header>
-          <div
-            hidden={!ratioActive}
-            className={cn('min-w-0', !ratioActive && 'hidden')}
-          >
-            {props.renderRatio(location.ratio, ratioActive)}
-          </div>
+          {/* Independent forms prevent Advanced drafts from being submitted by a base-rate save. */}
+          {(['base', 'advanced'] as const).map((section) =>
+            visited.has(section) ? (
+              <div
+                key={section}
+                hidden={sectionId !== section}
+                className={cn('min-w-0', sectionId !== section && 'hidden')}
+              >
+                {props.renderRatio(
+                  section === 'base' ? 'pricing' : 'advanced',
+                  section === sectionId
+                )}
+              </div>
+            ) : null
+          )}
           <div
             hidden={!catalogActive}
             className={cn('min-w-0', !catalogActive && 'hidden')}
           >
-            {props.renderCatalog(location.catalog)}
+            {props.renderCatalog(catalogPanel)}
           </div>
         </section>
       </div>

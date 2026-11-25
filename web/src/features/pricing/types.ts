@@ -84,6 +84,8 @@ export type PricingModel = {
   key?: string
   group_keys_are_display_only?: boolean
   group_catalog?: MarketGroupCatalog
+  group_rate_source?: Record<string, 'personal' | 'group_override' | 'group'>
+  group_rate_limits?: Record<string, MarketGroupRateLimit>
   group_ratio?: Record<string, number>
   /** Billing mode (e.g. "tiered_expr") used to flag dynamic pricing */
   billing_mode?: string
@@ -133,15 +135,26 @@ export interface MarketGroup {
   label?: string
   description?: string
   platform?: string
+  icon?: string
   sort_order?: number
   exclusive?: boolean
   badges?: string[]
 }
+/** Per-user request buckets, shared across models. Zero means this dimension is not capped. */
+export interface MarketGroupRateLimit {
+  window_minutes: number
+  total_requests: number
+  successful_requests: number
+  scope: 'shared' | 'group'
+}
+
 export type MarketGroupCatalog = Record<string, MarketGroup>
 
 export type PricingData = {
   group_keys_are_display_only?: boolean
   group_catalog?: MarketGroupCatalog
+  group_rate_source?: Record<string, 'personal' | 'group_override' | 'group'>
+  group_rate_limits?: Record<string, MarketGroupRateLimit>
   success: boolean
   message?: string
   data: PricingModel[]

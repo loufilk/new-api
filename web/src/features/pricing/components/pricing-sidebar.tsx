@@ -16,16 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { RotateCcw } from 'lucide-react'
-import { memo, useMemo, type ReactNode } from 'react'
+import { ChevronDown } from 'lucide-react'
+import { memo, useId, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import { getLobeIcon } from '@/lib/lobe-icon'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { cn } from '@/lib/utils'
 
 import {
   FILTER_ALL,
+  MAX_FILTER_ITEMS,
   getEndpointTypeLabels,
   getQuotaTypeLabels,
 } from '../constants'
@@ -39,7 +40,7 @@ import {
 } from '../lib/market-groups'
 import type { PricingModel, MarketGroupCatalog } from '../types'
 import { GroupCatalogBadges } from './group-catalog-badges'
-import { SearchBar, type SearchBarProps } from './search-bar'
+import { MarketGroupIcon } from './market-group-icon'
 
 interface Option {
   value: string
@@ -50,46 +51,56 @@ interface Option {
   accessiblePrefix?: string[]
 }
 
-const PLATFORM_ICONS: Partial<Record<MarketPlatform, string>> = {
-  openai: 'OpenAI',
-  anthropic: 'Claude.Color',
-  gemini: 'Gemini.Color',
-  deepseek: 'DeepSeek.Color',
-  moonshot: 'Moonshot',
-  xai: 'XAI',
-  zhipu: 'Zhipu.Color',
-  azure: 'Azure.Color',
-}
-
-function PlatformIcon(props: { platform: MarketPlatform }) {
-  const key = PLATFORM_ICONS[props.platform]
-  return key ? getLobeIcon(key, 15) : null
-}
-
 function FilterRow(props: {
   title: string
+  description?: string
+  collapsible?: boolean
   value: string
   options: Option[]
   onChange: (value: string) => void
 }) {
+  const { t } = useTranslation()
+  const id = useId()
+  const [expanded, setExpanded] = useState(false)
+  const compact = Boolean(
+    props.collapsible && props.options.length > MAX_FILTER_ITEMS
+  )
+  const visible =
+    compact && !expanded
+      ? props.options.filter(
+          (option, index) =>
+            index < MAX_FILTER_ITEMS || option.value === props.value
+        )
+      : props.options
   return (
     <div
       role='group'
+      aria-describedby={props.description ? `${id}-description` : undefined}
       aria-label={props.title}
-      className='grid min-w-0 gap-2 sm:grid-cols-[5.25rem_minmax(0,1fr)]'
+      className='grid min-w-0 gap-2 py-3 first:pt-0 last:pb-0 sm:grid-cols-[6.5rem_minmax(0,1fr)] sm:gap-x-4'
     >
-      <span className='text-muted-foreground self-start pt-1 text-sm font-medium'>
-        {props.title}
-      </span>
-      <div className='flex min-w-0 flex-wrap gap-x-2 gap-y-2'>
-        {props.options.map((option) => {
+      <div className='flex flex-wrap items-baseline gap-x-2 sm:block'>
+        <span className='text-foreground text-sm font-semibold'>
+          {props.title}
+        </span>
+        {props.description && (
+          <span
+            id={`${id}-description`}
+            className='text-muted-foreground text-xs leading-snug sm:mt-0.5 sm:block'
+          >
+            {props.description}
+          </span>
+        )}
+      </div>
+      <div id={id} className='flex min-w-0 flex-wrap items-center gap-1.5'>
+        {visible.map((option) => {
           const active = props.value === option.value
           return (
             <Button
               key={option.value}
               variant={active ? 'default' : 'outline'}
               size='sm'
-              className='h-auto min-h-8 max-w-full gap-1.5 rounded-full px-3 py-1 text-sm'
+              className='h-auto min-h-8 max-w-full min-w-0 flex-wrap gap-x-1.5 gap-y-1 rounded-full px-3 py-1 text-sm'
               type='button'
               aria-pressed={active}
               aria-label={[
@@ -103,7 +114,7 @@ function FilterRow(props: {
               title={option.description || option.label}
             >
               {option.leading}
-              <span className='break-all whitespace-normal'>
+              <span className='min-w-0 text-start [overflow-wrap:anywhere] whitespace-normal'>
                 {option.label}
               </span>
               {option.suffix != null && (
@@ -121,6 +132,22 @@ function FilterRow(props: {
             </Button>
           )
         })}
+        {compact && (
+          <Button
+            type='button'
+            variant='ghost'
+            size='sm'
+            aria-controls={id}
+            aria-expanded={expanded}
+            onClick={() => setExpanded((open) => !open)}
+          >
+            {expanded ? t('Collapse') : t('Expand')}
+            <ChevronDown
+              aria-hidden
+              className={cn('size-3.5', expanded && 'rotate-180')}
+            />
+          </Button>
+        )}
       </div>
     </div>
   )
@@ -139,15 +166,13 @@ export interface PricingSidebarProps {
   groupCatalog?: MarketGroupCatalog
   groupRatios?: Record<string, number>
   models: PricingModel[]
-  hasActiveFilters: boolean
-  onClearFilters: () => void
-  search: SearchBarProps
 }
 
 export const PricingSidebar = memo(function PricingSidebar(
   props: PricingSidebarProps
 ) {
   const { t } = useTranslation()
+  const compact = useMediaQuery('(max-width: 639px)')
   const counts = useMemo(() => {
     const endpoints = new Map<string, number>()
     const quotas = { token: 0, request: 0, task: 0 }
@@ -183,7 +208,7 @@ export const PricingSidebar = memo(function PricingSidebar(
             {
               value,
               label: value === 'other' ? t('Other') : label,
-              leading: <PlatformIcon platform={value} />,
+              leading: <MarketGroupIcon platform={value} />,
               suffix: count,
             },
           ]
@@ -220,7 +245,7 @@ export const PricingSidebar = memo(function PricingSidebar(
           suffix: ratio == null ? undefined : `×${ratio}`,
           leading: (
             <>
-              <PlatformIcon platform={groupPlatform(meta)} />
+              <MarketGroupIcon meta={meta} />
               {meta?.exclusive && (
                 <span className='rounded bg-violet-700 px-1 text-xs text-white'>
                   {t('Exclusive')}
@@ -257,17 +282,20 @@ export const PricingSidebar = memo(function PricingSidebar(
   return (
     <section
       aria-label={t('Filter')}
-      className='bg-card rounded-2xl border px-4 py-4 shadow-sm sm:px-5'
+      className='bg-card min-w-0 rounded-2xl border px-4 py-4 shadow-sm sm:px-6 sm:py-5'
     >
-      <div className='space-y-3'>
+      <div className='divide-border/60 divide-y'>
         <FilterRow
           title={t('Platform')}
+          description={t('Available group counts')}
           value={props.platform}
           options={platformOptions}
           onChange={props.onPlatformChange}
         />
         <FilterRow
+          key={props.platform}
           title={t('Group')}
+          collapsible={compact}
           value={props.groupFilter}
           options={groupOptions}
           onChange={props.onGroupChange}
@@ -284,18 +312,6 @@ export const PricingSidebar = memo(function PricingSidebar(
           options={endpointOptions}
           onChange={props.onEndpointTypeChange}
         />
-      </div>
-      <div className='mt-4 flex items-center gap-2 border-t pt-3'>
-        <SearchBar {...props.search} className='min-w-0 flex-1' />
-        <Button
-          variant='ghost'
-          size='sm'
-          onClick={props.onClearFilters}
-          disabled={!props.hasActiveFilters && !props.search.value}
-        >
-          <RotateCcw aria-hidden className='size-3.5' />
-          {t('Reset')}
-        </Button>
       </div>
     </section>
   )

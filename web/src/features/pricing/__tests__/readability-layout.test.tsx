@@ -111,7 +111,7 @@ describe('pricing readability layout', () => {
     const performance = screen.getByLabelText('Performance')
     expect(performance).toHaveClass('flex-wrap')
     expect(performance).toContainElement(
-      screen.getByTitle('Performance metrics for the last 24 hours')
+      screen.getByText('24 hourly buckets, including the current hour')
     )
     expect(screen.getByRole('button', { name: 'Details' })).toHaveClass(
       'h-9',

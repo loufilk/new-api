@@ -22,6 +22,7 @@ import { MoreHorizontal } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { CatalogModelIcon } from '@/components/catalog-model-icon'
 import {
   DataTablePage,
   DataTableBulkActions,
@@ -39,7 +40,6 @@ import {
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import type { ColumnDef } from '@/lib/console-table'
 import { formatTimestampToDate } from '@/lib/format'
-import { getLobeIcon } from '@/lib/lobe-icon'
 import { createServerError } from '@/lib/server-error-message'
 
 import { searchVendors } from '../api'
@@ -126,7 +126,11 @@ export function VendorsTable() {
       cell: ({ row }) => (
         <div className='flex min-w-0 items-center gap-2'>
           <span className='flex size-7 shrink-0 items-center justify-center'>
-            {getLobeIcon(row.original.icon, 24)}
+            <CatalogModelIcon
+              icon={row.original.icon}
+              name={row.original.name}
+              size={24}
+            />
           </span>
           <Button
             variant='link'

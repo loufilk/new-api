@@ -21,8 +21,8 @@ import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
 import { Button } from '@/components/ui/button'
-import { API_BASE_URL } from '@/lib/api-url'
 
+import { useMarketApiBase } from '../hooks/use-market-api-base'
 import {
   getEndpointDocId,
   getModelEndpoints,
@@ -42,9 +42,7 @@ export function ModelApiActions(props: {
   const path = endpoint?.path
   const documentation = endpoint ? getEndpointDocId(endpoint.type) : undefined
   const playground = getModelPlayground(props.model)
-  const origin =
-    API_BASE_URL ||
-    (typeof window !== 'undefined' ? window.location.origin : '')
+  const origin = useMarketApiBase()
   return (
     <div className='flex min-w-0 flex-col gap-2'>
       {path && (

@@ -16,129 +16,111 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { memo, useMemo } from 'react'
+import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import {
-  formatLatency,
-  formatThroughput,
-  getSuccessRateDotClass,
-} from '@/features/performance-metrics/lib/format'
-import type { SuccessRatePoint } from '@/features/performance-metrics/types'
+import { getSuccessRateDotClass } from '@/features/performance-metrics/lib/format'
+import type {
+  PerformanceSummary,
+  SuccessRatePoint,
+} from '@/features/performance-metrics/types'
+import { toIntlLocale } from '@/i18n/languages'
 import { cn } from '@/lib/utils'
 
-export type ModelPerfBadgeData = {
+import { marketMeasurements } from '../lib/market-measurements'
+
+export type ModelPerfBadgeData = PerformanceSummary & {
   window_start?: number
   window_end?: number
-  avg_latency_ms: number
-  success_rate: number
-  avg_tps: number
   recent_success_series?: SuccessRatePoint[]
 }
-
 export interface ModelPerfBadgeProps extends React.HTMLAttributes<HTMLDivElement> {
   perf: ModelPerfBadgeData | undefined
 }
 
-const STATUS_SAMPLE_LIMIT = 24
-
 export const ModelPerfBadge = memo(function ModelPerfBadge(
   props: ModelPerfBadgeProps
 ) {
-  const { t } = useTranslation()
-  const latencyText = formatLatency(props.perf?.avg_latency_ms ?? 0)
-  const throughputText = formatThroughput(props.perf?.avg_tps ?? 0).replace(
-    ' t/s',
-    't/s'
-  )
-  const successRate = props.perf?.success_rate
-  const hasSuccessRate =
-    successRate != null &&
-    Number.isFinite(successRate) &&
-    successRate >= 0 &&
-    successRate <= 100
-  const statusSamples = useMemo(
-    () =>
-      (props.perf?.recent_success_series ?? [])
-        .filter(
-          (point) =>
-            Number.isFinite(point.ts) &&
-            Number.isFinite(point.success_rate) &&
-            point.success_rate >= 0 &&
-            point.success_rate <= 100
-        )
-        .sort((a, b) => a.ts - b.ts)
-        .slice(-STATUS_SAMPLE_LIMIT),
-    [props.perf?.recent_success_series]
-  )
-  const statusLabel =
-    statusSamples.length > 0
-      ? t('Latest reported samples')
-      : t('No performance data available')
-
+  const { t, i18n } = useTranslation()
+  const values = marketMeasurements(props.perf)
+  const start = props.perf?.window_start
+  const end = props.perf?.window_end
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const windowTitle =
+    start && end
+      ? [start, end]
+          .map((ts) => new Date(ts * 1000).toLocaleString(locale))
+          .join(' – ')
+      : undefined
+  // Per-model series belongs to the same window as the weighted summary.
+  // The API's optional top-level seven-day history is intentionally not used.
+  const samples = (props.perf?.recent_success_series ?? [])
+    .filter(
+      (point) =>
+        Number.isFinite(point.ts) &&
+        Number.isFinite(point.success_rate) &&
+        point.success_rate >= 0 &&
+        point.success_rate <= 100 &&
+        (start == null || point.ts >= start) &&
+        (end == null || point.ts <= end)
+    )
+    .sort((a, b) => a.ts - b.ts)
+    .slice(-24)
   return (
     <div
       aria-label={t('Performance')}
       className={cn(
-        'flex w-full min-w-0 items-center justify-between gap-3',
+        'flex w-full min-w-0 flex-wrap items-end gap-2',
         props.className
       )}
     >
-      <dl className='flex min-w-0 flex-wrap items-start gap-5 text-sm tabular-nums'>
-        <div className='w-24 shrink-0'>
-          <dt
-            title={t('Performance metrics for the last 24 hours')}
-            className='text-muted-foreground flex items-center justify-between gap-1 text-xs leading-[1.4]'
-          >
-            <span title={t('Latest reported samples')}>{t('Status')}</span>
-            <span className='font-mono'>
-              {hasSuccessRate ? `${successRate.toFixed(2)}%` : '—'}
-            </span>
-          </dt>
-          <dd
-            role='img'
-            aria-label={statusLabel}
-            title={statusLabel}
-            className='mt-1 flex h-3 w-24 items-center gap-px'
-          >
-            {statusSamples.length > 0 ? (
-              statusSamples.map((sample) => (
+      <div className='min-w-0 flex-1 basis-full'>
+        <div className='text-muted-foreground mb-2 flex flex-wrap items-center justify-between gap-1 text-xs'>
+          <span title={windowTitle}>
+            {t('24 hourly buckets, including the current hour')}
+          </span>
+          {samples.length > 0 && (
+            <span
+              role='img'
+              aria-label={t(
+                'Request success rate sampled over the last 24 hours'
+              )}
+              className='flex h-2.5 items-end gap-px'
+            >
+              {samples.map((point) => (
                 <span
-                  key={sample.ts}
+                  key={point.ts}
                   aria-hidden
                   className={cn(
-                    'h-full w-[3px] shrink-0 rounded-xs',
-                    getSuccessRateDotClass(sample.success_rate)
+                    'h-full w-[3px] rounded-xs',
+                    getSuccessRateDotClass(point.success_rate)
                   )}
                 />
-              ))
-            ) : (
-              <span className='text-muted-foreground'>—</span>
-            )}
-          </dd>
-          {statusSamples.length > 0 && (
-            <dd className='text-muted-foreground mt-1 text-[10px]'>
-              {t('Latest reported samples')}
-            </dd>
+              ))}
+            </span>
           )}
         </div>
-        <div title={`${t('Average latency')} · 24 h`} className='shrink-0'>
-          <dt className='text-muted-foreground text-xs leading-[1.4]'>
-            {t('Latency short')}
-          </dt>
-          <dd className='mt-1 font-mono whitespace-nowrap'>
-            {latencyText === '—' ? '—s' : latencyText}
-          </dd>
-        </div>
-        <div title={`${t('Throughput')} · 24 h`} className='shrink-0'>
-          <dt className='text-muted-foreground text-xs leading-[1.4]'>
-            {t('Throughput short')}
-          </dt>
-          <dd className='mt-1 font-mono whitespace-nowrap'>
-            {throughputText === '—' ? '—t/s' : throughputText}
-          </dd>
-        </div>
-      </dl>
+        <dl className='grid grid-cols-2 gap-2 @sm/market-card:grid-cols-4'>
+          {[
+            [t('Average latency'), values.latency],
+            [t('Average TTFT'), values.ttft],
+            ['TPS', values.tps],
+            [t('Success rate'), values.success],
+          ].map(([label, value]) => (
+            <div className='min-w-0' key={label}>
+              <dt className='text-muted-foreground text-xs'>{label}</dt>
+              <dd
+                className={cn(
+                  'text-sm font-medium tabular-nums',
+                  !value && 'text-muted-foreground'
+                )}
+              >
+                {value ?? t('Unavailable')}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </div>
       {props.children}
     </div>
   )

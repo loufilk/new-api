@@ -35,6 +35,7 @@ import {
   hasTaskUsageSchema,
   isUnconfiguredTaskUsageModel,
 } from './dynamic-price'
+import { getMarketPriceModel } from './market-groups'
 import { getDisplayGroupRatio, isTokenBasedModel } from './model-helpers'
 import { withBasePricing } from './plugin-pricing'
 import { calculateTokenPrice } from './price'
@@ -216,7 +217,8 @@ export function sortModels(
   models: PricingModel[],
   sortBy: string,
   selectedGroup?: string,
-  now?: Date
+  now?: Date,
+  platformPriceGroups?: ReadonlySet<string>
 ): PricingModel[] {
   const sorted = [...models]
 
@@ -228,7 +230,11 @@ export function sortModels(
       sorted.map((m) => {
         const base = getSortPrice(m, priceSort.kind, now)
         const value = isValidSortPrice(base)
-          ? base * getDisplayGroupRatio(m, selectedGroup)
+          ? base *
+            getDisplayGroupRatio(
+              getMarketPriceModel(m, platformPriceGroups),
+              selectedGroup
+            )
           : undefined
         return [m, value] as const
       })
@@ -269,16 +275,31 @@ export function filterAndSortModels(
     endpointType: string
     tag?: string
     sortBy: string
+    platformPriceGroups?: ReadonlySet<string>
     now?: Date
   }
 ): PricingModel[] {
-  let result = filterBySearch(models, filters.search)
+  // A model offered through two matched groups is still one result. Membership
+  // comes from the viewer-specific pricing response, never from its name/vendor.
+  const platformGroups = filters.platformPriceGroups
+  const platformModels = platformGroups
+    ? models.filter((model) =>
+        model.enable_groups?.some((group) => platformGroups.has(group))
+      )
+    : models
+  let result = filterBySearch(platformModels, filters.search)
   if (filters.vendor) result = filterByVendor(result, filters.vendor)
   result = filterByGroup(result, filters.group)
   result = filterByQuotaType(result, filters.quotaType)
   result = filterByEndpointType(result, filters.endpointType)
   if (filters.tag) result = filterByTag(result, filters.tag)
-  result = sortModels(result, filters.sortBy, filters.group, filters.now)
+  result = sortModels(
+    result,
+    filters.sortBy,
+    filters.group,
+    filters.now,
+    platformGroups
+  )
 
   return result
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
@@ -100,11 +101,12 @@ func GetPricing(c *gin.Context) {
 			endpoints[endpoint] = info
 		}
 	}
+	rateLimits := pricingRateLimits(groups)
 	if !finishControllerGroupConfigRead(c, guard) {
 		return
 	}
 	c.Header("Cache-Control", "private, no-store")
-	c.JSON(200, gin.H{
+	payload := gin.H{
 		"group_catalog":      catalogue,
 		"group_rate_source":  groupRateSource,
 		"success":            true,
@@ -115,7 +117,46 @@ func GetPricing(c *gin.Context) {
 		"supported_endpoint": endpoints,
 		"auto_groups":        autoGroups,
 		"pricing_version":    "a42d372ccf0b5dd13ecf71203521f9d2",
-	})
+	}
+	if len(rateLimits) > 0 {
+		payload["group_rate_limits"] = rateLimits
+	}
+	c.JSON(200, payload)
+}
+
+type pricingRequestLimit struct {
+	WindowMinutes      int    `json:"window_minutes"`
+	TotalRequests      int    `json:"total_requests"`
+	SuccessfulRequests int    `json:"successful_requests"`
+	Scope              string `json:"scope"`
+}
+
+// Project the running admission settings, never the private bucket IDs or
+// unscoped configuration map. Both bucket types span models for this user.
+func pricingRateLimits(allowed []string) map[string]pricingRequestLimit {
+	common.OptionMapRWMutex.RLock()
+	defer common.OptionMapRWMutex.RUnlock()
+	minutes := setting.ModelRequestRateLimitDurationMinutes
+	if !setting.ModelRequestRateLimitEnabled || minutes <= 0 || minutes > 3650*24*60 {
+		return nil
+	}
+	limits := make(map[string]pricingRequestLimit, len(allowed))
+	for _, group := range allowed {
+		if !ratio_setting.ContainsGroupRatio(group) || group == "" || group == "auto" || group == "all" {
+			continue
+		}
+		total, success, isolated := setting.GetGroupRateLimit(group)
+		scope := "group"
+		if !isolated {
+			scope = "shared"
+			total, success = setting.ModelRequestRateLimitCount, setting.ModelRequestRateLimitSuccessCount
+		}
+		if total < 0 || success < 0 || int64(total) > (1<<53)-1 || int64(success) > (1<<53)-1 {
+			continue // Invalid/unrepresentable configuration is not a published policy.
+		}
+		limits[group] = pricingRequestLimit{WindowMinutes: minutes, TotalRequests: total, SuccessfulRequests: success, Scope: scope}
+	}
+	return limits
 }
 
 func ResetModelRatio(c *gin.Context) {

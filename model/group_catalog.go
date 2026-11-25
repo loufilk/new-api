@@ -17,6 +17,10 @@ import (
 
 const groupCatalogOptionKey = "GroupCatalogMetadata"
 
+// Keep independently customizable artwork out of the legacy, strictly decoded
+// access-policy document. An older node must still load every exclusive group.
+const groupCatalogIconsOptionKey = "GroupCatalogDisplayIcons"
+
 var (
 	ErrInvalidGroupCatalog = errors.New("invalid group catalog configuration")
 	ErrGroupCatalogGrants  = errors.New("remove all personal grants before removing exclusive access")
@@ -31,6 +35,7 @@ type GroupCatalogEntry struct {
 	Label       string   `json:"label,omitempty"`
 	Description string   `json:"description,omitempty"`
 	Platform    string   `json:"platform,omitempty"`
+	Icon        string   `json:"icon,omitempty"`
 	SortOrder   int      `json:"sort_order,omitempty"`
 	Exclusive   bool     `json:"exclusive,omitempty"`
 	Badges      []string `json:"badges,omitempty"`
@@ -56,6 +61,14 @@ func validateCatalogText(value string, limit int) bool {
 		!strings.ContainsFunc(value, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) })
 }
 
+func isCatalogPlatformSlug(value string) bool {
+	switch value {
+	case "", "openai", "anthropic", "gemini", "deepseek", "moonshot", "xai", "zhipu", "azure", "other":
+		return true
+	}
+	return false
+}
+
 func normalizeGroupCatalog(groups map[string]GroupCatalogEntry) (map[string]GroupCatalogEntry, error) {
 	if len(groups) > 2000 {
 		return nil, ErrInvalidGroupCatalog
@@ -72,9 +85,7 @@ func normalizeGroupCatalog(groups map[string]GroupCatalogEntry) (map[string]Grou
 			item.SortOrder < -10000 || item.SortOrder > 10000 || len(item.Badges) > 5 {
 			return nil, ErrInvalidGroupCatalog
 		}
-		switch item.Platform {
-		case "", "openai", "anthropic", "gemini", "deepseek", "moonshot", "xai", "zhipu", "azure", "other":
-		default:
+		if !isCatalogPlatformSlug(item.Platform) || !isCatalogPlatformSlug(item.Icon) {
 			return nil, ErrInvalidGroupCatalog
 		}
 		badges := make([]string, 0, len(item.Badges))
@@ -95,18 +106,29 @@ func normalizeGroupCatalog(groups map[string]GroupCatalogEntry) (map[string]Grou
 	return normalized, nil
 }
 
-func parseGroupCatalog(raw string) (map[string]GroupCatalogEntry, error) {
+func parseGroupCatalog(raw, iconRaw string) (map[string]GroupCatalogEntry, error) {
 	groups := make(map[string]GroupCatalogEntry)
 	if raw != "" {
 		if err := common.DecodeJsonStrict(strings.NewReader(raw), &groups); err != nil || groups == nil {
 			return nil, ErrInvalidGroupCatalog
 		}
 	}
+	// Artwork is not authority. Malformed/stale sidecar rows can never create a
+	// group, make it exclusive, or prevent an otherwise valid policy loading.
+	var icons map[string]string
+	if iconRaw != "" && common.UnmarshalJsonStr(iconRaw, &icons) == nil {
+		for name, icon := range icons {
+			if entry, ok := groups[name]; ok && isCatalogPlatformSlug(icon) {
+				entry.Icon = icon
+				groups[name] = entry
+			}
+		}
+	}
 	return normalizeGroupCatalog(groups)
 }
 
-func loadGroupCatalogRuntime(raw string) error {
-	groups, err := parseGroupCatalog(raw)
+func loadGroupCatalogRuntime(raw, icons string) error {
+	groups, err := parseGroupCatalog(raw, icons)
 	if err != nil {
 		return err
 	}
@@ -157,19 +179,46 @@ func ReadGroupCatalog(ctx context.Context) (*GroupCatalogSnapshot, error) {
 }
 
 func readGroupCatalogTx(tx *gorm.DB) (map[string]GroupCatalogEntry, error) {
-	var row Option
-	if err := tx.Where(&Option{Key: groupCatalogOptionKey}).Limit(1).Find(&row).Error; err != nil {
+	var rows []Option
+	if err := tx.Where(map[string]any{"key": []string{groupCatalogOptionKey, groupCatalogIconsOptionKey}}).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	return parseGroupCatalog(row.Value)
+	var catalogRaw, iconsRaw string
+	for _, row := range rows {
+		if row.Key == groupCatalogOptionKey {
+			catalogRaw = row.Value
+		} else {
+			iconsRaw = row.Value
+		}
+	}
+	return parseGroupCatalog(catalogRaw, iconsRaw)
 }
 
 func writeGroupCatalogTx(tx *gorm.DB, groups map[string]GroupCatalogEntry) error {
-	encoded, err := common.Marshal(groups)
+	legacy := maps.Clone(groups)
+	icons := make(map[string]string)
+	for name, entry := range legacy {
+		if entry.Icon != "" {
+			icons[name] = entry.Icon
+			entry.Icon = ""
+			legacy[name] = entry
+		}
+	}
+	encoded, err := common.Marshal(legacy)
 	if err != nil {
 		return err
 	}
-	return upsertGroupRenameOption(tx, groupCatalogOptionKey, string(encoded))
+	if err := upsertGroupRenameOption(tx, groupCatalogOptionKey, string(encoded)); err != nil {
+		return err
+	}
+	if len(icons) == 0 {
+		return tx.Where(&Option{Key: groupCatalogIconsOptionKey}).Delete(&Option{}).Error
+	}
+	encoded, err = common.Marshal(icons)
+	if err != nil {
+		return err
+	}
+	return upsertGroupRenameOption(tx, groupCatalogIconsOptionKey, string(encoded))
 }
 
 func groupRatioKeysTx(tx *gorm.DB) (map[string]float64, error) {

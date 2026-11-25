@@ -40,9 +40,9 @@ const HOURS = 24
 export function useMarketSummary(models: string[]) {
   const scope = useMarketIdentity()
   return useQuery({
-    queryKey: ['market-perf-summary', scope, HOURS, models],
+    queryKey: ['market-perf-summary', scope, HOURS],
     queryFn: async () =>
-      requireServerSuccess(await getPerfMetricsSummary(HOURS, models)),
+      requireServerSuccess(await getPerfMetricsSummary(HOURS)),
     enabled: scope !== null && models.length > 0,
     staleTime: 60_000,
     retry: false,
@@ -58,13 +58,15 @@ export function useMarketModelMetrics(name: string) {
     queryFn: async (): Promise<PerformanceMetricsData> => {
       if (scope === 'public') {
         const response = requireServerSuccess(
-          await getPerfMetricsSummary(HOURS, [name])
+          await getPerfMetricsSummary(HOURS)
         )
         return {
           success: true,
           data: {
             model_name: name,
             groups: [],
+            window_start: response.data.window_start,
+            window_end: response.data.window_end,
             summary:
               response.data.models?.find((item) => item.model_name === name) ??
               null,

@@ -20,6 +20,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { CatalogModelIcon } from '@/components/catalog-model-icon'
 import { CopyButton } from '@/components/copy-button'
 import { BadgeListCell, TruncatedCell } from '@/components/data-table'
 import { StatusBadge } from '@/components/status-badge'
@@ -38,7 +39,6 @@ import { modelPricingDisplay } from '@/features/model-pricing/pricing'
 import { ModelPriceCell } from '@/features/pricing/components/model-price-cell'
 import type { ColumnDef } from '@/lib/console-table'
 import { formatTimestampToDate } from '@/lib/format'
-import { getLobeIcon } from '@/lib/lobe-icon'
 
 import { getNameRuleConfig } from '../constants'
 import { parseModelTags, formatEndpointsDisplay } from '../lib'
@@ -107,11 +107,15 @@ export function useModelsColumns(
         cell: ({ row }) => {
           const model = row.original
           const vendor = vendorMap.get(model.vendor_id ?? 0)
-          const iconKey = model.icon || vendor?.icon || model.model_name[0]
           return (
             <div className='flex max-w-[320px] min-w-0 items-start gap-2.5 py-1'>
               <span className='mt-1 flex size-6 shrink-0 items-center justify-center'>
-                {getLobeIcon(iconKey, 24)}
+                <CatalogModelIcon
+                  icon={model.icon}
+                  vendorIcon={vendor?.icon}
+                  name={model.model_name}
+                  size={24}
+                />
               </span>
               <div className='min-w-0 flex-1'>
                 <div className='flex min-w-0 items-center gap-1'>

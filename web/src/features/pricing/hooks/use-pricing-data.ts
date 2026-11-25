@@ -25,6 +25,23 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { getPricing, getPublicPricing } from '../api'
 
+// Project private per-group details onto this model's already authorized groups.
+// Absence is meaningful (public response or no configured value), not zero.
+function modelGroupDetails<T>(
+  values: Record<string, T> | undefined,
+  groups: readonly string[],
+  allowed: Record<string, unknown> | undefined
+): Record<string, T> | undefined {
+  if (!values || !allowed) return undefined
+  return Object.fromEntries(
+    groups
+      .filter(
+        (group) => Object.hasOwn(allowed, group) && Object.hasOwn(values, group)
+      )
+      .map((group) => [group, values[group]])
+  )
+}
+
 export function usePricingData(enabled = true) {
   const { status } = useStatus()
   const bootstrapState = useAuthStore((state) => state.auth.bootstrapState)
@@ -78,6 +95,20 @@ export function usePricingData(enabled = true) {
         vendor_description: vendor?.description,
         group_ratio: data.group_ratio,
         group_catalog: data.group_catalog,
+        group_rate_source: isAuthenticated
+          ? modelGroupDetails(
+              data.group_rate_source,
+              model.enable_groups ?? [],
+              data.usable_group
+            )
+          : undefined,
+        group_rate_limits: isAuthenticated
+          ? modelGroupDetails(
+              data.group_rate_limits,
+              model.enable_groups ?? [],
+              data.usable_group
+            )
+          : undefined,
         group_keys_are_display_only:
           !isAuthenticated || data.group_keys_are_display_only,
       }

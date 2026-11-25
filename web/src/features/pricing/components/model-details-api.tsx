@@ -26,12 +26,13 @@ import {
   CodeBlock,
   CodeBlockCopyButton,
 } from '@/components/ai-elements/code-block'
+import { CopyButton } from '@/components/copy-button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useStatus } from '@/hooks/use-status'
-import { API_BASE_URL } from '@/lib/api-url'
 
+import { useMarketApiBase } from '../hooks/use-market-api-base'
 import {
   buildModelCodeSample,
+  modelEndpointAuth,
   type ModelSampleLanguage as Lang,
 } from '../lib/model-code-samples'
 import {
@@ -41,6 +42,7 @@ import {
 } from '../lib/model-endpoints'
 import type { PricingModel } from '../types'
 import { MarketCreateKey } from './market-create-key'
+import { ModelRateLimits } from './model-rate-limits'
 
 // ---------------------------------------------------------------------------
 // Code-sample registry
@@ -74,25 +76,7 @@ function CodeSamplesSection(props: {
   endpointMap: ModelEndpointMap
 }) {
   const { t } = useTranslation()
-  const { status } = useStatus()
-
-  const baseUrl = useMemo(() => {
-    // Copyable samples must always show the API origin. An explicitly
-    // configured API base wins over the admin-configured server address,
-    // which may be the console address in split deployments.
-    if (API_BASE_URL) return API_BASE_URL
-    const candidate =
-      (status as Record<string, unknown> | null)?.server_address ??
-      (status as Record<string, unknown> | null)?.serverAddress ??
-      (status?.data as Record<string, unknown> | undefined)?.server_address ??
-      (status?.data as Record<string, unknown> | undefined)?.serverAddress
-    if (candidate && typeof candidate === 'string') {
-      return candidate.replace(/\/$/, '')
-    }
-    if (typeof window !== 'undefined') return window.location.origin
-    return 'https://api.example.com'
-  }, [status])
-
+  const baseUrl = useMarketApiBase()
   const endpoints = useMemo(
     () => getModelEndpoints(props.model, props.endpointMap),
     [props.model, props.endpointMap]
@@ -108,7 +92,11 @@ function CodeSamplesSection(props: {
   }, [endpointType, endpoints])
 
   if (endpoints.length === 0 || !activeEndpoint) {
-    return null
+    return (
+      <p className='text-muted-foreground text-sm'>
+        {t('No verified endpoint is available for this model.')}
+      </p>
+    )
   }
 
   const code = buildModelCodeSample(lang, activeEndpoint.type, {
@@ -117,16 +105,36 @@ function CodeSamplesSection(props: {
     modelName: props.model.model_name || '',
     endpointType: activeEndpoint.type,
     endpointPath: activeEndpoint.path,
+    method: activeEndpoint.method,
   })
 
   return (
-    <section>
+    <section className='min-w-0'>
+      <div className='mb-4 flex items-center gap-2 rounded-lg border p-3'>
+        <div className='min-w-0 flex-1'>
+          <div className='text-muted-foreground text-xs'>
+            {activeEndpoint.type}
+          </div>
+          <code className='text-sm [overflow-wrap:anywhere]'>
+            {activeEndpoint.method} {baseUrl}
+            {activeEndpoint.path}
+          </code>
+        </div>
+        <CopyButton
+          value={baseUrl + activeEndpoint.path}
+          tooltip={t('Copy URL')}
+        />
+      </div>
       <SectionTitle icon={ScrollText}>{t('Code samples')}</SectionTitle>
 
       <div className='flex flex-wrap items-center gap-2'>
         {endpoints.length > 1 && (
-          <Tabs value={activeEndpoint.type} onValueChange={setEndpointType}>
-            <TabsList className='bg-muted/40 h-8 p-0.5'>
+          <Tabs
+            className='max-w-full min-w-0'
+            value={activeEndpoint.type}
+            onValueChange={setEndpointType}
+          >
+            <TabsList className='bg-muted/40 max-w-full flex-wrap p-0.5 group-data-horizontal/tabs:h-auto'>
               {endpoints.map((ep) => (
                 <TabsTrigger
                   key={ep.type}
@@ -145,7 +153,7 @@ function CodeSamplesSection(props: {
           onValueChange={(v) => setLang(v as Lang)}
           className='ml-auto'
         >
-          <TabsList className='bg-muted/40 h-8 p-0.5'>
+          <TabsList className='bg-muted/40 max-w-full flex-wrap p-0.5 group-data-horizontal/tabs:h-auto'>
             {(Object.keys(LANG_LABELS) as Lang[]).map((l) => (
               <TabsTrigger key={l} value={l} className='h-7 px-2.5 text-xs'>
                 {LANG_LABELS[l]}
@@ -183,13 +191,7 @@ function CodeSamplesSection(props: {
         )}
       </div>
 
-      <p className='text-muted-foreground mt-2 text-xs'>
-        {t('Replace')}{' '}
-        <code className='bg-muted rounded px-1 py-0.5 font-mono text-[11px]'>
-          {'<YOUR_API_KEY>'}
-        </code>{' '}
-        {t('with the API key from your token settings.')}
-      </p>
+      <AuthSection type={activeEndpoint.type} />
     </section>
   )
 }
@@ -198,34 +200,24 @@ function CodeSamplesSection(props: {
 // Authentication preview
 // ---------------------------------------------------------------------------
 
-function AuthSection() {
+function AuthSection(props: { type: string }) {
   const { t } = useTranslation()
+  const auth = modelEndpointAuth(props.type)
   return (
-    <section>
+    <section className='mt-4'>
       <SectionTitle icon={KeyRound}>{t('Authentication')}</SectionTitle>
-      <dl className='grid gap-3 text-xs sm:grid-cols-3'>
-        <div className='flex flex-col gap-1'>
-          <dt>OpenAI</dt>
-          <dd>
-            <code>Authorization: Bearer &lt;TOKEN&gt;</code>
-          </dd>
+      {auth === 'anthropic' && (
+        <div className='flex flex-col'>
+          <code>x-api-key: &lt;TOKEN&gt;</code>
+          <code>anthropic-version: 2023-06-01</code>
         </div>
-        <div className='flex flex-col gap-1'>
-          <dt>Anthropic</dt>
-          <dd>
-            <code>x-api-key: &lt;TOKEN&gt;</code>
-            <br />
-            <code>anthropic-version: 2023-06-01</code>
-          </dd>
-        </div>
-        <div className='flex flex-col gap-1'>
-          <dt>Gemini</dt>
-          <dd>
-            <code>x-goog-api-key: &lt;TOKEN&gt;</code>
-          </dd>
-        </div>
-      </dl>
-      <p className='text-muted-foreground mt-3 text-xs'>
+      )}
+      {auth === 'gemini' && <code>x-goog-api-key: &lt;TOKEN&gt;</code>}
+      {auth === 'bearer' && <code>Authorization: Bearer &lt;TOKEN&gt;</code>}
+      {!auth && (
+        <span className='text-muted-foreground'>{t('Unavailable')}</span>
+      )}
+      <p className='text-muted-foreground mt-2 text-xs'>
         {t(
           'Endpoint availability depends on the model catalog and API key group.'
         )}
@@ -246,7 +238,10 @@ export function ModelDetailsApi(props: {
   return (
     <div className='space-y-6'>
       <CodeSamplesSection model={props.model} endpointMap={props.endpointMap} />
-      <AuthSection />
+      <ModelRateLimits
+        model={props.model}
+        selectedGroup={props.selectedGroup}
+      />
       <MarketCreateKey
         model={props.model}
         selectedGroup={props.selectedGroup}

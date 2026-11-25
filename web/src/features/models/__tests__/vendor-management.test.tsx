@@ -115,6 +115,36 @@ describe('vendor management', () => {
     )
     await waitFor(() => expect(close).toHaveBeenCalledWith(false))
   })
+  it('clears a saved vendor override and previews the vendor initial without saving an unlisted search', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: vendor },
+    })
+    const put = vi.spyOn(api, 'put').mockResolvedValue({
+      data: { success: true, data: { ...vendor, icon: '' } },
+    })
+    const client = renderWithClient(
+      <VendorMutateDialog open currentVendor={vendor} onOpenChange={() => {}} />
+    )
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Clear' }))
+    expect(screen.getByText('Default placeholder')).toBeVisible()
+    expect(screen.getByText('G', { exact: true })).toBeVisible()
+    const picker = screen.getByRole('combobox', { name: 'Icon' })
+    await user.click(picker)
+    await user.type(picker, 'https://unavailable.invalid/icon.svg')
+    expect(await screen.findByText('No matching icons')).toBeVisible()
+    await user.keyboard('{Escape}')
+    expect(picker).toHaveValue('')
+    await user.click(screen.getByRole('button', { name: 'Save metadata' }))
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith(
+        '/api/vendors/',
+        expect.objectContaining({ id: vendor.id, icon: '' })
+      )
+    )
+    client.clear()
+  })
+
   it('requires a preview and a fresh version after a conflict when clearing model assignments', async () => {
     vi.spyOn(api, 'get').mockResolvedValue({
       data: { success: true, data: { items: [vendor, target] } },

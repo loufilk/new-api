@@ -58,3 +58,18 @@ export function activeBillingExpressions(models: PricingModel[]): string[] {
   }
   return [...expr]
 }
+
+// Only for price presentation and sorting. Never pass the scoped copy to key
+// creation, permissions, or API actions: those always use the server's model.
+export function getMarketPriceModel(
+  model: PricingModel,
+  platformPriceGroups?: ReadonlySet<string>
+): PricingModel {
+  if (!platformPriceGroups) return model
+  return {
+    ...model,
+    enable_groups: (model.enable_groups ?? []).filter((group) =>
+      platformPriceGroups.has(group)
+    ),
+  }
+}

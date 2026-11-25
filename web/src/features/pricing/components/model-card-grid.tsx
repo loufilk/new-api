@@ -36,6 +36,7 @@ export interface ModelCardGridProps {
   usdExchangeRate?: number
   tokenUnit?: TokenUnit
   showRechargePrice?: boolean
+  platformPriceGroups?: ReadonlySet<string>
   selectedGroup?: string
   endpointMap?: ModelEndpointMap
 }
@@ -66,17 +67,6 @@ export const ModelCardGrid = memo(function ModelCardGrid(
         window_end: perfQuery.data?.data.window_end,
       })
     }
-    for (const [name, series] of Object.entries(
-      perfQuery.data?.data?.recent_success_series ?? {}
-    )) {
-      map.set(name, {
-        avg_latency_ms: Number.NaN,
-        avg_tps: Number.NaN,
-        success_rate: Number.NaN,
-        ...map.get(name),
-        recent_success_series: series,
-      })
-    }
     return map
   }, [perfQuery.data])
 
@@ -96,6 +86,7 @@ export const ModelCardGrid = memo(function ModelCardGrid(
             priceRate={props.priceRate}
             usdExchangeRate={props.usdExchangeRate}
             showRechargePrice={props.showRechargePrice}
+            platformPriceGroups={props.platformPriceGroups}
             selectedGroup={props.selectedGroup}
             perf={perfMap.get(model.model_name || '')}
             onClick={props.onModelClick}

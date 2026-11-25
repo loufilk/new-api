@@ -148,6 +148,9 @@ async function renderList(
         },
       }
     }
+    if (url === '/api/pricing') {
+      return { data: { success: true, data: [], vendors: [] } }
+    }
     return { data: { success: true, data: { items: [] } } }
   })
   const client = new QueryClient({

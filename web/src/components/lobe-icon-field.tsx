@@ -16,12 +16,25 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMemo, useState } from 'react'
+import { useState, type AriaAttributes } from 'react'
+import { useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
+import { CatalogModelIcon } from '@/components/catalog-model-icon'
 import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
-import { getLobeIcon, getLobeIconNames } from '@/lib/lobe-icon'
+import { catalogIconID, getLobeIconNames } from '@/lib/catalog-icon-registry'
+
+const iconOptions = getLobeIconNames().map((name) => ({
+  value: name,
+  label: name,
+  // Loading an Avatar/Combine preview imports the optional UI toolkit. Only
+  // load those heavier variants after selection, not for each search result.
+  icon:
+    !name.includes('.') || name.endsWith('.Color') ? (
+      <CatalogModelIcon icon={name} size={18} />
+    ) : undefined,
+}))
 
 export function LobeIconField(props: {
   id?: string
@@ -30,20 +43,24 @@ export function LobeIconField(props: {
   allowInheritance?: boolean
   inheritedIcon?: string
   inheritedName?: string
+  'aria-describedby'?: string
+  'aria-invalid'?: AriaAttributes['aria-invalid']
 }) {
   const { t } = useTranslation()
-  const [custom, setCustom] = useState(false)
-  const usesCustom = !props.allowInheritance || Boolean(props.value) || custom
-  const options = useMemo(
-    () =>
-      getLobeIconNames().map((name) => ({
-        value: name,
-        label: name,
-        icon: getLobeIcon(name, 18),
-      })),
-    []
-  )
-  const effectiveIcon = props.value || props.inheritedIcon
+  // Both admin metadata forms use this control. Subscribe only the preview,
+  // rather than forcing the whole drawer to render on each name keystroke.
+  const recordName = useWatch<{ model_name: string; name: string }>({
+    name: props.allowInheritance ? 'model_name' : 'name',
+  })
+  const [choosing, setChoosing] = useState(false)
+  const usesCustom = !props.allowInheritance || Boolean(props.value) || choosing
+  const own = catalogIconID(props.value)
+  const inherited = catalogIconID(props.inheritedIcon)
+  const effective = own || inherited
+  const clearOverride = () => {
+    setChoosing(false)
+    props.onChange('')
+  }
   return (
     <div className='space-y-3'>
       {props.allowInheritance && (
@@ -53,19 +70,18 @@ export function LobeIconField(props: {
             size='sm'
             variant={!usesCustom ? 'secondary' : 'outline'}
             aria-pressed={!usesCustom}
-            onClick={() => {
-              setCustom(false)
-              props.onChange('')
-            }}
+            onClick={clearOverride}
           >
             {t('Inherit vendor icon')}
           </Button>
           <Button
+            id={usesCustom ? undefined : props.id}
+            aria-label={t('Custom model icon')}
             type='button'
             size='sm'
             variant={usesCustom ? 'secondary' : 'outline'}
             aria-pressed={usesCustom}
-            onClick={() => setCustom(true)}
+            onClick={() => setChoosing(true)}
           >
             {t('Custom model icon')}
           </Button>
@@ -75,49 +91,62 @@ export function LobeIconField(props: {
         <div className='flex min-w-0 items-center gap-2'>
           <Combobox
             id={props.id}
-            options={options}
-            value={props.value}
+            options={iconOptions}
+            value={own}
             onValueChange={(value) => props.onChange(value ?? '')}
-            allowCustomValue
-            searchPlaceholder={t('Search icons or enter an icon key')}
+            searchPlaceholder={t('Search installed icons')}
             emptyText={t('No matching icons')}
             className='min-w-0 flex-1'
+            aria-describedby={props['aria-describedby']}
+            aria-invalid={props['aria-invalid']}
+            limit={30}
           />
           {props.value && (
             <Button
               type='button'
               variant='ghost'
               size='sm'
-              onClick={() => props.onChange('')}
+              onClick={clearOverride}
             >
               {t('Clear')}
             </Button>
           )}
         </div>
       )}
-      <div className='bg-muted/40 flex items-center gap-3 rounded-lg border p-3'>
-        <span className='flex size-9 shrink-0 items-center justify-center'>
-          {getLobeIcon(effectiveIcon, 28)}
+      <div
+        aria-live='polite'
+        className='bg-muted/40 flex items-center gap-3 rounded-lg border p-3'
+      >
+        <span className='bg-muted/50 flex size-10 shrink-0 items-center justify-center rounded-lg'>
+          <CatalogModelIcon
+            icon={props.value}
+            vendorIcon={props.inheritedIcon}
+            name={recordName}
+            size={28}
+          />
         </span>
         <div className='min-w-0 text-xs'>
           <p className='font-medium'>{t('Effective icon')}</p>
           <p className='text-muted-foreground break-all'>
-            {effectiveIcon || t('Default placeholder')}
+            {effective || t('Default placeholder')}
           </p>
-          {props.allowInheritance && !props.value && (
-            <p className='text-muted-foreground'>
-              {t('Inherited from {{vendor}}', {
-                vendor: props.inheritedName || t('No vendor'),
-              })}
+          {props.allowInheritance &&
+            !own &&
+            inherited &&
+            props.inheritedName && (
+              <p className='text-muted-foreground'>
+                {t('Inherited from {{vendor}}', {
+                  vendor: props.inheritedName,
+                })}
+              </p>
+            )}
+          {props.value && !own && (
+            <p className='text-warning'>
+              {t('Choose an installed icon or clear the saved key.')}
             </p>
           )}
         </div>
       </div>
-      {usesCustom && (
-        <p className='text-muted-foreground text-xs'>
-          {t('Select a suggested icon or keep an existing advanced icon key.')}
-        </p>
-      )}
     </div>
   )
 }
