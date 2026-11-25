@@ -20,10 +20,15 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { TFunction } from 'i18next'
 import { ArrowDown, ArrowUp, ChevronRight, UserRound } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import {
+  sideDrawerContentClassName,
+  sideDrawerFormClassName,
+  sideDrawerHeaderClassName,
+} from '@/components/drawer-layout'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -34,6 +39,13 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 import { groupCatalogBadges as badgeOptions } from '@/features/pricing/lib/group-catalog-badges'
 import { searchUsers } from '@/features/users/api'
 import { toIntlLocale } from '@/i18n/languages'
@@ -45,22 +57,11 @@ import {
 } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { GroupCatalogList } from './group-catalog-list'
+import { catalogPlatforms } from './group-catalog-platforms'
 import { GroupDisplayPreview } from './group-display-preview'
 import type { CatalogPanel } from './group-pricing-workspace'
 import { normalizePersonalRatio } from './personal-ratio'
-
-const platforms = [
-  ['', 'Not specified'],
-  ['openai', 'OpenAI'],
-  ['anthropic', 'Anthropic'],
-  ['gemini', 'Gemini'],
-  ['deepseek', 'DeepSeek'],
-  ['moonshot', 'Moonshot'],
-  ['xai', 'xAI'],
-  ['zhipu', 'Zhipu GLM'],
-  ['azure', 'Azure'],
-  ['other', 'Other'],
-] as const
 
 type Badge = keyof typeof badgeOptions
 type GroupEntry = {
@@ -195,6 +196,8 @@ function GroupCatalogue({
   const [confirmPolicy, setConfirmPolicy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [groupFilter, setGroupFilter] = useState('')
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const detailsTrigger = useRef<HTMLButtonElement>(null)
   const [latest, setLatest] = useState<Catalogue>()
   const [reviewLoading, setReviewLoading] = useState(false)
   const [reviewFailed, setReviewFailed] = useState(false)
@@ -286,6 +289,7 @@ function GroupCatalogue({
     !!draft &&
     (hasRevisionConflict(mutation.error) ||
       revisionData.revision !== draft.revision)
+  const available = !!draft && Object.hasOwn(baseRates, draft.group)
   const validSort =
     !!draft &&
     Number.isInteger(draft.entry.sort_order) &&
@@ -295,6 +299,408 @@ function GroupCatalogue({
       ...emptyGroup,
       ...latest.groups[draft.group],
     }
+
+  const editor = (
+    <div className='space-y-4'>
+      {draft && (
+        <>
+          {!available && (
+            <p role='alert' className='text-destructive'>
+              {t(
+                'This group is no longer configured. Discard this draft to edit another group.'
+              )}
+            </p>
+          )}
+          {!policy && (
+            <div className='grid gap-3 sm:grid-cols-2'>
+              <label className='space-y-1'>
+                <span>{t('Display name')}</span>
+                <Input
+                  value={draft.entry.label}
+                  maxLength={64}
+                  onChange={(e) => change({ label: e.target.value })}
+                  disabled={mutation.isPending}
+                />
+              </label>
+              <label className='space-y-1'>
+                <span>{t('Description')}</span>
+                <Input
+                  value={draft.entry.description}
+                  maxLength={240}
+                  onChange={(e) => change({ description: e.target.value })}
+                  disabled={mutation.isPending}
+                />
+              </label>
+              <label className='space-y-1'>
+                <span>{t('Platform')}</span>
+                <NativeSelect
+                  className='w-full'
+                  value={draft.entry.platform}
+                  disabled={mutation.isPending}
+                  onChange={(e) => change({ platform: e.target.value })}
+                >
+                  {catalogPlatforms.map(([key, title]) => (
+                    <NativeSelectOption key={key} value={key}>
+                      {t(title)}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </label>
+              <label className='space-y-1'>
+                <span>{t('Icon source')}</span>
+                <NativeSelect
+                  className='w-full'
+                  value={draft.entry.icon ?? ''}
+                  disabled={mutation.isPending}
+                  onChange={(event) => change({ icon: event.target.value })}
+                >
+                  <NativeSelectOption value=''>
+                    {t('Inherit platform icon')}
+                  </NativeSelectOption>
+                  {catalogPlatforms
+                    .filter(([key]) => key !== '')
+                    .map(([key, title]) => (
+                      <NativeSelectOption key={key} value={key}>
+                        {t(title)}
+                      </NativeSelectOption>
+                    ))}
+                </NativeSelect>
+              </label>
+              <label className='space-y-1'>
+                <span>{t('Display order')}</span>
+                <Input
+                  type='number'
+                  step='1'
+                  min={-10000}
+                  max={10000}
+                  value={
+                    Number.isNaN(draft.entry.sort_order)
+                      ? ''
+                      : draft.entry.sort_order
+                  }
+                  onChange={(e) =>
+                    change({ sort_order: e.target.valueAsNumber })
+                  }
+                  disabled={mutation.isPending}
+                />
+                {!validSort && (
+                  <span className='text-destructive block text-xs'>
+                    {t('Enter a whole number from -10000 to 10000.')}
+                  </span>
+                )}
+              </label>
+            </div>
+          )}
+          {policy && (
+            <>
+              <label className='flex items-center gap-2'>
+                <input
+                  type='checkbox'
+                  checked={draft.entry.exclusive}
+                  onChange={(e) => change({ exclusive: e.target.checked })}
+                  disabled={mutation.isPending || draft.group === 'default'}
+                />
+                {t('Exclusive group (only visible to authorized users)')}
+              </label>
+              {draft.group === 'default' && (
+                <p className='text-muted-foreground text-xs'>
+                  {t('The default group cannot be exclusive.')}
+                </p>
+              )}
+              {draft.entry.exclusive !==
+                !!draft.entries[draft.group]?.exclusive && (
+                <p className='text-muted-foreground'>
+                  {t(
+                    'Changing visibility may affect requests made with existing keys. Check group usage before saving.'
+                  )}
+                </p>
+              )}
+            </>
+          )}
+          {!policy && (
+            <>
+              <fieldset className='space-y-2' disabled={mutation.isPending}>
+                <legend>{t('Group badges')}</legend>
+                <div className='flex flex-wrap gap-3'>
+                  {(Object.keys(badgeOptions) as Badge[]).map((key) => (
+                    <label className='flex items-center gap-1' key={key}>
+                      <input
+                        type='checkbox'
+                        checked={draft.entry.badges.includes(key)}
+                        onChange={(e) =>
+                          change({
+                            badges: e.target.checked
+                              ? [...draft.entry.badges, key]
+                              : draft.entry.badges.filter(
+                                  (value) => value !== key
+                                ),
+                          })
+                        }
+                      />
+                      {t(badgeOptions[key].label)}
+                    </label>
+                  ))}
+                </div>
+                <div
+                  hidden={!draft.entry.badges.length}
+                  className='flex flex-wrap items-center gap-2 rounded-lg border p-3 empty:hidden'
+                  aria-label={t('Group badges')}
+                >
+                  {draft.entry.badges.map((key, index) => {
+                    const badge = badgeOptions[key]
+                    if (!badge) return null
+                    return (
+                      <span
+                        className='inline-flex items-center gap-1'
+                        key={key}
+                      >
+                        <span
+                          className={`inline-flex items-center gap-1 rounded px-1.5 text-xs ${badge.color}`}
+                        >
+                          <badge.icon size={12} aria-hidden />
+                          {t(badge.label)}
+                        </span>
+                        <button
+                          type='button'
+                          aria-label={t('Move {{name}} up', {
+                            name: t(badge.label),
+                          })}
+                          disabled={index === 0}
+                          onClick={() => move(index, -1)}
+                        >
+                          <ArrowUp size={14} />
+                        </button>
+                        <button
+                          type='button'
+                          aria-label={t('Move {{name}} down', {
+                            name: t(badge.label),
+                          })}
+                          disabled={index === draft.entry.badges.length - 1}
+                          onClick={() => move(index, 1)}
+                        >
+                          <ArrowDown size={14} />
+                        </button>
+                      </span>
+                    )
+                  })}
+                </div>
+              </fieldset>
+              {active && (
+                <GroupDisplayPreview
+                  group={draft.group}
+                  entry={draft.entry}
+                  baseRatio={baseRates[draft.group]}
+                  scope={scope}
+                />
+              )}
+            </>
+          )}
+          {stale && (
+            <div
+              role='alert'
+              className='space-y-2 rounded-xl border p-3 text-sm'
+            >
+              <p>
+                {t(
+                  'Group settings have changed. Your draft is intact. Load the latest settings to compare.'
+                )}
+              </p>
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                disabled={reviewLoading || mutation.isPending}
+                onClick={async () => {
+                  setReviewLoading(true)
+                  setReviewFailed(false)
+                  setLatest(undefined)
+                  try {
+                    const result = await reload()
+                    if (result.data && !result.isError) setLatest(result.data)
+                    else setReviewFailed(true)
+                  } catch {
+                    setReviewFailed(true)
+                  } finally {
+                    setReviewLoading(false)
+                  }
+                }}
+              >
+                {reviewLoading ? t('Loading…') : t('Load latest settings')}
+              </Button>
+              {reviewFailed && (
+                <p>
+                  {t(
+                    'Could not load the settings. Your draft is intact. Try again.'
+                  )}
+                </p>
+              )}
+              {latestEntry && (
+                <div className='space-y-2 break-all'>
+                  <p>
+                    {t(
+                      'Latest: {{name}} · {{platform}} · Order {{order}} · {{visibility}}',
+                      {
+                        name: latestEntry.label || draft.group,
+                        platform: latestEntry.platform
+                          ? t(
+                              catalogPlatforms.find(
+                                ([key]) => key === latestEntry.platform
+                              )?.[1] ?? latestEntry.platform
+                            )
+                          : t('No platform specified'),
+                        order: latestEntry.sort_order,
+                        visibility: latestEntry.exclusive
+                          ? t('Exclusive')
+                          : t('Not exclusive'),
+                      }
+                    )}
+                  </p>
+                  {!policy && (
+                    <p>
+                      {t('Icon source')}:{' '}
+                      {t(
+                        catalogPlatforms.find(
+                          ([key]) => key && key === latestEntry.icon
+                        )?.[1] ?? 'Inherit platform icon'
+                      )}
+                    </p>
+                  )}
+                  {latestEntry.description && (
+                    <p>
+                      {t('Description: {{description}}', {
+                        description: latestEntry.description,
+                      })}
+                    </p>
+                  )}
+                  <p>
+                    {t('Badges: {{badges}}', {
+                      badges:
+                        new Intl.ListFormat(locale, {
+                          style: 'short',
+                          type: 'unit',
+                        }).format(
+                          (latestEntry.badges ?? []).map((badge) =>
+                            t(badgeOptions[badge]?.label ?? badge)
+                          )
+                        ) || t('None'),
+                    })}
+                  </p>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    disabled={
+                      !latest || latest.revision !== revisionData.revision
+                    }
+                    onClick={() => {
+                      if (
+                        !latest ||
+                        !original ||
+                        latest.revision !== revisionData.revision
+                      ) {
+                        return
+                      }
+                      const changes = Object.fromEntries(
+                        Object.entries(draft.entry).filter(
+                          ([key, value]) =>
+                            JSON.stringify(value) !==
+                            JSON.stringify(original[key as keyof GroupEntry])
+                        )
+                      )
+                      setDraft({
+                        ...draft,
+                        revision: latest.revision,
+                        entries: latest.groups,
+                        entry: { ...latestEntry, ...changes },
+                      })
+                      setLatest(undefined)
+                      mutation.reset()
+                    }}
+                  >
+                    {t('Continue editing after review')}
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+          <div className='flex flex-wrap gap-2'>
+            <Button
+              onClick={() =>
+                policy ? setConfirmPolicy(true) : mutation.mutate(draft)
+              }
+              disabled={
+                mutation.isPending ||
+                !available ||
+                !dirty ||
+                stale ||
+                !validSort
+              }
+            >
+              {policy ? t('Save visibility policy') : t('Save group display')}
+            </Button>
+            {dirty && (
+              <Button
+                variant='outline'
+                onClick={() => pick(draft.group)}
+                disabled={mutation.isPending}
+              >
+                {policy
+                  ? t('Discard access draft')
+                  : t('Discard display draft')}
+              </Button>
+            )}
+          </div>
+        </>
+      )}
+      {policy && draft && (
+        <ConfirmDialog
+          open={active && confirmPolicy}
+          onOpenChange={setConfirmPolicy}
+          title={t('Change group visibility?')}
+          desc={t(
+            'Changing visibility may affect requests made with existing keys. Check group usage before saving.'
+          )}
+          confirmText={t('Save visibility policy')}
+          disabled={stale || !available || !dirty || draft.group === 'default'}
+          isLoading={mutation.isPending}
+          handleConfirm={() => {
+            if (
+              !stale &&
+              available &&
+              dirty &&
+              draft.group !== 'default' &&
+              !mutation.isPending
+            ) {
+              setConfirmPolicy(false)
+              mutation.mutate(draft)
+            }
+          }}
+        >
+          <p className='text-sm break-all'>
+            {draft.group} ·{' '}
+            {draft.entry.exclusive
+              ? t('Visible only to authorized accounts')
+              : t('Visible according to existing group permissions')}
+          </p>
+          {draft.entry.exclusive && (
+            <p className='text-sm'>
+              {t(
+                'Without a grant, existing fixed API keys may return 403 and Auto will skip this group.'
+              )}
+            </p>
+          )}
+        </ConfirmDialog>
+      )}
+      <ErrorNote
+        error={!hasRevisionConflict(mutation.error) && mutation.error}
+      />
+      {saved && (
+        <p role='status'>
+          {policy ? t('Group visibility saved.') : t('Group display saved.')}
+        </p>
+      )}
+    </div>
+  )
 
   return (
     <Card>
@@ -315,418 +721,94 @@ function GroupCatalogue({
         </CardDescription>
       </CardHeader>
       <CardContent className='space-y-4'>
-        <label className='block space-y-1 text-sm font-medium'>
-          <span>{t('Search groups')}</span>
-          <Input
-            value={groupFilter}
-            placeholder={t('Display name or group ID')}
-            onChange={(e) => setGroupFilter(e.target.value)}
-          />
-        </label>
-        <label className='block space-y-1'>
-          <span>{t('Group to edit')}</span>
-          <select
-            className={selectClass}
-            value={draft?.group ?? ''}
-            onChange={(e) => pick(e.target.value)}
-            disabled={mutation.isPending || dirty}
-          >
-            <option value=''>{t('Select a group')}</option>
-            {allGroups
-              .filter((group) => {
-                const label = revisionData.groups?.[group]?.label ?? ''
-                const term = groupFilter.trim().toLocaleLowerCase()
-                return (
-                  group === draft?.group ||
-                  `${label} ${group}`.toLocaleLowerCase().includes(term)
-                )
-              })
-              .map((group) => (
-                <option key={group} value={group}>
-                  {revisionData.groups?.[group]?.label
-                    ? `${revisionData.groups[group].label} · ${group}`
-                    : group}
-                </option>
-              ))}
-          </select>
-        </label>
-        {draft && (
+        {policy ? (
           <>
-            {!policy && (
-              <div className='grid gap-3 sm:grid-cols-2'>
-                <label className='space-y-1'>
-                  <span>{t('Display name')}</span>
-                  <Input
-                    value={draft.entry.label}
-                    maxLength={64}
-                    onChange={(e) => change({ label: e.target.value })}
-                    disabled={mutation.isPending}
-                  />
-                </label>
-                <label className='space-y-1'>
-                  <span>{t('Description')}</span>
-                  <Input
-                    value={draft.entry.description}
-                    maxLength={240}
-                    onChange={(e) => change({ description: e.target.value })}
-                    disabled={mutation.isPending}
-                  />
-                </label>
-                <label className='space-y-1'>
-                  <span>{t('Platform')}</span>
-                  <select
-                    className={selectClass}
-                    value={
-                      draft.entry.exclusive ? 'other' : draft.entry.platform
-                    }
-                    disabled={draft.entry.exclusive || mutation.isPending}
-                    onChange={(e) => change({ platform: e.target.value })}
-                  >
-                    {platforms.map(([key, title]) => (
-                      <option key={key} value={key}>
-                        {t(title)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className='space-y-1'>
-                  <span>{t('Icon source')}</span>
-                  <NativeSelect
-                    className='w-full'
-                    value={draft.entry.icon ?? ''}
-                    disabled={mutation.isPending}
-                    onChange={(event) => change({ icon: event.target.value })}
-                  >
-                    <NativeSelectOption value=''>
-                      {t('Inherit platform icon')}
-                    </NativeSelectOption>
-                    {platforms
-                      .filter(([key]) => key !== '')
-                      .map(([key, title]) => (
-                        <NativeSelectOption key={key} value={key}>
-                          {t(title)}
-                        </NativeSelectOption>
-                      ))}
-                  </NativeSelect>
-                </label>
-                <label className='space-y-1'>
-                  <span>{t('Display order')}</span>
-                  <Input
-                    type='number'
-                    step='1'
-                    min={-10000}
-                    max={10000}
-                    value={
-                      Number.isNaN(draft.entry.sort_order)
-                        ? ''
-                        : draft.entry.sort_order
-                    }
-                    onChange={(e) =>
-                      change({ sort_order: e.target.valueAsNumber })
-                    }
-                    disabled={mutation.isPending}
-                  />
-                  {!validSort && (
-                    <span className='text-destructive block text-xs'>
-                      {t('Enter a whole number from -10000 to 10000.')}
-                    </span>
-                  )}
-                </label>
-              </div>
-            )}
-            {policy && (
-              <>
-                <label className='flex items-center gap-2'>
-                  <input
-                    type='checkbox'
-                    checked={draft.entry.exclusive}
-                    onChange={(e) => change({ exclusive: e.target.checked })}
-                    disabled={mutation.isPending || draft.group === 'default'}
-                  />
-                  {t('Exclusive group (only visible to authorized users)')}
-                </label>
-                {draft.group === 'default' && (
-                  <p className='text-muted-foreground text-xs'>
-                    {t('The default group cannot be exclusive.')}
-                  </p>
-                )}
-                {draft.entry.exclusive !==
-                  !!draft.entries[draft.group]?.exclusive && (
-                  <p className='text-muted-foreground'>
-                    {t(
-                      'Changing visibility may affect requests made with existing keys. Check group usage before saving.'
-                    )}
-                  </p>
-                )}
-              </>
-            )}
-            {!policy && (
-              <>
-                <fieldset className='space-y-2' disabled={mutation.isPending}>
-                  <legend>{t('Group badges')}</legend>
-                  <div className='flex flex-wrap gap-3'>
-                    {(Object.keys(badgeOptions) as Badge[]).map((key) => (
-                      <label className='flex items-center gap-1' key={key}>
-                        <input
-                          type='checkbox'
-                          checked={draft.entry.badges.includes(key)}
-                          onChange={(e) =>
-                            change({
-                              badges: e.target.checked
-                                ? [...draft.entry.badges, key]
-                                : draft.entry.badges.filter(
-                                    (value) => value !== key
-                                  ),
-                            })
-                          }
-                        />
-                        {t(badgeOptions[key].label)}
-                      </label>
-                    ))}
-                  </div>
-                  <div
-                    hidden={!draft.entry.badges.length}
-                    className='flex flex-wrap items-center gap-2 rounded-lg border p-3 empty:hidden'
-                    aria-label={t('Group badges')}
-                  >
-                    {draft.entry.badges.map((key, index) => {
-                      const badge = badgeOptions[key]
-                      if (!badge) return null
-                      return (
-                        <span
-                          className='inline-flex items-center gap-1'
-                          key={key}
-                        >
-                          <span
-                            className={`inline-flex items-center gap-1 rounded px-1.5 text-xs ${badge.color}`}
-                          >
-                            <badge.icon size={12} aria-hidden />
-                            {t(badge.label)}
-                          </span>
-                          <button
-                            type='button'
-                            aria-label={t('Move {{name}} up', {
-                              name: t(badge.label),
-                            })}
-                            disabled={index === 0}
-                            onClick={() => move(index, -1)}
-                          >
-                            <ArrowUp size={14} />
-                          </button>
-                          <button
-                            type='button'
-                            aria-label={t('Move {{name}} down', {
-                              name: t(badge.label),
-                            })}
-                            disabled={index === draft.entry.badges.length - 1}
-                            onClick={() => move(index, 1)}
-                          >
-                            <ArrowDown size={14} />
-                          </button>
-                        </span>
-                      )
-                    })}
-                  </div>
-                </fieldset>
-                {active && (
-                  <GroupDisplayPreview
-                    group={draft.group}
-                    entry={draft.entry}
-                    baseRatio={baseRates[draft.group]}
-                    scope={scope}
-                  />
-                )}
-              </>
-            )}
-            {stale && (
-              <div
-                role='alert'
-                className='space-y-2 rounded-xl border p-3 text-sm'
+            <label className='block space-y-1 text-sm font-medium'>
+              <span>{t('Search groups')}</span>
+              <Input
+                value={groupFilter}
+                placeholder={t('Display name or group ID')}
+                onChange={(e) => setGroupFilter(e.target.value)}
+              />
+            </label>
+            <label className='block space-y-1'>
+              <span>{t('Group to edit')}</span>
+              <select
+                className={selectClass}
+                value={draft?.group ?? ''}
+                onChange={(e) => pick(e.target.value)}
+                disabled={mutation.isPending || dirty}
               >
-                <p>
-                  {t(
-                    'Group settings have changed. Your draft is intact. Load the latest settings to compare.'
-                  )}
-                </p>
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='sm'
-                  disabled={reviewLoading || mutation.isPending}
-                  onClick={async () => {
-                    setReviewLoading(true)
-                    setReviewFailed(false)
-                    setLatest(undefined)
-                    try {
-                      const result = await reload()
-                      if (result.data && !result.isError) setLatest(result.data)
-                      else setReviewFailed(true)
-                    } catch {
-                      setReviewFailed(true)
-                    } finally {
-                      setReviewLoading(false)
-                    }
-                  }}
-                >
-                  {reviewLoading ? t('Loading…') : t('Load latest settings')}
-                </Button>
-                {reviewFailed && (
-                  <p>
-                    {t(
-                      'Could not load the settings. Your draft is intact. Try again.'
-                    )}
-                  </p>
-                )}
-                {latestEntry && (
-                  <div className='space-y-2 break-all'>
-                    <p>
-                      {t(
-                        'Latest: {{name}} · {{platform}} · Order {{order}} · {{visibility}}',
-                        {
-                          name: latestEntry.label || draft.group,
-                          platform: latestEntry.platform
-                            ? t(
-                                platforms.find(
-                                  ([key]) => key === latestEntry.platform
-                                )?.[1] ?? latestEntry.platform
-                              )
-                            : t('No platform specified'),
-                          order: latestEntry.sort_order,
-                          visibility: latestEntry.exclusive
-                            ? t('Exclusive')
-                            : t('Not exclusive'),
-                        }
-                      )}
-                    </p>
-                    {!policy && (
-                      <p>
-                        {t('Icon source')}:{' '}
-                        {t(
-                          platforms.find(
-                            ([key]) => key && key === latestEntry.icon
-                          )?.[1] ?? 'Inherit platform icon'
-                        )}
-                      </p>
-                    )}
-                    {latestEntry.description && (
-                      <p>
-                        {t('Description: {{description}}', {
-                          description: latestEntry.description,
-                        })}
-                      </p>
-                    )}
-                    <p>
-                      {t('Badges: {{badges}}', {
-                        badges:
-                          new Intl.ListFormat(locale, {
-                            style: 'short',
-                            type: 'unit',
-                          }).format(
-                            (latestEntry.badges ?? []).map((badge) =>
-                              t(badgeOptions[badge]?.label ?? badge)
-                            )
-                          ) || t('None'),
-                      })}
-                    </p>
-                    <Button
-                      type='button'
-                      variant='outline'
-                      size='sm'
-                      disabled={
-                        !latest || latest.revision !== revisionData.revision
-                      }
-                      onClick={() => {
-                        if (
-                          !latest ||
-                          !original ||
-                          latest.revision !== revisionData.revision
-                        ) {
-                          return
-                        }
-                        const changes = Object.fromEntries(
-                          Object.entries(draft.entry).filter(
-                            ([key, value]) =>
-                              JSON.stringify(value) !==
-                              JSON.stringify(original[key as keyof GroupEntry])
-                          )
-                        )
-                        setDraft({
-                          ...draft,
-                          revision: latest.revision,
-                          entries: latest.groups,
-                          entry: { ...latestEntry, ...changes },
-                        })
-                        setLatest(undefined)
-                        mutation.reset()
-                      }}
-                    >
-                      {t('Continue editing after review')}
-                    </Button>
-                  </div>
-                )}
-              </div>
-            )}
-            <div className='flex flex-wrap gap-2'>
-              <Button
-                onClick={() =>
-                  policy ? setConfirmPolicy(true) : mutation.mutate(draft)
-                }
-                disabled={mutation.isPending || !dirty || stale || !validSort}
-              >
-                {policy ? t('Save visibility policy') : t('Save group display')}
-              </Button>
-              {dirty && (
-                <Button
-                  variant='outline'
-                  onClick={() => pick(draft.group)}
-                  disabled={mutation.isPending}
-                >
-                  {policy
-                    ? t('Discard access draft')
-                    : t('Discard display draft')}
-                </Button>
-              )}
-            </div>
+                <option value=''>{t('Select a group')}</option>
+                {allGroups
+                  .filter((group) => {
+                    const label = revisionData.groups?.[group]?.label ?? ''
+                    const term = groupFilter.trim().toLocaleLowerCase()
+                    return (
+                      group === draft?.group ||
+                      `${label} ${group}`.toLocaleLowerCase().includes(term)
+                    )
+                  })
+                  .map((group) => (
+                    <option key={group} value={group}>
+                      {revisionData.groups?.[group]?.label
+                        ? `${revisionData.groups[group].label} · ${group}`
+                        : group}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            {editor}
           </>
-        )}
-        {policy && draft && (
-          <ConfirmDialog
-            open={active && confirmPolicy}
-            onOpenChange={setConfirmPolicy}
-            title={t('Change group visibility?')}
-            desc={t(
-              'Changing visibility may affect requests made with existing keys. Check group usage before saving.'
-            )}
-            confirmText={t('Save visibility policy')}
-            disabled={stale || !dirty || draft.group === 'default'}
-            isLoading={mutation.isPending}
-            handleConfirm={() => {
-              if (
-                !stale &&
-                dirty &&
-                draft.group !== 'default' &&
-                !mutation.isPending
-              ) {
-                setConfirmPolicy(false)
-                mutation.mutate(draft)
+        ) : (
+          <>
+            <GroupCatalogList
+              groups={revisionData.groups}
+              baseRates={baseRates}
+              lockedGroup={
+                dirty || mutation.isPending ? draft?.group : undefined
               }
-            }}
-          >
-            <p className='text-sm break-all'>
-              {draft.group} ·{' '}
-              {draft.entry.exclusive
-                ? t('Visible only to authorized accounts')
-                : t('Visible according to existing group permissions')}
-            </p>
-          </ConfirmDialog>
-        )}
-        <ErrorNote
-          error={!hasRevisionConflict(mutation.error) && mutation.error}
-        />
-        {saved && (
-          <p role='status'>
-            {policy ? t('Group visibility saved.') : t('Group display saved.')}
-          </p>
+              onOpen={(group, trigger) => {
+                if ((dirty || mutation.isPending) && group !== draft?.group) {
+                  return
+                }
+                detailsTrigger.current = trigger
+                if (
+                  group !== draft?.group ||
+                  (!dirty && !mutation.isPending && stale)
+                ) {
+                  pick(group)
+                }
+                setDetailsOpen(true)
+              }}
+            />
+            <Sheet
+              open={active && detailsOpen && !!draft}
+              onOpenChange={setDetailsOpen}
+            >
+              {draft && (
+                <SheetContent
+                  className={sideDrawerContentClassName('sm:max-w-xl')}
+                  finalFocus={detailsTrigger}
+                >
+                  <SheetHeader
+                    className={sideDrawerHeaderClassName('pe-12 sm:pe-12')}
+                  >
+                    <SheetTitle className='[overflow-wrap:anywhere]'>
+                      {t('Group details')}:{' '}
+                      {draft.entry.label.trim() || draft.group}
+                    </SheetTitle>
+                    <SheetDescription className='[overflow-wrap:anywhere]'>
+                      {t('ID')}: <code>{draft.group}</code>
+                    </SheetDescription>
+                  </SheetHeader>
+                  <div className={sideDrawerFormClassName('gap-4')}>
+                    {editor}
+                  </div>
+                </SheetContent>
+              )}
+            </Sheet>
+          </>
         )}
       </CardContent>
     </Card>
@@ -969,6 +1051,11 @@ function UserGroupEditor({
             </Button>
           </div>
         )}
+        <p className='text-muted-foreground text-xs'>
+          {t(
+            'Revoking access may cause existing fixed API keys to return 403; Auto skips inaccessible groups. Regranting access can restore a saved personal rate.'
+          )}
+        </p>
         {exclusiveGroups.length === 0 && (
           <p className='text-muted-foreground'>
             {t('No exclusive groups are configured.')}

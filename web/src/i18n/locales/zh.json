@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Batch edit base rates": "批量修改基础倍率",
+    "Group access": "分组访问权限",
+    "New base rate": "新基础倍率",
+    "No matching groups": "没有符合条件的分组",
+    "Open group details: {{name}} ({{id}})": "打开分组详情：{{name}}（{{id}}）",
+    "Revoking access may cause existing fixed API keys to return 403; Auto skips inaccessible groups. Regranting access can restore a saved personal rate.": "撤销授权可能导致现有固定分组的 API Key 返回 403，自动分组会跳过无权访问的分组。重新授权后，已保存的个人倍率可恢复生效。",
+    "Save or discard pending rate edits before starting a batch.": "批量修改前，请先保存或放弃未保存的倍率改动。",
+    "Save or discard the current group draft before opening another group.": "打开其他分组前，请先保存或放弃当前分组草稿。",
+    "Select group {{id}}": "选择分组 {{id}}",
+    "Select the groups to change. Applying adds only those changes to your draft. Use Save group settings to save them.": "勾选要修改的分组。应用后只更新所选分组的草稿，点击「保存分组设置」后才保存。",
+    "This group is no longer configured. Discard this draft to edit another group.": "此分组已不存在。请放弃当前草稿后编辑其他分组。",
+    "User group override": "用户分组覆盖倍率",
+    "Without a grant, existing fixed API keys may return 403 and Auto will skip this group.": "未获得授权时，现有固定分组的 API Key 可能返回 403，自动分组也会跳过该组。",
     "Base multiplier": "基础倍率",
     "Could not load marketplace activity": "无法加载广场动态",
     "Effective time": "生效时间",

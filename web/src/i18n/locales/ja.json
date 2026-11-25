@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Batch edit base rates": "Изменить базовые множители для нескольких групп",
+    "Group access": "Доступ к группе",
+    "New base rate": "Новый базовый множитель",
+    "No matching groups": "Нет подходящих групп",
+    "Open group details: {{name}} ({{id}})": "Открыть сведения о группе: {{name}} ({{id}})",
+    "Revoking access may cause existing fixed API keys to return 403; Auto skips inaccessible groups. Regranting access can restore a saved personal rate.": "После отзыва доступа существующие API-ключи с фиксированной группой могут возвращать ошибку 403. Автовыбор пропускает недоступные группы. Повторная выдача доступа может восстановить сохранённый персональный тариф.",
+    "Save or discard pending rate edits before starting a batch.": "Сохраните или отмените несохранённые изменения множителей перед массовым редактированием.",
+    "Save or discard the current group draft before opening another group.": "Сохраните или отмените черновик текущей группы, прежде чем открывать другую группу.",
+    "Select group {{id}}": "Выбрать группу {{id}}",
+    "Select the groups to change. Applying adds only those changes to your draft. Use Save group settings to save them.": "Выберите группы для изменения. При применении в черновик попадут только эти изменения. Чтобы сохранить их, нажмите «Сохранить настройки групп».",
+    "This group is no longer configured. Discard this draft to edit another group.": "Эта группа больше не настроена. Отмените черновик, чтобы изменить другую группу.",
+    "User group override": "Переопределение для группы пользователей",
+    "Without a grant, existing fixed API keys may return 403 and Auto will skip this group.": "Без доступа существующие API-ключи с фиксированной группой могут возвращать ошибку 403, а автовыбор пропустит эту группу.",
     "Base multiplier": "基本倍率",
     "Could not load marketplace activity": "マーケットの更新履歴を読み込めませんでした",
     "Effective time": "適用日時",

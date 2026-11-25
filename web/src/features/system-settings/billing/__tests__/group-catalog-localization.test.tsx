@@ -101,9 +101,10 @@ afterEach(() => {
 
 it('updates editor labels and badge controls on language switch without changing group metadata or the draft', async () => {
   const { instance, user } = await openEditor('groups')
-  await user.selectOptions(
-    await screen.findByRole('combobox', { name: /Group to edit/ }),
-    'gold'
+  await user.click(
+    await screen.findByRole('button', {
+      name: 'Open group details: Custom Tier (gold)',
+    })
   )
   const label = screen.getByRole('textbox', { name: 'Display name' })
   await user.clear(label)

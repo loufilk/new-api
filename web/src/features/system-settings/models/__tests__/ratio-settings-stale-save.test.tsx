@@ -21,7 +21,14 @@ import {
   QueryClientProvider,
   QueryObserver,
 } from '@tanstack/react-query'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import { AxiosError, type AxiosResponse } from 'axios'
 import i18next from 'i18next'
 import { toast } from 'sonner'
@@ -110,7 +117,10 @@ afterEach(() => {
   actionsContainer = null
 })
 
-function renderCard(workspace?: 'pricing' | 'advanced') {
+function renderCard(
+  workspace?: 'pricing' | 'advanced',
+  defaults = GROUP_DEFAULTS
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
@@ -131,7 +141,7 @@ function renderCard(workspace?: 'pricing' | 'advanced') {
       </SettingsPageProvider>
     </QueryClientProvider>
   )
-  const view = render(content(GROUP_DEFAULTS))
+  const view = render(content(defaults))
   return {
     queryClient,
     invalidateSpy,
@@ -207,6 +217,57 @@ test('workspace refresh leaves the dirty ratio and its original CAS baseline int
   expect(JSON.parse(payload.expected.GroupRatio)).toEqual({ vip: 1 })
   expect(JSON.parse(payload.options.GroupRatio)).toEqual({ vip: 0.67 })
   expect(ratio).toHaveValue(0.67)
+})
+
+test('batch preview applies only selected base rates to the draft and preserves the original write fence', async () => {
+  renameSystemGroupsMock.mockRejectedValue(staleAxiosError())
+  const defaults = {
+    ...GROUP_DEFAULTS,
+    GroupRatio: '{"vip":1,"standard":3}',
+    UserUsableGroups: '{"vip":"VIP","restricted":"Private"}',
+  }
+  const { updateDefaults } = renderCard('pricing', defaults)
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Batch edit base rates' })
+  )
+  const dialog = within(
+    await screen.findByRole('dialog', { name: 'Batch edit base rates' })
+  )
+  expect(dialog.queryByText('restricted')).not.toBeInTheDocument()
+  fireEvent.click(dialog.getByRole('checkbox', { name: 'Select group vip' }))
+  expect(dialog.getByRole('button', { name: 'Apply to draft' })).toBeDisabled()
+  fireEvent.change(dialog.getByRole('spinbutton', { name: 'New base rate' }), {
+    target: { value: '-1' },
+  })
+  expect(dialog.getByRole('button', { name: 'Apply to draft' })).toBeDisabled()
+  fireEvent.change(dialog.getByRole('spinbutton', { name: 'New base rate' }), {
+    target: { value: '0' },
+  })
+  expect(dialog.getByText('1× → 0×')).toBeInTheDocument()
+  expect(dialog.getByText('3×')).toBeInTheDocument()
+  fireEvent.click(dialog.getByRole('button', { name: 'Apply to draft' }))
+  expect(renameSystemGroupsMock).not.toHaveBeenCalled()
+  expect(
+    await screen.findByRole('button', { name: 'Batch edit base rates' })
+  ).toBeDisabled()
+  updateDefaults({ ...defaults, GroupRatio: '{"vip":2,"standard":3}' })
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+  await waitFor(() =>
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(STALE_MESSAGE)
+  )
+  const [payload] = renameSystemGroupsMock.mock.calls[0]
+  expect(payload.renames).toEqual([])
+  expect(Object.keys(payload.options)).toEqual(['GroupRatio'])
+  expect(JSON.parse(payload.options.GroupRatio)).toEqual({
+    vip: 0,
+    standard: 3,
+  })
+  expect(JSON.parse(payload.expected.GroupRatio)).toEqual({
+    vip: 1,
+    standard: 3,
+  })
+  const vip = screen.getByRole('row', { name: /vip/ })
+  expect(within(vip).getByRole('spinbutton', { name: 'Ratio' })).toHaveValue(0)
 })
 
 test('workspace freezes both editor input and Save until acknowledgement', async () => {

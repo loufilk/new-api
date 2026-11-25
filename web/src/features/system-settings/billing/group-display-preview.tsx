@@ -39,7 +39,8 @@ export function GroupDisplayPreview(props: {
   // inferred 1×, public projection or other user's cache can supply this price.
   const pricing = useQuery({
     queryKey: ['pricing', `user:${props.scope}`],
-    queryFn: async () => requireServerSuccess(await getPricing()),
+    queryFn: async ({ signal }) =>
+      requireServerSuccess(await getPricing(signal)),
     staleTime: 0,
     retry: false,
     meta: { errorToast: false },
@@ -56,6 +57,7 @@ export function GroupDisplayPreview(props: {
   const model = allowed
     ? data?.data?.find((row) => row.enable_groups?.includes(props.group))
     : undefined
+  const source = data?.group_rate_source?.[props.group]
   const name = props.entry.label?.trim() || props.group
   return (
     <section
@@ -100,6 +102,13 @@ export function GroupDisplayPreview(props: {
                   {t('Effective rate')}: {ratio}×
                 </span>
               </div>
+              <p className='text-muted-foreground mt-1 text-xs'>
+                {t('Price source')}:{' '}
+                {source === 'personal' && t('Personal rate')}
+                {source === 'group_override' && t('User group override')}
+                {source === 'group' && t('Base group rate')}
+                {!source && t('Unavailable')}
+              </p>
             </div>
             <ModelPriceCell
               model={{ ...model, group_ratio: data.group_ratio }}

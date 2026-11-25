@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Batch edit base rates": "Batch edit base rates",
+    "Group access": "Group access",
+    "New base rate": "New base rate",
+    "No matching groups": "No matching groups",
+    "Open group details: {{name}} ({{id}})": "Open group details: {{name}} ({{id}})",
+    "Revoking access may cause existing fixed API keys to return 403; Auto skips inaccessible groups. Regranting access can restore a saved personal rate.": "Revoking access may cause existing fixed API keys to return 403; Auto skips inaccessible groups. Regranting access can restore a saved personal rate.",
+    "Save or discard pending rate edits before starting a batch.": "Save or discard pending rate edits before starting a batch.",
+    "Save or discard the current group draft before opening another group.": "Save or discard the current group draft before opening another group.",
+    "Select group {{id}}": "Select group {{id}}",
+    "Select the groups to change. Applying adds only those changes to your draft. Use Save group settings to save them.": "Select the groups to change. Applying adds only those changes to your draft. Use Save group settings to save them.",
+    "This group is no longer configured. Discard this draft to edit another group.": "This group is no longer configured. Discard this draft to edit another group.",
+    "User group override": "User group override",
+    "Without a grant, existing fixed API keys may return 403 and Auto will skip this group.": "Without a grant, existing fixed API keys may return 403 and Auto will skip this group.",
     "Base multiplier": "Base multiplier",
     "Could not load marketplace activity": "Could not load marketplace activity",
     "Effective time": "Effective time",

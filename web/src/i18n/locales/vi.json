@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Batch edit base rates": "Sửa hàng loạt hệ số cơ sở",
+    "Group access": "Quyền truy cập nhóm",
+    "New base rate": "Hệ số cơ sở mới",
+    "No matching groups": "Không có nhóm phù hợp",
+    "Open group details: {{name}} ({{id}})": "Mở chi tiết nhóm: {{name}} ({{id}})",
+    "Revoking access may cause existing fixed API keys to return 403; Auto skips inaccessible groups. Regranting access can restore a saved personal rate.": "Thu hồi quyền có thể khiến khóa API cố định ở nhóm này trả về lỗi 403. Chế độ Tự động bỏ qua các nhóm không có quyền truy cập. Cấp lại quyền có thể áp dụng lại hệ số cá nhân đã lưu.",
+    "Save or discard pending rate edits before starting a batch.": "Hãy lưu hoặc bỏ các thay đổi hệ số chưa lưu trước khi sửa hàng loạt.",
+    "Save or discard the current group draft before opening another group.": "Hãy lưu hoặc bỏ bản nháp của nhóm hiện tại trước khi mở nhóm khác.",
+    "Select group {{id}}": "Chọn nhóm {{id}}",
+    "Select the groups to change. Applying adds only those changes to your draft. Use Save group settings to save them.": "Chọn các nhóm cần sửa. Thao tác áp dụng chỉ đưa các thay đổi đã chọn vào bản nháp. Chọn “Lưu cài đặt nhóm” để lưu.",
+    "This group is no longer configured. Discard this draft to edit another group.": "Nhóm này không còn được cấu hình. Hãy bỏ bản nháp này để sửa nhóm khác.",
+    "User group override": "Hệ số ghi đè theo nhóm người dùng",
+    "Without a grant, existing fixed API keys may return 403 and Auto will skip this group.": "Nếu không được cấp quyền, các khóa API cố định ở nhóm này có thể trả về lỗi 403 và chế độ Tự động sẽ bỏ qua nhóm.",
     "Base multiplier": "Hệ số cơ sở",
     "Could not load marketplace activity": "Không tải được hoạt động trên danh mục",
     "Effective time": "Thời điểm có hiệu lực",

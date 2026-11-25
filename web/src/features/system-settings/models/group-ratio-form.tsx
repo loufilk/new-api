@@ -257,8 +257,9 @@ export const GroupRatioForm = memo(function GroupRatioForm({
         pendingRename ||
         !showActions ||
         !pricingRowsValid
-      )
+      ) {
         return
+      }
       setSaveError(null)
       const renames = mergeGroupRenameMappings(
         groupRenames,
@@ -435,7 +436,9 @@ export const GroupRatioForm = memo(function GroupRatioForm({
             <Button
               type='button'
               size='sm'
-              onClick={form.handleSubmit(handleSave, handleInvalid)}
+              onClick={(event) =>
+                form.handleSubmit(handleSave, handleInvalid)(event)
+              }
               disabled={submitting || !pricingRowsValid}
             >
               {submitting ? t('Saving...') : t('Save group settings')}
@@ -499,6 +502,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
               }
               onSectionChange={setSection}
               groupRatio={values.GroupRatio ?? ''}
+              savedGroupRatio={baseline.GroupRatio}
               topupGroupRatio={values.TopupGroupRatio ?? ''}
               userUsableGroups={values.UserUsableGroups ?? ''}
               groupGroupRatio={values.GroupGroupRatio ?? ''}
@@ -571,10 +575,12 @@ export const GroupRatioForm = memo(function GroupRatioForm({
         {!showVisual && (
           <SettingsForm
             inert={Boolean(workspacePanel) && submitting}
-            onSubmit={form.handleSubmit(
-              handleSave,
-              workspacePanel ? handleInvalid : undefined
-            )}
+            onSubmit={(event) =>
+              form.handleSubmit(
+                handleSave,
+                workspacePanel ? handleInvalid : undefined
+              )(event)
+            }
           >
             <FormField
               control={form.control}

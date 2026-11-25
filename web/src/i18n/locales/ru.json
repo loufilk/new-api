@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Batch edit base rates": "基本倍率を一括編集",
+    "Group access": "グループのアクセス権",
+    "New base rate": "新しい基本倍率",
+    "No matching groups": "該当するグループはありません",
+    "Open group details: {{name}} ({{id}})": "グループの詳細を開く：{{name}}（{{id}}）",
+    "Revoking access may cause existing fixed API keys to return 403; Auto skips inaccessible groups. Regranting access can restore a saved personal rate.": "アクセス権を取り消すと、固定グループの既存 API キーで 403 が返ることがあります。自動選択ではアクセスできないグループはスキップされます。アクセス権を再付与すると、保存済みの個人別倍率が再び適用される場合があります。",
+    "Save or discard pending rate edits before starting a batch.": "一括編集を始める前に、未保存の倍率変更を保存するか破棄してください。",
+    "Save or discard the current group draft before opening another group.": "別のグループを開く前に、現在のグループの下書きを保存するか破棄してください。",
+    "Select group {{id}}": "グループ {{id}} を選択",
+    "Select the groups to change. Applying adds only those changes to your draft. Use Save group settings to save them.": "変更するグループを選択してください。適用すると、その変更だけが下書きに追加されます。「グループ設定を保存」で変更を保存してください。",
+    "This group is no longer configured. Discard this draft to edit another group.": "このグループは設定から削除されました。別のグループを編集するには、この下書きを破棄してください。",
+    "User group override": "ユーザーグループの上書き倍率",
+    "Without a grant, existing fixed API keys may return 403 and Auto will skip this group.": "アクセス権がない場合、固定グループの既存 API キーで 403 が返り、自動選択ではこのグループがスキップされます。",
     "Base multiplier": "Базовый множитель",
     "Could not load marketplace activity": "Не удалось загрузить обновления каталога",
     "Effective time": "Вступило в силу",

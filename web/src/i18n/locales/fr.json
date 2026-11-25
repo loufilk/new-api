@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Batch edit base rates": "Modifier les multiplicateurs de base par lot",
+    "Group access": "Accès au groupe",
+    "New base rate": "Nouveau multiplicateur de base",
+    "No matching groups": "Aucun groupe correspondant",
+    "Open group details: {{name}} ({{id}})": "Ouvrir les détails du groupe : {{name}} ({{id}})",
+    "Revoking access may cause existing fixed API keys to return 403; Auto skips inaccessible groups. Regranting access can restore a saved personal rate.": "Révoquer l’accès peut entraîner une erreur 403 pour les clés API liées à ce groupe. Le mode automatique ignore les groupes inaccessibles. Rétablir l’accès peut réactiver le tarif individuel enregistré.",
+    "Save or discard pending rate edits before starting a batch.": "Enregistrez ou abandonnez les modifications de multiplicateur en cours avant de lancer une modification par lot.",
+    "Save or discard the current group draft before opening another group.": "Enregistrez ou abandonnez le brouillon du groupe en cours avant d’ouvrir un autre groupe.",
+    "Select group {{id}}": "Sélectionner le groupe {{id}}",
+    "Select the groups to change. Applying adds only those changes to your draft. Use Save group settings to save them.": "Sélectionnez les groupes à modifier. Appliquer ajoute uniquement ces modifications au brouillon. Utilisez « Enregistrer les paramètres des groupes » pour les enregistrer.",
+    "This group is no longer configured. Discard this draft to edit another group.": "Ce groupe n’est plus configuré. Abandonnez ce brouillon pour modifier un autre groupe.",
+    "User group override": "Multiplicateur du groupe d’utilisateurs",
+    "Without a grant, existing fixed API keys may return 403 and Auto will skip this group.": "Sans autorisation, les clés API liées à ce groupe peuvent renvoyer une erreur 403, et le mode automatique ignorera ce groupe.",
     "Base multiplier": "Multiplicateur de base",
     "Could not load marketplace activity": "Impossible de charger l’activité du catalogue",
     "Effective time": "Prise d’effet",

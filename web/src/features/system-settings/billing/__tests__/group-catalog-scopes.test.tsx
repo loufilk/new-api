@@ -37,6 +37,13 @@ const catalogue = {
       badges: [],
       exclusive: false,
     },
+    othernormal: {
+      label: 'Standard',
+      platform: 'other',
+      sort_order: 0,
+      badges: [],
+      exclusive: false,
+    },
     limited: {
       label: 'Access only',
       platform: 'other',
@@ -65,6 +72,7 @@ function open() {
         data: {
           success: true,
           group_ratio: { standard: 0 },
+          group_rate_source: { standard: 'personal' },
           usable_group: { standard: 'enabled' },
           data: [
             {
@@ -132,7 +140,7 @@ function open() {
         renderRatio={() => null}
         renderCatalog={(panel) => (
           <GroupCatalogSettings
-            groupRatios='{"standard":2.5,"limited":4}'
+            groupRatios='{"standard":2.5,"limited":4,"othernormal":0.75}'
             panel={panel}
           />
         )}
@@ -144,9 +152,10 @@ function open() {
 
 it('shows the actual viewer quote separately from the base ratio and previews a label before writing any data', async () => {
   const { user, patch, post, put } = open()
-  await user.selectOptions(
-    await screen.findByRole('combobox', { name: /Group to edit/ }),
-    'standard'
+  await user.click(
+    await screen.findByRole('button', {
+      name: 'Open group details: Standard (standard)',
+    })
   )
   const preview = within(
     screen.getByRole('region', { name: 'Group display preview' })
@@ -154,6 +163,7 @@ it('shows the actual viewer quote separately from the base ratio and previews a 
   expect(await preview.findByText('visible-model')).toBeVisible()
   expect(preview.getByText(/Base group rate: 2.5×/)).toBeVisible()
   expect(preview.getByText(/Effective rate: 0×/)).toBeVisible()
+  expect(preview.getByText('Price source: Personal rate')).toBeVisible()
   await user.clear(screen.getByRole('textbox', { name: 'Display name' }))
   await user.type(
     screen.getByRole('textbox', { name: 'Display name' }),
@@ -192,9 +202,10 @@ it('shows the actual viewer quote separately from the base ratio and previews a 
 
 it('does not quote a model or create a fallback 1× when the configured group is absent from the viewer response', async () => {
   const { user, get } = open()
-  await user.selectOptions(
-    await screen.findByRole('combobox', { name: /Group to edit/ }),
-    'limited'
+  await user.click(
+    await screen.findByRole('button', {
+      name: 'Open group details: Access only (limited)',
+    })
   )
   const preview = within(
     screen.getByRole('region', { name: 'Group display preview' })
@@ -211,14 +222,16 @@ it('does not quote a model or create a fallback 1× when the configured group is
 
 it('requires explicit confirmation for group visibility, keeps the unsaved display draft and rebases only its display fields', async () => {
   const { user, patch, post, put } = open()
-  await user.selectOptions(
-    await screen.findByRole('combobox', { name: /Group to edit/ }),
-    'standard'
+  await user.click(
+    await screen.findByRole('button', {
+      name: 'Open group details: Standard (standard)',
+    })
   )
   await user.type(
     screen.getByRole('textbox', { name: 'Display name' }),
     ' draft'
   )
+  await user.keyboard('{Escape}')
   await user.click(
     screen.getByRole('button', { name: 'Exclusive group access' })
   )
@@ -232,6 +245,9 @@ it('requires explicit confirmation for group visibility, keeps the unsaved displ
   )
   const dialog = await screen.findByRole('alertdialog')
   expect(patch).not.toHaveBeenCalled()
+  expect(dialog).toHaveTextContent(
+    'existing fixed API keys may return 403 and Auto will skip this group'
+  )
   await user.click(
     within(dialog).getByRole('button', { name: 'Save visibility policy' })
   )
@@ -241,6 +257,7 @@ it('requires explicit confirmation for group visibility, keeps the unsaved displ
     groups: { standard: { label: 'Standard', exclusive: true } },
   })
   await user.click(screen.getByRole('button', { name: 'Marketplace display' }))
+  await user.click(screen.getByRole('button', { name: 'Resume' }))
   expect(screen.getByRole('textbox', { name: 'Display name' })).toHaveValue(
     'Standard draft'
   )
@@ -311,4 +328,100 @@ it('saves a personal price without granting a pending exclusive group, then save
   ])
   expect(patch).not.toHaveBeenCalled()
   expect(post).not.toHaveBeenCalled()
+})
+
+it('finds groups by ID or display name and filters Other independently of exclusive access', async () => {
+  const { user, patch } = open()
+  const search = await screen.findByRole('textbox', { name: 'Search groups' })
+  await user.type(search, 'STANDARD')
+  expect(
+    screen.getByRole('button', {
+      name: 'Open group details: Standard (standard)',
+    })
+  ).toBeVisible()
+  expect(
+    screen.getByRole('button', {
+      name: 'Open group details: Standard (othernormal)',
+    })
+  ).toBeVisible()
+  await user.clear(search)
+  await user.type(search, 'othernormal')
+  expect(
+    screen.queryByRole('button', {
+      name: 'Open group details: Standard (standard)',
+    })
+  ).toBeNull()
+  await user.clear(search)
+  await user.selectOptions(
+    screen.getByRole('combobox', { name: 'Platform' }),
+    'other'
+  )
+  await user.selectOptions(
+    screen.getByRole('combobox', { name: 'Group access' }),
+    'normal'
+  )
+  expect(
+    screen.queryByRole('button', {
+      name: 'Open group details: Access only (limited)',
+    })
+  ).toBeNull()
+  const target = screen.getByRole('button', {
+    name: 'Open group details: Standard (othernormal)',
+  })
+  expect(target).toHaveTextContent('Base group rate: 0.75×')
+  await user.click(target)
+  const sheet = await screen.findByRole('dialog', {
+    name: 'Group details: Standard',
+  })
+  expect(sheet).toHaveTextContent('ID: othernormal')
+  expect(sheet).toHaveClass('w-full', 'sm:max-w-xl')
+  await user.keyboard('{Escape}')
+  expect(target).toHaveFocus()
+  await user.selectOptions(
+    screen.getByRole('combobox', { name: 'Group access' }),
+    'exclusive'
+  )
+  expect(
+    screen.getByRole('button', {
+      name: 'Open group details: Access only (limited)',
+    })
+  ).toBeVisible()
+  await user.type(search, 'noSuchGroup')
+  expect(screen.getByText('No matching groups')).toBeVisible()
+  expect(patch).not.toHaveBeenCalled()
+})
+
+it('parks a closed unsaved draft and disables other rows until the draft is discarded', async () => {
+  const { user, patch } = open()
+  await user.click(
+    await screen.findByRole('button', {
+      name: 'Open group details: Standard (standard)',
+    })
+  )
+  await user.type(
+    screen.getByRole('textbox', { name: 'Display name' }),
+    ' draft'
+  )
+  await user.keyboard('{Escape}')
+  expect(
+    screen.getByRole('button', {
+      name: 'Open group details: Access only (limited)',
+    })
+  ).toBeDisabled()
+  const search = screen.getByRole('textbox', { name: 'Search groups' })
+  await user.type(search, 'limited')
+  await user.click(screen.getByRole('button', { name: 'Resume' }))
+  expect(screen.getByRole('textbox', { name: 'Display name' })).toHaveValue(
+    'Standard draft'
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Discard display draft' })
+  )
+  await user.keyboard('{Escape}')
+  expect(
+    screen.getByRole('button', {
+      name: 'Open group details: Access only (limited)',
+    })
+  ).toBeEnabled()
+  expect(patch).not.toHaveBeenCalled()
 })

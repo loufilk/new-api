@@ -87,6 +87,7 @@ import { formatNumber } from '@/lib/format'
 
 import type { GroupRenameMapping } from '../types'
 import { safeJsonParse } from '../utils/json-parser'
+import { GroupBaseRateBatch } from './group-base-rate-batch'
 import { collectGroupRenames } from './group-rename'
 import { GroupSpecialUsableRulesEditor } from './group-special-usable-editor'
 
@@ -103,6 +104,7 @@ type GroupRatioVisualEditorProps = {
   workspaceActive?: boolean
   defaultUseAutoGroupField: ReactNode
   groupRatio: string
+  savedGroupRatio?: string
   topupGroupRatio: string
   userUsableGroups: string
   groupGroupRatio: string
@@ -324,6 +326,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
   workspaceActive = true,
   defaultUseAutoGroupField,
   groupRatio,
+  savedGroupRatio,
   topupGroupRatio,
   userUsableGroups,
   groupGroupRatio,
@@ -436,6 +439,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
             workspacePanel === 'pricing' ? '{}' : topupGroupRatio
           }
           baseOnly={workspacePanel === 'pricing'}
+          savedGroupRatio={workspaceActive ? savedGroupRatio : undefined}
           newGroupSelectable={!workspacePanel}
           pendingRenames={pendingRenames}
           onRenamesChange={onRenamesChange}
@@ -549,6 +553,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
 
 type GroupPricingTableProps = {
   groupRatio: string
+  savedGroupRatio?: string
   userUsableGroups: string
   topupGroupRatio: string
   baseOnly?: boolean
@@ -562,6 +567,7 @@ type GroupPricingTableProps = {
 
 function GroupPricingTable({
   groupRatio,
+  savedGroupRatio,
   userUsableGroups,
   topupGroupRatio,
   baseOnly = false,
@@ -686,6 +692,27 @@ function GroupPricingTable({
       .map(([name]) => name)
   }, [rows])
 
+  const savedRates = savedGroupRatio
+    ? parseRatioMap(savedGroupRatio)
+    : undefined
+  const batchReady =
+    !!savedRates &&
+    Object.keys(savedRates).length === rows.length &&
+    rows.every(
+      (row) =>
+        row.originalName === row.name &&
+        row.name.trim() === row.name &&
+        row.name !== '__proto__' &&
+        Object.hasOwn(savedRates, row.name) &&
+        isCompleteGroupRatio(row.ratio) &&
+        Number(row.ratio) === savedRates[row.name]
+    )
+  const batchGroups = batchReady
+    ? rows
+        .filter((row) => row.name !== 'auto' && row.name !== 'all')
+        .map((row) => ({ id: row.name, ratio: Number(row.ratio) }))
+    : []
+
   const query = search.trim().toLowerCase()
   const visibleRows = rows.filter(
     (row) =>
@@ -710,6 +737,25 @@ function GroupPricingTable({
                   )}
             </CardDescription>
           </div>
+          {baseOnly && savedGroupRatio !== undefined && (
+            <GroupBaseRateBatch
+              key={savedGroupRatio}
+              groups={batchGroups}
+              disabled={!batchReady}
+              onStage={(ids, rate) => {
+                const available = new Set(batchGroups.map((group) => group.id))
+                if (!batchReady || !ids.every((id) => available.has(id))) {
+                  return
+                }
+                const selected = new Set(ids)
+                emitRows(
+                  rows.map((row) =>
+                    selected.has(row.name) ? { ...row, ratio: rate } : row
+                  )
+                )
+              }}
+            />
+          )}
           {!baseOnly && (
             <Button onClick={addRow} size='sm' className='sm:self-start'>
               <Plus className='mr-2 h-4 w-4' />
