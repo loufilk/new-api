@@ -1,5 +1,8 @@
 {
   "translation": {
+    "This application changed while you were reviewing it. Load the latest status before continuing.": "This application changed while you were reviewing it. Load the latest status before continuing.",
+    "Reload latest application": "Reload latest application",
+    "This application is read-only for your account.": "This application is read-only for your account.",
     "Account": "Account",
     "Balance Ledger": "Balance Ledger",
     "Bonus": "Bonus",
@@ -253,6 +256,8 @@
     "This invoice category is currently unavailable": "This invoice category is currently unavailable",
     "Update the server to edit invoice categories.": "Update the server to edit invoice categories.",
     "Invoice fee refund": "Invoice fee refund",
-    "Site information": "Site information"
+    "Site information": "Site information",
+    "Press Enter to add a model.": "Press Enter to add a model.",
+    "Top-up rates, settlement terms, or anything else you would like to share.": "Top-up rates, settlement terms, or anything else you would like to share."
   }
 }

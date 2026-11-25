@@ -338,6 +338,7 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 		}
 		registerChannelRoutes(apiRouter)
 		registerAuthzRoutes(apiRouter)
+		apiRouter.GET("/token/group-health", middleware.DisableCache(), middleware.TokenManagementAuth(), controller.GetTokenGroupHealth)
 		tokenRoute := apiRouter.Group("/token")
 		tokenRoute.Use(middleware.TokenManagementAuth())
 		tokenRoute.Use(middleware.TokenOperationAudit())

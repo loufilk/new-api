@@ -1,5 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Globe2, Layers3, Plus } from 'lucide-react'
 import { useMemo } from 'react'
 import { useFieldArray, useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -98,7 +99,13 @@ export function PartnerApplicationForm(props: {
       <fieldset disabled={disabled} className='flex min-w-0 flex-col gap-4'>
         <Card className='min-w-0'>
           <CardHeader>
-            <CardTitle>{t('Site information')}</CardTitle>
+            <CardTitle className='flex items-center gap-2'>
+              <Globe2
+                className='text-muted-foreground size-4'
+                aria-hidden='true'
+              />
+              {t('Site information')}
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <FieldGroup className='grid min-w-0 gap-3 sm:grid-cols-2'>
@@ -177,6 +184,9 @@ export function PartnerApplicationForm(props: {
                 <Textarea
                   id='partner-description'
                   {...form.register('description')}
+                  placeholder={t(
+                    'Top-up rates, settlement terms, or anything else you would like to share.'
+                  )}
                   maxLength={3000}
                   rows={3}
                 />
@@ -186,7 +196,13 @@ export function PartnerApplicationForm(props: {
         </Card>
         <Card className='min-w-0'>
           <CardHeader className='flex flex-wrap items-center justify-between gap-2'>
-            <CardTitle>{t('Available groups')}</CardTitle>
+            <CardTitle className='flex items-center gap-2'>
+              <Layers3
+                className='text-muted-foreground size-4'
+                aria-hidden='true'
+              />
+              {t('Available groups')}
+            </CardTitle>
             <span className='text-muted-foreground text-xs'>
               {t('{{current}} / {{maximum}} maximum', {
                 current: quotes.fields.length,
@@ -226,6 +242,7 @@ export function PartnerApplicationForm(props: {
               type='button'
               variant='outline'
               size='sm'
+              className='self-start'
               disabled={disabled || quotes.fields.length >= maxPartnerGroups}
               onClick={() =>
                 quotes.append(
@@ -236,15 +253,11 @@ export function PartnerApplicationForm(props: {
                 )
               }
             >
+              <Plus aria-hidden='true' />
               {t('Add group')}
             </Button>
 
-            <p className='text-muted-foreground text-xs'>
-              {t(
-                'Do not include API keys. Submitted applications cannot be edited.'
-              )}
-            </p>
-            <div className='flex justify-end'>
+            <div className='flex justify-end border-t pt-3'>
               <Button type='submit' disabled={disabled}>
                 {mutation.isPending
                   ? t('Submitting…')

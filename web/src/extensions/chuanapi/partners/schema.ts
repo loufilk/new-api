@@ -2,6 +2,8 @@ import { z } from 'zod'
 
 import { maxPartnerGroups, partnerContacts, partnerPlatforms } from './catalog'
 
+export const maxPartnerModelsLength = 500
+
 const rateSchema = z
   .string()
   .regex(/^\d{1,4}(?:\.\d{1,6})?$/)
@@ -41,7 +43,7 @@ export const partnerApplicationSchema = z
           platform: z.enum(partnerPlatforms),
           group: z.string().trim().min(1).max(120),
           rate: rateSchema,
-          models: z.string().trim().max(500),
+          models: z.string().trim().max(maxPartnerModelsLength),
           description: z.string().trim().max(500),
         })
       )

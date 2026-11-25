@@ -26,6 +26,8 @@ import { Route as errors403RouteImport } from './routes/(errors)/403'
 import { Route as errors404RouteImport } from './routes/(errors)/404'
 import { Route as errors500RouteImport } from './routes/(errors)/500'
 import { Route as errors503RouteImport } from './routes/(errors)/503'
+import { Route as AuthenticatedPartnerRouteImport } from './routes/_authenticated/partner'
+import { Route as AuthenticatedPartnerApplyRouteImport } from './routes/_authenticated/partner-apply'
 import { Route as AuthenticatedSystemSettingsRouteRouteImport } from './routes/_authenticated/system-settings/route'
 import { Route as AboutIndexRouteImport } from './routes/about/index'
 import { Route as AgentPayPublicIDRouteImport } from './routes/agent-pay/$publicID'
@@ -174,6 +176,17 @@ const errors503Route = errors503RouteImport.update({
   path: '/503',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedPartnerRoute = AuthenticatedPartnerRouteImport.update({
+  id: '/partner',
+  path: '/partner',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedPartnerApplyRoute =
+  AuthenticatedPartnerApplyRouteImport.update({
+    id: '/partner-apply',
+    path: '/partner-apply',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedSystemSettingsRouteRoute =
   AuthenticatedSystemSettingsRouteRouteImport.update({
     id: '/system-settings',
@@ -561,6 +574,8 @@ export interface FileRoutesByFullPath {
   '/404': typeof errors404Route
   '/500': typeof errors500Route
   '/503': typeof errors503Route
+  '/partner': typeof AuthenticatedPartnerRoute
+  '/partner-apply': typeof AuthenticatedPartnerApplyRoute
   '/agent-pay/$publicID': typeof AgentPayPublicIDRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
@@ -641,6 +656,8 @@ export interface FileRoutesByTo {
   '/404': typeof errors404Route
   '/500': typeof errors500Route
   '/503': typeof errors503Route
+  '/partner': typeof AuthenticatedPartnerRoute
+  '/partner-apply': typeof AuthenticatedPartnerApplyRoute
   '/agent-pay/$publicID': typeof AgentPayPublicIDRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about': typeof AboutIndexRoute
@@ -725,6 +742,8 @@ export interface FileRoutesById {
   '/(errors)/404': typeof errors404Route
   '/(errors)/500': typeof errors500Route
   '/(errors)/503': typeof errors503Route
+  '/_authenticated/partner': typeof AuthenticatedPartnerRoute
+  '/_authenticated/partner-apply': typeof AuthenticatedPartnerApplyRoute
   '/agent-pay/$publicID': typeof AgentPayPublicIDRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
@@ -808,6 +827,8 @@ export interface FileRouteTypes {
     | '/404'
     | '/500'
     | '/503'
+    | '/partner'
+    | '/partner-apply'
     | '/agent-pay/$publicID'
     | '/oauth/$provider'
     | '/about/'
@@ -888,6 +909,8 @@ export interface FileRouteTypes {
     | '/404'
     | '/500'
     | '/503'
+    | '/partner'
+    | '/partner-apply'
     | '/agent-pay/$publicID'
     | '/oauth/$provider'
     | '/about'
@@ -971,6 +994,8 @@ export interface FileRouteTypes {
     | '/(errors)/404'
     | '/(errors)/500'
     | '/(errors)/503'
+    | '/_authenticated/partner'
+    | '/_authenticated/partner-apply'
     | '/agent-pay/$publicID'
     | '/oauth/$provider'
     | '/about/'
@@ -1180,6 +1205,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/503'
       preLoaderRoute: typeof errors503RouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/partner': {
+      id: '/_authenticated/partner'
+      path: '/partner'
+      fullPath: '/partner'
+      preLoaderRoute: typeof AuthenticatedPartnerRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/partner-apply': {
+      id: '/_authenticated/partner-apply'
+      path: '/partner-apply'
+      fullPath: '/partner-apply'
+      preLoaderRoute: typeof AuthenticatedPartnerApplyRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/system-settings': {
       id: '/_authenticated/system-settings'
@@ -1723,6 +1762,8 @@ const AuthenticatedSystemSettingsRouteRouteWithChildren =
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedSystemSettingsRouteRoute: typeof AuthenticatedSystemSettingsRouteRouteWithChildren
+  AuthenticatedPartnerRoute: typeof AuthenticatedPartnerRoute
+  AuthenticatedPartnerApplyRoute: typeof AuthenticatedPartnerApplyRoute
   AuthenticatedAgentPlatformClaimRoute: typeof AuthenticatedAgentPlatformClaimRoute
   AuthenticatedAgentPlatformFinanceRoute: typeof AuthenticatedAgentPlatformFinanceRoute
   AuthenticatedDashboardSectionRoute: typeof AuthenticatedDashboardSectionRoute
@@ -1762,6 +1803,8 @@ interface AuthenticatedRouteRouteChildren {
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedSystemSettingsRouteRoute:
     AuthenticatedSystemSettingsRouteRouteWithChildren,
+  AuthenticatedPartnerRoute: AuthenticatedPartnerRoute,
+  AuthenticatedPartnerApplyRoute: AuthenticatedPartnerApplyRoute,
   AuthenticatedAgentPlatformClaimRoute: AuthenticatedAgentPlatformClaimRoute,
   AuthenticatedAgentPlatformFinanceRoute:
     AuthenticatedAgentPlatformFinanceRoute,

@@ -1,5 +1,8 @@
 {
   "translation": {
+    "This application changed while you were reviewing it. Load the latest status before continuing.": "Cette demande a changé pendant son examen. Chargez son dernier statut avant de continuer.",
+    "Reload latest application": "Recharger la demande",
+    "This application is read-only for your account.": "Votre compte peut uniquement consulter cette demande.",
     "{{count}} announcements deleted. Click \"Save Settings\" to apply.": "{{count}} annonces supprimées. Cliquez sur « Enregistrer les paramètres » pour appliquer.",
     "{{count}} API entries deleted. Click \"Save Settings\" to apply.": "{{count}} entrées API supprimées. Cliquez sur « Enregistrer les paramètres » pour appliquer.",
     "{{count}} FAQs deleted. Click \"Save Settings\" to apply.": "{{count}} FAQ supprimées. Cliquez sur « Enregistrer les paramètres » pour appliquer.",
@@ -253,6 +256,8 @@
     "This invoice category is currently unavailable": "Cette catégorie de facturation est actuellement indisponible",
     "Update the server to edit invoice categories.": "Mettez à jour le serveur pour pouvoir modifier les catégories de facturation.",
     "Invoice fee refund": "Remboursement des frais d’émission de facture",
-    "Site information": "Informations sur le site"
+    "Site information": "Informations sur le site",
+    "Press Enter to add a model.": "Appuyez sur Entrée pour ajouter un modèle.",
+    "Top-up rates, settlement terms, or anything else you would like to share.": "Taux de recharge, modalités de règlement ou toute autre précision."
   }
 }

@@ -1,5 +1,8 @@
 {
   "translation": {
+    "This application changed while you were reviewing it. Load the latest status before continuing.": "Đơn này đã thay đổi trong lúc bạn xét duyệt. Hãy tải trạng thái mới nhất trước khi tiếp tục.",
+    "Reload latest application": "Tải lại đơn mới nhất",
+    "This application is read-only for your account.": "Tài khoản của bạn chỉ có thể xem đơn này.",
     "{{count}} announcements deleted. Click \"Save Settings\" to apply.": "Đã xóa {{count}} thông báo. Nhấp “Lưu cài đặt” để áp dụng.",
     "{{count}} API entries deleted. Click \"Save Settings\" to apply.": "Đã xóa {{count}} mục API. Nhấp “Lưu cài đặt” để áp dụng.",
     "{{count}} FAQs deleted. Click \"Save Settings\" to apply.": "Đã xóa {{count}} mục FAQ. Nhấp “Lưu cài đặt” để áp dụng.",
@@ -253,6 +256,8 @@
     "This invoice category is currently unavailable": "Hạng mục xuất hóa đơn này hiện không khả dụng",
     "Update the server to edit invoice categories.": "Hãy cập nhật máy chủ để có thể chỉnh sửa các hạng mục xuất hóa đơn.",
     "Invoice fee refund": "Hoàn phí xuất hóa đơn",
-    "Site information": "Thông tin trang web"
+    "Site information": "Thông tin trang web",
+    "Press Enter to add a model.": "Nhấn Enter để thêm mô hình.",
+    "Top-up rates, settlement terms, or anything else you would like to share.": "Tỷ lệ nạp tiền, phương thức thanh toán hoặc các thông tin khác bạn muốn chia sẻ."
   }
 }

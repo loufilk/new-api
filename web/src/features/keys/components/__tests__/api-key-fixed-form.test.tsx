@@ -37,6 +37,7 @@ import type { MarketKeyDraft } from '../../lib/market-key-draft'
 import { apiKeySchema, type ApiKey } from '../../types'
 import { ApiKeysMutateDrawer } from '../api-keys-mutate-drawer'
 import { ApiKeysProvider } from '../api-keys-provider'
+import type { KeyGroupPreviewDetails } from '../key-group-cards'
 
 const i18n = createInstance()
 await i18n.init({
@@ -80,10 +81,12 @@ function openEditor({
   entry,
   draft,
   groups = options,
+  previewDetails,
 }: {
   entry?: ApiKey
   draft?: MarketKeyDraft
   groups?: Record<string, unknown>
+  previewDetails?: KeyGroupPreviewDetails
 } = {}) {
   const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url === '/api/user/self/groups') {
@@ -116,6 +119,7 @@ function openEditor({
             open
             currentRow={entry}
             draft={draft}
+            previewDetails={previewDetails}
             onOpenChange={close}
           />
         </ApiKeysProvider>
@@ -134,23 +138,43 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-test('creates a fixed key only after selecting one authorized radio card', async () => {
+async function pickGroup(
+  user: ReturnType<typeof userEvent.setup>,
+  name: string
+) {
+  await user.click(await screen.findByRole('button', { name }))
+  await user.click(
+    within(screen.getByRole('region', { name: 'Group preview' })).getByRole(
+      'button',
+      { name: 'Set as primary channel' }
+    )
+  )
+}
+
+test('creates a fixed Key only after confirming one authorized preview and explicitly submitting', async () => {
   const { user, post } = openEditor()
   await user.type(await screen.findByLabelText('Token Name'), 'New key')
   const save = screen.getByRole('button', { name: 'Create' })
   expect(save).toBeDisabled()
   expect(screen.queryByText('Legacy Auto')).not.toBeInTheDocument()
   expect(screen.queryByText('Smart Routing')).not.toBeInTheDocument()
-  await user.click(screen.getByRole('radio', { name: /Group One/ }))
-  await user.click(screen.getByRole('button', { name: 'Other' }))
+  await user.click(screen.getByRole('button', { name: 'Group One' }))
+  expect(save).toBeDisabled()
+  expect(post).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('button', { name: 'Other 1' }))
   expect(
-    screen.queryByRole('radio', { name: /Group One/ })
+    screen.queryByRole('button', { name: 'Group One' })
   ).not.toBeInTheDocument()
-  expect(screen.getByText('Selected: Group One')).toBeVisible()
-  await user.click(screen.getByRole('radio', { name: /Group Two/ }))
-  await user.click(screen.getByRole('button', { name: 'All' }))
-  expect(screen.getByRole('radio', { name: /Group One/ })).not.toBeChecked()
-  expect(screen.getByRole('radio', { name: /Group Two/ })).toBeChecked()
+  await pickGroup(user, 'Group Two')
+  await user.click(screen.getByRole('button', { name: 'All 2' }))
+  expect(screen.getByText('Selected: Group Two')).toBeVisible()
+  expect(screen.queryByText('Selected: Group One')).not.toBeInTheDocument()
+  const filter = screen.getByRole('textbox', {
+    name: 'Search by group name, description, or platform',
+  })
+  await user.click(filter)
+  await user.keyboard('{Enter}')
+  expect(post).not.toHaveBeenCalled()
   await user.click(save)
   expect(post).toHaveBeenCalledTimes(1)
   expect(post).toHaveBeenCalledWith('/api/token/', {
@@ -162,6 +186,7 @@ test('creates a fixed key only after selecting one authorized radio card', async
     model_limits_enabled: false,
     model_limits: '',
     allow_ips: '',
+    allow_user_quota_query: true,
   })
 })
 
@@ -197,7 +222,7 @@ test('keeps create and cancel outside the scrollable fields when advanced settin
   expect(post).not.toHaveBeenCalled()
 })
 
-test('a keyboard chooses exactly one eligible group and announces the whole description and explicit zero rate', async () => {
+test('keyboard previews without choosing and announces a spaced group’s whole description and explicit zero rate', async () => {
   const description =
     'Authorized testing group with a longer custom description'
   const { user, post } = openEditor({
@@ -209,24 +234,120 @@ test('a keyboard chooses exactly one eligible group and announces the whole desc
         catalog: { label: 'Team Test', exclusive: true },
       },
     },
+    previewDetails: ({ groupId }) => <p>Preview fixture: {groupId}</p>,
   })
-  const one = await screen.findByRole('radio', { name: 'Group One' })
-  const two = screen.getByRole('radio', { name: 'Group Two' })
-  const free = screen.getByRole('radio', { name: 'Team Test' })
-  expect(one).not.toBeChecked()
-  expect(free).toHaveAccessibleDescription(`0× Exclusive ${description}`)
+  const one = await screen.findByRole('button', { name: 'Group One' })
+  const free = screen.getByRole('button', { name: 'Team Test' })
+  expect(free).toHaveAccessibleDescription(`${description} 0× Exclusive`)
   expect(
-    screen.getByRole('button', { name: 'OpenAI' }).querySelector('svg')
+    screen.getByRole('button', { name: 'OpenAI 1' }).querySelector('svg')
   ).toBeInTheDocument()
+  expect(screen.queryByText(/Preview fixture/)).not.toBeInTheDocument()
   one.focus()
+  await user.keyboard('{Enter}')
+  const preview = screen.getByRole('region', { name: 'Group preview' })
+  expect(within(preview).getByText('Preview fixture: a')).toBeVisible()
+  expect(one).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.queryByText('Selected: Group One')).not.toBeInTheDocument()
+  const choose = within(preview).getByRole('button', {
+    name: 'Set as primary channel',
+  })
+  choose.focus()
   await user.keyboard('[Space]')
-  expect(one).toBeChecked()
-  await user.keyboard('{ArrowRight}')
-  expect(two).toHaveFocus()
-  expect(two).toBeChecked()
-  expect(one).not.toBeChecked()
-  expect(screen.getByText('Selected: Group Two')).toBeVisible()
+  expect(screen.getByText('Selected: Group One')).toBeVisible()
+  expect(choose).toBeDisabled()
   expect(post).not.toHaveBeenCalled()
+})
+
+test('searches group descriptions and platform and sorts real multipliers both ways', async () => {
+  const { user, post } = openEditor()
+  const search = await screen.findByRole('textbox', {
+    name: 'Search by group name, description, or platform',
+  })
+  const groups = within(screen.getByRole('group', { name: 'Groups' }))
+  const sort = screen.getByRole('combobox', { name: 'Sort groups' })
+  await user.type(search, 'openai')
+  expect(groups.getByRole('button', { name: 'Group One' })).toBeVisible()
+  expect(
+    groups.queryByRole('button', { name: 'Group Two' })
+  ).not.toBeInTheDocument()
+  await user.clear(search)
+  await user.type(search, 'restricted')
+  expect(groups.getByRole('button', { name: 'Group Two' })).toBeVisible()
+  await user.clear(search)
+  await user.selectOptions(sort, 'ascending')
+  expect(
+    groups
+      .getAllByRole('button')
+      .map((item) => item.getAttribute('aria-pressed'))
+  ).toHaveLength(2)
+  expect(groups.getAllByRole('button')[0]).toHaveAccessibleName('Group Two')
+  await user.selectOptions(sort, 'descending')
+  expect(groups.getAllByRole('button')[0]).toHaveAccessibleName('Group One')
+  expect(post).not.toHaveBeenCalled()
+})
+
+test('opens and closes the narrow inspector without mounting hidden health or committing a group', async () => {
+  const original = window.matchMedia
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+    ...original(query),
+    matches: query === '(max-width: 1023px)' || original(query).matches,
+  }))
+  const { user, post } = openEditor({
+    previewDetails: ({ groupId }) => <p>Preview fixture: {groupId}</p>,
+  })
+  const group = await screen.findByRole('button', { name: 'Group One' })
+  await user.click(group)
+  const title = screen.getByRole('heading', { name: 'Group preview' })
+  await waitFor(() => expect(title).toHaveFocus())
+  expect(screen.getByText('Preview fixture: a')).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Back to group list' }))
+  await waitFor(() => expect(group).toHaveFocus())
+  expect(screen.queryByText('Preview fixture: a')).not.toBeInTheDocument()
+  expect(screen.queryByText('Selected: Group One')).not.toBeInTheDocument()
+  expect(post).not.toHaveBeenCalled()
+})
+
+test('exposes an initially enabled create quota-query permission; explicit false is sent without affecting limits', async () => {
+  const { user, post } = openEditor()
+  await user.type(await screen.findByLabelText('Token Name'), 'Quota query off')
+  await pickGroup(user, 'Group One')
+  await user.click(screen.getByRole('button', { name: 'Advanced Settings' }))
+  const setting = screen.getByRole('switch', {
+    name: 'Allow querying user quota',
+  })
+  expect(setting).toBeChecked()
+  await user.click(setting)
+  await user.click(screen.getByRole('button', { name: 'Create' }))
+  expect(post).toHaveBeenLastCalledWith(
+    '/api/token/',
+    expect.objectContaining({
+      group: 'a',
+      allow_user_quota_query: false,
+      remain_quota: 0,
+      unlimited_quota: true,
+      expired_time: -1,
+    })
+  )
+})
+
+test('editing a saved disabled quota-query permission updates only that option when changed', async () => {
+  const { user, put } = openEditor({
+    entry: { ...saved, allow_user_quota_query: false },
+  })
+  await screen.findByLabelText('Token Name')
+  await user.click(screen.getByRole('button', { name: 'Advanced Settings' }))
+  const setting = screen.getByRole('switch', {
+    name: 'Allow querying user quota',
+  })
+  expect(setting).not.toBeChecked()
+  await user.click(setting)
+  await user.click(screen.getByRole('button', { name: 'Save changes' }))
+  expect(put).toHaveBeenCalledExactlyOnceWith('/api/token/', {
+    id: 7,
+    expected_version: 17,
+    allow_user_quota_query: true,
+  })
 })
 
 test('does not rewrite expiry, remaining quota, dormant restrictions or legacy settings on rename', async () => {
@@ -253,9 +374,8 @@ test('does not rewrite expiry, remaining quota, dormant restrictions or legacy s
 
 test('can explicitly adopt the same concrete group once used by a legacy smart key', async () => {
   const { user, put } = openEditor({ entry: { ...saved, smart_routing: true } })
-  const radio = await screen.findByRole('radio', { name: /Group One/ })
-  expect(radio).not.toBeChecked()
-  await user.click(radio)
+  expect(screen.queryByText('Selected: Group One')).not.toBeInTheDocument()
+  await pickGroup(user, 'Group One')
   await user.click(screen.getByRole('button', { name: 'Save changes' }))
   expect(put).toHaveBeenCalledWith('/api/token/', {
     id: 7,
@@ -290,7 +410,7 @@ test('validates a catalogue draft against current group and model scope; never s
       screen.getByRole('switch', { name: 'Model limits enabled' })
     ).toBeChecked()
   )
-  expect(screen.getByRole('radio', { name: /Group Two/ })).toBeChecked()
+  expect(screen.getByText('Selected: Group Two')).toBeVisible()
   expect(post).toHaveBeenCalledWith('/api/token/models', { group: 'b' })
   expect(post).toHaveBeenCalledTimes(1)
   await user.type(name, 'Generated draft')
@@ -312,14 +432,14 @@ test('a model-only catalogue draft waits for group selection and rechecks anothe
     screen.queryByText(/The group or model from the catalogue is unavailable/)
   ).not.toBeInTheDocument()
   expect(post).not.toHaveBeenCalled()
-  await user.click(screen.getByRole('radio', { name: /Group One/ }))
+  await pickGroup(user, 'Group One')
   expect(
     await screen.findByText(
       /The group or model from the catalogue is unavailable/
     )
   ).toBeVisible()
   expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled()
-  await user.click(screen.getByRole('radio', { name: /Group Two/ }))
+  await pickGroup(user, 'Group Two')
   await waitFor(() =>
     expect(
       screen.getByRole('switch', { name: 'Model limits enabled' })
@@ -358,7 +478,7 @@ test('does not double-submit when a request is pending', async () => {
     return { data: { success: true } }
   })
   await user.type(await screen.findByLabelText('Token Name'), 'New key')
-  await user.click(screen.getByRole('radio', { name: /Group One/ }))
+  await pickGroup(user, 'Group One')
   const submit = screen.getByRole('button', { name: 'Create' })
   const form = submit.closest('form')
   if (!form) throw new Error('Expected the API key form')
@@ -372,7 +492,7 @@ test('recovered error leaves an unknown creation outcome for manual checking wit
   const { user, post, close } = openEditor()
   post.mockRejectedValueOnce(new Error('network interrupted'))
   await user.type(await screen.findByLabelText('Token Name'), 'New key')
-  await user.click(screen.getByRole('radio', { name: /Group One/ }))
+  await pickGroup(user, 'Group One')
   await user.click(screen.getByRole('button', { name: 'Create' }))
   expect(await screen.findByRole('alert')).toHaveTextContent(
     'Could not confirm key creation'
@@ -385,7 +505,7 @@ test('keeps a restricted whitelist when the selected group changes and the saved
   const { user, post, put } = openEditor({
     entry: { ...saved, model_limits_enabled: true, model_limits: 'a-model' },
   })
-  await user.click(await screen.findByRole('radio', { name: /Group Two/ }))
+  await pickGroup(user, 'Group Two')
   await waitFor(() =>
     expect(post).toHaveBeenLastCalledWith('/api/token/models', { group: 'b' })
   )
@@ -443,7 +563,7 @@ test('an unauthorized model inside an authorized group is discarded without wide
 test('validates new IP restrictions and sends the normalized line-delimited format', async () => {
   const { user, post } = openEditor()
   await user.type(await screen.findByLabelText('Token Name'), 'Restricted')
-  await user.click(screen.getByRole('radio', { name: /Group One/ }))
+  await pickGroup(user, 'Group One')
   await user.click(screen.getByRole('button', { name: 'Advanced Settings' }))
   const ip = screen.getByLabelText('IP Whitelist (supports CIDR)')
   await user.type(ip, ',')

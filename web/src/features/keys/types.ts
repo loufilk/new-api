@@ -106,6 +106,7 @@ export interface ApiKeyFormData {
   model_limits_enabled: boolean
   model_limits: string
   allow_ips: string
+  allow_user_quota_query?: boolean
   group: string
 }
 

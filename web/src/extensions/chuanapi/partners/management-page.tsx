@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { RotateCw } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -216,6 +216,8 @@ function ReviewQueue(props: { reviewer: number; canReview: boolean }) {
     'submitted'
   )
   const [selected, setSelected] = useState<number | null>(null)
+  const detailTrigger = useRef<HTMLButtonElement>(null)
+  const statusFilter = useRef<HTMLSelectElement>(null)
   const query = useQuery({
     ...privateRead,
     queryKey: [...partnerKey, 'admin', props.reviewer, 'list', status, page],
@@ -232,6 +234,7 @@ function ReviewQueue(props: { reviewer: number; canReview: boolean }) {
           </FieldLabel>
           <NativeSelect
             id='partner-status-filter'
+            ref={statusFilter}
             className='min-w-40'
             value={status}
             onChange={(event) => {
@@ -277,17 +280,21 @@ function ReviewQueue(props: { reviewer: number; canReview: boolean }) {
             <StaticDataTable
               data={query.data.items}
               getRowKey={(row) => row.id}
-              tableClassName='min-w-[700px]'
+              tableClassName='w-full'
               columns={[
                 {
                   id: 'application',
                   header: t('Application'),
+                  className: 'w-20 whitespace-normal',
                   cell: (row: PartnerApplication) => (
                     <Button
                       variant='link'
                       size='sm'
                       aria-label={`${t('View application')} #${row.id}`}
-                      onClick={() => setSelected(row.id)}
+                      onClick={(event) => {
+                        detailTrigger.current = event.currentTarget
+                        setSelected(row.id)
+                      }}
                     >
                       #{row.id}
                     </Button>
@@ -296,11 +303,15 @@ function ReviewQueue(props: { reviewer: number; canReview: boolean }) {
                 {
                   id: 'user',
                   header: t('User ID'),
+                  className: 'hidden md:table-cell',
+                  cellClassName: 'hidden md:table-cell',
                   cell: (row: PartnerApplication) => row.user_id,
                 },
                 {
                   id: 'site',
                   header: t('Site name'),
+                  className: 'whitespace-normal',
+                  cellClassName: 'min-w-0 whitespace-normal',
                   cell: (row: PartnerApplication) => (
                     <span className='break-all whitespace-normal'>
                       {row.site_name}
@@ -310,6 +321,8 @@ function ReviewQueue(props: { reviewer: number; canReview: boolean }) {
                 {
                   id: 'status',
                   header: t('Application status'),
+                  className: 'whitespace-normal',
+                  cellClassName: 'whitespace-normal',
                   cell: (row: PartnerApplication) => (
                     <ApplicationStatus status={row.status} />
                   ),
@@ -317,6 +330,8 @@ function ReviewQueue(props: { reviewer: number; canReview: boolean }) {
                 {
                   id: 'created',
                   header: t('Submitted'),
+                  className: 'hidden md:table-cell',
+                  cellClassName: 'hidden md:table-cell',
                   cell: (row: PartnerApplication) =>
                     formatTimestamp(row.created_at),
                 },
@@ -343,7 +358,17 @@ function ReviewQueue(props: { reviewer: number; canReview: boolean }) {
         id={selected}
         reviewer={props.reviewer}
         canReview={props.canReview}
-        onClose={() => setSelected(null)}
+        onClose={() => {
+          const previous = detailTrigger.current
+          setSelected(null)
+          requestAnimationFrame(() => {
+            // Review can remove the row from the active filter.
+            const target = previous?.isConnected
+              ? previous
+              : statusFilter.current
+            target?.focus()
+          })
+        }}
       />
     </section>
   )
@@ -362,13 +387,6 @@ export default function PartnerApplicationManagementPage() {
       <SectionPageLayout.Content>
         {user && access.open ? (
           <div className='flex flex-col gap-6'>
-            {access.readSettings && (
-              <PartnerSettingsPanel
-                key={user.id}
-                reviewer={user.id}
-                canEdit={access.editSettings}
-              />
-            )}
             {access.readApplications && (
               <Card className='min-w-0'>
                 <CardHeader>
@@ -382,6 +400,13 @@ export default function PartnerApplicationManagementPage() {
                   />
                 </CardContent>
               </Card>
+            )}
+            {access.readSettings && (
+              <PartnerSettingsPanel
+                key={user.id}
+                reviewer={user.id}
+                canEdit={access.editSettings}
+              />
             )}
           </div>
         ) : (

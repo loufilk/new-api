@@ -1,5 +1,8 @@
 {
   "translation": {
+    "This application changed while you were reviewing it. Load the latest status before continuing.": "这份申请在审核期间已更新。请加载最新状态后再继续。",
+    "Reload latest application": "加载最新申请",
+    "This application is read-only for your account.": "当前账号只能查看这份申请。",
     "Partner application": "供货商申请",
     "Share your upstream and start a partnership": "提供您的上游，开启合作",
     "Tell us about your site, available groups and rates. API keys are not needed.": "告诉我们您的站点、可提供的分组和各分组的倍率，无需提供 API 密钥。",
@@ -321,6 +324,8 @@
     "This invoice category is currently unavailable": "该开票类目暂不受理",
     "Update the server to edit invoice categories.": "请先更新服务端，再编辑开票类目。",
     "Invoice fee refund": "开票手续费退款",
-    "Site information": "站点信息"
+    "Site information": "站点信息",
+    "Press Enter to add a model.": "按回车添加模型。",
+    "Top-up rates, settlement terms, or anything else you would like to share.": "充值比例、结算方式等任何想说明的内容"
   }
 }

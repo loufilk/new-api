@@ -991,7 +991,7 @@ it('opens and consumes a catalogue create link, without writing or reopening aft
   )
   const dialog = await screen.findByRole('dialog', { name: 'Create API Key' })
   await waitFor(() =>
-    expect(within(dialog).getByRole('radio', { name: /default/ })).toBeChecked()
+    expect(within(dialog).getByText('Selected: default')).toBeVisible()
   )
   await waitFor(() => {
     expect(post).toHaveBeenCalledWith('/api/token/models', { group: 'default' })

@@ -1,5 +1,8 @@
 {
   "translation": {
+    "This application changed while you were reviewing it. Load the latest status before continuing.": "Заявка изменилась во время проверки. Загрузите её актуальный статус, прежде чем продолжить.",
+    "Reload latest application": "Загрузить актуальную заявку",
+    "This application is read-only for your account.": "Ваш аккаунт может только просматривать эту заявку.",
     "{{count}} announcements deleted. Click \"Save Settings\" to apply.": "Удалено объявлений: {{count}}. Нажмите «Сохранить настройки», чтобы применить изменения.",
     "{{count}} API entries deleted. Click \"Save Settings\" to apply.": "Удалено записей API: {{count}}. Нажмите «Сохранить настройки», чтобы применить изменения.",
     "{{count}} FAQs deleted. Click \"Save Settings\" to apply.": "Удалено записей FAQ: {{count}}. Нажмите «Сохранить настройки», чтобы применить изменения.",
@@ -253,6 +256,8 @@
     "This invoice category is currently unavailable": "Эта категория счёта-фактуры сейчас недоступна",
     "Update the server to edit invoice categories.": "Чтобы редактировать категории счетов-фактур, обновите сервер.",
     "Invoice fee refund": "Возврат комиссии за выставление счёта",
-    "Site information": "Сведения о сайте"
+    "Site information": "Сведения о сайте",
+    "Press Enter to add a model.": "Нажмите Enter, чтобы добавить модель.",
+    "Top-up rates, settlement terms, or anything else you would like to share.": "Укажите условия пополнения, порядок расчётов или другие сведения."
   }
 }

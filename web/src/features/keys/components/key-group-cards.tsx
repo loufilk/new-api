@@ -16,8 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Check, Search } from 'lucide-react'
-import { useId, useState } from 'react'
+import { ArrowLeft, Check, Search } from 'lucide-react'
+import {
+  useId,
+  useRef,
+  useState,
+  type ComponentType,
+  type MouseEvent,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { GroupMultiplierBadge } from '@/components/group-badge'
@@ -31,6 +37,7 @@ import {
   MARKET_PLATFORMS,
   type MarketPlatform,
 } from '@/features/pricing/lib/market-groups'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { cn } from '@/lib/utils'
 
 export type KeyGroupCard = {
@@ -45,53 +52,134 @@ export type KeyGroupCard = {
   icon?: string
 }
 
-export function KeyGroupCards({
-  groups,
-  value,
-  onChange,
-  disabled,
-}: {
+export type KeyGroupPreviewDetails = ComponentType<{ groupId: string }>
+
+type SortOrder = 'default' | 'ascending' | 'descending'
+
+function numericRate(group: KeyGroupCard): number | undefined {
+  return typeof group.ratio === 'number' && Number.isFinite(group.ratio)
+    ? group.ratio
+    : undefined
+}
+
+function compareGroups(
+  a: KeyGroupCard,
+  b: KeyGroupCard,
+  sort: SortOrder
+): number {
+  const byName = a.label.localeCompare(b.label) || a.id.localeCompare(b.id)
+  if (sort === 'default') return a.sortOrder - b.sortOrder || byName
+  const aRatio = numericRate(a)
+  const bRatio = numericRate(b)
+  if (aRatio === undefined || bRatio === undefined) {
+    return Number(aRatio === undefined) - Number(bRatio === undefined) || byName
+  }
+  return (sort === 'ascending' ? aRatio - bRatio : bRatio - aRatio) || byName
+}
+
+function GroupIdentity(props: { group: KeyGroupCard; nameId?: string }) {
+  return (
+    <span className='flex min-w-0 items-start gap-1.5'>
+      <span className='mt-0.5 inline-flex shrink-0' aria-hidden='true'>
+        <MarketGroupIcon
+          meta={{ icon: props.group.icon }}
+          platform={props.group.platform}
+          size={16}
+        />
+      </span>
+      <span
+        id={props.nameId}
+        className='min-w-0 font-semibold [overflow-wrap:anywhere]'
+      >
+        {props.group.label}
+      </span>
+    </span>
+  )
+}
+
+function GroupBadges(props: { group: KeyGroupCard; id?: string }) {
+  const { t } = useTranslation()
+  if (!props.group.exclusive && !props.group.badges?.length) return null
+  return (
+    <span id={props.id} className='flex min-w-0 flex-wrap items-center gap-1.5'>
+      {props.group.exclusive && (
+        <Badge variant='secondary' className='h-auto rounded px-1.5 py-0.5'>
+          {t('Exclusive')}
+        </Badge>
+      )}
+      <GroupCatalogBadges values={props.group.badges} />
+    </span>
+  )
+}
+
+export function KeyGroupCards(props: {
   groups: KeyGroupCard[]
   value: string
   onChange: (id: string) => void
   disabled?: boolean
+  previewDetails?: KeyGroupPreviewDetails
 }) {
   const { t } = useTranslation()
   const id = useId()
-  const [platform, setPlatform] = useState('')
+  const [platform, setPlatform] = useState<MarketPlatform | ''>('')
   const [search, setSearch] = useState('')
-  const [sort, setSort] = useState<'default' | 'name' | 'ratio'>('default')
-  const availablePlatforms = new Set(groups.map((group) => group.platform))
+  const [sort, setSort] = useState<SortOrder>('default')
+  // Preview can read analytics but never selects a billing group or writes a Key.
+  const [previewId, setPreviewId] = useState<string>()
+  const isNarrow = useMediaQuery('(max-width: 1023px)')
+  const inspectorTitle = useRef<HTMLHeadingElement>(null)
+  const returnFocus = useRef<HTMLButtonElement>(null)
+  const preview = props.groups.find((group) => group.id === previewId)
+  const selected = props.groups.find((group) => group.id === props.value)
+  const counts = new Map<MarketPlatform, number>()
+  for (const group of props.groups) {
+    counts.set(group.platform, (counts.get(group.platform) ?? 0) + 1)
+  }
   const platforms = (Object.keys(MARKET_PLATFORMS) as MarketPlatform[]).filter(
-    (item) => availablePlatforms.has(item)
+    (item) => counts.has(item)
   )
-  const selected = groups.find((group) => group.id === value)
+  const platformName = (value: MarketPlatform): string =>
+    value === 'other' ? t('Other') : MARKET_PLATFORMS[value]
   const filter = search.trim().toLocaleLowerCase()
-  const matches = groups
+  const matches = props.groups
     .filter(
       (group) =>
         (!platform || platform === group.platform) &&
-        [group.id, group.label, group.description].some((part) =>
-          part.toLocaleLowerCase().includes(filter)
-        )
+        [
+          group.id,
+          group.label,
+          group.description,
+          group.platform,
+          platformName(group.platform),
+        ].some((part) => part.toLocaleLowerCase().includes(filter))
     )
-    .sort((a, b) => {
-      const aRatio = typeof a.ratio === 'number' ? a.ratio : Infinity
-      const bRatio = typeof b.ratio === 'number' ? b.ratio : Infinity
-      const byName = a.label.localeCompare(b.label) || a.id.localeCompare(b.id)
-      if (sort === 'ratio' && aRatio !== bRatio) return aRatio - bRatio
-      if (sort === 'default') return a.sortOrder - b.sortOrder || byName
-      return byName
-    })
+    .sort((a, b) => compareGroups(a, b, sort))
+  const PreviewDetails = props.previewDetails
+  const ratio = preview ? numericRate(preview) : undefined
+
+  function openPreview(
+    event: MouseEvent<HTMLButtonElement>,
+    group: KeyGroupCard
+  ) {
+    returnFocus.current = event.currentTarget
+    setPreviewId(group.id)
+    if (isNarrow) requestAnimationFrame(() => inspectorTitle.current?.focus())
+  }
+
+  function backToGroups() {
+    setPreviewId(undefined)
+    requestAnimationFrame(() => returnFocus.current?.focus())
+  }
+
   return (
-    <fieldset className='min-w-0 space-y-2.5' disabled={disabled}>
-      <legend className='pb-1 text-sm font-semibold'>
+    <fieldset className='min-w-0' disabled={props.disabled}>
+      <legend className='pb-2 text-sm font-semibold'>
         {t('Primary group')}
       </legend>
       {selected && (
         <p
           role='status'
-          className='text-primary flex min-w-0 items-start gap-1.5 text-xs font-medium'
+          className='text-primary mb-2 flex min-w-0 items-start gap-1.5 text-xs font-medium'
         >
           <Check className='size-3.5 shrink-0' aria-hidden />
           <span className='min-w-0 [overflow-wrap:anywhere]'>
@@ -99,156 +187,230 @@ export function KeyGroupCards({
           </span>
         </p>
       )}
-      <div
-        role='group'
-        className='flex flex-wrap gap-1.5'
-        aria-label={t('Platform')}
-      >
-        <Button
-          type='button'
-          variant={platform ? 'outline' : 'default'}
-          size='xs'
-          aria-pressed={!platform}
-          onClick={() => setPlatform('')}
+
+      <div className='grid min-w-0 gap-3 lg:grid-cols-[minmax(8.5rem,0.66fr)_minmax(0,1.55fr)_minmax(0,1.2fr)]'>
+        <div
+          role='group'
+          aria-label={t('Platform')}
+          className={cn(
+            'flex min-w-0 flex-wrap items-start gap-1.5 lg:flex-col lg:flex-nowrap lg:rounded-lg lg:border lg:p-2',
+            preview && 'hidden lg:flex'
+          )}
         >
-          {t('All')}
-        </Button>
-        {platforms.map((name) => (
+          <h3 className='text-muted-foreground hidden px-2 text-xs font-medium lg:block'>
+            {t('Platform')}
+          </h3>
           <Button
-            key={name}
             type='button'
-            variant={platform === name ? 'default' : 'outline'}
-            size='xs'
-            aria-pressed={platform === name}
-            onClick={() => setPlatform(name)}
+            variant={platform ? 'ghost' : 'secondary'}
+            size='sm'
+            className='lg:w-full lg:justify-between'
+            aria-pressed={!platform}
+            aria-label={`${t('All')} ${props.groups.length}`}
+            onClick={() => setPlatform('')}
           >
-            <span className='inline-flex shrink-0' aria-hidden='true'>
-              <MarketGroupIcon platform={name} size={14} />
+            {t('All')}{' '}
+            <span className='text-muted-foreground tabular-nums'>
+              {props.groups.length}
             </span>
-            {name === 'other' ? t('Other') : MARKET_PLATFORMS[name]}
           </Button>
-        ))}
-      </div>
-      <div className='flex flex-wrap items-center gap-2'>
-        <div className='relative min-w-35 flex-1'>
-          <Search
-            className='text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2'
-            aria-hidden='true'
-          />
-          <Input
-            className='pl-8'
-            aria-label={t('Search group name')}
-            placeholder={t('Search group name')}
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-        </div>
-        <NativeSelect
-          className='max-w-full'
-          size='sm'
-          aria-label={t('Sort groups')}
-          value={sort}
-          onChange={(event) => {
-            const next = event.target.value
-            setSort(next === 'ratio' || next === 'name' ? next : 'default')
-          }}
-        >
-          <NativeSelectOption value='default'>
-            {t('Default')}
-          </NativeSelectOption>
-          <NativeSelectOption value='name'>{t('Name')}</NativeSelectOption>
-          <NativeSelectOption value='ratio'>
-            {t('Group multiplier')}
-          </NativeSelectOption>
-        </NativeSelect>
-      </div>
-      <div className='grid grid-cols-1 gap-2 sm:grid-cols-2'>
-        {matches.map((group) => {
-          const checked = group.id === value
-          const cardId = `${id}-${encodeURIComponent(group.id)}`
-          const nameId = `${cardId}-name`
-          const detailId = `${cardId}-detail`
-          const ratio =
-            typeof group.ratio === 'number' && Number.isFinite(group.ratio)
-              ? group.ratio
-              : undefined
-          return (
-            <label
-              key={group.id}
-              className={cn(
-                'focus-within:ring-ring hover:bg-muted/40 relative flex min-w-0 items-start gap-2 rounded-lg border px-3 py-2.5 text-sm focus-within:ring-2',
-                checked && 'border-primary bg-primary/5 hover:bg-primary/10',
-                disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
-              )}
+          {platforms.map((item) => (
+            <Button
+              key={item}
+              type='button'
+              variant={platform === item ? 'secondary' : 'ghost'}
+              size='sm'
+              className='lg:w-full lg:justify-between'
+              aria-pressed={platform === item}
+              aria-label={`${platformName(item)} ${counts.get(item)}`}
+              onClick={() => setPlatform(item)}
             >
-              {/* The whole card selects the same native radio; browser arrow/Space behavior stays intact. */}
-              <input
-                type='radio'
-                name={id}
-                value={group.id}
-                checked={checked}
-                onChange={() => onChange(group.id)}
-                aria-labelledby={nameId}
-                aria-describedby={detailId}
-                className='accent-primary mt-1 size-3.5 shrink-0'
-              />
-              <span className='min-w-0 flex-1'>
-                <span className='flex min-w-0 items-start gap-1.5'>
-                  <span
-                    className='mt-0.5 inline-flex shrink-0'
-                    aria-hidden='true'
-                  >
-                    <MarketGroupIcon
-                      meta={{ icon: group.icon }}
-                      platform={group.platform}
-                      size={15}
-                    />
-                  </span>
-                  <span
-                    id={nameId}
-                    className='min-w-0 font-semibold [overflow-wrap:anywhere]'
-                  >
-                    {group.label}
-                  </span>
+              <span className='inline-flex min-w-0 items-center gap-1.5'>
+                <span className='inline-flex shrink-0' aria-hidden='true'>
+                  <MarketGroupIcon platform={item} size={14} />
                 </span>
-                <span
-                  id={detailId}
-                  className='mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-xs'
+                {platformName(item)}
+              </span>
+              <span className='text-muted-foreground tabular-nums'>
+                {counts.get(item)}
+              </span>
+            </Button>
+          ))}
+        </div>
+
+        <div
+          className={cn(
+            'min-w-0 space-y-2 rounded-lg border p-2.5',
+            preview && 'hidden lg:block'
+          )}
+        >
+          <div className='flex flex-wrap items-center gap-2'>
+            <div className='relative min-w-36 flex-1'>
+              <Search
+                className='text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2'
+                aria-hidden
+              />
+              <Input
+                className='pl-8'
+                aria-label={t('Search by group name, description, or platform')}
+                placeholder={t(
+                  'Search by group name, description, or platform'
+                )}
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') event.preventDefault()
+                }}
+              />
+            </div>
+            <NativeSelect
+              className='max-w-full'
+              size='sm'
+              aria-label={t('Sort groups')}
+              value={sort}
+              onChange={(event) => {
+                const value = event.target.value
+                setSort(
+                  value === 'ascending' || value === 'descending'
+                    ? value
+                    : 'default'
+                )
+              }}
+            >
+              <NativeSelectOption value='default'>
+                {t('Default')}
+              </NativeSelectOption>
+              <NativeSelectOption value='ascending'>
+                {t('Multiplier: Low to High')}
+              </NativeSelectOption>
+              <NativeSelectOption value='descending'>
+                {t('Multiplier: High to Low')}
+              </NativeSelectOption>
+            </NativeSelect>
+          </div>
+          <div
+            role='group'
+            aria-label={t('Groups')}
+            className='grid min-w-0 gap-1.5 lg:max-h-[clamp(14rem,44dvh,32rem)] lg:overflow-y-auto lg:overscroll-contain lg:p-1'
+          >
+            {matches.map((group) => {
+              const cardId = `${id}-${encodeURIComponent(group.id)}`
+              const rate = numericRate(group)
+              const descriptions = [`${cardId}-desc`]
+              if (rate !== undefined) descriptions.push(`${cardId}-rate`)
+              if (group.exclusive || group.badges?.length) {
+                descriptions.push(`${cardId}-badges`)
+              }
+              return (
+                <Button
+                  key={group.id}
+                  type='button'
+                  variant='outline'
+                  aria-labelledby={`${cardId}-name`}
+                  aria-describedby={descriptions.join(' ')}
+                  aria-pressed={preview?.id === group.id}
+                  className={cn(
+                    'h-auto min-h-11 w-full min-w-0 justify-between gap-2 rounded-md px-2 py-2 text-start whitespace-normal',
+                    preview?.id === group.id && 'border-primary bg-primary/5'
+                  )}
+                  onClick={(event) => openPreview(event, group)}
                 >
-                  {ratio !== undefined && (
-                    <GroupMultiplierBadge
-                      ratio={ratio}
-                      label={`${ratio}×`}
-                      className='text-xs'
-                    />
-                  )}{' '}
-                  {group.exclusive && (
-                    <Badge
-                      variant='secondary'
-                      className='h-auto rounded px-1.5 py-0.5'
+                  <span className='min-w-0 space-y-1'>
+                    <GroupIdentity group={group} nameId={`${cardId}-name`} />
+                    <span
+                      id={`${cardId}-desc`}
+                      className='text-muted-foreground block min-w-0 text-xs font-normal [overflow-wrap:anywhere]'
                     >
-                      {t('Exclusive')}
-                    </Badge>
-                  )}{' '}
-                  <GroupCatalogBadges values={group.badges} />{' '}
-                  {group.description && (
-                    <span className='text-muted-foreground min-w-0 basis-full [overflow-wrap:anywhere]'>
                       {group.description}
                     </span>
-                  )}
-                </span>
-              </span>
-              {checked && (
-                <Check className='text-primary size-4 shrink-0' aria-hidden />
+                    <GroupBadges group={group} id={`${cardId}-badges`} />
+                  </span>
+                  <span className='flex shrink-0 items-center gap-1'>
+                    {rate !== undefined && (
+                      <span id={`${cardId}-rate`}>
+                        <GroupMultiplierBadge
+                          ratio={rate}
+                          label={`${rate}×`}
+                          className='text-xs'
+                        />
+                      </span>
+                    )}
+                    {group.id === props.value && (
+                      <Check
+                        className='text-primary size-4 shrink-0'
+                        aria-hidden
+                      />
+                    )}
+                  </span>
+                </Button>
+              )
+            })}
+            {matches.length === 0 && (
+              <p className='text-muted-foreground p-3 text-center text-sm'>
+                {t('No group found.')}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <section
+          aria-labelledby={`${id}-preview-heading`}
+          className={cn(
+            'min-w-0 space-y-3 rounded-lg border p-3',
+            !preview && 'hidden lg:block'
+          )}
+        >
+          {!!preview && (
+            <Button
+              type='button'
+              size='sm'
+              variant='ghost'
+              className='px-0 lg:hidden'
+              onClick={backToGroups}
+            >
+              <ArrowLeft aria-hidden className='size-4' />
+              {t('Back to group list')}
+            </Button>
+          )}
+          <h3
+            id={`${id}-preview-heading`}
+            ref={inspectorTitle}
+            tabIndex={-1}
+            className='text-sm font-semibold'
+          >
+            {t('Group preview')}
+          </h3>
+          {preview ? (
+            <>
+              <GroupIdentity group={preview} />
+              <GroupBadges group={preview} />
+              {preview.description && (
+                <p className='text-muted-foreground text-xs [overflow-wrap:anywhere]'>
+                  {preview.description}
+                </p>
               )}
-            </label>
-          )
-        })}
-        {matches.length === 0 && (
-          <p className='text-muted-foreground col-span-full p-4 text-center text-sm'>
-            {t('No group found.')}
-          </p>
-        )}
+              {ratio !== undefined && (
+                <div className='flex flex-wrap items-center gap-2 text-xs'>
+                  {t('Effective rate')}
+                  <GroupMultiplierBadge ratio={ratio} label={`${ratio}×`} />
+                </div>
+              )}
+              {PreviewDetails && <PreviewDetails groupId={preview.id} />}
+              <Button
+                type='button'
+                className='h-auto min-h-8 w-full whitespace-normal'
+                disabled={preview.id === props.value}
+                onClick={() => props.onChange(preview.id)}
+              >
+                {t('Set as primary channel')}
+              </Button>
+            </>
+          ) : (
+            <p className='text-muted-foreground text-xs'>
+              {t('Select a group to preview its details.')}
+            </p>
+          )}
+        </section>
       </div>
     </fieldset>
   )

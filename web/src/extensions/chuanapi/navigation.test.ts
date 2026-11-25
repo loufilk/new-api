@@ -30,6 +30,7 @@ import {
   CHUANAPI_PUBLIC_HOME,
   chuanapiNavigationExtension,
   chuanapiSidebarNavigationExtension,
+  chuanapiToolsNavigationExtension,
 } from './navigation'
 
 const webSrc = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
@@ -144,6 +145,33 @@ describe('ChuanAPI cross-shell navigation', () => {
         isAuthenticated: false,
       })
     ).toEqual(sidebar)
+  })
+
+  test('offers the guarded partner alias without overriding configured navigation', () => {
+    const context = { isAuthenticated: false, status: null }
+    const docs = { title: 'Docs', href: '/help' }
+    const consoleLink = { title: 'Console', href: '/dashboard' }
+    const existingPartner = {
+      title: 'Configured applicant page',
+      href: '/partner-applications',
+    }
+    expect(
+      chuanapiToolsNavigationExtension.apply([docs, consoleLink], context)
+    ).toContainEqual({
+      title: 'Partner application',
+      href: '/partner',
+    })
+    expect(
+      chuanapiToolsNavigationExtension
+        .apply([docs], context)
+        .some((link) => link.href === '/partner')
+    ).toBe(false)
+    const personalized = chuanapiToolsNavigationExtension.apply(
+      [docs, consoleLink, existingPartner],
+      context
+    )
+    expect(personalized).toContainEqual(existingPartner)
+    expect(personalized.some((link) => link.href === '/partner')).toBe(false)
   })
 
   test('uses the canonical public homepage', () => {

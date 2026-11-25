@@ -30,6 +30,7 @@ export type SingleGroupKeyValues = {
   modelLimited: boolean
   models: string[]
   ips: string
+  allowUserQuotaQuery: boolean
 }
 
 export function isLegacyApiKey(key: ApiKey) {
@@ -55,25 +56,28 @@ export function initialKeyValues(
     modelLimited: key?.model_limits_enabled ?? false,
     models: key?.model_limits?.split(',').filter(Boolean) ?? [],
     ips: key?.allow_ips ?? '',
+    allowUserQuotaQuery: key?.allow_user_quota_query ?? true,
   }
 }
 
 export function quotaUnits(raw: string, quotaPerUSD: number) {
   if (!raw.trim()) return 0
-  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(raw.trim())) return NaN
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(raw.trim())) return Number.NaN
   const amount = Number(raw)
   const units = Math.round(amount * quotaPerUSD)
-  return amount <= 1_000_000_000 && Number.isSafeInteger(units) ? units : NaN
+  return amount <= 1_000_000_000 && Number.isSafeInteger(units)
+    ? units
+    : Number.NaN
 }
 
 export function expirySeconds(raw: string, nowSeconds: number) {
   if (!raw.trim()) return -1
-  if (!/^\d+$/.test(raw.trim())) return NaN
+  if (!/^\d+$/.test(raw.trim())) return Number.NaN
   const days = Number(raw)
   const expiry = nowSeconds + days * daySeconds
   return days > 0 && Number.isSafeInteger(expiry) && expiry <= 253_402_300_799
     ? expiry
-    : NaN
+    : Number.NaN
 }
 
 export function parseKeyIpAllowlist(raw: string): string | undefined {
@@ -88,8 +92,9 @@ export function parseKeyIpAllowlist(raw: string): string | undefined {
       (ip) =>
         ip.includes('%') || (!Address4.isValid(ip) && !Address6.isValid(ip))
     )
-  )
+  ) {
     return undefined
+  }
   // Server stores one address/network per line. Preserve unchanged legacy text
   // on sparse edits, but normalize new or changed input to that exact format.
   return [...new Set(entries)].join('\n')
@@ -109,6 +114,7 @@ export function createFixedKeyPayload(
     model_limits_enabled: values.modelLimited,
     model_limits: values.models.join(','),
     allow_ips: parseKeyIpAllowlist(values.ips) ?? values.ips.trim(),
+    allow_user_quota_query: values.allowUserQuotaQuery,
   }
 }
 
@@ -125,8 +131,9 @@ export function updateFixedKeyPayload(
   }
   if (values.name !== original.name) payload.name = values.name.trim()
   // No-op edits don't rewrite routing, recredit a balance or extend expiry.
-  if (values.group !== original.group && values.group)
+  if (values.group !== original.group && values.group) {
     payload.group = values.group
+  }
   if (values.quota !== original.quota) {
     payload.unlimited_quota = values.quota.trim() === ''
     if (!payload.unlimited_quota) {
@@ -142,7 +149,11 @@ export function updateFixedKeyPayload(
   if (values.models.join(',') !== original.models.join(',')) {
     payload.model_limits = values.models.join(',')
   }
-  if (values.ips !== original.ips)
+  if (values.ips !== original.ips) {
     payload.allow_ips = parseKeyIpAllowlist(values.ips) ?? values.ips.trim()
+  }
+  if (values.allowUserQuotaQuery !== original.allowUserQuotaQuery) {
+    payload.allow_user_quota_query = values.allowUserQuotaQuery
+  }
   return payload
 }

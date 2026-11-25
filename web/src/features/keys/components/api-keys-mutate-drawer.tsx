@@ -68,7 +68,11 @@ import {
 } from '../lib/single-group-form'
 import type { ApiKey } from '../types'
 import { useApiKeys } from './api-keys-provider'
-import { KeyGroupCards, type KeyGroupCard } from './key-group-cards'
+import {
+  KeyGroupCards,
+  type KeyGroupCard,
+  type KeyGroupPreviewDetails,
+} from './key-group-cards'
 
 type ApiKeyMutateDrawerProps = {
   open: boolean
@@ -76,6 +80,7 @@ type ApiKeyMutateDrawerProps = {
   currentRow?: ApiKey
   onCreated?: () => void
   draft?: MarketKeyDraft
+  previewDetails?: KeyGroupPreviewDetails
 }
 
 const nowSeconds = () => Math.floor(Date.now() / 1000)
@@ -86,6 +91,7 @@ export function ApiKeysMutateDrawer({
   currentRow,
   onCreated,
   draft,
+  previewDetails,
 }: ApiKeyMutateDrawerProps) {
   const { t } = useTranslation()
   const userId = useAuthStore((state) => state.auth.user?.id ?? null)
@@ -163,6 +169,7 @@ export function ApiKeysMutateDrawer({
         currentKey={detail.data?.data}
         groups={groupCards}
         draft={currentRow ? undefined : draft}
+        previewDetails={previewDetails}
         onClose={() => onOpenChange(false)}
         onCreated={onCreated}
         onReload={reload}
@@ -172,7 +179,7 @@ export function ApiKeysMutateDrawer({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='flex min-h-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl'>
+      <DialogContent className='flex min-h-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-[72rem]'>
         <DialogHeader className='shrink-0 gap-1 border-b px-4 py-4 pe-12 sm:px-6 sm:pe-12'>
           <DialogTitle>
             {currentRow ? t('Update API Key') : t('Create API Key')}
@@ -191,6 +198,7 @@ function ApiKeyEditor({
   currentKey: initialKey,
   groups,
   draft,
+  previewDetails,
   onClose,
   onCreated,
   onReload,
@@ -198,6 +206,7 @@ function ApiKeyEditor({
   currentKey?: ApiKey
   groups: KeyGroupCard[]
   draft?: MarketKeyDraft
+  previewDetails?: KeyGroupPreviewDetails
   onClose: () => void
   onCreated?: () => void
   onReload: () => Promise<void>
@@ -413,24 +422,24 @@ function ApiKeyEditor({
       data-slot='api-key-form-body'
       className='min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6'
     >
-      <div className='grid gap-1.5'>
-        <Label htmlFor='fixed-key-name'>{t('Token Name')}</Label>
-        <Input
-          id='fixed-key-name'
-          autoComplete='off'
-          placeholder={t('Enter token name')}
-          value={values.name}
-          onChange={(event) => set('name', event.target.value)}
-          required
-          aria-invalid={nameTooLong}
-        />
-        {nameTooLong && (
-          <p className='text-destructive text-xs'>
-            {t('Token name is too long')}
-          </p>
-        )}
-      </div>
-      <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
+      <div className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
+        <div className='grid gap-1.5'>
+          <Label htmlFor='fixed-key-name'>{t('Token Name')}</Label>
+          <Input
+            id='fixed-key-name'
+            autoComplete='off'
+            placeholder={t('Enter token name')}
+            value={values.name}
+            onChange={(event) => set('name', event.target.value)}
+            required
+            aria-invalid={nameTooLong}
+          />
+          {nameTooLong && (
+            <p className='text-destructive text-xs'>
+              {t('Token name is too long')}
+            </p>
+          )}
+        </div>
         <div className='grid gap-1.5'>
           <Label htmlFor='fixed-key-quota'>
             {currentKey ? t('Remaining quota (USD)') : t('Maximum quota (USD)')}
@@ -534,6 +543,7 @@ function ApiKeyEditor({
       <KeyGroupCards
         groups={groups}
         value={values.group}
+        previewDetails={previewDetails}
         disabled={busy || draftPending}
         onChange={(group) => {
           set('group', group)
@@ -616,6 +626,19 @@ function ApiKeyEditor({
                   {t('Enter valid IP addresses or networks, one per line.')}
                 </p>
               )}
+            </div>
+            <div className='flex items-center justify-between gap-2'>
+              <Label htmlFor='fixed-key-query-user-quota'>
+                {t('Allow querying user quota')}
+              </Label>
+              <Switch
+                id='fixed-key-query-user-quota'
+                checked={values.allowUserQuotaQuery}
+                disabled={busy}
+                onCheckedChange={(checked) =>
+                  set('allowUserQuotaQuery', checked)
+                }
+              />
             </div>
           </div>
         )}

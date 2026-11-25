@@ -50,6 +50,14 @@ export const chuanapiToolsNavigationExtension: NavigationExtension = {
     )
     const additions = [
       { title: t('pool.title'), href: '/account-pool' },
+      ...(result.some((link) => link.href === '/dashboard') &&
+      !result.some((link) =>
+        ['/partner', '/partner-apply', '/partner-applications'].includes(
+          link.href
+        )
+      )
+        ? [{ title: t('Partner application'), href: '/partner' }]
+        : []),
       { title: t('Invitation Rewards'), href: '/affiliate' },
     ].filter(
       (link) =>

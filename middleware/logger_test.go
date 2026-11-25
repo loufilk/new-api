@@ -34,6 +34,7 @@ func TestSetUpLoggerMasksQueryCredentials(t *testing.T) {
 		{"/v1/models?alt=sse&api-version=2024-02-01", "/v1/models?alt=sse&api-version=2024-02-01"},
 		{"/v1/models", "/v1/models"},
 		{"/%61pi/oauth/test?code=secret&state=secret", "/%61pi/oauth/test"},
+		{"/api/token/group-health?group=synthetic-private-group", "/api/token/group-health"},
 	} {
 		t.Run(tc.target, func(t *testing.T) {
 			var output bytes.Buffer
