@@ -16,13 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Search } from 'lucide-react'
+import { Check, Search } from 'lucide-react'
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { GroupMultiplierBadge } from '@/components/group-badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { GroupCatalogBadges } from '@/features/pricing/components/group-catalog-badges'
+import { MarketGroupIcon } from '@/features/pricing/components/market-group-icon'
 import {
   MARKET_PLATFORMS,
   type MarketPlatform,
@@ -37,6 +41,8 @@ export type KeyGroupCard = {
   sortOrder: number
   ratio: number | string
   badges?: string[]
+  exclusive?: boolean
+  icon?: string
 }
 
 export function KeyGroupCards({
@@ -55,7 +61,10 @@ export function KeyGroupCards({
   const [platform, setPlatform] = useState('')
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<'default' | 'name' | 'ratio'>('default')
-  const platforms = [...new Set(groups.map((group) => group.platform))]
+  const availablePlatforms = new Set(groups.map((group) => group.platform))
+  const platforms = (Object.keys(MARKET_PLATFORMS) as MarketPlatform[]).filter(
+    (item) => availablePlatforms.has(item)
+  )
   const selected = groups.find((group) => group.id === value)
   const filter = search.trim().toLocaleLowerCase()
   const matches = groups
@@ -75,37 +84,47 @@ export function KeyGroupCards({
       return byName
     })
   return (
-    <fieldset className='space-y-3' disabled={disabled}>
-      <legend className='text-sm font-medium'>{t('Primary group')}</legend>
-      <div className='flex flex-wrap items-center justify-between gap-2'>
-        <p className='text-muted-foreground text-xs'>
-          {t('Choose one group for this API key.')}
-        </p>
-        {selected && (
-          <p className='max-w-full truncate text-xs'>
+    <fieldset className='min-w-0 space-y-2.5' disabled={disabled}>
+      <legend className='pb-1 text-sm font-semibold'>
+        {t('Primary group')}
+      </legend>
+      {selected && (
+        <p
+          role='status'
+          className='text-primary flex min-w-0 items-start gap-1.5 text-xs font-medium'
+        >
+          <Check className='size-3.5 shrink-0' aria-hidden />
+          <span className='min-w-0 [overflow-wrap:anywhere]'>
             {t('Selected: {{group}}', { group: selected.label })}
-          </p>
-        )}
-      </div>
-      <div className='flex flex-wrap gap-1' aria-label={t('Platform')}>
+          </span>
+        </p>
+      )}
+      <div
+        role='group'
+        className='flex flex-wrap gap-1.5'
+        aria-label={t('Platform')}
+      >
         <Button
           type='button'
-          variant={platform ? 'ghost' : 'secondary'}
+          variant={platform ? 'outline' : 'default'}
           size='xs'
           aria-pressed={!platform}
           onClick={() => setPlatform('')}
         >
           {t('All')}
         </Button>
-        {platforms.sort().map((name) => (
+        {platforms.map((name) => (
           <Button
             key={name}
             type='button'
-            variant={platform === name ? 'secondary' : 'ghost'}
+            variant={platform === name ? 'default' : 'outline'}
             size='xs'
             aria-pressed={platform === name}
             onClick={() => setPlatform(name)}
           >
+            <span className='inline-flex shrink-0' aria-hidden='true'>
+              <MarketGroupIcon platform={name} size={14} />
+            </span>
             {name === 'other' ? t('Other') : MARKET_PLATFORMS[name]}
           </Button>
         ))}
@@ -124,63 +143,107 @@ export function KeyGroupCards({
             onChange={(event) => setSearch(event.target.value)}
           />
         </div>
-        <select
-          className='bg-background h-8 rounded-md border px-2 text-xs'
+        <NativeSelect
+          className='max-w-full'
+          size='sm'
           aria-label={t('Sort groups')}
           value={sort}
-          onChange={(event) =>
-            setSort(
-              event.target.value === 'ratio'
-                ? 'ratio'
-                : event.target.value === 'name'
-                  ? 'name'
-                  : 'default'
-            )
-          }
+          onChange={(event) => {
+            const next = event.target.value
+            setSort(next === 'ratio' || next === 'name' ? next : 'default')
+          }}
         >
-          <option value='default'>{t('Default')}</option>
-          <option value='name'>{t('Name')}</option>
-          <option value='ratio'>{t('Group multiplier')}</option>
-        </select>
+          <NativeSelectOption value='default'>
+            {t('Default')}
+          </NativeSelectOption>
+          <NativeSelectOption value='name'>{t('Name')}</NativeSelectOption>
+          <NativeSelectOption value='ratio'>
+            {t('Group multiplier')}
+          </NativeSelectOption>
+        </NativeSelect>
       </div>
-      <div className='grid max-h-52 grid-cols-1 gap-2 overflow-y-auto p-1 sm:grid-cols-2'>
-        {matches.map((group) => (
-          <label
-            key={group.id}
-            className={cn(
-              'focus-within:ring-ring flex min-w-0 cursor-pointer items-start gap-2 rounded-md border p-2.5 text-sm focus-within:ring-2',
-              group.id === value && 'border-primary bg-primary/5'
-            )}
-          >
-            <input
-              type='radio'
-              name={id}
-              value={group.id}
-              checked={value === group.id}
-              onChange={() => onChange(group.id)}
-              className='accent-primary mt-1 shrink-0'
-            />
-            <span className='min-w-0 flex-1'>
-              <span className='block truncate font-medium'>{group.label}</span>
-              {Boolean(group.badges?.length) && (
-                <span className='my-1 flex flex-wrap gap-1'>
-                  <GroupCatalogBadges values={group.badges} />
-                </span>
+      <div className='grid grid-cols-1 gap-2 sm:grid-cols-2'>
+        {matches.map((group) => {
+          const checked = group.id === value
+          const cardId = `${id}-${encodeURIComponent(group.id)}`
+          const nameId = `${cardId}-name`
+          const detailId = `${cardId}-detail`
+          const ratio =
+            typeof group.ratio === 'number' && Number.isFinite(group.ratio)
+              ? group.ratio
+              : undefined
+          return (
+            <label
+              key={group.id}
+              className={cn(
+                'focus-within:ring-ring hover:bg-muted/40 relative flex min-w-0 items-start gap-2 rounded-lg border px-3 py-2.5 text-sm focus-within:ring-2',
+                checked && 'border-primary bg-primary/5 hover:bg-primary/10',
+                disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
               )}
-              {group.description && (
-                <span className='text-muted-foreground block truncate text-xs'>
-                  {group.description}
+            >
+              {/* The whole card selects the same native radio; browser arrow/Space behavior stays intact. */}
+              <input
+                type='radio'
+                name={id}
+                value={group.id}
+                checked={checked}
+                onChange={() => onChange(group.id)}
+                aria-labelledby={nameId}
+                aria-describedby={detailId}
+                className='accent-primary mt-1 size-3.5 shrink-0'
+              />
+              <span className='min-w-0 flex-1'>
+                <span className='flex min-w-0 items-start gap-1.5'>
+                  <span
+                    className='mt-0.5 inline-flex shrink-0'
+                    aria-hidden='true'
+                  >
+                    <MarketGroupIcon
+                      meta={{ icon: group.icon }}
+                      platform={group.platform}
+                      size={15}
+                    />
+                  </span>
+                  <span
+                    id={nameId}
+                    className='min-w-0 font-semibold [overflow-wrap:anywhere]'
+                  >
+                    {group.label}
+                  </span>
                 </span>
-              )}
-            </span>
-            {typeof group.ratio === 'number' &&
-              Number.isFinite(group.ratio) && (
-                <span className='bg-muted shrink-0 rounded px-1.5 py-0.5 text-xs'>
-                  {group.ratio}×
+                <span
+                  id={detailId}
+                  className='mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-xs'
+                >
+                  {ratio !== undefined && (
+                    <GroupMultiplierBadge
+                      ratio={ratio}
+                      label={`${ratio}×`}
+                      className='text-xs'
+                    />
+                  )}{' '}
+                  {group.exclusive && (
+                    <Badge
+                      variant='secondary'
+                      className='h-auto rounded px-1.5 py-0.5'
+                    >
+                      {t('Exclusive')}
+                    </Badge>
+                  )}{' '}
+                  <GroupCatalogBadges values={group.badges} />{' '}
+                  {group.description && (
+                    <span className='text-muted-foreground min-w-0 basis-full [overflow-wrap:anywhere]'>
+                      {group.description}
+                    </span>
+                  )}
                 </span>
+              </span>
+              {checked && (
+                <Check className='text-primary size-4 shrink-0' aria-hidden />
               )}
-          </label>
-        ))}
+            </label>
+          )
+        })}
         {matches.length === 0 && (
           <p className='text-muted-foreground col-span-full p-4 text-center text-sm'>
             {t('No group found.')}

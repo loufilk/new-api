@@ -247,7 +247,7 @@ func LoadOptionsFromDatabase() (loadErr error) {
 		return err
 	}
 	marketValues := make(map[string]string, 2)
-	var bucketRaw, catalogRaw, iconsRaw string
+	var bucketRaw, catalogRaw, iconsRaw, badgesRaw string
 	for _, option := range options {
 		if option.Key == groupMarketDataKey || option.Key == groupMarketCursorKey {
 			marketValues[option.Key] = option.Value
@@ -261,6 +261,9 @@ func LoadOptionsFromDatabase() (loadErr error) {
 		if option.Key == groupCatalogIconsOptionKey {
 			iconsRaw = option.Value
 		}
+		if option.Key == groupCatalogBadgesOptionKey {
+			badgesRaw = option.Value
+		}
 	}
 	loadMarketRuntime(marketValues)
 	buckets, err := parseGroupRateLimitBuckets(bucketRaw)
@@ -270,14 +273,14 @@ func LoadOptionsFromDatabase() (loadErr error) {
 		return err
 	}
 	groupRateLimitBuckets.Store(&buckets)
-	if err := loadGroupCatalogRuntime(catalogRaw, iconsRaw); err != nil {
+	if err := loadGroupCatalogRuntime(catalogRaw, iconsRaw, badgesRaw); err != nil {
 		groupConfigRuntimeInvalid.Store(true)
 		return err
 	}
 	valid := true
 	passkeyOptions := make(map[string]string)
 	for _, option := range options {
-		if isGroupMarketOption(option.Key) || option.Key == groupRateLimitBucketsOptionKey || option.Key == groupCatalogOptionKey || option.Key == groupCatalogIconsOptionKey {
+		if isGroupMarketOption(option.Key) || option.Key == groupRateLimitBucketsOptionKey || isGroupCatalogOption(option.Key) {
 			continue
 		}
 		if IsPasskeyDomainOption(option.Key) {
@@ -323,7 +326,7 @@ func validateOptionValue(key string, value string) error {
 	if key == groupRenameAliasesOptionKey || key == groupConfigVersionOptionKey {
 		return common.NewMessage("Group namespace metadata is read-only.")
 	}
-	if isGroupMarketOption(key) || key == groupCatalogOptionKey || key == groupCatalogIconsOptionKey {
+	if isGroupMarketOption(key) || isGroupCatalogOption(key) {
 		return ErrInvalidGroupCatalog
 	}
 	if key == groupRateLimitBucketsOptionKey {

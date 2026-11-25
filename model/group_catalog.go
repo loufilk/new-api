@@ -20,6 +20,18 @@ const groupCatalogOptionKey = "GroupCatalogMetadata"
 // Keep independently customizable artwork out of the legacy, strictly decoded
 // access-policy document. An older node must still load every exclusive group.
 const groupCatalogIconsOptionKey = "GroupCatalogDisplayIcons"
+const groupCatalogBadgesOptionKey = "GroupCatalogDisplayBadges"
+
+const traceableGroupBadge = "traceable"
+
+func isGroupCatalogOption(key string) bool {
+	switch key {
+	case groupCatalogOptionKey, groupCatalogIconsOptionKey, groupCatalogBadgesOptionKey:
+		return true
+	default:
+		return false
+	}
+}
 
 var (
 	ErrInvalidGroupCatalog = errors.New("invalid group catalog configuration")
@@ -69,6 +81,32 @@ func isCatalogPlatformSlug(value string) bool {
 	return false
 }
 
+func isLegacyGroupBadge(badge string) bool {
+	switch badge {
+	case "self_operated", "authentic", "benefit", "stable", "distill":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeGroupBadges(values []string, allowDisplay bool) ([]string, bool) {
+	badges := make([]string, 0, min(len(values), 6))
+	for _, badge := range values {
+		if (!isLegacyGroupBadge(badge) && !(allowDisplay && badge == traceableGroupBadge)) || slices.Contains(badges, badge) {
+			return nil, false
+		}
+		badges = append(badges, badge)
+	}
+	return badges, true
+}
+
+func legacyGroupBadges(values []string) []string {
+	return slices.DeleteFunc(slices.Clone(values), func(value string) bool {
+		return !isLegacyGroupBadge(value)
+	})
+}
+
 func normalizeGroupCatalog(groups map[string]GroupCatalogEntry) (map[string]GroupCatalogEntry, error) {
 	if len(groups) > 2000 {
 		return nil, ErrInvalidGroupCatalog
@@ -82,23 +120,15 @@ func normalizeGroupCatalog(groups map[string]GroupCatalogEntry) (map[string]Grou
 		item.Label = strings.TrimSpace(item.Label)
 		item.Description = strings.TrimSpace(item.Description)
 		if !validateCatalogText(item.Label, 64) || !validateCatalogText(item.Description, 240) ||
-			item.SortOrder < -10000 || item.SortOrder > 10000 || len(item.Badges) > 5 {
+			item.SortOrder < -10000 || item.SortOrder > 10000 {
 			return nil, ErrInvalidGroupCatalog
 		}
 		if !isCatalogPlatformSlug(item.Platform) || !isCatalogPlatformSlug(item.Icon) {
 			return nil, ErrInvalidGroupCatalog
 		}
-		badges := make([]string, 0, len(item.Badges))
-		for _, badge := range item.Badges {
-			switch badge {
-			case "self_operated", "authentic", "benefit", "stable", "distill":
-			default:
-				return nil, ErrInvalidGroupCatalog
-			}
-			if slices.Contains(badges, badge) {
-				return nil, ErrInvalidGroupCatalog
-			}
-			badges = append(badges, badge)
+		badges, valid := normalizeGroupBadges(item.Badges, true)
+		if !valid {
+			return nil, ErrInvalidGroupCatalog
 		}
 		item.Badges = badges
 		normalized[group] = item
@@ -106,12 +136,23 @@ func normalizeGroupCatalog(groups map[string]GroupCatalogEntry) (map[string]Grou
 	return normalized, nil
 }
 
-func parseGroupCatalog(raw, iconRaw string) (map[string]GroupCatalogEntry, error) {
+func parseGroupCatalog(raw, iconRaw, badgeRaw string) (map[string]GroupCatalogEntry, error) {
 	groups := make(map[string]GroupCatalogEntry)
 	if raw != "" {
 		if err := common.DecodeJsonStrict(strings.NewReader(raw), &groups); err != nil || groups == nil {
 			return nil, ErrInvalidGroupCatalog
 		}
+	}
+	// Validate the original policy on its own, before overlaying presentation
+	// metadata. An extended badge in the policy JSON would break older readers.
+	for _, entry := range groups {
+		if _, valid := normalizeGroupBadges(entry.Badges, false); !valid {
+			return nil, ErrInvalidGroupCatalog
+		}
+	}
+	groups, err := normalizeGroupCatalog(groups)
+	if err != nil {
+		return nil, err
 	}
 	// Artwork is not authority. Malformed/stale sidecar rows can never create a
 	// group, make it exclusive, or prevent an otherwise valid policy loading.
@@ -124,11 +165,27 @@ func parseGroupCatalog(raw, iconRaw string) (map[string]GroupCatalogEntry, error
 			}
 		}
 	}
-	return normalizeGroupCatalog(groups)
+	var displayBadges map[string][]string
+	if badgeRaw != "" && common.UnmarshalJsonStr(badgeRaw, &displayBadges) == nil {
+		for name, values := range displayBadges {
+			entry, exists := groups[name]
+			if !exists || !slices.Contains(values, traceableGroupBadge) {
+				continue
+			}
+			ordered, valid := normalizeGroupBadges(values, true)
+			// If a rolled-back admin changed the legacy badge selection or
+			// order, their real edit wins over this stale presentation row.
+			if valid && slices.Equal(entry.Badges, legacyGroupBadges(ordered)) {
+				entry.Badges = ordered
+				groups[name] = entry
+			}
+		}
+	}
+	return groups, nil
 }
 
-func loadGroupCatalogRuntime(raw, icons string) error {
-	groups, err := parseGroupCatalog(raw, icons)
+func loadGroupCatalogRuntime(raw, icons, badges string) error {
+	groups, err := parseGroupCatalog(raw, icons, badges)
 	if err != nil {
 		return err
 	}
@@ -180,29 +237,37 @@ func ReadGroupCatalog(ctx context.Context) (*GroupCatalogSnapshot, error) {
 
 func readGroupCatalogTx(tx *gorm.DB) (map[string]GroupCatalogEntry, error) {
 	var rows []Option
-	if err := tx.Where(map[string]any{"key": []string{groupCatalogOptionKey, groupCatalogIconsOptionKey}}).Find(&rows).Error; err != nil {
+	if err := tx.Where(map[string]any{"key": []string{groupCatalogOptionKey, groupCatalogIconsOptionKey, groupCatalogBadgesOptionKey}}).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	var catalogRaw, iconsRaw string
+	var catalogRaw, iconsRaw, badgesRaw string
 	for _, row := range rows {
-		if row.Key == groupCatalogOptionKey {
+		switch row.Key {
+		case groupCatalogOptionKey:
 			catalogRaw = row.Value
-		} else {
+		case groupCatalogIconsOptionKey:
 			iconsRaw = row.Value
+		case groupCatalogBadgesOptionKey:
+			badgesRaw = row.Value
 		}
 	}
-	return parseGroupCatalog(catalogRaw, iconsRaw)
+	return parseGroupCatalog(catalogRaw, iconsRaw, badgesRaw)
 }
 
 func writeGroupCatalogTx(tx *gorm.DB, groups map[string]GroupCatalogEntry) error {
 	legacy := maps.Clone(groups)
 	icons := make(map[string]string)
+	displayBadges := make(map[string][]string)
 	for name, entry := range legacy {
 		if entry.Icon != "" {
 			icons[name] = entry.Icon
 			entry.Icon = ""
-			legacy[name] = entry
 		}
+		if slices.Contains(entry.Badges, traceableGroupBadge) {
+			displayBadges[name] = entry.Badges
+			entry.Badges = legacyGroupBadges(entry.Badges)
+		}
+		legacy[name] = entry
 	}
 	encoded, err := common.Marshal(legacy)
 	if err != nil {
@@ -211,14 +276,21 @@ func writeGroupCatalogTx(tx *gorm.DB, groups map[string]GroupCatalogEntry) error
 	if err := upsertGroupRenameOption(tx, groupCatalogOptionKey, string(encoded)); err != nil {
 		return err
 	}
-	if len(icons) == 0 {
-		return tx.Where(&Option{Key: groupCatalogIconsOptionKey}).Delete(&Option{}).Error
+	if err := writeGroupCatalogSidecarTx(tx, groupCatalogIconsOptionKey, icons); err != nil {
+		return err
 	}
-	encoded, err = common.Marshal(icons)
+	return writeGroupCatalogSidecarTx(tx, groupCatalogBadgesOptionKey, displayBadges)
+}
+
+func writeGroupCatalogSidecarTx[T any](tx *gorm.DB, key string, values map[string]T) error {
+	if len(values) == 0 {
+		return tx.Where(&Option{Key: key}).Delete(&Option{}).Error
+	}
+	encoded, err := common.Marshal(values)
 	if err != nil {
 		return err
 	}
-	return upsertGroupRenameOption(tx, groupCatalogIconsOptionKey, string(encoded))
+	return upsertGroupRenameOption(tx, key, string(encoded))
 }
 
 func groupRatioKeysTx(tx *gorm.DB) (map[string]float64, error) {

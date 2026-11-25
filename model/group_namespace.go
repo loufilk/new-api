@@ -359,7 +359,7 @@ func reloadGroupRuntimeOptions() error {
 	// The caller owns requestPolicyOptionMutex before groupConfigApplyMutex.
 	groupRenameRuntimeApplyMutex.Lock()
 	defer groupRenameRuntimeApplyMutex.Unlock()
-	keys := []string{groupMarketDataKey, groupMarketCursorKey, groupRateLimitBucketsOptionKey, groupCatalogOptionKey, groupCatalogIconsOptionKey, request_plugin_setting.InstancesOption}
+	keys := []string{groupMarketDataKey, groupMarketCursorKey, groupRateLimitBucketsOptionKey, groupCatalogOptionKey, groupCatalogIconsOptionKey, groupCatalogBadgesOptionKey, request_plugin_setting.InstancesOption}
 	for key := range groupRenameWritableOptionKeys {
 		keys = append(keys, key)
 	}
@@ -380,11 +380,11 @@ func reloadGroupRuntimeOptions() error {
 		return err
 	}
 	groupRateLimitBuckets.Store(&buckets)
-	if err := loadGroupCatalogRuntime(values[groupCatalogOptionKey], values[groupCatalogIconsOptionKey]); err != nil {
+	if err := loadGroupCatalogRuntime(values[groupCatalogOptionKey], values[groupCatalogIconsOptionKey], values[groupCatalogBadgesOptionKey]); err != nil {
 		return err
 	}
 	for _, option := range options {
-		if isGroupMarketOption(option.Key) || option.Key == groupRateLimitBucketsOptionKey || option.Key == groupCatalogOptionKey || option.Key == groupCatalogIconsOptionKey {
+		if isGroupMarketOption(option.Key) || option.Key == groupRateLimitBucketsOptionKey || isGroupCatalogOption(option.Key) {
 			continue
 		}
 		if err := updateOptionMap(option.Key, option.Value); err != nil {

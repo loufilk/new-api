@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Brain } from 'lucide-react'
-import { useEffect, useId, useRef, useState } from 'react'
+import { type RefObject, useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -117,7 +117,6 @@ export function KeyDiagnosticButton(props: {
 }) {
   const { t } = useTranslation()
   const owner = useAuthStore((state) => state.auth.user?.id)
-  const sessionId = useAuthStore((state) => state.auth.session?.sid)
   const [open, setOpen] = useState(false)
   return (
     <>
@@ -136,11 +135,8 @@ export function KeyDiagnosticButton(props: {
         />
         {!props.tokenId && t('Key diagnostic')}
       </Button>
-      {open && owner && (
-        <KeyDiagnosticDialog
-          key={`${owner}:${sessionId ?? ''}`}
-          owner={owner}
-          sessionId={sessionId}
+      {open && (
+        <KeyDiagnosticLauncher
           tokenId={props.tokenId}
           onClose={() => setOpen(false)}
         />
@@ -149,12 +145,34 @@ export function KeyDiagnosticButton(props: {
   )
 }
 
-function KeyDiagnosticDialog(props: {
-  owner: number
-  sessionId?: string
+type KeyDiagnosticLauncherProps = {
   tokenId?: number
   onClose: () => void
-}) {
+  finalFocus?: RefObject<HTMLButtonElement | null>
+}
+
+export function KeyDiagnosticLauncher(props: KeyDiagnosticLauncherProps) {
+  const owner = useAuthStore((state) => state.auth.user?.id)
+  const sessionId = useAuthStore((state) => state.auth.session?.sid)
+
+  if (!owner) return null
+
+  return (
+    <KeyDiagnosticDialog
+      key={`${owner}:${sessionId ?? ''}`}
+      owner={owner}
+      sessionId={sessionId}
+      {...props}
+    />
+  )
+}
+
+function KeyDiagnosticDialog(
+  props: KeyDiagnosticLauncherProps & {
+    owner: number
+    sessionId?: string
+  }
+) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const prefix = useId()
@@ -426,6 +444,7 @@ function KeyDiagnosticDialog(props: {
     <Dialog
       open
       onOpenChange={(next) => !next && props.onClose()}
+      finalFocus={props.finalFocus}
       title={t('Key diagnostic')}
       description={t(
         'This sends one paid request with your selected API key. Your normal account balance and group price apply. A single answer does not verify model identity.'

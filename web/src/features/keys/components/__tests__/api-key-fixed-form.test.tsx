@@ -24,6 +24,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
@@ -136,7 +137,7 @@ afterEach(() => {
 test('creates a fixed key only after selecting one authorized radio card', async () => {
   const { user, post } = openEditor()
   await user.type(await screen.findByLabelText('Token Name'), 'New key')
-  const save = screen.getByRole('button', { name: 'Add' })
+  const save = screen.getByRole('button', { name: 'Create' })
   expect(save).toBeDisabled()
   expect(screen.queryByText('Legacy Auto')).not.toBeInTheDocument()
   expect(screen.queryByText('Smart Routing')).not.toBeInTheDocument()
@@ -162,6 +163,70 @@ test('creates a fixed key only after selecting one authorized radio card', async
     model_limits: '',
     allow_ips: '',
   })
+})
+
+test('keeps create and cancel outside the scrollable fields when advanced settings open', async () => {
+  const { user, post, close } = openEditor()
+  const dialog = screen.getByRole('dialog', { name: 'Create API Key' })
+  const nameField = await within(dialog).findByRole('textbox', {
+    name: 'Token Name',
+  })
+  const body = nameField.closest('[data-slot="api-key-form-body"]')
+  const create = within(dialog).getByRole('button', { name: 'Create' })
+  const cancel = within(dialog).getByRole('button', { name: 'Cancel' })
+  const advanced = within(dialog).getByRole('button', {
+    name: 'Advanced Settings',
+  })
+
+  expect(body).toHaveClass('min-h-0', 'overflow-y-auto')
+  expect(dialog).toHaveClass('overflow-hidden')
+  expect(body).not.toContainElement(create)
+  expect(body).not.toContainElement(cancel)
+  const footer = create.closest('[data-slot="dialog-footer"]')
+  expect(footer).toHaveClass('shrink-0')
+  expect(footer).toContainElement(cancel)
+  expect(advanced).toHaveAttribute('aria-expanded', 'false')
+  await user.click(advanced)
+  expect(body).toContainElement(
+    within(dialog).getByLabelText('IP Whitelist (supports CIDR)')
+  )
+  expect(create).toBeVisible()
+  expect(create).toBeDisabled()
+  await user.click(cancel)
+  expect(close).toHaveBeenCalledWith(false)
+  expect(post).not.toHaveBeenCalled()
+})
+
+test('a keyboard chooses exactly one eligible group and announces the whole description and explicit zero rate', async () => {
+  const description =
+    'Authorized testing group with a longer custom description'
+  const { user, post } = openEditor({
+    groups: {
+      ...options,
+      'team test': {
+        ratio: 0,
+        desc: description,
+        catalog: { label: 'Team Test', exclusive: true },
+      },
+    },
+  })
+  const one = await screen.findByRole('radio', { name: 'Group One' })
+  const two = screen.getByRole('radio', { name: 'Group Two' })
+  const free = screen.getByRole('radio', { name: 'Team Test' })
+  expect(one).not.toBeChecked()
+  expect(free).toHaveAccessibleDescription(`0× Exclusive ${description}`)
+  expect(
+    screen.getByRole('button', { name: 'OpenAI' }).querySelector('svg')
+  ).toBeInTheDocument()
+  one.focus()
+  await user.keyboard('[Space]')
+  expect(one).toBeChecked()
+  await user.keyboard('{ArrowRight}')
+  expect(two).toHaveFocus()
+  expect(two).toBeChecked()
+  expect(one).not.toBeChecked()
+  expect(screen.getByText('Selected: Group Two')).toBeVisible()
+  expect(post).not.toHaveBeenCalled()
 })
 
 test('does not rewrite expiry, remaining quota, dormant restrictions or legacy settings on rename', async () => {
@@ -229,7 +294,7 @@ test('validates a catalogue draft against current group and model scope; never s
   expect(post).toHaveBeenCalledWith('/api/token/models', { group: 'b' })
   expect(post).toHaveBeenCalledTimes(1)
   await user.type(name, 'Generated draft')
-  await user.click(screen.getByRole('button', { name: 'Add' }))
+  await user.click(screen.getByRole('button', { name: 'Create' }))
   expect(post).toHaveBeenLastCalledWith(
     '/api/token/',
     expect.objectContaining({
@@ -253,7 +318,7 @@ test('a model-only catalogue draft waits for group selection and rechecks anothe
       /The group or model from the catalogue is unavailable/
     )
   ).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled()
   await user.click(screen.getByRole('radio', { name: /Group Two/ }))
   await waitFor(() =>
     expect(
@@ -264,7 +329,7 @@ test('a model-only catalogue draft waits for group selection and rechecks anothe
     ['/api/token/models', { group: 'a' }],
     ['/api/token/models', { group: 'b' }],
   ])
-  await user.click(screen.getByRole('button', { name: 'Add' }))
+  await user.click(screen.getByRole('button', { name: 'Create' }))
   expect(post).toHaveBeenLastCalledWith(
     '/api/token/',
     expect.objectContaining({ group: 'b', model_limits: 'b-model' })
@@ -279,7 +344,7 @@ test('never previews or selects a catalogue group the key owner cannot use', asy
   expect(
     screen.getByText(/The group or model from the catalogue is unavailable/)
   ).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled()
   expect(post).not.toHaveBeenCalled()
 })
 
@@ -294,7 +359,7 @@ test('does not double-submit when a request is pending', async () => {
   })
   await user.type(await screen.findByLabelText('Token Name'), 'New key')
   await user.click(screen.getByRole('radio', { name: /Group One/ }))
-  const submit = screen.getByRole('button', { name: 'Add' })
+  const submit = screen.getByRole('button', { name: 'Create' })
   const form = submit.closest('form')
   if (!form) throw new Error('Expected the API key form')
   fireEvent.submit(form)
@@ -308,7 +373,7 @@ test('recovered error leaves an unknown creation outcome for manual checking wit
   post.mockRejectedValueOnce(new Error('network interrupted'))
   await user.type(await screen.findByLabelText('Token Name'), 'New key')
   await user.click(screen.getByRole('radio', { name: /Group One/ }))
-  await user.click(screen.getByRole('button', { name: 'Add' }))
+  await user.click(screen.getByRole('button', { name: 'Create' }))
   expect(await screen.findByRole('alert')).toHaveTextContent(
     'Could not confirm key creation'
   )
@@ -362,7 +427,7 @@ test('an unauthorized model inside an authorized group is discarded without wide
       /The group or model from the catalogue is unavailable/
     )
   ).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled()
   expect(
     screen.getByRole('switch', { name: 'Model limits enabled' })
   ).not.toBeChecked()
@@ -372,7 +437,7 @@ test('an unauthorized model inside an authorized group is discarded without wide
   await user.click(
     screen.getByRole('button', { name: 'Discard catalogue draft' })
   )
-  expect(screen.getByRole('button', { name: 'Add' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Create' })).toBeEnabled()
 })
 
 test('validates new IP restrictions and sends the normalized line-delimited format', async () => {
@@ -382,10 +447,10 @@ test('validates new IP restrictions and sends the normalized line-delimited form
   await user.click(screen.getByRole('button', { name: 'Advanced Settings' }))
   const ip = screen.getByLabelText('IP Whitelist (supports CIDR)')
   await user.type(ip, ',')
-  expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled()
   await user.clear(ip)
   await user.type(ip, '192.0.2.1, 2001:db8::/32')
-  await user.click(screen.getByRole('button', { name: 'Add' }))
+  await user.click(screen.getByRole('button', { name: 'Create' }))
   expect(post).toHaveBeenCalledWith(
     '/api/token/',
     expect.objectContaining({

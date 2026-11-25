@@ -37,6 +37,11 @@ export const groupCatalogBadges = {
     icon: FlaskConical,
     color: 'bg-indigo-700 text-white',
   },
+  traceable: {
+    label: 'Traceable',
+    icon: Award,
+    color: 'bg-amber-800 text-white',
+  },
 } as const
 
 export function groupCatalogBadgeLabels(values?: readonly string[]) {

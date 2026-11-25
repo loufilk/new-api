@@ -24,11 +24,12 @@ import {
   PowerOff,
   ArrowRightLeft,
   Bird,
+  Brain,
   Copy,
   Link,
   Loader2,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -49,13 +50,14 @@ import { encodeChannelConnectionInfo } from '@/lib/channel-connection-info'
 import type { Row } from '@/lib/console-table'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
 import { handleServerError } from '@/lib/handle-server-error'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { updateApiKeyStatus } from '../api'
 import { API_KEY_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import { isMagpieEligibleKey } from '../lib/magpie-import'
 import type { ApiKey } from '../types'
 import { useApiKeys } from './api-keys-provider'
-import { KeyDiagnosticButton } from './key-diagnostic-dialog'
+import { KeyDiagnosticLauncher } from './key-diagnostic-dialog'
 
 function getServerAddress(): string {
   // Connection info must point API clients at the API origin.
@@ -90,6 +92,9 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const isEnabled = apiKey.status === API_KEY_STATUS.ENABLED
   const [isTogglingStatus, setIsTogglingStatus] = useState(false)
   const isRealKeyLoading = Boolean(loadingKeys[apiKey.id])
+  const owner = useAuthStore((state) => state.auth.user?.id)
+  const [diagnosticOpen, setDiagnosticOpen] = useState(false)
+  const moreRef = useRef<HTMLButtonElement>(null)
 
   const toggleLabel = isEnabled ? t('Disable') : t('Enable')
 
@@ -170,8 +175,8 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         <TooltipContent>{t('Edit')}</TooltipContent>
       </Tooltip>
 
-      <KeyDiagnosticButton tokenId={apiKey.id} disabled={!isEnabled} />
       <DataTableRowActionMenu
+        triggerRef={moreRef}
         ariaLabel={t('Open menu')}
         contentClassName='w-[200px]'
         modal={false}
@@ -238,6 +243,16 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
+          disabled={!isEnabled || !owner}
+          onClick={() => setDiagnosticOpen(true)}
+        >
+          {t('Key diagnostic')}
+          <DropdownMenuShortcut>
+            <Brain size={16} aria-hidden='true' />
+          </DropdownMenuShortcut>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
           onClick={() => {
             setCurrentRow(apiKey)
             setOpen('delete')
@@ -250,6 +265,13 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuShortcut>
         </DropdownMenuItem>
       </DataTableRowActionMenu>
+      {diagnosticOpen && (
+        <KeyDiagnosticLauncher
+          tokenId={apiKey.id}
+          onClose={() => setDiagnosticOpen(false)}
+          finalFocus={moreRef}
+        />
+      )}
     </div>
   )
 }

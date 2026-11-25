@@ -31,6 +31,7 @@ import {
 } from '@/components/data-table'
 import { ErrorState } from '@/components/error-state'
 import { StatusBadge } from '@/components/status-badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Empty,
   EmptyDescription,
@@ -114,6 +115,15 @@ function ApiKeysMobileList({
 }) {
   const { t } = useTranslation()
   const rows = table.getRowModel().rows
+  const visibleColumns = new Set(
+    table.getVisibleLeafColumns().map(({ id }) => id)
+  )
+  const showGroup = visibleColumns.has('group')
+  const showQuota = visibleColumns.has('quota')
+  const showModels = visibleColumns.has('model_limits')
+  const showIPs = visibleColumns.has('allow_ips')
+  const showActivity = visibleColumns.has('activity_time')
+  const showExpiry = visibleColumns.has('expired_time')
 
   if (isLoading) return <ApiKeysMobileSkeleton />
 
@@ -139,16 +149,33 @@ function ApiKeysMobileList({
 
   return (
     <div className='min-w-0 space-y-3'>
+      <div className='bg-background sticky top-0 z-10 space-y-2'>
+        <label className='flex min-h-9 w-fit items-center gap-2 px-3 text-sm'>
+          <Checkbox
+            checked={table.getIsAllPageRowsSelected()}
+            indeterminate={
+              table.getIsSomePageRowsSelected() &&
+              !table.getIsAllPageRowsSelected()
+            }
+            onCheckedChange={(value) =>
+              table.toggleAllPageRowsSelected(!!value)
+            }
+          />
+          {t('Select all')}
+        </label>
+        <DataTableBulkActions table={table} placement='inline' />
+      </div>
       {rows.map((row) => {
         const apiKey = row.original
         const statusConfig =
           API_KEY_STATUSES[apiKey.effective_status ?? apiKey.status]
-        const groupCell = row
-          .getAllCells()
-          .find((cell) => cell.column.id === 'group')
-        const expiryCell = row
-          .getAllCells()
-          .find((cell) => cell.column.id === 'expired_time')
+        const visibleCells = row.getVisibleCells()
+        const groupCell = visibleCells.find(
+          (cell) => cell.column.id === 'group'
+        )
+        const expiryCell = visibleCells.find(
+          (cell) => cell.column.id === 'expired_time'
+        )
 
         return (
           <div
@@ -158,62 +185,91 @@ function ApiKeysMobileList({
               isDisabledApiKeyRow(apiKey) && DISABLED_ROW_MOBILE
             )}
           >
-            <div className='flex items-start justify-between gap-3'>
-              <div className='min-w-0'>
-                <div className='text-sm leading-5 font-semibold break-words'>
+            <div className='flex items-start gap-3'>
+              <Checkbox
+                checked={row.getIsSelected()}
+                onCheckedChange={(value) => row.toggleSelected(!!value)}
+                aria-label={`${t('Select row')}: ${apiKey.name}`}
+                className='mt-0.5'
+              />
+              {visibleColumns.has('name') && (
+                <div className='min-w-0 flex-1 text-sm leading-5 font-semibold break-words'>
                   {apiKey.name}
                 </div>
-              </div>
-              {statusConfig && (
+              )}
+              {visibleColumns.has('status') && statusConfig && (
                 <StatusBadge
                   label={t(statusConfig.label)}
                   variant={statusConfig.variant}
                   copyable={false}
-                  className='shrink-0 px-0 text-xs font-normal'
+                  className='ms-auto shrink-0 px-0 text-xs font-normal'
                 />
               )}
             </div>
 
-            <div className='flex min-w-0 items-center justify-between gap-2'>
-              <div className='min-w-0 flex-1 [&_button:first-child]:max-w-full [&_button:first-child]:truncate [&_button:first-child]:px-0'>
-                <ApiKeyCell apiKey={apiKey} />
-              </div>
+            <div className='flex min-w-0 items-center justify-end gap-2'>
+              {visibleColumns.has('key') && (
+                <div className='min-w-0 flex-1 [&_button:first-child]:max-w-full [&_button:first-child]:truncate [&_button:first-child]:px-0'>
+                  <ApiKeyCell apiKey={apiKey} />
+                </div>
+              )}
               <DataTableRowActions row={row} />
             </div>
 
-            <div className='min-w-0 space-y-3 py-1'>
-              <div className='min-w-0'>
-                {groupCell &&
-                  flexRender(
-                    groupCell.column.columnDef.cell,
-                    groupCell.getContext()
-                  )}
+            {(showGroup || showQuota) && (
+              <div className='min-w-0 space-y-3 py-1'>
+                {groupCell && (
+                  <div className='min-w-0'>
+                    {flexRender(
+                      groupCell.column.columnDef.cell,
+                      groupCell.getContext()
+                    )}
+                  </div>
+                )}
+                {showQuota && (
+                  <ApiKeyQuotaCell apiKey={apiKey} now={now} variant='card' />
+                )}
               </div>
-              <ApiKeyQuotaCell apiKey={apiKey} now={now} variant='card' />
-            </div>
+            )}
 
-            <div className='flex flex-wrap items-center gap-x-5 gap-y-1'>
-              <ModelLimitsCell apiKey={apiKey} detailsTrigger='click' />
-              <IpRestrictionsCell apiKey={apiKey} detailsTrigger='click' />
-            </div>
+            {(showModels || showIPs) && (
+              <div className='flex flex-wrap items-center gap-x-5 gap-y-1'>
+                {showModels && (
+                  <ModelLimitsCell apiKey={apiKey} detailsTrigger='click' />
+                )}
+                {showIPs && (
+                  <IpRestrictionsCell apiKey={apiKey} detailsTrigger='click' />
+                )}
+              </div>
+            )}
 
-            <div className='grid grid-cols-3 items-start gap-3 border-t pt-2'>
-              <div className='col-span-2 min-w-0'>
-                <ApiKeyActivityCell
-                  apiKey={apiKey}
-                  now={now}
-                  layout='columns'
-                />
+            {(showActivity || showExpiry) && (
+              <div
+                className={cn(
+                  'grid items-start gap-3 border-t pt-2',
+                  showActivity && showExpiry && 'grid-cols-3'
+                )}
+              >
+                {showActivity && (
+                  <div className={cn('min-w-0', showExpiry && 'col-span-2')}>
+                    <ApiKeyActivityCell
+                      apiKey={apiKey}
+                      now={now}
+                      layout='columns'
+                    />
+                  </div>
+                )}
+                {expiryCell && (
+                  <div className='min-w-0 space-y-1 [&_[data-slot=status-badge]]:text-xs [&_[data-slot=status-badge]]:font-normal'>
+                    <div className='text-muted-foreground'>{t('Expires')}</div>
+                    {flexRender(
+                      expiryCell.column.columnDef.cell,
+                      expiryCell.getContext()
+                    )}
+                  </div>
+                )}
               </div>
-              <div className='min-w-0 space-y-1 [&_[data-slot=status-badge]]:text-xs [&_[data-slot=status-badge]]:font-normal'>
-                <div className='text-muted-foreground'>{t('Expires')}</div>
-                {expiryCell &&
-                  flexRender(
-                    expiryCell.column.columnDef.cell,
-                    expiryCell.getContext()
-                  )}
-              </div>
-            </div>
+            )}
           </div>
         )
       })}

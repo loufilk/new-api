@@ -45,6 +45,7 @@ import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 import { flexRender, useConsoleTable } from '@/lib/console-table'
 import { Route as KeysRoute } from '@/routes/_authenticated/keys'
+import { useAuthStore } from '@/stores/auth-store'
 import {
   DEFAULT_CURRENCY_CONFIG,
   useSystemConfigStore,
@@ -164,6 +165,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup()
+  useAuthStore.getState().auth.reset()
   toast.dismiss()
   localStorage.clear()
   clients.splice(0).forEach((client) => client.clear())
@@ -346,6 +348,32 @@ async function renderKeysPage(
       return {
         data: { success: true, data: { items: [currentKey], total: 1 } },
       }
+    }
+    if (url === '/api/user/key-diagnostics/options') {
+      return {
+        data: {
+          success: true,
+          data: {
+            keys: [
+              {
+                id: currentKey.id,
+                name: currentKey.name,
+                group: currentKey.group,
+              },
+            ],
+            questions: [
+              {
+                id: 'pelican-svg-v2',
+                prompt: 'Synthetic question.',
+                max_output_tokens: 32000,
+              },
+            ],
+          },
+        },
+      }
+    }
+    if (url.startsWith('/api/user/key-diagnostics/')) {
+      return { data: { success: true, data: [] } }
     }
     return {
       data: {
@@ -689,12 +717,124 @@ it.each([
   }
 )
 
-it('keeps full mobile information without group or quota section headings', async () => {
+it('opens the row diagnostic from More, keeps the Key preselected, and returns keyboard focus without submitting', async () => {
+  useAuthStore.getState().auth.setUser({ id: 51, username: 'fixture', role: 1 })
+  const { post } = await renderKeysPage(1, {}, true, '/keys/', true)
+  const user = userEvent.setup()
+  const more = screen.getByRole('button', { name: 'Open menu' })
+
+  expect(
+    screen.getAllByRole('button', { name: 'Key diagnostic' })
+  ).toHaveLength(1)
+  act(() => more.focus())
+  await user.keyboard('{Enter}')
+  await user.keyboard('{End}{ArrowUp}')
+  expect(screen.getByRole('menuitem', { name: 'Key diagnostic' })).toHaveFocus()
+  await user.keyboard('{Enter}')
+
+  const dialog = await screen.findByRole('dialog', { name: 'Key diagnostic' })
+  const keySelect = await within(dialog).findByRole('combobox', {
+    name: 'API Key',
+  })
+  expect(keySelect).toHaveValue('7')
+  expect(keySelect).toBeDisabled()
+  expect(
+    within(dialog).getByRole('button', { name: 'Start test' })
+  ).toBeDisabled()
+  expect(post).not.toHaveBeenCalled()
+  await waitFor(() =>
+    expect(dialog).toContainElement(document.activeElement as HTMLElement)
+  )
+
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(dialog).not.toBeInTheDocument())
+  await waitFor(() => expect(more).toHaveFocus())
+  expect(post).not.toHaveBeenCalled()
+})
+
+it('does not open the row diagnostic on a disabled Key', async () => {
+  useAuthStore.getState().auth.setUser({ id: 51, username: 'fixture', role: 1 })
+  const { post } = await renderKeysPage(2)
+  const user = userEvent.setup()
+
+  await user.click(screen.getByRole('button', { name: 'Open menu' }))
+  const diagnostic = screen.getByRole('menuitem', { name: 'Key diagnostic' })
+  expect(diagnostic).toHaveAttribute('aria-disabled', 'true')
+  await user.click(diagnostic)
+  expect(
+    screen.queryByRole('dialog', { name: 'Key diagnostic' })
+  ).not.toBeInTheDocument()
+  expect(api.get).not.toHaveBeenCalledWith(
+    '/api/user/key-diagnostics/options',
+    expect.anything()
+  )
+  expect(post).not.toHaveBeenCalled()
+})
+
+function useMobileViewport() {
   const matchMedia = window.matchMedia
   vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
     ...matchMedia(query),
     matches: query.includes('max-width'),
   }))
+}
+
+it('updates only the selected mobile card fields when changing View options', async () => {
+  useMobileViewport()
+  await renderKeysPage(1, {
+    model_limits_enabled: true,
+    model_limits: 'example-model',
+  })
+  const user = userEvent.setup()
+  const view = screen.getByRole('button', { name: 'View' })
+  const models = () => screen.queryByRole('button', { name: /Models: 1 model/ })
+
+  expect(models()).toBeVisible()
+  await user.click(view)
+  await user.click(screen.getByRole('menuitemcheckbox', { name: 'Models' }))
+  expect(models()).not.toBeInTheDocument()
+  await user.keyboard('{Escape}')
+  expect(screen.getByRole('button', { name: 'Open menu' })).toBeVisible()
+  expect(screen.getByText('Expires')).toBeVisible()
+
+  await user.click(view)
+  await user.click(screen.getByRole('menuitemcheckbox', { name: 'Models' }))
+  expect(models()).toBeVisible()
+})
+
+it('exposes existing bulk actions after mobile selection and clears it when the filtered list changes', async () => {
+  useMobileViewport()
+  const { post } = await renderKeysPage()
+  const user = userEvent.setup()
+  const selectAll = screen.getByRole('checkbox', { name: 'Select all' })
+  const row = screen.getByRole('checkbox', { name: 'Select row: production' })
+  const deleteButton = () =>
+    screen.queryByRole('button', { name: 'Delete selected API keys' })
+
+  expect(deleteButton()).not.toBeInTheDocument()
+  await user.click(row)
+  expect(row).toBeChecked()
+  expect(selectAll).toBeChecked()
+  expect(
+    screen.getByRole('button', { name: 'Copy selected keys' })
+  ).toBeVisible()
+  await user.click(
+    screen.getByRole('button', { name: 'Delete selected API keys' })
+  )
+  const dialog = await screen.findByRole('alertdialog')
+  expect(dialog).toHaveTextContent('production (#7)')
+  expect(post).not.toHaveBeenCalled()
+
+  await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  await user.click(screen.getByRole('button', { name: 'Status' }))
+  await user.click(screen.getByRole('option', { name: 'Enabled' }))
+  await waitFor(() => expect(row).not.toBeChecked())
+  expect(deleteButton()).not.toBeInTheDocument()
+  expect(post).not.toHaveBeenCalled()
+})
+
+it('keeps full mobile information without group or quota section headings', async () => {
+  useMobileViewport()
   i18n.addResourceBundle('zh', 'translation', zh.translation)
   await i18n.changeLanguage('zh')
   try {

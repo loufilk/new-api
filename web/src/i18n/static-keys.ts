@@ -23,6 +23,9 @@ export const STATIC_I18N_KEYS = [
   'Please select a group',
   'Invalid token status',
 
+  // Group presentation labels are selected from the catalog badge registry.
+  'Traceable',
+
   'Transfer wallet balance to agent balance',
   'Transferred wallet balance',
   'Paid wallet balance',

@@ -122,6 +122,8 @@ export function ApiKeysMutateDrawer({
             sortOrder: catalog?.sort_order ?? 0,
             ratio: info.ratio,
             badges: catalog?.badges,
+            icon: catalog?.icon,
+            exclusive: catalog?.exclusive,
           }
         }),
     [groups.data]
@@ -147,9 +149,13 @@ export function ApiKeysMutateDrawer({
   )
   let content: React.ReactNode = null
   if (error) {
-    content = errorContent
+    content = <div className='px-4 py-5 sm:px-6'>{errorContent}</div>
   } else if (!ready) {
-    content = <LoadingState inline size='sm' message={t('Loading...')} />
+    content = (
+      <div className='px-4 py-5 sm:px-6'>
+        <LoadingState inline size='sm' message={t('Loading...')} />
+      </div>
+    )
   } else if (open) {
     content = (
       <ApiKeyEditor
@@ -166,8 +172,8 @@ export function ApiKeysMutateDrawer({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-2xl'>
-        <DialogHeader>
+      <DialogContent className='flex min-h-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl'>
+        <DialogHeader className='shrink-0 gap-1 border-b px-4 py-4 pe-12 sm:px-6 sm:pe-12'>
           <DialogTitle>
             {currentRow ? t('Update API Key') : t('Create API Key')}
           </DialogTitle>
@@ -400,10 +406,13 @@ function ApiKeyEditor({
     }
   }
 
-  const saveLabel = currentKey ? t('Save changes') : t('Add')
+  const saveLabel = currentKey ? t('Save changes') : t('Create')
 
-  return (
-    <form className='space-y-4' onSubmit={submit} noValidate aria-busy={busy}>
+  const fields = (
+    <div
+      data-slot='api-key-form-body'
+      className='min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6'
+    >
       <div className='grid gap-1.5'>
         <Label htmlFor='fixed-key-name'>{t('Token Name')}</Label>
         <Input
@@ -632,16 +641,32 @@ function ApiKeyEditor({
           </Button>
         </div>
       )}
-      <DialogFooter>
+    </div>
+  )
+
+  return (
+    <form
+      className='flex min-h-0 flex-1 flex-col'
+      onSubmit={submit}
+      noValidate
+      aria-busy={busy}
+    >
+      {fields}
+      <DialogFooter className='m-0 shrink-0 flex-row gap-2 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6'>
         <Button
           type='button'
           variant='outline'
+          className='flex-1 sm:flex-none'
           onClick={onClose}
           disabled={busy}
         >
           {t('Cancel')}
         </Button>
-        <Button type='submit' disabled={!canSave}>
+        <Button
+          type='submit'
+          className='flex-1 sm:flex-none'
+          disabled={!canSave}
+        >
           {busy ? t('Saving...') : saveLabel}
         </Button>
       </DialogFooter>

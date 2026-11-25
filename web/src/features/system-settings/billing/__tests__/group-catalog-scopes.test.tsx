@@ -200,6 +200,52 @@ it('shows the actual viewer quote separately from the base ratio and previews a 
   expect(put).not.toHaveBeenCalled()
 })
 
+it('offers Traceable as ordered presentation only and never as an automatic status', async () => {
+  const { user, patch, post, put } = open()
+  await user.click(
+    await screen.findByRole('button', {
+      name: 'Open group details: Standard (standard)',
+    })
+  )
+  const checkbox = screen.getByRole('checkbox', { name: 'Traceable' })
+  expect(checkbox).not.toBeChecked()
+  expect(screen.queryByRole('checkbox', { name: 'New' })).toBeNull()
+  expect(
+    screen.getByRole('combobox', { name: 'Icon source' })
+  ).not.toHaveTextContent('Traceable')
+  const preview = within(
+    screen.getByRole('region', { name: 'Group display preview' })
+  )
+  await user.click(screen.getByRole('checkbox', { name: 'Authentic' }))
+  await user.click(checkbox)
+  expect(preview.getByText('Traceable')).toHaveClass('bg-amber-800')
+  expect(
+    preview.getByText('Traceable').querySelector('svg.lucide-award')
+  ).not.toBeNull()
+  await user.click(screen.getByRole('button', { name: 'Move Traceable up' }))
+  expect(
+    preview
+      .getByText('Traceable')
+      .previousElementSibling?.querySelector('title')?.textContent
+  ).toBe('OpenAI')
+  expect(patch).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('button', { name: 'Save group display' }))
+  expect(await screen.findByText('Group display saved.')).toBeVisible()
+  expect(checkbox).toBeChecked()
+  expect(patch).toHaveBeenCalledWith('/api/option/group-catalog', {
+    revision: 7,
+    groups: {
+      ...catalogue.groups,
+      standard: expect.objectContaining({
+        ...catalogue.groups.standard,
+        badges: ['traceable', 'authentic'],
+      }),
+    },
+  })
+  expect(post).not.toHaveBeenCalled()
+  expect(put).not.toHaveBeenCalled()
+})
+
 it('does not quote a model or create a fallback 1× when the configured group is absent from the viewer response', async () => {
   const { user, get } = open()
   await user.click(
