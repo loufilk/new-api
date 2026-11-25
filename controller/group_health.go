@@ -58,7 +58,8 @@ func GetTokenGroupHealth(c *gin.Context) {
 		return
 	}
 	group := values[0]
-	scope, ok := authorizeTokenGroupHealth(c, userID, group)
+	channelStatus := c.Query("view") == channelStatusView
+	scope, ok := authorizeTokenGroupHealth(c, userID, group, channelStatus)
 	if !ok {
 		return
 	}
@@ -97,7 +98,7 @@ func GetTokenGroupHealth(c *gin.Context) {
 	}
 	// Recheck the same admission generation and exact current account grants
 	// before publishing. The potentially slower metrics query holds no lock.
-	current, ok := authorizeTokenGroupHealth(c, userID, group)
+	current, ok := authorizeTokenGroupHealth(c, userID, group, channelStatus)
 	if !ok {
 		return
 	}
@@ -132,7 +133,51 @@ func GetTokenGroupHealth(c *gin.Context) {
 		totals.TtftSumMs += row.TtftSumMs
 	}
 	data.groupHealthMeasurement = groupHealthMeasurementFromCounters(totals)
+	if channelStatus {
+		common.ApiSuccess(c, channelStatusHealth(data))
+		return
+	}
 	common.ApiSuccess(c, data)
+}
+
+// A strict public projection omits both the overall and hourly sample counts.
+type channelStatusMeasurement struct {
+	SuccessRate   *float64 `json:"success_rate"`
+	AverageTtftMs *float64 `json:"average_ttft_ms"`
+}
+
+type channelStatusBucket struct {
+	BucketStart int64 `json:"bucket_start"`
+	channelStatusMeasurement
+}
+
+type channelStatusHealthResponse struct {
+	Group            string                `json:"group"`
+	Available        bool                  `json:"available"`
+	MetricsAvailable bool                  `json:"metrics_available"`
+	WindowStart      int64                 `json:"window_start"`
+	ObservedAt       int64                 `json:"observed_at"`
+	BucketSeconds    int64                 `json:"bucket_seconds"`
+	Buckets          []channelStatusBucket `json:"buckets"`
+	channelStatusMeasurement
+}
+
+func channelStatusHealth(health groupHealthResponse) channelStatusHealthResponse {
+	data := channelStatusHealthResponse{
+		Group: health.Group, Available: health.Available, MetricsAvailable: health.MetricsAvailable,
+		WindowStart: health.WindowStart, ObservedAt: health.ObservedAt, BucketSeconds: health.BucketSeconds,
+		Buckets: make([]channelStatusBucket, len(health.Buckets)),
+	}
+	if health.MetricsAvailable {
+		data.channelStatusMeasurement = channelStatusMeasurement{health.SuccessRate, health.AverageTtftMs}
+	}
+	for i, bucket := range health.Buckets {
+		data.Buckets[i].BucketStart = bucket.BucketStart
+		if health.MetricsAvailable {
+			data.Buckets[i].channelStatusMeasurement = channelStatusMeasurement{bucket.SuccessRate, bucket.AverageTtftMs}
+		}
+	}
+	return data
 }
 
 type groupHealthScope struct {
@@ -140,7 +185,7 @@ type groupHealthScope struct {
 	historyKnown      bool
 }
 
-func authorizeTokenGroupHealth(c *gin.Context, userID int, group string) (groupHealthScope, bool) {
+func authorizeTokenGroupHealth(c *gin.Context, userID int, group string, channelStatus bool) (groupHealthScope, bool) {
 	guard, ok := beginControllerGroupConfigRead(c)
 	if !ok {
 		return groupHealthScope{}, false
@@ -149,7 +194,11 @@ func authorizeTokenGroupHealth(c *gin.Context, userID int, group string) (groupH
 	ctx := c.Request.Context()
 	user, scopeErr := model.ReadGroupHealthUser(ctx, userID)
 	if scopeErr == nil {
-		if user.Status != common.UserStatusEnabled {
+		publiclyListed := true
+		if channelStatus {
+			_, publiclyListed = channelStatusPublicGroups()[group]
+		}
+		if user.Status != common.UserStatusEnabled || !publiclyListed {
 			scopeErr = service.ErrTokenGroupForbidden
 		} else {
 			scopeErr = service.ValidateTokenGroupForUser(ctx, userID, user.Group, group)

@@ -46,10 +46,11 @@ func TestTokenGroupHealthPostgres(t *testing.T) {
 
 	hour := time.Now().UTC().Truncate(time.Hour).Add(-time.Hour).Unix()
 	require.NoError(t, db.Create(&[]model.Option{
-		{Key: "GroupRatio", Value: `{"public":1,"empty":1,"disabled":1,"reserved":1,"foreign":1,"recycled":1,"renamed":1,"retired":1,"fresh":1}`},
+		{Key: "GroupRatio", Value: `{"public":1,"empty":1,"disabled":1,"reserved":1,"foreign":1,"legacy-private":1,"recycled":1,"renamed":1,"retired":1,"fresh":1}`},
 		{Key: "UserUsableGroups", Value: `{"public":"Public","empty":"Empty","disabled":"Disabled","reserved":"Private","recycled":"Recycled","renamed":"Renamed","retired":"Reactivated","fresh":"Fresh"}`},
 		{Key: "AutoGroups", Value: `["public"]`},
 		{Key: "GroupCatalogMetadata", Value: `{"reserved":{"label":"Private","exclusive":true}}`},
+		{Key: "group_ratio_setting.group_special_usable_group", Value: `{"public":{"+:legacy-private":"Legacy private"}}`},
 		{Key: "GroupConfigVersion", Value: "1"},
 		{Key: "GroupRenameAliases", Value: `{"other-retired-name":"renamed","retired":"foreign"}`},
 		{Key: "GroupCatalogMarketActivityCursor", Value: "1"},
@@ -102,8 +103,9 @@ func TestTokenGroupHealthPostgres(t *testing.T) {
 
 	engine := gin.New()
 	engine.GET("/api/token/group-health", middleware.DisableCache(), middleware.TokenManagementAuth(), GetTokenGroupHealth)
-	do := func(token, group string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, "/api/token/group-health?group="+url.QueryEscape(group), nil)
+	engine.GET("/api/user/self/groups", middleware.DisableCache(), middleware.UserAuth(), GetUserGroups)
+	doPath := func(token, path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
 		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
@@ -112,6 +114,9 @@ func TestTokenGroupHealthPostgres(t *testing.T) {
 		require.Contains(t, recorder.Header().Get("Cache-Control"), "no-store")
 		require.Contains(t, recorder.Header().Get("Cache-Control"), "private")
 		return recorder
+	}
+	do := func(token, group string) *httptest.ResponseRecorder {
+		return doPath(token, "/api/token/group-health?group="+url.QueryEscape(group))
 	}
 	decode := func(out *httptest.ResponseRecorder) groupHealthResponse {
 		require.Equal(t, http.StatusOK, out.Code, out.Body.String())
@@ -172,6 +177,44 @@ func TestTokenGroupHealthPostgres(t *testing.T) {
 
 	private := decode(do(ownerSession.AccessToken, "reserved"))
 	assert.EqualValues(t, 3, private.RequestCount)
+	t.Run("ChannelStatusPublishesOnlyPublicAggregate", func(t *testing.T) {
+		show := func(token, group string) *httptest.ResponseRecorder {
+			return doPath(token, "/api/token/group-health?group="+url.QueryEscape(group)+"&view=channel-status")
+		}
+		assert.Equal(t, http.StatusUnauthorized, show("", "public").Code)
+		out := show(ownerSession.AccessToken, "public")
+		require.Equal(t, http.StatusOK, out.Code, out.Body.String())
+		var payload struct {
+			Success bool                        `json:"success"`
+			Data    channelStatusHealthResponse `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(out.Body.Bytes(), &payload))
+		require.True(t, payload.Success)
+		require.Len(t, payload.Data.Buckets, 24)
+		require.NotNil(t, payload.Data.SuccessRate)
+		require.NotNil(t, payload.Data.AverageTtftMs)
+		assert.EqualValues(t, 43.75, *payload.Data.SuccessRate)
+		assert.EqualValues(t, 100, *payload.Data.AverageTtftMs)
+		for _, field := range []string{"request_count", "success_count", "sample_count", "fixture-model", "fixture-public", "channel_id"} {
+			assert.NotContains(t, out.Body.String(), field)
+		}
+		notFound := show(ownerSession.AccessToken, "nonexistent")
+		for _, hidden := range []string{"reserved", "legacy-private", "foreign"} {
+			got := show(ownerSession.AccessToken, hidden)
+			assert.Equal(t, http.StatusForbidden, got.Code)
+			assert.Equal(t, notFound.Body.String(), got.Body.String())
+		}
+		ordinary := doPath(ownerSession.AccessToken, "/api/user/self/groups")
+		require.Equal(t, http.StatusOK, ordinary.Code)
+		assert.Contains(t, ordinary.Body.String(), `"reserved":`)
+		assert.Contains(t, ordinary.Body.String(), `"legacy-private":`)
+		catalog := doPath(ownerSession.AccessToken, "/api/user/self/groups?view=channel-status")
+		require.Equal(t, http.StatusOK, catalog.Code)
+		assert.Contains(t, catalog.Body.String(), `"public":`)
+		for _, hidden := range []string{"reserved", "legacy-private", "foreign", "auto"} {
+			assert.NotContains(t, catalog.Body.String(), fmt.Sprintf("%q:", hidden))
+		}
+	})
 	// A prior populated full hour or durable retired alias proves reuse;
 	// no later bucket can prove that it excludes a slow old stream.
 	for _, name := range []string{"recycled", "renamed", "retired"} {
