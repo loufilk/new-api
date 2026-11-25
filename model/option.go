@@ -246,8 +246,12 @@ func LoadOptionsFromDatabase() (loadErr error) {
 		common.SysError("conflicting group option aliases; runtime refresh rejected")
 		return err
 	}
+	marketValues := make(map[string]string, 2)
 	var bucketRaw, catalogRaw, iconsRaw string
 	for _, option := range options {
+		if option.Key == groupMarketDataKey || option.Key == groupMarketCursorKey {
+			marketValues[option.Key] = option.Value
+		}
 		if option.Key == groupRateLimitBucketsOptionKey {
 			bucketRaw = option.Value
 		}
@@ -258,6 +262,7 @@ func LoadOptionsFromDatabase() (loadErr error) {
 			iconsRaw = option.Value
 		}
 	}
+	loadMarketRuntime(marketValues)
 	buckets, err := parseGroupRateLimitBuckets(bucketRaw)
 	if err != nil {
 		groupConfigRuntimeInvalid.Store(true)
@@ -272,7 +277,7 @@ func LoadOptionsFromDatabase() (loadErr error) {
 	valid := true
 	passkeyOptions := make(map[string]string)
 	for _, option := range options {
-		if option.Key == groupRateLimitBucketsOptionKey || option.Key == groupCatalogOptionKey || option.Key == groupCatalogIconsOptionKey {
+		if isGroupMarketOption(option.Key) || option.Key == groupRateLimitBucketsOptionKey || option.Key == groupCatalogOptionKey || option.Key == groupCatalogIconsOptionKey {
 			continue
 		}
 		if IsPasskeyDomainOption(option.Key) {
@@ -318,7 +323,7 @@ func validateOptionValue(key string, value string) error {
 	if key == groupRenameAliasesOptionKey || key == groupConfigVersionOptionKey {
 		return common.NewMessage("Group namespace metadata is read-only.")
 	}
-	if key == groupCatalogOptionKey || key == groupCatalogIconsOptionKey {
+	if isGroupMarketOption(key) || key == groupCatalogOptionKey || key == groupCatalogIconsOptionKey {
 		return ErrInvalidGroupCatalog
 	}
 	if key == groupRateLimitBucketsOptionKey {

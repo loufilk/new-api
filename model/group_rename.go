@@ -372,7 +372,7 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 			}
 		}
 		state.affectedOptionKeys = optionKeys
-		state.groupConfigVersion, err = bumpGroupConfigVersionTx(tx)
+		state.groupConfigVersion, err = advanceGroupConfigVersionTx(tx, &marketTransition{before: optionValues, after: renamedOptions, mappings: plan.mappings})
 		if err != nil {
 			return err
 		}

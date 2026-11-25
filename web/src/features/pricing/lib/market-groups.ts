@@ -32,11 +32,38 @@ export const MARKET_PLATFORMS = {
 
 export type MarketPlatform = keyof typeof MARKET_PLATFORMS
 
+export const MARKET_PLATFORM_ICONS: Record<MarketPlatform, string | null> = {
+  openai: 'OpenAI',
+  anthropic: 'Claude.Color',
+  gemini: 'Gemini.Color',
+  deepseek: 'DeepSeek.Color',
+  moonshot: 'Moonshot',
+  xai: 'XAI',
+  zhipu: 'Zhipu.Color',
+  azure: 'Azure.Color',
+  other: null,
+}
+
 export function groupPlatform(meta?: MarketGroup): MarketPlatform {
   const key = meta?.platform
   return !meta?.exclusive && key && Object.hasOwn(MARKET_PLATFORMS, key)
     ? (key as MarketPlatform)
     : 'other'
+}
+
+// Only unanimous explicit catalog platform metadata is a usable fallback.
+export function catalogModelPlatformIcon(
+  model: Pick<PricingModel, 'enable_groups' | 'group_catalog'>
+): string | null {
+  let platform: MarketPlatform | undefined
+  for (const group of model.enable_groups ?? []) {
+    const catalog = model.group_catalog
+    if (!catalog || !Object.hasOwn(catalog, group)) return null
+    const next = groupPlatform(catalog[group])
+    if (next === 'other' || (platform && next !== platform)) return null
+    platform = next
+  }
+  return platform ? MARKET_PLATFORM_ICONS[platform] : null
 }
 
 export function marketGroupLabel(

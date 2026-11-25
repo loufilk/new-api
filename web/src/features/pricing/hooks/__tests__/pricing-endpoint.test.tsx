@@ -16,7 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  focusManager,
+  QueryClient,
+  QueryClientProvider,
+} from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
@@ -94,7 +98,12 @@ describe('pricing endpoint selection', () => {
 
     renderPricingData()
 
-    await waitFor(() => expect(apiGet).toHaveBeenCalledWith('/api/pricing'))
+    await waitFor(() =>
+      expect(apiGet).toHaveBeenCalledWith('/api/pricing', {
+        signal: expect.any(AbortSignal),
+        disableDuplicate: true,
+      })
+    )
     expect(apiGet.mock.calls.map((call) => call[0])).toEqual(['/api/pricing'])
   })
 
@@ -145,6 +154,131 @@ describe('pricing endpoint selection', () => {
     }
   )
 
+  test.each([true, false])(
+    'never attaches another group or a personal price event to a model (signed in: %s)',
+    async (signedIn) => {
+      const activity = {
+        first_configured_at: 1795521600,
+        is_new: true,
+        recent_rate_change: true,
+        rate_changes: [
+          { old_ratio: 0.5, new_ratio: 0, effective_at: 1795521700 },
+        ],
+      }
+      const groups = [
+        'base',
+        'personal',
+        'override',
+        'stale',
+        'unusable',
+        'irrelevant',
+        'bad',
+        'unused',
+      ]
+      apiGet.mockResolvedValue({
+        data: {
+          success: true,
+          data: [
+            {
+              id: 1,
+              model_name: 'one',
+              enable_groups: groups.filter(
+                (g) => g !== 'irrelevant' && g !== 'unused'
+              ),
+            },
+            { id: 2, model_name: 'two', enable_groups: ['irrelevant'] },
+          ],
+          usable_group: Object.fromEntries(
+            groups.filter((g) => g !== 'unusable').map((g) => [g, {}])
+          ),
+          group_rate_source: {
+            base: 'group',
+            personal: 'personal',
+            override: 'group_override',
+            stale: 'group',
+            irrelevant: 'group',
+            bad: 'group',
+          },
+          group_ratio: {
+            base: 0,
+            personal: 0,
+            override: 0,
+            stale: 2,
+            irrelevant: 0,
+            bad: 0,
+          },
+          group_market_activity: {
+            ...Object.fromEntries(groups.map((g) => [g, activity])),
+            bad: {
+              first_configured_at: 1795521600000,
+              is_new: true,
+              recent_rate_change: true,
+              rate_changes: [{ old_ratio: 0, new_ratio: 0, effective_at: 0 }],
+            },
+          },
+        },
+      })
+      if (signedIn) {
+        useAuthStore.getState().auth.setBundle(bundleFor(1, 'session-a'))
+      }
+      const { result } = renderPricingData()
+      await waitFor(() => expect(result.current.models).toHaveLength(2))
+      const firstOnly = {
+        first_configured_at: activity.first_configured_at,
+        is_new: true,
+      }
+      expect(result.current.models[0].group_market_activity).toEqual(
+        signedIn
+          ? {
+              base: activity,
+              personal: firstOnly,
+              override: firstOnly,
+              stale: firstOnly,
+            }
+          : undefined
+      )
+      expect(result.current.groupMarketActivity).toEqual(
+        signedIn
+          ? {
+              base: activity,
+              irrelevant: activity,
+              personal: firstOnly,
+              override: firstOnly,
+              stale: firstOnly,
+            }
+          : undefined
+      )
+    }
+  )
+
+  test('returning to the authenticated marketplace refetches a just-committed event even within the fresh interval', async () => {
+    const activity = { first_configured_at: 1795521600, is_new: true }
+    const baseline = {
+      success: true,
+      data: [{ id: 1, model_name: 'm', enable_groups: ['g'] }],
+      usable_group: { g: {} },
+    }
+    apiGet.mockResolvedValueOnce({ data: baseline }).mockResolvedValue({
+      data: { ...baseline, group_market_activity: { g: activity } },
+    })
+    useAuthStore.getState().auth.setBundle(bundleFor(1, 'session-a'))
+    const { result, unmount } = renderPricingData()
+    try {
+      await waitFor(() => expect(result.current.models).toHaveLength(1))
+      expect(result.current.groupMarketActivity).toBeUndefined()
+      act(() => {
+        focusManager.setFocused(false)
+        focusManager.setFocused(true)
+      })
+      await waitFor(() =>
+        expect(result.current.groupMarketActivity).toEqual({ g: activity })
+      )
+    } finally {
+      unmount()
+      focusManager.setFocused(undefined)
+    }
+  })
+
   test('the identity probe suppresses requests until it resolves', async () => {
     apiGet.mockResolvedValue({ data: { success: true, data: [] } })
     useAuthStore.getState().auth.setBootstrapState('checking')
@@ -171,7 +305,12 @@ describe('pricing endpoint selection', () => {
     useAuthStore.getState().auth.setBundle(bundleFor(1, 'session-a'))
 
     const { rerender } = renderPricingData()
-    await waitFor(() => expect(apiGet).toHaveBeenCalledWith('/api/pricing'))
+    await waitFor(() =>
+      expect(apiGet).toHaveBeenCalledWith('/api/pricing', {
+        signal: expect.any(AbortSignal),
+        disableDuplicate: true,
+      })
+    )
 
     useAuthStore.getState().auth.setBundle(bundleFor(2, 'session-b'))
     rerender()

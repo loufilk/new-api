@@ -46,6 +46,7 @@ export function Pricing() {
   const {
     models,
     groupCatalog,
+    groupMarketActivity,
     scope,
     error,
     refetch,
@@ -201,6 +202,7 @@ export function Pricing() {
             onPlatformChange={setPlatform}
             groups={availableGroups}
             groupCatalog={groupCatalog}
+            groupMarketActivity={groupMarketActivity}
             groupRatios={groupRatio}
             groupFilter={groupFilter}
             onGroupChange={setGroupFilter}

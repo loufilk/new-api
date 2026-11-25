@@ -1,5 +1,17 @@
 {
   "translation": {
+    "Base multiplier": "基礎倍率",
+    "Could not load marketplace activity": "無法載入廣場動態",
+    "Effective time": "生效時間",
+    "From {{old}}× to {{new}}×": "從 {{old}}× 調整為 {{new}}×",
+    "Group added": "分組新增",
+    "Marketplace activity": "廣場動態",
+    "Multiplier history": "倍率變動紀錄",
+    "Multiplier history for {{group}}": "{{group}}的倍率變動紀錄",
+    "New": "新",
+    "New groups: 7 days. Base rate changes: up to 10 per group in the last 90 days.": "新增分組顯示 7 天；基礎倍率調整顯示近 90 天每組最近 10 筆。",
+    "No recent group activity": "暫無近期分組動態",
+    "Saved group additions and base rate changes appear automatically. Display edits, access rules and personal rates are not included.": "分組新增和基礎倍率調整會在儲存後自動顯示。展示資訊、授權和個人倍率的修改不會計入。",
     "Group namespace metadata is read-only.": "分組命名空間中繼資料為唯讀。",
     "0× · Free": "0× · 免費",
     "0× means free. Leaving this blank does not restore the inherited rate.": "0× 表示免費。留白不會還原繼承倍率。",

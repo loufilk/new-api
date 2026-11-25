@@ -38,8 +38,13 @@ import {
   MARKET_PLATFORMS,
   type MarketPlatform,
 } from '../lib/market-groups'
-import type { PricingModel, MarketGroupCatalog } from '../types'
+import type {
+  PricingModel,
+  MarketActivityByGroup,
+  MarketGroupCatalog,
+} from '../types'
 import { GroupCatalogBadges } from './group-catalog-badges'
+import { MarketNewBadge, MarketRateChangeLine } from './group-market-activity'
 import { MarketGroupIcon } from './market-group-icon'
 
 interface Option {
@@ -48,6 +53,7 @@ interface Option {
   suffix?: string | number
   description?: string
   leading?: ReactNode
+  activity?: ReactNode
   accessiblePrefix?: string[]
 }
 
@@ -93,7 +99,7 @@ function FilterRow(props: {
         )}
       </div>
       <div id={id} className='flex min-w-0 flex-wrap items-center gap-1.5'>
-        {visible.map((option) => {
+        {visible.map((option, index) => {
           const active = props.value === option.value
           return (
             <Button
@@ -103,6 +109,9 @@ function FilterRow(props: {
               className='h-auto min-h-8 max-w-full min-w-0 flex-wrap gap-x-1.5 gap-y-1 rounded-full px-3 py-1 text-sm'
               type='button'
               aria-pressed={active}
+              aria-describedby={
+                option.activity ? `${id}-activity-${index}` : undefined
+              }
               aria-label={[
                 ...(option.accessiblePrefix ?? []),
                 option.label,
@@ -127,6 +136,14 @@ function FilterRow(props: {
                   )}
                 >
                   {option.suffix}
+                </span>
+              )}
+              {option.activity && (
+                <span
+                  id={`${id}-activity-${index}`}
+                  className='inline-flex max-w-full min-w-0 flex-wrap items-baseline justify-center gap-1 text-start'
+                >
+                  {option.activity}
                 </span>
               )}
             </Button>
@@ -164,6 +181,7 @@ export interface PricingSidebarProps {
   onGroupChange: (value: string) => void
   groups: string[]
   groupCatalog?: MarketGroupCatalog
+  groupMarketActivity?: MarketActivityByGroup
   groupRatios?: Record<string, number>
   models: PricingModel[]
 }
@@ -234,10 +252,21 @@ export const PricingSidebar = memo(function PricingSidebar(
       .map((group): Option => {
         const meta = props.groupCatalog?.[group]
         const ratio = props.groupRatios?.[group]
+        const activity = props.groupMarketActivity?.[group]
+        const added = activity?.is_new && activity.first_configured_at
+        const change =
+          activity?.recent_rate_change && activity.rate_changes?.[0]
         return {
           value: group,
           label: marketGroupLabel(group, props.groupCatalog),
           description: meta?.description,
+          activity:
+            added || change ? (
+              <>
+                {added && <MarketNewBadge seconds={added} />}
+                {change && <MarketRateChangeLine change={change} />}
+              </>
+            ) : undefined,
           accessiblePrefix: [
             ...(meta?.exclusive ? [t('Exclusive')] : []),
             ...groupCatalogBadgeLabels(meta?.badges).map((label) => t(label)),

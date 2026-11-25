@@ -638,6 +638,21 @@ export function RatioSettingsCard({
           }
           await queryClient.invalidateQueries({ queryKey: ['system-options'] })
         }
+        if (renames.length || Object.hasOwn(options, 'GroupRatio')) {
+          // Activity is recorded by the server in the existing save. Never
+          // manufacture a notice from a draft or a replayed receipt.
+          const activityFilter = { queryKey: ['admin-group-market-activity'] }
+          // An initial activity read may still be in flight when Save returns.
+          // Invalidation alone can join that pre-commit read.
+          await Promise.all([
+            queryClient.cancelQueries(activityFilter),
+            queryClient.cancelQueries({ queryKey: ['pricing'] }),
+          ])
+          void queryClient.invalidateQueries(activityFilter)
+          if (!groupWorkspacePanel) {
+            void queryClient.invalidateQueries({ queryKey: ['pricing'] })
+          }
+        }
         if (groupWorkspacePanel) {
           await Promise.all(
             [

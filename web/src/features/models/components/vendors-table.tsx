@@ -128,6 +128,7 @@ export function VendorsTable() {
           <span className='flex size-7 shrink-0 items-center justify-center'>
             <CatalogModelIcon
               icon={row.original.icon}
+              vendorName={row.original.name}
               name={row.original.name}
               size={24}
             />

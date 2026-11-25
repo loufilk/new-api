@@ -1,5 +1,17 @@
 {
   "translation": {
+    "Base multiplier": "基本倍率",
+    "Could not load marketplace activity": "マーケットの更新履歴を読み込めませんでした",
+    "Effective time": "適用日時",
+    "From {{old}}× to {{new}}×": "{{old}} 倍から {{new}} 倍へ",
+    "Group added": "グループ追加",
+    "Marketplace activity": "マーケットの更新履歴",
+    "Multiplier history": "倍率の変更履歴",
+    "Multiplier history for {{group}}": "{{group}} の倍率変更履歴",
+    "New": "新規",
+    "New groups: 7 days. Base rate changes: up to 10 per group in the last 90 days.": "新規グループの表示期間は7日間です。基本倍率の変更は、過去90日間の各グループ直近10件まで表示します。",
+    "No recent group activity": "最近のグループ更新はありません",
+    "Saved group additions and base rate changes appear automatically. Display edits, access rules and personal rates are not included.": "グループの追加と基本倍率の変更は、保存すると自動で表示されます。表示設定、アクセスルール、個人別倍率の変更は含まれません。",
     "Group namespace metadata is read-only.": "グループ名前空間のメタデータは読み取り専用です。",
     "0× · Free": "0× · 無料",
     "0× means free. Leaving this blank does not restore the inherited rate.": "0× は無料です。空欄にしても継承倍率には戻りません。",

@@ -39,6 +39,7 @@ import {
 import { parseTags } from '../lib/filters'
 import {
   activeBillingExpressions,
+  catalogModelPlatformIcon,
   getMarketPriceModel,
   marketGroupLabel,
 } from '../lib/market-groups'
@@ -300,6 +301,8 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
           <CatalogModelIcon
             icon={props.model.icon}
             vendorIcon={props.model.vendor_icon}
+            vendorName={props.model.vendor_name}
+            platformIcon={catalogModelPlatformIcon(props.model)}
             name={props.model.model_name}
             size={28}
           />

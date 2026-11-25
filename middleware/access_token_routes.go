@@ -267,6 +267,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"DELETE /api/subscription/admin/user_subscriptions/:id":          accessTokenScopeRule("billing:write"),
 
 	// router/api-router.go: /api/option
+	"GET /api/option/group-catalog/activity":                     accessTokenSessionRule,
 	"GET /api/option/group-catalog":                              accessTokenSessionRule,
 	"PATCH /api/option/group-catalog":                            accessTokenSessionRule,
 	"GET /api/option/group-entitlements/:user_id":                accessTokenSessionRule,

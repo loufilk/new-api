@@ -31,7 +31,10 @@ import { Button } from '@/components/ui/button'
 import type { ColumnDef } from '@/lib/console-table'
 
 import { parseTags } from '../lib/filters'
-import { getMarketPriceModel } from '../lib/market-groups'
+import {
+  catalogModelPlatformIcon,
+  getMarketPriceModel,
+} from '../lib/market-groups'
 import { quotedMarketGroups } from '../lib/market-result-groups'
 import {
   getModelEndpoints,
@@ -73,6 +76,8 @@ export function usePricingColumns(
             <CatalogModelIcon
               icon={model.icon}
               vendorIcon={model.vendor_icon}
+              vendorName={model.vendor_name}
+              platformIcon={catalogModelPlatformIcon(model)}
               name={model.model_name}
               size={20}
             />
@@ -152,6 +157,7 @@ export function usePricingColumns(
           <BadgeCell className='gap-1.5'>
             <CatalogModelIcon
               icon={model.vendor_icon}
+              vendorName={model.vendor_name}
               name={model.vendor_name}
               size={14}
             />

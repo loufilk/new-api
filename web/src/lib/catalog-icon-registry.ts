@@ -73,6 +73,31 @@ export function catalogIconID(value?: string | null): string {
     : ''
 }
 
+// The vendor labels here mirror pricing_default.go; these are exact public
+// labels, not substring matches against a model ID, endpoint or group name.
+const vendorIcons = new Map<string, string>([
+  ['openai', 'OpenAI'],
+  ['google', 'Gemini.Color'],
+  ['gemini', 'Gemini.Color'],
+])
+
+export interface CatalogIconSource {
+  icon?: string | null
+  vendorIcon?: string | null
+  vendorName?: string | null
+  platformIcon?: string | null
+}
+
+export function catalogModelIconID(source: CatalogIconSource): string {
+  const configured =
+    catalogIconID(source.icon) || catalogIconID(source.vendorIcon)
+  if (configured) return configured
+  const vendor = source.vendorName?.trim().toLowerCase()
+  // An explicit, unfamiliar vendor is not the brand of a routing group.
+  if (vendor) return vendorIcons.get(vendor) ?? ''
+  return catalogIconID(source.platformIcon)
+}
+
 export function getLobeIconNames(): string[] {
   return [...catalogIconVariants]
     .flatMap(([id, variants]) => [

@@ -72,6 +72,7 @@ import {
 import { parseTags } from '../lib/filters'
 import {
   activeBillingExpressions,
+  catalogModelPlatformIcon,
   marketGroupLabel,
 } from '../lib/market-groups'
 import {
@@ -110,6 +111,7 @@ import type {
 } from '../types'
 import { CatalogGroupBadge } from './catalog-group-badge'
 import { DynamicPricingBreakdown } from './dynamic-pricing-breakdown'
+import { GroupQuoteActivity } from './group-market-activity'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelDetailsApi } from './model-details-api'
 import { ModelDetailsPerformance } from './model-details-performance'
@@ -581,6 +583,8 @@ function ModelHeader(props: { model: PricingModel }) {
         <CatalogModelIcon
           icon={model.icon}
           vendorIcon={model.vendor_icon}
+          vendorName={model.vendor_name}
+          platformIcon={catalogModelPlatformIcon(model)}
           name={model.model_name}
           size={32}
         />
@@ -1213,10 +1217,16 @@ function ProviderGroupPricingSection(
             return (
               <div key={group} className='overflow-hidden rounded-lg border'>
                 <div className='bg-muted/20 flex items-center justify-between gap-3 border-b px-3 py-2'>
-                  <CatalogGroupBadge
-                    group={group}
-                    catalog={props.model.group_catalog}
-                  />
+                  <div className='min-w-0'>
+                    <CatalogGroupBadge
+                      group={group}
+                      catalog={props.model.group_catalog}
+                    />
+                    <GroupQuoteActivity
+                      activity={props.model.group_market_activity?.[group]}
+                      label={marketGroupLabel(group, props.model.group_catalog)}
+                    />
+                  </div>
                   <span className='text-muted-foreground font-mono text-xs'>
                     {ratio}x
                   </span>
@@ -1408,10 +1418,16 @@ function ProviderGroupPricingSection(
             className: thClass,
             cellClassName: 'py-2.5',
             cell: (group) => (
-              <CatalogGroupBadge
-                group={group}
-                catalog={props.model.group_catalog}
-              />
+              <>
+                <CatalogGroupBadge
+                  group={group}
+                  catalog={props.model.group_catalog}
+                />
+                <GroupQuoteActivity
+                  activity={props.model.group_market_activity?.[group]}
+                  label={marketGroupLabel(group, props.model.group_catalog)}
+                />
+              </>
             ),
           },
           {

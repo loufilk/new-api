@@ -113,6 +113,7 @@ export function useModelsColumns(
                 <CatalogModelIcon
                   icon={model.icon}
                   vendorIcon={vendor?.icon}
+                  vendorName={vendor?.name}
                   name={model.model_name}
                   size={24}
                 />

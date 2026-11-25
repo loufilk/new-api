@@ -26,8 +26,10 @@ import type { PricingData } from './types'
 
 // Get model pricing data for the authenticated dashboard API. This endpoint
 // stays behind UserAuth and returns the caller's group ratios.
-export async function getPricing(): Promise<PricingData> {
-  const res = await api.get('/api/pricing')
+export async function getPricing(signal?: AbortSignal): Promise<PricingData> {
+  // Let React Query own this request so an admin save can cancel a pending
+  // pre-save read before refetching the committed projection.
+  const res = await api.get('/api/pricing', { signal, disableDuplicate: true })
   return res.data
 }
 

@@ -16,7 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  QueryClient,
+  QueryClientProvider,
+  QueryObserver,
+} from '@tanstack/react-query'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { AxiosError, type AxiosResponse } from 'axios'
 import i18next from 'i18next'
@@ -213,12 +217,15 @@ test('workspace freezes both editor input and Save until acknowledgement', async
         resolve = done
       })
   )
-  renderCard('pricing')
+  const { invalidateSpy } = renderCard('pricing')
   const ratio = await screen.findByRole('spinbutton', { name: 'Ratio' })
   fireEvent.change(ratio, { target: { value: '0.75' } })
   fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
   await waitFor(() => expect(ratio.closest('[inert]')).not.toBeNull())
   expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled()
+  expect(invalidateSpy).not.toHaveBeenCalledWith({
+    queryKey: ['admin-group-market-activity'],
+  })
   await act(async () => {
     resolve({
       success: true,
@@ -231,6 +238,48 @@ test('workspace freezes both editor input and Save until acknowledgement', async
     ).toBeNull()
   )
   expect(screen.getByRole('spinbutton', { name: 'Ratio' })).toHaveValue(0.75)
+  expect(invalidateSpy).toHaveBeenCalledWith({
+    queryKey: ['admin-group-market-activity'],
+  })
+  expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['pricing'] })
+  expect(renameSystemGroupsMock).toHaveBeenCalledTimes(1)
+})
+
+test('a successful base-rate save refreshes activity even if its first read began before the commit', async () => {
+  renameSystemGroupsMock.mockResolvedValueOnce({
+    success: true,
+    data: { applied_options: { GroupRatio: '{"vip":0.65}' } },
+  })
+  const { queryClient } = renderCard('pricing')
+  const queryKey = ['admin-group-market-activity', 1, 'session']
+  let deliverOld = (_: string[]) => {}
+  const beforeSave = new Promise<string[]>((resolve) => {
+    deliverOld = resolve
+  })
+  const load = vi
+    .fn()
+    .mockReturnValueOnce(beforeSave)
+    .mockResolvedValue(['saved change'])
+  const observer = new QueryObserver(queryClient, { queryKey, queryFn: load })
+  const unsubscribe = observer.subscribe(() => {})
+  try {
+    expect(load).toHaveBeenCalledTimes(1)
+    fireEvent.change(await screen.findByRole('spinbutton', { name: 'Ratio' }), {
+      target: { value: '0.65' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+    await waitFor(() =>
+      expect(queryClient.getQueryData(queryKey)).toEqual(['saved change'])
+    )
+    await act(async () => {
+      deliverOld([])
+      await beforeSave
+    })
+    expect(queryClient.getQueryData(queryKey)).toEqual(['saved change'])
+    expect(renameSystemGroupsMock).toHaveBeenCalledTimes(1)
+  } finally {
+    unsubscribe()
+  }
 })
 
 describe('group settings save conflict handling', () => {

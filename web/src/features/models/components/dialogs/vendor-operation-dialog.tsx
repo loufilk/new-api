@@ -69,7 +69,12 @@ export function VendorOperationDialog(props: {
       value: String(vendor.id),
       label: vendor.name,
       icon: (
-        <CatalogModelIcon icon={vendor.icon} name={vendor.name} size={18} />
+        <CatalogModelIcon
+          icon={vendor.icon}
+          vendorName={vendor.name}
+          name={vendor.name}
+          size={18}
+        />
       ),
     })
   )

@@ -21,20 +21,12 @@ import { Layers3 } from 'lucide-react'
 
 import { getLobeIcon } from '@/lib/lobe-icon'
 
-import { groupPlatform, type MarketPlatform } from '../lib/market-groups'
+import {
+  groupPlatform,
+  MARKET_PLATFORM_ICONS,
+  type MarketPlatform,
+} from '../lib/market-groups'
 import type { MarketGroup } from '../types'
-
-const icons: Record<MarketPlatform, string | null> = {
-  openai: 'OpenAI',
-  anthropic: 'Claude.Color',
-  gemini: 'Gemini.Color',
-  deepseek: 'DeepSeek.Color',
-  moonshot: 'Moonshot',
-  xai: 'XAI',
-  zhipu: 'Zhipu.Color',
-  azure: 'Azure.Color',
-  other: null,
-}
 
 export function MarketGroupIcon(props: {
   meta?: MarketGroup
@@ -43,10 +35,10 @@ export function MarketGroupIcon(props: {
 }) {
   const custom = props.meta?.icon
   const platform =
-    custom && Object.hasOwn(icons, custom)
+    custom && Object.hasOwn(MARKET_PLATFORM_ICONS, custom)
       ? (custom as MarketPlatform)
       : (props.platform ?? groupPlatform(props.meta))
   const size = props.size ?? 15
-  const key = icons[platform]
+  const key = MARKET_PLATFORM_ICONS[platform]
   return key ? getLobeIcon(key, size) : <Layers3 size={size} aria-hidden />
 }

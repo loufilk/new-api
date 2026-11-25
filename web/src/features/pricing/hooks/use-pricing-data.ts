@@ -24,6 +24,7 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { getPricing, getPublicPricing } from '../api'
+import { projectMarketActivity } from '../lib/group-market-activity'
 
 // Project private per-group details onto this model's already authorized groups.
 // Absence is meaningful (public response or no configured value), not zero.
@@ -60,11 +61,14 @@ export function usePricingData(enabled = true) {
       'pricing',
       isAuthenticated ? `user:${userID}:${sessionSID ?? ''}` : 'public',
     ],
-    queryFn: async () =>
+    queryFn: async ({ signal }) =>
       requireServerSuccess(
-        await (isAuthenticated ? getPricing() : getPublicPricing())
+        await (isAuthenticated ? getPricing(signal) : getPublicPricing())
       ),
     staleTime: 5 * 60 * 1000,
+    // A return to the signed-in marketplace picks up another admin's
+    // committed change without polling, even during the normal fresh interval.
+    ...(isAuthenticated ? { refetchOnWindowFocus: 'always' as const } : {}),
     enabled: enabled && identityResolved,
   })
 
@@ -76,6 +80,14 @@ export function usePricingData(enabled = true) {
   const usdExchangeRate = useMemo(
     () => Math.max((status?.usd_exchange_rate as number) ?? priceRate, 0.001),
     [status?.usd_exchange_rate, priceRate]
+  )
+
+  const groupMarketActivity = useMemo(
+    () =>
+      isAuthenticated && !data?.group_keys_are_display_only
+        ? projectMarketActivity(data)
+        : undefined,
+    [data, isAuthenticated]
   )
 
   const models = useMemo(() => {
@@ -95,6 +107,11 @@ export function usePricingData(enabled = true) {
         vendor_description: vendor?.description,
         group_ratio: data.group_ratio,
         group_catalog: data.group_catalog,
+        group_market_activity: modelGroupDetails(
+          groupMarketActivity,
+          model.enable_groups ?? [],
+          data.usable_group
+        ),
         group_rate_source: isAuthenticated
           ? modelGroupDetails(
               data.group_rate_source,
@@ -113,7 +130,7 @@ export function usePricingData(enabled = true) {
           !isAuthenticated || data.group_keys_are_display_only,
       }
     })
-  }, [data, isAuthenticated])
+  }, [data, isAuthenticated, groupMarketActivity])
 
   return {
     models,
@@ -124,6 +141,7 @@ export function usePricingData(enabled = true) {
     autoGroups: data?.auto_groups ?? [],
     isLoading: isLoading || !identityResolved,
     groupCatalog: data?.group_catalog,
+    groupMarketActivity,
     scope: isAuthenticated ? `user:${userID}:${sessionSID ?? ''}` : 'public',
     error,
     refetch,

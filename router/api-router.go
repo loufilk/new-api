@@ -274,6 +274,7 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 			optionRoute.POST("/rest_model_ratio", controller.ResetModelRatio)
 			optionRoute.POST("/group-rename", controller.RenameGroups)
 			optionRoute.GET("/group-catalog", middleware.DisableCache(), controller.GetGroupCatalog)
+			optionRoute.GET("/group-catalog/activity", middleware.DisableCache(), controller.GetGroupMarketActivity)
 			optionRoute.PATCH("/group-catalog", middleware.DisableCache(), controller.PatchGroupCatalog)
 			optionRoute.GET("/group-entitlements/:user_id", middleware.DisableCache(), controller.GetUserGroupEntitlements)
 			optionRoute.PUT("/group-entitlements/:user_id", middleware.DisableCache(), controller.PutUserGroupEntitlements)

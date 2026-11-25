@@ -23,7 +23,11 @@ import { useTranslation } from 'react-i18next'
 import { CatalogModelIcon } from '@/components/catalog-model-icon'
 import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
-import { catalogIconID, getLobeIconNames } from '@/lib/catalog-icon-registry'
+import {
+  catalogIconID,
+  catalogModelIconID,
+  getLobeIconNames,
+} from '@/lib/catalog-icon-registry'
 
 const iconOptions = getLobeIconNames().map((name) => ({
   value: name,
@@ -55,7 +59,11 @@ export function LobeIconField(props: {
   const [choosing, setChoosing] = useState(false)
   const usesCustom = !props.allowInheritance || Boolean(props.value) || choosing
   const own = catalogIconID(props.value)
-  const inherited = catalogIconID(props.inheritedIcon)
+  const vendorName = props.allowInheritance ? props.inheritedName : recordName
+  const inherited = catalogModelIconID({
+    vendorIcon: props.inheritedIcon,
+    vendorName,
+  })
   const effective = own || inherited
   const clearOverride = () => {
     setChoosing(false)
@@ -121,6 +129,7 @@ export function LobeIconField(props: {
           <CatalogModelIcon
             icon={props.value}
             vendorIcon={props.inheritedIcon}
+            vendorName={vendorName}
             name={recordName}
             size={28}
           />

@@ -1,5 +1,17 @@
 {
   "translation": {
+    "Base multiplier": "Базовый множитель",
+    "Could not load marketplace activity": "Не удалось загрузить обновления каталога",
+    "Effective time": "Вступило в силу",
+    "From {{old}}× to {{new}}×": "С {{old}}× до {{new}}×",
+    "Group added": "Группа добавлена",
+    "Marketplace activity": "Обновления каталога",
+    "Multiplier history": "История множителя",
+    "Multiplier history for {{group}}": "История множителя группы {{group}}",
+    "New": "Новая",
+    "New groups: 7 days. Base rate changes: up to 10 per group in the last 90 days.": "Новые группы показываются 7 дней. Для каждой группы выводится до 10 изменений базового множителя за последние 90 дней.",
+    "No recent group activity": "Нет недавних изменений в группах",
+    "Saved group additions and base rate changes appear automatically. Display edits, access rules and personal rates are not included.": "Новые группы и изменения базового множителя отображаются автоматически после сохранения. Изменения оформления, правил доступа и персональных тарифов не учитываются.",
     "Group namespace metadata is read-only.": "Метаданные пространства имён групп доступны только для чтения.",
     "0× · Free": "0× · Бесплатно",
     "0× means free. Leaving this blank does not restore the inherited rate.": "0× означает бесплатно. Пустое поле не восстанавливает унаследованный коэффициент.",

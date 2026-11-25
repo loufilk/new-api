@@ -102,6 +102,23 @@ func GetPricing(c *gin.Context) {
 		}
 	}
 	rateLimits := pricingRateLimits(groups)
+	activityScopes := make(map[string]bool)
+pricedModels:
+	for _, row := range pricing {
+		for _, name := range row.EnableGroup {
+			if name == "all" {
+				for _, name := range groups {
+					activityScopes[name] = groupRateSource[name] == "group"
+				}
+				// A wildcard model already includes all authorized concrete groups.
+				break pricedModels
+			}
+			if _, allowed := groupRateSource[name]; allowed {
+				activityScopes[name] = groupRateSource[name] == "group"
+			}
+		}
+	}
+	activity, _ := model.ProjectGroupMarketActivity(guard.Version, activityScopes)
 	if !finishControllerGroupConfigRead(c, guard) {
 		return
 	}
@@ -117,6 +134,9 @@ func GetPricing(c *gin.Context) {
 		"supported_endpoint": endpoints,
 		"auto_groups":        autoGroups,
 		"pricing_version":    "a42d372ccf0b5dd13ecf71203521f9d2",
+	}
+	if len(activity) > 0 {
+		payload["group_market_activity"] = activity
 	}
 	if len(rateLimits) > 0 {
 		payload["group_rate_limits"] = rateLimits

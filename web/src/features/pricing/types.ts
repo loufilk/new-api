@@ -84,6 +84,7 @@ export type PricingModel = {
   key?: string
   group_keys_are_display_only?: boolean
   group_catalog?: MarketGroupCatalog
+  group_market_activity?: MarketActivityByGroup
   group_rate_source?: Record<string, 'personal' | 'group_override' | 'group'>
   group_rate_limits?: Record<string, MarketGroupRateLimit>
   group_ratio?: Record<string, number>
@@ -148,11 +149,28 @@ export interface MarketGroupRateLimit {
   scope: 'shared' | 'group'
 }
 
+/** Confirmed changes to the base group multiplier, never personal prices. */
+export interface MarketRateChange {
+  old_ratio: number
+  new_ratio: number
+  effective_at: number
+}
+
+export interface GroupMarketActivity {
+  first_configured_at?: number
+  is_new?: true
+  rate_changes?: MarketRateChange[]
+  recent_rate_change?: true
+}
+
+export type MarketActivityByGroup = Record<string, GroupMarketActivity>
+
 export type MarketGroupCatalog = Record<string, MarketGroup>
 
 export type PricingData = {
   group_keys_are_display_only?: boolean
   group_catalog?: MarketGroupCatalog
+  group_market_activity?: MarketActivityByGroup
   group_rate_source?: Record<string, 'personal' | 'group_override' | 'group'>
   group_rate_limits?: Record<string, MarketGroupRateLimit>
   success: boolean

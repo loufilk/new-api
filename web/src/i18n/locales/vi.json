@@ -1,5 +1,17 @@
 {
   "translation": {
+    "Base multiplier": "Hệ số cơ sở",
+    "Could not load marketplace activity": "Không tải được hoạt động trên danh mục",
+    "Effective time": "Thời điểm có hiệu lực",
+    "From {{old}}× to {{new}}×": "Từ {{old}}× đến {{new}}×",
+    "Group added": "Đã thêm nhóm",
+    "Marketplace activity": "Hoạt động trên danh mục",
+    "Multiplier history": "Lịch sử hệ số",
+    "Multiplier history for {{group}}": "Lịch sử hệ số của {{group}}",
+    "New": "Mới",
+    "New groups: 7 days. Base rate changes: up to 10 per group in the last 90 days.": "Nhóm mới hiển thị trong 7 ngày. Mỗi nhóm hiển thị tối đa 10 lần thay đổi hệ số cơ sở trong 90 ngày qua.",
+    "No recent group activity": "Gần đây không có thay đổi về nhóm",
+    "Saved group additions and base rate changes appear automatically. Display edits, access rules and personal rates are not included.": "Nhóm mới và thay đổi hệ số cơ sở sẽ tự động xuất hiện sau khi lưu. Không bao gồm thay đổi cách hiển thị, quyền truy cập hay hệ số cá nhân.",
     "Group namespace metadata is read-only.": "Siêu dữ liệu không gian tên nhóm ở chế độ chỉ đọc.",
     "0× · Free": "0× · Miễn phí",
     "0× means free. Leaving this blank does not restore the inherited rate.": "0× nghĩa là miễn phí. Để trống không khôi phục hệ số kế thừa.",

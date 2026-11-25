@@ -1,5 +1,17 @@
 {
   "translation": {
+    "Base multiplier": "Multiplicateur de base",
+    "Could not load marketplace activity": "Impossible de charger l’activité du catalogue",
+    "Effective time": "Prise d’effet",
+    "From {{old}}× to {{new}}×": "De {{old}}× à {{new}}×",
+    "Group added": "Groupe ajouté",
+    "Marketplace activity": "Activité du catalogue",
+    "Multiplier history": "Historique du multiplicateur",
+    "Multiplier history for {{group}}": "Historique du multiplicateur de {{group}}",
+    "New": "Nouveau",
+    "New groups: 7 days. Base rate changes: up to 10 per group in the last 90 days.": "Nouveaux groupes : 7 jours. Multiplicateur de base : jusqu’à 10 changements par groupe sur les 90 derniers jours.",
+    "No recent group activity": "Aucune activité récente des groupes",
+    "Saved group additions and base rate changes appear automatically. Display edits, access rules and personal rates are not included.": "Les nouveaux groupes et les changements de multiplicateur de base apparaissent automatiquement une fois enregistrés. Les modifications de présentation, des accès et des tarifs individuels sont exclues.",
     "Group namespace metadata is read-only.": "Les métadonnées de l’espace de noms des groupes sont en lecture seule.",
     "0× · Free": "0× · Gratuit",
     "0× means free. Leaving this blank does not restore the inherited rate.": "0× signifie gratuit. Laisser ce champ vide ne rétablit pas le coefficient hérité.",

@@ -1,5 +1,17 @@
 {
   "translation": {
+    "Base multiplier": "Base multiplier",
+    "Could not load marketplace activity": "Could not load marketplace activity",
+    "Effective time": "Effective time",
+    "From {{old}}× to {{new}}×": "From {{old}}× to {{new}}×",
+    "Group added": "Group added",
+    "Marketplace activity": "Marketplace activity",
+    "Multiplier history": "Multiplier history",
+    "Multiplier history for {{group}}": "Multiplier history for {{group}}",
+    "New": "New",
+    "New groups: 7 days. Base rate changes: up to 10 per group in the last 90 days.": "New groups: 7 days. Base rate changes: up to 10 per group in the last 90 days.",
+    "No recent group activity": "No recent group activity",
+    "Saved group additions and base rate changes appear automatically. Display edits, access rules and personal rates are not included.": "Saved group additions and base rate changes appear automatically. Display edits, access rules and personal rates are not included.",
     "Group namespace metadata is read-only.": "Group namespace metadata is read-only.",
     "0× · Free": "0× · Free",
     "0× means free. Leaving this blank does not restore the inherited rate.": "0× means free. Leaving this blank does not restore the inherited rate.",

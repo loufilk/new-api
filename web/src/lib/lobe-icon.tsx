@@ -25,6 +25,11 @@ For commercial licensing, please contact support@quantumnous.com
  * - Chained properties: "OpenAI.Avatar.type={'platform'}"
  * - Size parameter: getLobeIcon("OpenAI", 20)
  */
+import GeminiColor from '@lobehub/icons/es/Gemini/components/Color.js'
+import GeminiMono from '@lobehub/icons/es/Gemini/components/Mono.js'
+import GoogleColor from '@lobehub/icons/es/Google/components/Color.js'
+import GoogleMono from '@lobehub/icons/es/Google/components/Mono.js'
+import OpenAIMono from '@lobehub/icons/es/OpenAI/components/Mono.js'
 import {
   lazy,
   Suspense,
@@ -56,6 +61,17 @@ const CUSTOM_ICONS: Record<string, ComponentType<{ size?: number }>> = {
   Wan: IconWan,
 }
 
+// These small, common glyphs must paint with the first frame (including in
+// filter chips and virtualized rows). Do not import a whole brand or the UI
+// toolkit: only the exact SVG modules below are eager.
+const inlineBrands = new Map<string, ComponentType<Record<string, unknown>>>([
+  ['OpenAI.Mono', OpenAIMono],
+  ['Gemini.Mono', GeminiMono],
+  ['Gemini.Color', GeminiColor],
+  ['Google.Mono', GoogleMono],
+  ['Google.Color', GoogleColor],
+])
+
 const LAZY_ICONS = new Map<
   string,
   LazyExoticComponent<ComponentType<Record<string, unknown>>>
@@ -65,6 +81,11 @@ function renderLobeIconFallback(
   name: string,
   size: number | string
 ): ReactNode {
+  // A heavier variant (e.g. a configured Avatar) can be loading or offline.
+  // Keep its brand visible rather than swapping in a misleading initial.
+  const Brand =
+    inlineBrands.get(`${name}.Color`) ?? inlineBrands.get(`${name}.Mono`)
+  if (Brand) return <Brand size={size} />
   return (
     <div
       className='bg-muted text-muted-foreground flex items-center justify-center rounded-full text-xs font-medium'
@@ -140,29 +161,6 @@ export function getLobeIcon(
   const variant = variants.includes(segments[1]) ? segments[1] : 'Mono'
   const propStartIndex =
     segments.length > 1 && /^[A-Z]/.test(segments[1]) ? 2 : 1
-  const cacheKey = `${baseKey}.${variant}`
-  let IconComponent = LAZY_ICONS.get(cacheKey)
-  if (!IconComponent) {
-    // Load the selected SVG variant, avoiding the brand index's Avatar/UI dependencies.
-    // The v6 compatibility exports expose .js aliases, but Rspack enumerates
-    // physical files (.mjs) when constructing a dynamic import context.
-    IconComponent = lazy(() =>
-      import(
-        /* webpackInclude: /[\\/]components[\\/](Mono|Avatar|Brand|BrandColor|Color|Combine|Text|TextCn|TextColor|Simple|Morden)\.mjs$/ */
-        `../../node_modules/@lobehub/icons/es/${baseKey}/components/${variant}.mjs`
-      ).catch(() => ({
-        default: (props: Record<string, unknown>) =>
-          renderLobeIconFallback(
-            baseKey,
-            typeof props.size === 'number' || typeof props.size === 'string'
-              ? props.size
-              : 20
-          ),
-      }))
-    )
-    LAZY_ICONS.set(cacheKey, IconComponent)
-  }
-
   // Parse chained properties (e.g., "type={'platform'}", "shape='square'")
   const props: Record<string, string | number | boolean> = {}
 
@@ -184,6 +182,32 @@ export function getLobeIcon(
   // Set size if not explicitly specified in the string
   if (props.size == null && size != null) {
     props.size = size
+  }
+
+  const cacheKey = `${baseKey}.${variant}`
+  const InlineIcon = inlineBrands.get(cacheKey)
+  if (InlineIcon) return <InlineIcon {...props} />
+
+  let IconComponent = LAZY_ICONS.get(cacheKey)
+  if (!IconComponent) {
+    // Load the selected SVG variant, avoiding the brand index's Avatar/UI dependencies.
+    // The v6 compatibility exports expose .js aliases, but Rspack enumerates
+    // physical files (.mjs) when constructing a dynamic import context.
+    IconComponent = lazy(() =>
+      import(
+        /* webpackInclude: /[\\/]components[\\/](Mono|Avatar|Brand|BrandColor|Color|Combine|Text|TextCn|TextColor|Simple|Morden)\.mjs$/ */
+        `../../node_modules/@lobehub/icons/es/${baseKey}/components/${variant}.mjs`
+      ).catch(() => ({
+        default: (props: Record<string, unknown>) =>
+          renderLobeIconFallback(
+            baseKey,
+            typeof props.size === 'number' || typeof props.size === 'string'
+              ? props.size
+              : 20
+          ),
+      }))
+    )
+    LAZY_ICONS.set(cacheKey, IconComponent)
   }
 
   return (

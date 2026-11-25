@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -19,6 +20,29 @@ func GetGroupCatalog(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, result)
+}
+
+// Read-only Root view of the same automatic observations. It cannot be used
+// to supply an old rate, timestamp, badge, or synthetic publication.
+func GetGroupMarketActivity(c *gin.Context) {
+	guard, ok := beginPublicGroupConfigRead(c)
+	if !ok {
+		return
+	}
+	defer guard.Close()
+	scopes := make(map[string]bool)
+	for name := range ratio_setting.GetGroupRatioCopy() {
+		scopes[name] = true
+	}
+	groups, available := model.ProjectGroupMarketActivity(guard.Version, scopes)
+	if !available {
+		groupConfigReadFailure(c)
+		return
+	}
+	if !finishControllerGroupConfigRead(c, guard) {
+		return
+	}
+	common.ApiSuccess(c, gin.H{"revision": guard.Version, "groups": groups})
 }
 
 func PatchGroupCatalog(c *gin.Context) {

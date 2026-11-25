@@ -16,18 +16,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { catalogIconID } from '@/lib/catalog-icon-registry'
+import {
+  catalogModelIconID,
+  type CatalogIconSource,
+} from '@/lib/catalog-icon-registry'
 import { getLobeIcon } from '@/lib/lobe-icon'
 
 // Shared by public cards, admin rows and the live preview. Do not guess the
-// upstream provider from a model name: an unconfigured icon is just an initial.
-export function CatalogModelIcon(props: {
-  icon?: string | null
-  vendorIcon?: string | null
-  name?: string | null
-  size: number
-}) {
-  const key = catalogIconID(props.icon) || catalogIconID(props.vendorIcon)
+// upstream provider from a model name or endpoint; use only catalog evidence.
+export function CatalogModelIcon(
+  props: CatalogIconSource & {
+    name?: string | null
+    size: number
+  }
+) {
+  const key = catalogModelIconID(props)
   return (
     <span
       aria-hidden='true'

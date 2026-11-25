@@ -22,9 +22,11 @@ import { resolve } from 'node:path'
 import { runInNewContext } from 'node:vm'
 
 import { act, render, screen } from '@testing-library/react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import { CatalogModelIcon } from '@/components/catalog-model-icon'
+import { catalogModelPlatformIcon } from '@/features/pricing/lib/market-groups'
 
 import { catalogIconID, catalogIconVariants } from '../catalog-icon-registry'
 import { getLobeIcon, getLobeIconNames } from '../lobe-icon'
@@ -207,5 +209,96 @@ describe('catalog icon display', () => {
     rerender(<CatalogModelIcon vendorIcon='bad-key' name='demo' size={21} />)
     expect(screen.getByText('D')).toBeVisible()
     expect(screen.queryByTitle('Claude')).not.toBeInTheDocument()
+  })
+})
+
+describe('catalog brand source and first paint', () => {
+  // No waitFor/lazy-import settling: a cold render, not just a later paint,
+  // must have the actual bundled glyph. These match the public pricing shape.
+  it.each([
+    ['gpt-4o', 'OpenAI', 'OpenAI', '', 'OpenAI'],
+    ['gpt-4o-mini', 'OpenAI', '', '', 'OpenAI'],
+    ['gpt-4o-mini', 'OpenAI', '', 'OpenAI.Avatar', 'OpenAI'],
+    ['gemini-2.5-flash', 'Google', '', 'Gemini.Avatar', 'Gemini'],
+    ['gemini-2.5-flash', 'Google', 'Gemini.Color', '', 'Gemini'],
+    ['gemini-2.5-pro', ' Google ', '', '', 'Gemini'],
+    ['gemini-custom', 'Google', 'Gemini.Color', 'OpenAI.Color', 'OpenAI'],
+    ['demo', 'OpenAI', 'Google.Color', 'invalid-key', 'Google'],
+    [
+      'demo',
+      'Gemini',
+      '',
+      'https://signed.invalid/logo.svg?secret=x',
+      'Gemini',
+    ],
+  ])(
+    'paints %s (%s, %s, %s) as %s inline',
+    (name, vendorName, vendorIcon, icon, brand) => {
+      const markup = renderToStaticMarkup(
+        <CatalogModelIcon
+          {...{ name, vendorName, vendorIcon, icon }}
+          size={28}
+        />
+      )
+      const svg = new DOMParser()
+        .parseFromString(markup, 'text/html')
+        .querySelector('svg')
+      expect(svg?.querySelector('title')?.textContent).toBe(brand)
+      expect(svg?.querySelector('path')).not.toBeNull()
+      expect(svg?.getAttribute('width')).toBe('28')
+      expect(markup).not.toMatch(/<img|signed.invalid|secret=x/)
+    }
+  )
+
+  const catalog = {
+    blue: { platform: 'openai' },
+    green: { platform: 'openai' },
+    red: { platform: 'gemini' },
+    reserved: { exclusive: true, platform: 'gemini' },
+  }
+
+  it.each([
+    [['blue', 'green'], 'OpenAI'],
+    [['red'], 'Gemini'],
+    [['blue', 'red'], null],
+    [['green', 'missing'], null],
+    [['reserved'], null],
+    [['constructor'], null],
+    [[], null],
+  ] as const)(
+    'uses only explicit and unanimous platforms in allowed groups %j',
+    (groups, brand) => {
+      const platformIcon = catalogModelPlatformIcon({
+        enable_groups: [...groups],
+        group_catalog: catalog,
+      })
+      const markup = renderToStaticMarkup(
+        <CatalogModelIcon
+          name='gpt-gemini-demo'
+          platformIcon={platformIcon}
+          size={24}
+        />
+      )
+      if (brand) expect(markup).toContain(`<title>${brand}</title>`)
+      else {
+        expect(markup).not.toContain('<svg')
+        expect(markup).toContain('>G<')
+      }
+    }
+  )
+
+  it('does not substitute platform branding for an explicit unknown vendor or unsafe icon', () => {
+    const { container } = render(
+      <CatalogModelIcon
+        name='openai/private'
+        icon='<svg/>'
+        vendorName='Unofficial OpenAI Relay'
+        vendorIcon='data:image/svg+xml,<svg/>'
+        platformIcon='Gemini.Color'
+        size={20}
+      />
+    )
+    expect(container.querySelector('svg, img')).toBeNull()
+    expect(screen.getByText('O')).toBeVisible()
   })
 })
