@@ -23,9 +23,13 @@ import { useTranslation } from 'react-i18next'
 import { SectionPageLayout } from '@/components/layout'
 
 import { ApiKeysDialogs } from './components/api-keys-dialogs'
-import { ApiKeysPrimaryButtons } from './components/api-keys-primary-buttons'
+import {
+  ApiKeysAddressBar,
+  ApiKeysPrimaryButtons,
+} from './components/api-keys-primary-buttons'
 import { ApiKeysProvider, useApiKeys } from './components/api-keys-provider'
 import { ApiKeysTable } from './components/api-keys-table'
+import { useApiKeyAddresses } from './hooks/use-api-key-addresses'
 import {
   consumePrivateMarketKeyDraft,
   type MarketKeyDraft,
@@ -43,6 +47,7 @@ export function ApiKeys() {
 
 function ApiKeysPage() {
   const { t } = useTranslation()
+  const apiAddresses = useApiKeyAddresses()
   const navigate = route.useNavigate()
   const { create, group, model } = route.useSearch()
   const { open, setOpen } = useApiKeys()
@@ -75,10 +80,15 @@ function ApiKeysPage() {
       <SectionPageLayout fixedContent stackActionsOnMobile>
         <SectionPageLayout.Title>{t('API Keys')}</SectionPageLayout.Title>
         <SectionPageLayout.Actions>
-          <ApiKeysPrimaryButtons />
+          <ApiKeysPrimaryButtons {...apiAddresses} />
         </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
-          <ApiKeysTable />
+          <div className='flex h-full min-h-0 flex-col gap-2'>
+            <ApiKeysAddressBar {...apiAddresses} />
+            <div className='min-h-0 flex-1'>
+              <ApiKeysTable />
+            </div>
+          </div>
         </SectionPageLayout.Content>
       </SectionPageLayout>
       <ApiKeysDialogs draft={draft} />
