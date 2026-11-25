@@ -32,11 +32,14 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { fetchTokenKey, fetchTokenKeysBatch } from '../api'
 import { ERROR_MESSAGES } from '../constants'
+import type { MarketKeyDraft } from '../lib/market-key-draft'
 import type { ApiKey, ApiKeysDialogType } from '../types'
 
 type ApiKeysContextType = {
   open: ApiKeysDialogType | null
   setOpen: (str: ApiKeysDialogType | null) => void
+  createDraft: MarketKeyDraft | undefined
+  openMarketCreate: (draft?: MarketKeyDraft) => void
   currentRow: ApiKey | null
   setCurrentRow: React.Dispatch<React.SetStateAction<ApiKey | null>>
   refreshTrigger: number
@@ -77,7 +80,26 @@ function SessionApiKeysProvider({
   ownerEpoch: number
 }) {
   const { t } = useTranslation()
-  const [open, setOpen] = useDialogState<ApiKeysDialogType>(null)
+  const [dialog, setDialog] = useDialogState<{
+    type: ApiKeysDialogType
+    draft?: MarketKeyDraft
+  }>(null)
+  const open = dialog?.type ?? null
+  const createDraft = open === 'create' ? dialog?.draft : undefined
+  const setOpen = useCallback(
+    (type: ApiKeysDialogType | null) => setDialog(type ? { type } : null),
+    [setDialog]
+  )
+  const openMarketCreate = useCallback(
+    (draft?: MarketKeyDraft) => {
+      setDialog((previous) => {
+        // A repeated route effect must not discard an already consumed private draft.
+        if (!draft && previous?.type === 'create') return previous
+        return { type: 'create', draft }
+      })
+    },
+    [setDialog]
+  )
   const [currentRow, setCurrentRow] = useState<ApiKey | null>(null)
   const [refreshTrigger, setRefreshTrigger] = useState(0)
   const [resolvedKey, setResolvedKey] = useState('')
@@ -238,6 +260,8 @@ function SessionApiKeysProvider({
       value={{
         open,
         setOpen,
+        createDraft,
+        openMarketCreate,
         currentRow,
         setCurrentRow,
         refreshTrigger,

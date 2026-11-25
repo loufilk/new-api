@@ -1006,4 +1006,14 @@ it('opens and consumes a catalogue create link, without writing or reopening aft
       screen.queryByRole('dialog', { name: 'Create API Key' })
     ).not.toBeInTheDocument()
   )
+  post.mockClear()
+  await userEvent.click(screen.getByRole('button', { name: 'Create API Key' }))
+  const manual = await screen.findByRole('dialog', { name: 'Create API Key' })
+  expect(
+    within(manual).queryByText('Selected: default')
+  ).not.toBeInTheDocument()
+  expect(post).not.toHaveBeenCalledWith('/api/token/models', {
+    group: 'default',
+  })
+  expect(post).not.toHaveBeenCalledWith('/api/token/', expect.anything())
 })
