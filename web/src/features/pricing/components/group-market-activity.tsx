@@ -16,26 +16,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { ChevronDown, TrendingDown, TrendingUp } from 'lucide-react'
+import { ArrowDown, ArrowUp, TrendingDown, TrendingUp } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import {
   marketRateDifference,
   validMarketRateChange,
+  type RecentGroupActivity,
 } from '../lib/group-market-activity'
-import type { GroupMarketActivity, MarketRateChange } from '../types'
+import type { MarketRateChange } from '../types'
 
-function MarketTime(props: { seconds: number; dateOnly?: boolean }) {
+function MarketTime(props: { seconds: number }) {
   const stamp = formatTimestampToDate(props.seconds)
   return (
     <time
@@ -43,11 +38,12 @@ function MarketTime(props: { seconds: number; dateOnly?: boolean }) {
       title={stamp}
       className='whitespace-nowrap tabular-nums'
     >
-      {props.dateOnly ? stamp.slice(0, 10) : stamp}
+      {stamp}
     </time>
   )
 }
 
+// Detailed transition for the admin audit; customer quotes use compact badges.
 export function MarketRateChangeLine(props: {
   change: MarketRateChange
   showTime?: boolean
@@ -88,80 +84,43 @@ export function MarketRateChangeLine(props: {
   )
 }
 
-export function MarketNewBadge(props: { seconds: number }) {
-  const { t } = useTranslation()
-  return (
-    <Badge variant='secondary' className='h-auto gap-1 rounded px-1.5 py-0.5'>
-      {t('New')} <MarketTime seconds={props.seconds} dateOnly />
-    </Badge>
-  )
-}
-
-// The quote cell is the only expanded history surface. No inactive headings
-// or placeholders are rendered for groups without recorded market events.
-export function GroupQuoteActivity(props: {
-  activity?: GroupMarketActivity
-  label: string
+export function GroupMarketBadges(props: {
+  activity?: RecentGroupActivity
+  id?: string
 }) {
   const { t } = useTranslation()
-  const activity = props.activity
-  if (!activity) return null
-  const changes = activity.rate_changes
-  const sameSecondEvents = new Map<string, number>()
+  if (!props.activity) return null
+  const change = props.activity.change
+  const rising = change && change.new_ratio > change.old_ratio
+  const delta = change ? marketRateDifference(change) : undefined
+  const Arrow = rising ? ArrowUp : ArrowDown
   return (
-    <div className='mt-1 flex min-w-0 flex-col items-start gap-1 text-xs'>
-      {activity.first_configured_at && (
-        <span className='text-muted-foreground flex flex-wrap items-center gap-1'>
-          {activity.is_new ? (
-            <MarketNewBadge seconds={activity.first_configured_at} />
-          ) : (
-            <>
-              {t('Group added')}{' '}
-              <MarketTime seconds={activity.first_configured_at} dateOnly />
-            </>
+    <span
+      id={props.id}
+      className='inline-flex max-w-full min-w-0 flex-wrap items-center gap-1 text-start'
+    >
+      {props.activity.isNew && (
+        <Badge variant='secondary' className='h-auto rounded px-1.5 py-0.5'>
+          {t('New')}
+        </Badge>
+      )}
+      {props.activity.isNew && delta && ' '}
+      {delta && (
+        <Badge
+          className={cn(
+            'h-auto max-w-full min-w-0 rounded px-1.5 py-0.5 whitespace-normal [overflow-wrap:anywhere] tabular-nums',
+            rising
+              ? 'bg-amber-100 text-amber-950 dark:bg-amber-950 dark:text-amber-100'
+              : 'bg-emerald-100 text-emerald-950 dark:bg-emerald-950 dark:text-emerald-100'
           )}
-        </span>
+        >
+          <Arrow aria-hidden className='shrink-0' />
+          <span aria-hidden className='min-w-0'>
+            {delta.slice(1)}×
+          </span>
+          <span className='sr-only'>{delta}×</span>
+        </Badge>
       )}
-      {changes && changes.length > 0 && (
-        <Collapsible className='group/history max-w-full min-w-0'>
-          <CollapsibleTrigger
-            render={
-              <Button
-                type='button'
-                variant='outline'
-                size='sm'
-                className='h-auto min-h-8 max-w-full flex-wrap text-xs'
-              />
-            }
-            aria-label={t('Multiplier history for {{group}}', {
-              group: props.label,
-            })}
-          >
-            {t('Multiplier history')}{' '}
-            <span className='tabular-nums'>{changes.length}</span>
-            <ChevronDown
-              aria-hidden
-              className='size-3 group-data-open/history:rotate-180'
-            />
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <ol className='mt-2 max-h-64 min-w-0 space-y-2 overflow-y-auto border-s ps-2 text-start'>
-              {changes.map((change) => {
-                // Timestamps have one-second resolution: A→B→A→B can
-                // legitimately contain two identical transitions.
-                const event = `${change.effective_at}:${change.old_ratio}:${change.new_ratio}`
-                const occurrence = (sameSecondEvents.get(event) ?? 0) + 1
-                sameSecondEvents.set(event, occurrence)
-                return (
-                  <li key={`${event}:${occurrence}`}>
-                    <MarketRateChangeLine change={change} />
-                  </li>
-                )
-              })}
-            </ol>
-          </CollapsibleContent>
-        </Collapsible>
-      )}
-    </div>
+    </span>
   )
 }

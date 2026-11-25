@@ -16,19 +16,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import {
-  GroupQuoteActivity,
-  MarketRateChangeLine,
-} from '../components/group-market-activity'
+import { api } from '@/lib/api'
+
+import { GroupMarketBadges } from '../components/group-market-activity'
+import { ModelDetailsContent } from '../components/model-details'
 import {
   PricingSidebar,
   type PricingSidebarProps,
 } from '../components/pricing-sidebar'
+import { getRecentGroupActivity } from '../lib/group-market-activity'
 import type { GroupMarketActivity } from '../types'
+
+vi.mock('@visactor/react-vchart', () => ({ VChart: () => null }))
 
 const latest = { old_ratio: 0.3, new_ratio: 0.2, effective_at: 1795521600 }
 const earlier = { old_ratio: 0, new_ratio: 0.3, effective_at: 1795435200 }
@@ -55,22 +59,19 @@ function sidebar(): PricingSidebarProps {
   }
 }
 describe('recorded group activity', () => {
-  it('shows the dated change on the filter itself and keeps the group selectable by keyboard', async () => {
+  it('shows only a new badge and the signed magnitude in the group filter without changing keyboard selection', async () => {
     const props = sidebar()
     render(<PricingSidebar {...props} />)
     const group = screen.getByRole('group', { name: 'Group' })
     const active = within(group).getByRole('button', { name: 'alpha ×0.2' })
-    expect(active).toHaveAccessibleDescription(
-      /New.*Base multiplier −0.1×.*From 0.3× to 0.2×/
-    )
-    expect(within(active).getByText('0.3× → 0.2×')).toBeVisible()
-    expect(within(active).getByText('Base multiplier −0.1×')).toBeVisible()
-    expect(
-      [...active.querySelectorAll('time')].map((el) => el.dateTime)
-    ).toEqual([
-      new Date(earlier.effective_at * 1000).toISOString(),
-      new Date(latest.effective_at * 1000).toISOString(),
-    ])
+    expect(active).toHaveAccessibleDescription('New −0.1×')
+    expect(within(active).getByText('New')).toBeVisible()
+    expect(within(active).getByText('0.1×')).toBeVisible()
+    expect(within(active).getByText('−0.1×')).toHaveClass('sr-only')
+    expect(active.querySelector('.lucide-arrow-down')).toBeVisible()
+    expect(active).not.toHaveTextContent(/\d{4}-\d{2}-\d{2}|→|Base multiplier/)
+    expect(active.querySelector('time')).not.toBeInTheDocument()
+    expect(active.querySelector('[title]')).not.toBeInTheDocument()
     const beta = within(group).getByRole('button', { name: 'beta ×0' })
     expect(beta).not.toHaveAttribute('aria-describedby')
     active.focus()
@@ -95,42 +96,89 @@ describe('recorded group activity', () => {
     expect(chip).not.toHaveAttribute('aria-describedby')
   })
 
-  it('opens matching group history by keyboard and preserves an increase from zero', async () => {
-    const user = userEvent.setup()
-    const { rerender } = render(
-      <GroupQuoteActivity activity={activity} label='Alpha' />
+  it.each([undefined, 'tier("base", p * 2 + c * 8)'])(
+    'shows only compact activity badges in ordinary and dynamic model quotes (expression: %s)',
+    (billing_expr) => {
+      vi.spyOn(api, 'get').mockResolvedValue({ data: { data: { groups: [] } } })
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      })
+      const { container, unmount } = render(
+        <QueryClientProvider client={client}>
+          <ModelDetailsContent
+            model={{
+              id: 1,
+              model_name: 'example',
+              quota_type: 0,
+              model_ratio: 1,
+              completion_ratio: 1,
+              enable_groups: ['alpha'],
+              group_market_activity: { alpha: activity },
+              billing_mode: billing_expr ? 'tiered_expr' : undefined,
+              billing_expr,
+            }}
+            groupRatio={{ alpha: 0.2 }}
+            usableGroup={{ alpha: { desc: '', ratio: 0.2 } }}
+            endpointMap={{}}
+            autoGroups={[]}
+            priceRate={1}
+            usdExchangeRate={1}
+            tokenUnit='M'
+          />
+        </QueryClientProvider>
+      )
+      try {
+        expect(screen.getByText('New')).toBeVisible()
+        expect(screen.getByText('0.1×')).toBeVisible()
+        expect(screen.getByText('−0.1×')).toHaveClass('sr-only')
+        expect(screen.getByText('0.2x')).toBeVisible()
+        expect(container).not.toHaveTextContent(
+          /\d{4}-\d{2}-\d{2}|→|Base multiplier|\+0.3×/
+        )
+        expect(container.querySelector('time')).not.toBeInTheDocument()
+        expect(
+          screen.queryByRole('button', { name: /history/i })
+        ).not.toBeInTheDocument()
+      } finally {
+        unmount()
+        client.clear()
+      }
+    }
+  )
+
+  it('does not show older activity in details', () => {
+    const { container } = render(
+      <GroupMarketBadges
+        activity={getRecentGroupActivity({
+          first_configured_at: earlier.effective_at,
+          rate_changes: [latest],
+        })}
+      />
     )
-    const toggle = screen.getByRole('button', {
-      name: 'Multiplier history for Alpha',
-    })
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByRole('list')).not.toBeInTheDocument()
-    toggle.focus()
-    await user.keyboard('[Space]')
-    expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    const rows = within(screen.getByRole('list')).getAllByRole('listitem')
-    expect(rows[0]).toHaveTextContent('0.3× → 0.2×')
-    expect(rows[1]).toHaveTextContent('Base multiplier +0.3×')
-    expect(rows[1]).toHaveTextContent('0× → 0.3×')
-    await user.click(toggle)
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    rerender(<GroupQuoteActivity label='No history' />)
-    expect(screen.queryByRole('button')).not.toBeInTheDocument()
-    expect(screen.queryByText('New')).not.toBeInTheDocument()
+    expect(container).toBeEmptyDOMElement()
   })
 
   it.each([
     [1.00000001, 1.00000002, '+0.00000001'],
     [0.0000000001, 0, '−0.0000000001'],
     [1.25, 0.25, '−1'],
+    [0, 0.3, '+0.3'],
     [1, 101, '+100'],
   ] as const)(
     'shows the actual signed difference from %s to %s',
     (old_ratio, new_ratio, delta) => {
-      render(
-        <MarketRateChangeLine change={{ ...latest, old_ratio, new_ratio }} />
+      const { container } = render(
+        <GroupMarketBadges
+          activity={getRecentGroupActivity({
+            recent_rate_change: true,
+            rate_changes: [{ ...latest, old_ratio, new_ratio }],
+          })}
+        />
       )
-      expect(screen.getByText(`Base multiplier ${delta}×`)).toBeVisible()
+      expect(screen.getByText(`${delta.slice(1)}×`)).toBeVisible()
+      expect(screen.getByText(`${delta}×`)).toHaveClass('sr-only')
+      const icon = old_ratio < new_ratio ? 'arrow-up' : 'arrow-down'
+      expect(container.querySelector(`.lucide-${icon}`)).toBeVisible()
     }
   )
 })

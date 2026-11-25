@@ -33,6 +33,10 @@ import {
 import { getModelQuotaType } from '../lib/filters'
 import { groupCatalogBadgeLabels } from '../lib/group-catalog-badges'
 import {
+  getRecentGroupActivity,
+  type RecentGroupActivity,
+} from '../lib/group-market-activity'
+import {
   groupPlatform,
   marketGroupLabel,
   MARKET_PLATFORMS,
@@ -44,7 +48,7 @@ import type {
   MarketGroupCatalog,
 } from '../types'
 import { GroupCatalogBadges } from './group-catalog-badges'
-import { MarketNewBadge, MarketRateChangeLine } from './group-market-activity'
+import { GroupMarketBadges } from './group-market-activity'
 import { MarketGroupIcon } from './market-group-icon'
 
 interface Option {
@@ -53,7 +57,7 @@ interface Option {
   suffix?: string | number
   description?: string
   leading?: ReactNode
-  activity?: ReactNode
+  activity?: RecentGroupActivity
   accessiblePrefix?: string[]
 }
 
@@ -139,12 +143,10 @@ function FilterRow(props: {
                 </span>
               )}
               {option.activity && (
-                <span
+                <GroupMarketBadges
                   id={`${id}-activity-${index}`}
-                  className='inline-flex max-w-full min-w-0 flex-wrap items-baseline justify-center gap-1 text-start'
-                >
-                  {option.activity}
-                </span>
+                  activity={option.activity}
+                />
               )}
             </Button>
           )
@@ -252,21 +254,11 @@ export const PricingSidebar = memo(function PricingSidebar(
       .map((group): Option => {
         const meta = props.groupCatalog?.[group]
         const ratio = props.groupRatios?.[group]
-        const activity = props.groupMarketActivity?.[group]
-        const added = activity?.is_new && activity.first_configured_at
-        const change =
-          activity?.recent_rate_change && activity.rate_changes?.[0]
         return {
           value: group,
           label: marketGroupLabel(group, props.groupCatalog),
           description: meta?.description,
-          activity:
-            added || change ? (
-              <>
-                {added && <MarketNewBadge seconds={added} />}
-                {change && <MarketRateChangeLine change={change} />}
-              </>
-            ) : undefined,
+          activity: getRecentGroupActivity(props.groupMarketActivity?.[group]),
           accessiblePrefix: [
             ...(meta?.exclusive ? [t('Exclusive')] : []),
             ...groupCatalogBadgeLabels(meta?.badges).map((label) => t(label)),

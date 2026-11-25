@@ -70,6 +70,7 @@ import {
   type DynamicPriceEntry,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
+import { getRecentGroupActivity } from '../lib/group-market-activity'
 import {
   activeBillingExpressions,
   catalogModelPlatformIcon,
@@ -111,7 +112,7 @@ import type {
 } from '../types'
 import { CatalogGroupBadge } from './catalog-group-badge'
 import { DynamicPricingBreakdown } from './dynamic-pricing-breakdown'
-import { GroupQuoteActivity } from './group-market-activity'
+import { GroupMarketBadges } from './group-market-activity'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelDetailsApi } from './model-details-api'
 import { ModelDetailsPerformance } from './model-details-performance'
@@ -1217,14 +1218,15 @@ function ProviderGroupPricingSection(
             return (
               <div key={group} className='overflow-hidden rounded-lg border'>
                 <div className='bg-muted/20 flex items-center justify-between gap-3 border-b px-3 py-2'>
-                  <div className='min-w-0'>
+                  <div className='flex min-w-0 flex-wrap items-center gap-1.5'>
                     <CatalogGroupBadge
                       group={group}
                       catalog={props.model.group_catalog}
                     />
-                    <GroupQuoteActivity
-                      activity={props.model.group_market_activity?.[group]}
-                      label={marketGroupLabel(group, props.model.group_catalog)}
+                    <GroupMarketBadges
+                      activity={getRecentGroupActivity(
+                        props.model.group_market_activity?.[group]
+                      )}
                     />
                   </div>
                   <span className='text-muted-foreground font-mono text-xs'>
@@ -1418,16 +1420,17 @@ function ProviderGroupPricingSection(
             className: thClass,
             cellClassName: 'py-2.5',
             cell: (group) => (
-              <>
+              <div className='flex min-w-0 flex-wrap items-center gap-1.5'>
                 <CatalogGroupBadge
                   group={group}
                   catalog={props.model.group_catalog}
                 />
-                <GroupQuoteActivity
-                  activity={props.model.group_market_activity?.[group]}
-                  label={marketGroupLabel(group, props.model.group_catalog)}
+                <GroupMarketBadges
+                  activity={getRecentGroupActivity(
+                    props.model.group_market_activity?.[group]
+                  )}
                 />
-              </>
+              </div>
             ),
           },
           {

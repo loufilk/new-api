@@ -48,6 +48,25 @@ export function validMarketRateChange(
   )
 }
 
+export interface RecentGroupActivity {
+  isNew: boolean
+  change?: MarketRateChange
+}
+
+/** Compact customer annotation, without the older history shown to admins. */
+export function getRecentGroupActivity(
+  activity?: GroupMarketActivity
+): RecentGroupActivity | undefined {
+  const isNew =
+    activity?.is_new === true && validMarketTime(activity.first_configured_at)
+  const latest = activity?.rate_changes?.[0]
+  const change =
+    activity?.recent_rate_change === true && validMarketRateChange(latest)
+      ? latest
+      : undefined
+  return isNew || change ? { isNew, change } : undefined
+}
+
 /** Read only the optional projection. No client-side reconstruction from prices or model dates. */
 export function projectMarketActivity(
   data?: PricingData
