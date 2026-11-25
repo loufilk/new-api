@@ -79,6 +79,7 @@ import { cn } from '@/lib/utils'
 
 import { getPaymentErrorTranslation } from '../wallet/lib/payment'
 import { PaymentMethodsVisualEditor } from './payment-methods-visual-editor'
+import { UsdtSettingsSection } from './usdt-settings-section'
 import { saveWaffoPancakeConfig } from './waffo-pancake-api'
 import {
   WaffoPancakeSettingsSection,
@@ -1788,6 +1789,7 @@ export function PaymentSettingsSection({
           </Tabs>
         </SettingsForm>
       </Form>
+      <UsdtSettingsSection complianceConfirmed={complianceConfirmed} />
     </SettingsSection>
   )
 }
