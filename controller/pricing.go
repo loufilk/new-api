@@ -24,6 +24,11 @@ func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string
 		return []model.Pricing{}
 	}
 
+	groupAliases := make(map[string]string, len(usableGroup)+1)
+	for name := range usableGroup {
+		groupAliases[name] = name
+	}
+	groupAliases["all"] = "all" // retain legacy scope without treating it as a concrete group
 	filtered := make([]model.Pricing, 0, len(pricing))
 	for _, item := range pricing {
 		// The pricing cache is shared by all viewers.
@@ -35,7 +40,8 @@ func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string
 		}
 		if len(groups) > 0 {
 			item.EnableGroup = groups
-			filtered = append(filtered, item)
+			item.SupportedEndpointTypes, item.SupportedEndpointTypesByGroup = item.ProjectEndpointGroups(groupAliases)
+			filtered = append(filtered, item.WithOrdinaryPriceScope(usableGroup))
 		}
 	}
 	return filtered
@@ -59,7 +65,8 @@ func GetPricing(c *gin.Context) {
 		groupConfigReadFailure(c)
 		return
 	}
-	pricing := filterPricingByUsableGroups(model.GetPricing(), usableGroup)
+	snapshot := model.GetPricingCatalogSnapshot()
+	pricing := filterPricingByUsableGroups(snapshot.Rows, usableGroup)
 	groups := make([]string, 0, len(usableGroup))
 	for key := range usableGroup {
 		if key != "auto" && key != "all" {
@@ -93,13 +100,13 @@ func GetPricing(c *gin.Context) {
 		}
 	}
 	vendors := make([]model.PricingVendor, 0)
-	for _, vendor := range model.GetVendors() {
+	for _, vendor := range snapshot.Vendors {
 		if _, ok := vendorIDs[vendor.ID]; ok {
 			vendors = append(vendors, vendor)
 		}
 	}
 	endpoints := make(map[string]common.EndpointInfo)
-	for endpoint, info := range model.GetSupportedEndpointMap() {
+	for endpoint, info := range snapshot.Endpoints {
 		if _, ok := visibleEndpoints[endpoint]; ok {
 			endpoints[endpoint] = info
 		}
@@ -216,9 +223,10 @@ func GetModelSquareUsage(c *gin.Context) {
 	for _, total := range totals {
 		usage[total.ModelName] = total
 	}
-	pricing := model.GetPricing()
+	snapshot := model.GetPricingCatalogSnapshot()
+	pricing := snapshot.Rows
 	vendors := make(map[int]model.PricingVendor)
-	for _, vendor := range model.GetVendors() {
+	for _, vendor := range snapshot.Vendors {
 		vendors[vendor.ID] = vendor
 	}
 	rows := make([]modelSquareUsage, 0, len(pricing))

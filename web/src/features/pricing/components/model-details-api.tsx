@@ -72,14 +72,16 @@ const LANG_HIGHLIGHT: Record<Lang, BundledLanguage> = {
 // ---------------------------------------------------------------------------
 
 function CodeSamplesSection(props: {
+  selectedGroup?: string
   model: PricingModel
   endpointMap: ModelEndpointMap
 }) {
   const { t } = useTranslation()
   const baseUrl = useMarketApiBase()
   const endpoints = useMemo(
-    () => getModelEndpoints(props.model, props.endpointMap),
-    [props.model, props.endpointMap]
+    () =>
+      getModelEndpoints(props.model, props.endpointMap, props.selectedGroup),
+    [props.model, props.endpointMap, props.selectedGroup]
   )
 
   const [endpointType, setEndpointType] = useState<string>(
@@ -237,7 +239,11 @@ export function ModelDetailsApi(props: {
 }) {
   return (
     <div className='space-y-6'>
-      <CodeSamplesSection model={props.model} endpointMap={props.endpointMap} />
+      <CodeSamplesSection
+        model={props.model}
+        endpointMap={props.endpointMap}
+        selectedGroup={props.selectedGroup}
+      />
       <ModelRateLimits
         model={props.model}
         selectedGroup={props.selectedGroup}

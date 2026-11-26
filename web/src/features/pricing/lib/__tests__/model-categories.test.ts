@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { describe, expect, it } from 'vitest'
 
 import type { PricingModel } from '../../types'
+import { filterByEndpointType, filterBySearch } from '../filters'
 import { getAutomaticModelCategories } from '../model-categories'
 import { getModelEndpoints, getModelPlayground } from '../model-endpoints'
 
@@ -33,6 +34,49 @@ const model = (values: Partial<PricingModel> = {}): PricingModel => ({
 })
 
 describe('model capability categories', () => {
+  it('uses the chosen group for protocol search and playground actions', () => {
+    const shared = model({
+      output_modalities: ['text'],
+      supported_endpoint_types: ['openai', 'anthropic'],
+      supported_endpoint_types_by_group: {
+        'text-group': ['openai'],
+        'other-group': ['anthropic'],
+        'unverified-group': [],
+      },
+    })
+    expect(filterBySearch([shared], 'anthropic', 'text-group')).toEqual([])
+    expect(filterByEndpointType([shared], 'anthropic', 'other-group')).toEqual([
+      shared,
+    ])
+    expect(
+      filterByEndpointType([shared], 'openai', 'unverified-group')
+    ).toEqual([])
+    expect(getModelPlayground(shared, 'text-group')).toBe('/playground')
+    expect(getModelPlayground(shared, 'other-group')).toBeUndefined()
+    expect(getModelPlayground(shared, 'unknown-group')).toBeUndefined()
+    expect(getModelPlayground(shared)).toBe('/playground')
+  })
+
+  it('does not use another group’s audio route when checking whether the current one supports chat', () => {
+    const shared = model({
+      output_modalities: ['text'],
+      supported_endpoint_types: ['openai', 'audio-transcription'],
+      supported_endpoint_types_by_group: {
+        chat: ['openai'],
+        transcription: ['audio-transcription'],
+      },
+    })
+    expect(getModelPlayground(shared, 'chat')).toBe('/playground')
+    expect(getModelPlayground(shared, 'transcription')).toBeUndefined()
+    expect(
+      getModelEndpoints(
+        shared,
+        { openai: { path: '/v1/chat/completions' } },
+        'chat'
+      )
+    ).toHaveLength(1)
+  })
+
   it('keeps missing metadata and default OpenAI protocol in all only without guessing names', () => {
     const unknown = model({
       model_name: 'gpt-image-video-embedding',

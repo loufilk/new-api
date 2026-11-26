@@ -203,10 +203,13 @@ func publicModelsFromPricing(pricing []publicCatalogModel) []llmsModel {
 	for _, item := range pricing {
 		billing := "token ratios: input " + strconv.FormatFloat(item.ModelRatio, 'g', -1, 64) +
 			", output " + strconv.FormatFloat(item.CompletionRatio, 'g', -1, 64)
-		if item.QuotaType == 1 {
-			billing = "per-request price factor: " + strconv.FormatFloat(item.ModelPrice, 'g', -1, 64)
+		if item.OrdinaryPriceAvailable != nil && !*item.OrdinaryPriceAvailable ||
+			item.OrdinaryPriceAvailable == nil && item.BillingVariantsPresent {
+			billing = "no public base quote"
 		} else if item.BillingMode == "tiered_expr" {
 			billing = "tiered usage pricing"
+		} else if item.QuotaType == 1 {
+			billing = "per-request price factor: " + strconv.FormatFloat(item.ModelPrice, 'g', -1, 64)
 		}
 
 		endpoints := make([]string, 0, len(item.SupportedEndpointTypes))

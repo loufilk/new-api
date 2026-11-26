@@ -86,6 +86,8 @@ import {
   isTokenBasedModel,
 } from '../lib/model-helpers'
 import {
+  hasRedactedProviderPricing,
+  isCatalogPriceUnavailable,
   withBasePricing,
   withOrdinaryPricing,
   withPluginPricing,
@@ -481,6 +483,7 @@ function ModelBackendSignalsSection(props: { model: PricingModel }) {
 }
 
 function ModelBackendProviderSection(props: {
+  selectedGroup?: string
   model: PricingModel
   endpointMap: ModelEndpointMap
 }) {
@@ -489,9 +492,11 @@ function ModelBackendProviderSection(props: {
   const groups = normalizeCatalogItems(model.enable_groups).map((group) =>
     marketGroupLabel(group, model.group_catalog)
   )
-  const endpoints = getModelEndpoints(model, props.endpointMap).map(
-    (endpoint) => endpoint.type
-  )
+  const endpoints = getModelEndpoints(
+    model,
+    props.endpointMap,
+    props.selectedGroup
+  ).map((endpoint) => endpoint.type)
   const tags = parseTags(model.tags)
   const cells: React.ReactNode[] = []
 
@@ -554,6 +559,7 @@ function ModelBackendProviderSection(props: {
 }
 
 function ModelBackendDetailsSection(props: {
+  selectedGroup?: string
   model: PricingModel
   endpointMap: ModelEndpointMap
 }) {
@@ -562,6 +568,7 @@ function ModelBackendDetailsSection(props: {
       <ModelBackendQuickStats model={props.model} />
       <ModelBackendSignalsSection model={props.model} />
       <ModelBackendProviderSection
+        selectedGroup={props.selectedGroup}
         model={props.model}
         endpointMap={props.endpointMap}
       />
@@ -1003,7 +1010,9 @@ function GroupPricingSection(props: GroupPricingSectionProps) {
   if (!variants?.length) {
     return <ProviderGroupPricingSection {...props} />
   }
-  const ordinary = props.model.ordinary_pricing
+  const ordinary =
+    props.model.ordinary_pricing &&
+    props.model.ordinary_price_available !== false
   return (
     <section>
       <SectionTitle>{t('Pricing by Group')}</SectionTitle>
@@ -1519,8 +1528,15 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
   // prices.
   const baseModel = useMemo(() => withBasePricing(props.model), [props.model])
 
+  const redactedProviderPricing = hasRedactedProviderPricing(baseModel)
+  const quoteUnavailable = isCatalogPriceUnavailable(baseModel)
+  const providerOnly =
+    baseModel.ordinary_price_available === false &&
+    Boolean(baseModel.billing_plugin_variants?.length)
   const isDynamic =
-    baseModel.billing_mode === 'tiered_expr' && Boolean(baseModel.billing_expr)
+    !providerOnly &&
+    baseModel.billing_mode === 'tiered_expr' &&
+    Boolean(baseModel.billing_expr)
 
   const simpleTaskPricing = hasSimpleTaskPricing(baseModel)
   const taskTiers = getTaskPricingDisplayTiers(
@@ -1558,7 +1574,17 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
 
           <section className='bg-card/60 space-y-5 rounded-xl border p-4 shadow-sm'>
             <SectionTitle>{t('Pricing')}</SectionTitle>
-            {showBasePrices && (
+            {redactedProviderPricing && (
+              <p className='text-muted-foreground text-sm'>
+                {t('Sign in to view provider pricing')}
+              </p>
+            )}
+            {quoteUnavailable && !redactedProviderPricing && (
+              <p className='text-muted-foreground text-sm'>
+                {t('Unset price')}
+              </p>
+            )}
+            {!quoteUnavailable && showBasePrices && (
               <PriceSection
                 model={baseModel}
                 priceRate={props.priceRate}
@@ -1567,7 +1593,7 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
                 showRechargePrice={showRechargePrice}
               />
             )}
-            {isDynamic && !simpleTaskPricing && (
+            {!quoteUnavailable && isDynamic && !simpleTaskPricing && (
               <DynamicPricingBreakdown
                 modelName={baseModel.model_name}
                 billingExpr={baseModel.billing_expr}
@@ -1579,19 +1605,22 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
                 }}
               />
             )}
-            <GroupPricingSection
-              model={props.model}
-              groupRatio={props.groupRatio}
-              usableGroup={props.usableGroup}
-              autoGroups={props.autoGroups}
-              priceRate={props.priceRate}
-              usdExchangeRate={props.usdExchangeRate}
-              tokenUnit={props.tokenUnit}
-              showRechargePrice={showRechargePrice}
-            />
+            {!quoteUnavailable && (
+              <GroupPricingSection
+                model={props.model}
+                groupRatio={props.groupRatio}
+                usableGroup={props.usableGroup}
+                autoGroups={props.autoGroups}
+                priceRate={props.priceRate}
+                usdExchangeRate={props.usdExchangeRate}
+                tokenUnit={props.tokenUnit}
+                showRechargePrice={showRechargePrice}
+              />
+            )}
           </section>
 
           <ModelBackendDetailsSection
+            selectedGroup={props.selectedGroup}
             model={props.model}
             endpointMap={props.endpointMap}
           />

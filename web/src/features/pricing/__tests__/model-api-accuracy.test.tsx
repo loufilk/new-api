@@ -43,7 +43,8 @@ const model: PricingModel = {
 }
 async function renderApi(
   values: Partial<PricingModel> = {},
-  endpointMap: ModelEndpointMap = {}
+  endpointMap: ModelEndpointMap = {},
+  group?: string
 ) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -57,6 +58,7 @@ async function renderApi(
         <ModelDetailsApi
           model={{ ...model, ...values }}
           endpointMap={endpointMap}
+          selectedGroup={group}
         />
       </QueryClientProvider>
     ),
@@ -69,6 +71,28 @@ async function renderApi(
   await screen.findByRole('heading', { name: 'Rate limits' })
 }
 describe('model API contract accuracy', () => {
+  it('renders only the selected group’s verified code examples and request URL', async () => {
+    await renderApi(
+      {
+        enable_groups: ['a', 'b'],
+        supported_endpoint_types: ['gemini', 'anthropic'],
+        supported_endpoint_types_by_group: {
+          a: ['gemini'],
+          b: ['anthropic'],
+        },
+      },
+      {
+        gemini: { path: '/v1beta/models/{model}:generateContent' },
+        anthropic: { path: '/v1/messages' },
+      },
+      'b'
+    )
+    expect(screen.getByText(/^POST .*\/v1\/messages$/)).toBeVisible()
+    expect(screen.getByText('x-api-key: <TOKEN>')).toBeVisible()
+    expect(screen.queryByText('x-goog-api-key: <TOKEN>')).toBeNull()
+    expect(screen.queryByText(/generateContent/)).toBeNull()
+  })
+
   it('does not show invented per-group rate limits or model-name-guessed parameter support', async () => {
     await renderApi()
     expect(screen.queryByText('RPM')).toBeNull()

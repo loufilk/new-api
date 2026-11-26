@@ -21,8 +21,10 @@ import (
 type publicPricingPayload struct {
 	Success bool `json:"success"`
 	Data    []struct {
-		ModelName   string   `json:"model_name"`
-		EnableGroup []string `json:"enable_groups"`
+		ModelName                     string                             `json:"model_name"`
+		EnableGroup                   []string                           `json:"enable_groups"`
+		SupportedEndpointTypesByGroup map[string][]constant.EndpointType `json:"supported_endpoint_types_by_group"`
+		SupportedEndpointTypes        []constant.EndpointType            `json:"supported_endpoint_types"`
 	} `json:"data"`
 	GroupRatio     map[string]float64 `json:"group_ratio"`
 	UsableGroup    map[string]string  `json:"usable_group"`
@@ -70,8 +72,8 @@ func TestAnonymousCatalogsProjectOnlyPublicModelFields(t *testing.T) {
 	originalUsableGroups := setting.UserUsableGroups2JSONString()
 	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
 	originalAutoGroups := setting.AutoGroups2JsonString()
-	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","private":"Private group exposed by the legacy list","unpriced":"Missing ratio"}`))
-	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"private":9}`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","public-gemini":"Another public tier","private":"Private group exposed by the legacy list","unpriced":"Missing ratio"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"public-gemini":1,"private":9}`))
 	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["default","private"]`))
 	require.NoError(t, db.Create(&model.Option{Key: "GroupCatalogMetadata", Value: `{"private":{"exclusive":true,"label":"private group label","badges":["stable"]}}`}).Error)
 	require.NoError(t, model.LoadOptionsFromDatabase())
@@ -86,8 +88,13 @@ func TestAnonymousCatalogsProjectOnlyPublicModelFields(t *testing.T) {
 		Status: common.ChannelStatusEnabled, Name: "fixture-channel",
 		Models: "public-model,private-model,stealth/pixel-canary,unpriced-model", Group: "default,private,unpriced",
 	}).Error)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 802, Type: constant.ChannelTypeGemini, Key: "gemini-fixture", Status: common.ChannelStatusEnabled, Group: "public-gemini"},
+		{Id: 803, Type: constant.ChannelTypeAnthropic, Key: "anthropic-fixture", Status: common.ChannelStatusEnabled, Group: "private"},
+	}).Error)
 	require.NoError(t, db.Create(&[]model.Ability{
-		{Group: "default", Model: "public-model", ChannelId: 801, Enabled: true},
+		{Group: "public-gemini", Model: "public-model", ChannelId: 802, Enabled: true},
+		{Group: "private", Model: "public-model", ChannelId: 803, Enabled: true}, {Group: "default", Model: "public-model", ChannelId: 801, Enabled: true},
 		{Group: "private", Model: "public-model", ChannelId: 801, Enabled: true},
 		{Group: "default", Model: "stealth/pixel-canary", ChannelId: 801, Enabled: true},
 		{Group: "unpriced", Model: "unpriced-model", ChannelId: 801, Enabled: true},
@@ -103,6 +110,10 @@ func TestAnonymousCatalogsProjectOnlyPublicModelFields(t *testing.T) {
 	require.Len(t, payload.Data, 1, "only public-group models may appear in the anonymous catalogue")
 	assert.Equal(t, "public-model", payload.Data[0].ModelName)
 	assert.Equal(t, []string{"rate-1"}, payload.Data[0].EnableGroup)
+	assert.ElementsMatch(t, []constant.EndpointType{constant.EndpointTypeOpenAI, constant.EndpointTypeGemini}, payload.Data[0].SupportedEndpointTypes)
+	require.Len(t, payload.Data[0].SupportedEndpointTypesByGroup, 1)
+	assert.ElementsMatch(t, payload.Data[0].SupportedEndpointTypes, payload.Data[0].SupportedEndpointTypesByGroup["rate-1"])
+	assert.NotContains(t, anonymous.Body.String(), "public-gemini")
 	assert.Equal(t, map[string]float64{"rate-1": 1}, payload.GroupRatio)
 	assert.Equal(t, map[string]string{"rate-1": "价格档位 ×1"}, payload.UsableGroup)
 	assert.Equal(t, []string{"rate-1"}, payload.AutoGroups)

@@ -88,6 +88,7 @@ function FilterFixture() {
       <Button onClick={() => filters.setGroupFilter('private_id')}>
         Private
       </Button>
+      <output aria-label='Sort'>{filters.sortBy}</output>
       <output aria-label='Group'>{filters.groupFilter}</output>
       <Input
         aria-label='Search'
@@ -127,6 +128,14 @@ async function renderFilters(entry = '/pricing/') {
 }
 
 describe('marketplace navigation', () => {
+  it.each(['', '?sort=requests', '?sort=tokens', '?sort=recommended'])(
+    'displays name sorting when the public projection has no ranking for %s',
+    async (search) => {
+      await renderFilters(`/pricing/${search}`)
+      expect(screen.getByLabelText('Sort')).toHaveTextContent('name')
+    }
+  )
+
   it('ignores retired category bookmarks, retaining query, sort and active group', async () => {
     const router = await renderFilters(
       '/pricing/?category=images&group=premium&sort=price-low'

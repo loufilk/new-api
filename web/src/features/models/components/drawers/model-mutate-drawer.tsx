@@ -72,7 +72,7 @@ import {
   getServerErrorMessage,
 } from '@/lib/server-error-message'
 
-import { createModel, updateModel, getModel, getVendors } from '../../api'
+import { createModel, updateModel, getModel, getVendorOptions } from '../../api'
 import { getNameRuleOptions, ENDPOINT_TEMPLATES } from '../../constants'
 import { modelsQueryKeys, vendorsQueryKeys } from '../../lib'
 import {
@@ -123,7 +123,7 @@ export function ModelMutateDrawer(props: {
   const vendorsQuery = useQuery({
     queryKey: vendorsQueryKeys.list(),
     queryFn: async () =>
-      requireServerSuccess(await getVendors({ page_size: 1000 })),
+      requireServerSuccess(await getVendorOptions()),
     enabled: props.open,
   })
   const vendors = vendorsQuery.data?.data?.items ?? []

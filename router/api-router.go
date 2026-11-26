@@ -269,6 +269,8 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 			optionRoute.PATCH("/request_policy", controller.UpdateRequestPolicy)
 			optionRoute.PUT("/", controller.UpdateOption)
 			optionRoute.PUT("/passkey/domains", controller.UpdatePasskeyDomains)
+			optionRoute.GET("/model-square-order", middleware.DisableCache(), controller.GetModelSquareOrderOptions)
+			optionRoute.PATCH("/model-square-order", middleware.DisableCache(), controller.PatchModelSquareOrderOptions)
 			optionRoute.GET("/model_pricing", controller.GetModelPricingConfig)
 			optionRoute.GET("/model_pricing/issues", controller.GetModelPricingIssues)
 			optionRoute.PATCH("/model_pricing", controller.UpdateModelPricingConfig)

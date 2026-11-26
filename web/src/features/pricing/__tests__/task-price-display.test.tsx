@@ -28,6 +28,7 @@ import {
   useSystemConfigStore,
 } from '@/stores/system-config-store'
 
+import { CachedPriceCell } from '../components/cached-price-cell'
 import { DynamicPricingBreakdown } from '../components/dynamic-pricing-breakdown'
 import { ModelCard } from '../components/model-card'
 import { ModelDetailsContent } from '../components/model-details'
@@ -491,6 +492,25 @@ it('preserves all conditions and leaves multiple possible fallback combinations 
   expect(tiers[1].conditions).toEqual([])
 })
 
+it('converts ordinary tier input, output and cache prices when recharge pricing is selected', () => {
+  const billingExpr = 'tier("sample", p * 12 + c * 16 + cr * 0.2)'
+  const { rerender } = render(
+    <DynamicPricingBreakdown
+      billingExpr={billingExpr}
+      taskPriceOptions={{
+        showRechargePrice: true,
+        priceRate: 1,
+        usdExchangeRate: 2,
+      }}
+    />
+  )
+  for (const price of ['$6', '$8', '$0.1']) {
+    expect(screen.getAllByText(price).length).toBeGreaterThan(0)
+  }
+  rerender(<DynamicPricingBreakdown billingExpr={billingExpr} />)
+  expect(screen.getAllByText('$12.0000').length).toBeGreaterThan(0)
+})
+
 it('uses the same recharge conversion and token unit in task condition prices', () => {
   render(
     <DynamicPricingBreakdown
@@ -642,6 +662,137 @@ function renderModelDetails(target: PricingModel) {
     </QueryClientProvider>
   )
 }
+
+function renderCatalogPriceSurfaces(entry: PricingModel) {
+  vi.spyOn(api, 'get').mockResolvedValue({ data: { data: { groups: [] } } })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  clients.push(client)
+  render(
+    <QueryClientProvider client={client}>
+      <div aria-label='Listing'>
+        <ModelPriceCell model={entry} />
+      </div>
+      <div aria-label='Cache listing'>
+        <CachedPriceCell model={entry} options={{}} />
+      </div>
+      <div aria-label='Card'>
+        <ModelCard model={entry} onClick={vi.fn()} />
+      </div>
+      <div aria-label='Details'>
+        <ModelDetailsContent
+          model={entry}
+          groupRatio={{ default: 2 }}
+          usableGroup={{ default: { desc: '', ratio: 2 } }}
+          endpointMap={{}}
+          autoGroups={[]}
+          priceRate={1}
+          usdExchangeRate={1}
+          tokenUnit='M'
+        />
+      </div>
+    </QueryClientProvider>
+  )
+}
+
+function catalogueQuote(overrides: Partial<PricingModel>): PricingModel {
+  return {
+    id: 2,
+    model_name: 'provider-only-example',
+    quota_type: 0,
+    model_ratio: 37.5,
+    completion_ratio: 1,
+    cache_ratio: 0.1,
+    enable_groups: ['default'],
+    ...overrides,
+  }
+}
+
+it.each([false, undefined])(
+  'withholds numeric provider-only public quotes even for a legacy projection (%s)',
+  (availability) => {
+    renderCatalogPriceSurfaces(
+      catalogueQuote({
+        group_keys_are_display_only: true,
+        billing_variants_present: true,
+        ordinary_price_available: availability,
+      })
+    )
+    for (const surface of ['Listing', 'Card', 'Details']) {
+      const view = within(screen.getByLabelText(surface))
+      expect(view.getByText('Sign in to view provider pricing')).toBeVisible()
+      expect(view.queryByText(/75/)).not.toBeInTheDocument()
+      expect(view.queryByText('Token-based')).not.toBeInTheDocument()
+    }
+    expect(
+      within(screen.getByLabelText('Cache listing')).getByText('—')
+    ).toBeVisible()
+  }
+)
+
+it('shows an explicit zero ordinary price even when additional provider pricing is redacted', () => {
+  renderCatalogPriceSurfaces(
+    catalogueQuote({
+      group_keys_are_display_only: true,
+      billing_variants_present: true,
+      ordinary_price_available: true,
+      model_ratio: 0,
+    })
+  )
+  for (const surface of ['Listing', 'Card', 'Details']) {
+    const view = within(screen.getByLabelText(surface))
+    expect(view.getByText('Sign in to view provider pricing')).toBeVisible()
+    expect(view.getAllByText(/^\$?0$/).length).toBeGreaterThan(0)
+  }
+})
+
+it('does not turn a confirmed unavailable ordinary quote into a numeric tier or cache price', () => {
+  renderCatalogPriceSurfaces(
+    catalogueQuote({
+      ordinary_price_available: false,
+      billing_mode: 'tiered_expr',
+      billing_expr: 'tier("legacy", p * 99)',
+    })
+  )
+  for (const surface of ['Listing', 'Card', 'Details']) {
+    const view = within(screen.getByLabelText(surface))
+    expect(view.getByText('Unset price')).toBeVisible()
+    expect(view.queryByText(/99/)).not.toBeInTheDocument()
+  }
+  expect(
+    within(screen.getByLabelText('Cache listing')).getByText('—')
+  ).toBeVisible()
+})
+
+it('keeps authorized task-provider quotes when the ordinary price is unavailable', () => {
+  renderCatalogPriceSurfaces(
+    catalogueQuote({
+      ordinary_pricing: true,
+      ordinary_price_available: false,
+      billing_plugin_variants: [
+        {
+          plugin_key: 'demo',
+          plugin_name: 'Demo',
+          billing_expr: 'tier("seconds", u("seconds") * 0.4)',
+          billing_usage_schema: { seconds: { type: 'number', unit: 'second' } },
+        },
+      ],
+    })
+  )
+  expect(
+    within(screen.getByLabelText('Listing')).getByText('0.4/s')
+  ).toBeVisible()
+  expect(within(screen.getByLabelText('Card')).getByText('$0.4')).toBeVisible()
+  expect(screen.getByRole('tab', { name: 'Demo' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  expect(
+    screen.queryByRole('tab', { name: 'Default price' })
+  ).not.toBeInTheDocument()
+  expect(screen.queryByText('$75')).not.toBeInTheDocument()
+})
 
 it('shows the chat token price beside a plugin that cannot use it when ordinary requests still pay it', async () => {
   renderModelDetails({

@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { FILTER_ALL } from '../constants'
 import type { PricingModel } from '../types'
 import { getAutomaticModelCategories } from './model-categories'
 import { replaceModelInPath } from './model-helpers'
@@ -31,14 +32,31 @@ type ModelEndpoint = {
   method: string
 }
 
+/** Do not fall back to another group's protocols when a scoped map exists. */
+export function getModelEndpointTypes(
+  model: PricingModel,
+  group?: string
+): string[] {
+  const byGroup = model.supported_endpoint_types_by_group
+  if (!group || group === FILTER_ALL || !byGroup) {
+    return model.supported_endpoint_types ?? []
+  }
+  return Object.hasOwn(byGroup, group) ? byGroup[group] : []
+}
+
 /** Resolve the same verified endpoints for card links, details and samples. */
 export function getModelEndpoints(
   model: PricingModel,
-  endpointMap: ModelEndpointMap
+  endpointMap: ModelEndpointMap,
+  group?: string
 ): ModelEndpoint[] {
-  const supportsText = getAutomaticModelCategories(model).includes('text')
+  const types = getModelEndpointTypes(model, group)
+  const supportsText = getAutomaticModelCategories({
+    ...model,
+    supported_endpoint_types: types,
+  }).includes('text')
   const endpoints: ModelEndpoint[] = []
-  for (const type of model.supported_endpoint_types ?? []) {
+  for (const type of types) {
     // Channel defaults can add OpenAI to media and unknown models. The wire
     // protocol alone does not establish that chat completions are supported.
     if (type === 'openai' && !supportsText) continue
@@ -79,10 +97,14 @@ export function getEndpointDocId(type: string): string | undefined {
 }
 
 export function getModelPlayground(
-  model: PricingModel
+  model: PricingModel,
+  group?: string
 ): '/image' | '/playground' | undefined {
-  const endpoints = model.supported_endpoint_types ?? []
-  const categories = getAutomaticModelCategories(model)
+  const endpoints = getModelEndpointTypes(model, group)
+  const categories = getAutomaticModelCategories({
+    ...model,
+    supported_endpoint_types: endpoints,
+  })
   if (endpoints.includes('image-generation') && categories.includes('images')) {
     return '/image'
   }

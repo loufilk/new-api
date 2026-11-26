@@ -31,7 +31,7 @@ import { Combobox } from '@/components/ui/combobox'
 import { Label } from '@/components/ui/label'
 import { createServerError } from '@/lib/server-error-message'
 
-import { getVendors } from '../../api'
+import { getVendorOptions } from '../../api'
 import { vendorsQueryKeys } from '../../lib'
 import {
   applyVendorOperation,
@@ -56,7 +56,7 @@ export function VendorOperationDialog(props: {
   const vendorsQuery = useQuery({
     queryKey: vendorsQueryKeys.list(),
     queryFn: async () => {
-      const response = await getVendors({ page_size: 1000 })
+      const response = await getVendorOptions()
       if (!response.success) {
         throw createServerError(response, t('Failed to load vendors'))
       }

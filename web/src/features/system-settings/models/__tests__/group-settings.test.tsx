@@ -117,6 +117,32 @@ describe('group settings workspace', () => {
     expect(JSON.parse(saved.GroupRatio)).toEqual({ default: 1, vip: 0 })
   })
 
+  it('searches descriptions only among priced rows, without admitting access-only groups', async () => {
+    const user = userEvent.setup()
+    render(
+      <Fixture
+        workspacePanel='pricing'
+        initial={{
+          UserUsableGroups:
+            '{"vip":"Premium access","unpriced":"Premium only"}',
+        }}
+      />
+    )
+    await user.type(
+      screen.getByRole('textbox', {
+        name: 'Search groups by name or description',
+      }),
+      'premium'
+    )
+    expect(screen.getByRole('row', { name: /vip/ })).toBeVisible()
+    expect(
+      screen.queryByRole('row', { name: /unpriced/ })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('row', { name: /default/ })
+    ).not.toBeInTheDocument()
+  })
+
   it('keeps one searchable pricing draft while switching between workspace panels', async () => {
     const user = userEvent.setup()
     const onSave = vi.fn<(values: typeof defaults) => Promise<void>>()

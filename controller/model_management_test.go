@@ -497,6 +497,27 @@ export function parseTaskResult() { return {}; }
 			}
 			db := modelManagementDB(t, dialect.kind, os.Getenv(dialect.env))
 
+			t.Run("status_only_rejects_missing_metadata_and_accepts_idempotent_updates", func(t *testing.T) {
+				record := model.Model{ModelName: "status-only-fixture", Description: "keep description", Status: 1}
+				require.NoError(t, record.Insert())
+				change := func(id, status int) map[string]any {
+					t.Helper()
+					var result map[string]any
+					modelManagementRequest(t, UpdateModelMeta, http.MethodPut, "/api/models/?status_only=true", gin.H{"id": id, "status": status}, &result)
+					return result
+				}
+				require.Equal(t, false, change(record.Id+1000000, 0)["success"])
+				require.Equal(t, true, change(record.Id, 0)["success"])
+				require.Equal(t, true, change(record.Id, 0)["success"])
+				var current model.Model
+				require.NoError(t, db.First(&current, record.Id).Error)
+				require.Equal(t, 0, current.Status)
+				require.Equal(t, record.ModelName, current.ModelName)
+				require.Equal(t, record.Description, current.Description)
+				require.NoError(t, db.Delete(&record).Error)
+				require.Equal(t, false, change(record.Id, 1)["success"])
+			})
+
 			t.Run("square_states_follow_catalog_policy", func(t *testing.T) {
 				records := []model.Model{
 					{ModelName: "square-visible", Status: 1},

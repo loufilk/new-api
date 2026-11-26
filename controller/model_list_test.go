@@ -221,6 +221,7 @@ func TestModelSquareGroupVisibility(t *testing.T) {
 			}
 			require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Public"}`))
 			require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"internal":2}`))
+			seedLiveInventoryChannels(t, db, 1)
 			require.NoError(t, db.Create(&[]model.Ability{
 				{Model: "shared", Group: "default", ChannelId: 1, Enabled: true},
 				{Model: "shared", Group: "internal", ChannelId: 1, Enabled: true},
@@ -308,6 +309,7 @@ func TestModelSquareOrderFollowsSavedSetting(t *testing.T) {
 			vendor := model.Vendor{Name: "Acme", Icon: "Acme.Color"}
 			require.NoError(t, db.Create(&vendor).Error)
 			require.NoError(t, db.Create(&model.Model{ModelName: "vip-only", Icon: "Vip.Color", VendorID: vendor.Id, Status: 1}).Error)
+			seedLiveInventoryChannels(t, db, 1)
 			require.NoError(t, db.Create(&[]model.Ability{
 				{Model: "alpha", Group: "default", ChannelId: 1, Enabled: true},
 				{Model: "gamma", Group: "default", ChannelId: 1, Enabled: true},
@@ -395,6 +397,7 @@ func TestGetUserModelsFiltersByRequestedGroup(t *testing.T) {
 		Group:    "default",
 		Status:   common.UserStatusEnabled,
 	}).Error)
+	seedLiveInventoryChannels(t, db, 1)
 	require.NoError(t, db.Create(&[]model.Ability{
 		{Group: "default", Model: "zz-default-only-model", ChannelId: 1, Enabled: true},
 		{Group: "default", Model: "zz-disabled-model", ChannelId: 1, Enabled: false},
@@ -449,6 +452,7 @@ func TestGetUserModelsExpandsAutoGroupsInConfiguredOrder(t *testing.T) {
 		Group:    "default",
 		Status:   common.UserStatusEnabled,
 	}).Error)
+	seedLiveInventoryChannels(t, db, 1, 2)
 	require.NoError(t, db.Create(&[]model.Ability{
 		{Group: "vip", Model: "zz-vip-model", ChannelId: 1, Enabled: true},
 		{Group: "vip", Model: "zz-shared-model", ChannelId: 1, Enabled: true},

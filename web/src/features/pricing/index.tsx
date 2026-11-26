@@ -229,6 +229,7 @@ export function Pricing() {
             hasActiveFilters={hasActiveFilters || Boolean(searchInput)}
             onClearFilters={clearFilters}
             sortBy={sortBy}
+            modelOrder={modelOrder}
             onSortChange={setSortBy}
             tokenUnit={tokenUnit}
             onTokenUnitChange={setTokenUnit}

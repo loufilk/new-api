@@ -24,6 +24,8 @@ const pricingVersion = "public-catalog-v2"
 // Operator notes, routing identities, plugin identities and future host fields
 // must be explicitly reviewed before they can become public.
 type publicCatalogModel struct {
+	SupportedEndpointTypesByGroup map[string][]constant.EndpointType `json:"supported_endpoint_types_by_group,omitempty"`
+
 	Icon                   string                       `json:"icon,omitempty"`
 	ModelName              string                       `json:"model_name"`
 	VendorID               int                          `json:"vendor_id"`
@@ -41,6 +43,7 @@ type publicCatalogModel struct {
 	BillingMode            string                       `json:"billing_mode"`
 	BillingExpr            string                       `json:"billing_expr"`
 	BillingVariantsPresent bool                         `json:"billing_variants_present"`
+	OrdinaryPriceAvailable *bool                        `json:"ordinary_price_available,omitempty"`
 	PricingVersion         string                       `json:"pricing_version"`
 	ContextLength          *int                         `json:"context_length"`
 	MaxOutputTokens        *int                         `json:"max_output_tokens"`
@@ -55,6 +58,7 @@ type publicCatalogModel struct {
 }
 
 type publicCatalog struct {
+	snapshot    model.PricingCatalogSnapshot
 	Models      []publicCatalogModel
 	GroupRatio  map[string]float64
 	UsableGroup map[string]string
@@ -92,8 +96,11 @@ func buildPublicCatalog() publicCatalog {
 			autoGroups = append(autoGroups, alias)
 		}
 	}
-	rows := publicPricingRows(model.FilterPricingByUsableGroups(model.GetPricing(), usableGroup), aliases)
-	return publicCatalog{Models: rows, GroupRatio: groupRatio, UsableGroup: publicGroups, AutoGroups: autoGroups}
+	snapshot := model.GetPricingCatalogSnapshot()
+	// Only published aliases are visible. An unpriced or invalid group must not
+	// justify a base quote for a model published through some other group.
+	rows := publicPricingRows(model.FilterPricingByUsableGroups(snapshot.Rows, aliases), aliases)
+	return publicCatalog{snapshot: snapshot, Models: rows, GroupRatio: groupRatio, UsableGroup: publicGroups, AutoGroups: autoGroups}
 }
 
 // GetPublicPricing serves the anonymous marketing catalogue. It always projects
@@ -129,13 +136,13 @@ func GetPublicPricing(c *gin.Context) {
 		}
 	}
 	endpointMap := make(map[string]common.EndpointInfo)
-	for key, info := range model.GetSupportedEndpointMap() {
+	for key, info := range catalog.snapshot.Endpoints {
 		if publicEndpointKeys[key] {
 			endpointMap[key] = info
 		}
 	}
 	vendors := make([]gin.H, 0)
-	for _, vendor := range model.GetVendors() {
+	for _, vendor := range catalog.snapshot.Vendors {
 		if !publicVendorIDs[vendor.ID] {
 			continue
 		}
@@ -172,6 +179,7 @@ func publicPricingRows(rows []model.Pricing, aliases map[string]string) []public
 		if len(groups) == 0 {
 			continue
 		}
+		endpointTypes, endpointTypesByGroup := row.ProjectEndpointGroups(aliases)
 		result = append(result, publicCatalogModel{
 			ModelName: row.ModelName, VendorID: row.VendorID, Icon: model.PublicCatalogIconID(row.Icon),
 			QuotaType: row.QuotaType, ModelRatio: row.ModelRatio,
@@ -179,9 +187,11 @@ func publicPricingRows(rows []model.Pricing, aliases map[string]string) []public
 			CacheRatio: row.CacheRatio, CreateCacheRatio: row.CreateCacheRatio,
 			ImageRatio: row.ImageRatio, AudioRatio: row.AudioRatio,
 			AudioCompletionRatio: row.AudioCompletionRatio,
-			EnableGroup:          groups, SupportedEndpointTypes: row.SupportedEndpointTypes,
-			BillingMode: row.BillingMode, BillingExpr: row.BillingExpr,
+			EnableGroup:          groups, SupportedEndpointTypes: endpointTypes,
+			SupportedEndpointTypesByGroup: endpointTypesByGroup,
+			BillingMode:                   row.BillingMode, BillingExpr: row.BillingExpr,
 			BillingVariantsPresent: len(row.BillingPluginVariants) > 0,
+			OrdinaryPriceAvailable: row.OrdinaryPriceAvailable,
 			PricingVersion:         row.PricingVersion,
 			ContextLength:          row.ContextLength, MaxOutputTokens: row.MaxOutputTokens,
 			KnowledgeCutoff: row.KnowledgeCutoff, ReleaseDate: row.ReleaseDate,

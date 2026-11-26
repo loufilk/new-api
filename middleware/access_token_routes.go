@@ -289,6 +289,8 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"PATCH /api/option/request_policy":                           accessTokenScopeRule("option:write"),
 	"PUT /api/option/":                                           accessTokenScopeRule("option:write"),
 	"PUT /api/option/passkey/domains":                            accessTokenScopeRule("option:write"),
+	"GET /api/option/model-square-order":                         accessTokenScopeRule("option:read"),
+	"PATCH /api/option/model-square-order":                       accessTokenScopeRule("option:write"),
 	"GET /api/option/model_pricing":                              accessTokenScopeRule("option:read"),
 	"GET /api/option/user-group-pricing":                         accessTokenScopeRule("option:read"),
 	"PUT /api/option/user-group-pricing":                         accessTokenScopeRule("option:write"),

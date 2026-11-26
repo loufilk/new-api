@@ -134,6 +134,7 @@ async function renderList(
     if (url === '/api/models/7') {
       return { data: { success: true, data: metadata } }
     }
+    if (url === '/api/option/') return { data: { success: true, data: [] } }
     if (url === '/api/option/model_pricing') {
       return {
         data: {

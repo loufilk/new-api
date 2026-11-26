@@ -409,8 +409,29 @@ describe('pricing controls', () => {
     expect(props.onSortChange).toHaveBeenCalledWith('input-price-low')
   })
 
+  it('does not advertise restricted popularity or recommendation sorts to public visitors', async () => {
+    const user = userEvent.setup()
+    render(<PricingToolbar {...toolbarProps()} />)
+    await user.click(screen.getByRole('button', { name: 'Name' }))
+    for (const name of ['Recommended', 'Most requests', 'Most tokens']) {
+      expect(screen.queryByRole('menuitem', { name })).not.toBeInTheDocument()
+    }
+    expect(screen.getByRole('menuitem', { name: 'Name' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitem', { name: 'Input Price: Low to High' })
+    ).toBeInTheDocument()
+  })
+
   it('lists the model order sorts above the name and price sorts', async () => {
-    const props = { ...toolbarProps(), sortBy: 'recommended' }
+    const props = {
+      ...toolbarProps(),
+      sortBy: 'recommended',
+      modelOrder: {
+        recommended: ['sample'],
+        requests: ['sample'],
+        tokens: ['sample'],
+      },
+    }
     const user = userEvent.setup()
     render(<PricingToolbar {...props} />)
     await user.click(screen.getByRole('button', { name: 'Recommended' }))

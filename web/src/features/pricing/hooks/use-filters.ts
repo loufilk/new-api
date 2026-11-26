@@ -25,6 +25,7 @@ import {
   FILTER_ALL,
   MODEL_ORDER_SORTS,
   SORT_OPTIONS,
+  canSortCatalogBy,
   normalizeSortOption,
   QUOTA_TYPES,
   ENDPOINT_TYPES,
@@ -98,7 +99,10 @@ export function useFilters(
 
   const searchInput = filterState.search || ''
   const debouncedSearchInput = useDebounce(searchInput, 200)
-  const sortBy = normalizeSortOption(filterState.sort)
+  const requestedSort = normalizeSortOption(filterState.sort)
+  const sortBy = canSortCatalogBy(requestedSort, modelOrder)
+    ? requestedSort
+    : SORT_OPTIONS.NAME
   const selectedGroup =
     selection?.scope === scope ? selection.group : filterState.group
   const groupFilter =

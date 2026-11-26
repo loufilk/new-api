@@ -98,11 +98,11 @@ async function renderEditor(fixture: EditorFixture = {}) {
       },
     }
   })
-  if (fixture.issues) {
-    useAuthStore
-      .getState()
-      .auth.setUser({ id: 1, username: 'root', role: ROLE.SUPER_ADMIN })
-  }
+  // This editor is mounted in authenticated system settings, never in the
+  // public catalogue. Exercise the dashboard pricing endpoint in every case.
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'root', role: ROLE.SUPER_ADMIN })
   const modelRatio = JSON.stringify({
     'gpt-4.1-mini': 0.2,
     'claude-sonnet': 1.5,

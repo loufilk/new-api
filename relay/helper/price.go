@@ -13,13 +13,10 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
-	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
-	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
-	hostreasoning "github.com/QuantumNous/new-api/setting/reasoning"
 	hosttypes "github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -60,7 +57,7 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) (ratio
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (hosttypes.PriceData, error) {
 	if info != nil {
-		if matched := resolveBillingModelName(info.GetOriginModelName()); matched != "" && matched != info.OriginModelName {
+		if matched := ResolveBillingModelName(info.GetOriginModelName()); matched != "" && matched != info.OriginModelName {
 			info.BillingModelName = matched
 		}
 	}
@@ -291,6 +288,8 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hostt
 }
 
 func HasModelBillingConfig(modelName string) bool {
+	// Preserve the caller-facing alias in inventories; look up only its billing key.
+	modelName = ResolveBillingModelName(modelName)
 	if _, ok := ratio_setting.GetModelPrice(modelName, false); ok {
 		return true
 	}
@@ -304,59 +303,14 @@ func HasModelBillingConfig(modelName string) bool {
 	return ok && strings.TrimSpace(expr) != ""
 }
 
-// HasPriceOrRatioEntry reports whether name has a configured price, ratio, or
-// tiered billing-mode entry after a single wildcard normalization. Self-use
-// fallback does not count as a configured ratio.
+// HasPriceOrRatioEntry retains the relay helper interface for pricing consumers.
 func HasPriceOrRatioEntry(name string) bool {
-	formatted := ratio_setting.FormatMatchingModelName(name)
-	if _, ok := ratio_setting.GetModelPrice(formatted, false); ok {
-		return true
-	}
-	if ratio_setting.HasConfiguredModelRatio(formatted) {
-		return true
-	}
-	return billing_setting.GetBillingMode(formatted) == billing_setting.BillingModeTieredExpr
+	return billing_setting.HasPriceOrRatioEntry(name)
 }
 
-// ResolveBillingModelName shares the relay's canonical pricing lookup with
-// explicit cost confirmations. It does not use the mapped upstream model.
+// ResolveBillingModelName is shared with explicit cost confirmations and the ordinary model catalogue.
 func ResolveBillingModelName(origin string) string {
-	return resolveBillingModelName(origin)
-}
-
-func resolveBillingModelName(origin string) string {
-	var candidates []string
-	if !reasoning.ParseModelModifiers(origin).HasModifiers() {
-		candidates = append(candidates, origin)
-	}
-	candidates = append(candidates, hostreasoning.CanonicalBillingModelNames(origin)...)
-	base := hostreasoning.BaseModelName(origin)
-	// DeepSeek thinking tails (-none/-low/-max) bill at the base model's price,
-	// with or without @ modifiers after them.
-	if deepSeekBase, _, _, ok := reasoning.ParseDeepSeekV4ThinkingSuffix(base); ok && !model_setting.ShouldPreserveThinkingSuffix(base) {
-		candidates = append(candidates, deepSeekBase)
-	}
-	candidates = append(candidates, base)
-
-	seen := make(map[string]struct{}, len(candidates))
-	matched := ""
-	for _, name := range candidates {
-		if name == "" {
-			continue
-		}
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		if HasPriceOrRatioEntry(name) {
-			matched = name
-			break
-		}
-	}
-	if matched == "" {
-		matched = base
-	}
-	return matched
+	return billing_setting.ResolveBillingModelName(origin)
 }
 
 func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, billingModelName string, promptTokens int, groupRatioInfo hosttypes.GroupRatioInfo) (hosttypes.PriceData, error) {

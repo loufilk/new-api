@@ -84,6 +84,8 @@ export function withPluginPricing(
     billing_usage_schema: variant.billing_usage_schema,
     billing_usage_examples: variant.billing_usage_examples,
     billing_plugin_variants: undefined,
+    billing_variants_present: undefined,
+    ordinary_price_available: undefined,
     ordinary_pricing: undefined,
   }
 }
@@ -99,10 +101,29 @@ export function withOrdinaryPricing(model: PricingModel): PricingModel {
   }
 }
 
-// The price a model is summarised by: the model-level price when ordinary
-// requests still pay it, as most requests do; otherwise its plugin prices.
+/** Anonymous snapshots report variants without exposing provider rates or identities. */
+export function hasRedactedProviderPricing(model: PricingModel): boolean {
+  return (
+    model.billing_variants_present === true &&
+    !model.billing_plugin_variants?.length
+  )
+}
+
+export function isCatalogPriceUnavailable(model: PricingModel): boolean {
+  if (model.billing_plugin_variants?.length) return false
+  if (model.ordinary_price_available === false) return true
+  // An old anonymous response cannot prove that its legacy values apply to
+  // ordinary requests when it also announces undisclosed provider prices.
+  return (
+    model.ordinary_price_available !== true && hasRedactedProviderPricing(model)
+  )
+}
+
+// Summarize the normal price when it applies; otherwise keep authorized providers.
 export function withBasePricing(model: PricingModel): PricingModel {
-  return model.ordinary_pricing ? withOrdinaryPricing(model) : model
+  return model.ordinary_pricing && model.ordinary_price_available !== false
+    ? withOrdinaryPricing(model)
+    : model
 }
 
 export function pluginExpressionsEqual(

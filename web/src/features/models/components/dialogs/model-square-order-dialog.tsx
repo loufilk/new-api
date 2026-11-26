@@ -29,8 +29,11 @@ import { toast } from 'sonner'
 
 import { AutoGroupOrderItem } from '@/components/auto-group-order-item'
 import { Dialog } from '@/components/dialog'
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
+import { FieldSet } from '@/components/ui/field'
 import {
   Select,
   SelectContent,
@@ -41,12 +44,6 @@ import {
 } from '@/components/ui/select'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { compareModelUsage } from '@/features/pricing/lib/filters'
-import { updateSystemOption } from '@/features/system-settings/api'
-import {
-  getOptionValue,
-  useSystemOptions,
-} from '@/features/system-settings/hooks/use-system-options'
-import type { UpdateOptionRequest } from '@/features/system-settings/types'
 import {
   SEGMENTED_SWITCH_CLASS,
   SEGMENTED_SWITCH_ITEM_CLASS,
@@ -57,24 +54,40 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import { getModelSquareUsage } from '../../api'
+import {
+  getModelSquareOrder,
+  getModelSquareUsage,
+  updateModelSquareOrder,
+} from '../../api'
 import { modelsQueryKeys } from '../../lib'
-import type { ModelSquareUsage } from '../../types'
+import type {
+  ModelSquareOrder,
+  ModelSquareOrderPatch,
+  ModelSquareUsage,
+} from '../../types'
 
-const MODE_KEY = 'model_square_setting.sort_mode'
-const METRIC_KEY = 'model_square_setting.sort_metric'
-const DAYS_KEY = 'model_square_setting.sort_days'
-const MODELS_KEY = 'model_square_setting.sort_models'
-
-// The saved settings; with no setting the square stays in name order.
-const DEFAULT_ORDER = {
-  [MODE_KEY]: 'manual',
-  [METRIC_KEY]: 'tokens',
-  [DAYS_KEY]: 7,
-  [MODELS_KEY]: [] as string[],
+const MODE_KEY = 'sort_mode'
+const METRIC_KEY = 'sort_metric'
+const DAYS_KEY = 'sort_days'
+const MODELS_KEY = 'sort_models'
+const ORDER_KEYS = [MODE_KEY, METRIC_KEY, DAYS_KEY, MODELS_KEY] as const
+const DEFAULT_ORDER: ModelSquareOrder = {
+  sort_mode: 'manual',
+  sort_metric: 'tokens',
+  sort_days: 7,
+  sort_models: [],
 }
 
-type OrderOptions = typeof DEFAULT_ORDER
+function orderMatches(
+  order: ModelSquareOrder,
+  expected: Partial<ModelSquareOrder>
+): boolean {
+  return ORDER_KEYS.every(
+    (key) =>
+      !(key in expected) ||
+      JSON.stringify(order[key]) === JSON.stringify(expected[key])
+  )
+}
 
 const PREVIEW_LIMIT = 10
 
@@ -100,14 +113,38 @@ type ModelSquareOrderDialogProps = {
 
 /** Lets the root admin choose the Recommended order of the model square. */
 export function ModelSquareOrderDialog(props: ModelSquareOrderDialogProps) {
+  return props.open ? <ModelSquareOrderEditor {...props} /> : null
+}
+
+function ModelSquareOrderEditor(props: ModelSquareOrderDialogProps) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const queryClient = useQueryClient()
-  const optionsQuery = useSystemOptions()
-  const [draft, setDraft] = useState<OrderOptions | null>(null)
+  const optionsQuery = useQuery({
+    queryKey: modelsQueryKeys.squareOrder(),
+    queryFn: async ({ signal }) =>
+      requireServerSuccess(await getModelSquareOrder(signal)).data,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    meta: { errorToast: false },
+  })
+  const [draft, setDraft] = useState<Partial<ModelSquareOrder>>({})
+  const [unconfirmed, setUnconfirmed] = useState<ModelSquareOrderPatch | null>(
+    null
+  )
 
-  const saved = getOptionValue(optionsQuery.data?.data, DEFAULT_ORDER)
-  const order = draft ?? saved
+  const saved = optionsQuery.data ?? DEFAULT_ORDER
+  const order = { ...saved, ...draft }
+  const changed = ORDER_KEYS.filter(
+    (key) => JSON.stringify(order[key]) !== JSON.stringify(saved[key])
+  )
+  const canEdit =
+    optionsQuery.isSuccess &&
+    optionsQuery.isFetchedAfterMount &&
+    optionsQuery.fetchStatus === 'idle' &&
+    unconfirmed === null
   const mode = order[MODE_KEY]
   const metric = order[METRIC_KEY]
   const days = order[DAYS_KEY]
@@ -118,7 +155,7 @@ export function ModelSquareOrderDialog(props: ModelSquareOrderDialogProps) {
   const usageQuery = useQuery({
     queryKey: modelsQueryKeys.squareUsage(days),
     queryFn: async () => requireServerSuccess(await getModelSquareUsage(days)),
-    enabled: props.open,
+    enabled: optionsQuery.isSuccess && optionsQuery.isFetchedAfterMount,
     placeholderData: keepPreviousData,
   })
   const squareModels = useMemo(
@@ -144,8 +181,10 @@ export function ModelSquareOrderDialog(props: ModelSquareOrderDialogProps) {
   }, [metric, mode, listed, squareModels])
   const hasUsage = ranked.some((row) => row.usage > 0)
 
-  const update = (changes: Partial<OrderOptions>) =>
-    setDraft({ ...order, ...changes })
+  const update = (changes: Partial<ModelSquareOrder>) => {
+    if (!canEdit || saveOrder.isPending) return
+    setDraft((current) => ({ ...current, ...changes }))
+  }
 
   const moveModel = (index: number, direction: 'up' | 'down') => {
     const target = direction === 'up' ? index - 1 : index + 1
@@ -155,43 +194,52 @@ export function ModelSquareOrderDialog(props: ModelSquareOrderDialogProps) {
     update({ [MODELS_KEY]: next })
   }
 
-  const handleOpenChange = (open: boolean) => {
-    if (!open) setDraft(null)
-    props.onOpenChange(open)
+  const finishSave = () => {
+    void queryClient.invalidateQueries({ queryKey: ['pricing'] })
+    void queryClient.invalidateQueries({ queryKey: ['system-options'] })
+    toast.success(t('Setting updated successfully'))
+    props.onOpenChange(false)
   }
 
-  // One toast for the whole order, however many settings changed
+  const confirmSave = async (patch: ModelSquareOrderPatch, error?: unknown) => {
+    // A failed HTTP response can mean the commit happened but its response
+    // was lost. Read back the committed order, never replay the write.
+    const result = await optionsQuery.refetch()
+    if (!result.isSuccess || !result.data) {
+      setUnconfirmed(patch)
+      if (error) handleServerError(error, t('Failed to update setting'))
+      return
+    }
+
+    setUnconfirmed(null)
+    if (orderMatches(result.data, patch.changes)) {
+      finishSave()
+    } else if (!orderMatches(result.data, patch.expected)) {
+      setDraft({})
+      toast.error(
+        t(
+          'Could not load or save the settings. Reload them before retrying to avoid overwriting another administrator’s changes.'
+        )
+      )
+    } else if (error) {
+      handleServerError(error, t('Failed to update setting'))
+    }
+  }
+
   const saveOrder = useMutation({
-    mutationFn: async (changes: UpdateOptionRequest[]) => {
-      for (const change of changes) {
-        requireServerSuccess(await updateSystemOption(change))
-      }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['pricing'] })
-      toast.success(t('Setting updated successfully'))
-      handleOpenChange(false)
-    },
-    onError: (error) => handleServerError(error, t('Failed to update setting')),
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: ['system-options'] }),
+    mutationFn: async (patch: ModelSquareOrderPatch) =>
+      requireServerSuccess(await updateModelSquareOrder(patch)),
+    retry: false,
+    onSuccess: finishSave,
+    onError: (error, patch) => confirmSave(patch, error),
   })
 
   const handleSave = () => {
-    const keys = Object.keys(order) as (keyof OrderOptions)[]
-    saveOrder.mutate(
-      keys
-        .filter(
-          (key) => JSON.stringify(order[key]) !== JSON.stringify(saved[key])
-        )
-        .map((key) => {
-          const value = order[key]
-          return {
-            key,
-            value: Array.isArray(value) ? JSON.stringify(value) : value,
-          }
-        })
-    )
+    if (!canEdit || changed.length === 0 || saveOrder.isPending) return
+    saveOrder.mutate({
+      changes: Object.fromEntries(changed.map((key) => [key, order[key]])),
+      expected: Object.fromEntries(changed.map((key) => [key, saved[key]])),
+    })
   }
 
   const modes = [
@@ -221,7 +269,9 @@ export function ModelSquareOrderDialog(props: ModelSquareOrderDialogProps) {
   return (
     <Dialog
       open={props.open}
-      onOpenChange={handleOpenChange}
+      onOpenChange={(open) => {
+        if (!saveOrder.isPending) props.onOpenChange(open)
+      }}
       title={t('Model square order')}
       description={t(
         'Choose the default order of the model square. Users can still pick another sort.'
@@ -229,21 +279,39 @@ export function ModelSquareOrderDialog(props: ModelSquareOrderDialogProps) {
       contentClassName='sm:max-w-xl'
       footer={
         <>
-          <Button variant='outline' onClick={() => handleOpenChange(false)}>
+          <Button
+            variant='outline'
+            disabled={saveOrder.isPending}
+            onClick={() => props.onOpenChange(false)}
+          >
             {t('Cancel')}
           </Button>
           <Button
             onClick={handleSave}
-            disabled={
-              draft === null || !optionsQuery.isSuccess || saveOrder.isPending
-            }
+            disabled={!canEdit || changed.length === 0 || saveOrder.isPending}
           >
             {t('Save')}
           </Button>
         </>
       }
     >
-      <div className='flex flex-col gap-5'>
+      {optionsQuery.isFetching && (
+        <LoadingState inline size='sm' message={t('Loading settings...')} />
+      )}
+      {optionsQuery.isError && !optionsQuery.isFetching && (
+        <ErrorState
+          title={t('Failed to load settings')}
+          onRetry={() => {
+            if (unconfirmed) void confirmSave(unconfirmed)
+            else void optionsQuery.refetch()
+          }}
+          className='min-h-0'
+        />
+      )}
+      <FieldSet
+        disabled={!canEdit || saveOrder.isPending}
+        className='min-w-0 gap-5'
+      >
         <div className='flex flex-col gap-2'>
           <div className='text-sm font-medium'>{t('Sort method')}</div>
           <ToggleGroup
@@ -385,7 +453,10 @@ export function ModelSquareOrderDialog(props: ModelSquareOrderDialogProps) {
           </div>
         )}
 
-        {usesUsage && usageQuery.isSuccess && (
+        {usesUsage && usageQuery.isFetching && (
+          <LoadingState inline size='sm' message={t('Loading...')} />
+        )}
+        {usesUsage && usageQuery.isSuccess && !usageQuery.isPlaceholderData && (
           <div className='flex flex-col gap-2'>
             <div className='flex items-baseline justify-between gap-3'>
               <div className='text-sm font-medium'>
@@ -444,7 +515,7 @@ export function ModelSquareOrderDialog(props: ModelSquareOrderDialogProps) {
             )}
           </div>
         )}
-      </div>
+      </FieldSet>
     </Dialog>
   )
 }

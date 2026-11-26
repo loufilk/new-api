@@ -32,7 +32,7 @@ import {
   requireServerSuccess,
 } from '@/lib/server-error-message'
 
-import { getModels, searchModels, getVendors } from '../api'
+import { getModels, searchModels, getVendorOptions } from '../api'
 import { DEFAULT_PAGE_SIZE } from '../constants'
 import { modelsQueryKeys, vendorsQueryKeys } from '../lib'
 import type { Model, ModelSquareState } from '../types'
@@ -112,7 +112,7 @@ export function ModelsTable() {
   const { data: vendorsData } = useQuery({
     queryKey: vendorsQueryKeys.list(),
     queryFn: async () =>
-      requireServerSuccess(await getVendors({ page_size: 1000 })),
+      requireServerSuccess(await getVendorOptions()),
   })
 
   const vendors = useMemo(

@@ -53,6 +53,7 @@ import {
   getTierCachePricingMode,
 } from '../lib/cache-pricing'
 import {
+  formatDynamicUnitPrice,
   formatTaskUsageUnitPrice,
   type DynamicPriceLabelKind,
   type DynamicPriceOptions,
@@ -209,12 +210,20 @@ function formatBreakdownPrice(
   taskPriceOptions: DynamicPricingBreakdownProps['taskPriceOptions'],
   language: string
 ): string {
-  const amount =
+  const options = { tokenUnit: 'M' as const, ...taskPriceOptions }
+  let amount: string
+  if (
     field.labelKind === 'schema' ||
     field.unit === 'request' ||
     field.unit === 'image'
-      ? formatTaskUsageUnitPrice(value, { tokenUnit: 'M', ...taskPriceOptions })
-      : `${symbol}${(value * rate).toFixed(4)}`
+  ) {
+    amount = formatTaskUsageUnitPrice(value, options)
+  } else if (taskPriceOptions) {
+    amount = formatDynamicUnitPrice(value, options)
+  } else {
+    // Keep historical usage-log quotes in their original per-million format.
+    amount = `${symbol}${(value * rate).toFixed(4)}`
+  }
   if (field.unit === 'second') return `${amount}/${t('s')}`
   if (field.unit === 'count') {
     return `${amount}/${taskUsageUnitLabel(field, language, t('unit'))}`

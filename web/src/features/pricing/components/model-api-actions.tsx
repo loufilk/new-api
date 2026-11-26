@@ -38,10 +38,14 @@ export function ModelApiActions(props: {
   selectedGroup?: string
 }) {
   const { t } = useTranslation()
-  const endpoint = getModelEndpoints(props.model, props.endpointMap)[0]
+  const endpoint = getModelEndpoints(
+    props.model,
+    props.endpointMap,
+    props.selectedGroup
+  )[0]
   const path = endpoint?.path
   const documentation = endpoint ? getEndpointDocId(endpoint.type) : undefined
-  const playground = getModelPlayground(props.model)
+  const playground = getModelPlayground(props.model, props.selectedGroup)
   const origin = useMarketApiBase()
   return (
     <div className='flex min-w-0 flex-col gap-2'>

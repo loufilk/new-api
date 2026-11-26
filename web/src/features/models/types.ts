@@ -280,6 +280,18 @@ export interface MissingModelsResponse {
   data?: string[]
 }
 
+export type ModelSquareOrder = {
+  sort_mode: string
+  sort_metric: string
+  sort_days: number
+  sort_models: string[]
+}
+
+export type ModelSquareOrderPatch = {
+  changes: Partial<ModelSquareOrder>
+  expected: Partial<ModelSquareOrder>
+}
+
 export type ModelSquareUsage = {
   model_name: string
   icon?: string

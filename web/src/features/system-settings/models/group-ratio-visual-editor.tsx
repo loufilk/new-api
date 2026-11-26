@@ -439,6 +439,9 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
             workspacePanel === 'pricing' ? '{}' : topupGroupRatio
           }
           baseOnly={workspacePanel === 'pricing'}
+          searchDescriptions={
+            workspacePanel === 'pricing' ? userUsableGroups : undefined
+          }
           savedGroupRatio={workspaceActive ? savedGroupRatio : undefined}
           newGroupSelectable={!workspacePanel}
           pendingRenames={pendingRenames}
@@ -557,6 +560,7 @@ type GroupPricingTableProps = {
   userUsableGroups: string
   topupGroupRatio: string
   baseOnly?: boolean
+  searchDescriptions?: string
   newGroupSelectable?: boolean
   pendingRenames?: GroupRenameMapping[]
   onChange: (field: string, value: string) => void
@@ -569,6 +573,7 @@ function GroupPricingTable({
   groupRatio,
   savedGroupRatio,
   userUsableGroups,
+  searchDescriptions,
   topupGroupRatio,
   baseOnly = false,
   newGroupSelectable = true,
@@ -713,12 +718,21 @@ function GroupPricingTable({
         .map((row) => ({ id: row.name, ratio: Number(row.ratio) }))
     : []
 
+  // Labels improve lookup only. Access-only groups must not become pricing
+  // rows, and searching must never write visibility or top-up settings.
+  const searchLabels = useMemo(
+    () => parseUsableMap(searchDescriptions ?? '{}'),
+    [searchDescriptions]
+  )
   const query = search.trim().toLowerCase()
   const visibleRows = rows.filter(
     (row) =>
       !query ||
       row.name.toLowerCase().includes(query) ||
-      row.description.toLowerCase().includes(query)
+      row.description.toLowerCase().includes(query) ||
+      (Object.hasOwn(searchLabels, row.name) &&
+        typeof searchLabels[row.name] === 'string' &&
+        searchLabels[row.name].toLowerCase().includes(query))
   )
 
   return (

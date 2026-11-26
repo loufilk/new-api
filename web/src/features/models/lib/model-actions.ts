@@ -102,11 +102,9 @@ export async function handleToggleModelStatus(
 // Batch Status Actions
 // ============================================================================
 
-/**
- * Batch enable models
- */
-export async function handleBatchEnableModels(
+async function updateBatchVisibility(
   ids: number[],
+  status: 0 | 1,
   queryClient?: QueryClient,
   onSuccess?: () => void
 ): Promise<void> {
@@ -116,86 +114,65 @@ export async function handleBatchEnableModels(
   }
 
   try {
-    const enablePromises = ids.map((id) => updateModelStatus(id, 1))
-    const results = await Promise.all(enablePromises)
-
-    let successCount = 0
-    let failedCount = 0
-
-    results.forEach((res) => {
-      if (res.success) {
-        successCount++
-      } else {
-        failedCount++
-      }
-    })
-
-    if (successCount > 0) {
+    // Each write commits independently. A lost HTTP response does not mean
+    // that the server rolled back that write or canceled its siblings.
+    const results = await Promise.allSettled(
+      ids.map((id) => updateModelStatus(id, status))
+    )
+    const confirmed = results.filter(
+      (result) => result.status === 'fulfilled' && result.value.success
+    ).length
+    const rejected = results.filter(
+      (result) => result.status === 'rejected'
+    ).length
+    const failed = results.length - confirmed - rejected
+    if (confirmed > 0) {
       toast.success(
-        i18next.t('Shown {{count}} models in model square', {
-          count: successCount,
-        })
+        status === 1
+          ? i18next.t('Shown {{count}} models in model square', {
+              count: confirmed,
+            })
+          : i18next.t('Hidden {{count}} models from model square', {
+              count: confirmed,
+            })
       )
-      if (queryClient) await invalidateVendorData(queryClient)
-      onSuccess?.()
     }
-
-    if (failedCount > 0) {
+    if (failed > 0) {
       toast.error(
-        i18next.t('Failed to enable {{count}} model(s)', { count: failedCount })
+        status === 1
+          ? i18next.t('Failed to enable {{count}} model(s)', { count: failed })
+          : i18next.t('Failed to disable {{count}} model(s)', { count: failed })
       )
     }
+    if (rejected > 0) {
+      toast.error(i18next.t('Refresh the list and try again.'))
+    }
+    if (queryClient && (confirmed > 0 || rejected > 0)) {
+      await invalidateVendorData(queryClient)
+    }
+    if (confirmed === results.length) onSuccess?.()
   } catch (error: unknown) {
-    handleServerError(error, i18next.t('Batch enable failed'))
+    handleServerError(
+      error,
+      status === 1
+        ? i18next.t('Batch enable failed')
+        : i18next.t('Batch disable failed')
+    )
   }
 }
 
-/**
- * Batch disable models
- */
-export async function handleBatchDisableModels(
+export function handleBatchEnableModels(
   ids: number[],
   queryClient?: QueryClient,
   onSuccess?: () => void
 ): Promise<void> {
-  if (ids.length === 0) {
-    toast.error(i18next.t('Please select at least one model'))
-    return
-  }
+  return updateBatchVisibility(ids, 1, queryClient, onSuccess)
+}
 
-  try {
-    const disablePromises = ids.map((id) => updateModelStatus(id, 0))
-    const results = await Promise.all(disablePromises)
-
-    let successCount = 0
-    let failedCount = 0
-
-    results.forEach((res) => {
-      if (res.success) {
-        successCount++
-      } else {
-        failedCount++
-      }
-    })
-
-    if (successCount > 0) {
-      toast.success(
-        i18next.t('Hidden {{count}} models from model square', {
-          count: successCount,
-        })
-      )
-      if (queryClient) await invalidateVendorData(queryClient)
-      onSuccess?.()
-    }
-
-    if (failedCount > 0) {
-      toast.error(
-        i18next.t('Failed to disable {{count}} model(s)', {
-          count: failedCount,
-        })
-      )
-    }
-  } catch (error: unknown) {
-    handleServerError(error, i18next.t('Batch disable failed'))
-  }
+export function handleBatchDisableModels(
+  ids: number[],
+  queryClient?: QueryClient,
+  onSuccess?: () => void
+): Promise<void> {
+  return updateBatchVisibility(ids, 0, queryClient, onSuccess)
 }

@@ -38,6 +38,7 @@ import {
 import { quotedMarketGroups } from '../lib/market-result-groups'
 import {
   getModelEndpoints,
+  getModelEndpointTypes,
   type ModelEndpointMap,
 } from '../lib/model-endpoints'
 import type { PricingModel } from '../types'
@@ -204,10 +205,12 @@ export function usePricingColumns(
       header: t('Endpoints'),
       cell: ({ row }) => {
         const endpoints = options.endpointMap
-          ? getModelEndpoints(row.original, options.endpointMap).map(
-              (ep) => ep.type
-            )
-          : (row.original.supported_endpoint_types ?? [])
+          ? getModelEndpoints(
+              row.original,
+              options.endpointMap,
+              options.selectedGroup
+            ).map((ep) => ep.type)
+          : getModelEndpointTypes(row.original, options.selectedGroup)
         return (
           <BadgeListCell
             items={endpoints.map((ep) => (

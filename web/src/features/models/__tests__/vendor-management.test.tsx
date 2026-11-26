@@ -24,6 +24,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { api, type ApiRequestConfig } from '@/lib/api'
 
+import { getVendorOptions } from '../api'
 import { VendorMutateDialog } from '../components/dialogs/vendor-mutate-dialog'
 import { VendorOperationDialog } from '../components/dialogs/vendor-operation-dialog'
 import { VendorLinkedModels } from '../components/vendor-linked-models'
@@ -221,6 +222,62 @@ describe('vendor management', () => {
     for (const key of ['vendors', 'models', 'pricing']) {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: [key] })
     }
+  })
+  it('can select an older vendor beyond the server page limit without applying changes', async () => {
+    const rows = Array.from({ length: 101 }, (_, index) => ({
+      ...vendor,
+      id: 101 - index,
+      name: `Vendor ${101 - index}`,
+    }))
+    const get = vi
+      .spyOn(api, 'get')
+      .mockImplementation(async (_url, config) => {
+        const params = config?.params
+        const query = params && typeof params === 'object' ? params : {}
+        const page = Number(('p' in query ? query.p : undefined) ?? 1)
+        const size = Math.min(
+          Number(('page_size' in query ? query.page_size : undefined) ?? 20),
+          100
+        )
+        return {
+          data: {
+            success: true,
+            data: {
+              page,
+              page_size: size,
+              total: rows.length,
+              items: rows.slice((page - 1) * size, page * size),
+            },
+          },
+        }
+      })
+    const post = vi.spyOn(api, 'post')
+    renderWithClient(
+      <VendorOperationDialog
+        selection={{ action: 'merge', vendor_ids: [101, 1] }}
+        onClose={() => {}}
+      />
+    )
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('combobox', { name: 'Keep this vendor' }))
+    await user.click(await screen.findByRole('option', { name: 'Vendor 1' }))
+    expect(
+      screen.getByRole('button', { name: 'Preview changes' })
+    ).toBeEnabled()
+    expect(post).not.toHaveBeenCalled()
+  })
+  it('does not return a partially loaded vendor directory on a later-page failure', async () => {
+    const failed = { success: false, message: 'Unable to read page 2' }
+    vi.spyOn(api, 'get')
+      .mockResolvedValueOnce({
+        data: {
+          success: true,
+          data: { items: [vendor], page_size: 1, total: 2 },
+        },
+      })
+      .mockResolvedValueOnce({ data: failed })
+    await expect(getVendorOptions()).resolves.toEqual(failed)
   })
   it('requires an explicit merge target and previews only the remaining source vendors', async () => {
     vi.spyOn(api, 'get').mockResolvedValue({

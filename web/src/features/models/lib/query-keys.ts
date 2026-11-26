@@ -28,6 +28,7 @@ export const modelsQueryKeys = {
     [...modelsQueryKeys.lists(), filters] as const,
   detail: (id: number) => [...modelsQueryKeys.all, 'detail', id] as const,
   missing: () => [...modelsQueryKeys.all, 'missing'] as const,
+  squareOrder: () => [...modelsQueryKeys.all, 'square-order'] as const,
   squareUsage: (days: number) =>
     [...modelsQueryKeys.all, 'square-usage', days] as const,
 }

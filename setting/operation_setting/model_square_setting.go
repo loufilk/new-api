@@ -26,11 +26,22 @@ type ModelSquareSetting struct {
 }
 
 // An empty manual list keeps the model square in name order.
-var modelSquareSetting = ModelSquareSetting{
-	SortMode:   ModelSquareSortManual,
-	SortMetric: ModelSquareMetricTokens,
-	SortDays:   7,
-	SortModels: []string{},
+var modelSquareSetting = DefaultModelSquareSetting()
+
+func DefaultModelSquareSetting() ModelSquareSetting {
+	return ModelSquareSetting{
+		SortMode: ModelSquareSortManual, SortMetric: ModelSquareMetricTokens,
+		SortDays: 7, SortModels: []string{},
+	}
+}
+
+// ModelSquareSettingSnapshot reads one coherent order while options reload.
+func ModelSquareSettingSnapshot() ModelSquareSetting {
+	return config.Snapshot(config.GlobalConfig, &modelSquareSetting, func(current *ModelSquareSetting) ModelSquareSetting {
+		order := *current
+		order.SortModels = slices.Clone(current.SortModels)
+		return order
+	})
 }
 
 func init() {

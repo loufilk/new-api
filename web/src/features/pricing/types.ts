@@ -59,6 +59,10 @@ export type BillingPluginVariant = {
 
 export type PricingModel = {
   billing_plugin_variants?: BillingPluginVariant[]
+  /** Anonymous projection only: provider identities and rates are withheld. */
+  billing_variants_present?: boolean
+  /** Server-confirmed ordinary quote availability; absence preserves legacy prices. */
+  ordinary_price_available?: boolean
   // Requests outside the plugin variants still pay the model-level price.
   ordinary_pricing?: boolean
   id: number
@@ -81,6 +85,8 @@ export type PricingModel = {
   enable_groups: string[]
   tags?: string
   supported_endpoint_types?: string[]
+  /** Live protocol capabilities keyed only by the visible group or public tier. */
+  supported_endpoint_types_by_group?: Record<string, string[]>
   key?: string
   group_keys_are_display_only?: boolean
   group_catalog?: MarketGroupCatalog

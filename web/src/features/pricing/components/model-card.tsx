@@ -46,10 +46,15 @@ import {
 import { quotedMarketGroups } from '../lib/market-result-groups'
 import {
   getModelEndpoints,
+  getModelEndpointTypes,
   type ModelEndpointMap,
 } from '../lib/model-endpoints'
 import { isTokenBasedModel } from '../lib/model-helpers'
-import { withBasePricing } from '../lib/plugin-pricing'
+import {
+  hasRedactedProviderPricing,
+  isCatalogPriceUnavailable,
+  withBasePricing,
+} from '../lib/plugin-pricing'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import { taskPriceLabel, taskUsageUnitLabel } from '../lib/task-price-display'
 import type { PricingModel, PriceType, TokenUnit } from '../types'
@@ -91,8 +96,12 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
     marketGroupLabel(group, props.model.group_catalog)
   )
   const endpoints = props.endpointMap
-    ? getModelEndpoints(props.model, props.endpointMap).map((ep) => ep.type)
-    : (props.model.supported_endpoint_types ?? [])
+    ? getModelEndpoints(
+        props.model,
+        props.endpointMap,
+        props.selectedGroup
+      ).map((ep) => ep.type)
+    : getModelEndpointTypes(props.model, props.selectedGroup)
   const isUnconfiguredTaskUsage = isUnconfiguredTaskUsageModel(model)
   const expressions = useMemo(() => activeBillingExpressions([model]), [model])
   const billingTime = useBillingTime(expressions)
@@ -131,8 +140,18 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [model, dynamicPriceOptions, currency]
   )
+  const redactedProviderPricing = hasRedactedProviderPricing(model)
+  const quoteUnavailable = isCatalogPriceUnavailable(model)
   let priceSummary: ReactNode
-  if (dynamicSummary) {
+  if (quoteUnavailable) {
+    priceSummary = (
+      <span className='text-muted-foreground col-span-full'>
+        {redactedProviderPricing
+          ? t('Sign in to view provider pricing')
+          : t('Unset price')}
+      </span>
+    )
+  } else if (dynamicSummary) {
     const cacheReadEntries = dynamicSummary.secondaryEntries.filter(
       (entry) => entry.field === 'cacheReadPrice' && entry.unit === 'token'
     )
@@ -375,6 +394,11 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
           <div className='grid grid-cols-[repeat(auto-fit,minmax(88px,1fr))] gap-x-3 gap-y-2'>
             {priceSummary}
           </div>
+          {redactedProviderPricing && !quoteUnavailable && (
+            <span className='text-muted-foreground text-sm'>
+              {t('Sign in to view provider pricing')}
+            </span>
+          )}
         </div>
         {(groups.length > 0 || endpoints.length > 0) && (
           <dl

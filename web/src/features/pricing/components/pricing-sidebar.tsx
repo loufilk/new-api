@@ -42,6 +42,7 @@ import {
   MARKET_PLATFORMS,
   type MarketPlatform,
 } from '../lib/market-groups'
+import { getModelEndpointTypes } from '../lib/model-endpoints'
 import type {
   PricingModel,
   MarketActivityByGroup,
@@ -196,15 +197,23 @@ export const PricingSidebar = memo(function PricingSidebar(
   const counts = useMemo(() => {
     const endpoints = new Map<string, number>()
     const quotas = { token: 0, request: 0, task: 0 }
-    for (const model of props.models) {
-      for (const type of new Set(model.supported_endpoint_types ?? [])) {
+    const groupModels =
+      props.groupFilter === FILTER_ALL
+        ? props.models
+        : props.models.filter((model) =>
+            model.enable_groups.includes(props.groupFilter)
+          )
+    for (const model of groupModels) {
+      for (const type of new Set(
+        getModelEndpointTypes(model, props.groupFilter)
+      )) {
         endpoints.set(type, (endpoints.get(type) ?? 0) + 1)
       }
       const quota = getModelQuotaType(model)
       if (quota) quotas[quota]++
     }
-    return { endpoints, quotas }
-  }, [props.models])
+    return { endpoints, quotas, total: groupModels.length }
+  }, [props.models, props.groupFilter])
   const platformCounts = useMemo(() => {
     const counts = new Map<MarketPlatform, number>()
     for (const group of props.groups) {
@@ -280,7 +289,7 @@ export const PricingSidebar = memo(function PricingSidebar(
   ]
   const quotaLabels = getQuotaTypeLabels(t)
   const quotaOptions = [
-    all(props.models.length),
+    all(counts.total),
     ...Object.entries(counts.quotas).map(([key, count]) => ({
       value: key,
       label: quotaLabels[key as keyof typeof counts.quotas],
@@ -289,7 +298,7 @@ export const PricingSidebar = memo(function PricingSidebar(
   ]
   const endpointLabels: Record<string, string> = getEndpointTypeLabels(t)
   const endpointOptions = [
-    all(props.models.length),
+    all(counts.total),
     ...[
       ...new Set([...Object.keys(endpointLabels), ...counts.endpoints.keys()]),
     ]

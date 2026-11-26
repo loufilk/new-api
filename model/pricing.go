@@ -27,6 +27,11 @@ type PricingPluginVariant struct {
 }
 
 type Pricing struct {
+	SupportedEndpointTypesByGroup map[string][]constant.EndpointType `json:"supported_endpoint_types_by_group,omitempty"`
+
+	channelEndpointsByGroup map[string][]constant.EndpointType // unscoped cache data; never serialized
+	declaredEndpoints       []constant.EndpointType            // model-level declarations, not verified group capabilities
+
 	declaredImageEndpoint  bool                                 // explicit model metadata, not inferred from unrelated channels
 	BillingPluginVariants  []PricingPluginVariant               `json:"billing_plugin_variants,omitempty"`
 	ModelName              string                               `json:"model_name"`
@@ -68,6 +73,11 @@ type Pricing struct {
 	// pay the model-level price: chat requests to a plugin relaying the model,
 	// or requests to ordinary channels.
 	OrdinaryPricing bool `json:"ordinary_pricing,omitempty"`
+	// OrdinaryPriceAvailable describes the advertised base quote, not call
+	// authorization or the request's actual settlement. Nil preserves the
+	// standalone task-price contract when a model has no ordinary route.
+	OrdinaryPriceAvailable *bool `json:"ordinary_price_available,omitempty"`
+	ordinaryPriceGroups    *types.Set[string]
 }
 
 type PricingVendor struct {
@@ -109,12 +119,12 @@ func FilterPricingByUsableGroups(pricing []Pricing, usableGroups map[string]stri
 	filtered := make([]Pricing, 0, len(pricing))
 	for _, item := range pricing {
 		if common.StringsContains(item.EnableGroup, "all") {
-			filtered = append(filtered, item)
+			filtered = append(filtered, item.WithOrdinaryPriceScope(usableGroups))
 			continue
 		}
 		for _, group := range item.EnableGroup {
 			if _, ok := usableGroups[group]; ok {
-				filtered = append(filtered, item)
+				filtered = append(filtered, item.WithOrdinaryPriceScope(usableGroups))
 				break
 			}
 		}
@@ -122,14 +132,23 @@ func FilterPricingByUsableGroups(pricing []Pricing, usableGroups map[string]stri
 	return filtered
 }
 
-func GetPricing() []Pricing {
-	pricing, _ := getPricingSnapshot()
-	return pricing
+// PricingCatalogSnapshot binds pricing, vendors and protocol paths to one rebuild.
+// Its collections (and all nested maps/slices) are read-only for callers.
+type PricingCatalogSnapshot struct {
+	Rows        []Pricing
+	Vendors     []PricingVendor
+	Endpoints   map[string]common.EndpointInfo
+	refreshedAt time.Time
 }
 
-// getPricingSnapshot returns the rows and their age under the same lock, so
-// derived eligibility caches cannot grant an older snapshot another full TTL.
+func GetPricing() []Pricing { return GetPricingCatalogSnapshot().Rows }
+
 func getPricingSnapshot() ([]Pricing, time.Time) {
+	snapshot := GetPricingCatalogSnapshot()
+	return snapshot.Rows, snapshot.refreshedAt
+}
+
+func GetPricingCatalogSnapshot() PricingCatalogSnapshot {
 	updatePricingLock.Lock()
 	defer updatePricingLock.Unlock()
 	if time.Since(lastGetPricingTime) > time.Minute || len(pricingMap) == 0 {
@@ -137,25 +156,19 @@ func getPricingSnapshot() ([]Pricing, time.Time) {
 		defer modelSupportEndpointsLock.Unlock()
 		updatePricing()
 	}
-	return pricingMap, lastGetPricingTime
+	return PricingCatalogSnapshot{Rows: pricingMap, Vendors: vendorsList, Endpoints: supportedEndpointMap, refreshedAt: lastGetPricingTime}
 }
 
 func InvalidatePricingCache() {
 	updatePricingLock.Lock()
 	defer updatePricingLock.Unlock()
-
 	pricingMap = nil
 	vendorsList = nil
+	supportedEndpointMap = nil
 	lastGetPricingTime = time.Time{}
 }
 
-// GetVendors 返回当前定价接口使用到的供应商信息
-func GetVendors() []PricingVendor {
-	GetPricing()
-	updatePricingLock.Lock()
-	defer updatePricingLock.Unlock()
-	return vendorsList
-}
+func GetVendors() []PricingVendor { return GetPricingCatalogSnapshot().Vendors }
 
 func GetModelSupportEndpointTypes(model string) []constant.EndpointType {
 	if model == "" {
@@ -301,6 +314,15 @@ func updatePricing() {
 	// Models an ordinary channel serves: neither a task plugin channel nor a
 	// legacy channel type that one of the model's plugins claims.
 	ordinaryChannelModels := make(map[string]bool)
+	ordinaryPriceGroups := make(map[string]*types.Set[string])
+	addOrdinaryPriceGroup := func(ability AbilityWithChannel) {
+		groups := ordinaryPriceGroups[ability.Model]
+		if groups == nil {
+			groups = types.NewSet[string]()
+			ordinaryPriceGroups[ability.Model] = groups
+		}
+		groups.Add(ability.Group)
+	}
 
 	for _, ability := range enableAbilities {
 		groups, ok := modelGroupsMap[ability.Model]
@@ -309,7 +331,7 @@ func updatePricing() {
 			modelGroupsMap[ability.Model] = groups
 		}
 		groups.Add(ability.Group)
-		if ability.ChannelType == constant.ChannelTypeTaskPlugin || ordinaryChannelModels[ability.Model] {
+		if ability.ChannelType == constant.ChannelTypeTaskPlugin {
 			continue
 		}
 		claimed := slices.ContainsFunc(pluginGeneration.PluginsByModel(ability.Model), func(plugin *jsplugin.LoadedPlugin) bool {
@@ -317,22 +339,46 @@ func updatePricing() {
 		})
 		if !claimed {
 			ordinaryChannelModels[ability.Model] = true
+			addOrdinaryPriceGroup(ability)
 		}
 	}
 
 	//这里使用切片而不是Set，因为一个模型可能支持多个端点类型，并且第一个端点是优先使用端点
 	modelSupportEndpointsStr := make(map[string][]string)
+	channelEndpointsByModel := make(map[string]map[string][]constant.EndpointType)
+	declaredEndpointsByModel := make(map[string][]constant.EndpointType)
 	advancedCustomConfigs := loadPricingAdvancedCustomConfigs(enableAbilities)
 
 	// 先根据已有能力填充原生端点
 	for _, ability := range enableAbilities {
 		endpoints := modelSupportEndpointsStr[ability.Model]
 		channelTypes := getPricingEndpointTypesForAbility(ability, advancedCustomConfigs)
+		if ability.ChannelType == constant.ChannelTypeTaskPlugin {
+			if config := advancedCustomConfigs[ability.ChannelId]; config != nil &&
+				len(config.SupportedEndpointTypesForModel(ability.Model)) > 0 {
+				addOrdinaryPriceGroup(ability)
+			}
+		}
+		groups := channelEndpointsByModel[ability.Model]
+		if groups == nil {
+			groups = make(map[string][]constant.EndpointType)
+			channelEndpointsByModel[ability.Model] = groups
+		}
+		groupEndpoints := groups[ability.Group]
+		// Even an enabled route with no inferred protocols has a defined empty
+		// capability set; clients must not fall back to another group's routes.
+		if groupEndpoints == nil {
+			groupEndpoints = []constant.EndpointType{}
+		}
 		for _, channelType := range channelTypes {
+			if !slices.Contains(groupEndpoints, channelType) {
+				groupEndpoints = append(groupEndpoints, channelType)
+			}
 			if !common.StringsContains(endpoints, string(channelType)) {
 				endpoints = append(endpoints, string(channelType))
 			}
 		}
+		groups[ability.Group] = groupEndpoints
 		modelSupportEndpointsStr[ability.Model] = endpoints
 	}
 
@@ -349,6 +395,7 @@ func updatePricing() {
 				switch v.(type) {
 				case string, map[string]any:
 					endpoints = appendPricingEndpoint(endpoints, k)
+					declaredEndpointsByModel[modelName] = append(declaredEndpointsByModel[modelName], constant.EndpointType(k))
 					if k == string(constant.EndpointTypeImageGeneration) {
 						declaredImageEndpoints[modelName] = true
 					}
@@ -412,6 +459,9 @@ func updatePricing() {
 	pricingMap = make([]Pricing, 0)
 	for model, groups := range modelGroupsMap {
 		pricing := Pricing{
+			channelEndpointsByGroup: channelEndpointsByModel[model],
+			declaredEndpoints:       declaredEndpointsByModel[model],
+
 			ModelName:              model,
 			declaredImageEndpoint:  declaredImageEndpoints[model],
 			EnableGroup:            groups.Items(),
@@ -439,35 +489,45 @@ func updatePricing() {
 			pricing.DisplayCategories = meta.DisplayCategories
 			pricing.BonusEligible = meta.BonusEligible
 		}
-		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
+		priceName := model
+		// The chat relay strips request modifiers or uses their configured canonical
+		// billing identity. Keep plugin/alias task pricing on its distinct resolver.
+		if ordinaryChannelModels[model] && len(pluginGeneration.PluginsByModel(model)) == 0 {
+			if _, taskAlias := ResolveTaskModelAlias(pluginGeneration, model); !taskAlias {
+				if resolved := billing_setting.ResolveBillingModelName(model); resolved != "" {
+					priceName = resolved
+				}
+			}
+		}
+		modelPrice, findPrice := ratio_setting.GetModelPrice(priceName, false)
 		if findPrice {
 			pricing.ModelPrice = modelPrice
 			pricing.QuotaType = 1
 		} else {
-			modelRatio, _, _ := ratio_setting.GetModelRatio(model)
+			modelRatio, _, _ := ratio_setting.GetModelRatio(priceName)
 			pricing.ModelRatio = modelRatio
-			pricing.CompletionRatio = ratio_setting.GetCompletionRatio(model)
+			pricing.CompletionRatio = ratio_setting.GetCompletionRatio(priceName)
 			pricing.QuotaType = 0
 		}
-		if cacheRatio, ok := ratio_setting.GetCacheRatio(model); ok {
+		if cacheRatio, ok := ratio_setting.GetCacheRatio(priceName); ok {
 			pricing.CacheRatio = &cacheRatio
 		}
-		if createCacheRatio, ok := ratio_setting.GetCreateCacheRatio(model); ok {
+		if createCacheRatio, ok := ratio_setting.GetCreateCacheRatio(priceName); ok {
 			pricing.CreateCacheRatio = &createCacheRatio
 		}
-		if imageRatio, ok := ratio_setting.GetImageRatio(model); ok {
+		if imageRatio, ok := ratio_setting.GetImageRatio(priceName); ok {
 			pricing.ImageRatio = &imageRatio
 		}
-		if ratio_setting.ContainsAudioRatio(model) {
-			audioRatio := ratio_setting.GetAudioRatio(model)
+		if ratio_setting.ContainsAudioRatio(priceName) {
+			audioRatio := ratio_setting.GetAudioRatio(priceName)
 			pricing.AudioRatio = &audioRatio
 		}
-		if ratio_setting.ContainsAudioCompletionRatio(model) {
-			audioCompletionRatio := ratio_setting.GetAudioCompletionRatio(model)
+		if ratio_setting.ContainsAudioCompletionRatio(priceName) {
+			audioCompletionRatio := ratio_setting.GetAudioCompletionRatio(priceName)
 			pricing.AudioCompletionRatio = &audioCompletionRatio
 		}
-		if billingMode := billing_setting.GetBillingMode(model); billingMode == "tiered_expr" {
-			if expr, ok := billing_setting.GetBillingExpr(model); ok && strings.TrimSpace(expr) != "" {
+		if billingMode := billing_setting.GetBillingMode(priceName); billingMode == "tiered_expr" {
+			if expr, ok := billing_setting.GetBillingExpr(priceName); ok && strings.TrimSpace(expr) != "" {
 				pricing.BillingMode = billingMode
 				pricing.BillingExpr = expr
 			}
@@ -534,6 +594,14 @@ func updatePricing() {
 			// reject it.
 			pricing.OrdinaryPricing = (relayed || ordinaryChannelModels[model]) && !(tieredModel && billingexpr.UsedVars(pricing.BillingExpr)["u"])
 		}
+		if groups := ordinaryPriceGroups[model]; groups != nil || len(pricing.BillingPluginVariants) > 0 {
+			// For shared plugin names, task price identity may differ from the
+			// relay identity. Don't advertise a task quote as the base quote.
+			resolved := billing_setting.ResolveBillingModelName(model)
+			pricing.OrdinaryPriceAvailable = common.GetPointer(groups != nil &&
+				priceName == resolved && hasConfiguredOrdinaryPrice(resolved))
+			pricing.ordinaryPriceGroups = groups
+		}
 		pricingMap = append(pricingMap, pricing)
 	}
 
@@ -557,5 +625,5 @@ func updatePricing() {
 
 // GetSupportedEndpointMap 返回全局端点到路径的映射
 func GetSupportedEndpointMap() map[string]common.EndpointInfo {
-	return supportedEndpointMap
+	return GetPricingCatalogSnapshot().Endpoints
 }

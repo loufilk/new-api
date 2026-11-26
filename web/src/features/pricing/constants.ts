@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { TFunction } from 'i18next'
 
-import type { TokenUnit } from './types'
+import type { ModelOrder, TokenUnit } from './types'
 
 // ----------------------------------------------------------------------------
 // Pricing Constants
@@ -46,6 +46,14 @@ export const MODEL_ORDER_SORTS: ReadonlySet<string> = new Set([
   SORT_OPTIONS.MOST_REQUESTS,
   SORT_OPTIONS.MOST_TOKENS,
 ])
+
+/** Public catalogs deliberately omit ranking data; never label name order as popularity. */
+export function canSortCatalogBy(value: string, order?: ModelOrder): boolean {
+  return (
+    !MODEL_ORDER_SORTS.has(value) ||
+    Array.isArray(order?.[value as keyof ModelOrder])
+  )
+}
 
 /** Keep bookmarked pre-upgrade sorting meaningful and reject stale unknown values. */
 export function normalizeSortOption(value: unknown): SortOption {

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"maps"
 	"strconv"
@@ -229,6 +230,8 @@ func LoadOptionsFromDatabase() (loadErr error) {
 	}()
 	passkeyOptionMutex.Lock()
 	defer passkeyOptionMutex.Unlock()
+	modelSquareOptionMu.Lock()
+	defer modelSquareOptionMu.Unlock()
 	options, err := AllOption()
 	if err != nil {
 		groupConfigRuntimeInvalid.Store(true)
@@ -279,12 +282,17 @@ func LoadOptionsFromDatabase() (loadErr error) {
 	}
 	valid := true
 	passkeyOptions := make(map[string]string)
+	modelSquareOptions := make(map[string]string)
 	for _, option := range options {
 		if isGroupMarketOption(option.Key) || option.Key == groupRateLimitBucketsOptionKey || isGroupCatalogOption(option.Key) {
 			continue
 		}
 		if IsPasskeyDomainOption(option.Key) {
 			passkeyOptions[option.Key] = option.Value
+			continue
+		}
+		if isModelSquareOption(option.Key) {
+			modelSquareOptions[strings.TrimPrefix(option.Key, modelSquareNamespace+".")] = option.Value
 			continue
 		}
 		err := updateOptionMap(option.Key, option.Value)
@@ -296,6 +304,9 @@ func LoadOptionsFromDatabase() (loadErr error) {
 		}
 	}
 	applyPasskeyDomainOptions(passkeyOptions)
+	if err := applyModelSquareOrderOptions(modelSquareOptions); err != nil {
+		loadErr = errors.Join(loadErr, err)
+	}
 	if valid {
 		syncGroupConfigVersionAfterOptionLoad(options)
 	}
@@ -410,6 +421,9 @@ func validateOptionValue(key string, value string) error {
 }
 
 func UpdateOption(key string, value string) error {
+	if isModelSquareOption(key) {
+		return UpdateModelSquareOrderOptions(context.Background(), map[string]string{strings.TrimPrefix(key, modelSquareNamespace+"."): value}, nil)
+	}
 	if key == request_plugin_setting.InstancesOption {
 		return updateRequestPluginInstancesOption(value)
 	}

@@ -37,8 +37,13 @@ import {
   isUnconfiguredTaskUsageModel,
 } from './dynamic-price'
 import { getMarketPriceModel } from './market-groups'
+import { getModelEndpointTypes } from './model-endpoints'
 import { getDisplayGroupRatio, isTokenBasedModel } from './model-helpers'
-import { withBasePricing } from './plugin-pricing'
+import {
+  hasRedactedProviderPricing,
+  isCatalogPriceUnavailable,
+  withBasePricing,
+} from './plugin-pricing'
 import { calculateTokenPrice } from './price'
 
 // ----------------------------------------------------------------------------
@@ -50,7 +55,8 @@ import { calculateTokenPrice } from './price'
  */
 export function filterBySearch(
   models: PricingModel[],
-  query: string
+  query: string,
+  group?: string
 ): PricingModel[] {
   if (!query) return models
 
@@ -61,7 +67,7 @@ export function filterBySearch(
       m.description?.toLowerCase().includes(lowerQuery) ||
       m.tags?.toLowerCase().includes(lowerQuery) ||
       m.vendor_name?.toLowerCase().includes(lowerQuery) ||
-      m.supported_endpoint_types?.some((type) =>
+      getModelEndpointTypes(m, group).some((type) =>
         type.toLowerCase().includes(lowerQuery)
       ) ||
       m.enable_groups?.some(
@@ -99,6 +105,9 @@ export function getModelQuotaType(
   listedModel: PricingModel
 ): Exclude<QuotaTypeOption, 'all'> | undefined {
   const model = withBasePricing(listedModel)
+  if (hasRedactedProviderPricing(model) && isCatalogPriceUnavailable(model)) {
+    return undefined
+  }
   // Task-usage models retain their own category.
   if (hasTaskUsageSchema(model)) return QUOTA_TYPES.TASK
 
@@ -144,11 +153,12 @@ export function filterByQuotaType(
  */
 export function filterByEndpointType(
   models: PricingModel[],
-  endpointType: string
+  endpointType: string,
+  group?: string
 ): PricingModel[] {
   if (endpointType === ENDPOINT_TYPES.ALL) return models
   return models.filter((m) =>
-    m.supported_endpoint_types?.includes(endpointType)
+    getModelEndpointTypes(m, group).includes(endpointType)
   )
 }
 
@@ -176,6 +186,7 @@ function getSortPrice(
   now?: Date
 ): number | undefined {
   const model = withBasePricing(listedModel)
+  if (isCatalogPriceUnavailable(model)) return undefined
   if (kind === 'request') {
     const example = getCardExamplePrice(model, { tokenUnit: 'M', now })
     if (example) return example.total
@@ -308,11 +319,11 @@ export function filterAndSortModels(
         model.enable_groups?.some((group) => platformGroups.has(group))
       )
     : models
-  let result = filterBySearch(platformModels, filters.search)
+  let result = filterBySearch(platformModels, filters.search, filters.group)
   if (filters.vendor) result = filterByVendor(result, filters.vendor)
   result = filterByGroup(result, filters.group)
   result = filterByQuotaType(result, filters.quotaType)
-  result = filterByEndpointType(result, filters.endpointType)
+  result = filterByEndpointType(result, filters.endpointType, filters.group)
   if (filters.tag) result = filterByTag(result, filters.tag)
   result = sortModels(
     result,

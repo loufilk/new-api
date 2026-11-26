@@ -126,6 +126,33 @@ describe('price sorting', () => {
 })
 
 describe('sort compatibility and unavailable prices', () => {
+  test('puts unquoted ordinary and redacted provider-only prices last in either direction', () => {
+    const entries = [
+      pricingModel('withheld', {
+        billing_variants_present: true,
+        model_ratio: 0,
+      }),
+      pricingModel('unset', {
+        ordinary_price_available: false,
+        model_ratio: 999,
+      }),
+      pricingModel('visible', {
+        ordinary_price_available: true,
+        model_ratio: 1,
+      }),
+    ]
+    for (const sortBy of [
+      SORT_OPTIONS.INPUT_PRICE_LOW,
+      SORT_OPTIONS.INPUT_PRICE_HIGH,
+    ]) {
+      expect(sortModels(entries, sortBy).map((m) => m.model_name)).toEqual([
+        'visible',
+        'withheld',
+        'unset',
+      ])
+    }
+  })
+
   test.each([
     ['price-low', SORT_OPTIONS.INPUT_PRICE_LOW],
     ['price-high', SORT_OPTIONS.INPUT_PRICE_HIGH],

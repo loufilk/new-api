@@ -236,12 +236,13 @@ func previousRankingTimeRange(config rankingPeriodConfig, currentStart int64) (i
 
 func buildRankingModelMeta() map[string]rankingModelMeta {
 	vendorByID := make(map[int]model.PricingVendor)
-	for _, vendor := range model.GetVendors() {
+	snapshot := model.GetPricingCatalogSnapshot()
+	for _, vendor := range snapshot.Vendors {
 		vendorByID[vendor.ID] = vendor
 	}
 
 	meta := make(map[string]rankingModelMeta)
-	for _, pricing := range model.GetPricing() {
+	for _, pricing := range snapshot.Rows {
 		item := rankingModelMeta{vendor: rankingUnknownVendor}
 		if vendor, ok := vendorByID[pricing.VendorID]; ok {
 			item.vendor = vendor.Name

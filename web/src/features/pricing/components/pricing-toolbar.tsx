@@ -36,12 +36,13 @@ import { formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import {
+  canSortCatalogBy,
   getSortLabels,
   MODEL_ORDER_SORTS,
   type SortOption,
   type ViewMode,
 } from '../constants'
-import type { TokenUnit } from '../types'
+import type { ModelOrder, TokenUnit } from '../types'
 
 export interface PricingToolbarProps {
   filteredCount: number
@@ -50,6 +51,7 @@ export interface PricingToolbarProps {
   hasActiveFilters?: boolean
   onClearFilters?: () => void
   sortBy: string
+  modelOrder?: ModelOrder
   onSortChange: (value: string) => void
   tokenUnit: TokenUnit
   onTokenUnitChange: (value: TokenUnit) => void
@@ -63,7 +65,9 @@ export function PricingToolbar(props: PricingToolbarProps) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const sortLabels = getSortLabels(t)
-  const sortEntries = Object.entries(sortLabels)
+  const sortEntries = Object.entries(sortLabels).filter(([value]) =>
+    canSortCatalogBy(value, props.modelOrder)
+  )
   const sortGroups = [
     {
       id: 'order',
@@ -73,7 +77,7 @@ export function PricingToolbar(props: PricingToolbarProps) {
       id: 'other',
       entries: sortEntries.filter(([value]) => !MODEL_ORDER_SORTS.has(value)),
     },
-  ]
+  ].filter((group) => group.entries.length > 0)
 
   return (
     <div className='min-w-0 border-b pb-3'>

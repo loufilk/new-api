@@ -62,7 +62,7 @@ func BuildModelSquareOrder(pricing []model.Pricing) ModelSquareOrder {
 	for _, item := range pricing {
 		listed[item.ModelName] = struct{}{}
 	}
-	setting := operation_setting.GetModelSquareSetting()
+	setting := operation_setting.ModelSquareSettingSnapshot()
 	totals, err := GetModelUsageTotals(setting.SortDays)
 	if err != nil {
 		common.SysError(common.LogText("failed to load model usage for the model square: %s", err.Error()))
