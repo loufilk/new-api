@@ -141,7 +141,7 @@ export async function requestImageGeneration(params: {
   style: string
   images: File[]
   asyncMode?: boolean
-  onAccepted?: (id: string, expiresAt: number) => void
+  prepareOperation?: (id: string) => void
   onTerminalFailure?: () => void
   signal?: AbortSignal
 }): Promise<GeneratedImage[]> {
@@ -182,9 +182,33 @@ export async function requestImageGeneration(params: {
     body = buildEditsFormData(params)
   }
   const operation = hasReference ? 'edits' : 'generations'
+  params.signal?.throwIfAborted()
+  let operationId: string | undefined
+  if (params.asyncMode) {
+    const issued = await api.get('/v1/images/tasks/operation-ticket', {
+      signal: params.signal,
+      skipErrorHandler: true,
+      disableDuplicate: true,
+    })
+    const id = issued.data?.id
+    if (
+      issued.data?.kind !== 'async_image_operation' ||
+      typeof id !== 'string' ||
+      !/^[0-9a-f]{48}$/.test(id)
+    ) {
+      throw new Error(t('Image generation failed'))
+    }
+    params.signal?.throwIfAborted()
+    if (!params.prepareOperation) throw new Error(t('Failed to save'))
+    params.prepareOperation(id)
+    operationId = id
+  }
+  // A POST failure is not proof that the operation was rejected. In
+  // particular, a busy node and a delayed copy reaching another node may
+  // see different capacity. Only a lookup can clear this receipt.
   const res = await api.post(
     params.asyncMode
-      ? `/v1/images/tasks/${operation}`
+      ? `/v1/images/tasks/operations/${operationId}/${operation}`
       : `/v1/images/${operation}`,
     body,
     {
@@ -207,14 +231,14 @@ export async function requestImageGeneration(params: {
     const id = res.data?.id
     if (
       res.status !== 202 ||
+      id !== operationId ||
       typeof id !== 'string' ||
       !/^[a-f0-9]{48}$/.test(id)
     ) {
       throw new Error(t('Image generation failed'))
     }
     const expiresAt = Date.now() + 15 * 60_000
-    params.onAccepted?.(id, expiresAt)
-    return pollAcceptedImageTask({ ...params, id, expiresAt })
+    return pollAcceptedImageTask({ ...params, id, expiresAt, protocol: 2 })
   }
   const images = normalizeImageResponse({
     data: result,
@@ -232,6 +256,7 @@ export async function requestImageGeneration(params: {
 export async function pollAcceptedImageTask(params: {
   id: string
   expiresAt: number
+  protocol?: 2
   prompt: string
   model: string
   size: string
@@ -242,21 +267,38 @@ export async function pollAcceptedImageTask(params: {
     throw new Error(t('Image generation failed'))
   }
   let delay = 2000
-  while (Date.now() < params.expiresAt) {
+  const now = params.protocol === 2 ? () => performance.now() : () => Date.now()
+  const pollUntil =
+    params.protocol === 2
+      ? now() + 15 * 60_000
+      : Math.min(params.expiresAt, now() + 15 * 60_000)
+  while (now() < pollUntil) {
     params.signal?.throwIfAborted()
     let response
     try {
-      response = await api.get(`/v1/images/tasks/${params.id}`, {
-        signal: params.signal,
-        timeout: 15_000,
-        skipErrorHandler: true,
-        disableDuplicate: true,
-      })
+      response = await api.get(
+        `/v1/images/tasks/${params.protocol === 2 ? 'operations/' : ''}${params.id}`,
+        {
+          signal: params.signal,
+          timeout: 15_000,
+          skipErrorHandler: true,
+          disableDuplicate: true,
+        }
+      )
     } catch (error) {
       params.signal?.throwIfAborted()
       if (!axios.isAxiosError(error)) throw error
       const status = error.response?.status
-      if (status === 404 || status === 410) params.onTerminalFailure?.()
+      const body = error.response?.data
+      const terminal =
+        params.protocol === 2
+          ? body?.id === params.id &&
+            ((status === 404 &&
+              body.error?.code === 'async_image_operation_missing') ||
+              (status === 410 &&
+                body.error?.code === 'async_image_operation_expired'))
+          : status === 404 && body?.error?.code === 'async_image_unavailable'
+      if (terminal) params.onTerminalFailure?.()
       if (status && status !== 408 && status !== 429 && status < 500) {
         throw error
       }
@@ -283,11 +325,16 @@ export async function pollAcceptedImageTask(params: {
         task.result?.error?.message || t('Image generation failed')
       )
     }
-    if (task.status !== 'running') throw new Error(t('Image generation failed'))
+    if (
+      task.status !== 'running' &&
+      !(params.protocol === 2 && task.status === 'awaiting_admission')
+    )
+      throw new Error(t('Image generation failed'))
     delay = 2000
     await waitForImageTask(params.signal, delay)
   }
-  params.onTerminalFailure?.()
+  // A local wait limit is not evidence of a failed or expired v2 operation.
+  if (params.protocol !== 2) params.onTerminalFailure?.()
   throw new Error(t('Image task is unavailable or expired'))
 }
 

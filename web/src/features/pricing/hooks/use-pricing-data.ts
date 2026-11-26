@@ -23,7 +23,27 @@ import { useStatus } from '@/hooks/use-status'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { getPricing, getPublicPricing } from '../api'
+import { getPricing, getPublicPricing, getPublishedModelLines } from '../api'
+import { mergePublishedModelLines } from '../lib/published-model-lines'
+import { projectMarketActivity } from '../lib/group-market-activity'
+import { publicTierCatalog, publicModelBrand } from '../lib/market-facets'
+
+// Project private per-group details onto this model's already authorized groups.
+// Absence is meaningful (public response or no configured value), not zero.
+function modelGroupDetails<T>(
+  values: Record<string, T> | undefined,
+  groups: readonly string[],
+  allowed: Record<string, unknown> | undefined
+): Record<string, T> | undefined {
+  if (!values || !allowed) return undefined
+  return Object.fromEntries(
+    groups
+      .filter(
+        (group) => Object.hasOwn(allowed, group) && Object.hasOwn(values, group)
+      )
+      .map((group) => [group, values[group]])
+  )
+}
 
 export function usePricingData(enabled = true) {
   const { status } = useStatus()
@@ -43,13 +63,31 @@ export function usePricingData(enabled = true) {
       'pricing',
       isAuthenticated ? `user:${userID}:${sessionSID ?? ''}` : 'public',
     ],
-    queryFn: async () =>
+    queryFn: async ({ signal }) =>
       requireServerSuccess(
-        await (isAuthenticated ? getPricing() : getPublicPricing())
+        await (isAuthenticated ? getPricing(signal) : getPublicPricing())
       ),
     staleTime: 5 * 60 * 1000,
+    // A return to the signed-in marketplace picks up another admin's
+    // committed change without polling, even during the normal fresh interval.
+    ...(isAuthenticated ? { refetchOnWindowFocus: 'always' as const } : {}),
     enabled: enabled && identityResolved,
   })
+
+  // Revocable names never ride in the edge-cached base catalogue. Hide them on
+  // an overlay failure rather than using React Query's previously loaded data.
+  const linesQuery = useQuery({
+    queryKey: ['public-model-lines'],
+    enabled: enabled && identityResolved && !isAuthenticated,
+    queryFn: async ({ signal }) =>
+      requireServerSuccess(await getPublishedModelLines(signal)),
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: 'always',
+    refetchInterval: 15_000,
+    gcTime: 0,
+    retry: false,
+  })
+  const publicLines = linesQuery.isError ? undefined : linesQuery.data
 
   // Ensure rates never reach zero to prevent division errors
   const priceRate = useMemo(
@@ -61,12 +99,24 @@ export function usePricingData(enabled = true) {
     [status?.usd_exchange_rate, priceRate]
   )
 
-  const models = useMemo(() => {
-    if (!data?.data || !data?.vendors) return []
+  const groupMarketActivity = useMemo(
+    () =>
+      isAuthenticated && !data?.group_keys_are_display_only
+        ? projectMarketActivity(data)
+        : undefined,
+    [data, isAuthenticated]
+  )
 
-    const vendorMap = new Map(data.vendors.map((v) => [v.id, v]))
+  const displayTiers =
+    !isAuthenticated || data?.group_keys_are_display_only === true
+  const catalog = useMemo(() => {
+    if (!data?.data) return { models: [], groupCatalog: undefined, groupRatio: {}, usableGroup: {} }
 
-    return data.data.map((model) => {
+    const displayData = displayTiers ? mergePublishedModelLines(data, publicLines) : data
+
+    const vendorMap = new Map((data.vendors ?? []).map((v) => [v.id, v]))
+
+    const rows = displayData.data.map((model) => {
       const vendor = model.vendor_id
         ? vendorMap.get(model.vendor_id)
         : undefined
@@ -76,19 +126,59 @@ export function usePricingData(enabled = true) {
         vendor_name: vendor?.name,
         vendor_icon: vendor?.icon,
         vendor_description: vendor?.description,
-        group_ratio: data.group_ratio,
+        group_ratio: displayData.group_ratio,
+        group_market_activity: modelGroupDetails(
+          groupMarketActivity,
+          model.enable_groups ?? [],
+          data.usable_group
+        ),
+        group_rate_source: isAuthenticated
+          ? modelGroupDetails(
+              data.group_rate_source,
+              model.enable_groups ?? [],
+              data.usable_group
+            )
+          : undefined,
+        group_rate_limits: isAuthenticated
+          ? modelGroupDetails(
+              data.group_rate_limits,
+              model.enable_groups ?? [],
+              data.usable_group
+            )
+          : undefined,
+        group_keys_are_display_only:
+          !isAuthenticated || data.group_keys_are_display_only,
       }
     })
-  }, [data])
+    const groupCatalog = displayTiers
+      ? {
+          ...publicTierCatalog(rows, data.group_ratio ?? {}),
+          ...(displayData !== data ? displayData.group_catalog : undefined),
+        }
+      : data.group_catalog
+    const models = rows.map((row) => ({
+      ...row,
+      group_catalog: groupCatalog,
+      vendor_icon:
+        row.vendor_icon ||
+        (displayTiers ? publicModelBrand(row).icon || undefined : undefined),
+    }))
+    return { models, groupCatalog, groupRatio: displayData.group_ratio, usableGroup: displayData.usable_group }
+  }, [data, isAuthenticated, groupMarketActivity, displayTiers, publicLines])
 
   return {
-    models,
+    models: catalog.models,
+    displayTiers,
     vendors: data?.vendors ?? [],
-    groupRatio: data?.group_ratio ?? {},
-    usableGroup: data?.usable_group ?? {},
+    groupRatio: catalog.groupRatio ?? {},
+    usableGroup: catalog.usableGroup ?? {},
     endpointMap: data?.supported_endpoint ?? {},
     autoGroups: data?.auto_groups ?? [],
-    isLoading,
+    modelOrder: data?.model_order,
+    isLoading: isLoading || !identityResolved,
+    groupCatalog: catalog.groupCatalog,
+    groupMarketActivity,
+    scope: isAuthenticated ? `user:${userID}:${sessionSID ?? ''}` : 'public',
     error,
     refetch,
     priceRate,

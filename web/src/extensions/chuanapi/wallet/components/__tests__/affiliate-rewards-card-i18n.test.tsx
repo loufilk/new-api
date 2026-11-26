@@ -21,6 +21,7 @@ import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { beforeAll, describe, expect, test, vi } from 'vitest'
 
+import { loadChuanapiI18nOverride } from '@/extensions/chuanapi/i18n'
 import zh from '@/i18n/locales/zh.json'
 
 import type { ReferralCommissionItem, UserWalletData } from '../../types'
@@ -56,12 +57,13 @@ const record: ReferralCommissionItem = {
 const testI18n = createInstance()
 
 beforeAll(async () => {
+  const override = await loadChuanapiI18nOverride('zhCN')
   await testI18n.init({
     lng: 'zh',
     fallbackLng: 'en',
     resources: {
       en: { translation: {} },
-      zh: { translation: zh.translation },
+      zh: { translation: { ...zh.translation, ...override?.translation } },
     },
     interpolation: { escapeValue: false },
   })
@@ -110,7 +112,7 @@ describe('affiliate rewards card Chinese copy', () => {
       screen.getByRole('button', { name: '划转到余额' })
     ).toBeInTheDocument()
 
-    expect(screen.getByText('仅官网在线充值参与邀请返利。')).toBeInTheDocument()
+    expect(screen.getByText(/USDT 充值不参与邀请返利/)).toBeVisible()
     expect(
       screen.getByText('好友每次符合条件的充值均可获得 5.0% 返利，不封顶。')
     ).toBeInTheDocument()

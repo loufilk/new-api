@@ -6,14 +6,15 @@ package i18n
 
 // Errors returned to AI clients
 const (
-	MsgImageTaskStillProcessing = "task.image_still_processing"
-	MsgDatabaseError            = "common.database_error"
-	MsgGroupConfigChanged       = "common.group_config_changed"
-	MsgAuthUserBanned           = "auth.user_banned"
-	MsgTokenGetInfoFailed       = "token.get_info_failed"
-	MsgTokenInvalid             = "token.invalid"
-	MsgTokenNotProvided         = "token.not_provided"
-	MsgTokenStatusUnavailable   = "token.status_unavailable"
+	MsgImageTaskStillProcessing    = "task.image_still_processing"
+	MsgDatabaseError               = "common.database_error"
+	MsgGroupConfigChanged          = "common.group_config_changed"
+	MsgUserGroupPricingUnavailable = "common.user_group_pricing_unavailable"
+	MsgAuthUserBanned              = "auth.user_banned"
+	MsgTokenGetInfoFailed          = "token.get_info_failed"
+	MsgTokenInvalid                = "token.invalid"
+	MsgTokenNotProvided            = "token.not_provided"
+	MsgTokenStatusUnavailable      = "token.status_unavailable"
 
 	MsgAuthClientIPUnresolved     = "auth.client_ip_unresolved"
 	MsgAuthTokenIPNotAllowed      = "auth.token_ip_not_allowed"

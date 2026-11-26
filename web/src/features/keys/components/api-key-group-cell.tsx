@@ -18,116 +18,58 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
 
-import { BadgeCell, TruncatedCell } from '@/components/data-table'
-import { GroupBadge } from '@/components/group-badge'
-import { StatusBadge } from '@/components/status-badge'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
-import { useMediaQuery } from '@/hooks'
-import { cn } from '@/lib/utils'
-
-import { GroupRatioBadge, type GroupRatio } from './auto-group-visuals'
+import { TruncatedCell } from '@/components/data-table'
+import { Badge } from '@/components/ui/badge'
+import { toIntlLocale } from '@/i18n/languages'
 
 type ApiKeyGroupCellProps = {
-  crossGroupRetry: boolean
-  smartRouting?: boolean
-  routingStrategy?: 'auto' | 'success_rate' | 'price' | 'speed'
   group: string
-  ratio?: GroupRatio
-  shouldReduceMotion: boolean
+  label?: string
+  autoGroups?: string[]
+  smartRouting?: boolean
+  ratio?: number | string
 }
 
-export function ApiKeyGroupCell(props: ApiKeyGroupCellProps) {
-  const { t } = useTranslation()
-  const isMobile = useMediaQuery('(max-width: 640px)')
-
-  const group = props.group?.trim() || ''
-  if (props.smartRouting) {
-    const strategies = {
-      auto: t('Smart Auto'),
-      success_rate: t('Success rate first'),
-      price: t('Price first'),
-      speed: t('Speed first'),
-    }
-    const strategy = strategies[props.routingStrategy || 'auto']
-    return (
-      <TruncatedCell
-        className={isMobile ? 'w-full' : 'max-w-50'}
-        tabIndex={0}
-        tooltipContent={`${t('Smart Routing')}: ${strategy}`}
-      >
-        <span className='flex min-w-0 flex-col items-start gap-1'>
-          <StatusBadge
-            label={t('Smart Routing')}
-            variant='warning'
-            copyable={false}
-            className='px-0'
-          />
-          <span className='text-muted-foreground truncate text-xs'>
-            {strategy}
-          </span>
-        </span>
-      </TruncatedCell>
-    )
-  }
-  if (group !== 'auto') {
-    const ratio =
-      group && typeof props.ratio === 'number' ? props.ratio : undefined
-    return (
-      <TruncatedCell
-        className={isMobile ? 'w-full' : 'max-w-50'}
-        tabIndex={0}
-        tooltipContent={group || t('Follow user group')}
-        tooltipClassName='break-all'
-      >
-        <GroupBadge
-          group={group}
-          ratio={ratio}
-          ratioLabel={group ? undefined : t('Inherited')}
-          type='text'
-          className='px-0'
-          containerClassName={cn('gap-3', isMobile && 'w-full justify-between')}
-        />
-      </TruncatedCell>
-    )
-  }
+export function ApiKeyGroupCell({
+  group,
+  label,
+  autoGroups,
+  smartRouting,
+  ratio,
+}: ApiKeyGroupCellProps) {
+  const { t, i18n } = useTranslation()
+  const legacy = smartRouting || group === 'auto' || !group
+  const title = smartRouting
+    ? t('Legacy smart routing')
+    : group === 'auto'
+      ? t('Legacy automatic routing')
+      : group
+        ? label || group
+        : t('Follow user group')
+  const multiplier =
+    !legacy && typeof ratio === 'number' && Number.isFinite(ratio)
+      ? `${new Intl.NumberFormat(toIntlLocale(i18n.resolvedLanguage || i18n.language), { maximumFractionDigits: 8 }).format(ratio)}×`
+      : null
+  const detail =
+    !smartRouting && group === 'auto' && autoGroups?.length
+      ? `${title}: ${autoGroups.join(' → ')}`
+      : [title, multiplier].filter(Boolean).join(' · ')
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <BadgeCell
-            data-api-key-group-cell='auto'
-            tabIndex={0}
-            className={cn(
-              'ml-0 gap-3 overflow-visible text-xs',
-              isMobile ? 'w-full justify-between' : 'max-w-50'
-            )}
-          />
-        }
-      >
-        <StatusBadge
-          label={t('Cross-group')}
-          variant='info'
-          copyable={false}
-          className='px-0'
-        />
-        <GroupRatioBadge
-          ratio={props.ratio}
-          isAuto
-          shouldReduceMotion={props.shouldReduceMotion}
-        />
-      </TooltipTrigger>
-      <TooltipContent>
-        <span className='text-xs'>
-          {t(
-            'Automatically selects the best available group with circuit breaker mechanism'
-          )}
-        </span>
-      </TooltipContent>
-    </Tooltip>
+    <TruncatedCell
+      className='w-full'
+      tabIndex={0}
+      tooltipContent={detail}
+      tooltipClassName='break-all'
+    >
+      <span className='flex min-w-0 items-center gap-2'>
+        <Badge variant='secondary' className='max-w-38 min-w-0'>
+          <span className='truncate'>{title}</span>
+        </Badge>
+        {multiplier && (
+          <span className='text-muted-foreground text-xs'>{multiplier}</span>
+        )}
+      </span>
+    </TruncatedCell>
   )
 }

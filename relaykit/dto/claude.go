@@ -678,6 +678,7 @@ func (c *ClaudeResponse) GetClaudeError() *types.ClaudeError {
 }
 
 type ClaudeUsage struct {
+	CacheReadReported        bool                      `json:"-"`
 	InputTokens              int                       `json:"input_tokens"`
 	CacheCreationInputTokens int                       `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int                       `json:"cache_read_input_tokens"`
@@ -688,6 +689,24 @@ type ClaudeUsage struct {
 	ClaudeCacheCreation1hTokens int                  `json:"claude_cache_creation_1_h_tokens"`
 	ServerToolUse               *ClaudeServerToolUse `json:"server_tool_use,omitempty"`
 	BillingUsage                *BillingUsage        `json:"billing_usage,omitempty"`
+}
+
+// UnmarshalJSON keeps an explicit zero distinguishable from missing cache usage
+// without changing the DTO's public JSON or the billing values.
+func (u *ClaudeUsage) UnmarshalJSON(data []byte) error {
+	type plain ClaudeUsage
+	fields := struct {
+		*plain
+		CacheRead *int `json:"cache_read_input_tokens"`
+	}{plain: (*plain)(u)}
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if fields.CacheRead != nil {
+		u.CacheReadInputTokens = *fields.CacheRead
+		u.CacheReadReported = true
+	}
+	return nil
 }
 
 type ClaudeCacheCreationUsage struct {

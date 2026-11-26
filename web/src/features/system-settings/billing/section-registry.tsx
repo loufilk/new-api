@@ -25,6 +25,10 @@ import { QuotaSettingsSection } from '../general/quota-settings-section'
 import { RatioSettingsCard } from '../models/ratio-settings-card'
 import type { BillingSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { GroupCatalogSettings } from './group-catalog-settings'
+import { PublicModelLineSettings } from './public-model-line-settings'
+import { GroupMarketActivityPreview } from './group-market-activity-preview'
+import { GroupPricingWorkspace } from './group-pricing-workspace'
 
 const getModelDefaults = (settings: BillingSettings) => ({
   ModelPrice: settings.ModelPrice,
@@ -114,12 +118,30 @@ const BILLING_SECTIONS = [
     id: 'group-pricing',
     titleKey: 'Group Pricing',
     build: (settings: BillingSettings) => (
-      <RatioSettingsCard
-        titleKey='Group Pricing'
-        modelDefaults={getModelDefaults(settings)}
-        groupDefaults={getGroupDefaults(settings)}
-        toolPricesDefault={settings['tool_price_setting.prices']}
-        visibleTabs={['groups']}
+      <GroupPricingWorkspace
+        renderRatio={(panel, active) => (
+          <>
+            <RatioSettingsCard
+              titleKey='Group Pricing'
+              modelDefaults={getModelDefaults(settings)}
+              groupDefaults={getGroupDefaults(settings)}
+              toolPricesDefault={settings['tool_price_setting.prices']}
+              visibleTabs={['groups']}
+              groupWorkspacePanel={panel}
+              groupWorkspaceActive={active}
+            />
+            {panel === 'pricing' && active && <GroupMarketActivityPreview />}
+          </>
+        )}
+        renderCatalog={(panel) => (
+          <>
+            {panel === 'groups' && <PublicModelLineSettings groupRatios={settings.GroupRatio} />}
+            <GroupCatalogSettings
+              groupRatios={settings.GroupRatio}
+              panel={panel}
+            />
+          </>
+        )}
       />
     ),
   },

@@ -30,6 +30,9 @@ import type {
   SyncUpstreamResponse,
   PreviewUpstreamDiffResponse,
   MissingModelsResponse,
+  ModelSquareOrder,
+  ModelSquareOrderPatch,
+  ModelSquareUsageResponse,
   PrefillGroupsResponse,
   SyncLocale,
   SyncSource,
@@ -141,6 +144,28 @@ export async function getVendors(params?: {
   return res.data
 }
 
+/** Directory used by selectors, not by the paginated vendor management table. */
+export async function getVendorOptions(): Promise<GetVendorsResponse> {
+  const pageSize = 100
+  const first = await getVendors({ p: 1, page_size: pageSize })
+  if (!first.success || !first.data) return first
+  const actualSize = first.data.page_size || pageSize
+  const totalPages = Math.ceil(
+    (first.data.total ?? first.data.items.length) / actualSize
+  )
+  if (totalPages <= 1) return first
+  const vendors = new Map(first.data.items.map((vendor) => [vendor.id, vendor]))
+  for (let page = 2; page <= totalPages; page++) {
+    const next = await getVendors({ p: page, page_size: actualSize })
+    if (!next.success || !next.data) return next
+    for (const vendor of next.data.items) vendors.set(vendor.id, vendor)
+  }
+  return {
+    ...first,
+    data: { ...first.data, items: Array.from(vendors.values()) },
+  }
+}
+
 /**
  * Search vendors
  */
@@ -237,6 +262,33 @@ export async function previewUpstreamDiff(params?: {
  */
 export async function getMissingModels(): Promise<MissingModelsResponse> {
   const res = await api.get('/api/models/missing')
+  return res.data
+}
+
+/** Get the administrator’s committed model square order. */
+export async function getModelSquareOrder(signal?: AbortSignal) {
+  const res = await api.get<{
+    success: boolean
+    message?: string
+    data?: ModelSquareOrder
+  }>('/api/option/model-square-order', { signal, disableDuplicate: true })
+  return res.data
+}
+
+export async function updateModelSquareOrder(patch: ModelSquareOrderPatch) {
+  const res = await api.patch<{ success: boolean; message?: string }>(
+    '/api/option/model-square-order',
+    patch,
+    { skipAuthRefresh: true }
+  )
+  return res.data
+}
+
+/** Get every model square model and its usage over the last days. */
+export async function getModelSquareUsage(
+  days: number
+): Promise<ModelSquareUsageResponse> {
+  const res = await api.get('/api/models/square_usage', { params: { days } })
   return res.data
 }
 

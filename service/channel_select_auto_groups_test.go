@@ -127,3 +127,36 @@ func TestCacheGetRandomSatisfiedChannelUsesTokenAutoGroupsWhenGlobalAutoIsEmpty(
 	assert.Equal(t, "default", selectedGroup)
 	assert.Equal(t, "default", common.GetContextKeyString(ctx, constant.ContextKeyAutoGroup))
 }
+
+func TestAuthorizeExclusiveChannelPinRequiresConcreteEntitlement(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.UserGroupEntitlement{}))
+	policy := model.Option{Key: "GroupCatalogMetadata", Value: `{"vip":{"exclusive":true}}`}
+	require.NoError(t, db.Create(&policy).Error)
+	require.NoError(t, model.LoadOptionsFromDatabase())
+	t.Cleanup(func() {
+		require.NoError(t, db.Delete(&policy).Error)
+		require.NoError(t, model.LoadOptionsFromDatabase())
+	})
+	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["vip","default"]`))
+	require.NoError(t, db.Create(&model.UserGroupEntitlement{UserID: 101, GroupName: "vip"}).Error)
+	const name = "exclusive-selector-model"
+	createChannelSelectAutoGroupsChannel(t, db, 2301, "vip", name)
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("GET", "/", nil)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	ctx.Set("id", 101)
+	group, err := authorizeExclusiveChannelPin(ctx, 2301, name, "vip")
+	require.NoError(t, err)
+	require.Equal(t, "vip", group)
+
+	_, err = authorizeExclusiveChannelPin(ctx, 2301, name, "auto")
+	require.ErrorIs(t, err, ErrTokenGroupForbidden, "legacy Auto must not use the account's explicit grant")
+	_, err = authorizeExclusiveChannelPin(ctx, 2301, name, "default")
+	require.ErrorIs(t, err, ErrTokenGroupForbidden, "unrelated group cannot claim the channel")
+
+	ctx.Set("id", 102)
+	_, err = authorizeExclusiveChannelPin(ctx, 2301, name, "vip")
+	require.ErrorIs(t, err, ErrTokenGroupForbidden, "same legacy cohort is not an entitlement")
+}

@@ -360,3 +360,37 @@ func TestCustomerInvoiceHTTPAdminCenterSwitchAndLegacyClientPostgres(t *testing.
 	_, centerEnabled, _ = readSettings(GetAdminCustomerInvoiceSettings, adminPath)
 	require.True(t, centerEnabled)
 }
+
+func TestAdminInvoiceIntakeConfigurationStatus(t *testing.T) {
+	base := model.CustomerInvoiceSettings{
+		CenterEnabled: true,
+		Ordinary:      model.CustomerInvoiceTypeSettings{Enabled: true},
+		Categories:    model.CustomerInvoiceCategories{{ID: "qa", Name: "Synthetic", Enabled: true}},
+	}
+	for _, tc := range []struct {
+		name, flag, scope, expected string
+		mutate                      func(*model.CustomerInvoiceSettings)
+	}{
+		{name: "ready", scope: "synthetic-not-exposed", expected: "configured"},
+		{name: "merchant missing", expected: "merchant_not_configured"},
+		{name: "deployment off", flag: "false", scope: "synthetic-not-exposed", expected: "deployment_off"},
+		{name: "center off", scope: "synthetic-not-exposed", expected: "center_off", mutate: func(s *model.CustomerInvoiceSettings) { s.CenterEnabled = false }},
+		{name: "no invoice types", scope: "synthetic-not-exposed", expected: "no_invoice_types", mutate: func(s *model.CustomerInvoiceSettings) { s.Ordinary.Enabled = false }},
+		{name: "no categories", scope: "synthetic-not-exposed", expected: "no_categories", mutate: func(s *model.CustomerInvoiceSettings) { s.Categories = nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CUSTOMER_INVOICE_ENABLED", tc.flag)
+			t.Setenv("CUSTOMER_INVOICE_EPAY_MERCHANT_SCOPE", tc.scope)
+			settings := base
+			if tc.mutate != nil {
+				tc.mutate(&settings)
+			}
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			respondAdminInvoiceSettings(c, settings, nil)
+			require.Equal(t, http.StatusOK, w.Code)
+			require.Contains(t, w.Body.String(), `"intake_state":"`+tc.expected+`"`)
+			require.NotContains(t, w.Body.String(), "synthetic-not-exposed")
+		})
+	}
+}

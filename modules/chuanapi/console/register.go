@@ -63,6 +63,11 @@ func registerPublicRoutes(scopes extension.RouteScopes) error {
 	scopes.PublicAPI.HEAD("/status", GetPublicConfig)
 	scopes.PublicAPI.GET("/pricing", GetPublicPricing)
 	scopes.PublicAPI.HEAD("/pricing", GetPublicPricing)
+	scopes.PublicAPI.GET("/model-lines", GetPublicModelLines)
+	scopes.PublicAPI.HEAD("/model-lines", GetPublicModelLines)
+	scopes.UserSelf.GET("/public-model-line", func(c *gin.Context) {
+		resolvePublicModelLine(c, scopes.UserUsableGroups)
+	})
 	accountpool.New(scopes.UserUsableGroups, scopes.UserGroupRatio).Register(scopes.UserSelf, scopes.RootOptions)
 	return nil
 }

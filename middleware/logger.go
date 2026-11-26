@@ -63,6 +63,10 @@ func snapshotAccessLogPath() gin.HandlerFunc {
 		cleanPath := c.Request.URL.Path
 		rawQuery := c.Request.URL.RawQuery
 		switch {
+		case c.FullPath() == "/api/token/group-health", strings.TrimRight(cleanPath, "/") == "/api/token/group-health":
+			// An exclusive group identifier is private even when access was
+			// denied. This endpoint only needs the route, not its query, in logs.
+			rawQuery = ""
 		case strings.HasPrefix(cleanPath, "/api/invoice/"), strings.HasPrefix(cleanPath, "/api/admin/invoice/"):
 			// Client mistakes (such as putting a tax ID into the search string
 			// or the document path) must not copy invoice PII into access logs.

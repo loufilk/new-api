@@ -30,7 +30,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
-import { ModelCategories } from '../../components/model-categories'
 import { pricingSearchSchema } from '../../lib/search'
 import type { PricingModel } from '../../types'
 import { useFilters } from '../use-filters'
@@ -55,23 +54,42 @@ const models: PricingModel[] = [
     model_name: 'image-only',
     supported_endpoint_types: ['image-generation'],
   },
-  { ...base, id: 3, model_name: 'mixed', output_modalities: ['text', 'image'] },
+  {
+    ...base,
+    id: 3,
+    model_name: 'mixed',
+    enable_groups: ['premium', 'second', 'private_id'],
+    group_ratio: { premium: 8, second: 3, private_id: 0 },
+    output_modalities: ['text', 'image'],
+  },
   {
     ...base,
     id: 4,
     model_name: 'unknown',
+    enable_groups: ['unavailable'],
     supported_endpoint_types: ['openai'],
   },
 ]
 function FilterFixture() {
-  const filters = useFilters(models)
+  const filters = useFilters(
+    models,
+    {
+      premium: { platform: 'openai' },
+      second: { platform: 'openai' },
+      unavailable: { platform: 'openai' },
+      private_id: { exclusive: true },
+    },
+    'public',
+    ['premium', 'second', 'private_id']
+  )
   return (
     <>
-      <ModelCategories
-        models={models}
-        value={filters.category}
-        onChange={filters.setCategory}
-      />
+      <Button onClick={() => filters.setPlatform('openai')}>OpenAI</Button>
+      <Button onClick={() => filters.setGroupFilter('private_id')}>
+        Private
+      </Button>
+      <output aria-label='Sort'>{filters.sortBy}</output>
+      <output aria-label='Group'>{filters.groupFilter}</output>
       <Input
         aria-label='Search'
         value={filters.searchInput}
@@ -105,147 +123,61 @@ async function renderFilters(entry = '/pricing/') {
     history: createMemoryHistory({ initialEntries: [entry] }),
   })
   render(<RouterProvider router={router} />)
-  await screen.findByRole('button', { name: 'All 4' })
+  await screen.findByRole('button', { name: 'OpenAI' })
   return router
 }
 
-describe('pricing category navigation', () => {
-  it('keeps typed search in the URL alongside category and clears search plus all filters together', async () => {
+describe('marketplace navigation', () => {
+  it.each(['', '?sort=requests', '?sort=tokens', '?sort=recommended'])(
+    'displays name sorting when the public projection has no ranking for %s',
+    async (search) => {
+      await renderFilters(`/pricing/${search}`)
+      expect(screen.getByLabelText('Sort')).toHaveTextContent('name')
+    }
+  )
+
+  it('ignores retired category bookmarks, retaining query, sort and active group', async () => {
     const router = await renderFilters(
-      '/pricing/?category=images&group=premium'
+      '/pricing/?category=images&group=premium&sort=price-low'
     )
-    const user = userEvent.setup()
-    await user.type(screen.getByLabelText('Search'), 'image')
+    expect(screen.getByLabelText('Results')).toHaveTextContent('text-only')
+    expect(screen.getByLabelText('Results')).toHaveTextContent('image-only')
+    await userEvent.click(screen.getByRole('button', { name: 'OpenAI' }))
     await waitFor(() =>
-      expect(router.state.location.search.search).toBe('image')
+      expect(router.state.location.search.platform).toBe('openai')
     )
+    expect(router.state.location.search.sort).toBe('price-low')
+    expect(screen.getByLabelText('Group')).toHaveTextContent('all')
+    act(() => router.history.back())
     await waitFor(() =>
-      expect(screen.getByLabelText('Results')).toHaveTextContent('image-only')
+      expect(screen.getByLabelText('Group')).toHaveTextContent('premium')
     )
-    expect(router.state.location.search.category).toBe('images')
-    await user.click(screen.getByRole('button', { name: 'Reset all' }))
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'All 4' })).toHaveAttribute(
-        'aria-pressed',
-        'true'
-      )
-    )
-    expect(screen.getByLabelText('Search')).toHaveValue('')
-    expect(router.state.location.search.group).toBeUndefined()
   })
-  it('defaults to all and changes the selected category with keyboard input without clearing it on repeated clicks', async () => {
-    const user = userEvent.setup()
-    await renderFilters()
-    expect(screen.getByRole('button', { name: 'All 4' })).toHaveAttribute(
-      'aria-pressed',
-      'true'
+  it('intersects the platform with available groups, counts a shared model once, and sorts by its matching price', async () => {
+    await renderFilters('/pricing/?platform=openai&sort=input-price-low')
+    expect(screen.getByLabelText('Results').textContent).toBe(
+      'text-only,image-only,mixed'
     )
-    const images = screen.getByRole('button', { name: 'Image Generation 2' })
-    images.focus()
-    await user.keyboard('{Enter}')
-    await waitFor(() => expect(images).toHaveAttribute('aria-pressed', 'true'))
-    expect(screen.getByLabelText('Results')).toHaveTextContent(
-      'image-only,mixed'
-    )
-    await user.click(images)
-    expect(images).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByLabelText('Group')).toHaveTextContent('all')
   })
-  it('preserves legacy query filters when category changes and restores selection through Back and Forward', async () => {
-    const router = await renderFilters(
-      '/pricing/?vendor=Vendor&group=premium&tag=featured&sort=price-low&view=table&tokenUnit=K&rechargePrice=true'
-    )
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: 'Image Generation 2' }))
+
+  it('keeps private group identifiers out of URL and history state, retaining only a live scoped reference', async () => {
+    const router = await renderFilters()
+    await userEvent.click(screen.getByRole('button', { name: 'Private' }))
     await waitFor(() =>
-      expect(router.state.location.search.category).toBe('images')
+      expect(screen.getByLabelText('Group')).toHaveTextContent('private_id')
     )
-    expect(router.state.location.search).toMatchObject({
-      vendor: 'Vendor',
-      group: 'premium',
-      tag: 'featured',
-      sort: 'price-low',
-      view: 'table',
-      tokenUnit: 'K',
-      rechargePrice: true,
-    })
-    await user.click(screen.getByRole('button', { name: 'Text 2' }))
+    expect(router.state.location.href).not.toContain('private_id')
+    expect(JSON.stringify(router.state.location.state)).not.toContain(
+      'private_id'
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'OpenAI' }))
     await waitFor(() =>
-      expect(router.state.location.search.category).toBe('text')
+      expect(screen.getByLabelText('Group')).toHaveTextContent('all')
     )
     act(() => router.history.back())
     await waitFor(() =>
-      expect(
-        screen.getByRole('button', { name: 'Image Generation 2' })
-      ).toHaveAttribute('aria-pressed', 'true')
-    )
-    act(() => router.history.forward())
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Text 2' })).toHaveAttribute(
-        'aria-pressed',
-        'true'
-      )
+      expect(screen.getByLabelText('Group')).toHaveTextContent('private_id')
     )
   })
-  it('honors bookmarked search and category together and resets category without removing the search', async () => {
-    const router = await renderFilters('/pricing/?search=image&category=images')
-    expect(screen.getByLabelText('Search')).toHaveValue('image')
-    expect(screen.getByLabelText('Results')).toHaveTextContent('image-only')
-    await userEvent.click(screen.getByRole('button', { name: 'Reset filters' }))
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'All 4' })).toHaveAttribute(
-        'aria-pressed',
-        'true'
-      )
-    )
-    expect(router.state.location.search.search).toBe('image')
-  })
-  it('falls back to all for an unknown category and keeps zero-result categories selectable', async () => {
-    await renderFilters('/pricing/?category=unsupported')
-    expect(screen.getByRole('button', { name: 'All 4' })).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
-    await userEvent.click(screen.getByRole('button', { name: 'Vectors 0' }))
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Vectors 0' })).toHaveAttribute(
-        'aria-pressed',
-        'true'
-      )
-    )
-    expect(screen.getByText('Embeddings and reranking')).toBeVisible()
-    expect(screen.getByLabelText('Results')).toBeEmptyDOMElement()
-  })
-})
-
-it('shows and counts decision as a manual category without double-counting all', async () => {
-  const onChange = vi.fn()
-  render(
-    <ModelCategories
-      models={[
-        {
-          ...base,
-          id: 11,
-          model_name: 'decision-name-only',
-          output_modalities: ['text'],
-        },
-        {
-          ...base,
-          id: 12,
-          model_name: 'manual',
-          display_categories: ['text', 'decision', 'decision'],
-        },
-      ]}
-      value='decision'
-      onChange={onChange}
-    />
-  )
-  expect(
-    screen.getByRole('button', { name: 'Decision Models 1' })
-  ).toHaveAttribute('aria-pressed', 'true')
-  expect(screen.getByRole('button', { name: 'All 2' })).toBeVisible()
-  expect(pricingSearchSchema.parse({ category: 'decision' }).category).toBe(
-    'decision'
-  )
-  await userEvent.click(screen.getByRole('button', { name: 'Text 2' }))
-  expect(onChange).toHaveBeenCalledWith('text')
 })

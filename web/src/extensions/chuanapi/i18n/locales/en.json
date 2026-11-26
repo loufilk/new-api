@@ -1,5 +1,21 @@
 {
   "translation": {
+    "Client setup wizard": "Client setup wizard",
+    "Choose a published model group, a model, a client and a connection address to generate setup instructions.": "Choose a published model group, a model, a client and a connection address to generate setup instructions.",
+    "Public group names are for reference only. The group and permissions on your API Key determine actual routing.": "Public group names are for reference only. The group and permissions on your API Key determine actual routing.",
+    "No published group is available. The examples below use a placeholder for your model ID.": "No published group is available. The examples below use a placeholder for your model ID.",
+    "Published model group": "Published model group",
+    "Protocol": "Protocol",
+    "Connection address": "Connection address",
+    "No verified connection address": "No verified connection address",
+    "Operating system": "Operating system",
+    "Setup instructions": "Setup instructions",
+    "Create or choose an API Key in the console. Set WANCHUAN_API_KEY locally for commands, or replace the placeholder in your client settings. Never paste your Key into this page.": "Create or choose an API Key in the console. Set WANCHUAN_API_KEY locally for commands, or replace the placeholder in your client settings. Never paste your Key into this page.",
+    "Merge these settings with your existing configuration. Test in your client and check the request time, model and status in your usage logs. A model request may incur charges.": "Merge these settings with your existing configuration. Test in your client and check the request time, model and status in your usage logs. A model request may incur charges.",
+    "Read the full guide": "Read the full guide",
+    "This application changed while you were reviewing it. Load the latest status before continuing.": "This application changed while you were reviewing it. Load the latest status before continuing.",
+    "Reload latest application": "Reload latest application",
+    "This application is read-only for your account.": "This application is read-only for your account.",
     "Account": "Account",
     "Balance Ledger": "Balance Ledger",
     "Bonus": "Bonus",
@@ -252,6 +268,16 @@
     "Select an invoice category": "Select an invoice category",
     "This invoice category is currently unavailable": "This invoice category is currently unavailable",
     "Update the server to edit invoice categories.": "Update the server to edit invoice categories.",
-    "Invoice fee refund": "Invoice fee refund"
+    "Invoice fee refund": "Invoice fee refund",
+    "Site information": "Site information",
+    "Press Enter to add a model.": "Press Enter to add a model.",
+    "Top-up rates, settlement terms, or anything else you would like to share.": "Top-up rates, settlement terms, or anything else you would like to share.",
+    "Previous EPay order": "Previous EPay order",
+    "Order not confirmed. Retry the same checkout to avoid duplicate orders.": "Order not confirmed. Retry the same checkout to avoid duplicate orders.",
+    "Check the previous EPay order before starting another.": "Check the previous EPay order before starting another.",
+    "Check status": "Check status",
+    "Dismiss reminder (does not cancel the order)": "Dismiss reminder (does not cancel the order)",
+    "The payment quote changed. Close this dialog and select the payment method again.": "The payment quote changed. Close this dialog and select the payment method again.",
+    "If it stays unconfirmed, check recharge history or give support this reference:": "If it stays unconfirmed, check recharge history or give support this reference:"
   }
 }

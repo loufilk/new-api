@@ -50,8 +50,16 @@ beforeEach(() => {
   vi.mocked(api.get).mockReset()
 })
 
+function expectIssuedOperation(id: string) {
+  vi.mocked(api.get).mockResolvedValueOnce({
+    status: 200,
+    data: { id, kind: 'async_image_operation' },
+  })
+}
+
 test('async generation submits once then retrieves the result using the dashboard session', async () => {
   const id = 'a'.repeat(48)
+  expectIssuedOperation(id)
   postMock.mockResolvedValue({ status: 202, data: { id, status: 'running' } })
   vi.mocked(api.get).mockResolvedValue({
     data: {
@@ -70,11 +78,14 @@ test('async generation submits once then retrieves the result using the dashboar
     style: '',
     images: [],
     asyncMode: true,
+    prepareOperation: (operationId) => expect(operationId).toBe(id),
   })
   expect(postMock).toHaveBeenCalledTimes(1)
-  expect(postMock.mock.calls[0][0]).toBe('/v1/images/tasks/generations')
+  expect(postMock.mock.calls[0][0]).toBe(
+    `/v1/images/tasks/operations/${id}/generations`
+  )
   expect(api.get).toHaveBeenCalledWith(
-    `/v1/images/tasks/${id}`,
+    `/v1/images/tasks/operations/${id}`,
     expect.not.objectContaining({
       headers: expect.anything(),
       preserveAuthorization: true,
@@ -87,6 +98,7 @@ test.each([false, true])(
   'displays a single object-shaped image from a successful request (async: %s)',
   async (asyncMode) => {
     const id = 'c'.repeat(48)
+    expectIssuedOperation(id)
     const imagePayload = {
       data: { b64_json: 'aGVsbG8=', mime_type: 'image/webp' },
     }
@@ -109,6 +121,7 @@ test.each([false, true])(
       style: '',
       images: [],
       asyncMode,
+      prepareOperation: (operationId) => expect(operationId).toBe(id),
     })
 
     expect(images).toEqual([
@@ -123,6 +136,7 @@ test.each([false, true])(
 
 test('async terminal failure preserves the upstream message and never resubmits', async () => {
   const id = 'b'.repeat(48)
+  expectIssuedOperation(id)
   postMock.mockResolvedValue({ status: 202, data: { id, status: 'running' } })
   vi.mocked(api.get).mockResolvedValue({
     data: {
@@ -144,6 +158,7 @@ test('async terminal failure preserves the upstream message and never resubmits'
       style: '',
       images: [],
       asyncMode: true,
+      prepareOperation: (operationId) => expect(operationId).toBe(id),
     })
   ).rejects.toThrow('Upstream image quota exhausted')
   expect(postMock).toHaveBeenCalledTimes(1)
@@ -153,6 +168,7 @@ test('stopping async polling aborts the wait without resubmitting or sending can
   vi.useFakeTimers()
   try {
     const id = 'c'.repeat(48)
+    expectIssuedOperation(id)
     const controller = new AbortController()
     postMock.mockResolvedValue({ status: 202, data: { id, status: 'running' } })
     vi.mocked(api.get).mockResolvedValue({ data: { id, status: 'running' } })
@@ -166,6 +182,7 @@ test('stopping async polling aborts the wait without resubmitting or sending can
       style: '',
       images: [],
       asyncMode: true,
+      prepareOperation: (operationId) => expect(operationId).toBe(id),
       signal: controller.signal,
     })
     const rejected = expect(pending).rejects.toMatchObject({
@@ -176,7 +193,7 @@ test('stopping async polling aborts the wait without resubmitting or sending can
     await rejected
     await vi.advanceTimersByTimeAsync(5000)
     expect(postMock).toHaveBeenCalledTimes(1)
-    expect(api.get).toHaveBeenCalledTimes(1)
+    expect(api.get).toHaveBeenCalledTimes(2)
   } finally {
     vi.useRealTimers()
   }
@@ -500,6 +517,7 @@ test.each([
   'native 2K batch uses one request and keeps returned partial output (async=%s, edit=%s)',
   async (asyncMode, edit) => {
     const id = 'd'.repeat(48)
+    expectIssuedOperation(id)
     const payload = {
       data: [
         { url: 'https://example.com/partial.png' },
@@ -527,10 +545,11 @@ test.each([
         ? [new File(['hello'], 'reference.png', { type: 'image/png' })]
         : [],
       asyncMode,
+      prepareOperation: (operationId) => expect(operationId).toBe(id),
     })
     expect(postMock).toHaveBeenCalledTimes(1)
     expect(postMock.mock.calls[0][0]).toBe(
-      `/v1/images/${asyncMode ? 'tasks/' : ''}${edit ? 'edits' : 'generations'}`
+      `/v1/images/${asyncMode ? `tasks/operations/${id}/` : ''}${edit ? 'edits' : 'generations'}`
     )
     expect(postMock.mock.calls[0][1]).toMatchObject({
       n: 3,
@@ -546,6 +565,8 @@ test.each([
 test.each([false, true])(
   'rejected multi-image requests are not split or retried (async=%s)',
   async (asyncMode) => {
+    const id = 'f'.repeat(48)
+    expectIssuedOperation(id)
     postMock.mockRejectedValue(new Error('Provider rejected this image count'))
     await expect(
       requestImageGeneration({
@@ -558,10 +579,17 @@ test.each([false, true])(
         style: '',
         images: [],
         asyncMode,
+        prepareOperation: (operationId) => expect(operationId).toBe(id),
       })
     ).rejects.toThrow('Provider rejected this image count')
     expect(postMock).toHaveBeenCalledTimes(1)
-    expect(api.get).not.toHaveBeenCalled()
+    expect(api.get).toHaveBeenCalledTimes(asyncMode ? 1 : 0)
+    if (asyncMode) {
+      expect(api.get).toHaveBeenCalledWith(
+        '/v1/images/tasks/operation-ticket',
+        expect.anything()
+      )
+    }
   }
 )
 
@@ -588,6 +616,7 @@ test.each([false, true])(
   'keeps delivered images and exposes billing review without retry (async=%s)',
   async (asyncMode) => {
     const id = 'e'.repeat(48)
+    expectIssuedOperation(id)
     const payload = { data: [{ url: 'https://example.com/delivered.png' }] }
     postMock.mockResolvedValue(
       asyncMode
@@ -616,6 +645,7 @@ test.each([false, true])(
       style: '',
       images: [],
       asyncMode,
+      prepareOperation: (operationId) => expect(operationId).toBe(id),
     })
     expect(images).toEqual([
       expect.objectContaining({
@@ -654,4 +684,79 @@ test('resuming a saved image task retries only GET after a temporary network err
   } finally {
     vi.useRealTimers()
   }
+})
+
+test.each([
+  [404, 'async_image_operation_missing', true],
+  [410, 'async_image_operation_expired', true],
+  [404, 'async_image_unavailable', false],
+  [403, 'forbidden', false],
+])(
+  'new receipt clears only matched terminal origin responses (%s, %s)',
+  async (status, code, terminal) => {
+    const id = 'd'.repeat(48),
+      cleared = vi.fn()
+    vi.mocked(api.get).mockRejectedValue({
+      isAxiosError: true,
+      response: { status, data: { id, error: { code } } },
+    })
+    await expect(
+      pollAcceptedImageTask({
+        id,
+        protocol: 2,
+        expiresAt: Date.now() + 60_000,
+        prompt: 'x',
+        model: 'image',
+        size: 'auto',
+        onTerminalFailure: cleared,
+      })
+    ).rejects.toBeDefined()
+    expect(cleared).toHaveBeenCalledTimes(terminal ? 1 : 0)
+    expect(api.post).not.toHaveBeenCalled()
+  }
+)
+
+test('receipt storage failure stops before any paid submit', async () => {
+  expectIssuedOperation('7'.repeat(48))
+  await expect(
+    requestImageGeneration({
+      fullKey: 'fixture',
+      model: 'gpt-image-2',
+      prompt: 'fixture',
+      count: 1,
+      size: 'auto',
+      quality: 'auto',
+      style: '',
+      images: [],
+      asyncMode: true,
+      prepareOperation() {
+        throw new Error('storage unavailable')
+      },
+    })
+  ).rejects.toThrow('storage unavailable')
+  expect(api.post).not.toHaveBeenCalled()
+})
+
+test('the ticket endpoint is required and never falls back to a legacy paid submit', async () => {
+  vi.mocked(api.get).mockResolvedValue({
+    status: 200,
+    data: '<html>old backend</html>',
+  })
+  const prepareOperation = vi.fn()
+  await expect(
+    requestImageGeneration({
+      fullKey: 'fixture',
+      model: 'gpt-image-2',
+      prompt: 'fixture',
+      count: 1,
+      size: 'auto',
+      quality: 'auto',
+      style: '',
+      images: [],
+      asyncMode: true,
+      prepareOperation,
+    })
+  ).rejects.toThrow()
+  expect(prepareOperation).not.toHaveBeenCalled()
+  expect(postMock).not.toHaveBeenCalled()
 })

@@ -31,17 +31,23 @@ type DataTableRowActionMenuProps = {
   children: React.ReactNode
   ariaLabel: string
   trigger?: React.ReactElement
+  triggerRef?: React.Ref<HTMLButtonElement>
   contentClassName?: string
   modal?: boolean
   onOpenChange?: (open: boolean) => void
 }
 
-export function DataTableRowActionMenu(props: DataTableRowActionMenuProps) {
+export function DataTableRowActionMenu({
+  triggerRef,
+  trigger,
+  ...props
+}: DataTableRowActionMenuProps) {
   return (
     <DropdownMenu modal={props.modal} onOpenChange={props.onOpenChange}>
       <DropdownMenuTrigger
+        ref={triggerRef}
         render={
-          props.trigger ?? (
+          trigger ?? (
             <Button
               variant='ghost'
               size='icon'

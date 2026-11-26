@@ -25,6 +25,9 @@ import {
   type ExtensionLocaleKey,
 } from '@/extensions'
 
+import { adminQuotaTranslations } from './admin-quota-translations'
+import { adminTaskTranslations } from './admin-task-translations'
+import { keyDiagnosticTranslations } from './key-diagnostic-translations'
 import {
   INTERFACE_LANGUAGE_OPTIONS,
   normalizeInterfaceLanguage,
@@ -47,6 +50,17 @@ const coreLocaleLoaders: Record<
   zhTW: () => import('./locales/zh-TW.json'),
 }
 
+// Public upstream feature strings remain separate from ChuanAPI overrides.
+const integrationLocaleLoaders: typeof coreLocaleLoaders = {
+  en: () => import('./upstream-order-plugins/en.json'),
+  zhCN: () => import('./upstream-order-plugins/zh.json'),
+  fr: () => import('./upstream-order-plugins/fr.json'),
+  ru: () => import('./upstream-order-plugins/ru.json'),
+  ja: () => import('./upstream-order-plugins/ja.json'),
+  vi: () => import('./upstream-order-plugins/vi.json'),
+  zhTW: () => import('./upstream-order-plugins/zh-TW.json'),
+}
+
 function normalizeBundle(module: LocaleModule): Bundle {
   if (module && typeof module === 'object' && 'default' in module) {
     return module.default
@@ -57,16 +71,20 @@ function normalizeBundle(module: LocaleModule): Bundle {
 async function loadLocalizedBundle(
   locale: InterfaceLanguageCode
 ): Promise<Bundle> {
-  const [coreModule, extension] = await Promise.all([
+  const [coreModule, integrationModule, extension] = await Promise.all([
     coreLocaleLoaders[locale](),
+    integrationLocaleLoaders[locale](),
     loadExtensionI18nOverride(locale as ExtensionLocaleKey),
   ])
   const core = normalizeBundle(coreModule)
-  if (!extension) return core
   return {
     translation: {
       ...core.translation,
-      ...extension.translation,
+      ...normalizeBundle(integrationModule).translation,
+      ...keyDiagnosticTranslations[locale],
+      ...adminQuotaTranslations[locale],
+      ...adminTaskTranslations[locale],
+      ...extension?.translation,
     },
   }
 }

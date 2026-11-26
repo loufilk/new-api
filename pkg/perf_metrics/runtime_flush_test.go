@@ -64,3 +64,20 @@ func TestRuntimeFinalFlushRetainsFailedSamplesAndPersistsCurrentBucket(t *testin
 		})
 	}
 }
+
+func TestPublicLineHealthCounterDrain(t *testing.T) {
+	bucket := &atomicBucket{}
+	bucket.add(Sample{Success: true, HasLatency: true, CacheMeasured: true})
+	bucket.add(Sample{Success: true, LatencyMs: 100, CacheMeasured: true, CacheHit: true})
+	bucket.add(Sample{Success: false, LatencyMs: 200, CacheMeasured: true, CacheHit: true})
+	bucket.add(Sample{Success: true})
+	drained := bucket.drain()
+	require.EqualValues(t, 4, drained.requestCount)
+	require.EqualValues(t, 3, drained.latencyCount)
+	require.EqualValues(t, 300, drained.measuredLatencyMs)
+	require.EqualValues(t, 2, drained.cacheSampleCount)
+	require.EqualValues(t, 1, drained.cacheHitCount)
+	require.Equal(t, counters{}, bucket.snapshot())
+	bucket.addCounters(drained)
+	require.Equal(t, drained, bucket.drain())
+}

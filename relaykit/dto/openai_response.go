@@ -260,6 +260,7 @@ type OpenAIVideoResponse struct {
 }
 
 type InputTokenDetails struct {
+	CacheReadReported    bool                `json:"-"`
 	CachedTokens         int                 `json:"cached_tokens"`
 	CachedTokensDetails  *CachedTokenDetails `json:"cached_tokens_details,omitempty"`
 	CachedCreationTokens int                 `json:"cached_creation_tokens,omitempty"`
@@ -277,6 +278,24 @@ type InputTokenDetails struct {
 	// takes the larger of this value, CacheWriteTokens, and CachedCreationTokens,
 	// and does not add them.
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+}
+
+// UnmarshalJSON keeps an explicit zero distinguishable from missing cache usage
+// without changing the DTO's public JSON or the billing values.
+func (u *InputTokenDetails) UnmarshalJSON(data []byte) error {
+	type plain InputTokenDetails
+	fields := struct {
+		*plain
+		CacheRead *int `json:"cached_tokens"`
+	}{plain: (*plain)(u)}
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if fields.CacheRead != nil {
+		u.CachedTokens = *fields.CacheRead
+		u.CacheReadReported = true
+	}
+	return nil
 }
 
 // CacheWriteTokenDetails is OpenAI's split of cache writes by lifetime. The

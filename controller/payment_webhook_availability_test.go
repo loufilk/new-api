@@ -429,13 +429,31 @@ func TestEpayRSAModeSignsOrdersAndVerifiesCallbacks(t *testing.T) {
 	unsigned := maps.Clone(paid)
 	delete(unsigned, "sign")
 
-	assertEpayCallbacksVerifyBeforeSettlement(t, []epayCallbackCase{
+	// Valid signatures are not sufficient: all three endpoints must bind the
+	// platform's synthetic callback to this configured merchant.
+	merchantCases := make([]epayCallbackCase, 0, 2)
+	for _, label := range []struct{ name, pid string }{{"other merchant", "fixture_other"}, {"missing merchant", ""}} {
+		cfg := *platform.Config
+		cfg.PartnerID = label.pid
+		signer, err := epay.NewClient(&cfg, "https://pay.example.com")
+		require.NoError(t, err)
+		params, err := signer.SignParams(paidFields)
+		require.NoError(t, err)
+		if label.pid == "" {
+			delete(params, "pid") // Empty values are not part of the RSA signing string.
+		}
+		verified, err := client.Verify(params)
+		require.NoError(t, err, label.name)
+		require.True(t, verified.VerifyStatus, label.name)
+		merchantCases = append(merchantCases, epayCallbackCase{name: label.name, params: params})
+	}
+	assertEpayCallbacksVerifyBeforeSettlement(t, append(merchantCases, []epayCallbackCase{
 		{name: "valid pending signed by platform", params: pending, validPending: true},
 		{name: "tampered amount", params: tampered},
 		{name: "signed with merchant key", params: merchantSigned},
 		{name: "MD5 signature in RSA mode", params: md5Signed},
 		{name: "missing signature", params: unsigned},
-	})
+	}...))
 }
 
 func TestUpdateOptionValidatesEpaySignSettings(t *testing.T) {

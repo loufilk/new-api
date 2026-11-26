@@ -1,5 +1,21 @@
 {
   "translation": {
+    "Client setup wizard": "クライアント設定ウィザード",
+    "Choose a published model group, a model, a client and a connection address to generate setup instructions.": "公開モデルグループ、モデル、クライアント、接続先を選ぶと設定手順が生成されます。",
+    "Public group names are for reference only. The group and permissions on your API Key determine actual routing.": "公開グループ名は参考情報です。実際のルーティングは API キーのグループと権限によって決まります。",
+    "No published group is available. The examples below use a placeholder for your model ID.": "利用できる公開グループはありません。以下の例ではモデル ID のプレースホルダーを使います。",
+    "Published model group": "公開モデルグループ",
+    "Protocol": "プロトコル",
+    "Connection address": "接続先",
+    "No verified connection address": "利用できる接続先がありません",
+    "Operating system": "オペレーティングシステム",
+    "Setup instructions": "設定手順",
+    "Create or choose an API Key in the console. Set WANCHUAN_API_KEY locally for commands, or replace the placeholder in your client settings. Never paste your Key into this page.": "コンソールでキーを作成または選択します。ローカルで WANCHUAN_API_KEY を設定するか、クライアントの設定でプレースホルダーを置き換えます。このページにはキーを貼り付けないでください。",
+    "Merge these settings with your existing configuration. Test in your client and check the request time, model and status in your usage logs. A model request may incur charges.": "既存の設定とマージしてください。クライアントでテストし、利用ログで時刻、モデル、ステータスを確認します。モデルへのリクエストは有料の場合があります。",
+    "Read the full guide": "ガイド全文を読む",
+    "This application changed while you were reviewing it. Load the latest status before continuing.": "審査中にこの申請が更新されました。最新の状態を読み込んでから続行してください。",
+    "Reload latest application": "最新の申請を読み込む",
+    "This application is read-only for your account.": "このアカウントでは、この申請の閲覧のみ可能です。",
     "{{count}} announcements deleted. Click \"Save Settings\" to apply.": "{{count}} 件のお知らせを削除しました。「設定を保存」をクリックして適用してください。",
     "{{count}} API entries deleted. Click \"Save Settings\" to apply.": "{{count}} 件の API 項目を削除しました。「設定を保存」をクリックして適用してください。",
     "{{count}} FAQs deleted. Click \"Save Settings\" to apply.": "{{count}} 件の FAQ を削除しました。「設定を保存」をクリックして適用してください。",
@@ -252,6 +268,16 @@
     "Select an invoice category": "発票の記載項目を選択してください",
     "This invoice category is currently unavailable": "この項目での発票発行は現在受け付けていません",
     "Update the server to edit invoice categories.": "発票の記載項目を編集するには、サーバーを更新してください。",
-    "Invoice fee refund": "発票発行手数料の返金"
+    "Invoice fee refund": "発票発行手数料の返金",
+    "Site information": "サイト情報",
+    "Press Enter to add a model.": "Enter キーを押してモデルを追加します。",
+    "Top-up rates, settlement terms, or anything else you would like to share.": "チャージ比率や精算方法など、補足事項があればご記入ください。",
+    "Previous EPay order": "前回の EPay 注文",
+    "Order not confirmed. Retry the same checkout to avoid duplicate orders.": "注文は未確認です。重複を避けるため、同じ金額と支払方法で再試行してください。",
+    "Check the previous EPay order before starting another.": "新しい注文の前に、前回の EPay 注文を確認してください。",
+    "Check status": "状態を確認",
+    "Dismiss reminder (does not cancel the order)": "通知を非表示（注文はキャンセルされません）",
+    "The payment quote changed. Close this dialog and select the payment method again.": "支払金額が変わりました。この画面を閉じて支払い方法を選び直してください。",
+    "If it stays unconfirmed, check recharge history or give support this reference:": "確認できない場合は、チャージ履歴を確認するか、この番号をサポートにお伝えください："
   }
 }

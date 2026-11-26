@@ -19,8 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import { describe, expect, test } from 'vitest'
 
 import { normalizeSortOption, SORT_OPTIONS } from '../constants'
-import { sortModels } from '../lib/filters'
-import type { PricingModel } from '../types'
+import { filterAndSortModels, sortModels } from '../lib/filters'
+import type { ModelOrder, PricingModel } from '../types'
 
 function pricingModel(
   modelName: string,
@@ -126,11 +126,38 @@ describe('price sorting', () => {
 })
 
 describe('sort compatibility and unavailable prices', () => {
+  test('puts unquoted ordinary and redacted provider-only prices last in either direction', () => {
+    const entries = [
+      pricingModel('withheld', {
+        billing_variants_present: true,
+        model_ratio: 0,
+      }),
+      pricingModel('unset', {
+        ordinary_price_available: false,
+        model_ratio: 999,
+      }),
+      pricingModel('visible', {
+        ordinary_price_available: true,
+        model_ratio: 1,
+      }),
+    ]
+    for (const sortBy of [
+      SORT_OPTIONS.INPUT_PRICE_LOW,
+      SORT_OPTIONS.INPUT_PRICE_HIGH,
+    ]) {
+      expect(sortModels(entries, sortBy).map((m) => m.model_name)).toEqual([
+        'visible',
+        'withheld',
+        'unset',
+      ])
+    }
+  })
+
   test.each([
     ['price-low', SORT_OPTIONS.INPUT_PRICE_LOW],
     ['price-high', SORT_OPTIONS.INPUT_PRICE_HIGH],
-    [undefined, SORT_OPTIONS.NAME],
-    ['unknown-old-value', SORT_OPTIONS.NAME],
+    [undefined, SORT_OPTIONS.RECOMMENDED],
+    ['unknown-old-value', SORT_OPTIONS.RECOMMENDED],
     [SORT_OPTIONS.OUTPUT_PRICE_HIGH, SORT_OPTIONS.OUTPUT_PRICE_HIGH],
   ])('normalizes persisted sort %s', (value, expected) => {
     expect(normalizeSortOption(value)).toBe(expected)
@@ -223,4 +250,71 @@ test('sorts a plugin model by the token price its ordinary requests pay', () => 
     'expr-fixed',
     'expr-task',
   ])
+})
+
+test('sort uses the displayed group multiplier, including free groups and active time tiers', () => {
+  const groups = {
+    enable_groups: ['standard', 'free'],
+    group_ratio: { standard: 2, free: 0 },
+  }
+  const values = [
+    pricingModel('plain', { model_ratio: 0.5 }),
+    pricingModel('timed', {
+      ...groups,
+      billing_mode: 'tiered_expr',
+      billing_expr:
+        'hour("UTC") < 12 ? tier("morning", p * 0.1) : tier("late", p * 8)',
+    }),
+  ]
+  const order = (group: string, hour: string) =>
+    sortModels(
+      values,
+      SORT_OPTIONS.INPUT_PRICE_LOW,
+      group,
+      new Date(`2026-11-20T${hour}:00:00Z`)
+    ).map((m) => m.model_name)
+  expect(order('standard', '09')).toEqual(['timed', 'plain'])
+  expect(order('standard', '15')).toEqual(['plain', 'timed'])
+  expect(order('all', '15')).toEqual(['timed', 'plain'])
+})
+
+test('uses the server order for authorized models only and falls back to name when it is absent', () => {
+  const visible = ['beta', 'alpha', 'delta'].map((name) =>
+    pricingModel(name, {})
+  )
+  const modelOrder: ModelOrder = {
+    recommended: ['delta', 'not-in-view', 'beta'],
+    requests: ['beta', 'delta'],
+    tokens: ['alpha', 'delta'],
+  }
+  const ordered = (sortBy: string, order?: ModelOrder) =>
+    filterAndSortModels(visible, {
+      search: '',
+      group: 'all',
+      endpointType: 'all',
+      quotaType: 'all',
+      sortBy,
+      modelOrder: order,
+    }).map((model) => model.model_name)
+  expect(ordered(SORT_OPTIONS.RECOMMENDED, modelOrder)).toEqual([
+    'delta',
+    'beta',
+    'alpha',
+  ])
+  expect(ordered(SORT_OPTIONS.MOST_REQUESTS, modelOrder)).toEqual([
+    'beta',
+    'delta',
+    'alpha',
+  ])
+  expect(ordered(SORT_OPTIONS.MOST_TOKENS, modelOrder)).toEqual([
+    'alpha',
+    'delta',
+    'beta',
+  ])
+  expect(ordered(SORT_OPTIONS.NAME, modelOrder)).toEqual([
+    'alpha',
+    'beta',
+    'delta',
+  ])
+  expect(ordered(SORT_OPTIONS.RECOMMENDED)).toEqual(['alpha', 'beta', 'delta'])
 })

@@ -5,6 +5,8 @@ type ContextKey string
 const (
 	// Only the server-owned, confirmed model-test ingress sets this flag.
 	ContextKeyModelTestSingleAttempt ContextKey = "model_test_single_attempt"
+	ContextKeyKeyDiagnosticTokenID   ContextKey = "key_diagnostic_token_id"
+	ContextKeyKeyDiagnosticAuthority ContextKey = "key_diagnostic_authority"
 	ContextKeyModelTestOutputLimit   ContextKey = "model_test_output_limit"
 	ContextKeyTokenCountMeta         ContextKey = "token_count_meta"
 	ContextKeyPromptTokens           ContextKey = "prompt_tokens"

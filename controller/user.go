@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
@@ -17,10 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
-	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
-
-	"github.com/QuantumNous/new-api/constant"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -289,42 +287,8 @@ func Register(c *gin.Context) {
 		return
 	}
 
-	// 获取插入后的用户ID
-	var insertedUser model.User
-	if err := model.DB.Where("username = ?", cleanUser.Username).First(&insertedUser).Error; err != nil {
-		common.ApiErrorT(c, "User registration failed or user ID retrieval failed")
-		return
-	}
-	// 生成默认令牌
-	if constant.GenerateDefaultToken {
-		key, err := common.GenerateKey()
-		if err != nil {
-			common.ApiErrorT(c, "Failed to generate default token")
-			common.SysLog(common.LogText("failed to generate token key: %s", err.Error()))
-			return
-		}
-		// 生成默认令牌
-		token := model.Token{
-			UserId:             insertedUser.Id, // 使用插入后的用户ID
-			Name:               i18n.T(c, i18n.MsgUserDefaultTokenName, map[string]any{"Username": cleanUser.Username}),
-			Key:                key,
-			CreatedTime:        common.GetTimestamp(),
-			AccessedTime:       common.GetTimestamp(),
-			ExpiredTime:        -1,     // 永不过期
-			RemainQuota:        500000, // 示例额度
-			UnlimitedQuota:     true,
-			ModelLimitsEnabled: false,
-		}
-		token.AllowUserQuotaQuery = true
-		if setting.DefaultUseAutoGroup {
-			token.Group = "auto"
-		}
-		if err := token.Insert(insertedUser.AuthVersion); err != nil {
-			common.ApiErrorT(c, "Failed to create default token")
-			return
-		}
-	}
-
+	// Registration does not issue an API key. A new key needs a group
+	// explicitly chosen by its owner in the authenticated key manager.
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -629,7 +593,11 @@ func GetUserModels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	groups := service.GetUserUsableGroups(user.Group)
+	groups, err := service.GetUserUsableGroupsForUser(c.Request.Context(), user.Id, user.Group)
+	if err != nil {
+		groupConfigReadFailure(c)
+		return
+	}
 	group := c.Query("group")
 	var groupsToQuery []string
 	switch {

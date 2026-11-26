@@ -19,12 +19,14 @@ For commercial licensing, please contact support@quantumnous.com
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
 import { ErrorState } from '@/components/error-state'
 import { SectionPageLayout } from '@/components/layout'
 import type { WalletPageProps } from '@/extensions/wallet'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
+import { handleServerError } from '@/lib/handle-server-error'
 
 import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
 import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
@@ -32,6 +34,7 @@ import { LedgerTable } from './components/ledger-table'
 import { RechargeFormCard } from './components/recharge-form-card'
 import { RechargeHistoryButton } from './components/recharge-history-dialog'
 import { ReferralPanel } from './components/referral-panel'
+import { UsdtRecharge } from './components/usdt-recharge'
 import { WalletStatsCard } from './components/wallet-stats-card'
 import { DEFAULT_DISCOUNT_RATE, PAYMENT_TYPES } from './constants'
 import {
@@ -84,6 +87,10 @@ export function Wallet(props: WalletPageProps) {
     refetch: refetchWallet,
   } = useWalletSummary()
   const {
+    recovery,
+    checkEpay,
+    forgetEpay,
+    invalidateEpayHandoff,
     amount: paymentAmount,
     calculating,
     processing,
@@ -91,6 +98,39 @@ export function Wallet(props: WalletPageProps) {
     isQuoteCurrent,
     processPayment,
   } = usePayment()
+  const recoveryStatus =
+    recovery &&
+    (recovery.tradeNo ? (
+      <p>
+        {recovery.tradeNo} ·{' '}
+        {t(
+          (
+            {
+              pending: 'Pending',
+              success: 'Success',
+              failed: 'Failed',
+              expired: 'Expired',
+            } as Record<string, string>
+          )[recovery.status]
+        )}
+      </p>
+    ) : (
+      <div>
+        <p>
+          {t(
+            'Order not confirmed. Retry the same checkout to avoid duplicate orders.'
+          )}
+        </p>
+        <p>
+          {t(
+            'If it stays unconfirmed, check recharge history or give support this reference:'
+          )}{' '}
+          <code className='break-all'>
+            {recovery.reference ?? recovery.draft.id}
+          </code>
+        </p>
+      </div>
+    ))
   const { redeeming, redeemCode } = useRedemption()
   const { processing: creemProcessing, processCreemPayment } = useCreemPayment()
   const { processing: waffoProcessing, processWaffoPayment } = useWaffoPayment()
@@ -110,13 +150,22 @@ export function Wallet(props: WalletPageProps) {
       if (response.success && response.data) {
         setUser(response.data as UserWalletData)
       }
+    } catch (error) {
+      // A failed focus refresh does not invalidate the previous user snapshot.
+      handleServerError(error)
     } finally {
       setUserLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    void fetchUser()
+    let mounted = true
+    queueMicrotask(() => {
+      if (mounted) void fetchUser()
+    })
+    return () => {
+      mounted = false
+    }
   }, [fetchUser])
 
   const paymentSelectionRef = useRef(0)
@@ -318,7 +367,49 @@ export function Wallet(props: WalletPageProps) {
             )}
             <div className='grid items-stretch gap-4 lg:grid-cols-2'>
               <section aria-label={t('Add Funds')} className='min-w-0'>
+                {recovery && (
+                  <div
+                    className='mb-3 rounded-md border p-3 text-sm'
+                    role='status'
+                  >
+                    <p className='font-medium'>{t('Previous EPay order')}</p>
+                    <p>
+                      {(recovery.terms ?? recovery.draft).method} · ¥
+                      {((recovery.terms ?? recovery.draft).minor / 100).toFixed(
+                        2
+                      )}
+                    </p>
+                    {recoveryStatus}
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      onClick={checkEpay}
+                    >
+                      {t('Check status')}
+                    </Button>
+                    {recovery.tradeNo && (
+                      <Button
+                        type='button'
+                        variant='ghost'
+                        size='sm'
+                        onClick={forgetEpay}
+                      >
+                        {t('Dismiss reminder (does not cancel the order)')}
+                      </Button>
+                    )}
+                  </div>
+                )}
                 <RechargeFormCard
+                  usdtRecharge={
+                    user?.id ? (
+                      <UsdtRecharge
+                        key={user.id}
+                        userId={user.id}
+                        onPaid={refreshBalances}
+                      />
+                    ) : null
+                  }
                   topupInfo={topupInfo}
                   presetAmounts={presetAmounts}
                   selectedPreset={selectedPreset}
@@ -359,8 +450,12 @@ export function Wallet(props: WalletPageProps) {
       </SectionPageLayout>
 
       <PaymentConfirmDialog
+        orderRecovery={recoveryStatus}
         open={confirmDialogOpen}
-        onOpenChange={setConfirmDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) invalidateEpayHandoff()
+          setConfirmDialogOpen(open)
+        }}
         onConfirm={handlePaymentConfirm}
         topupAmount={topupAmount}
         paymentAmount={paymentAmount}

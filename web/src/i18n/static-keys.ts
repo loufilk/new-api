@@ -23,6 +23,9 @@ export const STATIC_I18N_KEYS = [
   'Please select a group',
   'Invalid token status',
 
+  // Group presentation labels are selected from the catalog badge registry.
+  'Traceable',
+
   'Transfer wallet balance to agent balance',
   'Transferred wallet balance',
   'Paid wallet balance',
@@ -693,6 +696,23 @@ export const STATIC_I18N_KEYS = [
   'Validity',
   'Actions',
 
+  // Key diagnostic question, result, and routing labels
+  'Cycling pelican (SVG animation)',
+  'Drawing candies (logic puzzle)',
+  'Queued',
+  'Running',
+  'Completed',
+  'Failed',
+  'Intercepted',
+  'Result unknown',
+  'Correct answer',
+  'Incorrect answer',
+  'Answer not recognized',
+  'Automatic',
+  'Success rate first',
+  'Price first',
+  'Speed first',
+
   // Sidebar modules
   'Chat Area',
   'Text Generation and chat functions',
@@ -716,7 +736,6 @@ export const STATIC_I18N_KEYS = [
   '{{count}} of {{max}} images',
   'No matching history.',
   'AI model testing environment',
-  'Chat session management',
   'No content to copy',
   'Please wait for the current generation to complete',
   'An unknown error occurred',
@@ -778,11 +797,6 @@ export const STATIC_I18N_KEYS = [
   'Official documentation',
   'Violation deduction amount',
   'Base amount. Actual deduction = base amount × system group rate.',
-
-  // Chat2Link
-  'No available Web chat links',
-  'No enabled tokens available',
-  'Redirecting to chat page...',
 
   // Channel upstream updates
   'No processable upstream model updates for this channel',

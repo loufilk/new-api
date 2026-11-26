@@ -596,6 +596,7 @@ func (r *GeminiChatResponse) GetUsageMetadata() *GeminiUsageMetadata {
 }
 
 type GeminiUsageMetadata struct {
+	CacheReadReported          bool                        `json:"-"`
 	PromptTokenCount           int                         `json:"promptTokenCount"`
 	ToolUsePromptTokenCount    int                         `json:"toolUsePromptTokenCount"`
 	CandidatesTokenCount       int                         `json:"candidatesTokenCount"`
@@ -606,6 +607,24 @@ type GeminiUsageMetadata struct {
 	ToolUsePromptTokensDetails []GeminiPromptTokensDetails `json:"toolUsePromptTokensDetails"`
 	CandidatesTokensDetails    []GeminiPromptTokensDetails `json:"candidatesTokensDetails"`
 	BillingUsage               *BillingUsage               `json:"billing_usage,omitempty"`
+}
+
+// UnmarshalJSON keeps an explicit zero distinguishable from missing cache usage
+// without changing the DTO's public JSON or the billing values.
+func (u *GeminiUsageMetadata) UnmarshalJSON(data []byte) error {
+	type plain GeminiUsageMetadata
+	fields := struct {
+		*plain
+		CacheRead *int `json:"cachedContentTokenCount"`
+	}{plain: (*plain)(u)}
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if fields.CacheRead != nil {
+		u.CachedContentTokenCount = *fields.CacheRead
+		u.CacheReadReported = true
+	}
+	return nil
 }
 
 type GeminiPromptTokensDetails struct {

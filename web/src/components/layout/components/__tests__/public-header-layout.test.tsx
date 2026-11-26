@@ -80,7 +80,7 @@ afterEach(async () => {
   useSystemConfigStore.getState().setLoading(true)
 })
 
-async function renderHeader(requiresAuth = false) {
+async function renderHeader(requiresAuth = false, channelStatus?: boolean) {
   const rootRoute = createRootRoute({
     component: () => (
       <PublicHeader
@@ -90,7 +90,7 @@ async function renderHeader(requiresAuth = false) {
       />
     ),
   })
-  const routes = ['/', '/help', '/sign-in'].map((path) =>
+  const routes = ['/', '/help', '/sign-in', '/health'].map((path) =>
     createRoute({ getParentRoute: () => rootRoute, path })
   )
   const router = createRouter({
@@ -104,6 +104,7 @@ async function renderHeader(requiresAuth = false) {
   client.setQueryData(STATUS_QUERY_KEY, {
     HeaderNavModules: JSON.stringify({
       home: true,
+      channelStatus,
       console: false,
       pricing: { enabled: requiresAuth, requireAuth: requiresAuth },
       rankings: { enabled: false },
@@ -140,6 +141,41 @@ describe('public header responsive navigation', () => {
     act(() => window.dispatchEvent(new Event('scroll')))
     expect(banner.firstElementChild).toHaveClass('max-w-[52rem]')
     expect(desktopLinks).toHaveClass('@min-[64rem]/public-header:flex')
+  })
+
+  test('guest channel status has a desktop link and opens the same public page from the mobile menu', async () => {
+    const router = await renderHeader()
+    const user = userEvent.setup()
+    expect(
+      screen.getByRole('link', { name: 'Channel status' })
+    ).toHaveAttribute('href', '/health')
+    await user.click(
+      screen.getByRole('button', { name: 'Toggle navigation menu' })
+    )
+    const menu = await screen.findByRole('dialog', {
+      name: 'Toggle navigation menu',
+    })
+    await user.click(within(menu).getByRole('link', { name: 'Channel status' }))
+    await waitFor(() => expect(router.state.location.pathname).toBe('/health'))
+    expect(
+      screen.queryByRole('dialog', { name: 'Sign in required' })
+    ).not.toBeInTheDocument()
+  })
+
+  test('an explicitly disabled channel status link is absent on both desktop and mobile', async () => {
+    await renderHeader(false, false)
+    expect(
+      screen.queryByRole('link', { name: 'Channel status' })
+    ).not.toBeInTheDocument()
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Toggle navigation menu' })
+    )
+    const menu = await screen.findByRole('dialog', {
+      name: 'Toggle navigation menu',
+    })
+    expect(
+      within(menu).queryByRole('link', { name: 'Channel status' })
+    ).not.toBeInTheDocument()
   })
 
   test('the compact entry opens by keyboard, traps focus and restores it on Escape', async () => {

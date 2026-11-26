@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -26,7 +26,8 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { formatTimestampToDate } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
-import { createServerError } from '@/lib/server-error-message'
+import { getServerErrorSources } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
 import {
   getCurrentLogCleanupTask,
@@ -64,11 +65,68 @@ function isActiveLogCleanupTask(task: LogCleanupTask | null) {
   return task?.status === 'pending' || task?.status === 'running'
 }
 
+type CleanupAttempt = { taskId: string; cutoff: number }
+
+const cleanupStoragePrefix = 'log-cleanup:awaiting:'
+
+function readCleanupAttempt(scope: string): CleanupAttempt | null {
+  try {
+    const raw = sessionStorage.getItem(scope)
+    if (!raw) return null
+    const value = JSON.parse(raw) as Partial<CleanupAttempt>
+    if (
+      typeof value.taskId === 'string' &&
+      /^systask_[0-9a-f-]{36}$/.test(value.taskId) &&
+      typeof value.cutoff === 'number' &&
+      Number.isSafeInteger(value.cutoff) &&
+      value.cutoff > 0
+    ) {
+      return { taskId: value.taskId, cutoff: value.cutoff }
+    }
+  } catch {
+    // Session storage can be disabled.
+  }
+  return null
+}
+
+function saveCleanupAttempt(scope: string, attempt: CleanupAttempt | null) {
+  try {
+    if (attempt) sessionStorage.setItem(scope, JSON.stringify(attempt))
+    else sessionStorage.removeItem(scope)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function matchesCleanupAttempt(task: LogCleanupTask, attempt: CleanupAttempt) {
+  return (
+    task.type === 'log_cleanup' &&
+    task.task_id === attempt.taskId &&
+    task.payload?.target_timestamp === attempt.cutoff
+  )
+}
+
+function definiteCleanupRejection(value: unknown) {
+  return getServerErrorSources(value).some(
+    ({ code }) =>
+      code === 'invalid_log_cleanup_task_id' ||
+      code === 'invalid_log_cleanup_cutoff' ||
+      code === 'log_cleanup_task_id_conflict'
+  )
+}
+
 /**
  * The history log module of the log maintenance page. It deletes the logs
  * created before a chosen time as a background task and shows its progress.
  */
 export function HistoryLogCleanup() {
+  const userId = useAuthStore((state) => state.auth.user?.id)
+  const scope = cleanupStoragePrefix + (userId ?? '')
+  return <HistoryLogCleanupForm key={scope} scope={scope} />
+}
+
+function HistoryLogCleanupForm({ scope }: { scope: string }) {
   const { t } = useTranslation()
   const titleId = useId()
   const [purgeDate, setPurgeDate] = useState<Date | undefined>(() =>
@@ -80,30 +138,136 @@ export function HistoryLogCleanup() {
   )
   const [showConfirmDialog, setShowConfirmDialog] = useState(false)
 
-  useEffect(() => {
-    let cancelled = false
+  const [attempt, setAttempt] = useState(() => readCleanupAttempt(scope))
+  const [lookupProblem, setLookupProblem] = useState(false)
+  const [manualCheck, setManualCheck] = useState(0)
+  const [initialTaskChecked, setInitialTaskChecked] = useState(false)
+  const submitting = useRef(false)
+  const lastSeen = useRef<LogCleanupTask | null>(null)
 
-    async function fetchCurrentLogCleanupTask() {
+  const logCleanupActive = isActiveLogCleanupTask(logCleanupTask)
+  const targetId =
+    attempt?.taskId ?? (logCleanupActive ? logCleanupTask?.task_id : null)
+  const unconfirmed = Boolean(
+    attempt && logCleanupTask?.task_id !== attempt.taskId
+  )
+  const needsCurrentRead = !targetId && (!initialTaskChecked || lookupProblem)
+
+  useEffect(() => {
+    if (targetId || initialTaskChecked || isStartingLogCleanup) return
+    const controller = new AbortController()
+    void getCurrentLogCleanupTask(controller.signal)
+      .then((response) => {
+        if (controller.signal.aborted) return
+        setLookupProblem(response.success !== true)
+        setInitialTaskChecked(true)
+        if (response.success && response.data) {
+          lastSeen.current = response.data
+          setLogCleanupTask(response.data)
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setLookupProblem(true)
+          setInitialTaskChecked(true)
+        }
+      })
+    return () => controller.abort()
+  }, [initialTaskChecked, isStartingLogCleanup, targetId])
+
+  useEffect(() => {
+    if (!targetId || isStartingLogCleanup) return
+    const taskId = targetId
+    const controller = new AbortController()
+    let timer: number
+    let failures = 0
+    function schedule(delay: number) {
+      timer = window.setTimeout(() => void read(), delay)
+    }
+    async function read() {
       try {
-        const res = await getCurrentLogCleanupTask()
-        if (!cancelled && res.success && res.data) {
-          setLogCleanupTask(res.data)
+        const response = await getSystemTask(taskId, controller.signal)
+        if (controller.signal.aborted) return
+        const task = response.data
+        if (
+          !response.success ||
+          !task ||
+          task.type !== 'log_cleanup' ||
+          task.task_id !== taskId ||
+          (attempt && !matchesCleanupAttempt(task, attempt))
+        ) {
+          throw new Error('No matching log cleanup receipt')
+        }
+        failures = 0
+        setLookupProblem(false)
+        // Single outstanding read per ID. Do not move backwards if a node
+        // temporarily returns an older snapshot.
+        const previous = lastSeen.current
+        if (
+          previous?.task_id === task.task_id &&
+          ((previous.updated_at ?? 0) > (task.updated_at ?? 0) ||
+            (isActiveLogCleanupTask(task) &&
+              (!isActiveLogCleanupTask(previous) ||
+                (previous.state?.processed ?? 0) >
+                  (task.state?.processed ?? 0))))
+        ) {
+          schedule(1_000)
+          return
+        }
+        lastSeen.current = task
+        setLogCleanupTask(task)
+        if (isActiveLogCleanupTask(task)) {
+          schedule(1_000)
+          return
+        }
+        if (attempt) {
+          saveCleanupAttempt(scope, null)
+          setAttempt(null)
+        }
+        if (task.status === 'succeeded') {
+          const count = task.result?.deleted_count ?? task.state?.processed ?? 0
+          toast.success(
+            count > 0
+              ? t('{{count}} log entries removed.', { count })
+              : t('No log entries matched the selected time.')
+          )
+        } else if (task.status === 'failed') {
+          handleServerError(task, t('Failed to clean logs'))
         }
       } catch {
-        /* ignore */
+        if (controller.signal.aborted) return
+        setLookupProblem(true)
+        failures += 1
+        if (attempt && failures === 1) {
+          // Observe separately running work, never as this request's receipt.
+          void getCurrentLogCleanupTask(controller.signal)
+            .then((observed) => {
+              if (
+                !controller.signal.aborted &&
+                observed.success &&
+                observed.data &&
+                !lastSeen.current
+              ) {
+                lastSeen.current = observed.data
+                setLogCleanupTask(observed.data)
+              }
+            })
+            .catch(() => undefined)
+        }
+        if (failures < 5) schedule(Math.min(1_000 * 2 ** failures, 15_000))
       }
     }
-
-    fetchCurrentLogCleanupTask()
-
+    schedule(manualCheck > 0 || attempt ? 0 : 1_000)
     return () => {
-      cancelled = true
+      controller.abort()
+      window.clearTimeout(timer)
     }
-  }, [])
+  }, [attempt, isStartingLogCleanup, manualCheck, scope, t, targetId])
 
   const purgeTimestamp = useMemo(() => {
     if (!purgeDate) return null
-    return Math.floor(purgeDate.getTime() / 1000)
+    const timestamp = Math.floor(purgeDate.getTime() / 1000)
+    return Number.isSafeInteger(timestamp) && timestamp > 0 ? timestamp : null
   }, [purgeDate])
 
   const formattedPurgeDate = useMemo(() => {
@@ -111,7 +275,6 @@ export function HistoryLogCleanup() {
     return formatTimestampToDate(purgeDate.getTime(), 'milliseconds')
   }, [purgeDate])
 
-  const logCleanupActive = isActiveLogCleanupTask(logCleanupTask)
   const logCleanupState = logCleanupTask?.state
   const logCleanupProgress = Math.min(
     100,
@@ -119,45 +282,13 @@ export function HistoryLogCleanup() {
   )
   const logCleanupProcessed = logCleanupState?.processed ?? 0
   const logCleanupTotal = logCleanupState?.total ?? 0
-  const logCleanupTaskId = logCleanupTask?.task_id
-
-  useEffect(() => {
-    if (!logCleanupTaskId || !logCleanupActive) return
-
-    let cancelled = false
-    const interval = window.setInterval(async () => {
-      try {
-        const res = await getSystemTask(logCleanupTaskId)
-        if (cancelled || !res.success || !res.data) return
-
-        setLogCleanupTask(res.data)
-        if (!isActiveLogCleanupTask(res.data)) {
-          if (res.data.status === 'succeeded') {
-            const count =
-              res.data.result?.deleted_count ?? res.data.state?.processed ?? 0
-            toast.success(
-              count > 0
-                ? t('{{count}} log entries removed.', { count })
-                : t('No log entries matched the selected time.')
-            )
-          } else if (res.data.status === 'failed') {
-            handleServerError(res.data, t('Failed to clean logs'))
-          }
-        }
-      } catch {
-        /* keep polling */
-      }
-    }, 1000)
-
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [logCleanupActive, logCleanupTaskId, t])
 
   const handleRequestCleanLogs = () => {
     if (!purgeTimestamp) {
       toast.error(t('Select a timestamp before clearing logs.'))
+      return
+    }
+    if (submitting.current || attempt || logCleanupActive || needsCurrentRead) {
       return
     }
 
@@ -165,28 +296,69 @@ export function HistoryLogCleanup() {
   }
 
   const handleCleanLogs = async () => {
-    if (!purgeTimestamp) {
-      toast.error(t('Select a timestamp before clearing logs.'))
+    if (
+      !purgeTimestamp ||
+      submitting.current ||
+      attempt ||
+      logCleanupActive ||
+      needsCurrentRead
+    ) {
       return
     }
-
+    const uuid = globalThis.crypto?.randomUUID?.()
+    if (!uuid) {
+      toast.error(t('Could not start log cleanup.'))
+      return
+    }
+    const next = { taskId: `systask_${uuid}`, cutoff: purgeTimestamp }
+    if (!saveCleanupAttempt(scope, next)) {
+      toast.error(t('Could not start log cleanup.'))
+      return
+    }
+    submitting.current = true
     setIsStartingLogCleanup(true)
+    setLookupProblem(false)
+    setAttempt(next)
     try {
-      const res = await startLogCleanupTask(purgeTimestamp)
-      if (!res.success) {
-        throw createServerError(res, t('Failed to clean logs'))
+      const response = await startLogCleanupTask(next.cutoff, next.taskId)
+      const task = response.data
+      if (!task || task.type !== 'log_cleanup') {
+        throw response
       }
-      if (!res.data) {
-        throw new Error(t('Failed to clean logs'))
+      if (response.success && matchesCleanupAttempt(task, next)) {
+        lastSeen.current = task
+        setLogCleanupTask(task)
+        toast.success(t('Log cleanup task started.'))
+      } else if (
+        !response.success &&
+        response.code === 'log_cleanup_already_running' &&
+        task.task_id !== next.taskId &&
+        isActiveLogCleanupTask(task)
+      ) {
+        // The versioned route declined this cutoff and reported other work.
+        lastSeen.current = task
+        setLogCleanupTask(task)
+        setAttempt(null)
+        saveCleanupAttempt(scope, null)
+        toast.info(
+          t(
+            'Another log cleanup is already running. Your request was not started.'
+          )
+        )
+      } else {
+        throw response
       }
-      setLogCleanupTask(res.data)
-      setShowConfirmDialog(false)
-      toast.success(t('Log cleanup task started.'))
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : t('Failed to clean logs')
-      handleServerError(error, message)
+      if (definiteCleanupRejection(error)) {
+        setAttempt(null)
+        saveCleanupAttempt(scope, null)
+        handleServerError(error, t('Could not start log cleanup.'))
+      } else {
+        setLookupProblem(true)
+      }
     } finally {
+      setShowConfirmDialog(false)
+      submitting.current = false
       setIsStartingLogCleanup(false)
     }
   }
@@ -221,13 +393,42 @@ export function HistoryLogCleanup() {
           type='button'
           variant='destructive'
           onClick={handleRequestCleanLogs}
-          disabled={isStartingLogCleanup || logCleanupActive}
+          disabled={
+            isStartingLogCleanup ||
+            logCleanupActive ||
+            Boolean(attempt) ||
+            needsCurrentRead
+          }
         >
           {isStartingLogCleanup || logCleanupActive
             ? t('Cleaning...')
             : t('Clean logs')}
         </Button>
       </div>
+      {!isStartingLogCleanup && (unconfirmed || lookupProblem) && (
+        <div
+          role='status'
+          className='flex flex-wrap items-center gap-2 text-sm'
+        >
+          <span>
+            {unconfirmed
+              ? t(
+                  'Could not confirm the log cleanup request. Check its status before starting another.'
+                )
+              : t('Could not check log cleanup status.')}
+          </span>
+          <Button
+            type='button'
+            variant='outline'
+            onClick={() => {
+              if (targetId) setManualCheck((value) => value + 1)
+              else setInitialTaskChecked(false)
+            }}
+          >
+            {t('Check status')}
+          </Button>
+        </div>
+      )}
       {logCleanupTask && (
         <div className='rounded-md border p-3'>
           <div className='mb-2 flex items-center justify-between gap-3 text-sm'>
@@ -236,6 +437,15 @@ export function HistoryLogCleanup() {
               {logCleanupProgress}%
             </span>
           </div>
+          {logCleanupTask.payload?.target_timestamp != null && (
+            <p className='text-muted-foreground mb-2 text-xs'>
+              {t('Cleanup cutoff: {{date}}', {
+                date: formatTimestampToDate(
+                  logCleanupTask.payload.target_timestamp
+                ),
+              })}
+            </p>
+          )}
           <Progress value={logCleanupProgress} />
           <div className='text-muted-foreground mt-2 text-xs'>
             {t('{{processed}} of {{total}} log entries processed.', {

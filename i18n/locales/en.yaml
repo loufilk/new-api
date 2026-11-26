@@ -361,6 +361,7 @@ relay.user_call_intercepted: Calls for this user are intercepted. This endpoint 
 relay.user_call_interception_unavailable: Call interception is temporarily unavailable. The request was not forwarded.
 
 common.group_config_changed: "Group settings changed or are temporarily unavailable. Retry the request."
+common.user_group_pricing_unavailable: "User group pricing is temporarily unavailable. Retry the request."
 
 # Minimal support ticket notifications
 support_email_subject: "Support ticket #{{.ID}}"

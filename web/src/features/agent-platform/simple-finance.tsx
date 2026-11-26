@@ -176,7 +176,7 @@ export function SimpleAgentFinance() {
   const [openAgent, setOpenAgent] = useState(false)
   const [feesOpen, setFeesOpen] = useState(false)
   const [userWithdrawalOpen, setUserWithdrawalOpen] = useState(false)
-  const [detailsAgent, setDetailsAgent] = useState<SimpleAgentRow | null>(null)
+  const [detailsAgentId, setDetailsAgentId] = useState<number | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const refresh = async () => {
     await client.invalidateQueries({ queryKey: ['simple-root'] })
@@ -186,6 +186,9 @@ export function SimpleAgentFinance() {
   if (query.isPending) return <LoadingState />
   if (query.isError) return <ErrorState onRetry={() => void query.refetch()} />
   const agents = query.data?.items ?? []
+  const detailsAgent = agents.find(
+    (agent) => agent.agent_user_id === detailsAgentId
+  )
   return (
     <>
       <SectionPageLayout stackActionsOnMobile>
@@ -282,7 +285,7 @@ export function SimpleAgentFinance() {
                         <Button
                           size='sm'
                           variant='outline'
-                          onClick={() => setDetailsAgent(agent)}
+                          onClick={() => setDetailsAgentId(agent.agent_user_id)}
                         >
                           {t('Fund details')}
                         </Button>
@@ -424,8 +427,18 @@ export function SimpleAgentFinance() {
           open
           title={`${t('Fund details')} · ${detailsAgent.username}`}
           onOpenChange={(open) => {
-            if (!open) setDetailsAgent(null)
+            if (!open) setDetailsAgentId(null)
           }}
+          footer={
+            <Button
+              type='button'
+              variant='outline'
+              disabled={query.isFetching}
+              onClick={() => void query.refetch()}
+            >
+              {t('Refresh')}
+            </Button>
+          }
         >
           <dl className='mb-4 grid grid-cols-2 gap-3 text-sm'>
             {[

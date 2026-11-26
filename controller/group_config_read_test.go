@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -240,4 +241,49 @@ func TestGroupConfigAdmissionHTTP(t *testing.T) {
 	}
 	require.NoError(t, db.Callback().Query().Remove(identityFailure))
 
+}
+
+func TestPublicMarketReadsRequireCurrentGroupConfiguration(t *testing.T) {
+	if os.Getenv("TEST_TASK_DB_DIALECT") != "postgres" || os.Getenv("TEST_POSTGRES_DSN") == "" {
+		t.Skip("requires an isolated PostgreSQL fixture")
+	}
+	if groupRenameControllerIsolatedProcess(t) {
+		return
+	}
+	require.NoError(t, i18n.Init())
+	db := setupGroupRenameControllerTest(t)
+	require.NoError(t, db.AutoMigrate(&model.PerfMetric{}))
+	ratio_setting.SetExposeRatioEnabled(true)
+	require.NoError(t, db.Create(&model.Option{Key: "UserUsableGroups", Value: `{"public-route":"Public route"}`}).Error)
+	require.NoError(t, db.Create(&model.Option{Key: "GroupRatio", Value: `{"public-route":1}`}).Error)
+	require.NoError(t, db.Create(&model.PerfMetric{ModelName: "example-model", Group: "public-route", BucketTs: time.Now().Add(-time.Hour).Unix(), RequestCount: 1, SuccessCount: 1}).Error)
+
+	r := gin.New()
+	r.GET("/summary", GetPerfMetricsSummary)
+	r.GET("/ratios", GetRatioConfig)
+	get := func(path string) *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		r.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		return response
+	}
+	before := get("/summary")
+	require.Equal(t, http.StatusOK, before.Code, before.Body.String())
+	require.Contains(t, before.Body.String(), "example-model")
+	// A newly committed visibility policy is authoritative on the next
+	// anonymous request, without a process restart or a Pub/Sub message.
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		return tx.Create(&[]model.Option{
+			{Key: "GroupConfigVersion", Value: "1"},
+			{Key: "GroupCatalogMetadata", Value: `{"public-route":{"exclusive":true}}`},
+		}).Error
+	}))
+	after := get("/summary")
+	require.Equal(t, http.StatusOK, after.Code, after.Body.String())
+	require.NotContains(t, after.Body.String(), "example-model")
+	require.NoError(t, db.Model(&model.Option{}).Where("key = ?", "GroupConfigVersion").Update("value", "invalid").Error)
+	for _, path := range []string{"/ratios", "/summary"} {
+		response := get(path)
+		require.Equal(t, http.StatusServiceUnavailable, response.Code)
+		require.Contains(t, response.Body.String(), "group_config_changed")
+	}
 }

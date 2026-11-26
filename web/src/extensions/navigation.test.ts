@@ -91,7 +91,7 @@ test.each([
       { isAuthenticated: true, status }
     )
     expect(result.some((link) => link.href === '/account-pool')).toBe(false)
-    expect(result.some((link) => link.href === '/intelligence')).toBe(true)
+    expect(result.some((link) => link.href === '/intelligence')).toBe(false)
     expect(result.some((link) => link.href === '/affiliate')).toBe(true)
   }
 )
@@ -110,13 +110,13 @@ test.each([
   { model_test_enabled: false },
   { model_test_enabled: 'true' },
 ])(
-  'signed-in users can read model history regardless of the new-test switch (%j)',
+  'retired monitor is never advertised regardless of the legacy switch (%j)',
   (status) => {
     const result = applyNavigationExtensions(
       [{ title: 'Tests', href: '/intelligence' }],
       { isAuthenticated: true, status }
     )
-    expect(result.some((link) => link.href === '/intelligence')).toBe(true)
+    expect(result.some((link) => link.href === '/intelligence')).toBe(false)
     expect(result.some((link) => link.href === '/affiliate')).toBe(true)
   }
 )
@@ -125,6 +125,6 @@ test('model test and pool navigation are independent', () => {
     isAuthenticated: true,
     status: { model_test_enabled: true, account_pool_enabled: false },
   })
-  expect(result.filter((link) => link.href === '/intelligence')).toHaveLength(1)
+  expect(result.filter((link) => link.href === '/intelligence')).toHaveLength(0)
   expect(result.some((link) => link.href === '/account-pool')).toBe(false)
 })

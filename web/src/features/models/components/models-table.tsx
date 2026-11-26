@@ -16,9 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
-import { useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DataTablePage, useDataTable } from '@/components/data-table'
@@ -26,16 +26,21 @@ import { ErrorState } from '@/components/error-state'
 import { useModelPricing } from '@/features/model-pricing/api'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
+import { getAuthSessionEpoch } from '@/lib/auth-session'
 import {
   getServerMessage,
   requireServerSuccess,
 } from '@/lib/server-error-message'
 
-import { getModels, searchModels, getVendors } from '../api'
+import { getModels, searchModels, getVendorOptions } from '../api'
 import { DEFAULT_PAGE_SIZE } from '../constants'
 import { modelsQueryKeys, vendorsQueryKeys } from '../lib'
-import type { ModelSquareState } from '../types'
+import type { Model, ModelSquareState } from '../types'
 import { DataTableBulkActions } from './data-table-bulk-actions'
+import {
+  ModelDeleteDialog,
+  type ModelDeleteTarget,
+} from './dialogs/model-delete-dialog'
 import { useModelsColumns } from './models-columns'
 import { useModels } from './models-provider'
 
@@ -44,6 +49,24 @@ const route = getRouteApi('/_authenticated/model-management/$section')
 export function ModelsTable() {
   const { t } = useTranslation()
   const { selectedVendor } = useModels()
+  const client = useQueryClient()
+  const [deletion, setDeletion] = useState<{
+    targets: ModelDeleteTarget[]
+    epoch: number
+    bulk: boolean
+  } | null>(null)
+  const requestDeletion = useCallback((targets: Model[], bulk = false) => {
+    if (!targets.length || targets.some(({ id }) => id <= 0)) return
+    setDeletion({
+      targets: targets.map(({ id, model_name, name_rule }) => ({
+        id,
+        model_name,
+        name_rule,
+      })),
+      epoch: getAuthSessionEpoch(),
+      bulk,
+    })
+  }, [])
   const isMobile = useMediaQuery('(max-width: 640px)')
 
   // URL state management
@@ -89,7 +112,7 @@ export function ModelsTable() {
   const { data: vendorsData } = useQuery({
     queryKey: vendorsQueryKeys.list(),
     queryFn: async () =>
-      requireServerSuccess(await getVendors({ page_size: 1000 })),
+      requireServerSuccess(await getVendorOptions()),
   })
 
   const vendors = useMemo(
@@ -129,19 +152,20 @@ export function ModelsTable() {
     syncFilterValue
   )
 
+  const listKey = modelsQueryKeys.list({
+    include_channel_models: true,
+    keyword: globalFilter,
+    vendor: activeVendorFilter,
+    status: statusFilterValue,
+    square_state: squareState,
+    sync_official: syncFilterValue,
+    p: pagination.pageIndex + 1,
+    page_size: pagination.pageSize,
+  })
   // Fetch models data
   // eslint-disable-next-line @tanstack/query/exhaustive-deps
   const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
-    queryKey: modelsQueryKeys.list({
-      include_channel_models: true,
-      keyword: globalFilter,
-      vendor: activeVendorFilter,
-      status: statusFilterValue,
-      square_state: squareState,
-      sync_official: syncFilterValue,
-      p: pagination.pageIndex + 1,
-      page_size: pagination.pageSize,
-    }),
+    queryKey: listKey,
     queryFn: async () => {
       if (shouldSearch) {
         return requireServerSuccess(
@@ -181,7 +205,12 @@ export function ModelsTable() {
   let pricingState: 'loading' | 'error' | undefined
   if (pricingQuery.isError) pricingState = 'error'
   else if (pricingQuery.isLoading) pricingState = 'loading'
-  const columns = useModelsColumns(vendors, pricingQuery.data, pricingState)
+  const columns = useModelsColumns(
+    requestDeletion,
+    vendors,
+    pricingQuery.data,
+    pricingState
+  )
 
   // React Table instance
   const { table } = useDataTable({
@@ -224,16 +253,32 @@ export function ModelsTable() {
     })),
   ]
 
-  if (isError || data?.success === false) {
-    return (
-      <ErrorState
-        description={error?.message ?? getServerMessage(data)}
-        onRetry={() => void refetch()}
-      />
+  // Columns and mobile/desktop cells can remount while pricing or the catalogue
+  // refreshes. Keep the frozen deletion at table level, never in a transient row.
+  const deletionIsCurrent = () => {
+    if (!deletion || deletion.epoch !== getAuthSessionEpoch()) return false
+    const latest = client.getQueryState<typeof data>(listKey)
+    if (latest?.status !== 'success' || latest.fetchStatus !== 'idle') {
+      return false
+    }
+    return deletion.targets.every((target) =>
+      latest.data?.data?.items?.some(
+        (item) =>
+          item.id === target.id &&
+          item.model_name === target.model_name &&
+          item.name_rule === target.name_rule
+      )
     )
   }
-
-  return (
+  const deleteDialog = deletion && (
+    <ModelDeleteDialog
+      models={deletion.targets}
+      isCurrent={deletionIsCurrent}
+      onClose={() => setDeletion(null)}
+      onSuccess={deletion.bulk ? () => table.resetRowSelection() : undefined}
+    />
+  )
+  const catalogue = (
     <DataTablePage
       showMobileBulkActions
       mobileProps={{ enableRowSelection: true }}
@@ -294,7 +339,22 @@ export function ModelsTable() {
           },
         ],
       }}
-      bulkActions={<DataTableBulkActions table={table} />}
+      bulkActions={
+        <DataTableBulkActions table={table} onDelete={requestDeletion} />
+      }
     />
+  )
+  return (
+    <>
+      {deleteDialog}
+      {isError || data?.success === false ? (
+        <ErrorState
+          description={error?.message ?? getServerMessage(data)}
+          onRetry={() => void refetch()}
+        />
+      ) : (
+        catalogue
+      )}
+    </>
   )
 }

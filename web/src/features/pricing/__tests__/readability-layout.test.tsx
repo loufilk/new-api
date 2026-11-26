@@ -20,7 +20,6 @@ import { render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ModelCard } from '../components/model-card'
-import { ModelCategories } from '../components/model-categories'
 import type { PricingModel } from '../types'
 
 const model: PricingModel = {
@@ -36,26 +35,6 @@ const model: PricingModel = {
 }
 
 describe('pricing readability layout', () => {
-  it('keeps all seven category controls large and able to wrap on narrow screens', () => {
-    render(<ModelCategories models={[model]} value='all' onChange={vi.fn()} />)
-    const categories = screen.getAllByRole('button')
-    expect(categories).toHaveLength(7)
-    for (const name of [
-      'Text 1',
-      'Image Generation 0',
-      'Video 0',
-      'Audio 0',
-      'Vectors 0',
-      'Decision Models 0',
-      'All 1',
-    ]) {
-      const category = screen.getByRole('button', { name })
-      expect(category).toHaveClass('h-10', 'px-4', 'text-base')
-      expect(within(category).getByText(/^[01]$/)).toHaveClass('text-sm')
-    }
-    expect(categories[0].parentElement).toHaveClass('flex-wrap', 'max-w-full')
-  })
-
   it('shows the complete long model name at the larger size without a line clamp', () => {
     render(<ModelCard model={model} onClick={vi.fn()} />)
     const heading = screen.getByRole('heading', { name: model.model_name })
@@ -129,9 +108,11 @@ describe('pricing readability layout', () => {
 
   it('allows performance details to wrap rather than overflowing a narrow card', () => {
     render(<ModelCard model={model} onClick={vi.fn()} />)
-    expect(
-      screen.getByLabelText('Performance metrics for the last 24 hours')
-    ).toHaveClass('flex-wrap')
+    const performance = screen.getByLabelText('Performance')
+    expect(performance).toHaveClass('flex-wrap')
+    expect(performance).toContainElement(
+      screen.getByText('24 hourly buckets, including the current hour')
+    )
     expect(screen.getByRole('button', { name: 'Details' })).toHaveClass(
       'h-9',
       'text-sm'

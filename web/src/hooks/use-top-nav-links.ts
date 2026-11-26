@@ -78,6 +78,15 @@ export function useTopNavLinks(): TopNavLink[] {
     })
   }
 
+  // Visitors see published monitoring only. Account-specific group health
+  // stays on the original authenticated page.
+  if (status && modules.channelStatus !== false) {
+    links.push({
+      title: t('Channel status'),
+      href: isAuthed ? '/channel-status' : '/health',
+    })
+  }
+
   // Rankings
   const rankings = modules?.rankings
   if (rankings && typeof rankings === 'object' && rankings.enabled) {

@@ -183,6 +183,9 @@ func RenameGroups(mappings []GroupRenameMapping) (*GroupRenameResult, error) {
 // provided option values in one transaction. Missing option rows are
 // materialized before locking so concurrent initial operations serialize.
 func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, error) {
+	if len(request.Mappings) != 0 && !common.IM21RolloutActive() {
+		return nil, common.ErrIM21RolloutLocked
+	}
 	if len(request.Mappings) == 0 && len(request.Options) == 0 {
 		return nil, ErrGroupRenameEmpty
 	}
@@ -349,6 +352,12 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 		if err := renameGroupSubscriptionReferences(tx, plan, state); err != nil {
 			return err
 		}
+		if err := renameGroupCatalogAndEntitlementsTx(tx, plan.mappings); err != nil {
+			return err
+		}
+		if err := renameUserGroupPricingTx(tx, plan.mappings, request.ActorID); err != nil {
+			return err
+		}
 		for key, value := range renamedOptions {
 			if optionValues[key] != value {
 				if err := upsertGroupRenameOption(tx, key, value); err != nil {
@@ -363,7 +372,7 @@ func ApplyGroupRename(request GroupRenameApplyRequest) (*GroupRenameResult, erro
 			}
 		}
 		state.affectedOptionKeys = optionKeys
-		state.groupConfigVersion, err = bumpGroupConfigVersionTx(tx)
+		state.groupConfigVersion, err = advanceGroupConfigVersionTx(tx, &marketTransition{before: optionValues, after: renamedOptions, mappings: plan.mappings})
 		if err != nil {
 			return err
 		}
@@ -821,6 +830,16 @@ func validateGroupRenameOptionUpdates(tx *gorm.DB, request GroupRenameApplyReque
 func groupRenameNameStillReferenced(tx *gorm.DB, group string, effective map[string]string, exceptKey string, autoRefs map[string]struct{}) (bool, error) {
 	if _, ok := autoRefs[group]; ok {
 		return true, nil
+	}
+	catalog, err := readGroupCatalogTx(tx)
+	if err != nil {
+		return false, err
+	}
+	if _, ok := catalog[group]; ok {
+		return true, nil
+	}
+	if exists, err := userGroupPricingReferencesGroup(tx, group); err != nil || exists {
+		return exists, err
 	}
 	for _, key := range groupRenameOptionKeys {
 		if key == exceptKey {

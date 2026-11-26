@@ -43,7 +43,8 @@ const model: PricingModel = {
 }
 async function renderApi(
   values: Partial<PricingModel> = {},
-  endpointMap: ModelEndpointMap = {}
+  endpointMap: ModelEndpointMap = {},
+  group?: string
 ) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -57,6 +58,7 @@ async function renderApi(
         <ModelDetailsApi
           model={{ ...model, ...values }}
           endpointMap={endpointMap}
+          selectedGroup={group}
         />
       </QueryClientProvider>
     ),
@@ -66,18 +68,77 @@ async function renderApi(
     history: createMemoryHistory(),
   })
   render(<RouterProvider router={router} />)
-  await screen.findByRole('heading', { name: 'Authentication' })
+  await screen.findByRole('heading', { name: 'Rate limits' })
 }
 describe('model API contract accuracy', () => {
+  it('renders only the selected group’s verified code examples and request URL', async () => {
+    await renderApi(
+      {
+        enable_groups: ['a', 'b'],
+        supported_endpoint_types: ['gemini', 'anthropic'],
+        supported_endpoint_types_by_group: {
+          a: ['gemini'],
+          b: ['anthropic'],
+        },
+      },
+      {
+        gemini: { path: '/v1beta/models/{model}:generateContent' },
+        anthropic: { path: '/v1/messages' },
+      },
+      'b'
+    )
+    expect(screen.getByText(/^POST .*\/v1\/messages$/)).toBeVisible()
+    expect(screen.getByText('x-api-key: <TOKEN>')).toBeVisible()
+    expect(screen.queryByText('x-goog-api-key: <TOKEN>')).toBeNull()
+    expect(screen.queryByText(/generateContent/)).toBeNull()
+  })
+
   it('does not show invented per-group rate limits or model-name-guessed parameter support', async () => {
     await renderApi()
     expect(screen.queryByText('RPM')).toBeNull()
     expect(screen.queryByText('temperature')).toBeNull()
   })
-  it('shows the correct Gemini and Anthropic headers without forcing every protocol to use Bearer', async () => {
-    await renderApi()
+  it('shows only the active protocol headers and documents a non-POST method without generating a POST', async () => {
+    const user = userEvent.setup()
+    await renderApi(
+      { supported_endpoint_types: ['gemini', 'anthropic'] },
+      {
+        gemini: { path: '/v1beta/models/{model}:generateContent' },
+        anthropic: { path: '/custom/messages', method: 'GET' },
+      }
+    )
     expect(screen.getByText('x-goog-api-key: <TOKEN>')).toBeVisible()
+    expect(screen.queryByText('x-api-key: <TOKEN>')).toBeNull()
+    await user.click(screen.getByRole('tab', { name: 'anthropic' }))
+    expect(screen.getByText('x-api-key: <TOKEN>')).toBeVisible()
     expect(screen.getByText('anthropic-version: 2023-06-01')).toBeVisible()
+    expect(screen.queryByText('x-goog-api-key: <TOKEN>')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Copy code' })).toBeNull()
+  })
+  it('reports only visible group limits, preserving the real window, shared scope, and uncapped dimensions', async () => {
+    await renderApi({
+      enable_groups: ['premium'],
+      group_rate_limits: {
+        premium: {
+          window_minutes: 5,
+          total_requests: 250,
+          successful_requests: 0,
+          scope: 'shared',
+        },
+        hidden: {
+          window_minutes: 1,
+          total_requests: 333,
+          successful_requests: 222,
+          scope: 'group',
+        },
+      },
+    })
+    expect(screen.getByText('5 minutes')).toBeVisible()
+    expect(screen.getByText('250')).toBeVisible()
+    expect(screen.getByText('Unlimited')).toBeVisible()
+    expect(screen.getByText('Shared across groups')).toBeVisible()
+    expect(screen.queryByText('333')).not.toBeInTheDocument()
+    expect(screen.queryByText('RPM')).not.toBeInTheDocument()
   })
   it.each<{
     endpoint: string

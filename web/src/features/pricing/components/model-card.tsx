@@ -20,10 +20,10 @@ import { ChevronRight } from 'lucide-react'
 import { memo, useMemo, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { CatalogModelIcon } from '@/components/catalog-model-icon'
 import { CopyButton } from '@/components/copy-button'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card'
-import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
@@ -37,12 +37,28 @@ import {
   isUnconfiguredTaskUsageModel,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import type { ModelEndpointMap } from '../lib/model-endpoints'
+import {
+  activeBillingExpressions,
+  catalogModelPlatformIcon,
+  getMarketPriceModel,
+  marketGroupLabel,
+} from '../lib/market-groups'
+import { quotedMarketGroups } from '../lib/market-result-groups'
+import {
+  getModelEndpoints,
+  getModelEndpointTypes,
+  type ModelEndpointMap,
+} from '../lib/model-endpoints'
 import { isTokenBasedModel } from '../lib/model-helpers'
-import { withBasePricing } from '../lib/plugin-pricing'
+import {
+  hasRedactedProviderPricing,
+  isCatalogPriceUnavailable,
+  withBasePricing,
+} from '../lib/plugin-pricing'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import { taskPriceLabel, taskUsageUnitLabel } from '../lib/task-price-display'
 import type { PricingModel, PriceType, TokenUnit } from '../types'
+import { MarketGroupIcon } from './market-group-icon'
 import { ModelApiActions } from './model-api-actions'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
@@ -54,6 +70,7 @@ export interface ModelCardProps {
   usdExchangeRate?: number
   tokenUnit?: TokenUnit
   showRechargePrice?: boolean
+  platformPriceGroups?: ReadonlySet<string>
   selectedGroup?: string
   perf?: ModelPerfBadgeData
   endpointMap?: ModelEndpointMap
@@ -66,17 +83,28 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   const usdExchangeRate = props.usdExchangeRate ?? 1
   const showRechargePrice = props.showRechargePrice ?? false
   // Prices summarise the model-level price when ordinary requests pay it.
-  const model = useMemo(() => withBasePricing(props.model), [props.model])
+  const quote = useMemo(
+    () => getMarketPriceModel(props.model, props.platformPriceGroups),
+    [props.model, props.platformPriceGroups]
+  )
+  const model = useMemo(() => withBasePricing(quote), [quote])
   const isTokenBased = isTokenBasedModel(model)
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
   const tags = parseTags(props.model.tags)
-  const groups = props.model.enable_groups || []
-  const endpoints = props.model.supported_endpoint_types || []
-  const modelIconKey = props.model.icon || props.model.vendor_icon
-  const modelIcon = modelIconKey ? getLobeIcon(modelIconKey, 28) : null
-  const initial = props.model.model_name?.charAt(0).toUpperCase() || '?'
+  const groupKeys = quotedMarketGroups(quote, props.selectedGroup)
+  const groups = groupKeys.map((group) =>
+    marketGroupLabel(group, props.model.group_catalog)
+  )
+  const endpoints = props.endpointMap
+    ? getModelEndpoints(
+        props.model,
+        props.endpointMap,
+        props.selectedGroup
+      ).map((ep) => ep.type)
+    : getModelEndpointTypes(props.model, props.selectedGroup)
   const isUnconfiguredTaskUsage = isUnconfiguredTaskUsageModel(model)
-  const billingTime = useBillingTime(model.billing_expr)
+  const expressions = useMemo(() => activeBillingExpressions([model]), [model])
+  const billingTime = useBillingTime(expressions)
   const currency = useSystemConfigStore((state) => state.config.currency)
   const dynamicPriceOptions = useMemo(
     () => ({
@@ -112,8 +140,18 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [model, dynamicPriceOptions, currency]
   )
+  const redactedProviderPricing = hasRedactedProviderPricing(model)
+  const quoteUnavailable = isCatalogPriceUnavailable(model)
   let priceSummary: ReactNode
-  if (dynamicSummary) {
+  if (quoteUnavailable) {
+    priceSummary = (
+      <span className='text-muted-foreground col-span-full'>
+        {redactedProviderPricing
+          ? t('Sign in to view provider pricing')
+          : t('Unset price')}
+      </span>
+    )
+  } else if (dynamicSummary) {
     const cacheReadEntries = dynamicSummary.secondaryEntries.filter(
       (entry) => entry.field === 'cacheReadPrice' && entry.unit === 'token'
     )
@@ -273,17 +311,20 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   }
 
   return (
-    <Card className='hover:ring-foreground/20 h-full min-w-0 gap-4 pt-5 transition-colors'>
+    <Card className='hover:ring-foreground/20 @container/market-card h-full min-w-0 gap-4 pt-5 transition-colors'>
       <CardHeader className='flex flex-row items-start gap-3 px-5'>
         <div
           aria-hidden
           className='bg-muted/50 flex size-10 shrink-0 items-center justify-center rounded-lg'
         >
-          {modelIcon || (
-            <span className='text-muted-foreground text-sm font-bold'>
-              {initial}
-            </span>
-          )}
+          <CatalogModelIcon
+            icon={props.model.icon}
+            vendorIcon={props.model.vendor_icon}
+            vendorName={props.model.vendor_name}
+            platformIcon={catalogModelPlatformIcon(props.model)}
+            name={props.model.model_name}
+            size={28}
+          />
         </div>
         <div className='min-w-0 flex-1'>
           <h3
@@ -353,60 +394,68 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
           <div className='grid grid-cols-[repeat(auto-fit,minmax(88px,1fr))] gap-x-3 gap-y-2'>
             {priceSummary}
           </div>
+          {redactedProviderPricing && !quoteUnavailable && (
+            <span className='text-muted-foreground text-sm'>
+              {t('Sign in to view provider pricing')}
+            </span>
+          )}
         </div>
-        {(groups.length > 0 || endpoints.length > 0) && (
-          <dl
-            className={cn(
-              'grid min-w-0 grid-cols-2 gap-3 text-sm',
-              (groups.length === 0 || endpoints.length === 0) && 'grid-cols-1'
-            )}
-          >
-            {groups.length > 0 && (
-              <div className='flex min-w-0 items-baseline gap-1.5'>
-                <dt className='text-muted-foreground shrink-0'>
-                  {t('Groups')}
-                </dt>
-                <dd className='flex min-w-0 items-baseline gap-1'>
-                  <span className='truncate' title={groups.join(', ')}>
-                    {groups[0]}
+        <dl
+          className={cn(
+            'grid min-w-0 grid-cols-2 gap-3 text-sm',
+            groups.length === 0 && 'grid-cols-1'
+          )}
+        >
+          {groups.length > 0 && (
+            <div className='flex min-w-0 items-baseline gap-1.5'>
+              <dt className='text-muted-foreground shrink-0'>
+                {props.model.group_keys_are_display_only
+                  ? t('Pricing tiers')
+                  : t('Groups')}
+              </dt>
+              <dd className='flex min-w-0 items-baseline gap-1'>
+                <MarketGroupIcon
+                  meta={props.model.group_catalog?.[groupKeys[0]]}
+                  size={14}
+                />
+                <span className='truncate' title={groups.join(', ')}>
+                  {groups[0]}
+                </span>
+                {groups.length > 1 && (
+                  <span
+                    className='text-muted-foreground shrink-0'
+                    title={groups.slice(1).join(', ')}
+                  >
+                    +{groups.length - 1}
                   </span>
-                  {groups.length > 1 && (
-                    <span
-                      className='text-muted-foreground shrink-0'
-                      title={groups.slice(1).join(', ')}
-                    >
-                      +{groups.length - 1}
-                    </span>
-                  )}
-                </dd>
-              </div>
-            )}
-            {endpoints.length > 0 && (
-              <div className='flex min-w-0 items-baseline gap-1.5'>
-                <dt className='text-muted-foreground shrink-0'>
-                  {t('Endpoints')}
-                </dt>
-                <dd className='flex min-w-0 items-baseline gap-1'>
-                  <span className='truncate' title={endpoints.join(', ')}>
-                    {endpoints.slice(0, 2).join(', ')}
-                  </span>
-                  {endpoints.length > 2 && (
-                    <span
-                      className='text-muted-foreground shrink-0'
-                      title={endpoints.slice(2).join(', ')}
-                    >
-                      +{endpoints.length - 2}
-                    </span>
-                  )}
-                </dd>
-              </div>
-            )}
-          </dl>
-        )}
+                )}
+              </dd>
+            </div>
+          )}
+          <div className='flex min-w-0 items-baseline gap-1.5'>
+            <dt className='text-muted-foreground shrink-0'>{t('Endpoints')}</dt>
+            <dd className='flex min-w-0 items-baseline gap-1'>
+              <span className='truncate' title={endpoints.join(', ')}>
+                {endpoints.length
+                  ? endpoints.slice(0, 2).join(', ')
+                  : t('Not confirmed')}
+              </span>
+              {endpoints.length > 2 && (
+                <span
+                  className='text-muted-foreground shrink-0'
+                  title={endpoints.slice(2).join(', ')}
+                >
+                  +{endpoints.length - 2}
+                </span>
+              )}
+            </dd>
+          </div>
+        </dl>
         {props.endpointMap && (
           <ModelApiActions
             model={props.model}
             endpointMap={props.endpointMap}
+            selectedGroup={props.selectedGroup}
           />
         )}
       </CardContent>

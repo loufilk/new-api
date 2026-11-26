@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	hosttypes "github.com/QuantumNous/new-api/types"
 	"gorm.io/gorm"
 )
 
@@ -146,10 +147,8 @@ type TaskPrivateData struct {
 	PluginState json.RawMessage `json:"plugin_state,omitempty"`
 	// PollFailures counts consecutive unrecognized or transient poll outcomes.
 	PollFailures int `json:"poll_failures,omitempty"`
-	// ResultDiscarded marks an immediate terminal result whose submit route
-	// declared retainResult: false. The upstream snapshot was never written
-	// and every retrieval surface treats the task as not found. The zero
-	// value keeps historical rows retained and retrievable.
+	// ResultDiscarded marks an immediate result delivered inline by openai_image
+	// or a route with retainResult: false. Retrieval treats the task as missing.
 	ResultDiscarded bool `json:"result_discarded,omitempty"`
 	// CredentialAccount is the account of the plugin credential that
 	// submitted the task, which polls the task and fetches its content.
@@ -245,6 +244,32 @@ type TaskBillingContext struct {
 	BillingModelName string                       `json:"billing_model_name,omitempty"` // 价格/倍率/赠金资格使用的计费模型身份
 	PerCallBilling   bool                         `json:"per_call_billing,omitempty"`   // 按次计费：跳过轮询阶段的差额结算
 	TieredSnapshot   *billingexpr.BillingSnapshot `json:"tiered_snapshot,omitempty"`
+	// A non-nil pointer version-discriminates the new quote from historical
+	// tasks and preserves the selected group's explicit zero rate.
+	GroupRatioInfo *hosttypes.GroupRatioInfo `json:"group_rate_snapshot,omitempty"`
+}
+
+// NewTaskBillingContext records the financial contract understood by every
+// eligible poller. Legacy pollers use the current model ratio and the admitted
+// group ratio. Only after the mixed-version window may a writer select the
+// admitted-model-ratio contract by adding group_rate_snapshot. Readers must
+// always honor the contract recorded on the task, not the current rollout mode.
+func NewTaskBillingContext(relayInfo *commonRelay.RelayInfo) *TaskBillingContext {
+	ctx := &TaskBillingContext{
+		ModelPrice:       relayInfo.PriceData.ModelPrice,
+		GroupRatio:       relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+		ModelRatio:       relayInfo.PriceData.ModelRatio,
+		OtherRatios:      relayInfo.PriceData.OtherRatios(),
+		OriginModelName:  relayInfo.OriginModelName,
+		BillingModelName: relayInfo.GetBillingModelName(),
+		PerCallBilling:   common.StringsContains(constant.TaskPricePatches, relayInfo.GetBillingModelName()) || relayInfo.PriceData.UsePrice,
+		TieredSnapshot:   relayInfo.TieredBillingSnapshot,
+	}
+	if common.IM21RolloutActive() {
+		quote := relayInfo.PriceData.GroupRatioInfo
+		ctx.GroupRatioInfo = &quote
+	}
+	return ctx
 }
 
 // EffectiveBillingModelName 返回任务的计费模型身份。
@@ -320,6 +345,11 @@ func (p *TaskPrivateData) Scan(val any) error {
 }
 
 func (p TaskPrivateData) Value() (driver.Value, error) {
+	if p.ResultDiscarded {
+		// A plugin can return the inline image itself as the result URL.
+		// The submit presenter and report still have the in-memory result.
+		p.ResultURL = ""
+	}
 	if p.Key == "" && p.UpstreamTaskID == "" && p.ResultURL == "" && p.Execution == nil &&
 		p.BillingSource == "" && p.SubscriptionId == 0 && p.SubscriptionQuotaPeriod == 0 && p.SubscriptionReservedAmount == 0 && p.TokenId == 0 && p.TokenFingerprint == "" &&
 		p.NodeName == "" && p.BillingContext == nil && len(p.WalletDebit) == 0 &&

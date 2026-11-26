@@ -1,5 +1,21 @@
 {
   "translation": {
+    "Client setup wizard": "Assistant de configuration du client",
+    "Choose a published model group, a model, a client and a connection address to generate setup instructions.": "Choisissez un groupe public, un modèle, un client et une adresse pour obtenir les étapes de configuration.",
+    "Public group names are for reference only. The group and permissions on your API Key determine actual routing.": "Les noms de groupes publics sont indicatifs. Le routage dépend du groupe et des droits de votre clé API.",
+    "No published group is available. The examples below use a placeholder for your model ID.": "Aucun groupe public disponible. Les exemples utilisent un identifiant de modèle à remplacer.",
+    "Published model group": "Groupe de modèles public",
+    "Protocol": "Protocole",
+    "Connection address": "Adresse de connexion",
+    "No verified connection address": "Aucune adresse de connexion validée",
+    "Operating system": "Système d’exploitation",
+    "Setup instructions": "Étapes de configuration",
+    "Create or choose an API Key in the console. Set WANCHUAN_API_KEY locally for commands, or replace the placeholder in your client settings. Never paste your Key into this page.": "Créez ou choisissez une clé dans la console. Définissez WANCHUAN_API_KEY localement ou saisissez la clé dans le client. Ne collez pas de clé sur cette page.",
+    "Merge these settings with your existing configuration. Test in your client and check the request time, model and status in your usage logs. A model request may incur charges.": "Fusionnez ces paramètres avec votre configuration. Testez dans le client, puis vérifiez l’heure, le modèle et le statut dans les journaux. Une requête peut être facturée.",
+    "Read the full guide": "Lire le guide complet",
+    "This application changed while you were reviewing it. Load the latest status before continuing.": "Cette demande a changé pendant son examen. Chargez son dernier statut avant de continuer.",
+    "Reload latest application": "Recharger la demande",
+    "This application is read-only for your account.": "Votre compte peut uniquement consulter cette demande.",
     "{{count}} announcements deleted. Click \"Save Settings\" to apply.": "{{count}} annonces supprimées. Cliquez sur « Enregistrer les paramètres » pour appliquer.",
     "{{count}} API entries deleted. Click \"Save Settings\" to apply.": "{{count}} entrées API supprimées. Cliquez sur « Enregistrer les paramètres » pour appliquer.",
     "{{count}} FAQs deleted. Click \"Save Settings\" to apply.": "{{count}} FAQ supprimées. Cliquez sur « Enregistrer les paramètres » pour appliquer.",
@@ -252,6 +268,16 @@
     "Select an invoice category": "Sélectionnez une catégorie de facturation",
     "This invoice category is currently unavailable": "Cette catégorie de facturation est actuellement indisponible",
     "Update the server to edit invoice categories.": "Mettez à jour le serveur pour pouvoir modifier les catégories de facturation.",
-    "Invoice fee refund": "Remboursement des frais d’émission de facture"
+    "Invoice fee refund": "Remboursement des frais d’émission de facture",
+    "Site information": "Informations sur le site",
+    "Press Enter to add a model.": "Appuyez sur Entrée pour ajouter un modèle.",
+    "Top-up rates, settlement terms, or anything else you would like to share.": "Taux de recharge, modalités de règlement ou toute autre précision.",
+    "Previous EPay order": "Commande EPay précédente",
+    "Order not confirmed. Retry the same checkout to avoid duplicate orders.": "Commande non confirmée. Réessayez avec le même montant et le même mode de paiement pour éviter un doublon.",
+    "Check the previous EPay order before starting another.": "Vérifiez la commande EPay précédente avant d’en créer une autre.",
+    "Check status": "Vérifier le statut",
+    "Dismiss reminder (does not cancel the order)": "Masquer le rappel (sans annuler la commande)",
+    "The payment quote changed. Close this dialog and select the payment method again.": "Le montant a changé. Fermez cette fenêtre et sélectionnez à nouveau le moyen de paiement.",
+    "If it stays unconfirmed, check recharge history or give support this reference:": "Si la commande reste non confirmée, consultez l’historique des recharges ou communiquez cette référence au support :"
   }
 }

@@ -56,6 +56,7 @@ import {
 import { ModelsDialogs } from '../components/models-dialogs'
 import { ModelsProvider } from '../components/models-provider'
 import { ModelsTable } from '../components/models-table'
+import { modelsQueryKeys } from '../lib'
 import type { Model } from '../types'
 
 const metadata: Model = {
@@ -133,6 +134,7 @@ async function renderList(
     if (url === '/api/models/7') {
       return { data: { success: true, data: metadata } }
     }
+    if (url === '/api/option/') return { data: { success: true, data: [] } }
     if (url === '/api/option/model_pricing') {
       return {
         data: {
@@ -147,6 +149,9 @@ async function renderList(
                 },
         },
       }
+    }
+    if (url === '/api/pricing') {
+      return { data: { success: true, data: [], vendors: [] } }
     }
     return { data: { success: true, data: { items: [] } } }
   })
@@ -182,7 +187,7 @@ async function renderList(
   if (options.waitForPricing !== false) {
     await waitFor(() => expect(client.isFetching()).toBe(0))
   }
-  return { ...result, get, router }
+  return { ...result, client, get, router }
 }
 
 beforeEach(() => {
@@ -851,3 +856,120 @@ it.each([
     }
   }
 )
+
+it('preserves the row deletion confirmation and explicit choices across delayed pricing updates', async () => {
+  let finish!: (value: ModelPricingConfig) => void
+  const pricing = new Promise<ModelPricingConfig>((resolve) => {
+    finish = resolve
+  })
+  const remove = vi
+    .spyOn(api, 'delete')
+    .mockResolvedValue({ data: { success: true, data: { deleted_count: 1 } } })
+  await renderList([metadata], {
+    pricing,
+    waitForPricing: false,
+  })
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Open menu' }))
+  await user.click(screen.getByRole('menuitem', { name: 'Delete' }))
+  const dialog = await screen.findByRole('alertdialog')
+  await user.click(
+    within(dialog).getByRole('checkbox', { name: 'Also remove pricing' })
+  )
+  await act(async () => {
+    finish({ entries: [], options: pricingOptions({}), empty_version: 'empty' })
+  })
+  await screen.findByLabelText('View pricing for catalog-only')
+  expect(screen.getByRole('alertdialog')).toBe(dialog)
+  expect(
+    within(dialog).getByRole('checkbox', { name: 'Also remove pricing' })
+  ).toBeChecked()
+  expect(remove).not.toHaveBeenCalled()
+  await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+  await waitFor(() =>
+    expect(remove).toHaveBeenCalledExactlyOnceWith('/api/models/7', {
+      params: { remove_from_channels: false, remove_pricing: true },
+    })
+  )
+})
+
+it('does not retarget a pending model deletion to a changed model after the list refreshes', async () => {
+  const remove = vi.spyOn(api, 'delete')
+  const items = [{ ...metadata }]
+  const { client } = await renderList(items)
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Open menu' }))
+  await user.click(screen.getByRole('menuitem', { name: 'Delete' }))
+  const dialog = await screen.findByRole('alertdialog')
+  // Replace the catalogue entry with another target even though its ID is unchanged.
+  const key = client
+    .getQueryCache()
+    .find({ queryKey: modelsQueryKeys.lists(), exact: false })?.queryKey
+  if (!key) throw new Error('Model list did not load')
+  await act(async () => {
+    client.setQueryData(key, {
+      success: true,
+      data: {
+        items: [{ ...metadata, model_name: 'different-model' }],
+        total: 1,
+      },
+    })
+  })
+  expect(dialog).toHaveTextContent('catalog-only')
+  const confirm = within(dialog).getByRole('button', { name: 'Delete' })
+  await waitFor(() => expect(confirm).toBeDisabled())
+  await user.click(confirm)
+  expect(remove).not.toHaveBeenCalled()
+  await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+})
+
+it('keeps the model availability popover open through delayed pricing refresh', async () => {
+  let finish!: (value: ModelPricingConfig) => void
+  const pricing = new Promise<ModelPricingConfig>((resolve) => {
+    finish = resolve
+  })
+  await renderList([metadata], {
+    pricing,
+    waitForPricing: false,
+  })
+  await userEvent.click(screen.getByRole('button', { name: 'Unavailable' }))
+  const popup = await screen.findByRole('dialog', { name: 'Unavailable' })
+  await act(async () => {
+    finish({ entries: [], options: pricingOptions({}), empty_version: 'empty' })
+  })
+  await screen.findByLabelText('View pricing for catalog-only')
+  expect(screen.getByRole('dialog', { name: 'Unavailable' })).toBe(popup)
+})
+
+it('blocks the entire frozen bulk deletion if a selected model leaves the list', async () => {
+  const remove = vi.spyOn(api, 'delete')
+  const batch = vi.spyOn(api, 'post')
+  const { client } = await renderList([
+    metadata,
+    { ...metadata, id: 8, model_name: 'second' },
+  ])
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('checkbox', { name: 'Select all' }))
+  await user.click(
+    screen.getByRole('button', { name: 'Delete selected models' })
+  )
+  const dialog = await screen.findByRole('alertdialog')
+  expect(dialog).toHaveTextContent('Delete 2 models?')
+  const key = client
+    .getQueryCache()
+    .find({ queryKey: modelsQueryKeys.lists(), exact: false })?.queryKey
+  if (!key) throw new Error('Model list did not load')
+  await act(async () => {
+    client.setQueryData(key, {
+      success: true,
+      data: { items: [metadata], total: 1 },
+    })
+  })
+  const confirm = within(dialog).getByRole('button', { name: 'Delete' })
+  await waitFor(() => expect(confirm).toBeDisabled())
+  expect(dialog).toHaveTextContent('Delete 2 models?')
+  await user.click(confirm)
+  expect(remove).not.toHaveBeenCalled()
+  expect(batch).not.toHaveBeenCalled()
+})

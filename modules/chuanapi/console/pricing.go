@@ -1,6 +1,7 @@
 package console
 
 import (
+	"context"
 	"math"
 	"net/http"
 	"slices"
@@ -22,6 +23,9 @@ const pricingVersion = "public-catalog-v2"
 // Operator notes, routing identities, plugin identities and future host fields
 // must be explicitly reviewed before they can become public.
 type publicCatalogModel struct {
+	SupportedEndpointTypesByGroup map[string][]constant.EndpointType `json:"supported_endpoint_types_by_group,omitempty"`
+
+	Icon                   string                       `json:"icon,omitempty"`
 	ModelName              string                       `json:"model_name"`
 	VendorID               int                          `json:"vendor_id"`
 	QuotaType              int                          `json:"quota_type"`
@@ -38,6 +42,7 @@ type publicCatalogModel struct {
 	BillingMode            string                       `json:"billing_mode"`
 	BillingExpr            string                       `json:"billing_expr"`
 	BillingVariantsPresent bool                         `json:"billing_variants_present"`
+	OrdinaryPriceAvailable *bool                        `json:"ordinary_price_available,omitempty"`
 	PricingVersion         string                       `json:"pricing_version"`
 	ContextLength          *int                         `json:"context_length"`
 	MaxOutputTokens        *int                         `json:"max_output_tokens"`
@@ -52,6 +57,7 @@ type publicCatalogModel struct {
 }
 
 type publicCatalog struct {
+	snapshot    model.PricingCatalogSnapshot
 	Models      []publicCatalogModel
 	GroupRatio  map[string]float64
 	UsableGroup map[string]string
@@ -67,6 +73,10 @@ func buildPublicCatalog() publicCatalog {
 	groupRatio := make(map[string]float64)
 	publicGroups := make(map[string]string)
 	for group := range usableGroup {
+		if model.IsExclusiveGroup(group) {
+			delete(usableGroup, group)
+			continue
+		}
 		ratio, ok := ratios[group]
 		if !ok || math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 {
 			continue
@@ -85,26 +95,50 @@ func buildPublicCatalog() publicCatalog {
 			autoGroups = append(autoGroups, alias)
 		}
 	}
-	rows := publicPricingRows(model.FilterPricingByUsableGroups(model.GetPricing(), usableGroup), aliases)
-	return publicCatalog{Models: rows, GroupRatio: groupRatio, UsableGroup: publicGroups, AutoGroups: autoGroups}
+	snapshot := model.GetPricingCatalogSnapshot()
+	// Only published aliases are visible. An unpriced or invalid group must not
+	// justify a base quote for a model published through some other group.
+	rows := publicPricingRows(model.FilterPricingByUsableGroups(snapshot.Rows, aliases), aliases)
+	return publicCatalog{snapshot: snapshot, Models: rows, GroupRatio: groupRatio, UsableGroup: publicGroups, AutoGroups: autoGroups}
 }
 
 // GetPublicPricing serves the anonymous marketing catalogue. It always projects
 // the public usable-group set and never consults a caller identity, so a stray
 // cookie, bearer token, or forged context value cannot reveal private groups or
 // personalized discounts.
-func GetPublicPricing(c *gin.Context) {
+func readPublicCatalog(ctx context.Context) (publicCatalog, error) {
+	guard, err := model.BeginGroupConfigRead(ctx)
+	if err != nil {
+		return publicCatalog{}, err
+	}
+	defer guard.Close()
 	catalog := buildPublicCatalog()
+	if err := guard.Finish(); err != nil {
+		return publicCatalog{}, err
+	}
+	return catalog, nil
+}
+
+func GetPublicPricing(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	catalog, err := readPublicCatalog(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "Pricing is temporarily unavailable"})
+		return
+	}
 	publicVendorIDs := make(map[int]bool)
+	publicEndpoints := make(map[string][]constant.EndpointType, len(catalog.Models))
 	for _, row := range catalog.Models {
 		publicVendorIDs[row.VendorID] = true
+		publicEndpoints[row.ModelName] = row.SupportedEndpointTypes
 	}
+	endpointMap := catalog.snapshot.ProjectEndpointPaths(publicEndpoints)
 	vendors := make([]gin.H, 0)
-	for _, vendor := range model.GetVendors() {
+	for _, vendor := range catalog.snapshot.Vendors {
 		if !publicVendorIDs[vendor.ID] {
 			continue
 		}
-		vendors = append(vendors, gin.H{"id": vendor.ID, "name": vendor.Name, "icon": vendor.Icon})
+		vendors = append(vendors, gin.H{"id": vendor.ID, "name": vendor.Name, "icon": model.PublicCatalogIconID(vendor.Icon)})
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -113,7 +147,7 @@ func GetPublicPricing(c *gin.Context) {
 		"vendors":                     vendors,
 		"group_ratio":                 catalog.GroupRatio,
 		"usable_group":                catalog.UsableGroup,
-		"supported_endpoint":          model.GetSupportedEndpointMap(),
+		"supported_endpoint":          endpointMap,
 		"auto_groups":                 catalog.AutoGroups,
 		"pricing_version":             pricingVersion,
 		"group_keys_are_display_only": true,
@@ -137,16 +171,19 @@ func publicPricingRows(rows []model.Pricing, aliases map[string]string) []public
 		if len(groups) == 0 {
 			continue
 		}
+		endpointTypes, endpointTypesByGroup := row.ProjectEndpointGroups(aliases)
 		result = append(result, publicCatalogModel{
-			ModelName: row.ModelName, VendorID: row.VendorID,
+			ModelName: row.ModelName, VendorID: row.VendorID, Icon: model.PublicCatalogIconID(row.Icon),
 			QuotaType: row.QuotaType, ModelRatio: row.ModelRatio,
 			ModelPrice: row.ModelPrice, CompletionRatio: row.CompletionRatio,
 			CacheRatio: row.CacheRatio, CreateCacheRatio: row.CreateCacheRatio,
 			ImageRatio: row.ImageRatio, AudioRatio: row.AudioRatio,
 			AudioCompletionRatio: row.AudioCompletionRatio,
-			EnableGroup:          groups, SupportedEndpointTypes: row.SupportedEndpointTypes,
-			BillingMode: row.BillingMode, BillingExpr: row.BillingExpr,
+			EnableGroup:          groups, SupportedEndpointTypes: endpointTypes,
+			SupportedEndpointTypesByGroup: endpointTypesByGroup,
+			BillingMode:                   row.BillingMode, BillingExpr: row.BillingExpr,
 			BillingVariantsPresent: len(row.BillingPluginVariants) > 0,
+			OrdinaryPriceAvailable: row.OrdinaryPriceAvailable,
 			PricingVersion:         row.PricingVersion,
 			ContextLength:          row.ContextLength, MaxOutputTokens: row.MaxOutputTokens,
 			KnowledgeCutoff: row.KnowledgeCutoff, ReleaseDate: row.ReleaseDate,

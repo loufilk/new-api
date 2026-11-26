@@ -16,8 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
-import { AlertTriangle, HeartPulse, Timer } from 'lucide-react'
+import { HeartPulse, Timer } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -25,141 +24,73 @@ import {
   StaticDataTable,
   staticDataTableClassNames as tableStyles,
 } from '@/components/data-table'
-import { GroupBadge } from '@/components/group-badge'
-import { getPerfMetrics } from '@/features/performance-metrics/api'
-import {
-  formatLatency,
-  formatThroughput,
-  formatUptimePct,
-  getSuccessRateTextClass,
-} from '@/features/performance-metrics/lib/format'
-import type {
-  PerformanceGroup,
-  PerformanceSeriesPoint,
-} from '@/features/performance-metrics/types'
-import { requireServerSuccess } from '@/lib/server-error-message'
+import type { PerformanceSeriesPoint } from '@/features/performance-metrics/types'
 import { cn } from '@/lib/utils'
 
-import type { UptimeDayPoint } from '../lib/mock-stats'
+import { useMarketModelMetrics } from '../hooks/use-market-metrics'
+import { marketMeasurements } from '../lib/market-measurements'
 import type { PricingModel } from '../types'
+import { CatalogGroupBadge } from './catalog-group-badge'
 import { LatencyTrendChart, UptimeTrendChart } from './model-details-charts'
 import { UptimeSparkline } from './model-details-uptime-sparkline'
+import { ModelPerfBadge } from './model-perf-badge'
 
-function StatCard(props: {
-  icon: React.ComponentType<{ className?: string }>
-  label: string
-  value: React.ReactNode
-  hint?: string
-  valueClassName?: string
-}) {
-  const Icon = props.icon
-  return (
-    <div className='bg-background flex flex-col gap-1 rounded-lg border p-3'>
-      <span className='text-muted-foreground inline-flex items-center gap-1.5 text-[10px] font-medium tracking-wider uppercase'>
-        <Icon className='size-3' />
-        {props.label}
-      </span>
-      <span
-        className={cn(
-          'text-foreground font-mono text-lg font-semibold tabular-nums',
-          props.valueClassName
-        )}
-      >
-        {props.value}
-      </span>
-      {props.hint && (
-        <span className='text-muted-foreground/70 text-[11px]'>
-          {props.hint}
-        </span>
-      )}
-    </div>
-  )
-}
-
-type PerformanceRow = {
-  group: string
-  avg_ttft_ms: number
-  avg_latency_ms: number
-  success_rate: number
-  avg_tps: number
-}
-
-function toUptimePct(value: number): number {
-  if (!Number.isFinite(value)) return 0
-  const clamped = Math.min(100, Math.max(0, value))
-  return Math.round(clamped * 100) / 100
-}
-
-function toLatencySeries(series: PerformanceSeriesPoint[]) {
+function toSuccessSeries(series: PerformanceSeriesPoint[]) {
   return series
-    .filter((point) => point.avg_ttft_ms > 0)
+    .filter(
+      (point) =>
+        Number.isFinite(point.ts) && marketMeasurements(point).success !== null
+    )
     .map((point) => ({
-      timestamp: new Date(point.ts * 1000).toISOString(),
-      group: 'latency',
-      ttft_ms: point.avg_ttft_ms,
-    }))
-}
-
-function toUptimeSeries(series: PerformanceSeriesPoint[]): UptimeDayPoint[] {
-  return series.map((point) => ({
-    date: new Date(point.ts * 1000).toISOString(),
-    uptime_pct: toUptimePct(point.success_rate),
-    incidents: point.success_rate < 100 ? 1 : 0,
-    outage_minutes: 0,
-  }))
-}
-
-function toGroupUptimeSeries(group: PerformanceGroup): UptimeDayPoint[] {
-  return group.series.map((point) => {
-    const successRate = toUptimePct(point.success_rate)
-    return {
       date: new Date(point.ts * 1000).toISOString(),
-      uptime_pct: successRate,
-      incidents: successRate < 100 ? 1 : 0,
-      outage_minutes: 0,
-    }
-  })
+      uptime_pct: point.success_rate,
+    }))
 }
 
 export function ModelDetailsPerformance(props: { model: PricingModel }) {
   const { t } = useTranslation()
-  const metricsQuery = useQuery({
-    queryKey: ['perf-metrics', props.model.model_name],
-    queryFn: async () =>
-      requireServerSuccess(await getPerfMetrics(props.model.model_name, 24)),
-    staleTime: 60 * 1000,
-  })
+  const metricsQuery = useMarketModelMetrics(props.model.model_name)
   const groups = useMemo(
-    () => metricsQuery.data?.data.groups ?? [],
-    [metricsQuery.data]
+    () =>
+      (metricsQuery.data?.data.groups ?? []).filter((group) =>
+        props.model.enable_groups?.includes(group.group)
+      ),
+    [metricsQuery.data, props.model.enable_groups]
   )
   const summary = metricsQuery.data?.data.summary
   const series = useMemo(
     () => metricsQuery.data?.data.series ?? [],
     [metricsQuery.data]
   )
-  const performances = useMemo<PerformanceRow[]>(
+  const performances = useMemo(
     () =>
       groups.map((group) => ({
         group: group.group,
-        avg_ttft_ms: group.avg_ttft_ms,
-        avg_latency_ms: group.avg_latency_ms,
-        success_rate: group.success_rate,
-        avg_tps: group.avg_tps,
+        ...marketMeasurements(group),
+        successRate: group.success_rate,
+        series: toSuccessSeries(group.series),
       })),
     [groups]
   )
-  const latencySeries = useMemo(() => toLatencySeries(series), [series])
-  const uptimeSeries = useMemo(() => toUptimeSeries(series), [series])
-  const uptimeByGroup = useMemo<Record<string, UptimeDayPoint[]>>(() => {
-    const map: Record<string, UptimeDayPoint[]> = {}
-    for (const group of groups) {
-      map[group.group] = toGroupUptimeSeries(group)
-    }
-    return map
-  }, [groups])
+  const latencySeries = useMemo(
+    () =>
+      series
+        .filter(
+          (p) => Number.isFinite(p.ts) && marketMeasurements(p).ttft !== null
+        )
+        .map((p) => ({
+          timestamp: new Date(p.ts * 1000).toISOString(),
+          group: 'TTFT',
+          ttft_ms: p.avg_ttft_ms,
+        })),
+    [series]
+  )
+  const uptimeSeries = useMemo(() => toSuccessSeries(series), [series])
 
-  if (metricsQuery.isLoading || performances.length === 0) {
+  if (
+    metricsQuery.isLoading ||
+    (!summary && performances.length === 0 && series.length === 0)
+  ) {
     return (
       <div className='text-muted-foreground rounded-lg border p-6 text-center text-sm'>
         {t('Performance data is not yet available for this model.')}
@@ -167,127 +98,109 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
     )
   }
 
-  const avgTps = summary?.avg_tps ?? 0
-  const avgLatency = summary?.avg_latency_ms ?? 0
-  const successRate = summary?.success_rate ?? Number.NaN
-  const incidentCount = uptimeSeries.reduce((s, p) => s + p.incidents, 0)
-
+  const perf = summary
+    ? {
+        ...summary,
+        window_start: metricsQuery.data?.data.window_start,
+        window_end: metricsQuery.data?.data.window_end,
+      }
+    : undefined
   return (
     <div className='flex flex-col gap-4'>
-      <div className='grid grid-cols-1 gap-2 sm:grid-cols-3'>
-        <StatCard
-          icon={Timer}
-          label='TPS'
-          value={formatThroughput(avgTps)}
-          hint={t('Sustained tokens per second')}
-        />
-        <StatCard
-          icon={Timer}
-          label={t('Average latency')}
-          value={formatLatency(avgLatency)}
-        />
-        <StatCard
-          icon={HeartPulse}
-          label={t('Success rate')}
-          value={formatUptimePct(successRate)}
-          hint={
-            incidentCount > 0
-              ? t('{{count}} incidents in the last 24 hours', {
-                  count: incidentCount,
-                })
-              : t('No incidents in the last 24 hours')
-          }
-          valueClassName={getSuccessRateTextClass(successRate)}
-        />
-      </div>
+      <ModelPerfBadge
+        perf={perf}
+        className='@container/market-card rounded-lg border p-3'
+      />
 
-      <section>
-        <SectionHeader
-          icon={HeartPulse}
-          title={t('Per-group performance')}
-          description={t('Average latency, TTFT, TPS, and success rate')}
-        />
-        <StaticDataTable
-          className='rounded-lg'
-          tableClassName='text-sm'
-          headerRowClassName={tableStyles.compactHeaderRow}
-          data={performances}
-          getRowKey={(perf) => perf.group}
-          columns={[
-            {
-              id: 'group',
-              header: t('Group'),
-              className: tableStyles.compactHeaderCell,
-              cellClassName: tableStyles.compactCell,
-              cell: (perf) => <GroupBadge group={perf.group} size='sm' />,
-            },
-            {
-              id: 'tps',
-              header: 'TPS',
-              className: tableStyles.compactHeaderCellRight,
-              cellClassName: tableStyles.compactNumericCell,
-              cell: (perf) => formatThroughput(perf.avg_tps),
-            },
-            {
-              id: 'ttft',
-              header: t('Average TTFT'),
-              className: tableStyles.compactHeaderCellRight,
-              cellClassName: tableStyles.compactNumericCell,
-              cell: (perf) => formatLatency(perf.avg_ttft_ms),
-            },
-            {
-              id: 'latency',
-              header: t('Average latency'),
-              className: tableStyles.compactHeaderCellRight,
-              cellClassName: tableStyles.compactMutedNumericCell,
-              cell: (perf) => formatLatency(perf.avg_latency_ms),
-            },
-            {
-              id: 'success',
-              header: t('Success rate'),
-              className: cn(tableStyles.compactHeaderCell, 'min-w-[180px]'),
-              cellClassName: tableStyles.compactCell,
-              cell: (perf) => (
-                <UptimeSparkline
-                  size='sm'
-                  series={uptimeByGroup[perf.group] ?? []}
-                  overallSuccessRate={perf.success_rate}
-                />
-              ),
-            },
-          ]}
-        />
-      </section>
+      {performances.length > 0 && (
+        <section>
+          <SectionHeader
+            icon={HeartPulse}
+            title={t('Per-group performance')}
+            description={t('Average latency, TTFT, TPS, and success rate')}
+          />
+          <StaticDataTable
+            className='rounded-lg'
+            tableClassName='text-sm'
+            headerRowClassName={tableStyles.compactHeaderRow}
+            data={performances}
+            getRowKey={(perf) => perf.group}
+            columns={[
+              {
+                id: 'group',
+                header: t('Group'),
+                className: tableStyles.compactHeaderCell,
+                cellClassName: tableStyles.compactCell,
+                cell: (perf) => (
+                  <CatalogGroupBadge
+                    group={perf.group}
+                    catalog={props.model.group_catalog}
+                  />
+                ),
+              },
+              {
+                id: 'tps',
+                header: 'TPS',
+                className: tableStyles.compactHeaderCellRight,
+                cellClassName: tableStyles.compactNumericCell,
+                cell: (perf) => perf.tps ?? t('Unavailable'),
+              },
+              {
+                id: 'ttft',
+                header: t('Average TTFT'),
+                className: tableStyles.compactHeaderCellRight,
+                cellClassName: tableStyles.compactNumericCell,
+                cell: (perf) => perf.ttft ?? t('Unavailable'),
+              },
+              {
+                id: 'latency',
+                header: t('Average latency'),
+                className: tableStyles.compactHeaderCellRight,
+                cellClassName: tableStyles.compactMutedNumericCell,
+                cell: (perf) => perf.latency ?? t('Unavailable'),
+              },
+              {
+                id: 'success',
+                header: t('Success rate'),
+                className: cn(tableStyles.compactHeaderCell, 'min-w-[180px]'),
+                cellClassName: tableStyles.compactCell,
+                cell: (perf) => (
+                  <UptimeSparkline
+                    size='sm'
+                    series={perf.series}
+                    emptyLabel={perf.success ?? t('Unavailable')}
+                    overallSuccessRate={perf.successRate}
+                  />
+                ),
+              },
+            ]}
+          />
+        </section>
+      )}
 
-      <section>
-        <SectionHeader
-          icon={Timer}
-          title={t('Latency trend (last 24h)')}
-          description={t('Average TTFT')}
-        />
-        <LatencyTrendChart series={latencySeries} />
-      </section>
+      {latencySeries.length > 0 && (
+        <section>
+          <SectionHeader
+            icon={Timer}
+            title={t('Average TTFT')}
+            description={t('24 hourly buckets, including the current hour')}
+          />
+          <LatencyTrendChart series={latencySeries} />
+        </section>
+      )}
 
-      <section>
-        <SectionHeader
-          icon={HeartPulse}
-          title={t('Availability (last 24h)')}
-          description={t(
-            'Success rate excludes business rejections and includes the current partial hour.'
-          )}
-          accent={
-            incidentCount > 0 ? (
-              <span className='inline-flex items-center gap-1 text-amber-600 dark:text-amber-400'>
-                <AlertTriangle className='size-3.5' />
-                {t('{{count}} incidents', {
-                  count: incidentCount,
-                })}
-              </span>
-            ) : null
-          }
-        />
-        <UptimeTrendChart series={uptimeSeries} />
-      </section>
+      {uptimeSeries.length > 0 && (
+        <section>
+          <SectionHeader
+            icon={HeartPulse}
+            title={t('Success rate')}
+            description={t(
+              'Success rate excludes business rejections and includes the current partial hour.'
+            )}
+          />
+          <UptimeTrendChart series={uptimeSeries} />
+        </section>
+      )}
     </div>
   )
 }

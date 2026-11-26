@@ -17,10 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Link, useLocation } from '@tanstack/react-router'
-import { BookOpen, Braces } from 'lucide-react'
+import { BookOpen, Braces, ChevronDown, Terminal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import { cn } from '@/lib/utils'
 
 import { docsGroupIcons, docsGroups, getGuide } from '../content/nav'
@@ -45,6 +50,12 @@ export function DocsSidebar({ onNavigate }: { onNavigate?: () => void }) {
       active: pathname === '/help',
     },
     {
+      to: '/help/integrations',
+      icon: Terminal,
+      label: t('Client setup wizard'),
+      active: pathname === '/help/integrations',
+    },
+    {
       to: '/help/api',
       icon: Braces,
       label: t('API Reference'),
@@ -59,6 +70,7 @@ export function DocsSidebar({ onNavigate }: { onNavigate?: () => void }) {
           <Link
             key={link.to}
             to={link.to}
+            aria-current={link.active ? 'page' : undefined}
             onClick={onNavigate}
             className={cn(
               'flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors',
@@ -75,44 +87,57 @@ export function DocsSidebar({ onNavigate }: { onNavigate?: () => void }) {
 
       {docsGroups.map((group) => {
         const GroupIcon = docsGroupIcons[group.id]
+        const activeGroup = group.slugs.some(
+          (slug) => pathname === `/help/guides/${slug}`
+        )
         return (
-          <div key={group.id} className='space-y-0.5'>
-            <div className='text-muted-foreground/70 flex items-center gap-1.5 px-2 pb-1 text-xs font-medium'>
+          <Collapsible
+            key={`${group.id}:${activeGroup}`}
+            defaultOpen={activeGroup || group.id === 'getting-started'}
+          >
+            <CollapsibleTrigger className='text-muted-foreground hover:text-foreground group flex w-full items-center gap-1.5 px-2 py-1 text-left text-xs font-medium'>
               {GroupIcon ? <GroupIcon className='size-3.5 shrink-0' /> : null}
               {group.title}
-            </div>
-            {group.slugs.map((slug) => {
-              const guide = getGuide(slug)
-              if (!guide) {
-                return null
-              }
-              const active = pathname === `/help/guides/${slug}`
-              return (
-                <Link
-                  key={slug}
-                  to='/help/guides/$slug'
-                  params={{ slug }}
-                  onClick={onNavigate}
-                  className={cn(
-                    'flex items-center justify-between gap-2 rounded-md px-2 py-1.5 transition-colors',
-                    active
-                      ? 'bg-muted text-foreground font-medium'
-                      : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-                  )}
-                >
-                  <span className='truncate'>{guide.title}</span>
-                  {guide.recommended ? (
-                    <Badge
-                      variant='secondary'
-                      className='h-4 shrink-0 px-1.5 text-[10px]'
-                    >
-                      {t('Recommended')}
-                    </Badge>
-                  ) : null}
-                </Link>
-              )
-            })}
-          </div>
+              <ChevronDown
+                className='ml-auto size-3.5 shrink-0 group-data-[panel-open]:rotate-180'
+                aria-hidden='true'
+              />
+            </CollapsibleTrigger>
+            <CollapsibleContent className='space-y-0.5'>
+              {group.slugs.map((slug) => {
+                const guide = getGuide(slug)
+                if (!guide) {
+                  return null
+                }
+                const active = pathname === `/help/guides/${slug}`
+                return (
+                  <Link
+                    key={slug}
+                    to='/help/guides/$slug'
+                    params={{ slug }}
+                    aria-current={active ? 'page' : undefined}
+                    onClick={onNavigate}
+                    className={cn(
+                      'flex items-center justify-between gap-2 rounded-md px-2 py-1.5 transition-colors',
+                      active
+                        ? 'bg-muted text-foreground font-medium'
+                        : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+                    )}
+                  >
+                    <span className='truncate'>{guide.title}</span>
+                    {guide.recommended ? (
+                      <Badge
+                        variant='secondary'
+                        className='h-4 shrink-0 px-1.5 text-[10px]'
+                      >
+                        {t('Recommended')}
+                      </Badge>
+                    ) : null}
+                  </Link>
+                )
+              })}
+            </CollapsibleContent>
+          </Collapsible>
         )
       })}
     </nav>

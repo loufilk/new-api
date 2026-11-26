@@ -69,6 +69,7 @@ export interface Model {
   enable_groups?: string[]
   quota_types?: number[]
   matched_models?: string[]
+  pricing_candidates?: string[]
   matched_count?: number
 }
 
@@ -277,6 +278,33 @@ export interface MissingModelsResponse {
   success: boolean
   message?: string
   data?: string[]
+}
+
+export type ModelSquareOrder = {
+  sort_mode: string
+  sort_metric: string
+  sort_days: number
+  sort_models: string[]
+}
+
+export type ModelSquareOrderPatch = {
+  changes: Partial<ModelSquareOrder>
+  expected: Partial<ModelSquareOrder>
+}
+
+export type ModelSquareUsage = {
+  model_name: string
+  icon?: string
+  vendor_name?: string
+  vendor_icon?: string
+  requests: number
+  tokens: number
+}
+
+export interface ModelSquareUsageResponse {
+  success: boolean
+  message?: string
+  data?: ModelSquareUsage[]
 }
 
 /**

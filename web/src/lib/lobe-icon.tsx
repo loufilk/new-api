@@ -25,7 +25,11 @@ For commercial licensing, please contact support@quantumnous.com
  * - Chained properties: "OpenAI.Avatar.type={'platform'}"
  * - Size parameter: getLobeIcon("OpenAI", 20)
  */
-import { toc } from '@lobehub/icons/es/toc'
+import GeminiColor from '@lobehub/icons/es/Gemini/components/Color.js'
+import GeminiMono from '@lobehub/icons/es/Gemini/components/Mono.js'
+import GoogleColor from '@lobehub/icons/es/Google/components/Color.js'
+import GoogleMono from '@lobehub/icons/es/Google/components/Mono.js'
+import OpenAIMono from '@lobehub/icons/es/OpenAI/components/Mono.js'
 import {
   lazy,
   Suspense,
@@ -37,6 +41,10 @@ import {
 import sglangLogo from '@/assets/brand-icons/sglang.svg'
 import { IconSub2api } from '@/assets/custom/icon-sub2api'
 import { IconWan } from '@/assets/custom/icon-wan'
+
+import { catalogIconVariants } from './catalog-icon-registry'
+
+export { getLobeIconNames } from './catalog-icon-registry'
 
 const CUSTOM_ICONS: Record<string, ComponentType<{ size?: number }>> = {
   SGLang: (props) => (
@@ -53,17 +61,17 @@ const CUSTOM_ICONS: Record<string, ComponentType<{ size?: number }>> = {
   Wan: IconWan,
 }
 
-const ICON_METADATA = new Map(toc.map((icon) => [icon.id, icon]))
-const ICON_VARIANTS = {
-  Avatar: 'hasAvatar',
-  Brand: 'hasBrand',
-  BrandColor: 'hasBrandColor',
-  Color: 'hasColor',
-  Combine: 'hasCombine',
-  Text: 'hasText',
-  TextCn: 'hasTextCn',
-  TextColor: 'hasTextColor',
-} as const
+// These small, common glyphs must paint with the first frame (including in
+// filter chips and virtualized rows). Do not import a whole brand or the UI
+// toolkit: only the exact SVG modules below are eager.
+const inlineBrands = new Map<string, ComponentType<Record<string, unknown>>>([
+  ['OpenAI.Mono', OpenAIMono],
+  ['Gemini.Mono', GeminiMono],
+  ['Gemini.Color', GeminiColor],
+  ['Google.Mono', GoogleMono],
+  ['Google.Color', GoogleColor],
+])
+
 const LAZY_ICONS = new Map<
   string,
   LazyExoticComponent<ComponentType<Record<string, unknown>>>
@@ -73,6 +81,11 @@ function renderLobeIconFallback(
   name: string,
   size: number | string
 ): ReactNode {
+  // A heavier variant (e.g. a configured Avatar) can be loading or offline.
+  // Keep its brand visible rather than swapping in a misleading initial.
+  const Brand =
+    inlineBrands.get(`${name}.Color`) ?? inlineBrands.get(`${name}.Mono`)
+  if (Brand) return <Brand size={size} />
   return (
     <div
       className='bg-muted text-muted-foreground flex items-center justify-center rounded-full text-xs font-medium'
@@ -138,48 +151,16 @@ export function getLobeIcon(
 
   const segments = trimmedName.split('.')
   const baseKey = segments[0]
-  const CustomIcon = CUSTOM_ICONS[baseKey]
+  const CustomIcon = Object.hasOwn(CUSTOM_ICONS, baseKey)
+    ? CUSTOM_ICONS[baseKey]
+    : null
   if (CustomIcon) return <CustomIcon size={size} />
 
-  const metadata = ICON_METADATA.get(baseKey)
-  if (!metadata) return fallback
-
-  const variantKey = segments[1] as keyof typeof ICON_VARIANTS
-  const variantFlag = ICON_VARIANTS[variantKey]
-  let variant: string =
-    variantFlag && metadata.param[variantFlag] ? variantKey : 'Mono'
-  // These published variants are not represented by the package's toc flags.
-  if (
-    (baseKey === 'Gemma' && segments[1] === 'Simple') ||
-    (baseKey === 'LobeHub' && segments[1] === 'Morden')
-  ) {
-    variant = segments[1]
-  }
+  const variants = catalogIconVariants.get(baseKey)
+  if (!variants) return fallback
+  const variant = variants.includes(segments[1]) ? segments[1] : 'Mono'
   const propStartIndex =
     segments.length > 1 && /^[A-Z]/.test(segments[1]) ? 2 : 1
-  const cacheKey = `${baseKey}.${variant}`
-  let IconComponent = LAZY_ICONS.get(cacheKey)
-  if (!IconComponent) {
-    // Load the selected SVG variant, avoiding the brand index's Avatar/UI dependencies.
-    // The v6 compatibility exports expose .js aliases, but Rspack enumerates
-    // physical files (.mjs) when constructing a dynamic import context.
-    IconComponent = lazy(() =>
-      import(
-        /* webpackInclude: /[\\/]components[\\/](Mono|Avatar|Brand|BrandColor|Color|Combine|Text|TextCn|TextColor|Simple|Morden)\.mjs$/ */
-        `../../node_modules/@lobehub/icons/es/${baseKey}/components/${variant}.mjs`
-      ).catch(() => ({
-        default: (props: Record<string, unknown>) =>
-          renderLobeIconFallback(
-            baseKey,
-            typeof props.size === 'number' || typeof props.size === 'string'
-              ? props.size
-              : 20
-          ),
-      }))
-    )
-    LAZY_ICONS.set(cacheKey, IconComponent)
-  }
-
   // Parse chained properties (e.g., "type={'platform'}", "shape='square'")
   const props: Record<string, string | number | boolean> = {}
 
@@ -203,6 +184,32 @@ export function getLobeIcon(
     props.size = size
   }
 
+  const cacheKey = `${baseKey}.${variant}`
+  const InlineIcon = inlineBrands.get(cacheKey)
+  if (InlineIcon) return <InlineIcon {...props} />
+
+  let IconComponent = LAZY_ICONS.get(cacheKey)
+  if (!IconComponent) {
+    // Load the selected SVG variant, avoiding the brand index's Avatar/UI dependencies.
+    // The v6 compatibility exports expose .js aliases, but Rspack enumerates
+    // physical files (.mjs) when constructing a dynamic import context.
+    IconComponent = lazy(() =>
+      import(
+        /* webpackInclude: /[\\/]components[\\/](Mono|Avatar|Brand|BrandColor|Color|Combine|Text|TextCn|TextColor|Simple|Morden)\.mjs$/ */
+        `../../node_modules/@lobehub/icons/es/${baseKey}/components/${variant}.mjs`
+      ).catch(() => ({
+        default: (props: Record<string, unknown>) =>
+          renderLobeIconFallback(
+            baseKey,
+            typeof props.size === 'number' || typeof props.size === 'string'
+              ? props.size
+              : 20
+          ),
+      }))
+    )
+    LAZY_ICONS.set(cacheKey, IconComponent)
+  }
+
   return (
     <Suspense
       fallback={renderLobeIconFallback(
@@ -215,12 +222,4 @@ export function getLobeIcon(
       <IconComponent {...props} />
     </Suspense>
   )
-}
-
-// The selector uses the same installed icon registry as the renderer.
-export function getLobeIconNames(): string[] {
-  const names = toc.flatMap((icon) =>
-    icon.param.hasColor ? [icon.id, `${icon.id}.Color`] : [icon.id]
-  )
-  return [...new Set([...names, ...Object.keys(CUSTOM_ICONS)])].sort()
 }

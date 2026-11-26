@@ -627,12 +627,19 @@ func TransferReferralToAgentBalance(c *gin.Context) {
 		return
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
-	var request model.AgentSimpleTransferRequest
+	var request struct {
+		model.AgentSimpleTransferRequest
+		ExpectedUserID *int `json:"expected_user_id,omitempty"`
+	}
 	if err := common.DecodeJsonStrict(c.Request.Body, &request); err != nil {
 		writeAgentSimpleError(c, model.ErrAgentSimpleInvalid)
 		return
 	}
-	result, err := model.TransferReferralToAgentBalance(identity, request)
+	if request.ExpectedUserID != nil && *request.ExpectedUserID != identity.UserID {
+		writeAgentSimpleError(c, model.ErrAgentSimplePermission)
+		return
+	}
+	result, err := model.TransferReferralToAgentBalance(identity, request.AgentSimpleTransferRequest)
 	if err != nil {
 		writeAgentSimpleError(c, err)
 		return

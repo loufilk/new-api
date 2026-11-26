@@ -225,3 +225,22 @@ test.each([
     ).not.toBeInTheDocument()
   }
 )
+
+test('shows configured Resend independently of the legacy SMTP flag', async () => {
+  renderSettings(100, {
+    enabled: true,
+    admin_recipients: ['support@example.com'],
+    site_origin: 'https://example.com',
+    smtp_configured: false,
+    delivery_provider: 'resend',
+    delivery_configured: true,
+  })
+  expect(
+    await screen.findByText('Email sending method: Resend · Configured')
+  ).toBeVisible()
+  expect(
+    screen.queryByText(
+      'Configure SMTP in email settings before enabling notifications.'
+    )
+  ).not.toBeInTheDocument()
+})

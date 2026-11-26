@@ -32,10 +32,29 @@ function getInitialStatus(): SystemStatus | undefined {
  * Every caller reads the same cache entry, so mounting this hook in several
  * components costs one request. See `statusQueryOptions` for cache lifetimes.
  */
-export function useStatus(refreshOnFocus = false) {
-  const { data, isLoading, error } = useQuery({
+type AnnouncementRefresh = { announcements: 'return' | 'active' }
+const ANNOUNCEMENT_RETURN_MIN_AGE_MS = 30_000
+const ANNOUNCEMENT_ACTIVE_POLL_MS = 120_000
+
+export function useStatus(refresh: boolean | AnnouncementRefresh = false) {
+  const announcementRefresh = typeof refresh === 'object' && refresh
+  const { data, isLoading, error, refetch, dataUpdatedAt } = useQuery({
     ...statusQueryOptions,
-    ...(refreshOnFocus && { refetchOnWindowFocus: 'always' }),
+    ...(refresh === true && { refetchOnWindowFocus: 'always' }),
+    ...(announcementRefresh && {
+      // Only notification observers opt in; the status query and cache are shared.
+      refetchOnWindowFocus: (query: {
+        state: { dataUpdatedAt: number }
+      }): 'always' | false =>
+        Date.now() - query.state.dataUpdatedAt >= ANNOUNCEMENT_RETURN_MIN_AGE_MS
+          ? 'always'
+          : false,
+      refetchInterval:
+        announcementRefresh.announcements === 'active'
+          ? ANNOUNCEMENT_ACTIVE_POLL_MS
+          : false,
+      refetchIntervalInBackground: false,
+    }),
     // Use localStorage data as initial data
     placeholderData: getInitialStatus(),
   })
@@ -44,5 +63,10 @@ export function useStatus(refreshOnFocus = false) {
     status: (data as SystemStatus | null) ?? null,
     loading: isLoading,
     error,
+    refetchIfAnnouncementStale: () => {
+      if (Date.now() - dataUpdatedAt >= ANNOUNCEMENT_RETURN_MIN_AGE_MS) {
+        void refetch({ cancelRefetch: false })
+      }
+    },
   }
 }

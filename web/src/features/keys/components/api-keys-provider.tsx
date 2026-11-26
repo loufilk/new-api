@@ -32,11 +32,22 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { fetchTokenKey, fetchTokenKeysBatch } from '../api'
 import { ERROR_MESSAGES } from '../constants'
+import type { MarketKeyDraft } from '../lib/market-key-draft'
 import type { ApiKey, ApiKeysDialogType } from '../types'
 
 type ApiKeysContextType = {
   open: ApiKeysDialogType | null
   setOpen: (str: ApiKeysDialogType | null) => void
+  createDraft: MarketKeyDraft | undefined
+  diagnostic?: {
+    tokenId?: number
+    trigger: React.RefObject<HTMLButtonElement | null>
+  }
+  openDiagnostic: (
+    trigger: React.RefObject<HTMLButtonElement | null>,
+    tokenId?: number
+  ) => void
+  openMarketCreate: (draft?: MarketKeyDraft) => void
   currentRow: ApiKey | null
   setCurrentRow: React.Dispatch<React.SetStateAction<ApiKey | null>>
   refreshTrigger: number
@@ -44,6 +55,10 @@ type ApiKeysContextType = {
   resolvedKey: string
   setResolvedKey: React.Dispatch<React.SetStateAction<string>>
   resolveRealKey: (id: number) => Promise<string | null>
+  resolveTransientKey: (
+    id: number,
+    signal: AbortSignal
+  ) => Promise<string | null>
   resolveRealKeysBatch: (ids: number[]) => Promise<Record<number, string>>
   resolvedKeys: Record<number, string>
   loadingKeys: Record<number, boolean>
@@ -73,7 +88,32 @@ function SessionApiKeysProvider({
   ownerEpoch: number
 }) {
   const { t } = useTranslation()
-  const [open, setOpen] = useDialogState<ApiKeysDialogType>(null)
+  const [dialog, setDialog] = useDialogState<{
+    type: ApiKeysDialogType
+    draft?: MarketKeyDraft
+    diagnostic?: ApiKeysContextType['diagnostic']
+  }>(null)
+  const open = dialog?.type ?? null
+  const createDraft = open === 'create' ? dialog?.draft : undefined
+  const setOpen = useCallback(
+    (type: ApiKeysDialogType | null) => setDialog(type ? { type } : null),
+    [setDialog]
+  )
+  const openDiagnostic: ApiKeysContextType['openDiagnostic'] = useCallback(
+    (trigger, tokenId) =>
+      setDialog({ type: 'diagnostic', diagnostic: { trigger, tokenId } }),
+    [setDialog]
+  )
+  const openMarketCreate = useCallback(
+    (draft?: MarketKeyDraft) => {
+      setDialog((previous) => {
+        // A repeated route effect must not discard an already consumed private draft.
+        if (!draft && previous?.type === 'create') return previous
+        return { type: 'create', draft }
+      })
+    },
+    [setDialog]
+  )
   const [currentRow, setCurrentRow] = useState<ApiKey | null>(null)
   const [refreshTrigger, setRefreshTrigger] = useState(0)
   const [resolvedKey, setResolvedKey] = useState('')
@@ -157,6 +197,23 @@ function SessionApiKeysProvider({
     [resolvedKeys, t, isCurrentOwner]
   )
 
+  // Use the existing owner-scoped endpoint and epoch checks, but never fill
+  // the ordinary session cache or report a response body for local import.
+  const resolveTransientKey = useCallback(
+    async (id: number, signal: AbortSignal): Promise<string | null> => {
+      if (!isCurrentOwner() || signal.aborted) return null
+      try {
+        const res = await fetchTokenKey(id, { signal })
+        if (!isCurrentOwner() || signal.aborted) return null
+        const raw = res.success ? res.data?.key : null
+        return typeof raw === 'string' && raw.length > 0 ? `sk-${raw}` : null
+      } catch {
+        return null
+      }
+    },
+    [isCurrentOwner]
+  )
+
   const resolveRealKeysBatch = useCallback(
     async (ids: number[]): Promise<Record<number, string>> => {
       if (!isCurrentOwner()) return {}
@@ -217,6 +274,10 @@ function SessionApiKeysProvider({
       value={{
         open,
         setOpen,
+        createDraft,
+        openMarketCreate,
+        diagnostic: dialog?.diagnostic,
+        openDiagnostic,
         currentRow,
         setCurrentRow,
         refreshTrigger,
@@ -224,6 +285,7 @@ function SessionApiKeysProvider({
         resolvedKey,
         setResolvedKey,
         resolveRealKey,
+        resolveTransientKey,
         resolveRealKeysBatch,
         resolvedKeys,
         loadingKeys,

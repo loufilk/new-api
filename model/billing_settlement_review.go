@@ -15,8 +15,27 @@ import (
 // or authorizes a background debit. Process death leaves an enumerable review
 // item; recovery must retain the original funding policy and request identity.
 func RequestBillingSettlement(ctx context.Context, receipt BillingFinalization, actual int) error {
+	return requestBillingSettlement(ctx, receipt, actual, nil)
+}
+
+func RequestRecoverableBillingSettlement(ctx context.Context, receipt BillingFinalization, actual int, recovery BillingSettlementRecovery) error {
+	return requestBillingSettlement(ctx, receipt, actual, &recovery)
+}
+
+func requestBillingSettlement(ctx context.Context, receipt BillingFinalization, actual int, recovery *BillingSettlementRecovery) error {
 	if actual < 0 || actual > common.MaxQuota {
 		return errors.New("invalid billing actual quota")
+	}
+	data := ""
+	if recovery != nil {
+		if err := recovery.validate(receipt); err != nil {
+			return err
+		}
+		encoded, err := common.Marshal(recovery)
+		if err != nil {
+			return err
+		}
+		data = string(encoded)
 	}
 	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		r, err := claimBillingFinalizationTx(tx, receipt)
@@ -28,13 +47,23 @@ func RequestBillingSettlement(ctx context.Context, receipt BillingFinalization, 
 			if r.ActualQuota != actual {
 				return billingRefundReviewError("actual_mismatch", "billing settlement replay amount mismatch")
 			}
+			if data != "" && r.SettlementRecovery != data || r.State == BillingSettlementReview && r.SettlementRecovery != "" && data == "" {
+				return billingRefundReviewError("recovery_mismatch", "billing recovery snapshot mismatch")
+			}
 			return nil
 		case BillingHeld:
-			return tx.Model(r).Updates(map[string]any{
+			updates := map[string]any{
 				"state": BillingSettlementReview, "actual_quota": actual,
 				"last_error_code": "settlement_unconfirmed", "last_error_class": billingRefundReview,
 				"next_retry_at": 0, "escalated_at": common.GetTimestamp(),
-			}).Error
+			}
+			if data != "" {
+				updates["settlement_recovery"] = data
+				updates["last_error_class"] = billingRefundRetryable
+				updates["next_retry_at"] = common.GetTimestamp() + 10
+				updates["escalated_at"] = 0
+			}
+			return tx.Model(r).Updates(updates).Error
 		case "building":
 			return billingRefundReviewError("owner_missing", "settlement requires an atomically reserved request owner")
 		default:
@@ -91,15 +120,44 @@ func RecordBillingSettlementFailure(ctx context.Context, receipt BillingFinaliza
 			return billingRefundReviewError("identity_mismatch", "billing settlement failure receipt mismatch")
 		}
 		if r.State == BillingSettled && r.ActualQuota == actual {
-			return nil // The supposedly failed COMMIT succeeded.
+			// The supposedly failed COMMIT succeeded, but the handler may emit
+			// an unconfirmed usage log. Only this exceptional path schedules a
+			// projection check; normal successful requests create no extra work.
+			if r.SettlementRecovery != "" {
+				recovery, err := DecodeBillingSettlementRecovery(r)
+				if err != nil {
+					return err
+				}
+				if recovery.LogExpected {
+					return tx.Model(&r).Update("settlement_log_retry_at", common.GetTimestamp()+2).Error
+				}
+			}
+			return nil
 		}
 		if r.State != BillingSettlementReview || r.ActualQuota != actual {
 			return billingRefundReviewError("settlement_intent_unconfirmed", "billing settlement intent is not confirmed")
+		}
+		// Only explicit current measured-usage snapshots can retry a local SQL
+		// deadline or PostgreSQL connection-capacity error. In particular 53300
+		// is NOT an inline retry: reconnecting immediately amplifies overload.
+		if r.SettlementRecovery != "" {
+			var sqlState interface{ SQLState() string }
+			if errors.Is(failure, context.DeadlineExceeded) || errors.Is(failure, context.Canceled) {
+				code, class = "transient_database", billingRefundRetryable
+			} else if errors.As(failure, &sqlState) && sqlState.SQLState() == "53300" {
+				if _, err := DecodeBillingSettlementRecovery(r); err == nil {
+					code, class = "transient_database", billingRefundRetryable
+				}
+			}
 		}
 		now := common.GetTimestamp()
 		updates := map[string]any{
 			"attempts": r.Attempts + 1, "last_error_code": code, "last_error_class": class,
 			"last_attempt_at": now, "next_retry_at": 0, "escalated_at": now,
+		}
+		if r.SettlementRecovery != "" && class == billingRefundRetryable && r.Attempts+1 < BillingSettlementRecoveryMaxAttempts {
+			updates["next_retry_at"] = now + min(int64(60), int64(2)<<min(r.Attempts, 5))
+			updates["escalated_at"] = 0
 		}
 		if r.FirstFailedAt == 0 {
 			updates["first_failed_at"], updates["first_error_code"], updates["first_error_class"] = now, code, class

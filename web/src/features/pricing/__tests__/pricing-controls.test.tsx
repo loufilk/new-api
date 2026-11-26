@@ -25,6 +25,7 @@ import {
   PricingToolbar,
   type PricingToolbarProps,
 } from '../components/pricing-toolbar'
+import { SearchBar } from '../components/search-bar'
 import { filterByQuotaType } from '../lib/filters'
 import type { PricingModel } from '../types'
 
@@ -36,31 +37,38 @@ function toolbarProps(): PricingToolbarProps {
     tokenUnit: 'M',
     showRechargePrice: false,
     viewMode: 'card',
-    quotaTypeFilter: 'all',
-    endpointTypeFilter: 'all',
-    vendorFilter: 'all',
-    groupFilter: 'all',
-    tagFilter: 'all',
     onSortChange: vi.fn(),
     onTokenUnitChange: vi.fn(),
     onRechargePriceChange: vi.fn(),
     onViewModeChange: vi.fn(),
-    onQuotaTypeChange: vi.fn(),
-    onEndpointTypeChange: vi.fn(),
-    onVendorChange: vi.fn(),
-    onGroupChange: vi.fn(),
-    onTagChange: vi.fn(),
-    vendors: [],
-    groups: ['default', 'premium'],
-    groupRatios: { default: 1, premium: 3 },
-    tags: [],
-    models: [],
-    hasActiveFilters: false,
-    activeFilterCount: 0,
-    onClearFilters: vi.fn(),
   }
 }
 
+function filterProps() {
+  return {
+    platform: 'all',
+    groupFilter: 'all',
+    quotaTypeFilter: 'all',
+    endpointTypeFilter: 'all',
+    onPlatformChange: vi.fn(),
+    onGroupChange: vi.fn(),
+    onQuotaTypeChange: vi.fn(),
+    onEndpointTypeChange: vi.fn(),
+    groups: ['basic', 'premium', 'vip'],
+    groupRatios: { basic: 1, premium: 2, vip: 0 },
+    groupCatalog: {
+      basic: { platform: 'openai' },
+      premium: { platform: 'anthropic' },
+      vip: {
+        platform: 'openai',
+        exclusive: true,
+        label: 'Private tier',
+        badges: ['benefit'],
+      },
+    },
+    models: [],
+  }
+}
 describe('pricing controls', () => {
   it.each<{
     name: string
@@ -202,7 +210,7 @@ describe('pricing controls', () => {
         ...pricing,
       }
       const models = [model]
-      render(<PricingSidebar {...toolbarProps()} models={models} />)
+      render(<PricingSidebar {...filterProps()} models={models} />)
 
       for (const [quotaType, label] of [
         ['token', 'Token-based'],
@@ -221,87 +229,126 @@ describe('pricing controls', () => {
       }
       expect(filterByQuotaType(models, 'all')).toEqual([model])
       expect(
-        screen.getByRole('button', { name: /^All Models\s*1$/ })
+        within(screen.getByRole('group', { name: 'Pricing Type' })).getByRole(
+          'button',
+          { name: /^All\s*1$/ }
+        )
       ).toBeVisible()
     }
   )
 
-  it('counts each model once per filter and updates counts when the catalog changes', () => {
-    const props = toolbarProps()
-    const base: PricingModel = {
-      id: 1,
-      model_name: 'text-model',
-      vendor_name: 'Vendor A',
-      quota_type: 0,
-      model_ratio: 1,
-      completion_ratio: 1,
-      enable_groups: ['default'],
-      tags: 'Chat,chat',
-      supported_endpoint_types: ['openai', 'openai'],
+  it('counts platforms by allowed groups, lists exclusives under Other and shows their effective zero ratio', async () => {
+    const props = filterProps()
+    const { rerender } = render(<PricingSidebar {...props} />)
+    expect(
+      within(screen.getByRole('group', { name: 'Platform' })).getByRole(
+        'button',
+        { name: 'All 3' }
+      )
+    ).toBeVisible()
+    const other = screen.getByRole('button', { name: 'Other 1' })
+    await userEvent.click(other)
+    expect(props.onPlatformChange).toHaveBeenCalledWith('other')
+    rerender(<PricingSidebar {...props} platform='other' />)
+    const row = within(screen.getByRole('group', { name: 'Group' }))
+    const group = row.getByRole('button', {
+      name: /Exclusive Benefit Private tier ×0/,
+    })
+    await userEvent.click(group)
+    expect(props.onGroupChange).toHaveBeenCalledWith('vip')
+    expect(row.queryByText('basic')).toBeNull()
+  })
+
+  it('identifies platform numbers as group counts even when there are no matching models', () => {
+    render(<PricingSidebar {...filterProps()} />)
+    expect(
+      screen.getByRole('group', { name: 'Platform' })
+    ).toHaveAccessibleDescription('Available group counts')
+  })
+
+  it('keeps the selected group visible when a long mobile list is collapsed', async () => {
+    const media = window.matchMedia
+    const query = vi
+      .spyOn(window, 'matchMedia')
+      .mockImplementation((value) => ({
+        ...media(value),
+        matches: value === '(max-width: 639px)' || media(value).matches,
+      }))
+    try {
+      const props = filterProps()
+      const groups = ['a', 'b', 'c', 'd', 'e', 'f', 'z']
+      render(<PricingSidebar {...props} groups={groups} groupFilter='z' />)
+      const row = within(screen.getByRole('group', { name: 'Group' }))
+      const active = row.getByRole('button', { name: 'z' })
+      expect(active).toHaveAttribute('aria-pressed', 'true')
+      expect(row.queryByRole('button', { name: 'f' })).toBeNull()
+      const expand = row.getByRole('button', { name: 'Expand' })
+      expect(expand).toHaveAttribute('aria-expanded', 'false')
+      expand.focus()
+      await userEvent.keyboard('{Enter}')
+      expect(row.getByRole('button', { name: 'f' })).toBeVisible()
+      await userEvent.click(row.getByRole('button', { name: 'Collapse' }))
+      expect(active).toBeVisible()
+      expect(row.queryByRole('button', { name: 'f' })).toBeNull()
+    } finally {
+      query.mockRestore()
     }
-    const models: PricingModel[] = [
-      base,
-      {
-        ...base,
-        id: 2,
-        model_name: 'image-model',
-        quota_type: 1,
-        tags: 'chat,Image',
-        supported_endpoint_types: ['image-generation'],
-      },
-      {
-        ...base,
-        id: 3,
-        model_name: 'task-model',
-        vendor_name: 'Vendor B',
-        tags: 'Video',
-        supported_endpoint_types: ['openai-video'],
-        billing_usage_schema: { seconds: { type: 'number', unit: 'second' } },
-      },
-    ]
-    const sidebarProps = {
-      ...props,
-      vendors: [
-        { id: 1, name: 'Vendor A' },
-        { id: 2, name: 'Vendor B' },
-      ],
-      tags: ['Chat', 'Image', 'Video'],
-    }
-    const { rerender } = render(
-      <PricingSidebar {...sidebarProps} models={models} />
+  })
+
+  it('counts duplicated endpoint declarations once and exposes custom protocol chips', () => {
+    const props = filterProps()
+    render(
+      <PricingSidebar
+        {...props}
+        models={[
+          {
+            id: 1,
+            model_name: 'custom',
+            model_ratio: 1,
+            completion_ratio: 1,
+            quota_type: 0,
+            enable_groups: ['basic'],
+            supported_endpoint_types: ['audio-speech', 'audio-speech'],
+          },
+        ]}
+      />
     )
+    expect(screen.getByRole('button', { name: 'audio-speech 1' })).toBeVisible()
+    expect(screen.queryByRole('group', { name: 'Model Tags' })).toBeNull()
+  })
 
-    expect(
-      screen.getByRole('button', { name: /^All Vendors\s*3$/ })
-    ).toBeVisible()
-    expect(screen.getByRole('button', { name: /^Vendor A\s*2$/ })).toBeVisible()
-    expect(screen.getByRole('button', { name: /^Vendor B\s*1$/ })).toBeVisible()
-    expect(screen.getByRole('button', { name: /^Chat\s*2$/ })).toBeVisible()
-    expect(screen.getByRole('button', { name: /^Chat\s*1$/ })).toBeVisible()
-    expect(
-      screen.getByRole('button', { name: /^Token-based\s*1$/ })
-    ).toBeVisible()
-    expect(
-      screen.getByRole('button', { name: /^Per Request\s*1$/ })
-    ).toBeVisible()
-    expect(
-      screen.getByRole('button', { name: /^Task billing\s*1$/ })
-    ).toBeVisible()
+  it('announces filtered model totals and offers reset only when there is something to clear', async () => {
+    const props = toolbarProps()
+    const reset = vi.fn()
+    const { rerender } = render(
+      <PricingToolbar {...props} onClearFilters={reset} />
+    )
+    expect(screen.getByRole('status')).toHaveTextContent('Matching models2')
+    expect(screen.queryByRole('button', { name: 'Reset filters' })).toBeNull()
+    rerender(
+      <PricingToolbar
+        {...props}
+        filteredCount={0}
+        hasActiveFilters
+        onClearFilters={reset}
+      />
+    )
+    expect(screen.getByRole('status')).toHaveTextContent('Matching models0/ 2')
+    await userEvent.click(screen.getByRole('button', { name: 'Reset filters' }))
+    expect(reset).toHaveBeenCalledOnce()
+  })
 
-    rerender(<PricingSidebar {...sidebarProps} models={[models[1]]} />)
-    expect(
-      screen.getByRole('button', { name: /^All Vendors\s*1$/ })
-    ).toBeVisible()
-    expect(screen.getByRole('button', { name: /^Vendor A\s*1$/ })).toBeVisible()
-    expect(screen.queryByRole('button', { name: /^Vendor B\s*1$/ })).toBeNull()
-    expect(screen.getByRole('button', { name: /^Chat\s*1$/ })).toBeVisible()
-    expect(screen.getByRole('button', { name: /^Chat\s*0$/ })).toBeVisible()
-    expect(
-      screen.getByRole('button', { name: /^Token-based\s*0$/ })
-    ).toBeVisible()
-    expect(
-      screen.getByRole('button', { name: /^Task billing\s*0$/ })
-    ).toBeVisible()
+  it('focuses the standalone search with Ctrl+K and returns focus to it after clearing', async () => {
+    const onClear = vi.fn()
+    render(<SearchBar value='sample' onChange={vi.fn()} onClear={onClear} />)
+    const search = within(screen.getByRole('search', { name: 'Search models' }))
+    const field = search.getByRole('textbox', { name: 'Search models' })
+    const user = userEvent.setup()
+    await user.keyboard('{Control>}k{/Control}')
+    expect(field).toHaveFocus()
+    await user.click(search.getByRole('button', { name: 'Clear search' }))
+    expect(onClear).toHaveBeenCalledOnce()
+    expect(field).toHaveFocus()
   })
 
   it('changes the token unit and keeps the selected unit pressed when clicked again', async () => {
@@ -362,30 +409,46 @@ describe('pricing controls', () => {
     expect(props.onSortChange).toHaveBeenCalledWith('input-price-low')
   })
 
-  it('opens mobile filters from the left, selects a group, and restores focus on close', async () => {
-    const props = toolbarProps()
+  it('does not advertise restricted popularity or recommendation sorts to public visitors', async () => {
     const user = userEvent.setup()
-    const { rerender } = render(<PricingToolbar {...props} />)
-    await user.click(screen.getByRole('button', { name: 'Filter' }))
-    const dialog = await screen.findByRole('dialog', { name: 'Filter' })
-    expect(dialog).toHaveAttribute('data-side', 'left')
-    expect(within(dialog).getByRole('button', { name: 'Reset' })).toBeDisabled()
-    await user.click(within(dialog).getByRole('button', { name: /premium/ }))
-    expect(props.onGroupChange).toHaveBeenCalledWith('premium')
-    rerender(
-      <PricingToolbar
-        {...props}
-        groupFilter='premium'
-        hasActiveFilters
-        activeFilterCount={1}
-      />
-    )
+    render(<PricingToolbar {...toolbarProps()} />)
+    await user.click(screen.getByRole('button', { name: 'Name' }))
+    for (const name of ['Recommended', 'Most requests', 'Most tokens']) {
+      expect(screen.queryByRole('menuitem', { name })).not.toBeInTheDocument()
+    }
+    expect(screen.getByRole('menuitem', { name: 'Name' })).toBeInTheDocument()
     expect(
-      within(dialog).getByRole('button', { name: /premium/ })
-    ).toHaveAttribute('aria-pressed', 'true')
-    await user.click(within(dialog).getByRole('button', { name: 'Reset' }))
-    expect(props.onClearFilters).toHaveBeenCalledOnce()
-    await user.keyboard('{Escape}')
-    expect(await screen.findByRole('button', { name: /Filter/ })).toHaveFocus()
+      screen.getByRole('menuitem', { name: 'Input Price: Low to High' })
+    ).toBeInTheDocument()
+  })
+
+  it('lists the model order sorts above the name and price sorts', async () => {
+    const props = {
+      ...toolbarProps(),
+      sortBy: 'recommended',
+      modelOrder: {
+        recommended: ['sample'],
+        requests: ['sample'],
+        tokens: ['sample'],
+      },
+    }
+    const user = userEvent.setup()
+    render(<PricingToolbar {...props} />)
+    await user.click(screen.getByRole('button', { name: 'Recommended' }))
+    const [orderGroup, otherGroup] = within(
+      await screen.findByRole('menu')
+    ).getAllByRole('group')
+    expect(
+      within(orderGroup)
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent)
+    ).toEqual(['Recommended', 'Most requests', 'Most tokens'])
+    expect(within(otherGroup).getAllByRole('menuitem')[0]).toHaveTextContent(
+      'Name'
+    )
+    await user.click(
+      within(orderGroup).getByRole('menuitem', { name: 'Most requests' })
+    )
+    expect(props.onSortChange).toHaveBeenCalledWith('requests')
   })
 })

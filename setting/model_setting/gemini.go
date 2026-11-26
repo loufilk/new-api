@@ -9,6 +9,7 @@ import (
 )
 
 const defaultGeminiSafetySetting = "OFF"
+const defaultGeminiVersion = "v1beta"
 
 var validGeminiSafetySettings = map[string]struct{}{
 	"OFF":                              {},
@@ -36,7 +37,7 @@ var defaultGeminiSettings = GeminiSettings{
 		"default": defaultGeminiSafetySetting,
 	},
 	VersionSettings: map[string]string{
-		"default":        "v1beta",
+		"default":        defaultGeminiVersion,
 		"gemini-1.0-pro": "v1",
 	},
 	SupportedImagineModels: []string{
@@ -100,12 +101,33 @@ func ValidateGeminiSafetySettings(value string) error {
 	return nil
 }
 
-// GetGeminiVersionSetting 获取版本设置
+func validGeminiVersion(version string) bool {
+	return version == "v1" || version == defaultGeminiVersion || version == "v1alpha"
+}
+
+// Version settings supply a single API version path segment, never part of an
+// endpoint. A model-only map (including {}) inherits the built-in default.
+func ValidateGeminiVersionSettings(value string) error {
+	var versions map[string]string
+	if err := common.UnmarshalJsonStr(value, &versions); err != nil || versions == nil {
+		return fmt.Errorf("Gemini version settings must be a JSON string map")
+	}
+	for _, version := range versions {
+		if !validGeminiVersion(version) {
+			return fmt.Errorf("Gemini API versions must be v1, v1beta, or v1alpha")
+		}
+	}
+	return nil
+}
+
 func GetGeminiVersionSetting(key string) string {
-	if value, ok := geminiSettings.VersionSettings[key]; ok {
+	if value := geminiSettings.VersionSettings[key]; validGeminiVersion(value) {
 		return value
 	}
-	return geminiSettings.VersionSettings["default"]
+	if value := geminiSettings.VersionSettings["default"]; validGeminiVersion(value) {
+		return value
+	}
+	return defaultGeminiVersion
 }
 
 func IsGeminiModelSupportImagine(model string) bool {

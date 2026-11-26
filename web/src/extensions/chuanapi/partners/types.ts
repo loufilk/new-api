@@ -1,22 +1,11 @@
+import type { PartnerContactType, PartnerPlatform } from './catalog'
+
 export type PartnerApplicationStatus =
   | 'submitted'
   | 'reviewing'
   | 'approved'
   | 'rejected'
   | 'cancelled'
-
-export type PartnerContactType = 'wechat' | 'qq' | 'email' | 'phone' | 'other'
-
-export type PartnerPlatform =
-  | 'openai'
-  | 'anthropic'
-  | 'google'
-  | 'deepseek'
-  | 'alibaba'
-  | 'bytedance'
-  | 'zhipu'
-  | 'moonshot'
-  | 'other'
 
 export interface PartnerQuote {
   platform: PartnerPlatform

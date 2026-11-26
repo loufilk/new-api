@@ -46,6 +46,7 @@ import type { OrderSelection } from './orders'
 import { estimateInvoiceFee, type CustomerInvoiceConfig } from './policy'
 
 export function ApplicationForm(props: {
+  policyReady?: boolean
   policy: CustomerInvoiceConfig
   selection: OrderSelection
   onBusy: (busy: boolean) => void
@@ -125,6 +126,7 @@ export function ApplicationForm(props: {
     fee > 0n ? 'Submit and choose payment' : 'Submit application'
   if (mutation.isPending) submitLabel = 'Submitting…'
   const disabled =
+    props.policyReady === false ||
     !props.selection.size ||
     !props.policy.enabled ||
     !typePolicy.enabled ||

@@ -24,6 +24,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { api, type ApiRequestConfig } from '@/lib/api'
 
+import { getVendorOptions } from '../api'
 import { VendorMutateDialog } from '../components/dialogs/vendor-mutate-dialog'
 import { VendorOperationDialog } from '../components/dialogs/vendor-operation-dialog'
 import { VendorLinkedModels } from '../components/vendor-linked-models'
@@ -115,6 +116,51 @@ describe('vendor management', () => {
     )
     await waitFor(() => expect(close).toHaveBeenCalledWith(false))
   })
+  it.each([
+    ['Google', 'Gemini.Color'],
+    ['Guest relay', 'Default placeholder'],
+  ])(
+    'clears the saved override for %s, previews %s, and never saves an unlisted search',
+    async (name, effective) => {
+      const vendorFixture = { ...vendor, name }
+      vi.spyOn(api, 'get').mockResolvedValue({
+        data: { success: true, data: vendorFixture },
+      })
+      const put = vi.spyOn(api, 'put').mockResolvedValue({
+        data: { success: true, data: { ...vendorFixture, icon: '' } },
+      })
+      const client = renderWithClient(
+        <VendorMutateDialog
+          open
+          currentVendor={vendorFixture}
+          onOpenChange={() => {}}
+        />
+      )
+      const user = userEvent.setup()
+      await user.click(await screen.findByRole('button', { name: 'Clear' }))
+      expect(screen.getByText(effective)).toBeVisible()
+      if (name === 'Google') {
+        expect(screen.getByTitle('Gemini').parentElement?.tagName).toBe('svg')
+      } else {
+        expect(screen.getByText('G', { exact: true })).toBeVisible()
+      }
+      const picker = screen.getByRole('combobox', { name: 'Icon' })
+      await user.click(picker)
+      await user.type(picker, 'https://unavailable.invalid/icon.svg')
+      expect(await screen.findByText('No matching icons')).toBeVisible()
+      await user.keyboard('{Escape}')
+      expect(picker).toHaveValue('')
+      await user.click(screen.getByRole('button', { name: 'Save metadata' }))
+      await waitFor(() =>
+        expect(put).toHaveBeenCalledWith(
+          '/api/vendors/',
+          expect.objectContaining({ id: vendor.id, icon: '' })
+        )
+      )
+      client.clear()
+    }
+  )
+
   it('requires a preview and a fresh version after a conflict when clearing model assignments', async () => {
     vi.spyOn(api, 'get').mockResolvedValue({
       data: { success: true, data: { items: [vendor, target] } },
@@ -176,6 +222,62 @@ describe('vendor management', () => {
     for (const key of ['vendors', 'models', 'pricing']) {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: [key] })
     }
+  })
+  it('can select an older vendor beyond the server page limit without applying changes', async () => {
+    const rows = Array.from({ length: 101 }, (_, index) => ({
+      ...vendor,
+      id: 101 - index,
+      name: `Vendor ${101 - index}`,
+    }))
+    const get = vi
+      .spyOn(api, 'get')
+      .mockImplementation(async (_url, config) => {
+        const params = config?.params
+        const query = params && typeof params === 'object' ? params : {}
+        const page = Number(('p' in query ? query.p : undefined) ?? 1)
+        const size = Math.min(
+          Number(('page_size' in query ? query.page_size : undefined) ?? 20),
+          100
+        )
+        return {
+          data: {
+            success: true,
+            data: {
+              page,
+              page_size: size,
+              total: rows.length,
+              items: rows.slice((page - 1) * size, page * size),
+            },
+          },
+        }
+      })
+    const post = vi.spyOn(api, 'post')
+    renderWithClient(
+      <VendorOperationDialog
+        selection={{ action: 'merge', vendor_ids: [101, 1] }}
+        onClose={() => {}}
+      />
+    )
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('combobox', { name: 'Keep this vendor' }))
+    await user.click(await screen.findByRole('option', { name: 'Vendor 1' }))
+    expect(
+      screen.getByRole('button', { name: 'Preview changes' })
+    ).toBeEnabled()
+    expect(post).not.toHaveBeenCalled()
+  })
+  it('does not return a partially loaded vendor directory on a later-page failure', async () => {
+    const failed = { success: false, message: 'Unable to read page 2' }
+    vi.spyOn(api, 'get')
+      .mockResolvedValueOnce({
+        data: {
+          success: true,
+          data: { items: [vendor], page_size: 1, total: 2 },
+        },
+      })
+      .mockResolvedValueOnce({ data: failed })
+    await expect(getVendorOptions()).resolves.toEqual(failed)
   })
   it('requires an explicit merge target and previews only the remaining source vendors', async () => {
     vi.spyOn(api, 'get').mockResolvedValue({

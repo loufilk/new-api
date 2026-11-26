@@ -49,7 +49,8 @@ import { aggregateUptime, type UptimeDayPoint } from '../lib/mock-stats'
 type SparklineSize = 'sm' | 'md'
 
 type UptimeSparklineProps = {
-  series: UptimeDayPoint[]
+  series: (Pick<UptimeDayPoint, 'date' | 'uptime_pct'> &
+    Partial<Pick<UptimeDayPoint, 'incidents' | 'outage_minutes'>>)[]
   overallSuccessRate?: number
   size?: SparklineSize
   showOverall?: boolean
@@ -66,6 +67,7 @@ function heightFor(uptime: number): string {
 }
 
 export function UptimeSparkline(props: UptimeSparklineProps) {
+  const { t } = useTranslation()
   const size = props.size ?? 'md'
   const showOverall = props.showOverall ?? true
 
@@ -90,7 +92,7 @@ export function UptimeSparkline(props: UptimeSparklineProps) {
       <div
         className={cn('flex items-end', containerHeight, gap)}
         role='img'
-        aria-label={`30 day uptime ${overall.toFixed(2)}%`}
+        aria-label={`${t('Success rate')} ${overall.toFixed(2)}%`}
       >
         {props.series.map((day) => (
           <Tooltip key={day.date}>
@@ -118,7 +120,7 @@ export function UptimeSparkline(props: UptimeSparklineProps) {
             <TooltipContent side='top' className='font-mono text-xs'>
               <div className='font-medium'>{day.date}</div>
               <div>{formatUptimePct(day.uptime_pct)}</div>
-              {day.outage_minutes > 0 && (
+              {(day.outage_minutes ?? 0) > 0 && (
                 <div className='text-muted-foreground'>
                   {day.outage_minutes} min outage
                 </div>

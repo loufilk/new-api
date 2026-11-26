@@ -30,6 +30,7 @@ import type {
   StripePaymentResponse,
   AffiliateCodeResponse,
   BillingHistoryResponse,
+  RechargeHistoryResponse,
   CompleteOrderRequest,
   CreemPaymentRequest,
   CreemPaymentResponse,
@@ -113,15 +114,39 @@ export async function calculateWaffoAmount(
  * Request regular payment
  */
 export async function requestPayment(
-  request: PaymentRequest
+  {
+    intent_id,
+    ...request
+  }: PaymentRequest & { intent_id: string; expected_minor: number },
+  authSessionEpoch: number
 ): Promise<PaymentResponse> {
-  const res = await api.post('/api/user/pay', request, {
-    skipBusinessError: true,
-  } as Record<string, unknown>)
+  const res = await api.post(
+    '/api/user/pay/intents/' + encodeURIComponent(intent_id),
+    request,
+    {
+      singleUseAuthorization: true,
+      authSessionEpoch,
+      skipBusinessError: true,
+    } as Record<string, unknown>
+  )
   return {
     ...res.data,
     url: res.data.url || (res as unknown as { url?: string }).url,
   }
+}
+
+export type EpayReceipt = {
+  payment_method: string
+  payment_minor: number
+  success: boolean
+  trade_no: string
+  order_status: 'pending' | 'success' | 'failed' | 'expired'
+}
+export async function getEpayIntent(id: string): Promise<EpayReceipt> {
+  const res = await api.get('/api/user/pay/intents/' + encodeURIComponent(id), {
+    skipBusinessError: true,
+  } as Record<string, unknown>)
+  return res.data
 }
 
 /**
@@ -195,19 +220,21 @@ export async function getAffiliateCode(): Promise<AffiliateCodeResponse> {
 /**
  * Get billing history for current user
  */
-export async function getUserBillingHistory(
+export async function getRechargeHistory(
   page: number,
   pageSize: number,
-  keyword?: string
-): Promise<ApiResponse<BillingHistoryResponse>> {
+  orderNo: string,
+  method: string,
+  signal?: AbortSignal
+): Promise<ApiResponse<RechargeHistoryResponse>> {
   const params = new URLSearchParams({
     p: page.toString(),
     page_size: pageSize.toString(),
   })
-  if (keyword) {
-    params.append('keyword', keyword)
-  }
-  const res = await api.get(`/api/user/topup/self?${params.toString()}`)
+  if (orderNo) params.set('order_no', orderNo)
+  if (method) params.set('method', method)
+  const url = `/api/user/topup/history?${params.toString()}`
+  const res = await api.get(url, { signal })
   return res.data
 }
 

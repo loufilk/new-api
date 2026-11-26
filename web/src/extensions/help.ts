@@ -19,6 +19,10 @@ For commercial licensing, please contact support@quantumnous.com
 import type { ReactNode } from 'react'
 
 export type HelpIndexPage = () => ReactNode
+export type HelpIntegrationWizard = (props: {
+  publicLine?: string
+  previewModel?: string
+}) => ReactNode
 export type HelpGuidePage = (props: { slug: string }) => ReactNode
 export type HelpApiReferencePage = (props: {
   endpointId?: string
@@ -28,6 +32,7 @@ export type HelpApiReferencePage = (props: {
 export type HelpExtension = {
   id: string
   indexPage: HelpIndexPage
+  integrationWizard: HelpIntegrationWizard
   guidePage: HelpGuidePage
   apiReferencePage: HelpApiReferencePage
 }

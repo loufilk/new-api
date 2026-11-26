@@ -78,11 +78,13 @@ var llmsEndpointCatalog = []llmsEndpoint{
 }
 
 func GetLlmsIndex(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	data := buildLlmsPageData(c)
 	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(renderLlmsIndex(data)))
 }
 
 func GetLlmsFull(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	data := buildLlmsPageData(c)
 	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(renderLlmsFull(data)))
 }
@@ -182,7 +184,7 @@ func buildLlmsPageData(c *gin.Context) llmsPageData {
 		}
 	}
 
-	catalog := buildPublicCatalog()
+	catalog, _ := readPublicCatalog(c.Request.Context()) // No model information on policy read failure.
 
 	return llmsPageData{
 		SystemName:    common.SystemName,
@@ -201,10 +203,13 @@ func publicModelsFromPricing(pricing []publicCatalogModel) []llmsModel {
 	for _, item := range pricing {
 		billing := "token ratios: input " + strconv.FormatFloat(item.ModelRatio, 'g', -1, 64) +
 			", output " + strconv.FormatFloat(item.CompletionRatio, 'g', -1, 64)
-		if item.QuotaType == 1 {
-			billing = "per-request price factor: " + strconv.FormatFloat(item.ModelPrice, 'g', -1, 64)
+		if item.OrdinaryPriceAvailable != nil && !*item.OrdinaryPriceAvailable ||
+			item.OrdinaryPriceAvailable == nil && item.BillingVariantsPresent {
+			billing = "no public base quote"
 		} else if item.BillingMode == "tiered_expr" {
 			billing = "tiered usage pricing"
+		} else if item.QuotaType == 1 {
+			billing = "per-request price factor: " + strconv.FormatFloat(item.ModelPrice, 'g', -1, 64)
 		}
 
 		endpoints := make([]string, 0, len(item.SupportedEndpointTypes))

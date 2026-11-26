@@ -40,10 +40,12 @@ import { Toaster, toast } from 'sonner'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { PageFooterProvider } from '@/components/layout/components/page-footer'
+import { ApiKeys } from '@/features/keys'
 import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 import { flexRender, useConsoleTable } from '@/lib/console-table'
 import { Route as KeysRoute } from '@/routes/_authenticated/keys'
+import { useAuthStore } from '@/stores/auth-store'
 import {
   DEFAULT_CURRENCY_CONFIG,
   useSystemConfigStore,
@@ -163,6 +165,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup()
+  useAuthStore.getState().auth.reset()
   toast.dismiss()
   localStorage.clear()
   clients.splice(0).forEach((client) => client.clear())
@@ -333,18 +336,56 @@ async function renderKeysPage(
     routing_strategy?: unknown
   } = {},
   waitForRow = true,
-  initialEntry = '/keys/'
+  initialEntry = '/keys/',
+  fullPage = false
 ) {
   let currentKey = { ...key, status, ...overrides }
   vi.mocked(api.get).mockImplementation(async (url) => {
+    if (url.startsWith('/api/user/tokens/7/models?')) {
+      return { data: { success: true, data: ['example-model'] } }
+    }
     if (url.startsWith('/api/token/')) {
       return {
         data: { success: true, data: { items: [currentKey], total: 1 } },
       }
     }
-    return { data: { success: true, data: { default: { ratio: 1 } } } }
+    if (url === '/api/user/key-diagnostics/options') {
+      return {
+        data: {
+          success: true,
+          data: {
+            keys: [
+              {
+                id: currentKey.id,
+                name: currentKey.name,
+                group: currentKey.group,
+              },
+            ],
+            questions: [
+              {
+                id: 'pelican-svg-v2',
+                prompt: 'Synthetic question.',
+                max_output_tokens: 32000,
+              },
+            ],
+          },
+        },
+      }
+    }
+    if (url.startsWith('/api/user/key-diagnostics/')) {
+      return { data: { success: true, data: [] } }
+    }
+    return {
+      data: {
+        success: true,
+        data: { default: { ratio: 1, desc: 'Public group' } },
+      },
+    }
   })
   const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url === '/api/token/models') {
+      return { data: { success: true, data: ['example-model'] } }
+    }
     if (url.startsWith('/api/token/search')) {
       return {
         data: { success: true, data: { items: [currentKey], total: 1 } },
@@ -372,7 +413,7 @@ async function renderKeysPage(
   const keysRoute = createRoute({
     getParentRoute: () => auth,
     path: 'keys/',
-    component: KeysPage,
+    component: fullPage ? ApiKeys : KeysPage,
     validateSearch: KeysRoute.options.validateSearch,
     beforeLoad: KeysRoute.options.beforeLoad as unknown as (args: {
       location: { searchStr: string }
@@ -608,12 +649,205 @@ it.each([true, false])(
   }
 )
 
-it('keeps full mobile information without group or quota section headings', async () => {
+it('ignores cached Chat presets yet opens the independent CC Switch action', async () => {
+  const cachedStatus = JSON.stringify({
+    chats: [{ 'Retired client': 'https://retired.invalid/?key={key}' }],
+  })
+  localStorage.setItem('status', cachedStatus)
+  const launch = vi.spyOn(window, 'open').mockReturnValue(null)
+  const { post } = await renderKeysPage(1, {}, true, '/keys/', true)
+  const user = userEvent.setup()
+
+  await user.click(screen.getByRole('button', { name: 'Open menu' }))
+  expect(
+    screen.queryByRole('menuitem', { name: 'Chat' })
+  ).not.toBeInTheDocument()
+  expect(screen.queryByText('Retired client')).not.toBeInTheDocument()
+  expect(post).not.toHaveBeenCalled()
+  expect(launch).not.toHaveBeenCalled()
+
+  await user.click(screen.getByRole('menuitem', { name: 'CC Switch' }))
+  expect(
+    await screen.findByRole('dialog', { name: 'Import to CC Switch' })
+  ).toBeVisible()
+  expect(post).toHaveBeenCalledWith('/api/token/7/key', undefined, {
+    signal: expect.any(AbortSignal),
+  })
+  expect(launch).not.toHaveBeenCalled()
+})
+
+it('puts Magpie directly after standalone CC Switch and defers the Key read', async () => {
+  const { post } = await renderKeysPage(1, {}, true, '/keys/', true)
+  const user = userEvent.setup()
+
+  await user.click(screen.getByRole('button', { name: 'Open menu' }))
+  const items = screen.getAllByRole('menuitem')
+  const ccSwitch = screen.getByRole('menuitem', { name: 'CC Switch' })
+  const magpie = screen.getByRole('menuitem', { name: 'Add to Magpie' })
+  expect(items[items.indexOf(ccSwitch) + 1]).toBe(magpie)
+  await user.click(magpie)
+  expect(
+    await screen.findByRole('dialog', { name: 'Add to Magpie' })
+  ).toBeVisible()
+  expect(post).not.toHaveBeenCalled()
+})
+
+it.each([
+  { status: 2, expired_time: -1 },
+  { status: 1, expired_time: 1 },
+])(
+  'only offers disabled Magpie menu item for an inactive Key, %o',
+  async (token) => {
+    const { post } = await renderKeysPage(
+      token.status,
+      { expired_time: token.expired_time },
+      true,
+      '/keys/',
+      true
+    )
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    const magpie = screen.getByRole('menuitem', { name: 'Add to Magpie' })
+    expect(magpie).toHaveAttribute('aria-disabled', 'true')
+    await user.click(magpie)
+    expect(
+      screen.queryByRole('dialog', { name: 'Add to Magpie' })
+    ).not.toBeInTheDocument()
+    expect(post).not.toHaveBeenCalled()
+  }
+)
+
+it('opens the visible row diagnostic, keeps the Key preselected, and returns keyboard focus without submitting', async () => {
+  useAuthStore.getState().auth.setUser({ id: 51, username: 'fixture', role: 1 })
+  const { post } = await renderKeysPage(1, {}, true, '/keys/', true)
+  const user = userEvent.setup()
+  const [pageDiagnostic, rowDiagnostic] = screen.getAllByRole('button', {
+    name: 'Key diagnostic',
+  })
+  expect(pageDiagnostic).toBeEnabled()
+  act(() => rowDiagnostic.focus())
+  await user.keyboard('{Enter}')
+
+  const dialog = await screen.findByRole('dialog', { name: 'Key diagnostic' })
+  const keySelect = await within(dialog).findByRole('combobox', {
+    name: 'API Key',
+  })
+  expect(keySelect).toHaveValue('7')
+  expect(keySelect).toBeDisabled()
+  expect(
+    within(dialog).getByRole('button', { name: 'Start test' })
+  ).toBeDisabled()
+  expect(post).not.toHaveBeenCalled()
+  await waitFor(() =>
+    expect(dialog).toContainElement(document.activeElement as HTMLElement)
+  )
+
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(dialog).not.toBeInTheDocument())
+  await waitFor(() => expect(rowDiagnostic).toHaveFocus())
+  expect(post).not.toHaveBeenCalled()
+})
+
+it('offers the same safe visible diagnostic on mobile without posting on open', async () => {
+  useMobileViewport()
+  useAuthStore.getState().auth.setUser({ id: 51, username: 'fixture', role: 1 })
+  const { post } = await renderKeysPage(1, {}, true, '/keys/', true)
+  const [, rowDiagnostic] = screen.getAllByRole('button', {
+    name: 'Key diagnostic',
+  })
+  expect(rowDiagnostic).toBeVisible()
+  await userEvent.click(rowDiagnostic)
+  const dialog = await screen.findByRole('dialog', { name: 'Key diagnostic' })
+  const key = await within(dialog).findByRole('combobox', { name: 'API Key' })
+  expect(key).toHaveValue('7')
+  expect(key).toBeDisabled()
+  expect(post).not.toHaveBeenCalled()
+})
+
+it('does not open the row diagnostic on a disabled Key', async () => {
+  useAuthStore.getState().auth.setUser({ id: 51, username: 'fixture', role: 1 })
+  const { post } = await renderKeysPage(2)
+  const user = userEvent.setup()
+
+  const diagnostic = screen.getByRole('button', {
+    name: 'Key diagnostic',
+  })
+  expect(diagnostic).toBeDisabled()
+  await user.click(diagnostic)
+  expect(
+    screen.queryByRole('dialog', { name: 'Key diagnostic' })
+  ).not.toBeInTheDocument()
+  expect(api.get).not.toHaveBeenCalledWith(
+    '/api/user/key-diagnostics/options',
+    expect.anything()
+  )
+  expect(post).not.toHaveBeenCalled()
+})
+
+function useMobileViewport() {
   const matchMedia = window.matchMedia
   vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
     ...matchMedia(query),
     matches: query.includes('max-width'),
   }))
+}
+
+it('updates only the selected mobile card fields when changing View options', async () => {
+  useMobileViewport()
+  await renderKeysPage(1, {
+    model_limits_enabled: true,
+    model_limits: 'example-model',
+  })
+  const user = userEvent.setup()
+  const view = screen.getByRole('button', { name: 'View' })
+  const models = () => screen.queryByRole('button', { name: /Models: 1 model/ })
+
+  expect(models()).toBeVisible()
+  await user.click(view)
+  await user.click(screen.getByRole('menuitemcheckbox', { name: 'Models' }))
+  expect(models()).not.toBeInTheDocument()
+  await user.keyboard('{Escape}')
+  expect(screen.getByRole('button', { name: 'Open menu' })).toBeVisible()
+  expect(screen.getByText('Expires')).toBeVisible()
+
+  await user.click(view)
+  await user.click(screen.getByRole('menuitemcheckbox', { name: 'Models' }))
+  expect(models()).toBeVisible()
+})
+
+it('exposes existing bulk actions after mobile selection and clears it when the filtered list changes', async () => {
+  useMobileViewport()
+  const { post } = await renderKeysPage()
+  const user = userEvent.setup()
+  const selectAll = screen.getByRole('checkbox', { name: 'Select all' })
+  const row = screen.getByRole('checkbox', { name: 'Select row: production' })
+  const deleteButton = () =>
+    screen.queryByRole('button', { name: 'Delete selected API keys' })
+
+  expect(deleteButton()).not.toBeInTheDocument()
+  await user.click(row)
+  expect(row).toBeChecked()
+  expect(selectAll).toBeChecked()
+  expect(
+    screen.getByRole('button', { name: 'Copy selected keys' })
+  ).toBeVisible()
+  await user.click(
+    screen.getByRole('button', { name: 'Delete selected API keys' })
+  )
+  const dialog = await screen.findByRole('alertdialog')
+  expect(dialog).toHaveTextContent('production (#7)')
+  expect(post).not.toHaveBeenCalled()
+
+  await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  await user.click(screen.getByRole('button', { name: 'Status' }))
+  await user.click(screen.getByRole('option', { name: 'Enabled' }))
+  await waitFor(() => expect(row).not.toBeChecked())
+  expect(deleteButton()).not.toBeInTheDocument()
+  expect(post).not.toHaveBeenCalled()
+})
+
+it('keeps full mobile information without group or quota section headings', async () => {
+  useMobileViewport()
   i18n.addResourceBundle('zh', 'translation', zh.translation)
   await i18n.changeLanguage('zh')
   try {
@@ -631,7 +865,7 @@ it('keeps full mobile information without group or quota section headings', asyn
       screen.queryByText(zh.translation['Group'], { exact: true })
     ).not.toBeInTheDocument()
     expect(screen.getByText('default')).toBeInTheDocument()
-    expect(screen.getByText('1x')).toBeInTheDocument()
+    expect(screen.getByText('1×')).toBeInTheDocument()
     expect(screen.getByText(zh.translation['Models'])).toBeInTheDocument()
     expect(
       screen.getByText(zh.translation['IP Restriction'])
@@ -758,4 +992,65 @@ it('freezes the confirmed deletion target when the server reorders the current p
   await waitFor(() =>
     expect(post).toHaveBeenCalledWith('/api/token/batch', { ids: [7] })
   )
+})
+
+it('opens and consumes a catalogue create link, without writing or reopening after cancel', async () => {
+  const { post, router } = await renderKeysPage(
+    1,
+    {},
+    false,
+    '/keys/?create=true&group=default&model=example-model',
+    true
+  )
+  const dialog = await screen.findByRole('dialog', { name: 'Create API Key' })
+  await waitFor(() =>
+    expect(within(dialog).getByText('Selected: default')).toBeVisible()
+  )
+  await waitFor(() => {
+    expect(post).toHaveBeenCalledWith('/api/token/models', { group: 'default' })
+    expect(router.history.location.href).not.toContain('create=')
+  })
+  expect(router.history.location.href).not.toContain('group=')
+  expect(router.history.location.href).not.toContain('model=')
+  expect(post).not.toHaveBeenCalledWith('/api/token/', expect.anything())
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('dialog', { name: 'Create API Key' })
+    ).not.toBeInTheDocument()
+  )
+  post.mockClear()
+  await userEvent.click(screen.getByRole('button', { name: 'Create API Key' }))
+  const manual = await screen.findByRole('dialog', { name: 'Create API Key' })
+  expect(
+    within(manual).queryByText('Selected: default')
+  ).not.toBeInTheDocument()
+  expect(post).not.toHaveBeenCalledWith('/api/token/models', {
+    group: 'default',
+  })
+  expect(post).not.toHaveBeenCalledWith('/api/token/', expect.anything())
+})
+
+it('keeps a diagnostic opened from a row across the table clock tick and outside clicks', async () => {
+  useAuthStore.getState().auth.setUser({ id: 51, username: 'fixture', role: 1 })
+  const timer = vi.spyOn(window, 'setInterval')
+  const { post } = await renderKeysPage(1, {}, true, '/keys/', true)
+  const user = userEvent.setup()
+  const [, rowDiagnostic] = screen.getAllByRole('button', {
+    name: 'Key diagnostic',
+  })
+  await user.click(rowDiagnostic)
+  const dialog = await screen.findByRole('dialog', { name: 'Key diagnostic' })
+  await within(dialog).findByDisplayValue('production · default')
+  const tick = timer.mock.calls.find(([, ms]) => ms === 30_000)?.[0]
+  expect(typeof tick).toBe('function')
+  act(() => {
+    if (typeof tick === 'function') tick()
+  })
+  expect(dialog).toBeVisible()
+  const overlay = document.querySelector('[data-slot="dialog-overlay"]')
+  if (!overlay) throw new Error('Missing dialog backdrop')
+  await user.click(overlay)
+  expect(dialog).toBeVisible()
+  expect(post).not.toHaveBeenCalled()
 })

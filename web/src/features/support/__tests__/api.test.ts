@@ -24,6 +24,7 @@ import {
   createSupportTicket,
   getSupportTicketAttachment,
   listSupportTickets,
+  markSupportTicketRead,
   replySupportTicket,
   updateSupportTicketStatus,
 } from '../api'
@@ -71,15 +72,42 @@ describe('support ticket API keeps user and admin routes separate', () => {
       pageSize: 20,
     })
 
-    expect(getMock).toHaveBeenCalledWith('/api/support/tickets', {
-      params: {
-        keyword: 'image',
-        status: 'processing',
-        unread: true,
-        p: 2,
-        page_size: 20,
-      },
+    expect(getMock).toHaveBeenCalledWith(
+      '/api/support/tickets',
+      expect.objectContaining({
+        params: {
+          keyword: 'image',
+          status: 'processing',
+          unread: true,
+          p: 2,
+          page_size: 20,
+        },
+      })
+    )
+  })
+
+  test('read acknowledgement only uses the observed snapshot endpoint', async () => {
+    postMock.mockResolvedValue({
+      data: { success: true, data: { acknowledged: false } },
     })
+    await expect(
+      markSupportTicketRead({
+        admin: true,
+        ticketId: 9,
+        throughMessageId: 43,
+        sessionEpoch: 12,
+        observedStatus: 'processing',
+      })
+    ).resolves.toEqual({ acknowledged: false })
+
+    expect(postMock).toHaveBeenCalledWith(
+      '/api/admin/support/tickets/9/read-observed',
+      { through_message_id: 43, observed_status: 'processing' },
+      expect.objectContaining({
+        authSessionEpoch: 12,
+        singleUseAuthorization: true,
+      })
+    )
   })
 
   test('admin reply and status update use admin-only endpoints', async () => {

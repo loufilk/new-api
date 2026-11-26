@@ -46,7 +46,11 @@ func tokenRoutingGroups(c *gin.Context, tokenGroup string) []string {
 	if tokenGroup == "" {
 		tokenGroup = userGroup
 	}
-	if tokenGroup == "" || !IsUserSelectableGroup(userGroup, tokenGroup) {
+	if model.IsExclusiveGroup(tokenGroup) {
+		if c.Request == nil || ValidateTokenGroupForUser(c.Request.Context(), c.GetInt("id"), userGroup, tokenGroup) != nil {
+			return nil
+		}
+	} else if tokenGroup == "" || !IsUserSelectableGroup(userGroup, tokenGroup) {
 		return nil
 	}
 	return []string{tokenGroup}
@@ -192,7 +196,10 @@ func selectTokenRoutingChannel(param *RetryParam) (*model.Channel, string, error
 			metrics, _ = model.GetTokenRoutingMetrics(metricCtx, param.ModelName, groups)
 			cancel()
 		}
-		selected = rankTokenRoutes(c, candidates, metrics)
+		selected, err = rankTokenRoutes(c, candidates, metrics)
+		if err != nil {
+			return nil, "", err
+		}
 	}
 	if selected.Channel != nil {
 		common.SetContextKey(c, constant.ContextKeyAutoGroup, selected.Group)
@@ -216,7 +223,7 @@ func weightedTokenRoute(routes []model.RoutingCandidate) model.RoutingCandidate 
 	return routes[len(routes)-1]
 }
 
-func rankTokenRoutes(c *gin.Context, candidates []model.RoutingCandidate, metrics []model.TokenRoutingMetric) model.RoutingCandidate {
+func rankTokenRoutes(c *gin.Context, candidates []model.RoutingCandidate, metrics []model.TokenRoutingMetric) (model.RoutingCandidate, error) {
 	type routeID struct {
 		channel int
 		group   string
@@ -227,6 +234,10 @@ func rankTokenRoutes(c *gin.Context, candidates []model.RoutingCandidate, metric
 	}
 	routes := make([]scoredTokenRoute, 0, len(candidates))
 	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	policy, err := model.GetRequestUserGroupPricing(c, c.GetInt("id"), userGroup)
+	if err != nil {
+		return model.RoutingCandidate{}, err
+	}
 	for _, r := range candidates {
 		m := stats[routeID{r.Channel.Id, r.Group}]
 		success := float64(max(0, m.SuccessCount)+1) / float64(max(0, m.RequestCount)+2)
@@ -234,14 +245,14 @@ func rankTokenRoutes(c *gin.Context, candidates []model.RoutingCandidate, metric
 		if m.SuccessCount > 0 && m.TotalLatencyMs > 0 {
 			speed = float64(m.TotalLatencyMs) / float64(m.SuccessCount)
 		}
-		price := GetUserGroupRatio(userGroup, r.Group)
+		price := policy.ResolveGroupRatio(userGroup, r.Group).GroupRatio
 		if price < 0 || math.IsNaN(price) || math.IsInf(price, 0) {
 			continue
 		}
 		routes = append(routes, scoredTokenRoute{candidate: r, success: success, price: price, speed: speed})
 	}
 	if len(routes) == 0 {
-		return model.RoutingCandidate{}
+		return model.RoutingCandidate{}, nil
 	}
 	strategy := common.GetContextKeyString(c, constant.ContextKeyTokenRoutingStrategy)
 	// Auto balances ranks rather than adding incomparable units. Values are
@@ -296,7 +307,7 @@ func rankTokenRoutes(c *gin.Context, candidates []model.RoutingCandidate, metric
 			ties = append(ties, r.candidate)
 		}
 	}
-	return weightedTokenRoute(ties)
+	return weightedTokenRoute(ties), nil
 }
 
 func recordTokenRoutingOutcome(c *gin.Context, info *relaycommon.RelayInfo, apiErr *types.NewAPIError) {

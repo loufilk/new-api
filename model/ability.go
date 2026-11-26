@@ -30,13 +30,17 @@ type AbilityWithChannel struct {
 	ChannelType int `json:"channel_type"`
 }
 
+// liveChannelAbilities is the common source for customer-facing model lists.
+// A stale enabled ability alone does not make an offline channel routable.
+func liveChannelAbilities() *gorm.DB {
+	return DB.Table("abilities").
+		Joins("join channels on abilities.channel_id = channels.id").
+		Where("abilities.enabled = ? AND channels.status = ?", true, common.ChannelStatusEnabled)
+}
+
 func GetAllEnableAbilityWithChannels() ([]AbilityWithChannel, error) {
 	var abilities []AbilityWithChannel
-	err := DB.Table("abilities").
-		Select("abilities.*, channels.type as channel_type").
-		Joins("left join channels on abilities.channel_id = channels.id").
-		Where("abilities.enabled = ?", true).
-		Scan(&abilities).Error
+	err := liveChannelAbilities().Select("abilities.*, channels.type as channel_type").Scan(&abilities).Error
 	return abilities, err
 }
 
@@ -52,10 +56,8 @@ func GetEnabledAbilitiesWithChannelsForGroups(groups []string) ([]AbilityWithCha
 		values = append(values, group)
 	}
 	var abilities []AbilityWithChannel
-	err := DB.Table("abilities").
+	err := liveChannelAbilities().
 		Select("abilities.*, channels.type as channel_type").
-		Joins("join channels on abilities.channel_id = channels.id").
-		Where("abilities.enabled = ? AND channels.status = ?", true, common.ChannelStatusEnabled).
 		Where(clause.IN{
 			Column: clause.Column{Table: "abilities", Name: "group"},
 			Values: values,
@@ -83,8 +85,9 @@ func (ability *Ability) BeforeUpdate(tx *gorm.DB) error {
 
 func GetGroupEnabledModels(group string) []string {
 	var models []string
-	// Find distinct models
-	DB.Table("abilities").Where(commonGroupCol+" = ? and enabled = ?", group, true).Distinct("model").Pluck("model", &models)
+	liveChannelAbilities().
+		Where(clause.Eq{Column: clause.Column{Table: "abilities", Name: "group"}, Value: group}).
+		Distinct("abilities.model").Pluck("abilities.model", &models)
 	return models
 }
 

@@ -2,28 +2,30 @@ package common
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
+	"net"
 	"net/mail"
 	"net/smtp"
 	"net/textproto"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"golang.org/x/net/html"
 )
 
-func generateMessageID() (string, error) {
-	split := strings.Split(SMTPFrom, "@")
-	if len(split) < 2 {
+func generateMessageID(from string) (string, error) {
+	_, domain, ok := strings.Cut(from, "@")
+	if !ok {
 		return "", fmt.Errorf("invalid SMTP account")
 	}
-	domain := strings.Split(SMTPFrom, "@")[1]
 	return fmt.Sprintf("<%d.%s@%s>", time.Now().UnixNano(), GetRandomString(12), domain), nil
 }
 
@@ -34,52 +36,67 @@ func shouldUseSMTPLoginAuth() bool {
 	return isOutlookServer(SMTPAccount) || slices.Contains(EmailLoginAuthServerList, SMTPServer)
 }
 
-func getSMTPAuth() smtp.Auth {
-	return AutoSMTPAuth(SMTPAccount, SMTPToken)
-}
-
-func shouldAuthenticateSMTP() bool {
-	return SMTPAccount != "" && SMTPToken != ""
-}
-
-func smtpTLSConfig() *tls.Config {
-	return &tls.Config{
-		ServerName:         SMTPServer,
-		InsecureSkipVerify: SMTPInsecureSkipVerify, // #nosec G402 -- admin-controlled SMTP compatibility option.
+// smtpConfigSnapshotLocked reads SMTP globals while holding OptionMapRWMutex.
+// The sender fallback is local; a concurrent settings refresh cannot mutate
+// the configuration halfway through one delivery.
+func smtpConfigSnapshotLocked() SMTPDeliveryConfig {
+	from := SMTPFrom
+	if from == "" {
+		from = SMTPAccount
+	}
+	return SMTPDeliveryConfig{
+		Server: SMTPServer, Port: SMTPPort, Account: SMTPAccount, Token: SMTPToken, From: from,
+		SSL: SMTPSSLEnabled, StartTLS: SMTPStartTLSEnabled,
+		InsecureSkipVerify: SMTPInsecureSkipVerify, ForceAuthLogin: SMTPForceAuthLogin,
 	}
 }
 
-func newSMTPClient(addr string) (*smtp.Client, error) {
-	if SMTPSSLEnabled || (SMTPPort == 465 && !SMTPStartTLSEnabled) {
-		conn, err := tls.Dial("tcp", addr, smtpTLSConfig())
-		if err != nil {
-			return nil, err
-		}
-		client, err := smtp.NewClient(conn, SMTPServer)
-		if err != nil {
-			_ = conn.Close()
-			return nil, err
-		}
-		return client, nil
-	}
-
-	client, err := smtp.Dial(addr)
+func newSMTPClient(ctx context.Context, addr string, config SMTPDeliveryConfig) (*smtp.Client, error) {
+	conn, err := (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
-
-	if SMTPStartTLSEnabled {
-		startTLSSupported, _ := client.Extension("STARTTLS")
-		if !startTLSSupported {
+	rawConn := conn
+	stop := context.AfterFunc(ctx, func() { _ = rawConn.Close() })
+	ready := false
+	defer func() {
+		if !ready {
+			stop()
+			_ = rawConn.Close()
+		}
+	}()
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			return nil, err
+		}
+	}
+	tlsConfig := &tls.Config{
+		ServerName:         config.Server,
+		InsecureSkipVerify: config.InsecureSkipVerify, // #nosec G402 -- preserve explicit legacy admin compatibility.
+	}
+	implicitTLS := config.SSL || config.Port == 465 && !config.StartTLS
+	if implicitTLS {
+		secure := tls.Client(conn, tlsConfig)
+		if err := secure.HandshakeContext(ctx); err != nil {
+			return nil, err
+		}
+		conn = secure
+	}
+	client, err := smtp.NewClient(conn, config.Server)
+	if err != nil {
+		return nil, err
+	}
+	if config.StartTLS && !implicitTLS {
+		if supported, _ := client.Extension("STARTTLS"); !supported {
 			_ = client.Close()
 			return nil, fmt.Errorf("SMTP server does not support STARTTLS")
 		}
-		if err := client.StartTLS(smtpTLSConfig()); err != nil {
+		if err := client.StartTLS(tlsConfig); err != nil {
 			_ = client.Close()
 			return nil, err
 		}
 	}
-
+	ready = true
 	return client, nil
 }
 
@@ -144,8 +161,8 @@ func createAlternativePart(writer *multipart.Writer, contentType string, content
 	return quotedPrintableWriter.Close()
 }
 
-func buildEmailMessage(subject string, receiver string, plainText string, htmlContent string) ([]byte, error) {
-	id, err := generateMessageID()
+func buildEmailMessage(from, subject, receiver, plainText, htmlContent string) ([]byte, error) {
+	id, err := generateMessageID(from)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +192,7 @@ func buildEmailMessage(subject string, receiver string, plainText string, htmlCo
 		return nil, fmt.Errorf("invalid email receiver")
 	}
 
-	fromHeader := (&mail.Address{Name: SystemName, Address: SMTPFrom}).String()
+	fromHeader := (&mail.Address{Name: SystemName, Address: from}).String()
 	var message bytes.Buffer
 	fmt.Fprintf(&message, "To: %s\r\n", strings.Join(toHeaders, ", "))
 	fmt.Fprintf(&message, "From: %s\r\n", fromHeader)
@@ -199,6 +216,7 @@ func SendEmailWithPlainText(subject string, receiver string, plainText string, h
 	provider := OptionMap["EmailProvider"]
 	resendKey := OptionMap["ResendApiKey"]
 	resendFrom := OptionMap["ResendFrom"]
+	config := smtpConfigSnapshotLocked()
 	OptionMapRWMutex.RUnlock()
 	// One selector controls delivery. Never fall back to a second provider:
 	// a failed response does not prove that the first provider did not send.
@@ -209,33 +227,34 @@ func SendEmailWithPlainText(subject string, receiver string, plainText string, h
 	default:
 		return NewMessage("Email sending method must be SMTP or Resend")
 	}
-	if SMTPFrom == "" { // for compatibility
-		SMTPFrom = SMTPAccount
-	}
-	if SMTPServer == "" && SMTPAccount == "" {
+	if config.Server == "" && config.Account == "" {
 		return NewMessage("SMTP server is not configured")
 	}
-	message, err := buildEmailMessage(subject, receiver, plainText, htmlContent)
+	message, err := buildEmailMessage(config.From, subject, receiver, plainText, htmlContent)
 	if err != nil {
 		return err
 	}
-	auth := getSMTPAuth()
-	addr := fmt.Sprintf("%s:%d", SMTPServer, SMTPPort)
-	to := strings.Split(receiver, ";")
-	client, err := newSMTPClient(addr)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	addr := net.JoinHostPort(config.Server, strconv.Itoa(config.Port))
+	client, err := newSMTPClient(ctx, addr, config)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
-	if shouldAuthenticateSMTP() {
+	if config.Account != "" && config.Token != "" {
+		auth := &smtpAutoAuth{username: config.Account, password: config.Token, configuration: &smtpAuthConfiguration{
+			server: config.Server, forceLogin: config.ForceAuthLogin,
+			preferLogin: isOutlookServer(config.Account) || slices.Contains(EmailLoginAuthServerList, config.Server),
+		}}
 		if err = client.Auth(auth); err != nil {
 			return err
 		}
 	}
-	if err = client.Mail(SMTPFrom); err != nil {
+	if err = client.Mail(config.From); err != nil {
 		return err
 	}
-	for _, recipient := range to {
+	for recipient := range strings.SplitSeq(receiver, ";") {
 		recipient = strings.TrimSpace(recipient)
 		if recipient == "" {
 			continue
@@ -256,11 +275,9 @@ func SendEmailWithPlainText(subject string, receiver string, plainText string, h
 	if err != nil {
 		return err
 	}
-	err = client.Quit()
-	if err != nil {
-		SysError(LogText("failed to send email to %s: %v", receiver, err))
-	}
-	return err
+	// DATA was accepted. A later disconnect or QUIT error cannot undo it.
+	_ = client.Quit()
+	return nil
 }
 
 func SendEmail(subject string, receiver string, content string) error {

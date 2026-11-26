@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/collapsible'
 import { cn } from '@/lib/utils'
 
+import { DocsSearch } from './docs-search'
 import { DocsSidebar } from './docs-sidebar'
 
 /** 文档中心统一外壳：桌面端左侧粘性侧栏，移动端折叠导航 */
@@ -38,6 +39,9 @@ export function DocsShell({ children }: { children: ReactNode }) {
   return (
     <PublicLayout showMainContainer={false}>
       <div className='mx-auto w-full max-w-7xl px-4 pt-22 pb-16 sm:px-6 lg:px-8'>
+        <div className='mb-6'>
+          <DocsSearch />
+        </div>
         <Collapsible
           open={mobileNavOpen}
           onOpenChange={setMobileNavOpen}

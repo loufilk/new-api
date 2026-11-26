@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useMemo } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -96,10 +96,6 @@ export function SidebarModulesSection({
         title: t('Image Generation'),
         description: t('Create images from text prompts and reference images.'),
       },
-      chat: {
-        title: t('Chat'),
-        description: t('Access previous conversations and start new ones.'),
-      },
     },
     console: {
       detail: {
@@ -174,6 +170,8 @@ export function SidebarModulesSection({
     defaultValues: formDefaults,
   })
 
+  const sidebarModules = useWatch({ control: form.control })
+
   useEffect(() => {
     form.reset(formDefaults)
   }, [formDefaults, form])
@@ -191,7 +189,15 @@ export function SidebarModulesSection({
   }
 
   const resetToDefault = () => {
-    form.reset(SIDEBAR_MODULES_DEFAULT)
+    // Retire the control without dropping a saved legacy value on reset.
+    const legacyChat = config.chat?.chat
+    form.reset({
+      ...SIDEBAR_MODULES_DEFAULT,
+      chat: {
+        ...SIDEBAR_MODULES_DEFAULT.chat,
+        ...(typeof legacyChat === 'boolean' ? { chat: legacyChat } : {}),
+      },
+    })
   }
 
   const sections = Object.entries(config)
@@ -213,7 +219,9 @@ export function SidebarModulesSection({
               description: t('Custom sidebar section'),
             }
             const modules = Object.entries(sectionConfig).filter(
-              ([moduleKey]) => moduleKey !== 'enabled'
+              ([moduleKey]) =>
+                moduleKey !== 'enabled' &&
+                !(sectionKey === 'chat' && moduleKey === 'chat')
             )
 
             return (
@@ -264,10 +272,7 @@ export function SidebarModulesSection({
                               <Switch
                                 checked={Boolean(field.value)}
                                 onCheckedChange={field.onChange}
-                                disabled={
-                                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                  !form.watch(`${sectionKey}.enabled` as any)
-                                }
+                                disabled={!sidebarModules[sectionKey]?.enabled}
                               />
                             </FormControl>
                           </SettingsSwitchItem>

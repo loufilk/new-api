@@ -17,19 +17,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import { useNavigate } from '@tanstack/react-router'
 import {
   Trash2,
   Edit,
   Power,
   PowerOff,
-  ExternalLink,
   ArrowRightLeft,
+  Bird,
   Copy,
   Link,
   Loader2,
 } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -38,9 +37,6 @@ import { Button } from '@/components/ui/button'
 import {
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuShortcut,
 } from '@/components/ui/dropdown-menu'
 import {
@@ -48,15 +44,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { useChatPresets } from '@/features/chat/hooks/use-chat-presets'
-import {
-  chatLinkRequiresApiKey,
-  resolveChatUrl,
-  resolveWebChatUrl,
-  type ChatPreset,
-} from '@/features/chat/lib/chat-links'
-import { isSafeClientLink } from '@/features/chat/lib/client-import'
-import { sendToFluent } from '@/features/chat/lib/send-to-fluent'
 import { API_BASE_URL } from '@/lib/api-url'
 import { encodeChannelConnectionInfo } from '@/lib/channel-connection-info'
 import type { Row } from '@/lib/console-table'
@@ -65,8 +52,10 @@ import { handleServerError } from '@/lib/handle-server-error'
 
 import { updateApiKeyStatus } from '../api'
 import { API_KEY_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
+import { isMagpieEligibleKey } from '../lib/magpie-import'
 import type { ApiKey } from '../types'
 import { useApiKeys } from './api-keys-provider'
+import { KeyDiagnosticButton } from './key-diagnostic-dialog'
 
 function getServerAddress(): string {
   // Connection info must point API clients at the API origin.
@@ -89,7 +78,6 @@ type DataTableRowActionsProps = {
 
 export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
-  const navigate = useNavigate()
   const apiKey = row.original
   const {
     setOpen,
@@ -100,72 +88,11 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     loadingKeys,
   } = useApiKeys()
   const isEnabled = apiKey.status === API_KEY_STATUS.ENABLED
-  const { chatPresets, serverAddress } = useChatPresets()
   const [isTogglingStatus, setIsTogglingStatus] = useState(false)
   const isRealKeyLoading = Boolean(loadingKeys[apiKey.id])
+  const moreRef = useRef<HTMLButtonElement>(null)
 
-  const hasChatPresets = chatPresets.length > 0
   const toggleLabel = isEnabled ? t('Disable') : t('Enable')
-
-  const handleOpenChatPreset = useCallback(
-    async (preset: ChatPreset) => {
-      if (preset.type === 'web') {
-        if (chatLinkRequiresApiKey(preset.url)) {
-          await navigate({ to: '/chat/$chatId', params: { chatId: preset.id } })
-        } else {
-          const url = resolveWebChatUrl(preset.url, serverAddress)
-          if (url) {
-            window.open(url, '_blank', 'noopener,noreferrer')
-          } else {
-            toast.error(
-              t('Invalid chat link. Please contact your administrator.')
-            )
-          }
-        }
-        return
-      }
-      if (preset.type !== 'fluent' && !isSafeClientLink(preset.url)) {
-        toast.error(t('Invalid chat link. Please contact your administrator.'))
-        return
-      }
-      const realKey = await resolveRealKey(apiKey.id)
-      if (!realKey) return
-
-      if (preset.type === 'fluent') {
-        const success = sendToFluent(realKey, serverAddress)
-        if (success) {
-          toast.success(t('Sent the API key to FluentRead.'))
-        } else {
-          toast.info(
-            t(
-              'FluentRead extension not detected. Please ensure it is installed and active.'
-            )
-          )
-        }
-        return
-      }
-
-      const resolvedUrl = resolveChatUrl({
-        template: preset.url,
-        apiKey: realKey,
-        serverAddress,
-      })
-
-      if (!isSafeClientLink(resolvedUrl)) {
-        toast.error(t('Invalid chat link. Please contact your administrator.'))
-        return
-      }
-
-      if (typeof window === 'undefined') return
-
-      try {
-        window.open(resolvedUrl, '_blank', 'noopener')
-      } catch {
-        window.location.href = resolvedUrl
-      }
-    },
-    [resolveRealKey, apiKey.id, serverAddress, navigate, t]
-  )
 
   const handleToggleStatus = async (
     event?: React.MouseEvent<HTMLButtonElement>
@@ -244,7 +171,10 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         <TooltipContent>{t('Edit')}</TooltipContent>
       </Tooltip>
 
+      <KeyDiagnosticButton tokenId={apiKey.id} disabled={!isEnabled} />
+
       <DataTableRowActionMenu
+        triggerRef={moreRef}
         ariaLabel={t('Open menu')}
         contentClassName='w-[200px]'
         modal={false}
@@ -296,26 +226,19 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             <ArrowRightLeft size={16} />
           </DropdownMenuShortcut>
         </DropdownMenuItem>
-        {hasChatPresets && (
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>{t('Chat')}</DropdownMenuSubTrigger>
-            <DropdownMenuSubContent>
-              {chatPresets.map((preset) => (
-                <DropdownMenuItem
-                  key={preset.id}
-                  onClick={() => handleOpenChatPreset(preset)}
-                >
-                  {preset.name}
-                  {preset.type !== 'web' && (
-                    <DropdownMenuShortcut>
-                      <ExternalLink size={16} />
-                    </DropdownMenuShortcut>
-                  )}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-        )}
+        <DropdownMenuItem
+          disabled={!isMagpieEligibleKey(apiKey)}
+          onClick={() => {
+            if (!isMagpieEligibleKey(apiKey)) return
+            setCurrentRow(apiKey)
+            setOpen('magpie')
+          }}
+        >
+          {t('Add to Magpie')}
+          <DropdownMenuShortcut>
+            <Bird size={16} aria-hidden='true' />
+          </DropdownMenuShortcut>
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onClick={() => {

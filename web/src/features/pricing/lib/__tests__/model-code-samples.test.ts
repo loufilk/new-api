@@ -44,6 +44,33 @@ describe('model endpoint code samples', () => {
       expect(code).not.toContain('embedding.slice')
     }
   )
+  it.each<ModelSampleLanguage>(['python', 'typescript'])(
+    'retains canonical OpenAI and Anthropic SDK examples but uses the exact custom endpoint in %s',
+    (language) => {
+      for (const [type, path, operation] of [
+        ['openai', '/v1/chat/completions', 'chat.completions.create'],
+        ['openai-response', '/v1/responses', 'responses.create'],
+        ['anthropic', '/v1/messages', 'messages.create'],
+        ['embeddings', '/v1/embeddings', 'embeddings.create'],
+        ['image-generation', '/v1/images/generations', 'images.generate'],
+      ]) {
+        const canonical = buildModelCodeSample(language, type, {
+          ...ctx,
+          endpointType: type,
+          endpointPath: path,
+        })
+        expect(canonical).toContain(operation)
+        expect(canonical).toContain('API_TOKEN')
+        const custom = buildModelCodeSample(language, type, {
+          ...ctx,
+          endpointType: type,
+          endpointPath: '/custom/catalog/path',
+        })
+        expect(custom).toContain('https://gateway.example/custom/catalog/path')
+        expect(custom).not.toContain(operation)
+      }
+    }
+  )
   it('does not silently offer chat completions for an unknown endpoint', () => {
     expect(buildModelCodeSample('curl', 'custom-protocol', ctx)).toBeNull()
   })

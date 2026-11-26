@@ -49,6 +49,21 @@ function detail(status: SupportTicketDetail['ticket']['status']) {
 }
 
 describe('TicketDetail preserves user/admin conversation rules', () => {
+  test('the waiting status names the customer when viewed by staff', () => {
+    render(
+      <TicketDetail
+        admin
+        detail={detail('awaiting_user')}
+        replyPending={false}
+        statusPending={false}
+        onReply={vi.fn()}
+        onStatusChange={vi.fn()}
+      />
+    )
+    expect(screen.getByText('Waiting for customer reply')).toBeVisible()
+    expect(screen.queryByText('Waiting for your reply')).not.toBeInTheDocument()
+  })
+
   test('resolved user ticket is read-only and points the user to a new ticket', () => {
     render(
       <TicketDetail

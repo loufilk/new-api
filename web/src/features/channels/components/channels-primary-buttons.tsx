@@ -30,7 +30,7 @@ import {
   RefreshCw,
   ArrowUpFromLine,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
@@ -61,6 +61,7 @@ import {
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
+  checkChannelBalanceUpdate,
   handleDeleteAllDisabled,
   handleFixAbilities,
   handleTestAllChannels,
@@ -97,6 +98,21 @@ export function ChannelsPrimaryButtons() {
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
     ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
   )
+
+  const canOperate = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.OPERATE
+  )
+  useEffect(() => {
+    if (!canOperate) return
+    const controller = new AbortController()
+    void checkChannelBalanceUpdate(queryClient, {
+      quiet: true,
+      signal: controller.signal,
+    })
+    return () => controller.abort()
+  }, [canOperate, currentUser?.id, queryClient])
 
   const handleTagModeToggle = (checked: boolean) => {
     localStorage.setItem('enable-tag-mode', String(checked))
@@ -232,6 +248,13 @@ export function ChannelsPrimaryButtons() {
               <DropdownMenuShortcut>
                 <DollarSign className='h-4 w-4' />
               </DropdownMenuShortcut>
+            </DropdownMenuItem>
+
+            <DropdownMenuItem
+              disabled={!canOperate}
+              onClick={() => void checkChannelBalanceUpdate(queryClient)}
+            >
+              {t('Check balance update status')}
             </DropdownMenuItem>
 
             <DropdownMenuSeparator />

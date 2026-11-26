@@ -515,3 +515,57 @@ test('an explicitly empty catalog closes new applications while history and deta
     )
   ).toBeVisible()
 })
+
+test('policy refresh failure preserves typed invoice data and blocks submission until policy is verified', async () => {
+  const user = userEvent.setup()
+  let failed = false
+  vi.spyOn(api, 'get').mockImplementation(async (path) => {
+    let data: unknown = { items: [], total: 0 }
+    if (path === '/api/invoice/config') {
+      if (failed) throw new Error('temporary outage')
+      data = { enabled: true }
+    }
+    if (path === '/api/invoice/summary') data = totals
+    if (path === '/api/invoice/orders') {
+      data = {
+        items: [
+          {
+            id: 1,
+            reference: 'DEMO',
+            paid_at: 123,
+            amount_minor: '101',
+            type: 'topup',
+            currency: 'CNY',
+          },
+        ],
+        total: 1,
+      }
+    }
+    return { data: { success: true, data } }
+  })
+  renderCenter()
+  const title = await screen.findByRole('textbox', { name: 'Invoice title' })
+  await user.type(title, 'Synthetic draft')
+  failed = true
+  await user.click(screen.getByRole('button', { name: 'Refresh' }))
+  await screen.findByText('Unable to load invoice information')
+  expect(title).toBeVisible()
+  expect(title).toHaveValue('Synthetic draft')
+  const blockedOrder = screen.getByRole('checkbox', { name: 'DEMO' })
+  expect(blockedOrder).toHaveAttribute('aria-disabled', 'true')
+  await user.click(blockedOrder)
+  expect(blockedOrder).not.toBeChecked()
+  expect(
+    screen.getByRole('button', { name: 'Submit application' })
+  ).toBeDisabled()
+  failed = false
+  await user.click(screen.getByRole('button', { name: 'Retry' }))
+  const row = await screen.findByRole('checkbox', { name: 'DEMO' })
+  await waitFor(() => expect(row).not.toHaveAttribute('aria-disabled', 'true'))
+  await user.click(row)
+  expect(
+    screen.getByRole('button', { name: 'Submit application' })
+  ).toBeEnabled()
+  expect(screen.getByRole('textbox', { name: 'Invoice title' })).toBe(title)
+  expect(title).toHaveValue('Synthetic draft')
+})

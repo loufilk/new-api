@@ -55,6 +55,7 @@ const headerNavSchema = z.object({
   pricingRequireAuth: z.boolean(),
   rankingsEnabled: z.boolean(),
   rankingsRequireAuth: z.boolean(),
+  channelStatus: z.boolean(),
   docs: z.boolean(),
   about: z.boolean(),
 })
@@ -89,6 +90,7 @@ const toFormValues = (config: HeaderNavModulesConfig): HeaderNavFormValues => ({
     config.rankings?.requireAuth === undefined
       ? HEADER_NAV_DEFAULT.rankings.requireAuth
       : Boolean(config.rankings.requireAuth),
+  channelStatus: config.channelStatus ?? HEADER_NAV_DEFAULT.channelStatus,
   docs:
     config.docs === undefined ? HEADER_NAV_DEFAULT.docs : Boolean(config.docs),
   about:
@@ -119,6 +121,7 @@ export function HeaderNavigationSection({
       ...config,
       home: values.home,
       console: values.console,
+      channelStatus: values.channelStatus,
       docs: values.docs,
       about: values.about,
       pricing: {
@@ -162,6 +165,11 @@ export function HeaderNavigationSection({
       key: 'console',
       title: t('Console'),
       description: t('User dashboard and quota controls.'),
+    },
+    {
+      key: 'channelStatus',
+      title: t('Channel status'),
+      description: t('Show the channel status link in the header.'),
     },
     {
       key: 'docs',

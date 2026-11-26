@@ -28,10 +28,9 @@ import {
   updateApiKey,
 } from '../api'
 import {
-  getApiKeyFormDefaultValues,
-  transformApiKeyToFormDefaults,
-  transformFormDataToPayload,
-} from '../lib/api-key-form'
+  createFixedKeyPayload,
+  initialKeyValues,
+} from '../lib/single-group-form'
 import { apiKeySchema } from '../types'
 
 const legacyKey = {
@@ -90,12 +89,7 @@ describe('legacy key routing response compatibility', () => {
   it('accepts the backend empty strategy as auto without changing any access or quota setting', () => {
     const parsed = apiKeySchema.parse(legacyKey)
     expect(parsed).toEqual({ ...legacyKey, routing_strategy: 'auto' })
-    const payload = transformFormDataToPayload(
-      transformApiKeyToFormDefaults(parsed)
-    )
-    expect(payload).toMatchObject({
-      routing_strategy: 'auto',
-      smart_routing: false,
+    expect(parsed).toMatchObject({
       no_retry_within_group: false,
       group: 'restricted',
       model_limits_enabled: true,
@@ -109,9 +103,7 @@ describe('legacy key routing response compatibility', () => {
 
   it('keeps omitted legacy fields compatible and all four explicit strategies unchanged', () => {
     const { routing_strategy: _omitted, ...oldKey } = legacyKey
-    expect(
-      transformApiKeyToFormDefaults(apiKeySchema.parse(oldKey)).routing_strategy
-    ).toBe('auto')
+    expect(apiKeySchema.parse(oldKey).routing_strategy).toBeUndefined()
     for (const strategy of ['auto', 'success_rate', 'price', 'speed']) {
       expect(
         apiKeySchema.parse({ ...legacyKey, routing_strategy: strategy })
@@ -215,10 +207,15 @@ describe('legacy key routing response compatibility', () => {
     const ack = { success: true, message: '' }
     vi.spyOn(api, 'post').mockResolvedValue({ data: ack })
     vi.spyOn(api, 'put').mockResolvedValue({ data: ack })
-    const payload = transformFormDataToPayload({
-      ...getApiKeyFormDefaultValues(),
-      name: 'new fixture',
-    })
+    const payload = createFixedKeyPayload(
+      {
+        ...initialKeyValues(undefined, 500_000, 0),
+        name: 'new fixture',
+        group: 'restricted',
+      },
+      500_000,
+      0
+    )
     expect(await createApiKey(payload)).toEqual(ack)
     expect(await updateApiKey({ ...payload, id: 7 })).toEqual(ack)
   })

@@ -38,7 +38,6 @@ describe('legacy frontend route migration', () => {
       '/console/log': '/usage-logs',
       '/console/midjourney': '/usage-logs/drawing',
       '/console/task': '/usage-logs/task',
-      '/console/chat/42': '/chat/42',
     }
 
     for (const [source, target] of Object.entries(routes)) {
@@ -59,7 +58,6 @@ describe('legacy frontend route migration', () => {
     const settingsTabs = {
       operation: '/system-settings/operations/behavior',
       dashboard: '/system-settings/content/dashboard',
-      chats: '/system-settings/content/chat',
       drawing: '/system-settings/content/drawing',
       payment: '/system-settings/billing/payment',
       ratio: '/system-settings/billing/model-pricing',
@@ -79,6 +77,28 @@ describe('legacy frontend route migration', () => {
     expect(resolveLegacyRoute('/console/setting?tab=unknown')).toBe(
       '/system-settings?tab=unknown'
     )
+  })
+
+  test('old client-launch bookmarks fall back internally without carrying launch data', () => {
+    for (const path of [
+      '/chat',
+      '/chat/42',
+      '/chat2link/',
+      '/console/chat/',
+      '/console/chat/42',
+      '/console/chat2link',
+    ]) {
+      expect(resolveLegacyRoute(`${path}?key=synthetic#old-client`)).toBe(
+        '/dashboard'
+      )
+    }
+    expect(resolveLegacyRoute('/v1/chat/completions')).toBeNull()
+  })
+
+  test('old preset editor bookmark drops search and hash on the content fallback', () => {
+    expect(
+      resolveLegacyRoute('/console/setting?tab=chats&key=synthetic#old-editor')
+    ).toBe('/system-settings/content/dashboard')
   })
 
   test('safely redirects unknown console locations without touching new routes', () => {

@@ -67,6 +67,7 @@ async function renderSettings() {
 }
 
 beforeEach(() => {
+  sessionStorage.clear()
   vi.spyOn(api, 'get').mockImplementation(async (url) => ({
     data: {
       success: true,
@@ -123,15 +124,30 @@ test('the page shows the log modules in order, each with its own controls', asyn
 
 test('confirming a history cleanup starts the task and shows its progress in that module', async () => {
   const user = userEvent.setup()
-  vi.spyOn(api, 'post').mockResolvedValue({
-    data: {
-      success: true,
+  vi.spyOn(api, 'post').mockImplementation(async (_url, _body, config) => {
+    const params = config?.params
+    if (
+      !params ||
+      typeof params !== 'object' ||
+      !('task_id' in params) ||
+      typeof params.task_id !== 'string' ||
+      !('target_timestamp' in params) ||
+      typeof params.target_timestamp !== 'number'
+    ) {
+      throw new Error('fixture expected a cleanup receipt ID and cutoff')
+    }
+    return {
       data: {
-        task_id: 'systask_1',
-        status: 'running',
-        state: { total: 40, processed: 10, progress: 25, remaining: 30 },
+        success: true,
+        data: {
+          task_id: params.task_id,
+          type: 'log_cleanup',
+          status: 'running',
+          payload: { target_timestamp: params.target_timestamp },
+          state: { total: 40, processed: 10, progress: 25, remaining: 30 },
+        },
       },
-    },
+    }
   })
   await renderSettings()
   const cleanup = screen.getByRole('group', { name: 'Clean history logs' })
@@ -145,9 +161,15 @@ test('confirming a history cleanup starts the task and shows its progress in tha
 
   await waitFor(() =>
     expect(api.post).toHaveBeenCalledWith(
-      '/api/system-task/log-cleanup',
+      '/api/system-task/log-cleanup/receipt-v1',
       null,
-      { params: { target_timestamp: expect.any(Number) } }
+      expect.objectContaining({
+        params: {
+          target_timestamp: expect.any(Number),
+          task_id: expect.stringMatching(/^systask_[0-9a-f-]{36}$/),
+        },
+        singleUseAuthorization: true,
+      })
     )
   )
   expect(
@@ -155,6 +177,40 @@ test('confirming a history cleanup starts the task and shows its progress in tha
   ).toBeVisible()
   expect(
     within(cleanup).getByRole('button', { name: 'Cleaning...' })
+  ).toBeDisabled()
+})
+
+test('an old backend 404 never falls back to the legacy destructive route', async () => {
+  const user = userEvent.setup()
+  const submit = vi.spyOn(api, 'post').mockRejectedValue({
+    response: { status: 404 },
+  })
+  await renderSettings()
+  const cleanup = screen.getByRole('group', { name: 'Clean history logs' })
+  await user.click(within(cleanup).getByRole('button', { name: 'Clean logs' }))
+  await user.click(
+    within(await screen.findByRole('alertdialog')).getByRole('button', {
+      name: 'Delete logs',
+    })
+  )
+  expect(
+    await screen.findByText(/Could not confirm the log cleanup/)
+  ).toBeVisible()
+  await user.click(
+    within(cleanup).getByRole('button', { name: 'Check status' })
+  )
+  await waitFor(() => {
+    expect(
+      vi
+        .mocked(api.get)
+        .mock.calls.some(([url]) => /system-task\/systask_/.test(url))
+    ).toBe(true)
+  })
+  expect(submit.mock.calls.map(([url]) => url)).toEqual([
+    '/api/system-task/log-cleanup/receipt-v1',
+  ])
+  expect(
+    within(cleanup).getByRole('button', { name: 'Clean logs' })
   ).toBeDisabled()
 })
 

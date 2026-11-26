@@ -21,12 +21,18 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
+import { mockTransferLocks } from '@/extensions/chuanapi/wallet/__tests__/mock-transfer-locks'
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { useAffiliate } from '../use-affiliate'
 
 describe('useAffiliate transfer retries', () => {
   beforeEach(() => {
+    mockTransferLocks()
+    useAuthStore
+      .getState()
+      .auth.setUser({ id: 7, role: 1, username: 'test-user' })
     vi.spyOn(api, 'get').mockResolvedValue({
       data: { success: true, data: 'aff-1' },
     })
@@ -54,7 +60,7 @@ describe('useAffiliate transfer retries', () => {
     })
     expect(post).toHaveBeenCalledWith(
       '/api/user/aff_transfer',
-      { quota: 150000 },
+      { quota: 150000, expected_user_id: 7 },
       {
         headers: { 'Idempotency-Key': expect.any(String) },
       }
@@ -99,10 +105,117 @@ describe('useAffiliate transfer retries', () => {
     expect(
       await result.current.transferQuota(Number.MAX_SAFE_INTEGER + 1)
     ).toBe(false)
-    expect(post).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
     await act(async () => {
       finish({ data: { success: true } })
       expect(await transfer).toBe(true)
     })
+  })
+  test('a malformed reply followed by insufficient keeps the prior intent and blocks a new amount', async () => {
+    const post = vi
+      .spyOn(api, 'post')
+      .mockResolvedValueOnce({ data: { message: 'lost acknowledgement' } })
+      .mockResolvedValueOnce({
+        data: {
+          success: false,
+          code: 'REFERRAL_TRANSFER_INSUFFICIENT',
+          message: 'insufficient',
+        },
+      })
+      .mockResolvedValue({ data: { success: true } })
+    const { result, unmount } = await renderAffiliate()
+    await act(async () => {
+      expect(await result.current.transferQuota(100)).toBe(false)
+    })
+    const original = result.current.pendingTransfer
+    unmount()
+    const restored = (await renderAffiliate()).result
+    await act(async () => {
+      expect(await restored.current.transferQuota(100)).toBe(false)
+    })
+    expect(restored.current.pendingTransfer).toEqual(original)
+    await act(async () => {
+      expect(await restored.current.transferQuota(101)).toBe(false)
+    })
+    expect(post).toHaveBeenCalledTimes(2)
+    await act(async () => {
+      expect(await restored.current.transferQuota(100)).toBe(true)
+    })
+    expect(
+      post.mock.calls.map(
+        ([, , config]) => config?.headers?.['Idempotency-Key']
+      )
+    ).toEqual([
+      original?.request_id,
+      original?.request_id,
+      original?.request_id,
+    ])
+  })
+
+  test('an explicit transaction rejection on a first dispatch permits a corrected new amount', async () => {
+    const post = vi
+      .spyOn(api, 'post')
+      .mockResolvedValueOnce({
+        data: {
+          success: false,
+          code: 'REFERRAL_TRANSFER_INSUFFICIENT',
+          message: 'insufficient',
+        },
+      })
+      .mockResolvedValue({ data: { success: true } })
+    const { result } = await renderAffiliate()
+    await act(async () => {
+      expect(await result.current.transferQuota(100)).toBe(false)
+    })
+    expect(result.current.pendingTransfer).toBeNull()
+    await act(async () => {
+      expect(await result.current.transferQuota(101)).toBe(true)
+    })
+    expect(post.mock.calls[0][2]?.headers?.['Idempotency-Key']).not.toEqual(
+      post.mock.calls[1][2]?.headers?.['Idempotency-Key']
+    )
+  })
+
+  test('recovered agent reward cannot be rerouted to a user wallet or another owner', async () => {
+    const agent = vi
+      .spyOn(api, 'request')
+      .mockRejectedValueOnce(new Error('lost response'))
+      .mockResolvedValue({
+        data: { success: true, data: { agent_user_id: 7 } },
+      })
+    const regular = vi.spyOn(api, 'post')
+    const first = await renderAffiliate()
+    await act(async () => {
+      expect(await first.result.current.transferQuota(42, 'agent')).toBe(false)
+    })
+    const request = agent.mock.calls[0][0].data
+    first.unmount()
+    act(() => {
+      useAuthStore
+        .getState()
+        .auth.setUser({ id: 8, role: 1, username: 'separate' })
+    })
+    const other = await renderAffiliate()
+    expect(other.result.current.pendingTransfer).toBeNull()
+    other.unmount()
+    act(() => {
+      useAuthStore
+        .getState()
+        .auth.setUser({ id: 7, role: 1, username: 'original' })
+    })
+    const back = await renderAffiliate()
+    expect(back.result.current.pendingTransfer).toMatchObject({
+      quota: 42,
+      target: 'agent',
+    })
+    await act(async () => {
+      expect(await back.result.current.transferQuota(42, 'wallet')).toBe(false)
+    })
+    expect(regular).not.toHaveBeenCalled()
+    expect(agent).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      expect(await back.result.current.transferQuota(42, 'agent')).toBe(true)
+    })
+    expect(agent.mock.calls[1][0].data).toEqual(request)
   })
 })

@@ -38,10 +38,12 @@ import { useApiKeys } from './api-keys-provider'
 
 type DataTableBulkActionsProps<TData extends object> = {
   table: Table<TData>
+  placement?: 'floating' | 'inline'
 }
 
 export function DataTableBulkActions<TData extends object>({
   table,
+  placement,
 }: DataTableBulkActionsProps<TData>) {
   const { t } = useTranslation()
   const { resolveRealKeysBatch } = useApiKeys()
@@ -85,7 +87,11 @@ export function DataTableBulkActions<TData extends object>({
 
   return (
     <>
-      <BulkActionsToolbar table={table} entityName='API key'>
+      <BulkActionsToolbar
+        table={table}
+        entityName='API key'
+        placement={placement}
+      >
         <Tooltip>
           <TooltipTrigger
             render={

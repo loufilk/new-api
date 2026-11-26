@@ -48,6 +48,7 @@ import { useUpdateOption } from '../hooks/use-update-option'
 import {
   formatJsonForTextarea,
   normalizeJsonString,
+  validateGeminiVersionOverrides,
   validateJsonString,
 } from './utils'
 
@@ -63,7 +64,7 @@ const schema = z.object({
       }
     }),
     version_settings: z.string().superRefine((value, ctx) => {
-      const result = validateJsonString(value)
+      const result = validateGeminiVersionOverrides(value)
       if (!result.valid) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -290,7 +291,8 @@ export function GeminiSettingsCard({ defaultValues }: GeminiSettingsCardProps) {
                 <FormDescription>
                   {t(
                     'Map model identifiers to Gemini API versions. A `default` entry applies when no specific match is found.'
-                  )}
+                  )}{' '}
+                  <code>v1</code>, <code>v1beta</code>, <code>v1alpha</code>
                 </FormDescription>
                 <FormMessage />
               </FormItem>

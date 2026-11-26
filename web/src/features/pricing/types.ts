@@ -59,6 +59,10 @@ export type BillingPluginVariant = {
 
 export type PricingModel = {
   billing_plugin_variants?: BillingPluginVariant[]
+  /** Anonymous projection only: provider identities and rates are withheld. */
+  billing_variants_present?: boolean
+  /** Server-confirmed ordinary quote availability; absence preserves legacy prices. */
+  ordinary_price_available?: boolean
   // Requests outside the plugin variants still pay the model-level price.
   ordinary_pricing?: boolean
   id: number
@@ -81,7 +85,14 @@ export type PricingModel = {
   enable_groups: string[]
   tags?: string
   supported_endpoint_types?: string[]
+  /** Live protocol capabilities keyed only by the visible group or public tier. */
+  supported_endpoint_types_by_group?: Record<string, string[]>
   key?: string
+  group_keys_are_display_only?: boolean
+  group_catalog?: MarketGroupCatalog
+  group_market_activity?: MarketActivityByGroup
+  group_rate_source?: Record<string, 'personal' | 'group_override' | 'group'>
+  group_rate_limits?: Record<string, MarketGroupRateLimit>
   group_ratio?: Record<string, number>
   /** Billing mode (e.g. "tiered_expr") used to flag dynamic pricing */
   billing_mode?: string
@@ -127,7 +138,76 @@ export type ModelCapability =
   | 'caching'
   | 'embeddings'
 
+export type PublishedModelLine = {
+  id: string
+  label: string
+  ratio: number
+  sort_order?: number
+  badges?: string[]
+  is_new?: boolean
+  previous_ratio?: number
+  representative_model?: string
+}
+
+export type PublishedModelLinesResponse = {
+  success: boolean
+  public_lines: PublishedModelLine[]
+  models: {
+    model_name: string
+    public_line_ids: string[]
+    supported_endpoint_types_by_public_line: Record<string, string[]>
+  }[]
+}
+
+export interface MarketGroup {
+  public_line?: PublishedModelLine
+
+  /** Locally derived from unanimous public model-brand metadata, never a route identity. */
+  public_tier_icon?: string
+  label?: string
+  description?: string
+  platform?: string
+  icon?: string
+  sort_order?: number
+  exclusive?: boolean
+  badges?: string[]
+}
+/** Per-user request buckets, shared across models. Zero means this dimension is not capped. */
+export interface MarketGroupRateLimit {
+  window_minutes: number
+  total_requests: number
+  successful_requests: number
+  scope: 'shared' | 'group'
+}
+
+/** Confirmed changes to the base group multiplier, never personal prices. */
+export interface MarketRateChange {
+  old_ratio: number
+  new_ratio: number
+  effective_at: number
+}
+
+export interface GroupMarketActivity {
+  first_configured_at?: number
+  is_new?: true
+  rate_changes?: MarketRateChange[]
+  recent_rate_change?: true
+}
+
+export type MarketActivityByGroup = Record<string, GroupMarketActivity>
+
+export type MarketGroupCatalog = Record<string, MarketGroup>
+
+/** Authorized model names in server order. No raw usage is included. */
+export type ModelOrder = Record<'recommended' | 'requests' | 'tokens', string[]>
+
 export type PricingData = {
+  model_order?: ModelOrder
+  group_keys_are_display_only?: boolean
+  group_catalog?: MarketGroupCatalog
+  group_market_activity?: MarketActivityByGroup
+  group_rate_source?: Record<string, 'personal' | 'group_override' | 'group'>
+  group_rate_limits?: Record<string, MarketGroupRateLimit>
   success: boolean
   message?: string
   data: PricingModel[]

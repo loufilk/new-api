@@ -1,5 +1,21 @@
 {
   "translation": {
+    "Client setup wizard": "客户端接入向导",
+    "Choose a published model group, a model, a client and a connection address to generate setup instructions.": "选择公开分组、模型、客户端和接入地址，即可生成配置步骤。",
+    "Public group names are for reference only. The group and permissions on your API Key determine actual routing.": "公开分组名称仅供参考。实际路由由 API Key 所属分组和权限决定。",
+    "No published group is available. The examples below use a placeholder for your model ID.": "暂无可用的公开分组。下方示例使用模型 ID 占位符。",
+    "Published model group": "公开模型分组",
+    "Protocol": "协议",
+    "Connection address": "接入地址",
+    "No verified connection address": "没有可用的接入地址",
+    "Operating system": "操作系统",
+    "Setup instructions": "配置步骤",
+    "Create or choose an API Key in the console. Set WANCHUAN_API_KEY locally for commands, or replace the placeholder in your client settings. Never paste your Key into this page.": "在控制台创建或选用 API Key。在本机设置 WANCHUAN_API_KEY，或在客户端设置里替换占位符。请勿在此页面粘贴真实 Key。",
+    "Merge these settings with your existing configuration. Test in your client and check the request time, model and status in your usage logs. A model request may incur charges.": "将这些设置合并到现有配置。在客户端测试后，到用量日志核对请求时间、模型和状态。模型请求可能收费。",
+    "Read the full guide": "查看完整教程",
+    "This application changed while you were reviewing it. Load the latest status before continuing.": "这份申请在审核期间已更新。请加载最新状态后再继续。",
+    "Reload latest application": "加载最新申请",
+    "This application is read-only for your account.": "当前账号只能查看这份申请。",
     "Partner application": "供货商申请",
     "Share your upstream and start a partnership": "提供您的上游，开启合作",
     "Tell us about your site, available groups and rates. API keys are not needed.": "告诉我们您的站点、可提供的分组和各分组的倍率，无需提供 API 密钥。",
@@ -320,6 +336,16 @@
     "Select an invoice category": "请选择开票类目",
     "This invoice category is currently unavailable": "该开票类目暂不受理",
     "Update the server to edit invoice categories.": "请先更新服务端，再编辑开票类目。",
-    "Invoice fee refund": "开票手续费退款"
+    "Invoice fee refund": "开票手续费退款",
+    "Site information": "站点信息",
+    "Press Enter to add a model.": "按回车添加模型。",
+    "Top-up rates, settlement terms, or anything else you would like to share.": "充值比例、结算方式等任何想说明的内容",
+    "Previous EPay order": "上一次易支付订单",
+    "Order not confirmed. Retry the same checkout to avoid duplicate orders.": "订单状态未确认。请用相同金额和支付方式继续，不要重复下单。",
+    "Check the previous EPay order before starting another.": "请先核对上一笔易支付订单，再创建新订单。",
+    "Check status": "查询状态",
+    "Dismiss reminder (does not cancel the order)": "忽略提醒（不会取消订单）",
+    "The payment quote changed. Close this dialog and select the payment method again.": "应付金额已变更。请关闭确认框，重新选择支付方式并核对报价。",
+    "If it stays unconfirmed, check recharge history or give support this reference:": "若一直无法确认，请先查看充值记录，或将此编号提供给客服核对："
   }
 }

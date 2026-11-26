@@ -21,8 +21,10 @@ import (
 type publicPricingPayload struct {
 	Success bool `json:"success"`
 	Data    []struct {
-		ModelName   string   `json:"model_name"`
-		EnableGroup []string `json:"enable_groups"`
+		ModelName                     string                             `json:"model_name"`
+		EnableGroup                   []string                           `json:"enable_groups"`
+		SupportedEndpointTypesByGroup map[string][]constant.EndpointType `json:"supported_endpoint_types_by_group"`
+		SupportedEndpointTypes        []constant.EndpointType            `json:"supported_endpoint_types"`
 	} `json:"data"`
 	GroupRatio     map[string]float64 `json:"group_ratio"`
 	UsableGroup    map[string]string  `json:"usable_group"`
@@ -53,8 +55,10 @@ func TestAnonymousCatalogsProjectOnlyPublicModelFields(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:console-public-pricing?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	model.DB, model.LOG_DB = db, db
-	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}))
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.Option{}))
 	t.Cleanup(func() {
+		_ = db.Where("key = ?", "GroupCatalogMetadata").Delete(&model.Option{}).Error
+		_ = model.LoadOptionsFromDatabase()
 		model.DB, model.LOG_DB = previousDB, previousLogDB
 		common.RedisEnabled = previousRedis
 		common.SetDatabaseTypes(previousMainType, previousLogType)
@@ -68,9 +72,11 @@ func TestAnonymousCatalogsProjectOnlyPublicModelFields(t *testing.T) {
 	originalUsableGroups := setting.UserUsableGroups2JSONString()
 	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
 	originalAutoGroups := setting.AutoGroups2JsonString()
-	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","unpriced":"Missing ratio"}`))
-	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"private":9}`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","public-gemini":"Another public tier","private":"Private group exposed by the legacy list","unpriced":"Missing ratio"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"public-gemini":1,"private":9}`))
 	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["default","private"]`))
+	require.NoError(t, db.Create(&model.Option{Key: "GroupCatalogMetadata", Value: `{"private":{"exclusive":true,"label":"private group label","badges":["stable"]}}`}).Error)
+	require.NoError(t, model.LoadOptionsFromDatabase())
 	t.Cleanup(func() {
 		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalUsableGroups))
 		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
@@ -82,8 +88,13 @@ func TestAnonymousCatalogsProjectOnlyPublicModelFields(t *testing.T) {
 		Status: common.ChannelStatusEnabled, Name: "fixture-channel",
 		Models: "public-model,private-model,stealth/pixel-canary,unpriced-model", Group: "default,private,unpriced",
 	}).Error)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 802, Type: constant.ChannelTypeGemini, Key: "gemini-fixture", Status: common.ChannelStatusEnabled, Group: "public-gemini"},
+		{Id: 803, Type: constant.ChannelTypeAnthropic, Key: "anthropic-fixture", Status: common.ChannelStatusEnabled, Group: "private"},
+	}).Error)
 	require.NoError(t, db.Create(&[]model.Ability{
-		{Group: "default", Model: "public-model", ChannelId: 801, Enabled: true},
+		{Group: "public-gemini", Model: "public-model", ChannelId: 802, Enabled: true},
+		{Group: "private", Model: "public-model", ChannelId: 803, Enabled: true}, {Group: "default", Model: "public-model", ChannelId: 801, Enabled: true},
 		{Group: "private", Model: "public-model", ChannelId: 801, Enabled: true},
 		{Group: "default", Model: "stealth/pixel-canary", ChannelId: 801, Enabled: true},
 		{Group: "unpriced", Model: "unpriced-model", ChannelId: 801, Enabled: true},
@@ -99,6 +110,10 @@ func TestAnonymousCatalogsProjectOnlyPublicModelFields(t *testing.T) {
 	require.Len(t, payload.Data, 1, "only public-group models may appear in the anonymous catalogue")
 	assert.Equal(t, "public-model", payload.Data[0].ModelName)
 	assert.Equal(t, []string{"rate-1"}, payload.Data[0].EnableGroup)
+	assert.ElementsMatch(t, []constant.EndpointType{constant.EndpointTypeOpenAI, constant.EndpointTypeGemini}, payload.Data[0].SupportedEndpointTypes)
+	require.Len(t, payload.Data[0].SupportedEndpointTypesByGroup, 1)
+	assert.ElementsMatch(t, payload.Data[0].SupportedEndpointTypes, payload.Data[0].SupportedEndpointTypesByGroup["rate-1"])
+	assert.NotContains(t, anonymous.Body.String(), "public-gemini")
 	assert.Equal(t, map[string]float64{"rate-1": 1}, payload.GroupRatio)
 	assert.Equal(t, map[string]string{"rate-1": "价格档位 ×1"}, payload.UsableGroup)
 	assert.Equal(t, []string{"rate-1"}, payload.AutoGroups)
@@ -123,7 +138,7 @@ func TestAnonymousCatalogsProjectOnlyPublicModelFields(t *testing.T) {
 }
 
 func TestPublicPricingRowsHideRoutingAndNotesWithoutMutatingSource(t *testing.T) {
-	rows := []model.Pricing{{ModelName: "public-model", Description: "private-supplier", Tags: "internal-note", OwnerBy: "private-owner", EnableGroup: []string{"supplier-a", "supplier-b"}, BillingMode: "tiered_expr", BillingExpr: `tier("standard", p * 2 + c * 6)`}}
+	rows := []model.Pricing{{ModelName: "public-model", Icon: "Claude.Avatar.type={'private'}", Description: "private-supplier", Tags: "internal-note", OwnerBy: "private-owner", EnableGroup: []string{"supplier-a", "supplier-b"}, BillingMode: "tiered_expr", BillingExpr: `tier("standard", p * 2 + c * 6)`}}
 	public := publicPricingRows(rows, map[string]string{"supplier-a": "rate-1", "supplier-b": "rate-1"})
 	require.Len(t, public, 1)
 	payload, err := common.Marshal(public)
@@ -132,6 +147,9 @@ func TestPublicPricingRowsHideRoutingAndNotesWithoutMutatingSource(t *testing.T)
 		assert.NotContains(t, string(payload), internal)
 	}
 	assert.Equal(t, []string{"rate-1"}, public[0].EnableGroup)
+	assert.Equal(t, "Claude.Avatar", public[0].Icon)
+	assert.NotContains(t, string(payload), "type=")
+	assert.Equal(t, "Claude.Avatar.type={'private'}", rows[0].Icon)
 	assert.Equal(t, rows[0].BillingExpr, public[0].BillingExpr)
 	assert.Equal(t, []string{"supplier-a", "supplier-b"}, rows[0].EnableGroup)
 	assert.Empty(t, publicPricingRows(rows, map[string]string{}))

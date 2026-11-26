@@ -371,7 +371,9 @@ func is64BitIntegerType(dbType common.DatabaseType, dataType string) bool {
 	}
 }
 
-func migrateDB() error {
+func migrateDB() error { return migrateMainSchema(false) }
+
+func migrateMainSchema(strict bool) error {
 	if err := migrateChannelGroupToText(DB); err != nil {
 		return err
 	}
@@ -382,12 +384,31 @@ func migrateDB() error {
 		return err
 	}
 	// Migrate price_amount column from float/double to decimal for existing tables
-	migrateSubscriptionPlanPriceAmount()
+	if err := migrateSubscriptionPlanPriceAmount(); err != nil {
+		if strict {
+			return err
+		}
+		common.SysError(err.Error())
+	}
 	// Migrate model_limits column from varchar to text for existing tables
 	if err := migrateTokenModelLimitsToText(); err != nil {
 		return err
 	}
+	if strict && DB.Migrator().HasTable(&Option{}) {
+		// The historical repair warns and skips empty keys. The managed path must
+		// preserve evidence for manual reconciliation instead.
+		var invalid bool
+		if err := DB.Raw(`SELECT EXISTS(SELECT 1 FROM options WHERE "key" IS NULL OR "key" = '')`).Row().Scan(&invalid); err != nil {
+			return err
+		}
+		if invalid {
+			return errors.New("options contain empty keys; reconcile before migration")
+		}
+	}
 	if err := migrateOptionPrimaryKey(DB); err != nil {
+		if strict {
+			return fmt.Errorf("migrate options primary key: %w", err)
+		}
 		common.SysError(common.LogText("failed to migrate options primary key: %s", err.Error()))
 	}
 
@@ -448,6 +469,9 @@ func mainAutoMigrateModels(registry *extension.Registry) []any {
 		&PasskeyCredential{},
 		&Option{},
 		&GroupRenameOperation{},
+		&UserGroupEntitlement{},
+		&UserGroupPricing{},
+		&UserGroupPricingAudit{},
 		&LoginEncryptionKey{},
 		&Redemption{},
 		&RedemptionMutation{},
@@ -490,7 +514,7 @@ func mainAutoMigrateModels(registry *extension.Registry) []any {
 	coreModels = append(coreModels, BonusSourceModels()...)
 	coreModels = append(coreModels, ReferralRewardModels()...)
 	coreModels = append(coreModels, CustomerInvoiceModels()...)
-	coreModels = append(coreModels, &QuotaDataFlushCursor{})
+	coreModels = append(coreModels, &QuotaDataFlushCursor{}, &USDTTopUpConfig{}, &USDTTopUpOrder{})
 	if registry == nil {
 		return coreModels
 	}
@@ -705,7 +729,7 @@ func migrateTokenModelLimitsToText() error {
 		if err := DB.Raw(`SELECT data_type FROM information_schema.columns
 			WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
 			tableName, columnName).Scan(&dataType).Error; err != nil {
-			common.SysLog(common.LogText("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
+			return fmt.Errorf("inspect %s.%s: %w", tableName, columnName, err)
 		} else if dataType == "text" {
 			return nil
 		}
@@ -715,7 +739,7 @@ func migrateTokenModelLimitsToText() error {
 		if err := DB.Raw(`SELECT COLUMN_TYPE FROM information_schema.columns
 				WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
 			tableName, columnName).Scan(&columnType).Error; err != nil {
-			common.SysLog(common.LogText("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
+			return fmt.Errorf("inspect %s.%s: %w", tableName, columnName, err)
 		} else if strings.ToLower(columnType) == "text" {
 			return nil
 		}
@@ -735,11 +759,11 @@ func migrateTokenModelLimitsToText() error {
 
 // migrateSubscriptionPlanPriceAmount migrates price_amount column from float/double to decimal(10,6)
 // This is safe to run multiple times - it checks the column type first
-func migrateSubscriptionPlanPriceAmount() {
+func migrateSubscriptionPlanPriceAmount() error {
 	// SQLite doesn't support ALTER COLUMN, and its type affinity handles this automatically
 	// Skip early to avoid GORM parsing the existing table DDL which may cause issues
 	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
-		return
+		return nil
 	}
 
 	tableName := "subscription_plans"
@@ -747,12 +771,12 @@ func migrateSubscriptionPlanPriceAmount() {
 
 	// Check if table exists first
 	if !DB.Migrator().HasTable(tableName) {
-		return
+		return nil
 	}
 
 	// Check if column exists
 	if !DB.Migrator().HasColumn(&SubscriptionPlan{}, columnName) {
-		return
+		return nil
 	}
 
 	var alterSQL string
@@ -762,9 +786,9 @@ func migrateSubscriptionPlanPriceAmount() {
 		if err := DB.Raw(`SELECT data_type FROM information_schema.columns
 			WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
 			tableName, columnName).Scan(&dataType).Error; err != nil {
-			common.SysLog(common.LogText("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
+			return fmt.Errorf("inspect %s.%s: %w", tableName, columnName, err)
 		} else if dataType == "numeric" {
-			return // Already decimal/numeric
+			return nil // Already decimal/numeric
 		}
 		alterSQL = fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s TYPE decimal(10,6) USING %s::decimal(10,6)`,
 			tableName, columnName, columnName)
@@ -774,23 +798,24 @@ func migrateSubscriptionPlanPriceAmount() {
 		if err := DB.Raw(`SELECT COLUMN_TYPE FROM information_schema.columns
 				WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
 			tableName, columnName).Scan(&columnType).Error; err != nil {
-			common.SysLog(common.LogText("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
+			return fmt.Errorf("inspect %s.%s: %w", tableName, columnName, err)
 		} else if strings.HasPrefix(strings.ToLower(columnType), "decimal") {
-			return // Already decimal
+			return nil // Already decimal
 		}
 		alterSQL = fmt.Sprintf("ALTER TABLE %s MODIFY COLUMN %s decimal(10,6) NOT NULL DEFAULT 0",
 			tableName, columnName)
 	} else {
-		return
+		return nil
 	}
 
 	if alterSQL != "" {
 		if err := DB.Exec(alterSQL).Error; err != nil {
-			common.SysLog(common.LogText("Warning: failed to migrate %s.%s to decimal: %v", tableName, columnName, err))
+			return fmt.Errorf("migrate %s.%s to decimal: %w", tableName, columnName, err)
 		} else {
 			common.SysLog(common.LogText("Successfully migrated %s.%s to decimal(10,6)", tableName, columnName))
 		}
 	}
+	return nil
 }
 
 func closeDB(db *gorm.DB) error {

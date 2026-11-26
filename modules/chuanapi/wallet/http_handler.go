@@ -214,7 +214,8 @@ func GetReferralRewards(c *gin.Context) {
 
 // AffiliateTransferRequest 是划转请求体；quota 以整数 quota units 表示。
 type AffiliateTransferRequest struct {
-	Quota *int64 `json:"quota"`
+	Quota          *int64 `json:"quota"`
+	ExpectedUserID *int   `json:"expected_user_id,omitempty"`
 }
 
 // transferRequestBodyMaxBytes 限制划转请求体大小：请求只有一个整数字段，
@@ -253,7 +254,7 @@ func TransferAffQuota(c *gin.Context) {
 	// wallet implementations). The model revalidates the session in the money tx.
 	identity := model.AuthSessionIdentity{UserID: c.GetInt("id"), SessionID: c.GetString("session_id"), UserAuthVersion: c.GetInt64("auth_version"), SessionVersion: c.GetInt64("session_version")}
 	_, pat := model.ParseAccessTokenSessionID(identity.SessionID)
-	if identity.UserID <= 0 || identity.SessionID == "" || identity.UserAuthVersion <= 0 || identity.SessionVersion <= 0 || pat || c.GetBool("use_access_token") {
+	if (request.ExpectedUserID != nil && *request.ExpectedUserID != identity.UserID) || identity.UserID <= 0 || identity.SessionID == "" || identity.UserAuthVersion <= 0 || identity.SessionVersion <= 0 || pat || c.GetBool("use_access_token") {
 		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Financial operations require a current browser session"))
 		return
 	}
@@ -263,7 +264,7 @@ func TransferAffQuota(c *gin.Context) {
 		case errors.Is(err, model.ErrAgentTransactionProof), errors.Is(err, model.ErrUserSessionInactive), errors.Is(err, gorm.ErrRecordNotFound):
 			common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Financial operations require a current browser session"))
 		case errors.Is(err, model.ErrLedgerInsufficientBalance):
-			common.ApiErrorMsg(c, "待使用邀请奖励不足")
+			common.ApiErrorStatus(c, http.StatusOK, errors.New("待使用邀请奖励不足"), gin.H{"code": "REFERRAL_TRANSFER_INSUFFICIENT"})
 		case errors.Is(err, model.ErrLedgerIdempotencyConflict):
 			common.ApiErrorMsg(c, "Idempotency-Key 与已处理的划转参数不一致")
 		default:

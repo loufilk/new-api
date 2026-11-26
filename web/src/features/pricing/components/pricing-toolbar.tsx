@@ -16,43 +16,42 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { ArrowUpDown, Check, Filter } from 'lucide-react'
-import { useState } from 'react'
+import { ArrowUpDown, Check, RotateCcw } from 'lucide-react'
+import { Fragment } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DataTableViewModeToggle } from '@/components/data-table'
-import {
-  sideDrawerContentClassName,
-  sideDrawerFormClassName,
-  sideDrawerHeaderClassName,
-} from '@/components/drawer-layout'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import { getSortLabels, type SortOption, type ViewMode } from '../constants'
-import type { PricingModel, PricingVendor, TokenUnit } from '../types'
-import { PricingSidebar } from './pricing-sidebar'
+import {
+  canSortCatalogBy,
+  getSortLabels,
+  MODEL_ORDER_SORTS,
+  type SortOption,
+  type ViewMode,
+} from '../constants'
+import type { ModelOrder, TokenUnit } from '../types'
 
 export interface PricingToolbarProps {
   filteredCount: number
   totalCount?: number
+  platformBest?: boolean
+  hasActiveFilters?: boolean
+  onClearFilters?: () => void
   sortBy: string
+  modelOrder?: ModelOrder
   onSortChange: (value: string) => void
   tokenUnit: TokenUnit
   onTokenUnitChange: (value: TokenUnit) => void
@@ -60,63 +59,62 @@ export interface PricingToolbarProps {
   onRechargePriceChange: (value: boolean) => void
   viewMode: ViewMode
   onViewModeChange: (value: ViewMode) => void
-  quotaTypeFilter: string
-  endpointTypeFilter: string
-  vendorFilter: string
-  groupFilter: string
-  tagFilter: string
-  onQuotaTypeChange: (value: string) => void
-  onEndpointTypeChange: (value: string) => void
-  onVendorChange: (value: string) => void
-  onGroupChange: (value: string) => void
-  onTagChange: (value: string) => void
-  vendors: PricingVendor[]
-  groups: string[]
-  groupRatios?: Record<string, number>
-  tags: string[]
-  models: PricingModel[]
-  hasActiveFilters: boolean
-  activeFilterCount: number
-  onClearFilters: () => void
 }
 
 export function PricingToolbar(props: PricingToolbarProps) {
-  const { t } = useTranslation()
-  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false)
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const sortLabels = getSortLabels(t)
+  const sortEntries = Object.entries(sortLabels).filter(([value]) =>
+    canSortCatalogBy(value, props.modelOrder)
+  )
+  const sortGroups = [
+    {
+      id: 'order',
+      entries: sortEntries.filter(([value]) => MODEL_ORDER_SORTS.has(value)),
+    },
+    {
+      id: 'other',
+      entries: sortEntries.filter(([value]) => !MODEL_ORDER_SORTS.has(value)),
+    },
+  ].filter((group) => group.entries.length > 0)
 
   return (
-    <div className='bg-card rounded-xl border p-3'>
-      <div className='flex flex-wrap items-center justify-between gap-3'>
-        <div className='flex items-center gap-2'>
-          <Button
-            type='button'
-            variant='outline'
-            size='sm'
-            onClick={() => setMobileFiltersOpen(true)}
-            className='gap-1.5 xl:hidden'
+    <div className='min-w-0 border-b pb-3'>
+      <div className='flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-3'>
+        <div className='flex min-w-0 flex-wrap items-center gap-2'>
+          <p
+            role='status'
+            className='text-muted-foreground flex flex-wrap items-baseline gap-x-1.5 text-sm'
           >
-            <Filter className='size-4' />
-            {t('Filter')}
-            {props.activeFilterCount > 0 && (
-              <Badge className='ml-0.5 size-5 justify-center p-0 text-[10px]'>
-                {props.activeFilterCount}
-              </Badge>
-            )}
-          </Button>
-
-          <div className='text-muted-foreground flex items-baseline gap-1 text-sm'>
-            <span className='text-foreground font-semibold tabular-nums'>
-              {props.filteredCount.toLocaleString()}
-            </span>
-            <span>{props.filteredCount === 1 ? t('model') : t('models')}</span>
+            {t('Matching models')}
+            <strong className='text-foreground font-semibold tabular-nums'>
+              {formatNumber(props.filteredCount, locale)}
+            </strong>
             {props.totalCount != null &&
               props.filteredCount !== props.totalCount && (
-                <span className='text-muted-foreground/60 text-xs'>
-                  / {props.totalCount.toLocaleString()}
+                <span className='tabular-nums'>
+                  / {formatNumber(props.totalCount, locale)}
                 </span>
               )}
-          </div>
+          </p>
+          {props.platformBest && (
+            <span className='text-muted-foreground text-xs'>
+              {t('Lowest price on this platform')}
+            </span>
+          )}
+          {props.hasActiveFilters && props.onClearFilters && (
+            <Button
+              type='button'
+              variant='ghost'
+              size='sm'
+              onClick={props.onClearFilters}
+              aria-label={t('Reset filters')}
+            >
+              <RotateCcw aria-hidden className='size-3.5' />
+              {t('Reset')}
+            </Button>
+          )}
         </div>
 
         <div className='flex min-w-0 flex-wrap items-center gap-2'>
@@ -156,31 +154,38 @@ export function PricingToolbar(props: PricingToolbarProps) {
                   type='button'
                   variant='outline'
                   size='sm'
-                  className='h-8 gap-1.5 px-3 text-xs'
+                  className='h-auto min-h-8 max-w-full gap-1.5 px-3 py-1 text-xs'
                 />
               }
             >
-              <ArrowUpDown className='size-3.5' />
-              <span>{sortLabels[props.sortBy as SortOption] || t('Sort')}</span>
+              <ArrowUpDown aria-hidden className='size-3.5' />
+              <span className='min-w-0 [overflow-wrap:anywhere] whitespace-normal'>
+                {sortLabels[props.sortBy as SortOption] || t('Sort')}
+              </span>
             </DropdownMenuTrigger>
             <DropdownMenuContent align='end' className='w-44'>
-              <DropdownMenuGroup>
-                {Object.entries(sortLabels).map(([value, label]) => (
-                  <DropdownMenuItem
-                    key={value}
-                    onClick={() => props.onSortChange(value)}
-                    className='gap-2'
-                  >
-                    <Check
-                      className={cn(
-                        'size-4 shrink-0',
-                        props.sortBy === value ? 'opacity-100' : 'opacity-0'
-                      )}
-                    />
-                    {label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuGroup>
+              {sortGroups.map((group, index) => (
+                <Fragment key={group.id}>
+                  {index > 0 && <DropdownMenuSeparator />}
+                  <DropdownMenuGroup>
+                    {group.entries.map(([value, label]) => (
+                      <DropdownMenuItem
+                        key={value}
+                        onClick={() => props.onSortChange(value)}
+                        className='gap-2 [overflow-wrap:anywhere] whitespace-normal'
+                      >
+                        <Check
+                          className={cn(
+                            'size-4 shrink-0',
+                            props.sortBy === value ? 'opacity-100' : 'opacity-0'
+                          )}
+                        />
+                        {label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuGroup>
+                </Fragment>
+              ))}
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -190,42 +195,6 @@ export function PricingToolbar(props: PricingToolbarProps) {
           />
         </div>
       </div>
-
-      <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
-        <SheetContent
-          side='left'
-          className={sideDrawerContentClassName('sm:max-w-md')}
-        >
-          <SheetHeader className={sideDrawerHeaderClassName()}>
-            <SheetTitle>{t('Filter')}</SheetTitle>
-            <SheetDescription>
-              {t('Filter models by provider, group, type, endpoint, and tags.')}
-            </SheetDescription>
-          </SheetHeader>
-          <div className={sideDrawerFormClassName('gap-0')}>
-            <PricingSidebar
-              quotaTypeFilter={props.quotaTypeFilter}
-              endpointTypeFilter={props.endpointTypeFilter}
-              vendorFilter={props.vendorFilter}
-              groupFilter={props.groupFilter}
-              tagFilter={props.tagFilter}
-              onQuotaTypeChange={props.onQuotaTypeChange}
-              onEndpointTypeChange={props.onEndpointTypeChange}
-              onVendorChange={props.onVendorChange}
-              onGroupChange={props.onGroupChange}
-              onTagChange={props.onTagChange}
-              vendors={props.vendors}
-              groups={props.groups}
-              groupRatios={props.groupRatios}
-              tags={props.tags}
-              models={props.models}
-              hasActiveFilters={props.hasActiveFilters}
-              onClearFilters={props.onClearFilters}
-              className='border-0 bg-transparent p-0 shadow-none'
-            />
-          </div>
-        </SheetContent>
-      </Sheet>
     </div>
   )
 }

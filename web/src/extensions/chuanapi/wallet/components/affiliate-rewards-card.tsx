@@ -41,6 +41,7 @@ import { ReferralCommissionRecords } from './referral-commission-records'
 interface AffiliateRewardsCardProps {
   user: UserWalletData | null
   affiliateLink: string
+  pendingTransfer?: boolean
   onTransfer: () => void
   onWithdraw?: () => void
   availableQuota: number
@@ -109,10 +110,13 @@ export function AffiliateRewardsCard(props: AffiliateRewardsCardProps) {
       contentClassName='space-y-3 sm:p-3'
       action={
         <div className='flex flex-wrap gap-2'>
-          {hasRewards || props.standalone ? (
+          {hasRewards || props.standalone || props.pendingTransfer ? (
             <Button
               onClick={props.onTransfer}
-              disabled={!props.complianceConfirmed || !hasRewards}
+              disabled={
+                !props.complianceConfirmed ||
+                (!hasRewards && !props.pendingTransfer)
+              }
               size='sm'
               variant='outline'
             >
@@ -192,7 +196,9 @@ export function AffiliateRewardsCard(props: AffiliateRewardsCardProps) {
         <CollapsibleContent>
           <ol className='text-muted-foreground list-decimal space-y-1 ps-4 text-xs'>
             <li>
-              {t('Only website online top-ups qualify for invitation rewards.')}
+              {t(
+                'Only online top-ups on this site qualify for invitation rewards. USDT top-ups do not qualify.'
+              )}
             </li>
             <li>
               {t('Earn {{rate}} from every qualifying top-up, with no cap.', {

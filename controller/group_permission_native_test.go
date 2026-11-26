@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -123,7 +124,7 @@ func TestGroupPermissionNativeRevocationChain(t *testing.T) {
 	assert.JSONEq(t, `{"enterprise":{}}`, option.Value)
 	granted := request(http.MethodPost, "/api/option/group-rename", rootJWT, grantRequest)
 	require.True(t, decodeAPIResponse(t, granted).Success, granted.Body.String())
-	ordinaryBody := baseAutoTokenRequest("must-not-save")
+	ordinaryBody := baseTokenRequest("must-not-save")
 	ordinaryBody["group"] = "privateA"
 	denied = request(http.MethodPost, "/api/token/", ordinaryJWT, ordinaryBody)
 	require.False(t, decodeAPIResponse(t, denied).Success)
@@ -132,14 +133,18 @@ func TestGroupPermissionNativeRevocationChain(t *testing.T) {
 	assert.Zero(t, count)
 	tokens := map[string]*model.Token{}
 	for _, group := range []string{"privateA", "privateB", "auto"} {
-		body := baseAutoTokenRequest("native-" + group)
-		body["group"] = group
-		saved := request(http.MethodPost, "/api/token/", enterpriseJWT, body)
-		require.True(t, decodeAPIResponse(t, saved).Success, saved.Body.String())
 		token := &model.Token{}
-		require.NoError(t, db.Where("name = ?", "native-"+group).First(token).Error)
 		if group == "auto" {
+			token = seedTokenModelsToken(t, db, enterprise.Id, "native-auto", "auto", nil)
+			token.Key = strings.Repeat("a", 48)
+			require.NoError(t, db.Model(token).Update("key", token.Key).Error)
 			require.Empty(t, token.AutoGroups, "this sample must inherit virtual Auto permission")
+		} else {
+			body := baseTokenRequest("native-" + group)
+			body["group"] = group
+			saved := request(http.MethodPost, "/api/token/", enterpriseJWT, body)
+			require.True(t, decodeAPIResponse(t, saved).Success, saved.Body.String())
+			require.NoError(t, db.Where("name = ?", "native-"+group).First(token).Error)
 		}
 		tokens[group] = token
 		actual := request(http.MethodGet, "/runtime", "sk-"+token.Key, nil)
@@ -192,7 +197,7 @@ func TestGroupPermissionNativeRevocationChain(t *testing.T) {
 		require.True(t, response.Success)
 		require.NoError(t, common.Unmarshal(response.Data, &models))
 		assert.Empty(t, models)
-		body := baseAutoTokenRequest("must-not-update-after-revoke")
+		body := baseTokenRequest("must-not-update-after-revoke")
 		body["id"], body["group"] = token.Id, token.Group
 		rejectedUpdate := request(http.MethodPut, "/api/token/", enterpriseJWT, body)
 		require.False(t, decodeAPIResponse(t, rejectedUpdate).Success)

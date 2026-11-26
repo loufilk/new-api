@@ -69,6 +69,8 @@ type Model struct {
 
 	MatchedModels []string `json:"matched_models,omitempty" gorm:"-"`
 	MatchedCount  int      `json:"matched_count,omitempty" gorm:"-"`
+	// Admin-only concrete pricing targets include configured but inactive channels.
+	PricingCandidates []string `json:"pricing_candidates,omitempty" gorm:"-"`
 
 	HasMetadata            bool             `json:"has_metadata" gorm:"-"`
 	ConfiguredChannelCount int              `json:"configured_channel_count" gorm:"-"`

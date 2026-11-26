@@ -22,6 +22,7 @@ import type {
   HelpApiReferencePage,
   HelpGuidePage,
   HelpIndexPage,
+  HelpIntegrationWizard,
 } from '../help'
 import type { WalletBenefitBannerProps, WalletPage } from '../wallet'
 
@@ -29,6 +30,13 @@ const LazyDocsIndexPage = lazy(() =>
   import('./help/pages/docs-index').then(({ DocsIndexPage }) => ({
     default: DocsIndexPage,
   }))
+)
+const LazyIntegrationWizardPage = lazy(() =>
+  import('./help/pages/integration-wizard-page').then(
+    ({ IntegrationWizardPage }) => ({
+      default: IntegrationWizardPage,
+    })
+  )
 )
 const LazyGuidePage = lazy(() =>
   import('./help/pages/guide-page').then(({ GuidePage }) => ({
@@ -84,11 +92,6 @@ const LazyAffiliatePage = lazy(() =>
     default: AffiliatePage,
   }))
 )
-const LazyIntelligencePage = lazy(() =>
-  import('./intelligence').then(({ IntelligencePage }) => ({
-    default: IntelligencePage,
-  }))
-)
 
 function ExtensionLoading() {
   return <div className='min-h-24' role='status' aria-label='Loading' />
@@ -100,6 +103,9 @@ function withLoading(content: ReactNode) {
 
 export const LazyHelpIndex: HelpIndexPage = () =>
   withLoading(<LazyDocsIndexPage />)
+
+export const LazyHelpIntegrationWizard: HelpIntegrationWizard = (props) =>
+  withLoading(<LazyIntegrationWizardPage {...props} />)
 
 export const LazyHelpGuide: HelpGuidePage = ({ slug }) =>
   withLoading(<LazyGuidePage slug={slug} />)
@@ -129,8 +135,6 @@ export const LazyAccountPoolDiagnostics = () =>
   withLoading(<LazyPoolDiagnostics />)
 
 export const LazyAffiliate = () => withLoading(<LazyAffiliatePage />)
-
-export const LazyIntelligence = () => withLoading(<LazyIntelligencePage />)
 
 export function LazyPaymentSettingsRenderer({
   settings,

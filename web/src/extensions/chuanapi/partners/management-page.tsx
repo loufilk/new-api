@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { RotateCw } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -17,7 +17,6 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { SimpleRecordPager } from '@/features/agent-platform/components/simple-record-pager'
-import { hasPermission } from '@/lib/admin-permissions'
 import { formatTimestamp } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { useAuthStore } from '@/stores/auth-store'
@@ -31,6 +30,7 @@ import {
   saveAdminPartnerSettings,
 } from './api'
 import { PartnerApplicationDetailDialog } from './application-detail-dialog'
+import { partnerManagementAccess } from './permissions'
 import type {
   PartnerApplication,
   PartnerApplicationStatus,
@@ -119,10 +119,64 @@ function PartnerSettings(props: { settings: PartnerApplicationSettings }) {
               }
               onClick={() => save.mutate()}
             >
-              {save.isPending ? t('Saving…') : t('Save settings')}
+              {save.isPending ? t('Saving...') : t('Save Settings')}
             </Button>
           </div>
         </FieldGroup>
+      </CardContent>
+    </Card>
+  )
+}
+
+function PartnerSettingsPanel(props: { reviewer: number; canEdit: boolean }) {
+  const { t } = useTranslation()
+  const settings = useQuery({
+    ...privateRead,
+    queryKey: [...partnerKey, 'admin', 'settings', props.reviewer],
+    queryFn: ({ signal }) => getAdminPartnerSettings(signal),
+  })
+
+  if (settings.isPending) return <LoadingState className='min-h-24' />
+  if (settings.isError) {
+    return (
+      <ErrorState
+        className='min-h-28'
+        title={t('Unable to load partner application settings')}
+        onRetry={() => void settings.refetch()}
+      />
+    )
+  }
+  if (props.canEdit) {
+    return (
+      <PartnerSettings key={settings.data.revision} settings={settings.data} />
+    )
+  }
+  return (
+    <Card className='min-w-0'>
+      <CardHeader>
+        <CardTitle>{t('Partner application settings')}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <dl className='flex flex-col gap-4 text-sm'>
+          <div>
+            <dt className='text-muted-foreground'>
+              {t('Accept partner applications')}
+            </dt>
+            <dd>
+              <Badge variant='outline'>
+                {t(settings.data.partner_enabled ? 'Enabled' : 'Disabled')}
+              </Badge>
+            </dd>
+          </div>
+          <div>
+            <dt className='text-muted-foreground'>
+              {t('Application instructions')}
+            </dt>
+            <dd className='break-words whitespace-pre-wrap'>
+              {settings.data.partner_instructions || t('Not provided')}
+            </dd>
+          </div>
+        </dl>
       </CardContent>
     </Card>
   )
@@ -162,6 +216,8 @@ function ReviewQueue(props: { reviewer: number; canReview: boolean }) {
     'submitted'
   )
   const [selected, setSelected] = useState<number | null>(null)
+  const detailTrigger = useRef<HTMLButtonElement>(null)
+  const statusFilter = useRef<HTMLSelectElement>(null)
   const query = useQuery({
     ...privateRead,
     queryKey: [...partnerKey, 'admin', props.reviewer, 'list', status, page],
@@ -178,6 +234,7 @@ function ReviewQueue(props: { reviewer: number; canReview: boolean }) {
           </FieldLabel>
           <NativeSelect
             id='partner-status-filter'
+            ref={statusFilter}
             className='min-w-40'
             value={status}
             onChange={(event) => {
@@ -223,17 +280,21 @@ function ReviewQueue(props: { reviewer: number; canReview: boolean }) {
             <StaticDataTable
               data={query.data.items}
               getRowKey={(row) => row.id}
-              tableClassName='min-w-[700px]'
+              tableClassName='w-full'
               columns={[
                 {
                   id: 'application',
                   header: t('Application'),
+                  className: 'w-20 whitespace-normal',
                   cell: (row: PartnerApplication) => (
                     <Button
                       variant='link'
                       size='sm'
                       aria-label={`${t('View application')} #${row.id}`}
-                      onClick={() => setSelected(row.id)}
+                      onClick={(event) => {
+                        detailTrigger.current = event.currentTarget
+                        setSelected(row.id)
+                      }}
                     >
                       #{row.id}
                     </Button>
@@ -242,11 +303,15 @@ function ReviewQueue(props: { reviewer: number; canReview: boolean }) {
                 {
                   id: 'user',
                   header: t('User ID'),
+                  className: 'hidden md:table-cell',
+                  cellClassName: 'hidden md:table-cell',
                   cell: (row: PartnerApplication) => row.user_id,
                 },
                 {
                   id: 'site',
                   header: t('Site name'),
+                  className: 'whitespace-normal',
+                  cellClassName: 'min-w-0 whitespace-normal',
                   cell: (row: PartnerApplication) => (
                     <span className='break-all whitespace-normal'>
                       {row.site_name}
@@ -256,6 +321,8 @@ function ReviewQueue(props: { reviewer: number; canReview: boolean }) {
                 {
                   id: 'status',
                   header: t('Application status'),
+                  className: 'whitespace-normal',
+                  cellClassName: 'whitespace-normal',
                   cell: (row: PartnerApplication) => (
                     <ApplicationStatus status={row.status} />
                   ),
@@ -263,6 +330,8 @@ function ReviewQueue(props: { reviewer: number; canReview: boolean }) {
                 {
                   id: 'created',
                   header: t('Submitted'),
+                  className: 'hidden md:table-cell',
+                  cellClassName: 'hidden md:table-cell',
                   cell: (row: PartnerApplication) =>
                     formatTimestamp(row.created_at),
                 },
@@ -289,7 +358,17 @@ function ReviewQueue(props: { reviewer: number; canReview: boolean }) {
         id={selected}
         reviewer={props.reviewer}
         canReview={props.canReview}
-        onClose={() => setSelected(null)}
+        onClose={() => {
+          const previous = detailTrigger.current
+          setSelected(null)
+          requestAnimationFrame(() => {
+            // Review can remove the row from the active filter.
+            const target = previous?.isConnected
+              ? previous
+              : statusFilter.current
+            target?.focus()
+          })
+        }}
       />
     </section>
   )
@@ -298,13 +377,7 @@ function ReviewQueue(props: { reviewer: number; canReview: boolean }) {
 export default function PartnerApplicationManagementPage() {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
-  const reviewer = user?.id ?? 0
-  const canReview = hasPermission(user, 'partner_applications', 'review')
-  const settings = useQuery({
-    ...privateRead,
-    queryKey: [...partnerKey, 'admin', 'settings'],
-    queryFn: ({ signal }) => getAdminPartnerSettings(signal),
-  })
+  const access = partnerManagementAccess(user)
 
   return (
     <SectionPageLayout>
@@ -312,34 +385,33 @@ export default function PartnerApplicationManagementPage() {
         {t('Partner applications')}
       </SectionPageLayout.Title>
       <SectionPageLayout.Content>
-        <div className='flex flex-col gap-6'>
-          {settings.isPending && <LoadingState className='min-h-24' />}
-          {settings.isError && (
-            <ErrorState
-              className='min-h-28'
-              title={t('Unable to load partner application settings')}
-              onRetry={() => void settings.refetch()}
-            />
-          )}
-          {settings.data && (
-            <PartnerSettings
-              key={settings.data.revision}
-              settings={settings.data}
-            />
-          )}
-          <Card className='min-w-0'>
-            <CardHeader>
-              <CardTitle>{t('Application review')}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ReviewQueue
-                key={reviewer}
-                reviewer={reviewer}
-                canReview={canReview}
+        {user && access.open ? (
+          <div className='flex flex-col gap-6'>
+            {access.readApplications && (
+              <Card className='min-w-0'>
+                <CardHeader>
+                  <CardTitle>{t('Application review')}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ReviewQueue
+                    key={user.id}
+                    reviewer={user.id}
+                    canReview={access.reviewApplications}
+                  />
+                </CardContent>
+              </Card>
+            )}
+            {access.readSettings && (
+              <PartnerSettingsPanel
+                key={user.id}
+                reviewer={user.id}
+                canEdit={access.editSettings}
               />
-            </CardContent>
-          </Card>
-        </div>
+            )}
+          </div>
+        ) : (
+          <EmptyState title={t('Access Forbidden')} bordered />
+        )}
       </SectionPageLayout.Content>
     </SectionPageLayout>
   )

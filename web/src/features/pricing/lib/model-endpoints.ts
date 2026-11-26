@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { FILTER_ALL } from '../constants'
 import type { PricingModel } from '../types'
 import { getAutomaticModelCategories } from './model-categories'
 import { replaceModelInPath } from './model-helpers'
@@ -31,17 +32,58 @@ type ModelEndpoint = {
   method: string
 }
 
+/** Do not fall back to another group's protocols when a scoped map exists. */
+export function getModelEndpointTypes(
+  model: PricingModel,
+  group?: string
+): string[] {
+  const byGroup = model.supported_endpoint_types_by_group
+  if (!byGroup) {
+    // A legacy guest payload containing only model-level documentation cannot
+    // prove availability on a public price tier.
+    return model.group_keys_are_display_only
+      ? []
+      : (model.supported_endpoint_types ?? [])
+  }
+  if (!group || group === FILTER_ALL) {
+    return [
+      ...new Set(
+        (model.enable_groups ?? []).flatMap((key) =>
+          Object.hasOwn(byGroup, key) && Array.isArray(byGroup[key])
+            ? byGroup[key]
+            : []
+        )
+      ),
+    ]
+  }
+  return model.enable_groups?.includes(group) &&
+    Object.hasOwn(byGroup, group) &&
+    Array.isArray(byGroup[group])
+    ? byGroup[group]
+    : []
+}
+
 /** Resolve the same verified endpoints for card links, details and samples. */
 export function getModelEndpoints(
   model: PricingModel,
-  endpointMap: ModelEndpointMap
+  endpointMap: ModelEndpointMap,
+  group?: string
 ): ModelEndpoint[] {
-  const supportsText = getAutomaticModelCategories(model).includes('text')
+  const types = getModelEndpointTypes(model, group)
+  const supportsText = getAutomaticModelCategories({
+    ...model,
+    supported_endpoint_types: types,
+  }).includes('text')
   const endpoints: ModelEndpoint[] = []
-  for (const type of model.supported_endpoint_types ?? []) {
+  for (const type of types) {
     // Channel defaults can add OpenAI to media and unknown models. The wire
     // protocol alone does not establish that chat completions are supported.
-    if (type === 'openai' && !supportsText) continue
+    if (
+      !model.supported_endpoint_types_by_group &&
+      type === 'openai' &&
+      !supportsText
+    )
+      continue
     const info = endpointMap[type]
     const path = info?.path
     if (!path?.startsWith('/') || path.startsWith('//')) continue
@@ -79,10 +121,14 @@ export function getEndpointDocId(type: string): string | undefined {
 }
 
 export function getModelPlayground(
-  model: PricingModel
+  model: PricingModel,
+  group?: string
 ): '/image' | '/playground' | undefined {
-  const endpoints = model.supported_endpoint_types ?? []
-  const categories = getAutomaticModelCategories(model)
+  const endpoints = getModelEndpointTypes(model, group)
+  const categories = getAutomaticModelCategories({
+    ...model,
+    supported_endpoint_types: endpoints,
+  })
   if (endpoints.includes('image-generation') && categories.includes('images')) {
     return '/image'
   }

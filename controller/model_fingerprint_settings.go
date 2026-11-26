@@ -156,5 +156,5 @@ func GetSiteModelFingerprints(c *gin.Context) {
 		}
 		targets = append(targets, gin.H{"id": target.ID, "group": target.Group, "model": target.Model, "enabled": target.Enabled, "period_secs": period})
 	}
-	common.ApiSuccess(c, gin.H{"items": runs, "user_items": userRuns, "targets": targets, "automatic_enabled": config.AutomaticEnabled, "enabled": config.Enabled})
+	common.ApiSuccess(c, gin.H{"items": runs, "user_items": userRuns, "targets": targets, "automatic_enabled": false, "enabled": false})
 }

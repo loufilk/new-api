@@ -79,30 +79,42 @@ export async function confirmPaymentCompliance() {
   return res.data
 }
 
-export async function startLogCleanupTask(targetTimestamp: number) {
-  const res = await api.post<SystemTaskResponse<LogCleanupTask>>(
-    '/api/system-task/log-cleanup',
-    null,
-    {
-      params: { target_timestamp: targetTimestamp },
-    }
-  )
+export async function startLogCleanupTask(
+  targetTimestamp: number,
+  taskId: string
+) {
+  const res = await api.post<
+    SystemTaskResponse<LogCleanupTask> & { code?: string }
+  >('/api/system-task/log-cleanup/receipt-v1', null, {
+    params: { target_timestamp: targetTimestamp, task_id: taskId },
+    validateStatus: (status) =>
+      (status >= 200 && status < 300) || status === 409,
+    skipErrorHandler: true,
+    skipBusinessError: true,
+    singleUseAuthorization: true,
+    timeout: 15_000,
+  })
   return res.data
 }
 
-export async function getCurrentLogCleanupTask() {
+export async function getCurrentLogCleanupTask(signal?: AbortSignal) {
   const res = await api.get<SystemTaskResponse<LogCleanupTask | null>>(
     '/api/system-task/current',
     {
       params: { type: 'log_cleanup' },
+      signal,
+      timeout: 10_000,
+      skipErrorHandler: true,
+      skipBusinessError: true,
     }
   )
   return res.data
 }
 
-export async function getSystemTask(taskId: string) {
+export async function getSystemTask(taskId: string, signal?: AbortSignal) {
   const res = await api.get<SystemTaskResponse<LogCleanupTask>>(
-    `/api/system-task/${taskId}`
+    `/api/system-task/${encodeURIComponent(taskId)}`,
+    { signal, timeout: 10_000, skipErrorHandler: true, skipBusinessError: true }
   )
   return res.data
 }

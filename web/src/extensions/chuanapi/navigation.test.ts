@@ -30,6 +30,7 @@ import {
   CHUANAPI_PUBLIC_HOME,
   chuanapiNavigationExtension,
   chuanapiSidebarNavigationExtension,
+  chuanapiToolsNavigationExtension,
 } from './navigation'
 
 const webSrc = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
@@ -63,6 +64,14 @@ describe('ChuanAPI cross-shell navigation', () => {
     const admin = chuanapiSidebarNavigationExtension.apply(sidebar, {
       isAuthenticated: true,
       role: ROLE.ADMIN,
+      user: {
+        id: 12,
+        username: 'reader',
+        role: ROLE.ADMIN,
+        permissions: {
+          admin_permissions: { partner_applications: { read: true } },
+        },
+      },
     })
     expect(admin.navGroups[1]?.items).toEqual(
       expect.arrayContaining([
@@ -74,9 +83,44 @@ describe('ChuanAPI cross-shell navigation', () => {
       ])
     )
 
+    const deniedAdmin = chuanapiSidebarNavigationExtension.apply(sidebar, {
+      isAuthenticated: true,
+      role: ROLE.ADMIN,
+      user: {
+        id: 13,
+        username: 'no-supplier-access',
+        role: ROLE.ADMIN,
+        permissions: {
+          admin_permissions: {
+            partner_applications: { read: false, review: true },
+          },
+        },
+      },
+    })
+    expect(deniedAdmin.navGroups[1]?.items).toHaveLength(0)
+
+    const settingsReader = chuanapiSidebarNavigationExtension.apply(sidebar, {
+      isAuthenticated: true,
+      role: ROLE.ADMIN,
+      user: {
+        id: 14,
+        username: 'settings-reader',
+        role: ROLE.ADMIN,
+        permissions: {
+          admin_permissions: { partner_settings: { read: true } },
+        },
+      },
+    })
+    expect(settingsReader.navGroups[1]?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ url: '/partner-application-management' }),
+      ])
+    )
+
     const root = chuanapiSidebarNavigationExtension.apply(sidebar, {
       isAuthenticated: true,
       role: ROLE.SUPER_ADMIN,
+      user: { id: 1, username: 'root', role: ROLE.SUPER_ADMIN },
     })
     expect(root.navGroups[1]?.items).toEqual(
       expect.arrayContaining([
@@ -101,6 +145,33 @@ describe('ChuanAPI cross-shell navigation', () => {
         isAuthenticated: false,
       })
     ).toEqual(sidebar)
+  })
+
+  test('offers the guarded partner alias without overriding configured navigation', () => {
+    const context = { isAuthenticated: false, status: null }
+    const docs = { title: 'Docs', href: '/help' }
+    const consoleLink = { title: 'Console', href: '/dashboard' }
+    const existingPartner = {
+      title: 'Configured applicant page',
+      href: '/partner-applications',
+    }
+    expect(
+      chuanapiToolsNavigationExtension.apply([docs, consoleLink], context)
+    ).toContainEqual({
+      title: 'Partner application',
+      href: '/partner',
+    })
+    expect(
+      chuanapiToolsNavigationExtension
+        .apply([docs], context)
+        .some((link) => link.href === '/partner')
+    ).toBe(false)
+    const personalized = chuanapiToolsNavigationExtension.apply(
+      [docs, consoleLink, existingPartner],
+      context
+    )
+    expect(personalized).toContainEqual(existingPartner)
+    expect(personalized.some((link) => link.href === '/partner')).toBe(false)
   })
 
   test('uses the canonical public homepage', () => {

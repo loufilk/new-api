@@ -35,7 +35,9 @@ func RecordTokenRoutingMetric(ctx context.Context, channelID int, modelName, gro
 		row.SuccessCount = 1
 		row.TotalLatencyMs = max(0, latency.Milliseconds())
 	}
-	return DB.WithContext(ctx).Clauses(clause.OnConflict{
+	// This hook-free aggregate is one atomic upsert. An outer transaction only
+	// adds BEGIN/COMMIT round trips to the request's advisory observation.
+	return DB.WithContext(ctx).Session(&gorm.Session{SkipDefaultTransaction: true}).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "channel_id"}, {Name: "model_name"}, {Name: "group"}, {Name: "bucket_ts"}},
 		DoUpdates: clause.Assignments(map[string]any{
 			"request_count":    gorm.Expr("token_routing_metrics.request_count + 1"),

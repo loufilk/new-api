@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -62,6 +63,26 @@ func newAwsInvokeError(requestContext context.Context, err error, operation stri
 	)
 }
 
+// Bedrock bypasses the common channel HTTP dispatcher. Restrict only the
+// private diagnostic client; ordinary SDK requests keep their existing policy.
+type keyDiagnosticAWSHTTPClient struct {
+	inner *http.Client
+	sent  atomic.Bool
+}
+
+func (c *keyDiagnosticAWSHTTPClient) Do(request *http.Request) (*http.Response, error) {
+	if !c.sent.CompareAndSwap(false, true) {
+		return nil, errors.New("key diagnostic Bedrock request was already dispatched")
+	}
+	once := request.Clone(request.Context())
+	once.GetBody = nil
+	response, err := service.DoRequestWithoutRedirects(c.inner, once)
+	if err == nil && response.Body != nil {
+		response.Body = http.MaxBytesReader(nil, response.Body, 512<<10)
+	}
+	return response, err
+}
+
 func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.Client, error) {
 	httpClient, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
 	if err != nil {
@@ -77,6 +98,10 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 		common.GetContextKeyBool(c, constant.ContextKeyModelTestSingleAttempt) {
 		retryer = aws.NopRetryer{}
 	}
+	var wireClient aws.HTTPClient = httpClient
+	if common.IsPrivateKeyDiagnosticLog(c) {
+		wireClient = &keyDiagnosticAWSHTTPClient{inner: httpClient}
+	}
 	var client *bedrockruntime.Client
 	switch len(awsSecret) {
 	case 2:
@@ -85,7 +110,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 		client = bedrockruntime.New(bedrockruntime.Options{
 			Region:                  region,
 			BearerAuthTokenProvider: bearer.StaticTokenProvider{Token: bearer.Token{Value: apiKey}},
-			HTTPClient:              httpClient,
+			HTTPClient:              wireClient,
 			Retryer:                 retryer,
 		})
 	case 3:
@@ -95,7 +120,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 		client = bedrockruntime.New(bedrockruntime.Options{
 			Region:      region,
 			Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(ak, sk, "")),
-			HTTPClient:  httpClient,
+			HTTPClient:  wireClient,
 			Retryer:     retryer,
 		})
 	default:
@@ -245,7 +270,25 @@ func getAwsModelID(requestModel string) string {
 
 // SDK requests are only prepared by DoRequest. Check admission immediately
 // before Invoke, just like the ordinary HTTP transport's dispatch boundary.
-func authorizeAwsInvoke(c *gin.Context) *types.NewAPIError {
+func authorizeAwsInvoke(c *gin.Context, a *Adaptor) *types.NewAPIError {
+	if common.GetContextKeyInt(c, constant.ContextKeyKeyDiagnosticTokenID) > 0 {
+		var body []byte
+		switch req := a.AwsReq.(type) {
+		case *bedrockruntime.InvokeModelInput:
+			if req != nil {
+				body = req.Body
+			}
+		case *bedrockruntime.InvokeModelWithResponseStreamInput:
+			if req != nil {
+				body = req.Body
+			}
+		}
+		if err := channel.ValidateDiagnosticOutputBudget(body, common.GetContextKeyInt(c, constant.ContextKeyModelTestOutputLimit)); err != nil {
+			c.Set("model_test_error_code", "output_budget_changed")
+			common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, true)
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+		}
+	}
 	if stopped := service.RelayRequestCancellation(c); stopped != nil {
 		common.SetContextKey(c, constant.ContextKeyUpstreamRequestUnsent, true)
 		return stopped
@@ -264,7 +307,7 @@ func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types
 	ctx, cancel := newAwsInvokeContext(requestContext)
 	defer cancel()
 
-	if apiErr := authorizeAwsInvoke(c); apiErr != nil {
+	if apiErr := authorizeAwsInvoke(c, a); apiErr != nil {
 		return apiErr, nil
 	}
 	awsResp, err := a.AwsClient.InvokeModel(ctx, a.AwsReq.(*bedrockruntime.InvokeModelInput))
@@ -297,7 +340,7 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
 	ctx, cancel := newAwsInvokeContext(requestContext)
 	defer cancel()
 
-	if apiErr := authorizeAwsInvoke(c); apiErr != nil {
+	if apiErr := authorizeAwsInvoke(c, a); apiErr != nil {
 		return apiErr, nil
 	}
 	awsResp, err := a.AwsClient.InvokeModelWithResponseStream(ctx, a.AwsReq.(*bedrockruntime.InvokeModelWithResponseStreamInput))
@@ -371,7 +414,7 @@ func handleNovaRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) 
 	ctx, cancel := newAwsInvokeContext(requestContext)
 	defer cancel()
 
-	if apiErr := authorizeAwsInvoke(c); apiErr != nil {
+	if apiErr := authorizeAwsInvoke(c, a); apiErr != nil {
 		return apiErr, nil
 	}
 	awsResp, err := a.AwsClient.InvokeModel(ctx, a.AwsReq.(*bedrockruntime.InvokeModelInput))

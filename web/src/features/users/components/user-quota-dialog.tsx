@@ -16,9 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 
 import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
@@ -28,9 +27,10 @@ import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { adjustUserQuota } from '../api'
-import type { ManageUserQuotaPayload, QuotaAdjustMode } from '../types'
+import { useQuotaAdjustment } from '../lib/use-quota-adjustment'
+import type { QuotaAdjustMode } from '../types'
 
 interface UserQuotaDialogProps {
   open: boolean
@@ -47,12 +47,28 @@ const QUOTA_MODE_LABEL_KEYS = {
 } as const
 
 export function UserQuotaDialog(props: UserQuotaDialogProps) {
+  const actorId = useAuthStore((s) => s.auth.user?.id ?? 0)
+  if (!props.open) return null
+  return (
+    <QuotaForm
+      key={`${actorId}:${props.userId}`}
+      {...props}
+      actorId={actorId}
+    />
+  )
+}
+
+function QuotaForm(props: UserQuotaDialogProps & { actorId: number }) {
   const { t } = useTranslation()
   const [mode, setMode] = useState<QuotaAdjustMode>('add')
   const [amount, setAmount] = useState('')
-  const [loading, setLoading] = useState(false)
-  const inFlight = useRef(false)
-  const intent = useRef<ManageUserQuotaPayload | null>(null)
+  const { blocked, pending, loading, submit } = useQuotaAdjustment(
+    { actorId: props.actorId, userId: props.userId },
+    () => {
+      props.onOpenChange(false)
+      props.onSuccess()
+    }
+  )
 
   const { meta: currencyMeta } = getCurrencyDisplay()
   const currencyLabel = getCurrencyLabel()
@@ -79,9 +95,8 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
   }
 
   const handleConfirm = async () => {
-    // State alone cannot exclude a second Enter/click in the same render turn.
-    if (inFlight.current) return
-    if (!amount && mode !== 'override') return
+    if (pending) return submit(pending.mode, pending.value)
+    if (!amount.trim()) return
     if (quotaValue <= 0 && mode !== 'override') return
     const value =
       mode === 'override'
@@ -89,138 +104,120 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
         : Math.abs(quotaValue)
     // The display conversion can overflow after multiplying by quota units.
     // Never let a non-representable number become JSON null (an apparent zero).
-    if (!Number.isFinite(amountValue) || !Number.isSafeInteger(value)) {
+    if (
+      !Number.isFinite(amountValue) ||
+      !Number.isSafeInteger(value) ||
+      value < 0
+    ) {
       handleServerError(undefined, t('Please enter a valid number'))
       return
     }
 
-    inFlight.current = true
-    setLoading(true)
-    try {
-      // Preserve an unresolved operation across retries, but not a new target,
-      // amount or mode. The backend binds this key to the same target, mode and value.
-      if (
-        !intent.current ||
-        intent.current.id !== props.userId ||
-        intent.current.mode !== mode ||
-        intent.current.value !== value
-      ) {
-        intent.current = {
-          id: props.userId,
-          action: 'add_quota',
-          request_id: globalThis.crypto.randomUUID(),
-          mode,
-          value,
-        }
-      }
-      const result = await adjustUserQuota(intent.current)
-      if (result.success) {
-        intent.current = null
-        toast.success(t('Quota adjusted successfully'))
-        setAmount('')
-        setMode('add')
-        props.onOpenChange(false)
-        props.onSuccess()
-      } else {
-        handleServerError(result, t('Failed to adjust quota'))
-      }
-    } catch (e: unknown) {
-      handleServerError(e, t('Failed to adjust quota'))
-    } finally {
-      inFlight.current = false
-      setLoading(false)
-    }
-  }
-
-  const handleCancel = () => {
-    intent.current = null
-    setAmount('')
-    setMode('add')
-    props.onOpenChange(false)
+    await submit(mode, value)
   }
 
   const placeholder = tokensOnly
     ? t('Enter amount in tokens')
     : t('Enter amount in {{currency}}', { currency: currencyLabel })
 
+  const submitLabel = pending ? t('intelligence.retrySame') : t('Confirm')
   return (
     <Dialog
       open={props.open}
-      onOpenChange={(open) => {
-        if (!open) intent.current = null
-        props.onOpenChange(open)
-      }}
+      onOpenChange={props.onOpenChange}
       title={t('Adjust Quota')}
-      description={t('Select an operation mode and enter the amount')}
+      description={
+        pending || blocked
+          ? undefined
+          : t('Select an operation mode and enter the amount')
+      }
       contentHeight='auto'
       bodyClassName='space-y-4'
       footer={
         <>
-          <Button variant='outline' onClick={handleCancel}>
-            {t('Cancel')}
+          <Button variant='outline' onClick={() => props.onOpenChange(false)}>
+            {pending || blocked ? t('Close') : t('Cancel')}
           </Button>
-          <Button onClick={handleConfirm} disabled={loading}>
-            {loading ? t('Processing...') : t('Confirm')}
+          <Button onClick={handleConfirm} disabled={loading || blocked}>
+            {loading ? t('Processing...') : submitLabel}
           </Button>
         </>
       }
     >
-      <div className='space-y-4'>
-        <div className='text-muted-foreground text-sm'>{getPreviewText()}</div>
+      {blocked && (
+        <p role='alert'>
+          {t(
+            'Quota adjustment recovery is unavailable in this browser. Reopen it with storage enabled and check the ledger before making another adjustment.'
+          )}
+        </p>
+      )}
+      {pending && (
+        <div role='status' className='space-y-2 text-sm'>
+          <p>
+            {t(
+              'The result is unconfirmed. Retrying sends the same adjustment: it may apply if it has not already been applied. Closing does not cancel it.'
+            )}
+          </p>
+          <p>
+            {t('Mode')}: {t(QUOTA_MODE_LABEL_KEYS[pending.mode])} ·{' '}
+            {t('Amount')}: {formatQuota(pending.value)} ({pending.value}{' '}
+            {t('Quota units')})
+          </p>
+          <p className='break-all'>
+            {t('Request ID')}: <code>{pending.request_id}</code>
+          </p>
+        </div>
+      )}
+      {!blocked && !pending && (
+        <div className='space-y-4'>
+          <div className='text-muted-foreground text-sm'>
+            {getPreviewText()}
+          </div>
 
-        <div className='space-y-2'>
-          <Label>{t('Mode')}</Label>
-          <div className='flex gap-1'>
-            {(['add', 'subtract', 'override'] as const).map((m) => (
-              <Button
-                key={m}
-                type='button'
-                variant='outline'
-                size='sm'
-                className={cn(
-                  mode === m &&
-                    'bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
-                )}
-                onClick={() => {
-                  intent.current = null
-                  setMode(m)
-                  setAmount('')
-                }}
-              >
-                {t(QUOTA_MODE_LABEL_KEYS[m])}
-              </Button>
-            ))}
+          <div className='space-y-2'>
+            <Label>{t('Mode')}</Label>
+            <div className='flex gap-1'>
+              {(['add', 'subtract', 'override'] as const).map((m) => (
+                <Button
+                  key={m}
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  className={cn(
+                    mode === m &&
+                      'bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
+                  )}
+                  onClick={() => {
+                    setMode(m)
+                    setAmount('')
+                  }}
+                >
+                  {t(QUOTA_MODE_LABEL_KEYS[m])}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className='space-y-2'>
+            <Label>
+              {t('Amount')} ({currencyLabel})
+            </Label>
+            <Input
+              type='number'
+              step={tokensOnly ? 1 : 0.000001}
+              min={mode === 'override' ? undefined : 0}
+              placeholder={placeholder}
+              value={amount}
+              onChange={(e) => {
+                setAmount(e.target.value)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleConfirm()
+              }}
+            />
           </div>
         </div>
-
-        <div className='space-y-2'>
-          <Label>
-            {t('Amount')} ({currencyLabel})
-          </Label>
-          <Input
-            type='number'
-            step={tokensOnly ? 1 : 0.000001}
-            min={mode === 'override' ? undefined : 0}
-            placeholder={placeholder}
-            value={amount}
-            onChange={(e) => {
-              const nextAmount = e.target.value
-              const nextNumeric = Number.parseFloat(nextAmount) || 0
-              const nextQuota = parseQuotaFromDollars(
-                mode === 'override' ? nextNumeric : Math.abs(nextNumeric)
-              )
-              const nextValue =
-                mode === 'override' ? nextQuota : Math.abs(nextQuota)
-              // Formatting alone does not create a different backend operation.
-              if (nextValue !== intent.current?.value) intent.current = null
-              setAmount(nextAmount)
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleConfirm()
-            }}
-          />
-        </div>
-      </div>
+      )}
     </Dialog>
   )
 }

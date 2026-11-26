@@ -70,7 +70,14 @@ afterEach(() => {
 })
 
 describe('sidebar exposes Text Generation and Image Generation in order', () => {
-  test('chat group lists text generation before image generation', () => {
+  test('only text and image are visible even when old presets are cached', () => {
+    const cachedStatus = JSON.stringify({
+      chats: [{ 'Retired preset': 'https://retired.invalid/{{key}}' }],
+      SidebarModulesAdmin: JSON.stringify({
+        chat: { enabled: true, playground: true, image: true, chat: true },
+      }),
+    })
+    window.localStorage.setItem('status', cachedStatus)
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     })
@@ -79,21 +86,14 @@ describe('sidebar exposes Text Generation and Image Generation in order', () => 
         createElement(QueryClientProvider, { client }, children),
     })
     try {
-      const chat = result.current.navGroups.find((group) => group.id === 'chat')
-      const urls = (chat?.items ?? [])
-        .filter((item) => 'url' in item)
-        .map((item) => (item as { url: string }).url)
-      const playgroundIndex = urls.indexOf('/playground')
-      const imageIndex = urls.indexOf('/image')
-      expect(playgroundIndex).toBeGreaterThanOrEqual(0)
-      expect(imageIndex).toBeGreaterThan(playgroundIndex)
-
-      const titles = (chat?.items ?? [])
-        .filter((item) => 'url' in item)
-        .map((item) => (item as { title: string }).title)
-      expect(titles).toContain('Text Generation')
-      expect(titles).toContain('Image Generation')
-      expect(titles).not.toContain('Playground')
+      const group = result.current.navGroups.find(
+        (group) => group.id === 'chat'
+      )
+      expect(group?.items.map((item) => [item.title, item.url])).toEqual([
+        ['Text Generation', '/playground'],
+        ['Image Generation', '/image'],
+      ])
+      expect(window.localStorage.getItem('status')).toBe(cachedStatus)
     } finally {
       unmount()
       client.clear()

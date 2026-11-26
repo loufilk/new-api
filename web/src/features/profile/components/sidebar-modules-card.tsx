@@ -75,11 +75,6 @@ export function SidebarModulesCard() {
           title: t('Image Generation'),
           description: t('Create images from text prompts'),
         },
-        {
-          key: 'chat',
-          title: t('Chat'),
-          description: t('Chat session management'),
-        },
       ],
     },
     {
@@ -225,6 +220,14 @@ export function SidebarModulesCard() {
     for (const sec of visibleSectionDefs) {
       defaults[sec.key] = { enabled: true }
       for (const mod of sec.modules) defaults[sec.key][mod.key] = true
+    }
+    // Keep the retired preference inert, even when resetting visible modules.
+    const legacyChat = config.chat?.chat
+    if (typeof legacyChat === 'boolean') {
+      defaults.chat = {
+        ...(defaults.chat ?? { enabled: true }),
+        chat: legacyChat,
+      }
     }
     setConfig(defaults)
     toast.success(t('Reset to default configuration'))

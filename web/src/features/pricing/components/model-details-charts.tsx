@@ -85,10 +85,6 @@ function getUptimeAxisMin(values: number[]): number {
   return Math.max(0, Math.floor((minValue - 5) / 10) * 10)
 }
 
-function stripUptimePointSuffix(value: string): string {
-  return value.replace(/__(start|end)$/, '')
-}
-
 // ---------------------------------------------------------------------------
 // Latency trend chart (24h, multi-group point-line chart)
 // ---------------------------------------------------------------------------
@@ -192,7 +188,7 @@ export function LatencyTrendChart(props: {
 // ---------------------------------------------------------------------------
 
 export function UptimeTrendChart(props: {
-  series: UptimeDayPoint[]
+  series: Pick<UptimeDayPoint, 'date' | 'uptime_pct'>[]
   className?: string
 }) {
   const { t } = useTranslation()
@@ -202,20 +198,11 @@ export function UptimeTrendChart(props: {
   const spec = useMemo(() => {
     if (props.series.length === 0) return null
 
-    const rawData = props.series.map((point) => ({
+    const data = props.series.map((point) => ({
       date: formatDayLabel(point.date),
       uptime: toUptimeChartValue(point.uptime_pct),
-      incidents: point.incidents,
-      outage: point.outage_minutes,
     }))
-    const data =
-      rawData.length === 1
-        ? [
-            { ...rawData[0], date: `${rawData[0].date}__start` },
-            { ...rawData[0], date: `${rawData[0].date}__end` },
-          ]
-        : rawData
-    const axisMin = getUptimeAxisMin(rawData.map((point) => point.uptime))
+    const axisMin = getUptimeAxisMin(data.map((point) => point.uptime))
 
     return {
       type: 'line' as const,
@@ -239,20 +226,12 @@ export function UptimeTrendChart(props: {
       tooltip: {
         mark: {
           title: {
-            value: (d: { date: string }) => stripUptimePointSuffix(d.date),
+            value: (d: { date: string }) => d.date,
           },
           content: [
             {
-              key: t('Uptime'),
+              key: t('Success rate'),
               value: (d: { uptime: number }) => `${d.uptime.toFixed(2)}%`,
-            },
-            {
-              key: t('Incidents'),
-              value: (d: { incidents: number }) => `${d.incidents}`,
-            },
-            {
-              key: t('Outage'),
-              value: (d: { outage: number }) => `${d.outage} ${t('minutes')}`,
             },
           ],
         },
@@ -261,8 +240,6 @@ export function UptimeTrendChart(props: {
         {
           orient: 'bottom',
           label: {
-            formatMethod: (val: number | string) =>
-              stripUptimePointSuffix(String(val)),
             style: { fill: textColor, fontSize: 10 },
             autoLimit: true,
           },

@@ -300,11 +300,14 @@ func RecordTopupLog(userId int, content *common.Message, callerIp string, paymen
 
 func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string, tokenName string, content string, tokenId int, useTimeSeconds int,
 	isStream bool, group string, other *LogOther) {
+	if common.IsPrivateKeyDiagnosticLog(c) {
+		content = "Key diagnostic relay request failed"
+	}
 	logger.LogInfo(c, common.LogText("record error log: userId=%d, channelId=%d, modelName=%s, tokenName=%s, content=%s", userId, channelId, modelName, tokenName, common.LocalLogPreview(content)))
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
-	otherStr := other.JSONString()
+	otherStr := common.RedactPrivateKeyDiagnosticSecrets(c, other.JSONString())
 	// 判断是否需要记录 IP
 	needRecordIp := false
 	if settingMap, err := GetUserSetting(userId, false); err == nil {
@@ -335,7 +338,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 			return ""
 		}(),
 		RequestId:         requestId,
-		UpstreamRequestId: upstreamRequestId,
+		UpstreamRequestId: common.RedactPrivateKeyDiagnosticSecrets(c, upstreamRequestId),
 		Other:             otherStr,
 	}
 	err := createLog(log)
@@ -389,8 +392,8 @@ func recordUsageLog(c *gin.Context, userId int, params RecordConsumeLogParams, l
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
 	createdAt := common.GetTimestamp()
 	other := params.Other
-	content := other.setContent(params.Content)
-	otherStr := other.JSONString()
+	content := common.RedactPrivateKeyDiagnosticSecrets(c, other.setContent(params.Content))
+	otherStr := common.RedactPrivateKeyDiagnosticSecrets(c, other.JSONString())
 	// 判断是否需要记录 IP
 	needRecordIp := false
 	if settingMap, err := GetUserSetting(userId, false); err == nil {
@@ -421,7 +424,7 @@ func recordUsageLog(c *gin.Context, userId int, params RecordConsumeLogParams, l
 			return ""
 		}(),
 		RequestId:         requestId,
-		UpstreamRequestId: upstreamRequestId,
+		UpstreamRequestId: common.RedactPrivateKeyDiagnosticSecrets(c, upstreamRequestId),
 		Other:             otherStr,
 	}
 	err := createLog(log)

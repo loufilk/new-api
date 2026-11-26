@@ -108,11 +108,6 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             url: '/image',
             icon: ImageIcon,
           },
-          {
-            title: t('Third-party'),
-            icon: PlugZap,
-            type: 'chat-presets',
-          },
         ],
       },
       {
@@ -168,15 +163,6 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
                   title: t('pool.title'),
                   url: '/account-pool',
                   icon: ServerCog,
-                },
-              ]
-            : []),
-          ...(user
-            ? [
-                {
-                  title: t('intelligence.title'),
-                  url: '/intelligence',
-                  icon: FlaskConical,
                 },
               ]
             : []),
@@ -287,5 +273,6 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
   return applySidebarNavigationExtensions(sidebar, {
     isAuthenticated: Boolean(user),
     role: user?.role,
+    user,
   })
 }

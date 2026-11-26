@@ -78,6 +78,7 @@ export function LedgerTable() {
 
   const ledgerQuery = useQuery({
     queryKey: ['wallet', 'ledger', page, account, reason],
+    meta: { redirectOnInternalServerError: false },
     queryFn: async () => {
       const response = requireServerSuccess(
         await getWalletLedger({

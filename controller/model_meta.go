@@ -162,14 +162,23 @@ func UpdateModelMeta(c *gin.Context) {
 			return
 		}
 		// 只更新状态，防止误清空其他字段
-		err := model.DB.Model(&model.Model{}).Where("id = ?", m.Id).Update("status", m.Status).Error
+		result := model.DB.Model(&model.Model{}).Where("id = ?", m.Id).Update("status", m.Status)
 		// Status changes can remove rule-matched eligibility even if the COMMIT
 		// acknowledgement is lost. This does not change exact-name fallback.
 		model.InvalidatePricingCache()
 		model.InvalidateModelBonusEligibleCache()
-		if err != nil {
-			common.ApiError(c, err)
+		if result.Error != nil {
+			common.ApiError(c, result.Error)
 			return
+		}
+		if result.RowsAffected == 0 {
+			// A missing/soft-deleted model is not a successful visibility change.
+			// Some drivers report no affected rows for a valid idempotent update.
+			var existing model.Model
+			if err := model.DB.Select("id").First(&existing, m.Id).Error; err != nil {
+				common.ApiError(c, err)
+				return
+			}
 		}
 		model.BumpSyncTopic(model.SyncTopicModels)
 	} else {
@@ -269,14 +278,19 @@ func enrichModels(models []*model.Model) error {
 			continue
 		}
 		metadata.HasMetadata = metadata.Id > 0
+		metadata.PricingCandidates = nil
 		channelIDs := make(map[int]struct{})
 		for name, ids := range configured {
 			if metadata.MatchesName(name) {
+				if metadata.NameRule != model.NameRuleExact {
+					metadata.PricingCandidates = append(metadata.PricingCandidates, name)
+				}
 				for _, id := range ids {
 					channelIDs[id] = struct{}{}
 				}
 			}
 		}
+		sort.Strings(metadata.PricingCandidates)
 		metadata.ConfiguredChannelCount = len(channelIDs)
 	}
 	connections, err := model.GetModelConnections()

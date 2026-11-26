@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 import { beforeEach, afterEach, expect, test, vi } from 'vitest'
 
 import {
+  transferConfirmationDeadline,
   useWalletTransferStore,
   walletTransferVersion,
   WalletTransferChanged,
@@ -39,77 +40,141 @@ afterEach(() => {
   localStorage.clear()
   vi.unstubAllGlobals()
 })
+const owner = 42
 const store = () => useWalletTransferStore.getState()
+const lost = new Error('Network unavailable')
+const refused = new Error('Insufficient funds for this attempt')
+const execute = (
+  version: string | null,
+  quota: number,
+  dispatch: Parameters<ReturnType<typeof store>['execute']>[0]['dispatch']
+) =>
+  store().execute({
+    userId: owner,
+    version,
+    draft: { quota, amount: String(quota) },
+    current: () => true,
+    dispatch,
+    isDefiniteRejection: (error) => error === refused,
+  })
+const record = () => store().read(owner)
 
-test('two stale blank pages cannot silently submit different amounts under one identity', async () => {
-  const first = await store().begin(42, null, 500_000, '1')
-  await expect(store().begin(42, null, 1_000_000, '2')).rejects.toBeInstanceOf(
-    WalletTransferChanged
+test('a second tab cannot dispatch while the first tab still holds the lock', async () => {
+  let rejectFirst!: (error: unknown) => void
+  let acquired!: () => void
+  const firstStarted = new Promise<void>((resolve) => {
+    acquired = resolve
+  })
+  const first = execute(
+    null,
+    50,
+    () =>
+      new Promise((_, reject) => {
+        rejectFirst = reject
+        acquired()
+      })
   )
-  expect(store().read(42)).toEqual(first)
-})
-test('a stale retry after another page completes must not generate another debit identity', async () => {
-  const first = await store().begin(42, null, 500_000, '1')
-  await store().finish(42, first.request_id, 'completed')
+  await firstStarted
+  const prior = record()
+  const stale = vi.fn(async () => {})
+  const review = execute(null, 100, stale)
+  const replay = vi.fn(async () => {
+    throw refused
+  })
+  const retry = execute(walletTransferVersion(prior), 50, replay)
+  await Promise.resolve()
+  expect(stale).not.toHaveBeenCalled()
+  expect(replay).not.toHaveBeenCalled()
+  const failed = expect(first).rejects.toThrow(lost.message)
+  const unchanged = expect(review).rejects.toBeInstanceOf(WalletTransferChanged)
+  const rejected = expect(retry).rejects.toThrow(refused.message)
+  rejectFirst(lost)
+  await Promise.all([failed, unchanged, rejected])
+  expect(stale).not.toHaveBeenCalled()
+  expect(replay).toHaveBeenCalledWith(prior)
+  expect(record()).toEqual(prior)
   await expect(
-    store().begin(42, walletTransferVersion(first), 500_000, '1')
+    execute(walletTransferVersion(prior), 100, stale)
   ).rejects.toBeInstanceOf(WalletTransferChanged)
+  expect(stale).not.toHaveBeenCalled()
+  await execute(
+    walletTransferVersion(prior),
+    50,
+    vi.fn(async () => {})
+  )
+  expect(record()).toMatchObject({
+    request_id: prior?.request_id,
+    status: 'completed',
+  })
 })
-test('a blank page opened before a completed transfer cannot create a second transfer', async () => {
-  const first = await store().begin(42, null, 500_000, '1')
-  await store().finish(42, first.request_id, 'completed')
-  await expect(store().begin(42, null, 500_000, '1')).rejects.toBeInstanceOf(
+
+test('a confirmation deadline releases the lock without allowing a late result to change the pending receipt', async () => {
+  vi.useFakeTimers()
+  try {
+    let resolveLate!: () => void
+    const first = execute(
+      null,
+      50,
+      () =>
+        new Promise((resolve) => {
+          resolveLate = resolve
+        })
+    )
+    const ambiguous = expect(first).rejects.toThrow(/awaiting confirmation/)
+    await vi.advanceTimersByTimeAsync(transferConfirmationDeadline)
+    await ambiguous
+    const prior = record()
+    await expect(
+      execute(walletTransferVersion(prior), 50, async () => {
+        throw refused
+      })
+    ).rejects.toBe(refused)
+    resolveLate()
+    await Promise.resolve()
+    expect(record()).toEqual(prior)
+    expect(record()?.status).toBe('pending')
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test('a stale blank page or stale retry after another page has settled cannot create another identity', async () => {
+  await expect(
+    execute(null, 50, async () => {
+      throw lost
+    })
+  ).rejects.toBe(lost)
+  const version = walletTransferVersion(record())
+  await execute(version, 50, async () => {})
+  const unwanted = vi.fn(async () => {})
+  await expect(execute(null, 50, unwanted)).rejects.toBeInstanceOf(
     WalletTransferChanged
   )
+  await expect(execute(version, 50, unwanted)).rejects.toBeInstanceOf(
+    WalletTransferChanged
+  )
+  expect(unwanted).not.toHaveBeenCalled()
 })
-test.each(['completed', 'rejected'] as const)(
-  'late %s for an older request cannot erase a newer intent',
-  async (status) => {
-    const first = await store().begin(42, null, 500_000, '1')
-    await store().finish(42, first.request_id, 'completed')
-    const second = await store().begin(
-      42,
-      walletTransferVersion(store().read(42)),
-      1_000_000,
-      '2'
-    )
-    expect(await store().finish(42, first.request_id, status)).toBe(false)
-    expect(store().read(42)).toEqual(second)
-  }
-)
-test('refresh uses the same pending request and immutable quota', async () => {
-  const first = await store().begin(42, null, 500_000, '1')
-  const loaded = store().read(42)
-  expect(
-    await store().begin(42, walletTransferVersion(loaded), 9_000_000, '18')
-  ).toEqual(first)
-})
+
 test('missing Web Locks fails closed rather than allowing unsafe cross-tab writes', async () => {
   vi.stubGlobal('navigator', {})
-  await expect(store().begin(42, null, 500_000, '1')).rejects.toThrow(
+  const dispatch = vi.fn(async () => {})
+  await expect(execute(null, 50, dispatch)).rejects.toThrow(
     'This browser cannot safely coordinate wallet transfers.'
   )
-  expect(store().read(42)).toBeNull()
-})
-test('concurrent blank pages serialize the creation of one pending operation', async () => {
-  const results = await Promise.allSettled([
-    store().begin(42, null, 500_000, '1'),
-    store().begin(42, null, 1_000_000, '2'),
-  ])
-  expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
-  expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1)
+  expect(dispatch).not.toHaveBeenCalled()
+  expect(record()).toBeNull()
 })
 
-test('confirmed rejection permits a corrected new intent only from the latest revision', async () => {
-  const first = await store().begin(42, null, 500_000, '1')
-  await store().finish(42, first.request_id, 'rejected')
-  const second = await store().begin(
-    42,
-    walletTransferVersion(store().read(42)),
-    250_000,
-    '0.5'
-  )
-  expect(second.request_id).not.toBe(first.request_id)
-  expect(second.quota).toBe(250_000)
-  expect(second.status).toBe('pending')
+test('a definite initial rejection permits a corrected new intent only after review', async () => {
+  await expect(
+    execute(null, 50, async () => {
+      throw refused
+    })
+  ).rejects.toBe(refused)
+  const first = record()
+  expect(first?.status).toBe('rejected')
+  await execute(walletTransferVersion(first), 25, async () => {})
+  expect(record()?.request_id).not.toBe(first?.request_id)
+  expect(record()?.quota).toBe(25)
 })

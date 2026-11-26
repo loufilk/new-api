@@ -170,8 +170,8 @@ func TestTokenGroupPermissionSaveAndRuntime(t *testing.T) {
 			{name: "unknown", owner: "default", group: "unknown"},
 			{name: "enterprise grant", owner: "enterprise", group: "b", allowed: true},
 			{name: "auto denied inherited", owner: "default", group: "auto"},
-			{name: "manual groups without virtual auto", owner: "default", group: "auto", children: []string{"a"}, allowed: true},
-			{name: "auto scoped allowed", owner: "enterprise", group: "auto", autoAllowed: true, children: []string{"a", "b"}, allowed: true},
+			{name: "manual groups without virtual auto", owner: "default", group: "auto", children: []string{"a"}},
+			{name: "auto scoped not writable", owner: "enterprise", group: "auto", autoAllowed: true, children: []string{"a", "b"}},
 			{name: "auto scoped unauthorized child", owner: "default", group: "auto", autoAllowed: true, children: []string{"a", "b"}},
 		} {
 			t.Run(fmt.Sprintf("role%d/%s", role, tc.name), func(t *testing.T) {
@@ -179,7 +179,7 @@ func TestTokenGroupPermissionSaveAndRuntime(t *testing.T) {
 				configureGroupPermissionScope(t, tc.autoAllowed)
 				user.Group, user.Role = tc.owner, role
 				require.NoError(t, db.Save(user).Error)
-				body := baseAutoTokenRequest("permission-create")
+				body := baseTokenRequest("permission-create")
 				body["group"] = tc.group
 				body["auto_groups"] = tc.children
 				ctx, rec := newAuthenticatedContext(t, http.MethodPost, "/api/token/", body, user.Id)
@@ -334,11 +334,12 @@ func TestTokenGroupPermissionOmittedSnapshotCannotRestoreRevokedScope(t *testing
 	db, user := setupTokenModelsControllerTest(t)
 	configureGroupPermissionScope(t, true)
 	token := seedTokenModelsToken(t, db, user.Id, "legacy-auto", "auto", []string{"a", "b"})
-	request := baseAutoTokenRequest("updated")
+	request := baseTokenRequest("updated")
 	request["id"] = token.Id
+	delete(request, "group")
 	ctx, rec := newAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id)
 	UpdateToken(ctx)
-	require.False(t, decodeAPIResponse(t, rec).Success)
+	require.True(t, decodeAPIResponse(t, rec).Success)
 	require.NoError(t, db.First(token, token.Id).Error)
 	assert.JSONEq(t, `["a","b"]`, token.AutoGroups)
 	groups, err := service.GetTokenEffectiveGroups(user.Group, token)
@@ -350,16 +351,18 @@ func TestTokenGroupPermissionOmittedSnapshotCannotRestoreRevokedScope(t *testing
 	UpdateToken(ctx)
 	require.False(t, decodeAPIResponse(t, rec).Success)
 	require.NoError(t, db.First(token, token.Id).Error)
-	assert.Equal(t, "legacy-auto", token.Name)
+	assert.Equal(t, "updated", token.Name)
 	assert.JSONEq(t, `["a","b"]`, token.AutoGroups)
-	request["auto_groups"] = []string{"a"}
+	delete(request, "auto_groups")
+	request["group"], request["expected_version"] = "a", token.CacheRevision
 	request["name"] = "updated"
 	ctx, rec = newAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id)
 	UpdateToken(ctx)
 	require.True(t, decodeAPIResponse(t, rec).Success)
 	require.NoError(t, db.First(token, token.Id).Error)
 	assert.Equal(t, "updated", token.Name)
-	assert.JSONEq(t, `["a"]`, token.AutoGroups)
+	assert.Empty(t, token.AutoGroups)
+	assert.Equal(t, "a", token.Group)
 }
 
 func TestGroupPermissionEmptyRulesRoundTripAndHistoricalConflict(t *testing.T) {

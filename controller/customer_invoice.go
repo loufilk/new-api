@@ -176,12 +176,36 @@ func invoiceWalletPaymentAvailable() int64 {
 	return model.CustomerInvoiceWalletQuotaPerCent()
 }
 
+// This root-only diagnostic describes configuration for this serving node. It
+// deliberately exposes no merchant identifier, credentials or eligible orders.
+func adminInvoiceIntakeState(settings model.CustomerInvoiceSettings, policy model.CustomerInvoicePolicy) string {
+	switch {
+	case !settings.CenterEnabled:
+		return "center_off"
+	case !policy.CenterVisible:
+		return "deployment_off"
+	case !policy.Enabled:
+		return "merchant_not_configured"
+	case !settings.Ordinary.Enabled && !settings.Special.Enabled:
+		return "no_invoice_types"
+	case len(settings.Categories.EnabledOnly()) == 0:
+		return "no_categories"
+	default:
+		return "configured"
+	}
+}
+
 func respondAdminInvoiceSettings(c *gin.Context, settings model.CustomerInvoiceSettings, err error) {
+	if err != nil {
+		respondCustomerInvoice(c, nil, err)
+		return
+	}
 	methods, _ := customerInvoiceFeeMethods()
 	respondCustomerInvoice(c, struct {
 		model.CustomerInvoiceSettings
-		FeePaymentAvailable bool `json:"fee_payment_available"`
-	}{settings, len(methods) > 0}, err)
+		FeePaymentAvailable bool   `json:"fee_payment_available"`
+		IntakeState         string `json:"intake_state"`
+	}{settings, len(methods) > 0, adminInvoiceIntakeState(settings, model.GetCustomerInvoicePolicy())}, nil)
 }
 
 func GetAdminCustomerInvoiceSettings(c *gin.Context) {

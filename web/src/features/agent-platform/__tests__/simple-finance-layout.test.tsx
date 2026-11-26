@@ -36,7 +36,7 @@ afterEach(() => {
   clients.splice(0).forEach((client) => client.clear())
 })
 
-function renderFinance(total = 0) {
+function renderFinance(total = 0, cashQuota = () => 0) {
   vi.spyOn(api, 'get').mockImplementation(async (url, config) => {
     let data: unknown = { items: [], total: 0 }
     if (url.endsWith('/finance/agents')) {
@@ -54,6 +54,7 @@ function renderFinance(total = 0) {
                   available_credit_quota: 0,
                   amount_due_quota: 0,
                   overdue_quota: 0,
+                  cash_quota: cashQuota(),
                 },
               ]
             : [],
@@ -113,6 +114,22 @@ test('paging remains available to return from a later page that becomes empty', 
   expect(screen.getByRole('button', { name: 'Previous' })).toBeEnabled()
   fireEvent.click(screen.getByRole('button', { name: 'Previous' }))
   expect(await screen.findByText('Example agent')).toBeVisible()
+})
+
+test('fund details refreshes the selected agent data without making a write', async () => {
+  let cash = 0
+  renderFinance(1, () => cash)
+  const write = vi.spyOn(api, 'request')
+  fireEvent.click(await screen.findByRole('button', { name: 'Fund details' }))
+  const dialog = await screen.findByRole('dialog', {
+    name: 'Fund details · Example agent',
+  })
+  const balance = within(dialog).getByText('Cash recharge').parentElement
+  expect(balance).toHaveTextContent(/\$0(?:\.00)?$/)
+  cash = 500_000
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Refresh' }))
+  await waitFor(() => expect(balance).toHaveTextContent(/\$1(?:\.00)?$/))
+  expect(write).not.toHaveBeenCalled()
 })
 
 test.each([

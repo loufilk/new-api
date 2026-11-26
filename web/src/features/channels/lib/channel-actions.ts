@@ -20,8 +20,12 @@ import type { QueryClient } from '@tanstack/react-query'
 import i18next from 'i18next'
 import { toast } from 'sonner'
 
+import { getAuthSessionEpoch } from '@/lib/auth-session'
 import { handleServerError } from '@/lib/handle-server-error'
-import { getServerMessage } from '@/lib/server-error-message'
+import {
+  getServerErrorStatus,
+  getServerMessage,
+} from '@/lib/server-error-message'
 
 import {
   copyChannel,
@@ -40,6 +44,7 @@ import {
   testAllChannels,
   updateAllChannelsBalance,
   getChannelBalanceTask,
+  getCurrentChannelBalanceTask,
   type ChannelBalanceTask,
 } from '../api'
 import { CHANNEL_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
@@ -660,37 +665,45 @@ export async function handleTestAllChannels(
   }
 }
 
-/** How often the progress of a balance update is checked. */
 const BALANCE_UPDATE_POLL_MS = 5_000
-
-/** Balance updates this page follows, so a second click adds no follower. */
 const followedBalanceUpdates = new Set<string>()
+const startingBalanceUpdates = new Set<number>()
 
-/**
- * Follows an update of all balances until it ends. The list reloads whenever
- * more channels have been queried and once more at the end, which is then
- * reported. A failed progress check stops following after one last reload.
- */
 async function followBalanceUpdate(
   taskId: string,
+  epoch: number,
   queryClient?: QueryClient
 ): Promise<void> {
   const reloadList = () =>
     queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
   let reloadedAt = 0
-  for (;;) {
-    await new Promise((resolve) => setTimeout(resolve, BALANCE_UPDATE_POLL_MS))
+  let failures = 0
+  while (getAuthSessionEpoch() === epoch) {
+    const delay = Math.min(BALANCE_UPDATE_POLL_MS * 2 ** failures, 30_000)
+    await new Promise((resolve) => setTimeout(resolve, delay))
+    if (getAuthSessionEpoch() !== epoch) return
     let task: ChannelBalanceTask | null | undefined
     try {
       const response = await getChannelBalanceTask(taskId)
+      if (getAuthSessionEpoch() !== epoch) return
       task = response.success ? response.data : null
     } catch {
-      task = null
+      if (getAuthSessionEpoch() !== epoch) return
     }
-    if (!task) {
-      void reloadList()
-      return
+    if (!task || task.task_id !== taskId) {
+      failures += 1
+      if (failures >= 4) {
+        void reloadList()
+        toast.error(
+          i18next.t(
+            'Balance update status is unavailable. Check the latest status instead of starting it again.'
+          )
+        )
+        return
+      }
+      continue
     }
+    failures = 0
     const processed = task.state?.processed ?? 0
     const ended = task.status === 'succeeded' || task.status === 'failed'
     if (ended || processed > reloadedAt) {
@@ -710,21 +723,78 @@ async function followBalanceUpdate(
   }
 }
 
-/**
- * Update balance for all enabled channels. The server runs the update in the
- * background; the list follows its progress until it ends. A run already in
- * progress is reported and followed the same way.
- */
+function trackBalanceUpdate(
+  taskId: string,
+  queryClient: QueryClient | undefined,
+  epoch: number
+) {
+  const scope = `${epoch}:${taskId}`
+  if (followedBalanceUpdates.has(scope)) return
+  followedBalanceUpdates.add(scope)
+  void followBalanceUpdate(taskId, epoch, queryClient).finally(() =>
+    followedBalanceUpdates.delete(scope)
+  )
+}
+
+/** Observe the latest task only. This endpoint cannot start another update. */
+export async function checkChannelBalanceUpdate(
+  queryClient?: QueryClient,
+  options?: { quiet?: boolean; signal?: AbortSignal }
+): Promise<void> {
+  const epoch = getAuthSessionEpoch()
+  const isCurrent = () =>
+    !options?.signal?.aborted && getAuthSessionEpoch() === epoch
+  try {
+    const response = await getCurrentChannelBalanceTask(options?.signal)
+    if (!isCurrent()) return
+    if (!response.success) throw response
+    const task = response.data
+    if (task?.status === 'pending' || task?.status === 'running') {
+      trackBalanceUpdate(task.task_id, queryClient, epoch)
+      if (!options?.quiet) {
+        toast.info(i18next.t('A balance update is already running'))
+      }
+    } else if (!options?.quiet) {
+      if (task?.status === 'succeeded') {
+        void queryClient?.invalidateQueries({
+          queryKey: channelsQueryKeys.lists(),
+        })
+        toast.success(i18next.t('Latest balance update completed.'))
+      } else if (task?.status === 'failed') {
+        toast.error(i18next.t('Latest balance update failed.'), {
+          description: task.error || undefined,
+        })
+      } else {
+        toast.info(i18next.t('No balance update was found.'))
+      }
+    }
+  } catch {
+    if (isCurrent() && !options?.quiet) {
+      toast.error(
+        i18next.t(
+          'Balance update status is unavailable. Check the latest status instead of starting it again.'
+        )
+      )
+    }
+  }
+}
+
 export async function handleUpdateAllBalances(
   queryClient?: QueryClient,
   onSuccess?: () => void
 ): Promise<void> {
+  const epoch = getAuthSessionEpoch()
+  if (startingBalanceUpdates.has(epoch)) return
+  startingBalanceUpdates.add(epoch)
   try {
     const response = await updateAllChannelsBalance()
+    if (getAuthSessionEpoch() !== epoch) return
     if (!response.success) {
       handleServerError(response, i18next.t('Failed to update all balances'))
       return
     }
+    const taskId = response.data?.task_id
+    if (!taskId) throw new Error('Missing balance update receipt')
     if (response.data?.started === false) {
       toast.info(
         getServerMessage(response) ||
@@ -738,14 +808,22 @@ export async function handleUpdateAllBalances(
       )
       onSuccess?.()
     }
-    const taskId = response.data?.task_id
-    if (taskId && !followedBalanceUpdates.has(taskId)) {
-      followedBalanceUpdates.add(taskId)
-      void followBalanceUpdate(taskId, queryClient).finally(() =>
-        followedBalanceUpdates.delete(taskId)
-      )
-    }
+    trackBalanceUpdate(taskId, queryClient, epoch)
   } catch (error) {
-    handleServerError(error, i18next.t('Failed to update all balances'))
+    if (getAuthSessionEpoch() !== epoch) return
+    const status = getServerErrorStatus(error)
+    if (status && status < 500 && status !== 429) {
+      handleServerError(error, i18next.t('Failed to update all balances'))
+      return
+    }
+    toast.info(
+      i18next.t(
+        'Could not confirm the balance update. Checking the latest task.'
+      )
+    )
+    // GET only: never repeat an update whose acknowledgement may have been lost.
+    await checkChannelBalanceUpdate(queryClient)
+  } finally {
+    startingBalanceUpdates.delete(epoch)
   }
 }

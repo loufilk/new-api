@@ -62,6 +62,136 @@ func TestGroupConfigReadRejectsRemoteCommitAndStaleRouting(t *testing.T) {
 	assert.Equal(t, int64(1), groupConfigAppliedVersion.Load())
 }
 
+func TestGroupConfigReadWarmOpeningFenceUsesOneQueryAndStillDetectsRemoteCommit(t *testing.T) {
+	setupGroupRenameTest(t)
+	guard, err := BeginGroupConfigRead(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, guard.Finish())
+
+	queries := 0
+	const hook = "count_warm_group_fence_options"
+	require.NoError(t, DB.Callback().Query().Before("gorm:query").Register(hook, func(tx *gorm.DB) {
+		if tx.Statement.Table == "options" {
+			queries++
+		}
+	}))
+	t.Cleanup(func() { _ = DB.Callback().Query().Remove(hook) })
+	guard, err = BeginGroupConfigRead(context.Background())
+	require.NoError(t, err)
+	defer guard.Close()
+	require.Equal(t, 1, queries)
+	require.Zero(t, guard.Version)
+
+	// A writer on another node can commit without acquiring our process lock.
+	setGroupGuardOption(t, groupConfigVersionOptionKey, "1")
+	require.ErrorIs(t, guard.Finish(), ErrGroupConfigChanged)
+	require.Equal(t, 2, queries)
+
+	guard, err = BeginGroupConfigRead(context.Background())
+	require.NoError(t, err)
+	defer guard.Close()
+	require.EqualValues(t, 1, guard.Version)
+	require.NoError(t, guard.Finish())
+}
+
+func TestGroupConfigReadCanceledOpeningFenceReleasesRuntimeLock(t *testing.T) {
+	setupGroupRenameTest(t)
+	guard, err := BeginGroupConfigRead(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, guard.Finish())
+
+	const hook = "block_opening_group_fence_until_cancel"
+	entered := make(chan struct{})
+	require.NoError(t, DB.Callback().Query().Before("gorm:query").Register(hook, func(tx *gorm.DB) {
+		if tx.Statement.Table == "options" {
+			close(entered)
+			<-tx.Statement.Context.Done()
+			tx.AddError(tx.Statement.Context.Err())
+		}
+	}))
+	t.Cleanup(func() { _ = DB.Callback().Query().Remove(hook) })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		guard, err := BeginGroupConfigRead(ctx)
+		if guard != nil {
+			guard.Close()
+		}
+		result <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("opening fence did not start")
+	}
+	writer := make(chan struct{})
+	go func() {
+		groupConfigRuntimeMutex.Lock()
+		defer groupConfigRuntimeMutex.Unlock()
+		close(writer)
+	}()
+	cancel()
+	select {
+	case err := <-result:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("opening fence did not return")
+	}
+	select {
+	case <-writer:
+	case <-time.After(5 * time.Second):
+		t.Fatal("canceled opening fence retained the runtime lock")
+	}
+}
+
+func TestPointGroupConfigFenceChecksPrimaryOnceAndRejectsMissedInvalidation(t *testing.T) {
+	setupGroupRenameTest(t)
+	current, err := BeginGroupConfigRead(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, current.Finish())
+
+	queries := 0
+	const hook = "count_point_group_fence_options"
+	require.NoError(t, DB.Callback().Query().Before("gorm:query").Register(hook, func(tx *gorm.DB) {
+		if tx.Statement.Table == "options" {
+			queries++
+		}
+	}))
+	t.Cleanup(func() { _ = DB.Callback().Query().Remove(hook) })
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	require.NoError(t, CheckRequestGroupConfigVersion(nil))
+	require.NoError(t, CheckRequestGroupConfigVersion(c))
+	require.Zero(t, queries, "internal calls without an ingress fence must remain no-ops")
+
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	c.Set(GroupConfigVersionContextKey, "0")
+	require.ErrorIs(t, CheckRequestGroupConfigVersion(c), ErrGroupConfigChanged)
+	require.Zero(t, queries)
+
+	c.Set(GroupConfigVersionContextKey, current.Version)
+	require.NoError(t, CheckRequestGroupConfigVersion(c))
+	require.Equal(t, 1, queries)
+
+	// The surrounding read contract still checks both ends for callers that
+	// consult actual mutable policy between the two fences.
+	guard, err := BeginRequestGroupConfigRead(c)
+	require.NoError(t, err)
+	require.NoError(t, guard.Finish())
+	require.Equal(t, 3, queries)
+
+	setGroupGuardOption(t, groupConfigVersionOptionKey, "1")
+	require.ErrorIs(t, CheckRequestGroupConfigVersion(c), ErrGroupConfigChanged)
+	require.Equal(t, 4, queries)
+	require.Equal(t, current.Version, groupConfigAppliedVersion.Load())
+
+	advanced, err := BeginGroupConfigRead(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, advanced.Finish())
+	c.Set(GroupConfigVersionContextKey, advanced.Version)
+	require.NoError(t, CheckRequestGroupConfigVersion(c))
+}
+
 func TestGroupConfigReadFailedRefreshIsRetryableAndNeverAcknowledged(t *testing.T) {
 	setupGroupRenameTest(t)
 	setGroupGuardOption(t, "GroupRatio", `{"new":0.25}`)

@@ -16,16 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { memo, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import { getPerfMetricsSummary } from '@/features/performance-metrics/api'
-import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { DEFAULT_PRICING_PAGE_SIZE, DEFAULT_TOKEN_UNIT } from '../constants'
+import { useMarketSummary } from '../hooks/use-market-metrics'
 import type { ModelEndpointMap } from '../lib/model-endpoints'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelCard } from './model-card'
@@ -38,6 +36,7 @@ export interface ModelCardGridProps {
   usdExchangeRate?: number
   tokenUnit?: TokenUnit
   showRechargePrice?: boolean
+  platformPriceGroups?: ReadonlySet<string>
   selectedGroup?: string
   endpointMap?: ModelEndpointMap
 }
@@ -57,14 +56,7 @@ export const ModelCardGrid = memo(function ModelCardGrid(
     return props.models.slice(start, start + pageSize)
   }, [currentPage, pageSize, props.models])
   const recentModels = pagedModels.map((model) => model.model_name || '')
-  const perfQuery = useQuery({
-    queryKey: ['perf-metrics-summary', 24, recentModels],
-    queryFn: async () =>
-      requireServerSuccess(await getPerfMetricsSummary(24, recentModels)),
-    enabled: recentModels.length > 0,
-    staleTime: 60 * 1000,
-    retry: false,
-  })
+  const perfQuery = useMarketSummary(recentModels)
 
   const perfMap = useMemo(() => {
     const map = new Map<string, ModelPerfBadgeData>()
@@ -73,17 +65,6 @@ export const ModelCardGrid = memo(function ModelCardGrid(
         ...model,
         window_start: perfQuery.data?.data.window_start,
         window_end: perfQuery.data?.data.window_end,
-      })
-    }
-    for (const [name, series] of Object.entries(
-      perfQuery.data?.data?.recent_success_series ?? {}
-    )) {
-      map.set(name, {
-        avg_latency_ms: Number.NaN,
-        avg_tps: Number.NaN,
-        success_rate: Number.NaN,
-        ...map.get(name),
-        recent_success_series: series,
       })
     }
     return map
@@ -98,13 +79,14 @@ export const ModelCardGrid = memo(function ModelCardGrid(
       <div className='grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-3'>
         {pagedModels.map((model) => (
           <ModelCard
-            key={model.id ?? model.model_name}
+            key={model.model_name}
             model={model}
             endpointMap={props.endpointMap}
             tokenUnit={tokenUnit}
             priceRate={props.priceRate}
             usdExchangeRate={props.usdExchangeRate}
             showRechargePrice={props.showRechargePrice}
+            platformPriceGroups={props.platformPriceGroups}
             selectedGroup={props.selectedGroup}
             perf={perfMap.get(model.model_name || '')}
             onClick={props.onModelClick}

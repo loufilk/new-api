@@ -30,8 +30,13 @@ import {
   getDynamicPricingSummary,
   isUnconfiguredTaskUsageModel,
 } from '../lib/dynamic-price'
+import { activeBillingExpressions } from '../lib/market-groups'
 import { isTokenBasedModel } from '../lib/model-helpers'
-import { withBasePricing } from '../lib/plugin-pricing'
+import {
+  hasRedactedProviderPricing,
+  isCatalogPriceUnavailable,
+  withBasePricing,
+} from '../lib/plugin-pricing'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import { taskUsageUnitLabel } from '../lib/task-price-display'
 import type { PricingModel, TokenUnit } from '../types'
@@ -57,7 +62,8 @@ export function ModelPriceCell(props: {
   const options = props.options ?? {}
   const tokenUnit = options.tokenUnit ?? DEFAULT_TOKEN_UNIT
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
-  const billingTime = useBillingTime(model.billing_expr)
+  const expressions = useMemo(() => activeBillingExpressions([model]), [model])
+  const billingTime = useBillingTime(expressions)
   const dynamic = useMemo(
     () =>
       getDynamicPricingSummary(model, {
@@ -85,6 +91,16 @@ export function ModelPriceCell(props: {
       currency,
     ]
   )
+  const redactedProviderPricing = hasRedactedProviderPricing(model)
+  if (isCatalogPriceUnavailable(model)) {
+    return (
+      <span className='text-muted-foreground text-sm'>
+        {redactedProviderPricing
+          ? t('Sign in to view provider pricing')
+          : t('Unset price')}
+      </span>
+    )
+  }
   let metrics: Array<{ label: string; value: string }>
   const providerCaption = dynamic?.providerCount
     ? t('{{count}} providers', { count: dynamic.providerCount })
@@ -262,6 +278,11 @@ export function ModelPriceCell(props: {
       >
         {caption}
       </span>
+      {redactedProviderPricing && (
+        <span className='text-muted-foreground block text-xs'>
+          {t('Sign in to view provider pricing')}
+        </span>
+      )}
     </span>
   )
 }

@@ -62,7 +62,7 @@ export function useFAQ() {
  * Get dashboard content panel visibility
  */
 export function useDashboardContentVisibility() {
-  const { status } = useStatus()
+  const { status } = useStatus({ announcements: 'active' })
   const hasStatus = Boolean(status)
 
   return {

@@ -39,8 +39,10 @@ export interface ApiResponse<T = unknown> {
  */
 export type TopupInfoResponse = ApiResponse<TopupInfo>
 export type RedemptionResponse = ApiResponse<number>
-export type AmountResponse = ApiResponse<string>
+export type AmountResponse = ApiResponse<string> & { epay_gateway?: string }
 export type PaymentResponse = ApiResponse<Record<string, unknown>> & {
+  trade_no?: string
+  order_status?: string
   url?: string
 }
 export type StripePaymentResponse = ApiResponse<{ pay_link: string }>
@@ -277,6 +279,33 @@ export interface BillingHistoryResponse {
   total: number
 }
 
+export interface USDTRechargeHistoryDetails {
+  network: string
+  status:
+    | 'creating'
+    | 'pending'
+    | 'confirming'
+    | 'paid'
+    | 'expired'
+    | 'review'
+    | 'failed'
+  quote_usdt?: string
+  wallet_credit_cny?: string
+}
+
+export interface RechargeHistoryItem {
+  order_no: string
+  created_at: number
+  fiat?: Omit<TopupRecord, 'id' | 'user_id' | 'create_time' | 'trade_no'>
+  usdt?: USDTRechargeHistoryDetails
+}
+
+export interface RechargeHistoryResponse {
+  items: RechargeHistoryItem[]
+  total: number
+  methods: string[]
+}
+
 /**
  * Complete order request (admin only)
  */
@@ -346,6 +375,7 @@ export interface WalletLedgerPage {
  * into the spendable reward account.
  */
 export interface AffiliateTransferRequest {
+  expected_user_id?: number
   quota: number
 }
 

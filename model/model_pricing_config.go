@@ -714,6 +714,7 @@ func mutateModelPricingOptions(mutate func(*gorm.DB, map[string]map[string]any) 
 			common.SysError(common.LogText("options table has duplicate pricing keys [%s]; the table is missing a primary key", strings.Join(duplicated, ", ")))
 		}
 		defaults := defaultPricingMaps()
+		seeded := false
 		for _, key := range modelPricingOptionKeys {
 			if existing[key] {
 				continue
@@ -724,6 +725,16 @@ func mutateModelPricingOptions(mutate func(*gorm.DB, map[string]map[string]any) 
 			}
 			row := Option{Key: key, Value: string(encoded)}
 			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
+				return err
+			}
+			seeded = true
+		}
+		if seeded {
+			// The first SELECT cannot row-lock absent keys. A concurrent node
+			// may have created and populated them while our insert was waiting.
+			// Validate versions and merge changes against that committed state.
+			values, _, _, err = readModelPricingMaps(lockForUpdate(tx))
+			if err != nil {
 				return err
 			}
 		}

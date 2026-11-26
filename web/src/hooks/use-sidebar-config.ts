@@ -41,7 +41,6 @@ const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
     enabled: true,
     playground: true,
     image: true,
-    chat: true,
   },
   console: {
     enabled: true,
@@ -93,6 +92,15 @@ const mergeWithDefaultSidebarModules = (
 
   return merged
 }
+
+// Only actual root-sidebar groups participate: contextual tab lists and the
+// independent agent workspace have no corresponding master switch.
+const ROOT_GROUP_TO_SECTION = new Map([
+  ['chat', 'chat'],
+  ['general', 'console'],
+  ['personal', 'personal'],
+  ['admin', 'admin'],
+])
 
 /**
  * Mapping from URL to configuration keys
@@ -205,18 +213,6 @@ function isNavItemVisible(
   adminConfig: SidebarModulesAdminConfig,
   userConfig: SidebarModulesUserConfig
 ): boolean {
-  // Handle dynamic chat presets type — also runs the admin × user AND gate
-  if ('type' in item && item.type === 'chat-presets') {
-    const adminChat = adminConfig.chat
-    const adminAllowed = Boolean(adminChat?.enabled && adminChat.chat === true)
-    if (!adminAllowed) return false
-    if (!userConfig) return true
-    const userChat = userConfig.chat
-    if (!userChat) return true
-    if (userChat.enabled === false) return false
-    return userChat.chat !== false
-  }
-
   // Handle direct link type
   if ('url' in item && item.url) {
     const configUrls = item.configUrls ?? [item.url]
@@ -305,6 +301,16 @@ export function useSidebarConfig(navGroups: NavGroup[]): NavGroup[] {
   const filteredNavGroups = useMemo(
     () =>
       navGroups
+        .filter((group) => {
+          const section = group.id && ROOT_GROUP_TO_SECTION.get(group.id)
+          if (!section) return true
+          // An extension link may have no individual switch, but still belongs
+          // to its section. This controls navigation, never API authorization.
+          return (
+            adminConfig[section]?.enabled !== false &&
+            userConfig?.[section]?.enabled !== false
+          )
+        })
         .map((group) => ({
           ...group,
           items: filterNavItems(group.items, adminConfig, userConfig),

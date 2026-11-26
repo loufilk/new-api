@@ -1,7 +1,9 @@
-import type { UseFormRegister } from 'react-hook-form'
+import { Trash2 } from 'lucide-react'
+import { Controller, type Control, type UseFormRegister } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { Combobox } from '@/components/ui/combobox'
 import {
   Field,
   FieldDescription,
@@ -12,23 +14,10 @@ import {
   FieldSet,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 
+import { QuoteModelTags } from './quote-model-tags'
 import type { PartnerApplicationFormValues } from './schema'
-import type { PartnerPlatform } from './types'
-
-const platforms: Array<{ value: PartnerPlatform; label: string }> = [
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'anthropic', label: 'Anthropic' },
-  { value: 'google', label: 'Google Gemini' },
-  { value: 'deepseek', label: 'DeepSeek' },
-  { value: 'alibaba', label: 'Alibaba Cloud' },
-  { value: 'bytedance', label: 'ByteDance' },
-  { value: 'zhipu', label: 'Zhipu' },
-  { value: 'moonshot', label: 'Moonshot' },
-  { value: 'other', label: 'Other' },
-]
 
 type QuoteError = Partial<
   Record<'platform' | 'group' | 'rate' | 'models' | 'description', string>
@@ -36,6 +25,8 @@ type QuoteError = Partial<
 
 export function QuoteFields(props: {
   index: number
+  control: Control<PartnerApplicationFormValues>
+  platforms: { value: string; label: string }[]
   register: UseFormRegister<PartnerApplicationFormValues>
   errors?: QuoteError
   disabled: boolean
@@ -49,32 +40,11 @@ export function QuoteFields(props: {
   const modelsName = `quotes.${props.index}.models` as const
   const descriptionName = `quotes.${props.index}.description` as const
   return (
-    <FieldSet className='min-w-0 border-t pt-4'>
+    <FieldSet className='min-w-0 gap-3 rounded-lg border p-4'>
       <FieldLegend variant='label'>
         {t('Quote {{number}}', { number: props.index + 1 })}
       </FieldLegend>
-      <FieldGroup className='grid min-w-0 gap-3 sm:grid-cols-2'>
-        <Field data-invalid={Boolean(props.errors?.platform)}>
-          <FieldLabel htmlFor={`partner-platform-${props.index}`} required>
-            {t('Platform')}
-          </FieldLabel>
-          <NativeSelect
-            id={`partner-platform-${props.index}`}
-            {...props.register(platformName)}
-            required
-            disabled={props.disabled}
-            aria-invalid={Boolean(props.errors?.platform)}
-          >
-            {platforms.map((platform) => (
-              <NativeSelectOption key={platform.value} value={platform.value}>
-                {t(platform.label)}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-          <FieldError>
-            {props.errors?.platform ? t(props.errors.platform) : undefined}
-          </FieldError>
-        </Field>
+      <FieldGroup className='grid min-w-0 items-start gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(7.5rem,0.65fr)_auto]'>
         <Field data-invalid={Boolean(props.errors?.group)}>
           <FieldLabel htmlFor={`partner-group-${props.index}`} required>
             {t('Group name')}
@@ -91,9 +61,33 @@ export function QuoteFields(props: {
             {props.errors?.group ? t(props.errors.group) : undefined}
           </FieldError>
         </Field>
+        <Field data-invalid={Boolean(props.errors?.platform)}>
+          <FieldLabel htmlFor={`partner-platform-${props.index}`} required>
+            {t('Platform')}
+          </FieldLabel>
+          <Controller
+            control={props.control}
+            name={platformName}
+            render={({ field }) => (
+              <Combobox
+                id={`partner-platform-${props.index}`}
+                options={props.platforms}
+                value={field.value}
+                ref={field.ref}
+                onBlur={field.onBlur}
+                onValueChange={field.onChange}
+                disabled={props.disabled}
+                aria-invalid={Boolean(props.errors?.platform)}
+              />
+            )}
+          />
+          <FieldError>
+            {props.errors?.platform ? t(props.errors.platform) : undefined}
+          </FieldError>
+        </Field>
         <Field data-invalid={Boolean(props.errors?.rate)}>
           <FieldLabel htmlFor={`partner-rate-${props.index}`} required>
-            {t('Rate')}
+            {t('Multiplier')}
           </FieldLabel>
           <Input
             id={`partner-rate-${props.index}`}
@@ -113,23 +107,47 @@ export function QuoteFields(props: {
             {props.errors?.rate ? t(props.errors.rate) : undefined}
           </FieldError>
         </Field>
-        <Field data-invalid={Boolean(props.errors?.models)}>
+        <div className='xl:mt-6'>
+          <Button
+            type='button'
+            variant='ghost'
+            size='sm'
+            className='text-muted-foreground hover:text-destructive'
+            disabled={props.disabled || !props.canRemove}
+            onClick={props.onRemove}
+          >
+            <Trash2 aria-hidden='true' />
+            {t('Remove group')}
+          </Button>
+        </div>
+        <Field
+          className='sm:col-span-full'
+          data-invalid={Boolean(props.errors?.models)}
+        >
           <FieldLabel htmlFor={`partner-models-${props.index}`}>
             {t('Main models')}
           </FieldLabel>
-          <Input
-            id={`partner-models-${props.index}`}
-            {...props.register(modelsName)}
-            maxLength={500}
-            disabled={props.disabled}
-            aria-invalid={Boolean(props.errors?.models)}
+          <Controller
+            control={props.control}
+            name={modelsName}
+            render={({ field }) => (
+              <QuoteModelTags
+                id={`partner-models-${props.index}`}
+                disabled={props.disabled}
+                invalid={Boolean(props.errors?.models)}
+                field={field}
+              />
+            )}
           />
-          <FieldError>
+          <FieldDescription id={`partner-models-${props.index}-hint`}>
+            {t('Press Enter to add a model.')}
+          </FieldDescription>
+          <FieldError id={`partner-models-${props.index}-error`}>
             {props.errors?.models ? t(props.errors.models) : undefined}
           </FieldError>
         </Field>
         <Field
-          className='sm:col-span-2'
+          className='sm:col-span-full'
           data-invalid={Boolean(props.errors?.description)}
         >
           <FieldLabel htmlFor={`partner-quote-description-${props.index}`}>
@@ -150,19 +168,6 @@ export function QuoteFields(props: {
           </FieldError>
         </Field>
       </FieldGroup>
-      {props.canRemove && (
-        <div className='flex justify-end'>
-          <Button
-            type='button'
-            variant='ghost'
-            size='sm'
-            disabled={props.disabled}
-            onClick={props.onRemove}
-          >
-            {t('Remove group')}
-          </Button>
-        </div>
-      )}
     </FieldSet>
   )
 }

@@ -23,7 +23,7 @@ export const openaiSdk: GuideDoc = {
   title: '接入 OpenAI SDK',
   description: '用官方 OpenAI SDK 在 Python 或 JavaScript 中调用本站。',
   recommended: true,
-  updated: '2026-08-30',
+  updated: '2026-11-23',
   body: `
 > \`base_url\` 必须带 \`/v1\`，即 \`{{BASE_URL}}/v1\`。SDK 会在其后拼接 \`/chat/completions\`。这一点和 Anthropic SDK 不同，后者不要带 \`/v1\`。
 
@@ -41,18 +41,18 @@ client = OpenAI(
     base_url="{{BASE_URL}}/v1",
 )
 
+for model in client.models.list().data:
+    print(model.id)
+\`\`\`
+
+上面的 SDK 使用同一把密钥调用 \`GET /v1/models\`。从返回结果中选一个支持 Chat Completions 的 ID，替换下面的 \`MODEL_ID\`。列表表示密钥能看到哪些模型，能否通过目标协议调用要用实际请求验证。
+
+\`\`\`python
 resp = client.chat.completions.create(
     model="MODEL_ID",
     messages=[{"role": "user", "content": "你好"}],
 )
 print(resp.choices[0].message.content)
-\`\`\`
-
-把 \`MODEL_ID\` 换成 [定价页](/pricing) 里的真实 id。也可以直接列出当前密钥可见的模型：
-
-\`\`\`python
-for model in client.models.list().data:
-    print(model.id)
 \`\`\`
 
 ## Node.js
@@ -66,6 +66,7 @@ const client = new OpenAI({
   baseURL: "{{BASE_URL}}/v1",
 });
 
+// 用同一客户端的 client.models.list() 查到支持 Chat Completions 的 ID 后填入下方。
 const resp = await client.chat.completions.create({
   model: "MODEL_ID",
   messages: [{ role: "user", content: "你好" }],
@@ -96,7 +97,8 @@ for chunk in stream:
 ## 常见问题
 
 - **请求打到了官方而不是本站**：多半是 Node 里写成了 \`base_url\`，或者环境里还留着 \`OPENAI_BASE_URL\`。SDK 的显式参数优先级高于环境变量，但拼错的字段会被静默忽略。
-- **404**：\`base_url\` 漏了 \`/v1\`，或 model id 不在目录里。
+- **404**：\`base_url\` 漏了 \`/v1\`，或当前分组未配置目标模型；请核对响应体和同一密钥的模型列表。
+- **403**：根据响应体核对密钥的模型限制或来源 IP 限制。
 - **401**：环境变量没读到。检查是不是把 \`OPENAI_API_KEY\` 和本站的令牌搞混了。
 - **超时**：长输出建议开流式，或调大 SDK 的 \`timeout\`。默认超时对推理模型往往偏短。
 
@@ -105,6 +107,6 @@ for chunk in stream:
 - [协议兼容总览](/help/guides/compatibility)——Chat Completions 与 Responses 的边界。
 - [接入 Anthropic SDK](/help/guides/anthropic-sdk)——需要 Messages 协议时用这个。
 
-本页基于 2026-08-30 校订。
+本页于 2026-11-23 校订。
 `.trim(),
 }

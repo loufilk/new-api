@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   SORT_OPTIONS,
+  MODEL_ORDER_SORTS,
   normalizeSortOption,
   FILTER_ALL,
   QUOTA_TYPES,
@@ -26,7 +27,7 @@ import {
   type QuotaTypeOption,
   type SortOption,
 } from '../constants'
-import type { PricingModel } from '../types'
+import type { ModelOrder, PricingModel } from '../types'
 import { compileBillingExpression } from './billing-expression/parser'
 import { visitExpression } from './billing-expression/types'
 import {
@@ -35,9 +36,14 @@ import {
   hasTaskUsageSchema,
   isUnconfiguredTaskUsageModel,
 } from './dynamic-price'
-import { filterByCategory, type ModelCategory } from './model-categories'
-import { isTokenBasedModel } from './model-helpers'
-import { withBasePricing } from './plugin-pricing'
+import { getMarketPriceModel } from './market-groups'
+import { getModelEndpointTypes } from './model-endpoints'
+import { getDisplayGroupRatio, isTokenBasedModel } from './model-helpers'
+import {
+  hasRedactedProviderPricing,
+  isCatalogPriceUnavailable,
+  withBasePricing,
+} from './plugin-pricing'
 import { calculateTokenPrice } from './price'
 
 // ----------------------------------------------------------------------------
@@ -49,17 +55,26 @@ import { calculateTokenPrice } from './price'
  */
 export function filterBySearch(
   models: PricingModel[],
-  query: string
+  query: string,
+  group?: string
 ): PricingModel[] {
   if (!query) return models
 
-  const lowerQuery = query.toLowerCase()
+  const lowerQuery = query.trim().toLowerCase()
   return models.filter(
     (m) =>
       m.model_name?.toLowerCase().includes(lowerQuery) ||
       m.description?.toLowerCase().includes(lowerQuery) ||
       m.tags?.toLowerCase().includes(lowerQuery) ||
-      m.vendor_name?.toLowerCase().includes(lowerQuery)
+      m.vendor_name?.toLowerCase().includes(lowerQuery) ||
+      getModelEndpointTypes(m, group).some((type) =>
+        type.toLowerCase().includes(lowerQuery)
+      ) ||
+      m.enable_groups?.some(
+        (group) =>
+          group.toLowerCase().includes(lowerQuery) ||
+          m.group_catalog?.[group]?.label?.toLowerCase().includes(lowerQuery)
+      )
   )
 }
 
@@ -90,6 +105,9 @@ export function getModelQuotaType(
   listedModel: PricingModel
 ): Exclude<QuotaTypeOption, 'all'> | undefined {
   const model = withBasePricing(listedModel)
+  if (hasRedactedProviderPricing(model) && isCatalogPriceUnavailable(model)) {
+    return undefined
+  }
   // Task-usage models retain their own category.
   if (hasTaskUsageSchema(model)) return QUOTA_TYPES.TASK
 
@@ -135,11 +153,12 @@ export function filterByQuotaType(
  */
 export function filterByEndpointType(
   models: PricingModel[],
-  endpointType: string
+  endpointType: string,
+  group?: string
 ): PricingModel[] {
   if (endpointType === ENDPOINT_TYPES.ALL) return models
   return models.filter((m) =>
-    m.supported_endpoint_types?.includes(endpointType)
+    getModelEndpointTypes(m, group).includes(endpointType)
   )
 }
 
@@ -163,14 +182,16 @@ const PRICE_SORTS: Partial<
  */
 function getSortPrice(
   listedModel: PricingModel,
-  kind: SortPriceKind
+  kind: SortPriceKind,
+  now?: Date
 ): number | undefined {
   const model = withBasePricing(listedModel)
+  if (isCatalogPriceUnavailable(model)) return undefined
   if (kind === 'request') {
-    const example = getCardExamplePrice(model, { tokenUnit: 'M' })
+    const example = getCardExamplePrice(model, { tokenUnit: 'M', now })
     if (example) return example.total
   }
-  const summary = getDynamicPricingSummary(model, { tokenUnit: 'M' })
+  const summary = getDynamicPricingSummary(model, { tokenUnit: 'M', now })
   if (kind === 'request') {
     if (summary) {
       return summary.entries.find(
@@ -201,12 +222,31 @@ function isValidSortPrice(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
 }
 
+function compareModelNames(a: PricingModel, b: PricingModel): number {
+  return (a.model_name || '').localeCompare(b.model_name || '')
+}
+
+/** Compare admin usage rows using the same tie-breaking as the server. */
+export function compareModelUsage(
+  a: { name: string; usage: number },
+  b: { name: string; usage: number }
+): number {
+  if (a.usage !== b.usage) return b.usage - a.usage
+  if (a.usage === 0) return a.name.localeCompare(b.name)
+  if (a.name === b.name) return 0
+  return a.name < b.name ? -1 : 1
+}
+
 /**
  * Sort models by specified option
  */
 export function sortModels(
   models: PricingModel[],
-  sortBy: string
+  sortBy: string,
+  selectedGroup?: string,
+  now?: Date,
+  platformPriceGroups?: ReadonlySet<string>,
+  modelOrder?: ModelOrder
 ): PricingModel[] {
   const sorted = [...models]
 
@@ -216,8 +256,15 @@ export function sortModels(
     // Extracting the price parses the billing expression, so compute once
     const price = new Map(
       sorted.map((m) => {
-        const value = getSortPrice(m, priceSort.kind)
-        return [m, isValidSortPrice(value) ? value : undefined] as const
+        const base = getSortPrice(m, priceSort.kind, now)
+        const value = isValidSortPrice(base)
+          ? base *
+            getDisplayGroupRatio(
+              getMarketPriceModel(m, platformPriceGroups),
+              selectedGroup
+            )
+          : undefined
+        return [m, value] as const
       })
     )
     // Models without this kind of price stay last in both directions
@@ -232,15 +279,18 @@ export function sortModels(
     return sorted
   }
 
-  switch (normalizedSort) {
-    case SORT_OPTIONS.NAME:
-      sorted.sort((a, b) =>
-        (a.model_name || '').localeCompare(b.model_name || '')
-      )
-      break
+  if (MODEL_ORDER_SORTS.has(normalizedSort)) {
+    const order = modelOrder?.[normalizedSort as keyof ModelOrder] ?? []
+    const rank = new Map(order.map((name, index) => [name, index]))
+    sorted.sort(
+      (a, b) =>
+        (rank.get(a.model_name) ?? order.length) -
+          (rank.get(b.model_name) ?? order.length) || compareModelNames(a, b)
+    )
+    return sorted
   }
 
-  return sorted
+  return sorted.sort(compareModelNames)
 }
 
 /**
@@ -250,23 +300,39 @@ export function filterAndSortModels(
   models: PricingModel[],
   filters: {
     search: string
-    vendor: string
+    vendor?: string
     group: string
     quotaType: string
     endpointType: string
-    tag: string
+    tag?: string
     sortBy: string
-    category?: ModelCategory
+    modelOrder?: ModelOrder
+    platformPriceGroups?: ReadonlySet<string>
+    now?: Date
   }
 ): PricingModel[] {
-  let result = filterBySearch(models, filters.search)
-  result = filterByVendor(result, filters.vendor)
+  // A model offered through two matched groups is still one result. Membership
+  // comes from the viewer-specific pricing response, never from its name/vendor.
+  const platformGroups = filters.platformPriceGroups
+  const platformModels = platformGroups
+    ? models.filter((model) =>
+        model.enable_groups?.some((group) => platformGroups.has(group))
+      )
+    : models
+  let result = filterBySearch(platformModels, filters.search, filters.group)
+  if (filters.vendor) result = filterByVendor(result, filters.vendor)
   result = filterByGroup(result, filters.group)
   result = filterByQuotaType(result, filters.quotaType)
-  result = filterByEndpointType(result, filters.endpointType)
-  result = filterByTag(result, filters.tag)
-  result = filterByCategory(result, filters.category ?? 'all')
-  result = sortModels(result, filters.sortBy)
+  result = filterByEndpointType(result, filters.endpointType, filters.group)
+  if (filters.tag) result = filterByTag(result, filters.tag)
+  result = sortModels(
+    result,
+    filters.sortBy,
+    filters.group,
+    filters.now,
+    platformGroups,
+    filters.modelOrder
+  )
 
   return result
 }

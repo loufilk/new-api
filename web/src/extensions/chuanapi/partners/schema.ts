@@ -1,18 +1,8 @@
 import { z } from 'zod'
 
-const partnerPlatforms = [
-  'openai',
-  'anthropic',
-  'google',
-  'deepseek',
-  'alibaba',
-  'bytedance',
-  'zhipu',
-  'moonshot',
-  'other',
-] as const
+import { maxPartnerGroups, partnerContacts, partnerPlatforms } from './catalog'
 
-const partnerContacts = ['wechat', 'qq', 'email', 'phone', 'other'] as const
+export const maxPartnerModelsLength = 500
 
 const rateSchema = z
   .string()
@@ -53,12 +43,12 @@ export const partnerApplicationSchema = z
           platform: z.enum(partnerPlatforms),
           group: z.string().trim().min(1).max(120),
           rate: rateSchema,
-          models: z.string().trim().max(500),
+          models: z.string().trim().max(maxPartnerModelsLength),
           description: z.string().trim().max(500),
         })
       )
       .min(1)
-      .max(20),
+      .max(maxPartnerGroups),
   })
   .superRefine((value, context) => {
     if (
@@ -73,7 +63,7 @@ export const partnerApplicationSchema = z
     }
     const seen = new Set<string>()
     value.quotes.forEach((quote, index) => {
-      const group = quote.group.toLocaleLowerCase()
+      const group = quote.group.toLowerCase()
       if (seen.has(group)) {
         context.addIssue({
           code: 'custom',

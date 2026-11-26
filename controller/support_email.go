@@ -3,6 +3,7 @@ package controller
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -39,7 +40,7 @@ func GetSupportEmailSettings(c *gin.Context) {
 		supportEmailError(c, err)
 		return
 	}
-	_, configured, err := service.SupportEmailSMTPConfig(c.Request.Context())
+	provider, configured, err := service.SupportEmailDeliveryStatus(c.Request.Context())
 	if err != nil {
 		supportEmailError(c, err)
 		return
@@ -48,7 +49,7 @@ func GetSupportEmailSettings(c *gin.Context) {
 	if recipients == nil {
 		recipients = []string{}
 	}
-	common.ApiSuccess(c, gin.H{"enabled": settings.Enabled, "admin_recipients": recipients, "site_origin": settings.SiteOrigin, "smtp_configured": configured})
+	common.ApiSuccess(c, gin.H{"enabled": settings.Enabled, "admin_recipients": recipients, "site_origin": settings.SiteOrigin, "smtp_configured": provider == "smtp" && configured, "delivery_provider": provider, "delivery_configured": configured})
 }
 
 func UpdateSupportEmailSettings(c *gin.Context) {
@@ -63,13 +64,13 @@ func UpdateSupportEmailSettings(c *gin.Context) {
 		return
 	}
 	if *request.Enabled {
-		_, configured, err := service.SupportEmailSMTPConfig(c.Request.Context())
+		_, configured, err := service.SupportEmailDeliveryStatus(c.Request.Context())
 		if err != nil {
 			supportEmailError(c, err)
 			return
 		}
 		if !configured {
-			common.ApiErrorT(c, "Configure secure SMTP before enabling support email notifications")
+			common.ApiErrorT(c, "Configure the selected email provider before enabling support email notifications")
 			return
 		}
 	}
@@ -123,6 +124,23 @@ func ListSupportEmailOutbox(c *gin.Context) {
 	rows := []model.SupportEmailOutbox{}
 	var total int64
 	query := model.DB.WithContext(c.Request.Context()).Model(&model.SupportEmailOutbox{})
+	params, err := url.ParseQuery(c.Request.URL.RawQuery)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
+	}
+	if values, present := params["ticket_id"]; present {
+		if len(values) != 1 {
+			common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+			return
+		}
+		id, err := strconv.ParseUint(values[0], 10, 63)
+		if err != nil || id == 0 {
+			common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+			return
+		}
+		query = query.Where("ticket_id = ?", int64(id))
+	}
 	if err := query.Count(&total).Error; err != nil {
 		supportEmailError(c, err)
 		return

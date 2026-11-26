@@ -19,19 +19,31 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { useTranslation } from 'react-i18next'
 
+import { CatalogModelIcon } from '@/components/catalog-model-icon'
+import { CopyButton } from '@/components/copy-button'
 import {
   BadgeCell,
   BadgeListCell,
   DataTableColumnHeader,
 } from '@/components/data-table'
-import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
+import { Button } from '@/components/ui/button'
 import type { ColumnDef } from '@/lib/console-table'
-import { getLobeIcon } from '@/lib/lobe-icon'
 
 import { parseTags } from '../lib/filters'
+import {
+  catalogModelPlatformIcon,
+  getMarketPriceModel,
+} from '../lib/market-groups'
+import { quotedMarketGroups } from '../lib/market-result-groups'
+import {
+  getModelEndpoints,
+  getModelEndpointTypes,
+  type ModelEndpointMap,
+} from '../lib/model-endpoints'
 import type { PricingModel } from '../types'
 import { CachedPriceCell } from './cached-price-cell'
+import { CatalogGroupBadge } from './catalog-group-badge'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelPriceCell, type ModelPriceCellOptions } from './model-price-cell'
 
@@ -39,7 +51,12 @@ import { ModelPriceCell, type ModelPriceCellOptions } from './model-price-cell'
 // Pricing Table Columns
 // ----------------------------------------------------------------------------
 
-export type PricingColumnsOptions = ModelPriceCellOptions
+export type PricingColumnsOptions = ModelPriceCellOptions & {
+  displayTiers?: boolean
+  onModelClick?: (name: string) => void
+  endpointMap?: ModelEndpointMap
+  platformPriceGroups?: ReadonlySet<string>
+}
 
 export function usePricingColumns(
   options: PricingColumnsOptions = {}
@@ -56,18 +73,34 @@ export function usePricingColumns(
       ),
       cell: ({ row }) => {
         const model = row.original
-        const modelIconKey = model.icon || model.vendor_icon
-        const modelIcon = modelIconKey ? getLobeIcon(modelIconKey, 14) : null
-
         return (
-          <div className='flex max-w-full min-w-0 items-center gap-2'>
-            {modelIcon}
-            <span className='truncate font-mono text-sm font-medium'>
-              {model.model_name}
-            </span>
+          <div className='flex w-64 min-w-0 items-center gap-2'>
+            <CatalogModelIcon
+              icon={model.icon}
+              vendorIcon={model.vendor_icon}
+              vendorName={model.vendor_name}
+              platformIcon={catalogModelPlatformIcon(model)}
+              name={model.model_name}
+              size={20}
+            />
+            <Button
+              type='button'
+              variant='link'
+              className='h-auto min-w-0 flex-1 justify-start p-0 text-left font-mono'
+              title={model.model_name}
+              onClick={() => options.onModelClick?.(model.model_name)}
+            >
+              <span className='truncate'>{model.model_name}</span>
+            </Button>
+            <CopyButton
+              value={model.model_name}
+              tooltip={t('Copy model name')}
+              className='size-7'
+            />
           </div>
         )
       },
+      size: 280,
       minSize: 200,
     },
 
@@ -90,7 +123,10 @@ export function usePricingColumns(
         <DataTableColumnHeader column={column} title={t('Price')} />
       ),
       cell: ({ row }) => (
-        <ModelPriceCell model={row.original} options={options} />
+        <ModelPriceCell
+          model={getMarketPriceModel(row.original, options.platformPriceGroups)}
+          options={options}
+        />
       ),
       size: 180,
       enableSorting: false,
@@ -101,7 +137,10 @@ export function usePricingColumns(
       id: 'cached_price',
       header: t('Cached'),
       cell: ({ row }) => (
-        <CachedPriceCell model={row.original} options={options} />
+        <CachedPriceCell
+          model={getMarketPriceModel(row.original, options.platformPriceGroups)}
+          options={options}
+        />
       ),
       size: 110,
       enableSorting: false,
@@ -116,12 +155,14 @@ export function usePricingColumns(
         if (!model.vendor_name) {
           return <span className='text-muted-foreground/50 text-xs'>—</span>
         }
-        const vendorIcon = model.vendor_icon
-          ? getLobeIcon(model.vendor_icon, 12)
-          : null
         return (
           <BadgeCell className='gap-1.5'>
-            {vendorIcon}
+            <CatalogModelIcon
+              icon={model.vendor_icon}
+              vendorName={model.vendor_name}
+              name={model.vendor_name}
+              size={14}
+            />
             <StatusBadge
               label={model.vendor_name}
               autoColor={model.vendor_name}
@@ -164,7 +205,17 @@ export function usePricingColumns(
       accessorKey: 'supported_endpoint_types',
       header: t('Endpoints'),
       cell: ({ row }) => {
-        const endpoints = row.original.supported_endpoint_types || []
+        const endpoints = options.endpointMap
+          ? getModelEndpoints(
+              row.original,
+              options.endpointMap,
+              options.selectedGroup
+            ).map((ep) => ep.type)
+          : getModelEndpointTypes(row.original, options.selectedGroup)
+        if (!endpoints.length)
+          return (
+            <span className='text-muted-foreground'>{t('Not confirmed')}</span>
+          )
         return (
           <BadgeListCell
             items={endpoints.map((ep) => (
@@ -186,13 +237,21 @@ export function usePricingColumns(
     // Enable Groups column
     {
       accessorKey: 'enable_groups',
-      header: t('Groups'),
+      header: options.displayTiers ? t('Pricing tiers') : t('Groups'),
       cell: ({ row }) => {
-        const groups = row.original.enable_groups || []
+        const groups = quotedMarketGroups(
+          getMarketPriceModel(row.original, options.platformPriceGroups),
+          options.selectedGroup
+        )
         return (
           <BadgeListCell
+            max={1}
             items={groups.map((group) => (
-              <GroupBadge key={group} group={group} size='sm' />
+              <CatalogGroupBadge
+                key={group}
+                group={group}
+                catalog={row.original.group_catalog}
+              />
             ))}
             tooltipClassName='max-w-[280px] p-2'
           />

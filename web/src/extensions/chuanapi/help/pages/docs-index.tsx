@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Link } from '@tanstack/react-router'
-import { ArrowRight, Braces, Rocket } from 'lucide-react'
+import { ArrowRight, Braces, Rocket, Terminal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
@@ -54,6 +54,18 @@ export function DocsIndexPage() {
             >
               <Rocket />
               {t('Quick Start')}
+            </Button>
+            <Button
+              variant='outline'
+              render={
+                <Link
+                  to='/help/integrations'
+                  search={{ public_line: undefined, model: undefined }}
+                />
+              }
+            >
+              <Terminal />
+              {t('Client setup wizard')}
             </Button>
             <Button variant='outline' render={<Link to='/help/api' />}>
               <Braces />

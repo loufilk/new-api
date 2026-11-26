@@ -108,7 +108,7 @@ func fetchGroupData(ctx context.Context, client *http.Client, groupConfig map[st
 
 	var heartbeatData struct {
 		HeartbeatList map[string][]struct {
-			Status int `json:"status"`
+			Status *int `json:"status"`
 		} `json:"heartbeatList"`
 		UptimeList map[string]float64 `json:"uptimeList"`
 	}
@@ -145,7 +145,11 @@ func fetchGroupData(ctx context.Context, client *http.Client, groupConfig map[st
 			}
 
 			if heartbeats, exists := heartbeatData.HeartbeatList[monitorID]; exists && len(heartbeats) > 0 {
-				monitor.Status = heartbeats[0].Status
+				// Uptime Kuma status pages return heartbeats in chronological order.
+				// An absent latest status is unknown, not an old up/down sample.
+				if latest := heartbeats[len(heartbeats)-1].Status; latest != nil {
+					monitor.Status = *latest
+				}
 			}
 
 			result.Monitors = append(result.Monitors, monitor)

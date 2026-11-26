@@ -251,6 +251,10 @@ func recordGroupRenameAliasesTx(tx *gorm.DB, mappings []GroupRenameMapping) erro
 }
 
 func bumpGroupConfigVersionTx(tx *gorm.DB) (int64, error) {
+	return advanceGroupConfigVersionTx(tx, nil)
+}
+
+func advanceGroupConfigVersionTx(tx *gorm.DB, change *marketTransition) (int64, error) {
 	option := Option{Key: groupConfigVersionOptionKey, Value: "0"}
 	if err := tx.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "key"}},
@@ -269,6 +273,19 @@ func bumpGroupConfigVersionTx(tx *gorm.DB) (int64, error) {
 	if err := tx.Model(&Option{}).Where(&Option{Key: groupConfigVersionOptionKey}).
 		Update("value", strconv.FormatInt(next, 10)).Error; err != nil {
 		return 0, err
+	}
+	// A savepoint isolates optional presentation storage failures. On failure
+	// the cursor stays behind the durable namespace revision, so old data cannot
+	// appear current. Never abort a valid ACL or price update for a badge.
+	if err := tx.Transaction(func(sidecar *gorm.DB) error {
+		return recordMarketRevisionTx(sidecar, current, next, change)
+	}); err != nil {
+		common.SysError("marketplace activity recording unavailable; notices suppressed")
+	}
+	if change != nil {
+		if err := retireChangedPublicModelLinesTx(tx, change); err != nil {
+			return 0, err
+		}
 	}
 	return next, nil
 }
@@ -347,7 +364,7 @@ func reloadGroupRuntimeOptions() error {
 	// The caller owns requestPolicyOptionMutex before groupConfigApplyMutex.
 	groupRenameRuntimeApplyMutex.Lock()
 	defer groupRenameRuntimeApplyMutex.Unlock()
-	keys := []string{groupRateLimitBucketsOptionKey, request_plugin_setting.InstancesOption}
+	keys := []string{groupMarketDataKey, groupMarketCursorKey, groupRateLimitBucketsOptionKey, groupCatalogOptionKey, groupCatalogIconsOptionKey, groupCatalogBadgesOptionKey, request_plugin_setting.InstancesOption}
 	for key := range groupRenameWritableOptionKeys {
 		keys = append(keys, key)
 	}
@@ -362,13 +379,17 @@ func reloadGroupRuntimeOptions() error {
 	if err := validateGroupOptionAliases(values, nil); err != nil {
 		return err
 	}
+	loadMarketRuntime(values)
 	buckets, err := parseGroupRateLimitBuckets(values[groupRateLimitBucketsOptionKey])
 	if err != nil {
 		return err
 	}
 	groupRateLimitBuckets.Store(&buckets)
+	if err := loadGroupCatalogRuntime(values[groupCatalogOptionKey], values[groupCatalogIconsOptionKey], values[groupCatalogBadgesOptionKey]); err != nil {
+		return err
+	}
 	for _, option := range options {
-		if option.Key == groupRateLimitBucketsOptionKey {
+		if isGroupMarketOption(option.Key) || option.Key == groupRateLimitBucketsOptionKey || isGroupCatalogOption(option.Key) {
 			continue
 		}
 		if err := updateOptionMap(option.Key, option.Value); err != nil {

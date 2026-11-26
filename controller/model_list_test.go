@@ -185,7 +185,10 @@ func modelSquareData[T any](t *testing.T, handler gin.HandlerFunc, path, userGro
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodGet, path, nil)
 	if userGroup != "" {
-		common.SetContextKey(ctx, constant.ContextKeyUserGroup, userGroup)
+		var user model.User
+		require.NoError(t, model.DB.Where("username = ?", "square-"+userGroup).First(&user).Error)
+		ctx.Set("id", user.Id)
+		common.SetContextKey(ctx, constant.ContextKeyUserGroup, user.Group)
 	}
 	handler(ctx)
 	require.Equal(t, http.StatusOK, recorder.Code)
@@ -212,8 +215,13 @@ func TestModelSquareGroupVisibility(t *testing.T) {
 				t.Skip("set " + dialect.env + " to run this database")
 			}
 			db := modelManagementDB(t, dialect.kind, os.Getenv(dialect.env))
+			require.NoError(t, db.AutoMigrate(&model.Token{}, &model.SubscriptionPlan{}))
+			for _, group := range []string{"default", "internal"} {
+				require.NoError(t, db.Create(&model.User{Username: "square-" + group, Group: group, AffCode: "square-" + group, Status: common.UserStatusEnabled}).Error)
+			}
 			require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Public"}`))
 			require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"internal":2}`))
+			seedLiveInventoryChannels(t, db, 1)
 			require.NoError(t, db.Create(&[]model.Ability{
 				{Model: "shared", Group: "default", ChannelId: 1, Enabled: true},
 				{Model: "shared", Group: "internal", ChannelId: 1, Enabled: true},
@@ -224,10 +232,10 @@ func TestModelSquareGroupVisibility(t *testing.T) {
 			model.InvalidatePricingCache()
 			t.Cleanup(model.InvalidatePricingCache)
 
-			guest := pricingByModelName(modelSquareData[[]model.Pricing](t, GetPricing, "/api/pricing", ""))
-			assert.Equal(t, []string{"default"}, guest["shared"].EnableGroup)
-			assert.Equal(t, []string{"all"}, guest["wildcard"].EnableGroup)
-			assert.NotContains(t, guest, "private-only")
+			ordinary := pricingByModelName(modelSquareData[[]model.Pricing](t, GetPricing, "/api/pricing", "default"))
+			assert.Equal(t, []string{"default"}, ordinary["shared"].EnableGroup)
+			assert.Equal(t, []string{"all"}, ordinary["wildcard"].EnableGroup)
+			assert.NotContains(t, ordinary, "private-only")
 			member := pricingByModelName(modelSquareData[[]model.Pricing](t, GetPricing, "/api/pricing", "internal"))
 			assert.ElementsMatch(t, []string{"default", "internal"}, member["shared"].EnableGroup)
 			assert.Equal(t, []string{"internal"}, member["private-only"].EnableGroup)
@@ -241,10 +249,10 @@ func TestModelSquareGroupVisibility(t *testing.T) {
 			}).Error)
 			const detailPath = "/api/perf-metrics?model=shared"
 			const summaryPath = "/api/perf-metrics/summary?recent_model=private-only"
-			detail := modelSquareData[perfmetrics.QueryResult](t, GetPerfMetrics, detailPath, "")
+			detail := modelSquareData[perfmetrics.QueryResult](t, GetPerfMetrics, detailPath, "default")
 			require.Len(t, detail.Groups, 1)
 			assert.Equal(t, "default", detail.Groups[0].Group)
-			denied := modelSquareData[perfmetrics.QueryResult](t, GetPerfMetrics, detailPath+"&group=internal", "")
+			denied := modelSquareData[perfmetrics.QueryResult](t, GetPerfMetrics, detailPath+"&group=internal", "default")
 			assert.Empty(t, denied.Groups)
 			summary := modelSquareData[perfmetrics.SummaryAllResult](t, GetPerfMetricsSummary, summaryPath, "")
 			require.Len(t, summary.Models, 1)
@@ -256,13 +264,116 @@ func TestModelSquareGroupVisibility(t *testing.T) {
 			assert.Equal(t, "internal", allowed.Groups[0].Group)
 
 			require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{}`))
-			assert.Empty(t, modelSquareData[[]model.Pricing](t, GetPricing, "/api/pricing", ""))
-			assert.Empty(t, modelSquareData[perfmetrics.QueryResult](t, GetPerfMetrics, detailPath, "").Groups)
+			// The authenticated member retains its own group, but an anonymous
+			// market summary has no implicit group after public visibility is cleared.
+			remaining := pricingByModelName(modelSquareData[[]model.Pricing](t, GetPricing, "/api/pricing", "default"))
+			assert.Equal(t, []string{"default"}, remaining["shared"].EnableGroup)
+			assert.NotContains(t, remaining, "private-only")
+			assert.Len(t, modelSquareData[perfmetrics.QueryResult](t, GetPerfMetrics, detailPath, "default").Groups, 1)
 			assert.Empty(t, modelSquareData[perfmetrics.SummaryAllResult](t, GetPerfMetricsSummary, summaryPath, "").Models)
 			dashboard := modelSquareData[perfmetrics.SummaryAllResult](t, GetDashboardPerfMetricsSummary, "/api/data/perf-metrics/summary", "")
 			assert.Len(t, dashboard.Models, 2)
 			require.NotNil(t, dashboard.Summary)
 			assert.Equal(t, 33.33, dashboard.Summary.SuccessRate)
+		})
+	}
+}
+
+func TestModelSquareOrderFollowsSavedSetting(t *testing.T) {
+	originalGroups := setting.UserUsableGroups2JSONString()
+	originalRatios := ratio_setting.GroupRatio2JSONString()
+	originalOrder := *operation_setting.GetModelSquareSetting()
+	originalDataExport := common.DataExportEnabled
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalGroups))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalRatios))
+		*operation_setting.GetModelSquareSetting() = originalOrder
+		common.DataExportEnabled = originalDataExport
+	})
+
+	for _, dialect := range []struct{ kind, env string }{{"sqlite", ""}, {"mysql", "TEST_MYSQL_DSN"}, {"postgres", "TEST_POSTGRES_DSN"}} {
+		t.Run(dialect.kind, func(t *testing.T) {
+			if dialect.env != "" && os.Getenv(dialect.env) == "" {
+				t.Skip("set " + dialect.env + " to run this database")
+			}
+			db := modelManagementDB(t, dialect.kind, os.Getenv(dialect.env))
+			require.NoError(t, db.AutoMigrate(&model.Token{}, &model.SubscriptionPlan{}))
+			user := model.User{Username: "square-order", Group: "default", AffCode: "square-order", Status: common.UserStatusEnabled}
+			require.NoError(t, db.Create(&user).Error)
+			// The service caches usage across databases, so usage ordering is
+			// covered in the service tests and the query is checked directly below.
+			common.DataExportEnabled = false
+			require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":2}`))
+			*operation_setting.GetModelSquareSetting() = operation_setting.ModelSquareSetting{SortMode: "manual", SortMetric: "tokens", SortDays: 7, SortModels: []string{}}
+			require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Public"}`))
+			vendor := model.Vendor{Name: "Acme", Icon: "Acme.Color"}
+			require.NoError(t, db.Create(&vendor).Error)
+			require.NoError(t, db.Create(&model.Model{ModelName: "vip-only", Icon: "Vip.Color", VendorID: vendor.Id, Status: 1}).Error)
+			seedLiveInventoryChannels(t, db, 1)
+			require.NoError(t, db.Create(&[]model.Ability{
+				{Model: "alpha", Group: "default", ChannelId: 1, Enabled: true},
+				{Model: "gamma", Group: "default", ChannelId: 1, Enabled: true},
+				{Model: "vip-only", Group: "vip", ChannelId: 1, Enabled: true},
+			}).Error)
+			model.InvalidatePricingCache()
+			t.Cleanup(model.InvalidatePricingCache)
+
+			manual := []string{"gamma", "alpha"}
+			for _, step := range []struct {
+				key, value string
+				rejected   bool
+				want       []string
+			}{
+				{want: []string{}},
+				{key: "model_square_setting.sort_models", value: `["gamma","vip-only","alpha","gamma"]`, want: manual},
+				{key: "model_square_setting.sort_mode", value: "random", rejected: true, want: manual},
+				{key: "model_square_setting.sort_metric", value: "cost", rejected: true, want: manual},
+				{key: "model_square_setting.sort_days", value: "3", rejected: true, want: manual},
+				{key: "model_square_setting.sort_models", value: `"gamma"`, rejected: true, want: manual},
+			} {
+				if step.key != "" {
+					err := model.UpdateOption(step.key, step.value)
+					if step.rejected {
+						require.Error(t, err, step.key)
+					} else {
+						require.NoError(t, err, step.key)
+					}
+				}
+				recorder := httptest.NewRecorder()
+				ctx, _ := gin.CreateTestContext(recorder)
+				ctx.Request = httptest.NewRequest(http.MethodGet, "/api/pricing", nil)
+				ctx.Set("id", user.Id)
+				GetPricing(ctx)
+				require.Equal(t, http.StatusOK, recorder.Code)
+				var response struct {
+					ModelOrder map[string][]string `json:"model_order"`
+				}
+				require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+				assert.Equal(t, map[string][]string{"recommended": step.want, "requests": {}, "tokens": {}}, response.ModelOrder, step.key)
+			}
+
+			// The admin preview offers the models of every group.
+			assert.ElementsMatch(t, []modelSquareUsage{
+				{ModelName: "alpha"},
+				{ModelName: "gamma"},
+				{ModelName: "vip-only", Icon: "Vip.Color", VendorName: "Acme", VendorIcon: "Acme.Color"},
+			}, modelSquareData[[]modelSquareUsage](t, GetModelSquareUsage, "/api/models/square_usage?days=7", ""))
+
+			require.NoError(t, db.AutoMigrate(&model.QuotaData{}))
+			now := time.Now().Unix()
+			require.NoError(t, db.Create(&[]model.QuotaData{
+				{UserID: 1, Username: "a", ModelName: "alpha", CreatedAt: now - 3600, Count: 3, TokenUsed: 100},
+				{UserID: 2, Username: "b", ModelName: "alpha", CreatedAt: now - 7200, Count: 2},
+				{UserID: 1, Username: "a", ModelName: "vip-only", CreatedAt: now - 3600, Count: 1},
+				{UserID: 1, Username: "a", ModelName: "gamma", CreatedAt: now - 8*24*3600, Count: 9, TokenUsed: 900},
+				{UserID: 1, Username: "a", ModelName: "", CreatedAt: now - 3600, Count: 4, TokenUsed: 40},
+			}).Error)
+			totals, err := model.GetModelUsageTotals(now-7*24*3600, now)
+			require.NoError(t, err)
+			assert.ElementsMatch(t, []model.ModelUsageTotal{
+				{ModelName: "alpha", Requests: 5, Tokens: 100},
+				{ModelName: "vip-only", Requests: 1},
+			}, totals)
 		})
 	}
 }
@@ -286,6 +397,7 @@ func TestGetUserModelsFiltersByRequestedGroup(t *testing.T) {
 		Group:    "default",
 		Status:   common.UserStatusEnabled,
 	}).Error)
+	seedLiveInventoryChannels(t, db, 1)
 	require.NoError(t, db.Create(&[]model.Ability{
 		{Group: "default", Model: "zz-default-only-model", ChannelId: 1, Enabled: true},
 		{Group: "default", Model: "zz-disabled-model", ChannelId: 1, Enabled: false},
@@ -340,6 +452,7 @@ func TestGetUserModelsExpandsAutoGroupsInConfiguredOrder(t *testing.T) {
 		Group:    "default",
 		Status:   common.UserStatusEnabled,
 	}).Error)
+	seedLiveInventoryChannels(t, db, 1, 2)
 	require.NoError(t, db.Create(&[]model.Ability{
 		{Group: "vip", Model: "zz-vip-model", ChannelId: 1, Enabled: true},
 		{Group: "vip", Model: "zz-shared-model", ChannelId: 1, Enabled: true},

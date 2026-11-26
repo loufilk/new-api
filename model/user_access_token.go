@@ -306,8 +306,12 @@ func EnsureLegacyAccessTokenRetireAt(now int64) error {
 	if err := DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&Option{Key: legacyAccessTokenRetireAtKey, Value: deadline}).Error; err != nil {
 		return err
 	}
+	return loadLegacyAccessTokenRetireAt(DB)
+}
+
+func loadLegacyAccessTokenRetireAt(db *gorm.DB) error {
 	var option Option
-	if err := DB.Where(&Option{Key: legacyAccessTokenRetireAtKey}).First(&option).Error; err != nil {
+	if err := db.Where(&Option{Key: legacyAccessTokenRetireAtKey}).First(&option).Error; err != nil {
 		return err
 	}
 	retireAt, err := strconv.ParseInt(strings.TrimSpace(option.Value), 10, 64)

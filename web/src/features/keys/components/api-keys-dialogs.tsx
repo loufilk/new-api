@@ -16,12 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { MarketKeyDraft } from '../lib/market-key-draft'
 import { ApiKeysDeleteDialog } from './api-keys-delete-dialog'
 import { ApiKeysMutateDrawer } from './api-keys-mutate-drawer'
 import { useApiKeys } from './api-keys-provider'
 import { CCSwitchDialog } from './dialogs/cc-switch-dialog'
+import { MagpieImportDialog } from './dialogs/magpie-import-dialog'
+import { KeyDiagnosticHost } from './key-diagnostic-dialog'
+import { KeyGroupHealthPreview } from './key-group-health-preview'
 
-export function ApiKeysDialogs() {
+export function ApiKeysDialogs({ draft }: { draft?: MarketKeyDraft }) {
   const { open, setOpen, currentRow, resolvedKey } = useApiKeys()
 
   return (
@@ -35,14 +39,24 @@ export function ApiKeysDialogs() {
         open={open === 'create' || open === 'update'}
         onOpenChange={(isOpen) => !isOpen && setOpen(null)}
         currentRow={open === 'update' ? currentRow || undefined : undefined}
+        draft={open === 'create' ? draft : undefined}
+        previewDetails={KeyGroupHealthPreview}
       />
       <ApiKeysDeleteDialog />
+      <KeyDiagnosticHost />
       <CCSwitchDialog
         open={open === 'cc-switch'}
         onOpenChange={(isOpen) => !isOpen && setOpen(null)}
         tokenKey={resolvedKey}
         token={currentRow}
       />
+      {open === 'magpie' && currentRow ? (
+        <MagpieImportDialog
+          key={currentRow.id}
+          token={currentRow}
+          onClose={() => setOpen(null)}
+        />
+      ) : null}
     </>
   )
 }

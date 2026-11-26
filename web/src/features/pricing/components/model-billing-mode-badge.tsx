@@ -34,6 +34,7 @@ interface ModelBillingModeBadgeProps {
 export function ModelBillingModeBadge(props: ModelBillingModeBadgeProps) {
   const { t } = useTranslation()
   const labelKey = getBillingModeLabelKey(props.model)
+  if (!labelKey) return null
   const label = t(labelKey)
   const isCaption = props.appearance === 'caption'
   let variant: StatusVariant = 'purple'

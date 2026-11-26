@@ -22,7 +22,7 @@ import { persist } from 'zustand/middleware'
 interface NotificationState {
   // Last read Notice content signature (full trimmed message)
   lastReadNotice: string
-  // Array of read announcement keys (id or content hash)
+  // Read announcement revisions (legacy entries are migrated on first observation)
   readAnnouncementKeys: string[]
   // Timestamp of last "Close Today" action
   closedUntilDate: string | null
@@ -32,6 +32,7 @@ interface NotificationState {
   // Actions
   markNoticeRead: (noticeContent: string) => void
   markAnnouncementsRead: (keys: string[]) => void
+  replaceLegacyAnnouncementKeys: (previous: string[], next: string[]) => void
   setClosedUntilDate: (date: string | null) => void
   setAutoPopupShown: () => void
   isAnnouncementRead: (key: string) => boolean
@@ -57,11 +58,21 @@ export const useNotificationStore = create<NotificationState>()(
       },
 
       markAnnouncementsRead: (keys: string[]) => {
-        set((state) => ({
-          readAnnouncementKeys: [
-            ...new Set([...state.readAnnouncementKeys, ...keys]),
-          ],
-        }))
+        set((state) => {
+          const previous = new Set(state.readAnnouncementKeys)
+          const added = keys.filter((key) => !previous.has(key))
+          return added.length
+            ? { readAnnouncementKeys: [...new Set([...previous, ...added])] }
+            : state
+        })
+      },
+
+      replaceLegacyAnnouncementKeys: (previous, next) => {
+        set((state) =>
+          state.readAnnouncementKeys === previous
+            ? { readAnnouncementKeys: [...new Set(next)] }
+            : state
+        )
       },
 
       setClosedUntilDate: (date: string | null) => {

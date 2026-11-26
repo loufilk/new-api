@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useFormState } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import * as z from 'zod'
@@ -54,7 +54,7 @@ import { getOptionValue } from '../hooks/use-system-options'
 import { useUpdateOption } from '../hooks/use-update-option'
 import type { GroupRenameMapping } from '../types'
 import { positiveIntegerSchema } from '../utils/numeric-field'
-import { GroupRatioForm } from './group-ratio-form'
+import { GroupRatioForm, type GroupWorkspacePanel } from './group-ratio-form'
 import type {
   GroupRatioSaveOutcome,
   GroupRenameEditableValues,
@@ -231,6 +231,8 @@ type RatioSettingsCardProps = {
   toolPricesDefault: string
   titleKey?: string
   visibleTabs?: RatioTabId[]
+  groupWorkspacePanel?: GroupWorkspacePanel
+  groupWorkspaceActive?: boolean
 }
 
 export function RatioSettingsCard({
@@ -239,6 +241,8 @@ export function RatioSettingsCard({
   toolPricesDefault,
   titleKey = 'Pricing Ratios',
   visibleTabs = ['models', 'groups', 'tool-prices', 'upstream-sync'],
+  groupWorkspacePanel,
+  groupWorkspaceActive,
 }: RatioSettingsCardProps) {
   const { t, i18n } = useTranslation()
   const isMobile = useMediaQuery('(max-width: 639px)')
@@ -317,7 +321,9 @@ export function RatioSettingsCard({
   const [groupBaseline, setGroupBaseline] = useState<GroupRenameBaseline>(() =>
     groupRenameBaselineFromDefaults(groupDefaults)
   )
-  if (!shallow(incomingGroupDefaults, groupDefaults)) {
+  const observedWorkspaceDefaults = useRef(incomingGroupDefaults)
+  const [workspacePricingValid, setWorkspacePricingValid] = useState(true)
+  if (!groupWorkspacePanel && !shallow(incomingGroupDefaults, groupDefaults)) {
     setGroupDefaults(incomingGroupDefaults)
     setGroupBaseline(groupRenameBaselineFromDefaults(incomingGroupDefaults))
   }
@@ -371,6 +377,29 @@ export function RatioSettingsCard({
       ),
     },
   })
+  const { isDirty: groupDraftDirty } = useFormState({
+    control: groupForm.control,
+  })
+
+  useEffect(() => {
+    if (
+      !groupWorkspacePanel ||
+      !workspacePricingValid ||
+      groupDraftDirty ||
+      shallow(incomingGroupDefaults, observedWorkspaceDefaults.current)
+    ) {
+      return
+    }
+    // A refresh must never move the CAS baseline underneath an active draft.
+    observedWorkspaceDefaults.current = incomingGroupDefaults
+    setGroupDefaults(incomingGroupDefaults)
+    setGroupBaseline(groupRenameBaselineFromDefaults(incomingGroupDefaults))
+  }, [
+    groupDraftDirty,
+    groupWorkspacePanel,
+    incomingGroupDefaults,
+    workspacePricingValid,
+  ])
 
   useEffect(() => {
     modelForm.reset({
@@ -599,7 +628,41 @@ export function RatioSettingsCard({
               applied[apiKey] ?? options[apiKey] ?? value
           }
           setGroupBaseline(nextBaseline)
+          if (groupWorkspacePanel) {
+            // Only the acknowledged server snapshot can clear a dirty workspace.
+            setGroupDefaults({
+              ...nextBaseline,
+              MaxTokenAutoGroups: Number(nextBaseline.MaxTokenAutoGroups),
+              DefaultUseAutoGroup: nextBaseline.DefaultUseAutoGroup === 'true',
+            })
+          }
           await queryClient.invalidateQueries({ queryKey: ['system-options'] })
+        }
+        if (renames.length || Object.hasOwn(options, 'GroupRatio')) {
+          // Activity is recorded by the server in the existing save. Never
+          // manufacture a notice from a draft or a replayed receipt.
+          const activityFilter = { queryKey: ['admin-group-market-activity'] }
+          // An initial activity read may still be in flight when Save returns.
+          // Invalidation alone can join that pre-commit read.
+          await Promise.all([
+            queryClient.cancelQueries(activityFilter),
+            queryClient.cancelQueries({ queryKey: ['pricing'] }),
+          ])
+          void queryClient.invalidateQueries(activityFilter)
+          if (!groupWorkspacePanel) {
+            void queryClient.invalidateQueries({ queryKey: ['pricing'] })
+          }
+        }
+        if (groupWorkspacePanel) {
+          await Promise.all(
+            [
+              'admin-group-catalog',
+              'admin-group-entitlements',
+              'admin-personal-pricing',
+              'pricing',
+              'user-groups',
+            ].map((key) => queryClient.invalidateQueries({ queryKey: [key] }))
+          )
         }
         if (renames.length > 0 && response.data) {
           const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
@@ -623,7 +686,14 @@ export function RatioSettingsCard({
         return 'failed'
       }
     },
-    [queryClient, t, i18n, groupBaseline, reloadCurrentGroupSettings]
+    [
+      queryClient,
+      t,
+      i18n,
+      groupBaseline,
+      groupWorkspacePanel,
+      reloadCurrentGroupSettings,
+    ]
   )
 
   const handleResetRatios = useCallback(() => {
@@ -708,6 +778,9 @@ export function RatioSettingsCard({
           baseline={groupRenameBaseline}
           onSave={saveGroupRatios}
           isSaving={updateOption.isPending}
+          workspacePanel={groupWorkspacePanel}
+          workspaceActive={groupWorkspaceActive}
+          onWorkspacePricingValidityChange={setWorkspacePricingValid}
         />
       )
     }
@@ -736,6 +809,14 @@ export function RatioSettingsCard({
       ))}
     </TabsList>
   )
+
+  if (
+    groupWorkspacePanel &&
+    visibleTabs.length === 1 &&
+    defaultTab === 'groups'
+  ) {
+    return renderTabContent('groups')
+  }
 
   return (
     <>

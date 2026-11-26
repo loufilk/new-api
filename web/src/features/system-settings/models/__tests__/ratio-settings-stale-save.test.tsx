@@ -16,8 +16,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  QueryClient,
+  QueryClientProvider,
+  QueryObserver,
+} from '@tanstack/react-query'
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import { AxiosError, type AxiosResponse } from 'axios'
 import i18next from 'i18next'
 import { toast } from 'sonner'
@@ -106,7 +117,10 @@ afterEach(() => {
   actionsContainer = null
 })
 
-function renderCard() {
+function renderCard(
+  workspace?: 'pricing' | 'advanced',
+  defaults = GROUP_DEFAULTS
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
@@ -122,11 +136,12 @@ function renderCard() {
           groupDefaults={groupDefaults}
           toolPricesDefault='{}'
           visibleTabs={['groups']}
+          groupWorkspacePanel={workspace}
         />
       </SettingsPageProvider>
     </QueryClientProvider>
   )
-  const view = render(content(GROUP_DEFAULTS))
+  const view = render(content(defaults))
   return {
     queryClient,
     invalidateSpy,
@@ -185,6 +200,147 @@ test('an equivalent options refresh keeps the draft, but changed group defaults 
   })
   expect(await screen.findByDisplayValue('enterprise')).toBeInTheDocument()
   expect(screen.queryByDisplayValue('vip2')).not.toBeInTheDocument()
+})
+
+test('workspace refresh leaves the dirty ratio and its original CAS baseline intact', async () => {
+  renameSystemGroupsMock.mockRejectedValue(staleAxiosError())
+  const { updateDefaults } = renderCard('pricing')
+  const ratio = await screen.findByRole('spinbutton', { name: 'Ratio' })
+  fireEvent.change(ratio, { target: { value: '0.67' } })
+  updateDefaults({ ...GROUP_DEFAULTS, GroupRatio: '{"vip":2}' })
+  expect(ratio).toHaveValue(0.67)
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+  await waitFor(() =>
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(STALE_MESSAGE)
+  )
+  const [payload] = renameSystemGroupsMock.mock.calls[0]
+  expect(JSON.parse(payload.expected.GroupRatio)).toEqual({ vip: 1 })
+  expect(JSON.parse(payload.options.GroupRatio)).toEqual({ vip: 0.67 })
+  expect(ratio).toHaveValue(0.67)
+})
+
+test('batch preview applies only selected base rates to the draft and preserves the original write fence', async () => {
+  renameSystemGroupsMock.mockRejectedValue(staleAxiosError())
+  const defaults = {
+    ...GROUP_DEFAULTS,
+    GroupRatio: '{"vip":1,"standard":3}',
+    UserUsableGroups: '{"vip":"VIP","restricted":"Private"}',
+  }
+  const { updateDefaults } = renderCard('pricing', defaults)
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Batch edit base rates' })
+  )
+  const dialog = within(
+    await screen.findByRole('dialog', { name: 'Batch edit base rates' })
+  )
+  expect(dialog.queryByText('restricted')).not.toBeInTheDocument()
+  fireEvent.click(dialog.getByRole('checkbox', { name: 'Select group vip' }))
+  expect(dialog.getByRole('button', { name: 'Apply to draft' })).toBeDisabled()
+  fireEvent.change(dialog.getByRole('spinbutton', { name: 'New base rate' }), {
+    target: { value: '-1' },
+  })
+  expect(dialog.getByRole('button', { name: 'Apply to draft' })).toBeDisabled()
+  fireEvent.change(dialog.getByRole('spinbutton', { name: 'New base rate' }), {
+    target: { value: '0' },
+  })
+  expect(dialog.getByText('1× → 0×')).toBeInTheDocument()
+  expect(dialog.getByText('3×')).toBeInTheDocument()
+  fireEvent.click(dialog.getByRole('button', { name: 'Apply to draft' }))
+  expect(renameSystemGroupsMock).not.toHaveBeenCalled()
+  expect(
+    await screen.findByRole('button', { name: 'Batch edit base rates' })
+  ).toBeDisabled()
+  updateDefaults({ ...defaults, GroupRatio: '{"vip":2,"standard":3}' })
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+  await waitFor(() =>
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(STALE_MESSAGE)
+  )
+  const [payload] = renameSystemGroupsMock.mock.calls[0]
+  expect(payload.renames).toEqual([])
+  expect(Object.keys(payload.options)).toEqual(['GroupRatio'])
+  expect(JSON.parse(payload.options.GroupRatio)).toEqual({
+    vip: 0,
+    standard: 3,
+  })
+  expect(JSON.parse(payload.expected.GroupRatio)).toEqual({
+    vip: 1,
+    standard: 3,
+  })
+  const vip = screen.getByRole('row', { name: /vip/ })
+  expect(within(vip).getByRole('spinbutton', { name: 'Ratio' })).toHaveValue(0)
+})
+
+test('workspace freezes both editor input and Save until acknowledgement', async () => {
+  let resolve: (value: unknown) => void = () => undefined
+  renameSystemGroupsMock.mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolve = done
+      })
+  )
+  const { invalidateSpy } = renderCard('pricing')
+  const ratio = await screen.findByRole('spinbutton', { name: 'Ratio' })
+  fireEvent.change(ratio, { target: { value: '0.75' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+  await waitFor(() => expect(ratio.closest('[inert]')).not.toBeNull())
+  expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled()
+  expect(invalidateSpy).not.toHaveBeenCalledWith({
+    queryKey: ['admin-group-market-activity'],
+  })
+  await act(async () => {
+    resolve({
+      success: true,
+      data: { applied_options: { GroupRatio: '{"vip":0.75}' } },
+    })
+  })
+  await waitFor(() =>
+    expect(
+      screen.getByRole('spinbutton', { name: 'Ratio' }).closest('[inert]')
+    ).toBeNull()
+  )
+  expect(screen.getByRole('spinbutton', { name: 'Ratio' })).toHaveValue(0.75)
+  expect(invalidateSpy).toHaveBeenCalledWith({
+    queryKey: ['admin-group-market-activity'],
+  })
+  expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['pricing'] })
+  expect(renameSystemGroupsMock).toHaveBeenCalledTimes(1)
+})
+
+test('a successful base-rate save refreshes activity even if its first read began before the commit', async () => {
+  renameSystemGroupsMock.mockResolvedValueOnce({
+    success: true,
+    data: { applied_options: { GroupRatio: '{"vip":0.65}' } },
+  })
+  const { queryClient } = renderCard('pricing')
+  const queryKey = ['admin-group-market-activity', 1, 'session']
+  let deliverOld = (_: string[]) => {}
+  const beforeSave = new Promise<string[]>((resolve) => {
+    deliverOld = resolve
+  })
+  const load = vi
+    .fn()
+    .mockReturnValueOnce(beforeSave)
+    .mockResolvedValue(['saved change'])
+  const observer = new QueryObserver(queryClient, { queryKey, queryFn: load })
+  const unsubscribe = observer.subscribe(() => {})
+  try {
+    expect(load).toHaveBeenCalledTimes(1)
+    fireEvent.change(await screen.findByRole('spinbutton', { name: 'Ratio' }), {
+      target: { value: '0.65' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save group settings' }))
+    await waitFor(() =>
+      expect(queryClient.getQueryData(queryKey)).toEqual(['saved change'])
+    )
+    await act(async () => {
+      deliverOld([])
+      await beforeSave
+    })
+    expect(queryClient.getQueryData(queryKey)).toEqual(['saved change'])
+    expect(renameSystemGroupsMock).toHaveBeenCalledTimes(1)
+  } finally {
+    unsubscribe()
+  }
 })
 
 describe('group settings save conflict handling', () => {

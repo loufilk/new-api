@@ -21,8 +21,8 @@ import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
 import { Button } from '@/components/ui/button'
-import { API_BASE_URL } from '@/lib/api-url'
 
+import { useMarketApiBase } from '../hooks/use-market-api-base'
 import {
   getEndpointDocId,
   getModelEndpoints,
@@ -30,19 +30,23 @@ import {
   type ModelEndpointMap,
 } from '../lib/model-endpoints'
 import type { PricingModel } from '../types'
+import { MarketCreateKey } from './market-create-key'
 
 export function ModelApiActions(props: {
   model: PricingModel
   endpointMap: ModelEndpointMap
+  selectedGroup?: string
 }) {
   const { t } = useTranslation()
-  const endpoint = getModelEndpoints(props.model, props.endpointMap)[0]
+  const endpoint = getModelEndpoints(
+    props.model,
+    props.endpointMap,
+    props.selectedGroup
+  )[0]
   const path = endpoint?.path
   const documentation = endpoint ? getEndpointDocId(endpoint.type) : undefined
-  const playground = getModelPlayground(props.model)
-  const origin =
-    API_BASE_URL ||
-    (typeof window !== 'undefined' ? window.location.origin : '')
+  const playground = getModelPlayground(props.model, props.selectedGroup)
+  const origin = useMarketApiBase()
   return (
     <div className='flex min-w-0 flex-col gap-2'>
       {path && (
@@ -54,6 +58,10 @@ export function ModelApiActions(props: {
         </code>
       )}
       <div className='flex flex-wrap gap-1.5'>
+        <MarketCreateKey
+          model={props.model}
+          selectedGroup={props.selectedGroup}
+        />
         {path && (
           <CopyButton
             value={`${origin}${path}`}

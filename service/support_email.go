@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"net"
+	"net/http"
 	"net/textproto"
 	"strconv"
 	"time"
@@ -19,17 +20,38 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-// Read only primary-DB SMTP options, never stale globals or request headers.
-// Values/driver errors are not logged: this snapshot contains SMTP credentials.
-func SupportEmailSMTPConfig(ctx context.Context) (common.SMTPDeliveryConfig, bool, error) {
+type supportEmailDelivery struct {
+	provider              string
+	configured            bool
+	smtp                  common.SMTPDeliveryConfig
+	resendKey, resendFrom string
+}
+
+// Return only the selected provider and readiness to callers; never expose secrets.
+func SupportEmailDeliveryStatus(ctx context.Context) (string, bool, error) {
+	config, err := readSupportEmailDelivery(ctx)
+	return config.provider, config.configured, err
+}
+
+// Take one snapshot from the primary DB after admission, not from stale globals.
+// Neither credentials nor raw driver/provider errors are logged or returned by the API.
+func readSupportEmailDelivery(ctx context.Context) (supportEmailDelivery, error) {
 	var rows []model.Option
-	err := model.DB.WithContext(ctx).Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)}).Where(map[string]any{"key": []string{"EmailProvider", "SMTPServer", "SMTPPort", "SMTPAccount", "SMTPToken", "SMTPFrom", "SMTPSSLEnabled", "SMTPStartTLSEnabled", "SMTPInsecureSkipVerify", "SMTPForceAuthLogin"}}).Find(&rows).Error
+	err := model.DB.WithContext(ctx).Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)}).Where(map[string]any{"key": []string{"EmailProvider", "ResendApiKey", "ResendFrom", "SMTPServer", "SMTPPort", "SMTPAccount", "SMTPToken", "SMTPFrom", "SMTPSSLEnabled", "SMTPStartTLSEnabled", "SMTPInsecureSkipVerify", "SMTPForceAuthLogin"}}).Find(&rows).Error
 	if err != nil {
-		return common.SMTPDeliveryConfig{}, false, err
+		return supportEmailDelivery{}, err
 	}
 	options := map[string]string{}
 	for _, row := range rows {
 		options[row.Key] = row.Value
+	}
+	switch options["EmailProvider"] {
+	case "resend":
+		key, from := options["ResendApiKey"], options["ResendFrom"]
+		return supportEmailDelivery{provider: "resend", configured: common.ValidateResendConfiguration(key, from) == nil, resendKey: key, resendFrom: from}, nil
+	case "", "smtp":
+	default:
+		return supportEmailDelivery{provider: "unsupported"}, nil
 	}
 	port := 587 // Match the existing SMTP default when no option row was saved.
 	if raw := options["SMTPPort"]; raw != "" {
@@ -39,7 +61,7 @@ func SupportEmailSMTPConfig(ctx context.Context) (common.SMTPDeliveryConfig, boo
 	if config.From == "" {
 		config.From = config.Account
 	}
-	return config, (options["EmailProvider"] == "" || options["EmailProvider"] == "smtp") && config.Valid(), nil
+	return supportEmailDelivery{provider: "smtp", configured: config.Valid(), smtp: config}, nil
 }
 
 func SupportEmailContent(row *model.SupportEmailOutbox, admission *model.SupportEmailAdmission) (subject, plain, markup, messageID string) {
@@ -72,6 +94,19 @@ func supportEmailErrorCode(err error) string {
 	if errors.As(err, &network) && network.Timeout() {
 		return "delivery_timeout"
 	}
+	var resend *common.ResendHTTPError
+	if errors.As(err, &resend) {
+		switch {
+		case resend.Status == http.StatusTooManyRequests:
+			return "resend_rate_limited"
+		case resend.Status == http.StatusConflict:
+			return "resend_conflict"
+		case resend.Status >= 500 || resend.Status == http.StatusRequestTimeout:
+			return "resend_temporary"
+		default:
+			return "resend_rejected"
+		}
+	}
 	var smtp *textproto.Error
 	if errors.As(err, &smtp) {
 		if smtp.Code >= 500 {
@@ -93,18 +128,35 @@ func RunSupportEmailOnce(ctx context.Context) (bool, error) {
 		return true, err
 	}
 	// The absolute deadline starts at admission, not when a paused worker wakes.
-	// Reading SMTP after admission also avoids reusing a pre-admission snapshot
+	// Reading the transport after admission also avoids reusing a pre-admission snapshot
 	// after an administrator has switched the selected delivery provider.
 	sendCtx, cancelSend := context.WithDeadline(ctx, admission.Deadline)
 	defer cancelSend()
-	config, configured, configErr := SupportEmailSMTPConfig(sendCtx)
-	code := "smtp_not_configured"
-	if configErr != nil {
-		code = "smtp_configuration_unavailable"
-	} else if configured {
+	config, configErr := readSupportEmailDelivery(sendCtx)
+	code := ""
+	switch {
+	case configErr != nil:
+		code = "delivery_configuration_unavailable"
+	case !config.configured:
+		switch config.provider {
+		case "smtp":
+			code = "smtp_not_configured"
+		case "resend":
+			code = "resend_not_configured"
+		default:
+			code = "delivery_provider_unsupported"
+		}
+	case config.provider == "resend" && row.Attempts > 1 && time.Since(time.Unix(row.CreatedAt, 0)) >= 24*time.Hour:
+		// The provider only retains idempotency keys for 24h. Event creation
+		// is a conservative lower bound when an exact first-send time is unknown.
+		code = model.SupportEmailReplayWindowElapsed
+	default:
 		subject, plain, markup, id := SupportEmailContent(row, admission)
-		err = common.SendQueuedSMTP(sendCtx, config, subject, row.Recipient, plain, markup, id)
-		code = ""
+		if config.provider == "resend" {
+			err = common.SendQueuedResend(sendCtx, config.resendKey, config.resendFrom, subject, row.Recipient, plain, markup, admission.Origin+"/"+id)
+		} else {
+			err = common.SendQueuedSMTP(sendCtx, config.smtp, subject, row.Recipient, plain, markup, id)
+		}
 		if err != nil {
 			code = supportEmailErrorCode(err)
 		}

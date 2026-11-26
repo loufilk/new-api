@@ -766,7 +766,10 @@ export async function updateAllChannelsBalance(): Promise<{
 }> {
   const res = await api.get(
     '/api/channel/update_balance',
-    channelActionConfig()
+    channelActionConfig({
+      timeout: 15_000,
+      singleUseAuthorization: true,
+    })
   )
   return res.data
 }
@@ -790,7 +793,15 @@ export async function getChannelBalanceTask(taskId: string): Promise<{
 }> {
   const res = await api.get(
     `/api/channel/update_balance/task/${encodeURIComponent(taskId)}`,
-    channelActionConfig()
+    channelActionConfig({ timeout: 10_000 })
+  )
+  return res.data
+}
+
+export async function getCurrentChannelBalanceTask(signal?: AbortSignal) {
+  const res = await api.get<Awaited<ReturnType<typeof getChannelBalanceTask>>>(
+    '/api/channel/update_balance/task/current',
+    channelActionConfig({ signal, timeout: 10_000 })
   )
   return res.data
 }

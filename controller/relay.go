@@ -19,6 +19,7 @@ import (
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/pkg/privacy"
+	"github.com/QuantumNous/new-api/pkg/relay_timing"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -94,6 +95,26 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 
 	var relayInfo *relaycommon.RelayInfo
+	var timings *relay_timing.Sample
+	if relayFormat != types.RelayFormatOpenAIRealtime {
+		timings = relay_timing.Begin(c)
+		if timings != nil {
+			defer func() {
+				var firstUpstreamEvent, firstUsableOutput time.Time
+				if relayInfo != nil && relayInfo.IsStream {
+					if relayInfo.HasSendResponse() {
+						firstUpstreamEvent = relayInfo.FirstResponseTime
+					}
+					firstUsableOutput = relayInfo.FirstDownstreamContentTime
+				}
+				report := timings.Finish(c.Writer.Status(), newAPIError != nil, firstUpstreamEvent, firstUsableOutput)
+				// All fields in this report are fixed types; none are request data.
+				if encoded, err := common.Marshal(report); err == nil {
+					logger.LogInfo(c.Request.Context(), "relay_timing "+string(encoded))
+				}
+			}()
+		}
+	}
 	var ingressRecord []relaycommon.RequestPluginRecord
 	// Registered first so that it runs last: the request plugins' report
 	// hooks receive the request once the client has the whole response and
@@ -200,7 +221,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		defer stopKeepAlive()
 	}
 
-	if newAPIError = relay.PrepareRequestBilling(c, relayInfo); newAPIError != nil {
+	var billingStarted time.Time
+	if timings != nil {
+		billingStarted = time.Now()
+	}
+	newAPIError = relay.PrepareRequestBilling(c, relayInfo)
+	if timings != nil {
+		timings.RecordBillingPreparation(billingStarted)
+	}
+	if newAPIError != nil {
 		return
 	}
 	defer func() {
@@ -237,6 +266,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, (*relaycommon.StreamStatus)(nil))
 		relayInfo.PerformanceBusinessRejection = false
 		relayInfo.PerformanceOutputTokens = 0
+		relayInfo.PerformanceCacheMeasured = false
+		relayInfo.PerformanceCacheHit = false
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
@@ -880,16 +911,7 @@ func executeTaskSubmissionWith(
 	task.PrivateData.SubscriptionQuotaPeriod = relayInfo.SubscriptionQuotaPeriod
 	task.PrivateData.TokenId = relayInfo.TokenId
 	task.PrivateData.NodeName = common.NodeName
-	task.PrivateData.BillingContext = &model.TaskBillingContext{
-		ModelPrice:       relayInfo.PriceData.ModelPrice,
-		GroupRatio:       relayInfo.PriceData.GroupRatioInfo.GroupRatio,
-		ModelRatio:       relayInfo.PriceData.ModelRatio,
-		OtherRatios:      relayInfo.PriceData.OtherRatios(),
-		OriginModelName:  relayInfo.OriginModelName,
-		BillingModelName: relayInfo.GetBillingModelName(),
-		PerCallBilling:   common.StringsContains(constant.TaskPricePatches, relayInfo.GetBillingModelName()) || relayInfo.PriceData.UsePrice,
-		TieredSnapshot:   relayInfo.TieredBillingSnapshot,
-	}
+	task.PrivateData.BillingContext = model.NewTaskBillingContext(relayInfo)
 	task.Quota = result.Quota
 	task.Data = result.TaskData
 	if len(result.PluginState) > 0 {
@@ -914,31 +936,16 @@ func executeTaskSubmissionWith(
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 		}
 	}
-	// A native submit route may declare retainResult: false. It applies only
-	// to immediate terminal results: the client receives the complete response
-	// once, the upstream snapshot is never persisted, and the task is not
-	// retrievable afterwards. An asynchronous result on such a route keeps its
-	// snapshot because polling and retrieval need it. The OpenAI Images
-	// protocol delivers its images inline in the same HTTP response, so its
-	// immediate results follow the same rule; an asynchronous image task is
-	// expected there and is polled inside the request.
+	// The presenter reads the in-memory snapshot. Asynchronous tasks also
+	// need it in storage for polling and retrieval.
 	var insertOmits []string
 	immediateTerminal := result.Immediate != nil && (result.Immediate.Status == model.TaskStatusSuccess || result.Immediate.Status == model.TaskStatusFailure)
-	if pinnedValue, exists := c.Get(pluginruntime.ContextKeyPinnedRoute); exists {
-		pinned, ok := pinnedValue.(pluginruntime.PinnedRoute)
-		if ok && pinned.Route.RetainResult != nil && !*pinned.Route.RetainResult {
-			if immediateTerminal {
-				task.PrivateData.ResultDiscarded = true
-				insertOmits = append(insertOmits, "data")
-			} else {
-				logger.LogWarn(c, common.LogText("task plugin route %s %s declares retainResult: false but returned an asynchronous result; retaining task %s", pinned.Route.Method, pinned.Route.Path, task.TaskID))
-			}
-		}
-	}
-	if pinnedValue, exists := c.Get(pluginruntime.ContextKeyPinnedEndpoint); exists && immediateTerminal {
-		if pinned, ok := pinnedValue.(pluginruntime.PinnedEndpoint); ok && pinned.Protocol == pluginruntime.ProtocolOpenAIImage {
+	if pluginruntime.DiscardsImmediateResult(c) {
+		if immediateTerminal {
 			task.PrivateData.ResultDiscarded = true
 			insertOmits = append(insertOmits, "data")
+		} else if pinned, ok := common.GetContextKeyType[pluginruntime.PinnedRoute](c, pluginruntime.ContextKeyPinnedRoute); ok {
+			logger.LogWarn(c, common.LogText("task plugin route %s %s declares retainResult: false but returned an asynchronous result; retaining task %s", pinned.Route.Method, pinned.Route.Path, task.TaskID))
 		}
 	}
 	diagnostics.insertStart(task)

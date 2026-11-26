@@ -132,6 +132,54 @@ test('root records a completed refund with confirmation and evidence', async () 
     data: { order_id: 19, evidence: 'Synthetic external refund receipt' },
   })
 })
+test('root refreshes the current agent orders and sees newly released profit without a write', async () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
+  const read = vi
+    .spyOn(api, 'get')
+    .mockResolvedValueOnce({
+      data: { success: true, data: { items: [row], total: 1 } },
+    })
+    .mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: { items: [{ ...row, profit_matured: true }], total: 1 },
+      },
+    })
+  const write = vi.spyOn(api, 'request')
+  mount(<SimplePaymentRecords agentUserId={42} />)
+  expect(await screen.findByText(/Profit frozen/)).toBeVisible()
+  expect(screen.getByRole('status')).toHaveTextContent('Last updated:')
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+  expect(await screen.findByText(/Profit released/)).toBeVisible()
+  expect(read).toHaveBeenCalledTimes(2)
+  expect(read).toHaveBeenLastCalledWith(
+    '/api/agent-platform/simple/payment-orders',
+    expect.objectContaining({
+      params: { agent_user_id: 42, p: 1, page_size: 20 },
+    })
+  )
+  expect(write).not.toHaveBeenCalled()
+})
+
+test('switching viewers does not reuse another viewer’s payment order cache', async () => {
+  const read = vi
+    .spyOn(api, 'get')
+    .mockResolvedValueOnce({
+      data: { success: true, data: { items: [row], total: 1 } },
+    })
+    .mockResolvedValueOnce({
+      data: { success: true, data: { items: [], total: 0 } },
+    })
+  mount(<SimplePaymentRecords />)
+  expect(await screen.findByText('Customer order')).toBeVisible()
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 18, username: 'Other agent', role: 1 })
+  expect(await screen.findByText('No customer payment records')).toBeVisible()
+  expect(screen.queryByText('Customer order')).not.toBeInTheDocument()
+  expect(read).toHaveBeenCalledTimes(2)
+})
+
 test('one method filter controls both direct codes and pending payment orders', async () => {
   vi.spyOn(api, 'get').mockImplementation(async (url) => ({
     data: {

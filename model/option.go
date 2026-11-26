@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"maps"
 	"strconv"
@@ -229,6 +230,8 @@ func LoadOptionsFromDatabase() (loadErr error) {
 	}()
 	passkeyOptionMutex.Lock()
 	defer passkeyOptionMutex.Unlock()
+	modelSquareOptionMu.Lock()
+	defer modelSquareOptionMu.Unlock()
 	options, err := AllOption()
 	if err != nil {
 		groupConfigRuntimeInvalid.Store(true)
@@ -246,12 +249,26 @@ func LoadOptionsFromDatabase() (loadErr error) {
 		common.SysError("conflicting group option aliases; runtime refresh rejected")
 		return err
 	}
-	var bucketRaw string
+	marketValues := make(map[string]string, 2)
+	var bucketRaw, catalogRaw, iconsRaw, badgesRaw string
 	for _, option := range options {
+		if option.Key == groupMarketDataKey || option.Key == groupMarketCursorKey {
+			marketValues[option.Key] = option.Value
+		}
 		if option.Key == groupRateLimitBucketsOptionKey {
 			bucketRaw = option.Value
 		}
+		if option.Key == groupCatalogOptionKey {
+			catalogRaw = option.Value
+		}
+		if option.Key == groupCatalogIconsOptionKey {
+			iconsRaw = option.Value
+		}
+		if option.Key == groupCatalogBadgesOptionKey {
+			badgesRaw = option.Value
+		}
 	}
+	loadMarketRuntime(marketValues)
 	buckets, err := parseGroupRateLimitBuckets(bucketRaw)
 	if err != nil {
 		groupConfigRuntimeInvalid.Store(true)
@@ -259,14 +276,23 @@ func LoadOptionsFromDatabase() (loadErr error) {
 		return err
 	}
 	groupRateLimitBuckets.Store(&buckets)
+	if err := loadGroupCatalogRuntime(catalogRaw, iconsRaw, badgesRaw); err != nil {
+		groupConfigRuntimeInvalid.Store(true)
+		return err
+	}
 	valid := true
 	passkeyOptions := make(map[string]string)
+	modelSquareOptions := make(map[string]string)
 	for _, option := range options {
-		if option.Key == groupRateLimitBucketsOptionKey {
+		if option.Key == publicModelLinesOptionKey || isGroupMarketOption(option.Key) || option.Key == groupRateLimitBucketsOptionKey || isGroupCatalogOption(option.Key) {
 			continue
 		}
 		if IsPasskeyDomainOption(option.Key) {
 			passkeyOptions[option.Key] = option.Value
+			continue
+		}
+		if isModelSquareOption(option.Key) {
+			modelSquareOptions[strings.TrimPrefix(option.Key, modelSquareNamespace+".")] = option.Value
 			continue
 		}
 		err := updateOptionMap(option.Key, option.Value)
@@ -278,6 +304,9 @@ func LoadOptionsFromDatabase() (loadErr error) {
 		}
 	}
 	applyPasskeyDomainOptions(passkeyOptions)
+	if err := applyModelSquareOrderOptions(modelSquareOptions); err != nil {
+		loadErr = errors.Join(loadErr, err)
+	}
 	if valid {
 		syncGroupConfigVersionAfterOptionLoad(options)
 	}
@@ -302,6 +331,15 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	// Only the serialized rename transaction owns these internal records. A
+	// generic option upsert must never publish arbitrary aliases or reset the
+	// revision that fences concurrent validation, in either rollout mode.
+	if key == groupRenameAliasesOptionKey || key == groupConfigVersionOptionKey {
+		return common.NewMessage("Group namespace metadata is read-only.")
+	}
+	if key == publicModelLinesOptionKey || isGroupMarketOption(key) || isGroupCatalogOption(key) {
+		return ErrInvalidGroupCatalog
+	}
 	if key == groupRateLimitBucketsOptionKey {
 		return errors.New("group rate limit bucket metadata is read-only")
 	}
@@ -322,6 +360,9 @@ func validateOptionValue(key string, value string) error {
 		return err
 	}
 	if err := operation_setting.ValidateEpaySignOption(key, value); err != nil {
+		return err
+	}
+	if err := operation_setting.ValidateModelSquareOption(key, value); err != nil {
 		return err
 	}
 	if key == "EmailProvider" || key == "ResendApiKey" || key == "ResendFrom" {
@@ -380,6 +421,9 @@ func validateOptionValue(key string, value string) error {
 }
 
 func UpdateOption(key string, value string) error {
+	if isModelSquareOption(key) {
+		return UpdateModelSquareOrderOptions(context.Background(), map[string]string{strings.TrimPrefix(key, modelSquareNamespace+"."): value}, nil)
+	}
 	if key == request_plugin_setting.InstancesOption {
 		return updateRequestPluginInstancesOption(value)
 	}

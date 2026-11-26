@@ -205,3 +205,26 @@ test('a refreshed sending state disables an already open cancellation confirmati
   )
   expect(screen.getByText('Sending')).toBeVisible()
 })
+
+test('looks up one ticket without mutating the queue', async () => {
+  const { user, get } = renderOutbox()
+  const search = await screen.findByRole('button', { name: 'Search' })
+  expect(search).toBeDisabled()
+  await user.type(screen.getByRole('textbox', { name: 'Ticket' }), '42')
+  await user.click(search)
+  await waitFor(() =>
+    expect(get).toHaveBeenLastCalledWith(
+      '/api/support-email/outbox',
+      expect.objectContaining({
+        params: { p: 1, page_size: 20, ticket_id: 42 },
+      })
+    )
+  )
+  await user.click(screen.getByRole('button', { name: 'Reset' }))
+  await waitFor(() =>
+    expect(get).toHaveBeenLastCalledWith(
+      '/api/support-email/outbox',
+      expect.objectContaining({ params: { p: 1, page_size: 20 } })
+    )
+  )
+})

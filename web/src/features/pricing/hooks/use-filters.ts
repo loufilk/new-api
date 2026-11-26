@@ -16,14 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useSearch, useNavigate } from '@tanstack/react-router'
-import { useMemo, useCallback } from 'react'
+import { useSearch, useNavigate, useLocation } from '@tanstack/react-router'
+import { useMemo, useCallback, useState } from 'react'
 
 import { useDebounce } from '@/hooks/use-debounce'
 
 import {
   FILTER_ALL,
+  MODEL_ORDER_SORTS,
   SORT_OPTIONS,
+  canSortCatalogBy,
   normalizeSortOption,
   QUOTA_TYPES,
   ENDPOINT_TYPES,
@@ -31,10 +33,17 @@ import {
   VIEW_MODES,
   type ViewMode,
 } from '../constants'
-import { filterAndSortModels, extractAllTags } from '../lib/filters'
-import type { ModelCategory } from '../lib/model-categories'
+import { filterAndSortModels } from '../lib/filters'
+import { marketFacets } from '../lib/market-facets'
+import { activeBillingExpressions } from '../lib/market-groups'
 import type { PricingSearch } from '../lib/search'
-import type { PricingModel, TokenUnit } from '../types'
+import type {
+  MarketGroupCatalog,
+  ModelOrder,
+  PricingModel,
+  TokenUnit,
+} from '../types'
+import { useBillingTime } from './use-billing-time'
 
 function normalizeViewMode(value: unknown): ViewMode {
   if (value === VIEW_MODES.TABLE) {
@@ -43,38 +52,92 @@ function normalizeViewMode(value: unknown): ViewMode {
   return VIEW_MODES.CARD
 }
 
-export function useFilters(models: PricingModel[]) {
+declare module '@tanstack/history' {
+  interface HistoryState {
+    marketGroupRef?: string
+  }
+}
+
+export function useFilters(
+  models: PricingModel[],
+  groupCatalog?: MarketGroupCatalog,
+  scope = 'public',
+  availableGroups?: readonly string[],
+  modelOrder?: ModelOrder,
+  displayTiers = false
+) {
   const filterState = useSearch({ from: '/pricing/' })
   const navigate = useNavigate({ from: '/pricing/' })
-  const category = filterState.category ?? 'all'
+  // The browser history carries only an opaque reference, never a private group
+  // identifier. A reload, new tab or new session cannot resolve the reference.
+  const [privateGroups, setPrivateGroups] = useState<
+    Map<string, { scope: string; group: string }>
+  >(() => new Map())
+  const ref = useLocation({
+    select: (location) => location.state.marketGroupRef,
+  })
+  const selection = ref ? privateGroups.get(ref) : undefined
+  const facets = useMemo(
+    () =>
+      marketFacets(
+        models,
+        availableGroups ?? [],
+        groupCatalog,
+        filterState.platform,
+        displayTiers
+      ),
+    [models, availableGroups, groupCatalog, filterState.platform, displayTiers]
+  )
+  const { platform, priceGroups: platformPriceGroups, visibleModels } = facets
 
   const searchInput = filterState.search || ''
   const debouncedSearchInput = useDebounce(searchInput, 200)
-  const sortBy = normalizeSortOption(filterState.sort)
-  const vendorFilter = filterState.vendor || FILTER_ALL
-  const groupFilter = filterState.group || FILTER_ALL
+  const requestedSort = normalizeSortOption(filterState.sort)
+  const sortBy = canSortCatalogBy(requestedSort, modelOrder)
+    ? requestedSort
+    : SORT_OPTIONS.NAME
+  const selectedGroup =
+    selection?.scope === scope ? selection.group : filterState.group
+  const groupFilter =
+    selectedGroup &&
+    (!availableGroups || facets.visibleGroups.includes(selectedGroup))
+      ? selectedGroup
+      : FILTER_ALL
   const quotaTypeFilter = filterState.quotaType || QUOTA_TYPES.ALL
   const endpointTypeFilter = filterState.endpointType || ENDPOINT_TYPES.ALL
-  const tagFilter = filterState.tag || FILTER_ALL
   const tokenUnit: TokenUnit =
     filterState.tokenUnit === 'K' ? 'K' : DEFAULT_TOKEN_UNIT
   const viewMode = normalizeViewMode(filterState.view)
   const showRechargePrice = filterState.rechargePrice === true
 
   const updateFilters = useCallback(
-    (updates: Partial<PricingSearch>, replace = false) => {
+    (updates: Partial<PricingSearch>, replace = false, privateRef = ref) => {
       void navigate({
         search: (previous) => ({ ...previous, ...updates }),
+        state: (previous) => ({
+          ...previous,
+          marketGroupRef: privateRef || undefined,
+        }),
         replace,
         resetScroll: false,
       })
     },
-    [navigate]
+    [navigate, ref]
   )
-  const setCategory = useCallback(
-    (value: ModelCategory) =>
-      updateFilters({ category: value === 'all' ? undefined : value }),
-    [updateFilters]
+  const setPlatform = useCallback(
+    (value: string) => {
+      if (value !== platform) {
+        updateFilters(
+          {
+            platform: value === FILTER_ALL ? undefined : value,
+            group: undefined,
+          },
+          false,
+          ''
+        )
+      }
+    },
+    [platform, updateFilters]
   )
 
   const setSearchInput = useCallback(
@@ -83,16 +146,27 @@ export function useFilters(models: PricingModel[]) {
   )
   const setSortBy = useCallback(
     (v: string) =>
-      updateFilters({ sort: v === SORT_OPTIONS.NAME ? undefined : v }),
-    [updateFilters]
-  )
-  const setVendorFilter = useCallback(
-    (v: string) => updateFilters({ vendor: v === FILTER_ALL ? undefined : v }),
+      updateFilters({ sort: v === SORT_OPTIONS.RECOMMENDED ? undefined : v }),
     [updateFilters]
   )
   const setGroupFilter = useCallback(
-    (v: string) => updateFilters({ group: v === FILTER_ALL ? undefined : v }),
-    [updateFilters]
+    (value: string) => {
+      if (groupCatalog?.[value]?.exclusive) {
+        const privateRef = crypto.randomUUID()
+        setPrivateGroups(
+          (previous) =>
+            new Map([...previous, [privateRef, { scope, group: value }]])
+        )
+        updateFilters({ group: undefined }, false, privateRef)
+        return
+      }
+      updateFilters(
+        { group: value === FILTER_ALL ? undefined : value },
+        false,
+        ''
+      )
+    },
+    [groupCatalog, scope, updateFilters]
   )
   const setQuotaTypeFilter = useCallback(
     (v: string) =>
@@ -104,10 +178,6 @@ export function useFilters(models: PricingModel[]) {
       updateFilters({
         endpointType: v === ENDPOINT_TYPES.ALL ? undefined : v,
       }),
-    [updateFilters]
-  )
-  const setTagFilter = useCallback(
-    (v: string) => updateFilters({ tag: v === FILTER_ALL ? undefined : v }),
     [updateFilters]
   )
   const setTokenUnit = useCallback(
@@ -125,81 +195,56 @@ export function useFilters(models: PricingModel[]) {
     [updateFilters]
   )
 
-  const availableTags = useMemo(() => {
-    if (!models || models.length === 0) return []
-    return extractAllTags(models)
-  }, [models])
-
-  const filteredModels = useMemo(() => {
-    if (!models || models.length === 0) return []
-
-    return filterAndSortModels(models, {
-      search: debouncedSearchInput,
-      vendor: vendorFilter,
-      group: groupFilter,
-      quotaType: quotaTypeFilter,
-      endpointType: endpointTypeFilter,
-      tag: tagFilter,
+  const sortExpressions = useMemo(
+    () =>
+      sortBy === SORT_OPTIONS.NAME || MODEL_ORDER_SORTS.has(sortBy)
+        ? []
+        : activeBillingExpressions(models),
+    [models, sortBy]
+  )
+  const clock = useBillingTime(sortExpressions)
+  const filteredModels = useMemo(
+    () =>
+      filterAndSortModels(visibleModels, {
+        search: debouncedSearchInput,
+        group: groupFilter,
+        quotaType: quotaTypeFilter,
+        endpointType: endpointTypeFilter,
+        sortBy,
+        modelOrder,
+        platformPriceGroups,
+        now: clock === undefined ? undefined : new Date(clock),
+      }),
+    [
+      visibleModels,
+      modelOrder,
+      debouncedSearchInput,
+      platformPriceGroups,
+      groupFilter,
+      quotaTypeFilter,
+      endpointTypeFilter,
       sortBy,
-      category,
-    })
-  }, [
-    models,
-    debouncedSearchInput,
-    vendorFilter,
+      clock,
+    ]
+  )
+  const hasActiveFilters = [
+    platform,
     groupFilter,
     quotaTypeFilter,
     endpointTypeFilter,
-    tagFilter,
-    sortBy,
-    category,
-  ])
-
-  const hasActiveFilters = useMemo(
-    () =>
-      category !== 'all' ||
-      vendorFilter !== FILTER_ALL ||
-      groupFilter !== FILTER_ALL ||
-      quotaTypeFilter !== QUOTA_TYPES.ALL ||
-      endpointTypeFilter !== ENDPOINT_TYPES.ALL ||
-      tagFilter !== FILTER_ALL,
-    [
-      category,
-      vendorFilter,
-      groupFilter,
-      quotaTypeFilter,
-      endpointTypeFilter,
-      tagFilter,
-    ]
-  )
-
-  const activeFilterCount = useMemo(
-    () =>
-      (category !== 'all' ? 1 : 0) +
-      (vendorFilter !== FILTER_ALL ? 1 : 0) +
-      (groupFilter !== FILTER_ALL ? 1 : 0) +
-      (quotaTypeFilter !== QUOTA_TYPES.ALL ? 1 : 0) +
-      (endpointTypeFilter !== ENDPOINT_TYPES.ALL ? 1 : 0) +
-      (tagFilter !== FILTER_ALL ? 1 : 0),
-    [
-      category,
-      vendorFilter,
-      groupFilter,
-      quotaTypeFilter,
-      endpointTypeFilter,
-      tagFilter,
-    ]
-  )
-
+  ].some((value) => value !== FILTER_ALL)
   const clearFilters = useCallback(() => {
-    updateFilters({
-      category: undefined,
-      vendor: undefined,
-      group: undefined,
-      quotaType: undefined,
-      endpointType: undefined,
-      tag: undefined,
-    })
+    updateFilters(
+      {
+        platform: undefined,
+        group: undefined,
+        quotaType: undefined,
+        endpointType: undefined,
+        search: undefined,
+      },
+      false,
+      ''
+    )
   }, [updateFilters])
 
   const clearSearch = useCallback(() => {
@@ -207,32 +252,28 @@ export function useFilters(models: PricingModel[]) {
   }, [updateFilters])
 
   return {
-    category,
-    setCategory,
+    facets,
+    platform,
+    platformPriceGroups,
+    setPlatform,
     searchInput,
     sortBy,
-    vendorFilter,
     groupFilter,
     quotaTypeFilter,
     endpointTypeFilter,
-    tagFilter,
     tokenUnit,
     viewMode,
     showRechargePrice,
     setSearchInput,
     setSortBy,
-    setVendorFilter,
     setGroupFilter,
     setQuotaTypeFilter,
     setEndpointTypeFilter,
-    setTagFilter,
     setTokenUnit,
     setViewMode,
     setShowRechargePrice,
     filteredModels,
     hasActiveFilters,
-    activeFilterCount,
-    availableTags,
     clearFilters,
     clearSearch,
   }

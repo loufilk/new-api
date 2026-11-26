@@ -168,7 +168,9 @@ export async function manageUser(
 export async function adjustUserQuota(
   payload: ManageUserQuotaPayload
 ): Promise<ApiResponse<Partial<User>>> {
-  const res = await api.post('/api/user/manage', payload)
+  const res = await api.post('/api/user/manage', payload, {
+    singleUseAuthorization: true,
+  })
   return res.data
 }
 

@@ -918,15 +918,22 @@ func TestRunTaskPollingOnceContinuesAtFullProgress(t *testing.T) {
 			for _, terminal := range []string{model.TaskStatusSuccess, model.TaskStatusFailure} {
 				t.Run(action+"/"+progress+"/"+terminal, func(t *testing.T) {
 					truncate(t)
-					const channelID, userID, initialQuota, taskQuota = 405, 405, 10_000, 1_200
+					const channelID, userID, tokenID = 405, 405, 405
+					const initialQuota, tokenRemain, taskQuota = 10_000, 8_000, 1_200
 					seedUser(t, userID, initialQuota)
+					seedToken(t, tokenID, userID, "polling-progress-key", tokenRemain)
 					seedTaskPollingChannel(t, channelID, true)
-					task := seedPollingTask(t, channelID, "task_progress", "upstream_progress")
+					seedChargedAccounting(t, userID, channelID, tokenID, taskQuota, 1)
+					// Polling a terminal failure may refund only a task with
+					// proved funding ownership, not a historical bare row.
+					task := makeTask(userID, channelID, taskQuota, tokenID, BillingSourceWallet, 0)
+					task.TaskID = "task_progress"
+					task.Platform = constant.TaskPlatform("kling")
+					task.PrivateData.UpstreamTaskID = "upstream_progress"
 					task.Action = action
-					task.UserId = userID
-					task.Quota = taskQuota
+					task.Progress = "30%"
 					task.SubmitTime = time.Now().Unix()
-					require.NoError(t, model.DB.Save(task).Error)
+					require.NoError(t, model.DB.Create(task).Error)
 					adaptor := &scriptedPollingAdaptor{parse: &relaycommon.TaskInfo{
 						TaskID: task.GetUpstreamTaskID(), Status: model.TaskStatusInProgress, Progress: progress,
 					}}
@@ -941,6 +948,7 @@ func TestRunTaskPollingOnceContinuesAtFullProgress(t *testing.T) {
 					assert.Equal(t, progress, persisted.Progress)
 					assert.Zero(t, persisted.FinishTime)
 					assert.Equal(t, initialQuota, getUserQuota(t, userID))
+					assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
 					assert.Zero(t, countLogs(t))
 					require.True(t, model.HasUnfinishedSyncTasks(), "the scheduler must run again even at 100%")
 
@@ -955,10 +963,12 @@ func TestRunTaskPollingOnceContinuesAtFullProgress(t *testing.T) {
 					if terminal == model.TaskStatusFailure {
 						assert.Zero(t, persisted.Quota)
 						assert.Equal(t, initialQuota+taskQuota, getUserQuota(t, userID))
+						assert.Equal(t, tokenRemain+taskQuota, getTokenRemainQuota(t, tokenID))
 						assert.EqualValues(t, 1, countLogs(t))
 					} else {
 						assert.Equal(t, taskQuota, persisted.Quota)
 						assert.Equal(t, initialQuota, getUserQuota(t, userID))
+						assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
 						assert.Zero(t, countLogs(t))
 					}
 					quota, logs := getUserQuota(t, userID), countLogs(t)

@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { CatalogModelIcon } from '@/components/catalog-model-icon'
 import { CopyButton } from '@/components/copy-button'
 import { BadgeListCell, TruncatedCell } from '@/components/data-table'
 import { StatusBadge } from '@/components/status-badge'
@@ -36,9 +37,8 @@ import {
 } from '@/features/model-pricing/api'
 import { modelPricingDisplay } from '@/features/model-pricing/pricing'
 import { ModelPriceCell } from '@/features/pricing/components/model-price-cell'
-import type { ColumnDef } from '@/lib/console-table'
+import type { ColumnDef, Row } from '@/lib/console-table'
 import { formatTimestampToDate } from '@/lib/format'
-import { getLobeIcon } from '@/lib/lobe-icon'
 
 import { getNameRuleConfig } from '../constants'
 import { parseModelTags, formatEndpointsDisplay } from '../lib'
@@ -51,7 +51,24 @@ import { useModels } from './models-provider'
 
 const EMPTY_VENDORS: Vendor[] = []
 
+function renderTagsCell({ row }: { row: Row<Model> }) {
+  return (
+    <BadgeListCell
+      expandable
+      max={1}
+      items={parseModelTags(row.original.tags ?? '').map((tag) => (
+        <StatusBadge key={tag} label={tag} variant='neutral' size='sm' />
+      ))}
+    />
+  )
+}
+
+function renderAvailabilityCell({ row }: { row: Row<Model> }) {
+  return <ModelSquareStatus model={row.original} />
+}
+
 export function useModelsColumns(
+  onDelete: (models: Model[]) => void,
   vendors: Vendor[] = EMPTY_VENDORS,
   pricing?: ModelPricingConfig,
   pricingState?: 'loading' | 'error'
@@ -59,6 +76,12 @@ export function useModelsColumns(
   const { t } = useTranslation()
   const canPrice = useCanEditModelPricing()
   const { setCurrentRow, setOpen } = useModels()
+  const renderActions = useCallback(
+    ({ row }: { row: Row<Model> }) => (
+      <DataTableRowActions row={row} onDelete={onDelete} />
+    ),
+    [onDelete]
+  )
   const vendorMap = useMemo(
     () => new Map(vendors.map((vendor) => [vendor.id, vendor])),
     [vendors]
@@ -107,11 +130,16 @@ export function useModelsColumns(
         cell: ({ row }) => {
           const model = row.original
           const vendor = vendorMap.get(model.vendor_id ?? 0)
-          const iconKey = model.icon || vendor?.icon || model.model_name[0]
           return (
             <div className='flex max-w-[320px] min-w-0 items-start gap-2.5 py-1'>
               <span className='mt-1 flex size-6 shrink-0 items-center justify-center'>
-                {getLobeIcon(iconKey, 24)}
+                <CatalogModelIcon
+                  icon={model.icon}
+                  vendorIcon={vendor?.icon}
+                  vendorName={vendor?.name}
+                  name={model.model_name}
+                  size={24}
+                />
               </span>
               <div className='min-w-0 flex-1'>
                 <div className='flex min-w-0 items-center gap-1'>
@@ -212,7 +240,7 @@ export function useModelsColumns(
         size: 115,
         enableSorting: false,
         meta: { mobileBadge: true },
-        cell: ({ row }) => <ModelSquareStatus model={row.original} />,
+        cell: renderAvailabilityCell,
       },
       {
         id: 'connections',
@@ -253,15 +281,7 @@ export function useModelsColumns(
         size: 180,
         enableSorting: false,
         meta: { mobileHidden: true },
-        cell: ({ row }) => (
-          <BadgeListCell
-            expandable
-            max={1}
-            items={parseModelTags(row.original.tags ?? '').map((tag) => (
-              <StatusBadge key={tag} label={tag} variant='neutral' size='sm' />
-            ))}
-          />
-        ),
+        cell: renderTagsCell,
       },
       {
         accessorKey: 'sync_official',
@@ -289,7 +309,7 @@ export function useModelsColumns(
         enableSorting: false,
         enableHiding: false,
         size: canPrice ? 170 : 105,
-        cell: ({ row }) => <DataTableRowActions row={row} />,
+        cell: renderActions,
       },
       {
         accessorKey: 'status',
@@ -383,5 +403,14 @@ export function useModelsColumns(
         meta: { mobileHidden: true },
       },
     ]
-  }, [t, canPrice, vendorMap, priceMap, pricingState, setCurrentRow, setOpen])
+  }, [
+    t,
+    canPrice,
+    vendorMap,
+    priceMap,
+    pricingState,
+    setCurrentRow,
+    setOpen,
+    renderActions,
+  ])
 }

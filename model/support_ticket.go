@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"strings"
 
@@ -283,4 +284,47 @@ func MarkSupportTicketRead(ticketID int64, userID int, adminView bool) error {
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+type SupportTicketReadSnapshot struct {
+	MessageID int64
+	Status    string
+}
+
+func MarkObservedSupportTicketRead(ctx context.Context, ticketID int64, userID int, adminView bool, observed SupportTicketReadSnapshot) (bool, error) {
+	acknowledged := false
+	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		query := lockForUpdate(tx).Where("id = ?", ticketID)
+		if !adminView {
+			query = query.Where("user_id = ?", userID)
+		}
+		var ticket SupportTicket
+		if err := query.Select("id", "status", "admin_unread", "user_unread").First(&ticket).Error; err != nil {
+			return err
+		}
+		// Both writers (new replies and status changes) use this same ticket
+		// lock. A later write can still set the side's unread marker again.
+		if ticket.Status != observed.Status {
+			return nil
+		}
+		var latest SupportTicketMessage
+		if err := tx.Where("ticket_id = ?", ticket.ID).Select("id").Order("id DESC").Limit(1).Find(&latest).Error; err != nil {
+			return err
+		}
+		if latest.ID != observed.MessageID {
+			return nil
+		}
+		if adminView && ticket.AdminUnread {
+			if err := tx.Model(&ticket).UpdateColumn("admin_unread", false).Error; err != nil {
+				return err
+			}
+		} else if !adminView && ticket.UserUnread {
+			if err := tx.Model(&ticket).UpdateColumn("user_unread", false).Error; err != nil {
+				return err
+			}
+		}
+		acknowledged = true
+		return nil
+	})
+	return acknowledged && err == nil, err
 }

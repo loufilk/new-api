@@ -64,6 +64,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { useCanEditModelPricing } from '@/features/model-pricing/api'
 import { ModelPricingPanel } from '@/features/model-pricing/model-pricing-panel'
 import {
   requireServerSuccess,
@@ -71,7 +72,7 @@ import {
   getServerErrorMessage,
 } from '@/lib/server-error-message'
 
-import { createModel, updateModel, getModel, getVendors } from '../../api'
+import { createModel, updateModel, getModel, getVendorOptions } from '../../api'
 import { getNameRuleOptions, ENDPOINT_TEMPLATES } from '../../constants'
 import { modelsQueryKeys, vendorsQueryKeys } from '../../lib'
 import {
@@ -122,7 +123,7 @@ export function ModelMutateDrawer(props: {
   const vendorsQuery = useQuery({
     queryKey: vendorsQueryKeys.list(),
     queryFn: async () =>
-      requireServerSuccess(await getVendors({ page_size: 1000 })),
+      requireServerSuccess(await getVendorOptions()),
     enabled: props.open,
   })
   const vendors = vendorsQuery.data?.data?.items ?? []
@@ -142,6 +143,19 @@ export function ModelMutateDrawer(props: {
     enabled: props.open && isEditing,
   })
   const savedModel = modelQuery.data ?? currentRow
+  const canPrice = useCanEditModelPricing()
+  const hasRule = savedModel?.name_rule !== 0
+  const pricingCandidates = Array.from(
+    new Set([
+      ...(savedModel?.pricing_candidates ?? []),
+      ...(savedModel?.matched_models ?? []),
+    ])
+  ).sort()
+  const pricingTarget = !hasRule
+    ? savedModel?.model_name
+    : pricingCandidates.includes(pricingName)
+      ? pricingName
+      : undefined
 
   useEffect(() => {
     if (!props.open) return
@@ -677,46 +691,57 @@ export function ModelMutateDrawer(props: {
                   : 'hidden'
               }
             >
-              {savedModel.name_rule !== 0 && (
-                <div className='space-y-2 p-4'>
-                  <p className='text-muted-foreground text-sm'>
-                    {t(
-                      'Select a concrete model to configure pricing. Metadata matching does not propagate prices.'
-                    )}
-                  </p>
-                  <Combobox
-                    value={pricingName}
-                    onValueChange={(value) => {
-                      if (pricingDirty) {
-                        setPendingPricingName(value ?? '')
-                        setCloseConfirm(true)
-                      } else {
-                        setPricingName(value ?? '')
-                      }
-                    }}
-                    options={(savedModel.matched_models ?? []).map((name) => ({
-                      value: name,
-                      label: name,
-                    }))}
-                    aria-label={t('Select model')}
-                    className='w-full'
-                    placeholder={t('Select model')}
-                  />
+              {!canPrice ? (
+                <div className='text-muted-foreground p-6 text-sm'>
+                  {t('Model pricing is managed by a super administrator.')}
                 </div>
+              ) : (
+                hasRule && (
+                  <div className='space-y-2 p-4'>
+                    <p className='text-muted-foreground text-sm'>
+                      {t(
+                        'Select a concrete model to configure pricing. Metadata matching does not propagate prices.'
+                      )}
+                    </p>
+                    {pricingCandidates.length > 0 ? (
+                      <Combobox
+                        value={pricingTarget ?? ''}
+                        onValueChange={(value) => {
+                          if (pricingDirty) {
+                            setPendingPricingName(value ?? '')
+                            setCloseConfirm(true)
+                          } else {
+                            setPricingName(value ?? '')
+                          }
+                        }}
+                        options={pricingCandidates.map((name) => ({
+                          value: name,
+                          label: name,
+                        }))}
+                        aria-label={t('Select model')}
+                        className='w-full'
+                        placeholder={t('Select model')}
+                      />
+                    ) : modelQuery.isError ? (
+                      <ErrorState
+                        description={modelQuery.error.message}
+                        onRetry={() => void modelQuery.refetch()}
+                      />
+                    ) : isEditing && modelQuery.isPending ? (
+                      <LoadingState />
+                    ) : (
+                      <p className='text-sm' role='status'>
+                        {t('No matching models')}
+                      </p>
+                    )}
+                  </div>
+                )
               )}
-              {(savedModel.name_rule === 0 || pricingName) && (
+              {canPrice && pricingTarget && (
                 <ModelPricingPanel
                   onDirtyChange={setPricingDirty}
-                  key={
-                    savedModel.name_rule === 0
-                      ? savedModel.model_name
-                      : pricingName
-                  }
-                  modelName={
-                    savedModel.name_rule === 0
-                      ? savedModel.model_name
-                      : pricingName
-                  }
+                  key={pricingTarget}
+                  modelName={pricingTarget}
                 />
               )}
             </div>

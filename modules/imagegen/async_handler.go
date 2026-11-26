@@ -3,8 +3,14 @@ package imagegen
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"strings"
 
@@ -80,20 +86,61 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		c.JSON(400, gin.H{"error": gin.H{"message": "Failed to read image request"}})
 		return
 	}
+	var hasSlot bool
 	select {
 	case h.slots <- struct{}{}:
+		hasSlot = true
 	default:
+	}
+	releaseSlot := func() {
+		if hasSlot {
+			<-h.slots
+		}
+	}
+	id := c.Param("operation")
+	var task *AsyncImageTask
+	if id != "" {
+		if _, e := operationTime(id); e != nil {
+			releaseSlot()
+			c.JSON(400, gin.H{"error": gin.H{"message": "Invalid image operation", "code": "async_image_invalid_operation"}})
+			return
+		}
+		binding, e := requestBinding(tokenID, path, c.ContentType(), c.GetHeader("Content-Type"), data)
+		if e != nil {
+			releaseSlot()
+			c.JSON(400, gin.H{"error": gin.H{"message": "Invalid image request", "code": "invalid_image_request"}})
+			return
+		}
+		var created bool
+		task, created, err = h.store.admit(c.Request.Context(), userID, count, id, binding, hasSlot)
+		if err == nil && !created {
+			releaseSlot()
+			acceptImage(c, task, true)
+			return
+		}
+	} else if hasSlot {
+		task, err = h.store.Create(c.Request.Context(), userID, count)
+	} else {
+		// Preserve the legacy endpoint's wire response for existing clients.
 		c.JSON(429, gin.H{"error": gin.H{"message": "Async image queue is full"}})
 		return
 	}
-	task, err := h.store.Create(c.Request.Context(), userID, count)
 	if err != nil {
-		<-h.slots
-		status := 503
-		if errors.Is(err, ErrAsyncImageBusy) {
-			status = 429
+		releaseSlot()
+		status, code := 503, "async_image_unavailable"
+		switch {
+		case errors.Is(err, ErrAsyncImageBusy):
+			status, code = 429, "async_image_busy"
+		case errors.Is(err, errOperationConflict):
+			status, code = 409, "async_image_operation_conflict"
+		case errors.Is(err, errOperationExpired):
+			status, code = 410, "async_image_operation_expired"
 		}
-		c.JSON(status, gin.H{"error": gin.H{"message": "Async image service is busy or unavailable. Try again later.", "code": "async_image_unavailable"}})
+		if id == "" {
+			c.JSON(status, gin.H{"error": gin.H{"message": "Async image service is busy or unavailable. Try again later.", "code": "async_image_unavailable"}})
+			return
+		}
+		c.JSON(status, gin.H{"id": id, "error": gin.H{"message": http.StatusText(status), "code": code}})
 		return
 	}
 	// Re-enter the normal HTTP pipeline with an independent request: token/IP
@@ -134,9 +181,55 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		c.Data(http.StatusServiceUnavailable, "application/json", task.Result)
 		return
 	}
-	c.Header("Location", "/v1/images/tasks/"+task.ID)
+	acceptImage(c, &accepted, id != "")
+}
+
+// Stable across multipart encoders choosing different boundaries. Each part's
+// headers and payload digest are independently framed; store only the digest,
+// never the prompt, contents, token secret, or client-supplied fingerprint.
+func requestBinding(tokenID int, path, mediaType, contentType string, data []byte) (string, error) {
+	hash := sha256.New()
+	fmt.Fprintf(hash, "%d\x00%s\x00%s\x00", tokenID, path, mediaType)
+	if mediaType == "multipart/form-data" {
+		_, params, err := mime.ParseMediaType(contentType)
+		if err != nil {
+			return "", err
+		}
+		r := multipart.NewReader(bytes.NewReader(data), params["boundary"])
+		for {
+			part, err := r.NextRawPart()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				return "", err
+			}
+			headers, err := json.Marshal(part.Header)
+			if err != nil {
+				return "", err
+			}
+			body := sha256.New()
+			if _, err = io.Copy(body, part); err != nil {
+				return "", err
+			}
+			fmt.Fprintf(hash, "%d:", len(headers))
+			hash.Write(headers)
+			hash.Write(body.Sum(nil))
+		}
+	} else {
+		hash.Write(data)
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func acceptImage(c *gin.Context, task *AsyncImageTask, operation bool) {
+	prefix := "/v1/images/tasks/"
+	if operation {
+		prefix += "operations/"
+	}
+	c.Header("Location", prefix+task.ID)
 	c.Header("Retry-After", "2")
-	c.JSON(http.StatusAccepted, accepted)
+	c.JSON(http.StatusAccepted, task)
 }
 
 func (h *AsyncImageHandler) run(request *http.Request, cancel context.CancelFunc, userID int, task *AsyncImageTask) {
@@ -179,11 +272,48 @@ func (h *AsyncImageHandler) run(request *http.Request, cancel context.CancelFunc
 	h.relay.ServeHTTP(writer, request)
 }
 
+// Issue is session-authorized by the route. No API key, image content,
+// operation state, cooldown or charge is involved.
+func (h *AsyncImageHandler) Issue(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	userID := c.GetInt("id")
+	if userID <= 0 {
+		c.JSON(401, gin.H{"error": gin.H{"message": "Authentication required"}})
+		return
+	}
+	id, err := h.store.issueOperation(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(503, gin.H{"error": gin.H{"message": "Async image service is unavailable. Try again later.", "code": "async_image_unavailable"}})
+		return
+	}
+	c.JSON(200, gin.H{"id": id, "kind": "async_image_operation"})
+}
+
 func (h *AsyncImageHandler) Poll(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	userID := c.GetInt("id")
 	if userID <= 0 {
 		c.JSON(401, gin.H{"error": gin.H{"message": "Authentication required"}})
+		return
+	}
+	if id := c.Param("operation"); id != "" {
+		task, err := h.store.getOperation(c.Request.Context(), userID, id)
+		if err == nil {
+			c.JSON(200, task)
+			return
+		}
+		status, code := 503, "async_image_unavailable"
+		switch {
+		case errors.Is(err, errOperationPending):
+			c.Header("Retry-After", "2")
+			c.JSON(200, gin.H{"id": id, "status": "awaiting_admission"})
+			return
+		case errors.Is(err, errOperationExpired):
+			status, code = 410, "async_image_operation_expired"
+		case errors.Is(err, errOperationMissing):
+			status, code = 404, "async_image_operation_missing"
+		}
+		c.JSON(status, gin.H{"id": id, "error": gin.H{"message": "Image task is unavailable or expired", "code": code}})
 		return
 	}
 	task, err := h.store.Get(c.Request.Context(), userID, c.Param("id"))

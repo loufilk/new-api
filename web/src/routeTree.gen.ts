@@ -26,11 +26,14 @@ import { Route as errors403RouteImport } from './routes/(errors)/403'
 import { Route as errors404RouteImport } from './routes/(errors)/404'
 import { Route as errors500RouteImport } from './routes/(errors)/500'
 import { Route as errors503RouteImport } from './routes/(errors)/503'
-import { Route as AuthenticatedChat2linkRouteImport } from './routes/_authenticated/chat2link'
+import { Route as AuthenticatedPartnerRouteImport } from './routes/_authenticated/partner'
+import { Route as AuthenticatedPartnerApplyRouteImport } from './routes/_authenticated/partner-apply'
 import { Route as AuthenticatedSystemSettingsRouteRouteImport } from './routes/_authenticated/system-settings/route'
 import { Route as AboutIndexRouteImport } from './routes/about/index'
 import { Route as AgentPayPublicIDRouteImport } from './routes/agent-pay/$publicID'
+import { Route as HealthIndexRouteImport } from './routes/health/index'
 import { Route as HelpIndexRouteImport } from './routes/help/index'
+import { Route as HelpIntegrationsRouteImport } from './routes/help/integrations'
 import { Route as ModelMonitorIndexRouteImport } from './routes/model-monitor/index'
 import { Route as OauthProviderRouteImport } from './routes/oauth/$provider'
 import { Route as PricingIndexRouteImport } from './routes/pricing/index'
@@ -43,8 +46,8 @@ import { Route as AuthenticatedAgentPlatformIndexRouteImport } from './routes/_a
 import { Route as AuthenticatedAgentPlatformClaimRouteImport } from './routes/_authenticated/agent-platform/claim'
 import { Route as AuthenticatedAgentPlatformFinanceRouteImport } from './routes/_authenticated/agent-platform/finance'
 import { Route as AuthenticatedAgentRedemptionIndexRouteImport } from './routes/_authenticated/agent-redemption/index'
+import { Route as AuthenticatedChannelStatusIndexRouteImport } from './routes/_authenticated/channel-status/index'
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
-import { Route as AuthenticatedChatChatIdRouteImport } from './routes/_authenticated/chat/$chatId'
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
 import { Route as AuthenticatedDashboardSectionRouteImport } from './routes/_authenticated/dashboard/$section'
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
@@ -176,11 +179,17 @@ const errors503Route = errors503RouteImport.update({
   path: '/503',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthenticatedChat2linkRoute = AuthenticatedChat2linkRouteImport.update({
-  id: '/chat2link',
-  path: '/chat2link',
+const AuthenticatedPartnerRoute = AuthenticatedPartnerRouteImport.update({
+  id: '/partner',
+  path: '/partner',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedPartnerApplyRoute =
+  AuthenticatedPartnerApplyRouteImport.update({
+    id: '/partner-apply',
+    path: '/partner-apply',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedSystemSettingsRouteRoute =
   AuthenticatedSystemSettingsRouteRouteImport.update({
     id: '/system-settings',
@@ -197,9 +206,19 @@ const AgentPayPublicIDRoute = AgentPayPublicIDRouteImport.update({
   path: '/agent-pay/$publicID',
   getParentRoute: () => rootRouteImport,
 } as any)
+const HealthIndexRoute = HealthIndexRouteImport.update({
+  id: '/health/',
+  path: '/health/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const HelpIndexRoute = HelpIndexRouteImport.update({
   id: '/help/',
   path: '/help/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HelpIntegrationsRoute = HelpIntegrationsRouteImport.update({
+  id: '/help/integrations',
+  path: '/help/integrations',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ModelMonitorIndexRoute = ModelMonitorIndexRouteImport.update({
@@ -268,17 +287,18 @@ const AuthenticatedAgentRedemptionIndexRoute =
     path: '/agent-redemption/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedChannelStatusIndexRoute =
+  AuthenticatedChannelStatusIndexRouteImport.update({
+    id: '/channel-status/',
+    path: '/channel-status/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedChannelsIndexRoute =
   AuthenticatedChannelsIndexRouteImport.update({
     id: '/channels/',
     path: '/channels/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
-const AuthenticatedChatChatIdRoute = AuthenticatedChatChatIdRouteImport.update({
-  id: '/chat/$chatId',
-  path: '/chat/$chatId',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
 const AuthenticatedDashboardIndexRoute =
   AuthenticatedDashboardIndexRouteImport.update({
     id: '/dashboard/',
@@ -573,10 +593,13 @@ export interface FileRoutesByFullPath {
   '/404': typeof errors404Route
   '/500': typeof errors500Route
   '/503': typeof errors503Route
-  '/chat2link': typeof AuthenticatedChat2linkRoute
+  '/partner': typeof AuthenticatedPartnerRoute
+  '/partner-apply': typeof AuthenticatedPartnerApplyRoute
   '/agent-pay/$publicID': typeof AgentPayPublicIDRoute
+  '/help/integrations': typeof HelpIntegrationsRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
+  '/health/': typeof HealthIndexRoute
   '/help/': typeof HelpIndexRoute
   '/model-monitor/': typeof ModelMonitorIndexRoute
   '/pricing/': typeof PricingIndexRoute
@@ -585,7 +608,6 @@ export interface FileRoutesByFullPath {
   '/user/reset': typeof authUserResetRoute
   '/agent-platform/claim': typeof AuthenticatedAgentPlatformClaimRoute
   '/agent-platform/finance': typeof AuthenticatedAgentPlatformFinanceRoute
-  '/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/model-management/$section': typeof AuthenticatedModelManagementSectionRoute
@@ -596,6 +618,7 @@ export interface FileRoutesByFullPath {
   '/affiliate/': typeof AuthenticatedAffiliateIndexRoute
   '/agent-platform/': typeof AuthenticatedAgentPlatformIndexRoute
   '/agent-redemption/': typeof AuthenticatedAgentRedemptionIndexRoute
+  '/channel-status/': typeof AuthenticatedChannelStatusIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/image/': typeof AuthenticatedImageIndexRoute
@@ -655,10 +678,13 @@ export interface FileRoutesByTo {
   '/404': typeof errors404Route
   '/500': typeof errors500Route
   '/503': typeof errors503Route
-  '/chat2link': typeof AuthenticatedChat2linkRoute
+  '/partner': typeof AuthenticatedPartnerRoute
+  '/partner-apply': typeof AuthenticatedPartnerApplyRoute
   '/agent-pay/$publicID': typeof AgentPayPublicIDRoute
+  '/help/integrations': typeof HelpIntegrationsRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about': typeof AboutIndexRoute
+  '/health': typeof HealthIndexRoute
   '/help': typeof HelpIndexRoute
   '/model-monitor': typeof ModelMonitorIndexRoute
   '/pricing': typeof PricingIndexRoute
@@ -667,7 +693,6 @@ export interface FileRoutesByTo {
   '/user/reset': typeof authUserResetRoute
   '/agent-platform/claim': typeof AuthenticatedAgentPlatformClaimRoute
   '/agent-platform/finance': typeof AuthenticatedAgentPlatformFinanceRoute
-  '/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/model-management/$section': typeof AuthenticatedModelManagementSectionRoute
@@ -678,6 +703,7 @@ export interface FileRoutesByTo {
   '/affiliate': typeof AuthenticatedAffiliateIndexRoute
   '/agent-platform': typeof AuthenticatedAgentPlatformIndexRoute
   '/agent-redemption': typeof AuthenticatedAgentRedemptionIndexRoute
+  '/channel-status': typeof AuthenticatedChannelStatusIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
   '/image': typeof AuthenticatedImageIndexRoute
@@ -741,10 +767,13 @@ export interface FileRoutesById {
   '/(errors)/404': typeof errors404Route
   '/(errors)/500': typeof errors500Route
   '/(errors)/503': typeof errors503Route
-  '/_authenticated/chat2link': typeof AuthenticatedChat2linkRoute
+  '/_authenticated/partner': typeof AuthenticatedPartnerRoute
+  '/_authenticated/partner-apply': typeof AuthenticatedPartnerApplyRoute
   '/agent-pay/$publicID': typeof AgentPayPublicIDRoute
+  '/help/integrations': typeof HelpIntegrationsRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
+  '/health/': typeof HealthIndexRoute
   '/help/': typeof HelpIndexRoute
   '/model-monitor/': typeof ModelMonitorIndexRoute
   '/pricing/': typeof PricingIndexRoute
@@ -753,7 +782,6 @@ export interface FileRoutesById {
   '/(auth)/user/reset': typeof authUserResetRoute
   '/_authenticated/agent-platform/claim': typeof AuthenticatedAgentPlatformClaimRoute
   '/_authenticated/agent-platform/finance': typeof AuthenticatedAgentPlatformFinanceRoute
-  '/_authenticated/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/_authenticated/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
   '/_authenticated/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/_authenticated/model-management/$section': typeof AuthenticatedModelManagementSectionRoute
@@ -764,6 +792,7 @@ export interface FileRoutesById {
   '/_authenticated/affiliate/': typeof AuthenticatedAffiliateIndexRoute
   '/_authenticated/agent-platform/': typeof AuthenticatedAgentPlatformIndexRoute
   '/_authenticated/agent-redemption/': typeof AuthenticatedAgentRedemptionIndexRoute
+  '/_authenticated/channel-status/': typeof AuthenticatedChannelStatusIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/_authenticated/image/': typeof AuthenticatedImageIndexRoute
@@ -826,10 +855,13 @@ export interface FileRouteTypes {
     | '/404'
     | '/500'
     | '/503'
-    | '/chat2link'
+    | '/partner'
+    | '/partner-apply'
     | '/agent-pay/$publicID'
+    | '/help/integrations'
     | '/oauth/$provider'
     | '/about/'
+    | '/health/'
     | '/help/'
     | '/model-monitor/'
     | '/pricing/'
@@ -838,7 +870,6 @@ export interface FileRouteTypes {
     | '/user/reset'
     | '/agent-platform/claim'
     | '/agent-platform/finance'
-    | '/chat/$chatId'
     | '/dashboard/$section'
     | '/errors/$error'
     | '/model-management/$section'
@@ -849,6 +880,7 @@ export interface FileRouteTypes {
     | '/affiliate/'
     | '/agent-platform/'
     | '/agent-redemption/'
+    | '/channel-status/'
     | '/channels/'
     | '/dashboard/'
     | '/image/'
@@ -908,10 +940,13 @@ export interface FileRouteTypes {
     | '/404'
     | '/500'
     | '/503'
-    | '/chat2link'
+    | '/partner'
+    | '/partner-apply'
     | '/agent-pay/$publicID'
+    | '/help/integrations'
     | '/oauth/$provider'
     | '/about'
+    | '/health'
     | '/help'
     | '/model-monitor'
     | '/pricing'
@@ -920,7 +955,6 @@ export interface FileRouteTypes {
     | '/user/reset'
     | '/agent-platform/claim'
     | '/agent-platform/finance'
-    | '/chat/$chatId'
     | '/dashboard/$section'
     | '/errors/$error'
     | '/model-management/$section'
@@ -931,6 +965,7 @@ export interface FileRouteTypes {
     | '/affiliate'
     | '/agent-platform'
     | '/agent-redemption'
+    | '/channel-status'
     | '/channels'
     | '/dashboard'
     | '/image'
@@ -993,10 +1028,13 @@ export interface FileRouteTypes {
     | '/(errors)/404'
     | '/(errors)/500'
     | '/(errors)/503'
-    | '/_authenticated/chat2link'
+    | '/_authenticated/partner'
+    | '/_authenticated/partner-apply'
     | '/agent-pay/$publicID'
+    | '/help/integrations'
     | '/oauth/$provider'
     | '/about/'
+    | '/health/'
     | '/help/'
     | '/model-monitor/'
     | '/pricing/'
@@ -1005,7 +1043,6 @@ export interface FileRouteTypes {
     | '/(auth)/user/reset'
     | '/_authenticated/agent-platform/claim'
     | '/_authenticated/agent-platform/finance'
-    | '/_authenticated/chat/$chatId'
     | '/_authenticated/dashboard/$section'
     | '/_authenticated/errors/$error'
     | '/_authenticated/model-management/$section'
@@ -1016,6 +1053,7 @@ export interface FileRouteTypes {
     | '/_authenticated/affiliate/'
     | '/_authenticated/agent-platform/'
     | '/_authenticated/agent-redemption/'
+    | '/_authenticated/channel-status/'
     | '/_authenticated/channels/'
     | '/_authenticated/dashboard/'
     | '/_authenticated/image/'
@@ -1072,8 +1110,10 @@ export interface RootRouteChildren {
   errors500Route: typeof errors500Route
   errors503Route: typeof errors503Route
   AgentPayPublicIDRoute: typeof AgentPayPublicIDRoute
+  HelpIntegrationsRoute: typeof HelpIntegrationsRoute
   OauthProviderRoute: typeof OauthProviderRoute
   AboutIndexRoute: typeof AboutIndexRoute
+  HealthIndexRoute: typeof HealthIndexRoute
   HelpIndexRoute: typeof HelpIndexRoute
   ModelMonitorIndexRoute: typeof ModelMonitorIndexRoute
   PricingIndexRoute: typeof PricingIndexRoute
@@ -1205,11 +1245,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof errors503RouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_authenticated/chat2link': {
-      id: '/_authenticated/chat2link'
-      path: '/chat2link'
-      fullPath: '/chat2link'
-      preLoaderRoute: typeof AuthenticatedChat2linkRouteImport
+    '/_authenticated/partner': {
+      id: '/_authenticated/partner'
+      path: '/partner'
+      fullPath: '/partner'
+      preLoaderRoute: typeof AuthenticatedPartnerRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/partner-apply': {
+      id: '/_authenticated/partner-apply'
+      path: '/partner-apply'
+      fullPath: '/partner-apply'
+      preLoaderRoute: typeof AuthenticatedPartnerApplyRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/system-settings': {
@@ -1233,11 +1280,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentPayPublicIDRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/health/': {
+      id: '/health/'
+      path: '/health'
+      fullPath: '/health/'
+      preLoaderRoute: typeof HealthIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/help/': {
       id: '/help/'
       path: '/help'
       fullPath: '/help/'
       preLoaderRoute: typeof HelpIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/help/integrations': {
+      id: '/help/integrations'
+      path: '/help/integrations'
+      fullPath: '/help/integrations'
+      preLoaderRoute: typeof HelpIntegrationsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/model-monitor/': {
@@ -1324,18 +1385,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAgentRedemptionIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/channel-status/': {
+      id: '/_authenticated/channel-status/'
+      path: '/channel-status'
+      fullPath: '/channel-status/'
+      preLoaderRoute: typeof AuthenticatedChannelStatusIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/channels/': {
       id: '/_authenticated/channels/'
       path: '/channels'
       fullPath: '/channels/'
       preLoaderRoute: typeof AuthenticatedChannelsIndexRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/chat/$chatId': {
-      id: '/_authenticated/chat/$chatId'
-      path: '/chat/$chatId'
-      fullPath: '/chat/$chatId'
-      preLoaderRoute: typeof AuthenticatedChatChatIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/dashboard/': {
@@ -1761,10 +1822,10 @@ const AuthenticatedSystemSettingsRouteRouteWithChildren =
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedSystemSettingsRouteRoute: typeof AuthenticatedSystemSettingsRouteRouteWithChildren
-  AuthenticatedChat2linkRoute: typeof AuthenticatedChat2linkRoute
+  AuthenticatedPartnerRoute: typeof AuthenticatedPartnerRoute
+  AuthenticatedPartnerApplyRoute: typeof AuthenticatedPartnerApplyRoute
   AuthenticatedAgentPlatformClaimRoute: typeof AuthenticatedAgentPlatformClaimRoute
   AuthenticatedAgentPlatformFinanceRoute: typeof AuthenticatedAgentPlatformFinanceRoute
-  AuthenticatedChatChatIdRoute: typeof AuthenticatedChatChatIdRoute
   AuthenticatedDashboardSectionRoute: typeof AuthenticatedDashboardSectionRoute
   AuthenticatedErrorsErrorRoute: typeof AuthenticatedErrorsErrorRoute
   AuthenticatedModelManagementSectionRoute: typeof AuthenticatedModelManagementSectionRoute
@@ -1774,6 +1835,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedAffiliateIndexRoute: typeof AuthenticatedAffiliateIndexRoute
   AuthenticatedAgentPlatformIndexRoute: typeof AuthenticatedAgentPlatformIndexRoute
   AuthenticatedAgentRedemptionIndexRoute: typeof AuthenticatedAgentRedemptionIndexRoute
+  AuthenticatedChannelStatusIndexRoute: typeof AuthenticatedChannelStatusIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
   AuthenticatedImageIndexRoute: typeof AuthenticatedImageIndexRoute
@@ -1802,11 +1864,11 @@ interface AuthenticatedRouteRouteChildren {
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedSystemSettingsRouteRoute:
     AuthenticatedSystemSettingsRouteRouteWithChildren,
-  AuthenticatedChat2linkRoute: AuthenticatedChat2linkRoute,
+  AuthenticatedPartnerRoute: AuthenticatedPartnerRoute,
+  AuthenticatedPartnerApplyRoute: AuthenticatedPartnerApplyRoute,
   AuthenticatedAgentPlatformClaimRoute: AuthenticatedAgentPlatformClaimRoute,
   AuthenticatedAgentPlatformFinanceRoute:
     AuthenticatedAgentPlatformFinanceRoute,
-  AuthenticatedChatChatIdRoute: AuthenticatedChatChatIdRoute,
   AuthenticatedDashboardSectionRoute: AuthenticatedDashboardSectionRoute,
   AuthenticatedErrorsErrorRoute: AuthenticatedErrorsErrorRoute,
   AuthenticatedModelManagementSectionRoute:
@@ -1818,6 +1880,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAgentPlatformIndexRoute: AuthenticatedAgentPlatformIndexRoute,
   AuthenticatedAgentRedemptionIndexRoute:
     AuthenticatedAgentRedemptionIndexRoute,
+  AuthenticatedChannelStatusIndexRoute: AuthenticatedChannelStatusIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
   AuthenticatedImageIndexRoute: AuthenticatedImageIndexRoute,
@@ -1865,8 +1928,10 @@ const rootRouteChildren: RootRouteChildren = {
   errors500Route: errors500Route,
   errors503Route: errors503Route,
   AgentPayPublicIDRoute: AgentPayPublicIDRoute,
+  HelpIntegrationsRoute: HelpIntegrationsRoute,
   OauthProviderRoute: OauthProviderRoute,
   AboutIndexRoute: AboutIndexRoute,
+  HealthIndexRoute: HealthIndexRoute,
   HelpIndexRoute: HelpIndexRoute,
   ModelMonitorIndexRoute: ModelMonitorIndexRoute,
   PricingIndexRoute: PricingIndexRoute,

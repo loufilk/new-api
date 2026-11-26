@@ -37,7 +37,10 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import { AutoGroupOrderItem } from '@/components/auto-group-order-item'
-import { StaticDataTable } from '@/components/data-table/static/static-data-table'
+import {
+  StaticDataTable,
+  type StaticDataTableColumn,
+} from '@/components/data-table/static/static-data-table'
 import { StaticRowActions } from '@/components/data-table/static/static-row-actions'
 import { Dialog } from '@/components/dialog'
 import {
@@ -84,6 +87,7 @@ import { formatNumber } from '@/lib/format'
 
 import type { GroupRenameMapping } from '../types'
 import { safeJsonParse } from '../utils/json-parser'
+import { GroupBaseRateBatch } from './group-base-rate-batch'
 import { collectGroupRenames } from './group-rename'
 import { GroupSpecialUsableRulesEditor } from './group-special-usable-editor'
 
@@ -96,8 +100,11 @@ export type GroupSettingsSection =
 type GroupRatioVisualEditorProps = {
   section: GroupSettingsSection
   onSectionChange: (section: GroupSettingsSection) => void
+  workspacePanel?: 'pricing' | 'advanced'
+  workspaceActive?: boolean
   defaultUseAutoGroupField: ReactNode
   groupRatio: string
+  savedGroupRatio?: string
   topupGroupRatio: string
   userUsableGroups: string
   groupGroupRatio: string
@@ -107,6 +114,7 @@ type GroupRatioVisualEditorProps = {
   groupSpecialUsableGroup: string
   onChange: (field: string, value: string) => void
   onRenamesChange?: (renames: GroupRenameMapping[]) => void
+  onPricingValidityChange?: (valid: boolean) => void
 }
 
 type GroupPricingRow = {
@@ -136,6 +144,27 @@ function createGroupPricingId() {
 function normalizeRatio(value: unknown): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : 1
+}
+
+function isCompleteGroupRatio(value: string) {
+  return (
+    Boolean(value.trim()) &&
+    Number.isFinite(Number(value)) &&
+    Number(value) >= 0
+  )
+}
+
+function areCompleteGroupPricingRows(rows: GroupPricingRow[]) {
+  const names = rows.map((row) => row.name.trim())
+  return (
+    names.every(Boolean) &&
+    new Set(names).size === names.length &&
+    rows.every(
+      (row) =>
+        isCompleteGroupRatio(row.ratio) &&
+        (!row.topupRatio || isCompleteGroupRatio(row.topupRatio))
+    )
+  )
 }
 
 function parseRatioMap(value: string): Record<string, number> {
@@ -293,8 +322,11 @@ function GroupNameSelect(props: GroupNameSelectProps) {
 export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
   section,
   onSectionChange,
+  workspacePanel,
+  workspaceActive = true,
   defaultUseAutoGroupField,
   groupRatio,
+  savedGroupRatio,
   topupGroupRatio,
   userUsableGroups,
   groupGroupRatio,
@@ -304,6 +336,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
   groupSpecialUsableGroup,
   onChange,
   onRenamesChange,
+  onPricingValidityChange,
 }: GroupRatioVisualEditorProps) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
@@ -375,10 +408,15 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
       onValueChange={(value) => onSectionChange(value as GroupSettingsSection)}
       className='min-w-0 gap-5'
     >
-      <div className='min-w-0 overflow-x-auto pb-1'>
+      <div
+        className='min-w-0 overflow-x-auto pb-1'
+        hidden={workspacePanel === 'pricing'}
+      >
         <TabsList aria-label={t('Group settings')} className='w-full min-w-max'>
           <TabsTrigger value='pricing' className='px-3'>
-            {t('Pricing groups')}
+            {workspacePanel === 'advanced'
+              ? t('Group defaults and access')
+              : t('Pricing groups')}
           </TabsTrigger>
           <TabsTrigger value='overrides' className='px-3'>
             {t('Special ratio rules')}
@@ -387,17 +425,28 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
             {t('Group visibility')}
           </TabsTrigger>
           <TabsTrigger value='auto' className='px-3'>
-            {t('Auto group order')}
+            {workspacePanel ? t('Legacy Auto') : t('Auto group order')}
           </TabsTrigger>
         </TabsList>
       </div>
       <TabsContent value='pricing' keepMounted>
         <GroupPricingTable
           groupRatio={groupRatio}
-          userUsableGroups={userUsableGroups}
-          topupGroupRatio={topupGroupRatio}
+          userUsableGroups={
+            workspacePanel === 'pricing' ? '{}' : userUsableGroups
+          }
+          topupGroupRatio={
+            workspacePanel === 'pricing' ? '{}' : topupGroupRatio
+          }
+          baseOnly={workspacePanel === 'pricing'}
+          searchDescriptions={
+            workspacePanel === 'pricing' ? userUsableGroups : undefined
+          }
+          savedGroupRatio={workspaceActive ? savedGroupRatio : undefined}
+          newGroupSelectable={!workspacePanel}
           pendingRenames={pendingRenames}
           onRenamesChange={onRenamesChange}
+          onPricingValidityChange={onPricingValidityChange}
           onChange={onChange}
           onShowDetail={setDetailGroup}
         />
@@ -419,11 +468,17 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
       <TabsContent value='auto' keepMounted>
         <Card className={sectionCardClassName}>
           <CardHeader className={sectionHeaderClassName}>
-            <CardTitle>{t('Auto group order')}</CardTitle>
+            <CardTitle>
+              {workspacePanel ? t('Legacy Auto') : t('Auto group order')}
+            </CardTitle>
             <CardDescription>
-              {t(
-                'Priority order for tokens in the auto group. The system tries groups from top to bottom.'
-              )}
+              {workspacePanel
+                ? t(
+                    'Applies to existing API keys using Auto. New API keys use a single selected group.'
+                  )
+                : t(
+                    'Priority order for tokens in the auto group. The system tries groups from top to bottom.'
+                  )}
             </CardDescription>
           </CardHeader>
           <CardContent className='grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.7fr)]'>
@@ -476,7 +531,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
             </div>
             <div className='bg-muted/20 flex min-w-0 flex-col gap-4 self-start rounded-lg border p-4'>
               {defaultUseAutoGroupField}
-              <Separator />
+              {defaultUseAutoGroupField && <Separator />}
               {maxTokenAutoGroupsField}
             </div>
           </CardContent>
@@ -484,7 +539,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
       </TabsContent>
 
       <GroupDetailSheet
-        groupName={detailGroup}
+        groupName={workspaceActive ? detailGroup : null}
         onOpenChange={(open) => {
           if (!open) setDetailGroup(null)
         }}
@@ -501,22 +556,32 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
 
 type GroupPricingTableProps = {
   groupRatio: string
+  savedGroupRatio?: string
   userUsableGroups: string
   topupGroupRatio: string
+  baseOnly?: boolean
+  searchDescriptions?: string
+  newGroupSelectable?: boolean
   pendingRenames?: GroupRenameMapping[]
   onChange: (field: string, value: string) => void
   onShowDetail: (name: string) => void
   onRenamesChange?: (renames: GroupRenameMapping[]) => void
+  onPricingValidityChange?: (valid: boolean) => void
 }
 
 function GroupPricingTable({
   groupRatio,
+  savedGroupRatio,
   userUsableGroups,
+  searchDescriptions,
   topupGroupRatio,
+  baseOnly = false,
+  newGroupSelectable = true,
   pendingRenames,
   onChange,
   onShowDetail,
   onRenamesChange,
+  onPricingValidityChange,
 }: GroupPricingTableProps) {
   const { t } = useTranslation()
   const [search, setSearch] = useState('')
@@ -527,37 +592,54 @@ function GroupPricingTable({
     )
   )
 
-  useEffect(() => {
+  const [source, setSource] = useState({
+    groupRatio,
+    userUsableGroups,
+    topupGroupRatio,
+    pendingRenames,
+  })
+  if (
+    groupRatio !== source.groupRatio ||
+    userUsableGroups !== source.userUsableGroups ||
+    topupGroupRatio !== source.topupGroupRatio ||
+    pendingRenames !== source.pendingRenames
+  ) {
+    setSource({ groupRatio, userUsableGroups, topupGroupRatio, pendingRenames })
     const incomingRows = applyPendingRenamesToRows(
       buildGroupPricingRows(groupRatio, userUsableGroups, topupGroupRatio),
       pendingRenames
     )
-    setRows((currentRows) => {
-      if (
-        groupPricingSignature(currentRows) ===
-        groupPricingSignature(incomingRows)
-      ) {
-        return currentRows
-      }
-      return incomingRows
-    })
-  }, [groupRatio, userUsableGroups, topupGroupRatio, pendingRenames])
+    if (groupPricingSignature(rows) !== groupPricingSignature(incomingRows)) {
+      setRows(incomingRows)
+    }
+  }
 
   const renames = useMemo(() => collectGroupRenames(rows), [rows])
+  const canEmitRenames =
+    !onPricingValidityChange || areCompleteGroupPricingRows(rows)
 
   useEffect(() => {
-    onRenamesChange?.(renames)
-  }, [onRenamesChange, renames])
+    if (canEmitRenames) onRenamesChange?.(renames)
+  }, [onRenamesChange, renames, canEmitRenames])
 
   const emitRows = useCallback(
     (nextRows: GroupPricingRow[]) => {
       setRows(nextRows)
+      if (onPricingValidityChange) {
+        const valid = areCompleteGroupPricingRows(nextRows)
+        onPricingValidityChange(valid)
+        // A partial number is a visual draft, not a numeric zero or a
+        // partially serialized settings change.
+        if (!valid) return
+      }
       const serialized = serializeGroupPricingRows(nextRows)
       onChange('GroupRatio', serialized.GroupRatio)
+      // This editor owns only the existing base-rate map, not the ACL or top-up options.
+      if (baseOnly) return
       onChange('UserUsableGroups', serialized.UserUsableGroups)
       onChange('TopupGroupRatio', serialized.TopupGroupRatio)
     },
-    [onChange]
+    [baseOnly, onChange, onPricingValidityChange]
   )
 
   const updateRow = useCallback(
@@ -589,12 +671,12 @@ function GroupPricingTable({
         name,
         ratio: '1',
         topupRatio: '',
-        selectable: true,
+        selectable: newGroupSelectable,
         description: '',
       },
       ...rows,
     ])
-  }, [emitRows, rows])
+  }, [emitRows, newGroupSelectable, rows])
 
   const removeRow = useCallback(
     (id: string) => {
@@ -615,12 +697,42 @@ function GroupPricingTable({
       .map(([name]) => name)
   }, [rows])
 
+  const savedRates = savedGroupRatio
+    ? parseRatioMap(savedGroupRatio)
+    : undefined
+  const batchReady =
+    !!savedRates &&
+    Object.keys(savedRates).length === rows.length &&
+    rows.every(
+      (row) =>
+        row.originalName === row.name &&
+        row.name.trim() === row.name &&
+        row.name !== '__proto__' &&
+        Object.hasOwn(savedRates, row.name) &&
+        isCompleteGroupRatio(row.ratio) &&
+        Number(row.ratio) === savedRates[row.name]
+    )
+  const batchGroups = batchReady
+    ? rows
+        .filter((row) => row.name !== 'auto' && row.name !== 'all')
+        .map((row) => ({ id: row.name, ratio: Number(row.ratio) }))
+    : []
+
+  // Labels improve lookup only. Access-only groups must not become pricing
+  // rows, and searching must never write visibility or top-up settings.
+  const searchLabels = useMemo(
+    () => parseUsableMap(searchDescriptions ?? '{}'),
+    [searchDescriptions]
+  )
   const query = search.trim().toLowerCase()
   const visibleRows = rows.filter(
     (row) =>
       !query ||
       row.name.toLowerCase().includes(query) ||
-      row.description.toLowerCase().includes(query)
+      row.description.toLowerCase().includes(query) ||
+      (Object.hasOwn(searchLabels, row.name) &&
+        typeof searchLabels[row.name] === 'string' &&
+        searchLabels[row.name].toLowerCase().includes(query))
   )
 
   return (
@@ -630,15 +742,40 @@ function GroupPricingTable({
           <div>
             <CardTitle>{t('Pricing groups')}</CardTitle>
             <CardDescription>
-              {t(
-                'All group names live here. Ratio applies when calls are billed as this group; top-up ratio applies to users whose account is in this group.'
-              )}
+              {baseOnly
+                ? t(
+                    'Base group ratios apply to calls billed to this group. Top-up ratios and availability are in Advanced.'
+                  )
+                : t(
+                    'All group names live here. Ratio applies when calls are billed as this group; top-up ratio applies to users whose account is in this group.'
+                  )}
             </CardDescription>
           </div>
-          <Button onClick={addRow} size='sm' className='sm:self-start'>
-            <Plus className='mr-2 h-4 w-4' />
-            {t('Add group')}
-          </Button>
+          {baseOnly && savedGroupRatio !== undefined && (
+            <GroupBaseRateBatch
+              key={savedGroupRatio}
+              groups={batchGroups}
+              disabled={!batchReady}
+              onStage={(ids, rate) => {
+                const available = new Set(batchGroups.map((group) => group.id))
+                if (!batchReady || !ids.every((id) => available.has(id))) {
+                  return
+                }
+                const selected = new Set(ids)
+                emitRows(
+                  rows.map((row) =>
+                    selected.has(row.name) ? { ...row, ratio: rate } : row
+                  )
+                )
+              }}
+            />
+          )}
+          {!baseOnly && (
+            <Button onClick={addRow} size='sm' className='sm:self-start'>
+              <Plus className='mr-2 h-4 w-4' />
+              {t('Add group')}
+            </Button>
+          )}
         </div>
       </CardHeader>
       <CardContent>
@@ -666,7 +803,7 @@ function GroupPricingTable({
             )}
           </InputGroup>
           <StaticDataTable
-            tableClassName='min-w-[760px]'
+            tableClassName={baseOnly ? 'w-full table-fixed' : 'min-w-[760px]'}
             tableProps={{ 'aria-label': t('Pricing groups') }}
             data={visibleRows}
             getRowKey={(row) => row._id}
@@ -692,121 +829,150 @@ function GroupPricingTable({
                 }
               />
             }
-            columns={[
-              {
-                id: 'group',
-                header: t('Group name'),
-                className: 'min-w-40',
-                cell: (row) => (
-                  <Input
-                    value={row.name}
-                    aria-label={t('Group name')}
-                    onChange={(event) =>
-                      updateRow(row._id, 'name', event.target.value)
-                    }
-                    aria-invalid={duplicateNames.includes(row.name.trim())}
-                  />
-                ),
-              },
-              {
-                id: 'ratio',
-                header: t('Ratio'),
-                className: 'w-28',
-                cell: (row) => (
-                  <Input
-                    type='number'
-                    min={0}
-                    step={0.0001}
-                    value={row.ratio}
-                    aria-label={t('Ratio')}
-                    onChange={(event) =>
-                      updateRow(row._id, 'ratio', event.target.value)
-                    }
-                  />
-                ),
-              },
-              {
-                id: 'topup-ratio',
-                header: t('Top-up ratio'),
-                className: 'w-28',
-                cell: (row) => (
-                  <Input
-                    type='number'
-                    min={0}
-                    step={0.0001}
-                    value={row.topupRatio}
-                    aria-label={t('Top-up ratio')}
-                    placeholder={t('Not set')}
-                    onChange={(event) =>
-                      updateRow(row._id, 'topupRatio', event.target.value)
-                    }
-                  />
-                ),
-              },
-              {
-                id: 'selectable',
-                header: t('User selectable'),
-                className: 'w-28 text-center',
-                cell: (row) => (
-                  <div className='flex justify-center'>
-                    <Checkbox
-                      checked={row.selectable}
-                      onCheckedChange={(checked) =>
-                        updateRow(row._id, 'selectable', checked === true)
-                      }
-                      aria-label={t('User selectable')}
-                    />
-                  </div>
-                ),
-              },
-              {
-                id: 'description',
-                header: t('Description'),
-                className: 'min-w-56',
-                cell: (row) =>
-                  row.selectable ? (
+            columns={(
+              [
+                {
+                  id: 'group',
+                  header: t('Group name'),
+                  className: baseOnly ? 'w-auto' : 'min-w-40',
+                  cell: (row) =>
+                    baseOnly ? (
+                      <span className='font-medium break-words'>
+                        {row.name}
+                      </span>
+                    ) : (
+                      <Input
+                        value={row.name}
+                        aria-label={t('Group name')}
+                        onChange={(event) =>
+                          updateRow(row._id, 'name', event.target.value)
+                        }
+                        aria-invalid={duplicateNames.includes(row.name.trim())}
+                      />
+                    ),
+                },
+                {
+                  id: 'ratio',
+                  header: t('Ratio'),
+                  className: baseOnly ? 'w-24' : 'w-28',
+                  cell: (row) => (
                     <Input
-                      value={row.description}
-                      aria-label={t('Group description')}
-                      placeholder={t('Group description')}
+                      type='number'
+                      min={0}
+                      step={0.0001}
+                      value={row.ratio}
+                      aria-label={t('Ratio')}
+                      aria-invalid={
+                        onPricingValidityChange
+                          ? !isCompleteGroupRatio(row.ratio)
+                          : undefined
+                      }
                       onChange={(event) =>
-                        updateRow(row._id, 'description', event.target.value)
+                        updateRow(row._id, 'ratio', event.target.value)
                       }
                     />
-                  ) : (
-                    <span className='text-muted-foreground px-3 text-sm'>
-                      -
-                    </span>
                   ),
-              },
-              {
-                id: 'actions',
-                header: t('Actions'),
-                className: 'text-right',
-                cellClassName: 'text-right',
-                cell: (row) => (
-                  <div className='flex justify-end gap-1'>
-                    <Button
-                      variant='ghost'
-                      size='sm'
-                      onClick={() => onShowDetail(row.name.trim())}
-                      disabled={!row.name.trim()}
-                      aria-label={t('Details')}
-                    >
-                      <Info className='h-4 w-4' />
-                    </Button>
-                    <Button
-                      variant='ghost'
-                      size='sm'
-                      onClick={() => removeRow(row._id)}
-                      aria-label={t('Delete')}
-                    >
-                      <Trash2 className='h-4 w-4' />
-                    </Button>
-                  </div>
-                ),
-              },
-            ]}
+                },
+                {
+                  id: 'topup-ratio',
+                  header: t('Top-up ratio'),
+                  className: 'w-28',
+                  cell: (row) => (
+                    <Input
+                      type='number'
+                      min={0}
+                      step={0.0001}
+                      value={row.topupRatio}
+                      aria-label={t('Top-up ratio')}
+                      aria-invalid={
+                        onPricingValidityChange && row.topupRatio
+                          ? !isCompleteGroupRatio(row.topupRatio)
+                          : undefined
+                      }
+                      placeholder={t('Not set')}
+                      onChange={(event) =>
+                        updateRow(row._id, 'topupRatio', event.target.value)
+                      }
+                    />
+                  ),
+                },
+                {
+                  id: 'selectable',
+                  header: t('User selectable'),
+                  className: 'w-28 text-center',
+                  cell: (row) => (
+                    <div className='flex justify-center'>
+                      <Checkbox
+                        checked={row.selectable}
+                        onCheckedChange={(checked) =>
+                          updateRow(row._id, 'selectable', checked === true)
+                        }
+                        aria-label={t('User selectable')}
+                      />
+                    </div>
+                  ),
+                },
+                {
+                  id: 'description',
+                  header: t('Description'),
+                  className: 'min-w-56',
+                  cell: (row) =>
+                    row.selectable ? (
+                      <Input
+                        value={row.description}
+                        aria-label={t('Group description')}
+                        placeholder={t('Group description')}
+                        onChange={(event) =>
+                          updateRow(row._id, 'description', event.target.value)
+                        }
+                      />
+                    ) : (
+                      <span className='text-muted-foreground px-3 text-sm'>
+                        -
+                      </span>
+                    ),
+                },
+                {
+                  id: 'actions',
+                  header: t('Actions'),
+                  className: baseOnly ? 'w-16 text-right' : 'text-right',
+                  cellClassName: 'text-right',
+                  cell: (row) => (
+                    <div className='flex justify-end gap-1'>
+                      <Button
+                        variant='ghost'
+                        size='sm'
+                        onClick={() => onShowDetail(row.name.trim())}
+                        disabled={!row.name.trim()}
+                        aria-label={
+                          baseOnly
+                            ? `${t('Details')}: ${row.name}`
+                            : t('Details')
+                        }
+                      >
+                        <Info className='h-4 w-4' />
+                      </Button>
+                      {!baseOnly && (
+                        <Button
+                          variant='ghost'
+                          size='sm'
+                          onClick={() => removeRow(row._id)}
+                          aria-label={t('Delete')}
+                        >
+                          <Trash2 className='h-4 w-4' />
+                        </Button>
+                      )}
+                    </div>
+                  ),
+                },
+              ] satisfies StaticDataTableColumn<GroupPricingRow>[]
+            ).filter(
+              ({ id }) =>
+                !baseOnly ||
+                id === 'group' ||
+                id === 'ratio' ||
+                id === 'actions'
+            )}
           />
 
           {duplicateNames.length > 0 && (
@@ -1197,19 +1363,19 @@ function GroupOverrideDialog({
   baseRatioByName,
 }: GroupOverrideDialogProps) {
   const { t } = useTranslation()
-  const [targetGroup, setTargetGroup] = useState<string | null>(null)
-  const [ratio, setRatio] = useState('')
+  const [targetGroup, setTargetGroup] = useState<string | null>(
+    open ? (editData?.targetGroup ?? null) : null
+  )
+  const [ratio, setRatio] = useState(
+    open && editData ? String(editData.ratio) : ''
+  )
 
-  useEffect(() => {
-    if (!open) {
-      setTargetGroup(null)
-      setRatio('')
-      return
-    }
-
-    setTargetGroup(editData?.targetGroup ?? null)
-    setRatio(editData ? String(editData.ratio) : '')
-  }, [editData, open])
+  const [source, setSource] = useState({ open, editData })
+  if (open !== source.open || editData !== source.editData) {
+    setSource({ open, editData })
+    setTargetGroup(open ? (editData?.targetGroup ?? null) : null)
+    setRatio(open && editData ? String(editData.ratio) : '')
+  }
 
   const baseRatio = targetGroup ? baseRatioByName.get(targetGroup) : undefined
 

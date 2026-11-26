@@ -16,6 +16,7 @@ import (
 	common2 "github.com/QuantumNous/new-api/common"
 	appconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/relay_timing"
 	"github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -643,7 +644,11 @@ func doPreparedChannelHTTPRequest(c *gin.Context, req *http.Request, info *commo
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestUnsent, false)
 	common2.SetContextKey(c, appconstant.ContextKeyUpstreamRequestAttempted, true)
 	applySingleAttemptTransportPolicy(c, req)
-	resp, err := relayClient.Do(req)
+	tracedReq, finishTiming := relay_timing.TraceUpstream(c, req)
+	resp, err := relayClient.Do(tracedReq)
+	if finishTiming != nil {
+		finishTiming(resp)
+	}
 	if err != nil {
 		var dialErr *net.OpError
 		var dnsErr *net.DNSError

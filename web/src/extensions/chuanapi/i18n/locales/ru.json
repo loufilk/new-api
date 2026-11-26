@@ -1,5 +1,21 @@
 {
   "translation": {
+    "Client setup wizard": "Мастер настройки клиента",
+    "Choose a published model group, a model, a client and a connection address to generate setup instructions.": "Выберите опубликованную группу, модель, клиент и адрес подключения, чтобы получить инструкции.",
+    "Public group names are for reference only. The group and permissions on your API Key determine actual routing.": "Имена публичных групп приведены для справки. Маршрутизацию определяют группа и права ключа API.",
+    "No published group is available. The examples below use a placeholder for your model ID.": "Нет доступных опубликованных групп. В примерах используется заполнитель идентификатора модели.",
+    "Published model group": "Опубликованная группа моделей",
+    "Protocol": "Протокол",
+    "Connection address": "Адрес подключения",
+    "No verified connection address": "Нет проверенного адреса подключения",
+    "Operating system": "Операционная система",
+    "Setup instructions": "Инструкции по настройке",
+    "Create or choose an API Key in the console. Set WANCHUAN_API_KEY locally for commands, or replace the placeholder in your client settings. Never paste your Key into this page.": "Создайте или выберите ключ в консоли. Задайте WANCHUAN_API_KEY локально или введите ключ в клиенте. Не вставляйте ключ на этой странице.",
+    "Merge these settings with your existing configuration. Test in your client and check the request time, model and status in your usage logs. A model request may incur charges.": "Объедините настройки с существующими. Проверьте в клиенте и сверьте время, модель и статус в журнале. Запрос к модели может быть платным.",
+    "Read the full guide": "Открыть полное руководство",
+    "This application changed while you were reviewing it. Load the latest status before continuing.": "Заявка изменилась во время проверки. Загрузите её актуальный статус, прежде чем продолжить.",
+    "Reload latest application": "Загрузить актуальную заявку",
+    "This application is read-only for your account.": "Ваш аккаунт может только просматривать эту заявку.",
     "{{count}} announcements deleted. Click \"Save Settings\" to apply.": "Удалено объявлений: {{count}}. Нажмите «Сохранить настройки», чтобы применить изменения.",
     "{{count}} API entries deleted. Click \"Save Settings\" to apply.": "Удалено записей API: {{count}}. Нажмите «Сохранить настройки», чтобы применить изменения.",
     "{{count}} FAQs deleted. Click \"Save Settings\" to apply.": "Удалено записей FAQ: {{count}}. Нажмите «Сохранить настройки», чтобы применить изменения.",
@@ -252,6 +268,16 @@
     "Select an invoice category": "Выберите категорию счёта-фактуры",
     "This invoice category is currently unavailable": "Эта категория счёта-фактуры сейчас недоступна",
     "Update the server to edit invoice categories.": "Чтобы редактировать категории счетов-фактур, обновите сервер.",
-    "Invoice fee refund": "Возврат комиссии за выставление счёта"
+    "Invoice fee refund": "Возврат комиссии за выставление счёта",
+    "Site information": "Сведения о сайте",
+    "Press Enter to add a model.": "Нажмите Enter, чтобы добавить модель.",
+    "Top-up rates, settlement terms, or anything else you would like to share.": "Укажите условия пополнения, порядок расчётов или другие сведения.",
+    "Previous EPay order": "Предыдущий заказ EPay",
+    "Order not confirmed. Retry the same checkout to avoid duplicate orders.": "Статус заказа не подтверждён. Чтобы избежать дублирования, повторите с той же суммой и способом оплаты.",
+    "Check the previous EPay order before starting another.": "Проверьте предыдущий заказ EPay перед созданием нового.",
+    "Check status": "Проверить статус",
+    "Dismiss reminder (does not cancel the order)": "Скрыть напоминание (не отменяет заказ)",
+    "The payment quote changed. Close this dialog and select the payment method again.": "Сумма изменилась. Закройте окно и снова выберите способ оплаты.",
+    "If it stays unconfirmed, check recharge history or give support this reference:": "Если статус не подтверждён, проверьте историю пополнений или сообщите поддержке этот номер:"
   }
 }

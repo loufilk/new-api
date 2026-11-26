@@ -162,7 +162,7 @@ func TestModelTestSwitchPostgresDatabaseFaultDeniesNewWorkButPreservesHistory(t 
 	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/history", nil))
 	assert.Equal(t, 200, recorder.Code, recorder.Body.String())
 	assert.Contains(t, recorder.Body.String(), `"enabled":false`)
-	assert.Contains(t, recorder.Body.String(), `"availability_error":"model_test_settings_unavailable"`)
+	assert.Contains(t, recorder.Body.String(), `"availability_error":"fingerprint_retired"`)
 	var count int64
 	require.NoError(t, db.Model(&model.ModelTestRun{}).Count(&count).Error)
 	assert.Zero(t, count)
@@ -184,7 +184,7 @@ func TestModelTestSwitchPostgresRejectsNonBooleanSettings(t *testing.T) {
 	}
 }
 
-func TestModelTestSwitchPostgresOnlyLiveRootSessionCanChangeCapability(t *testing.T) {
+func TestModelTestSwitchPostgresRetiredCapabilityCannotBeReactivated(t *testing.T) {
 	db, rootID := setupModelTestsPostgres(t)
 	require.NoError(t, db.AutoMigrate(&model.UserSession{}, &model.UserAccessToken{}, &model.AuditLog{}))
 	require.NoError(t, i18n.Init())
@@ -215,12 +215,12 @@ func TestModelTestSwitchPostgresOnlyLiveRootSessionCanChangeCapability(t *testin
 	for _, enabled := range []string{"false", "true", "false"} {
 		body := `{"key":"ModelTestEnabled","value":` + enabled + `}`
 		response := accessTokenRequest(engine, http.MethodPut, "/api/option/", rootSession, "", body)
-		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-		require.Contains(t, response.Body.String(), `"success":true`)
+		require.Equal(t, http.StatusGone, response.Code, response.Body.String())
+		require.Contains(t, response.Body.String(), "fingerprint_retired")
 		status := httptest.NewRecorder()
 		engine.ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/api/status", nil))
-		assert.Contains(t, status.Body.String(), `"model_test_enabled":`+enabled)
-		assert.Contains(t, status.Body.String(), `"model_test_settings_available":true`)
+		assert.Contains(t, status.Body.String(), `"model_test_enabled":false`)
+		assert.Contains(t, status.Body.String(), `"model_test_settings_available":false`)
 		for _, denied := range []struct {
 			name, token, code string
 			status            int
@@ -243,7 +243,7 @@ func TestModelTestSwitchPostgresOnlyLiveRootSessionCanChangeCapability(t *testin
 				}
 				var stored model.Option
 				require.NoError(t, db.Where(model.Option{Key: model.ModelTestEnabledKey}).Take(&stored).Error)
-				assert.Equal(t, enabled, stored.Value)
+				assert.Equal(t, "true", stored.Value, "historical settings must not be overwritten")
 			})
 		}
 		poolEnabled, err := model.AccountPoolEnabled(t.Context())
@@ -264,13 +264,13 @@ func TestModelTestSwitchPostgresOnlyLiveRootSessionCanChangeCapability(t *testin
 			assert.Contains(t, denied.Body.String(), "AUTH_SESSION_REQUIRED")
 		}
 		rejected := accessTokenRequest(engine, http.MethodPut, "/api/option/", rootSession, "", string(body))
-		assert.Equal(t, http.StatusBadRequest, rejected.Code, rejected.Body.String())
+		assert.Equal(t, http.StatusGone, rejected.Code, rejected.Body.String())
 		var aliasCount int64
 		require.NoError(t, db.Model(&model.Option{}).Where(model.Option{Key: alias}).Count(&aliasCount).Error)
 		assert.Zero(t, aliasCount, "noncanonical option key must never be persisted")
 		current, err := model.ModelTestEnabled(t.Context())
 		require.NoError(t, err)
-		assert.False(t, current)
+		assert.True(t, current, "stored option is historical, not a runnable capability")
 	}
 	revoked, err := model.RevokeUserSession(rootID, "synthetic-model-test-root-session", "synthetic-revocation")
 	require.NoError(t, err)
@@ -279,10 +279,10 @@ func TestModelTestSwitchPostgresOnlyLiveRootSessionCanChangeCapability(t *testin
 	assert.Equal(t, http.StatusUnauthorized, response.Code, response.Body.String())
 	enabled, err := model.ModelTestEnabled(t.Context())
 	require.NoError(t, err)
-	assert.False(t, enabled)
+	assert.True(t, enabled, "historical value must survive retirement")
 }
 
-func TestModelTestSwitchPostgresStatusDistinguishesDisabledFromUnavailable(t *testing.T) {
+func TestModelTestSwitchPostgresStatusNeverAdvertisesRetiredCapability(t *testing.T) {
 	db, _ := setupModelTestsPostgres(t)
 	engine := gin.New()
 	engine.GET("/api/status", GetStatus)
@@ -291,8 +291,8 @@ func TestModelTestSwitchPostgresStatusDistinguishesDisabledFromUnavailable(t *te
 		response := httptest.NewRecorder()
 		engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/status", nil))
 		require.Equal(t, http.StatusOK, response.Code)
-		assert.Contains(t, response.Body.String(), `"model_test_enabled":`+value)
-		assert.Contains(t, response.Body.String(), `"model_test_settings_available":true`)
+		assert.Contains(t, response.Body.String(), `"model_test_enabled":false`)
+		assert.Contains(t, response.Body.String(), `"model_test_settings_available":false`)
 		assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
 	}
 	require.NoError(t, db.Migrator().RenameTable(&model.Option{}, "model_test_settings_unavailable_options"))

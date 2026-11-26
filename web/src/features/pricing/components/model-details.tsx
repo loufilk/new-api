@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import {
   ArrowLeft,
@@ -28,15 +27,15 @@ import {
   Layers,
   Maximize2,
   Sparkles,
-  Timer,
 } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { CatalogModelIcon } from '@/components/catalog-model-icon'
 import { CopyButton } from '@/components/copy-button'
 import { StaticDataTable } from '@/components/data-table'
 import { sideDrawerContentClassName } from '@/components/drawer-layout'
-import { GroupBadge } from '@/components/group-badge'
+import { ErrorState } from '@/components/error-state'
 import { PublicLayout } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import {
@@ -48,21 +47,13 @@ import {
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { getPerfMetrics } from '@/features/performance-metrics/api'
-import {
-  formatLatency,
-  formatThroughput,
-  formatUptimePct,
-  getSuccessRateTextClass,
-} from '@/features/performance-metrics/lib/format'
 import { PluginIcon } from '@/features/task-plugins/components/plugin-icon'
-import { getLobeIcon } from '@/lib/lobe-icon'
-import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { DEFAULT_TOKEN_UNIT } from '../constants'
 import { useBillingTime } from '../hooks/use-billing-time'
+import { useMarketModelMetrics } from '../hooks/use-market-metrics'
 import { usePricingData } from '../hooks/use-pricing-data'
 import type { ParsedTaskTier, ParsedTier } from '../lib/billing-expr'
 import { formatBillingCondition } from '../lib/billing-expression/condition-display'
@@ -79,8 +70,24 @@ import {
   type DynamicPriceEntry,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { getAvailableGroups, isTokenBasedModel } from '../lib/model-helpers'
+import { getRecentGroupActivity } from '../lib/group-market-activity'
 import {
+  activeBillingExpressions,
+  catalogModelPlatformIcon,
+  marketGroupLabel,
+} from '../lib/market-groups'
+import {
+  getModelEndpoints,
+  type ModelEndpointMap,
+} from '../lib/model-endpoints'
+import {
+  getAvailableGroups,
+  getConfiguredGroupRatio,
+  isTokenBasedModel,
+} from '../lib/model-helpers'
+import {
+  hasRedactedProviderPricing,
+  isCatalogPriceUnavailable,
   withBasePricing,
   withOrdinaryPricing,
   withPluginPricing,
@@ -105,10 +112,13 @@ import type {
   PricingModel,
   TokenUnit,
 } from '../types'
+import { CatalogGroupBadge } from './catalog-group-badge'
 import { DynamicPricingBreakdown } from './dynamic-pricing-breakdown'
+import { GroupMarketBadges } from './group-market-activity'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelDetailsApi } from './model-details-api'
 import { ModelDetailsPerformance } from './model-details-performance'
+import { ModelPerfBadge } from './model-perf-badge'
 
 // ----------------------------------------------------------------------------
 // Local UI helpers
@@ -242,67 +252,20 @@ function normalizeCatalogItems(items?: readonly string[]): string[] {
   return items.filter((item) => item.trim().length > 0)
 }
 
-function OverviewMetric(props: {
-  icon: React.ComponentType<{ className?: string }>
-  label: string
-  value: React.ReactNode
-  valueClassName?: string
-}) {
-  const Icon = props.icon
-
-  return (
-    <div className='flex min-w-0 items-center gap-2 px-3 py-2'>
-      <Icon className='text-muted-foreground/70 size-3.5 shrink-0' />
-      <div className='min-w-0 flex-1'>
-        <div className='text-muted-foreground truncate text-[10px] font-medium tracking-wider uppercase'>
-          {props.label}
-        </div>
-        <div
-          className={cn(
-            'text-foreground truncate font-mono text-sm font-semibold tabular-nums',
-            props.valueClassName
-          )}
-        >
-          {props.value}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function OverviewSummaryGrid(props: { model: PricingModel }) {
-  const { t } = useTranslation()
-  const metricsQuery = useQuery({
-    queryKey: ['perf-metrics', props.model.model_name],
-    queryFn: async () =>
-      requireServerSuccess(await getPerfMetrics(props.model.model_name, 24)),
-    staleTime: 60 * 1000,
-  })
-
-  const summary = metricsQuery.data?.data.summary
-  const successRate = summary?.success_rate ?? Number.NaN
-  const avgTps = summary?.avg_tps ?? 0
-  const avgLatency = summary?.avg_latency_ms ?? 0
-
+  const result = useMarketModelMetrics(props.model.model_name).data?.data
+  const perf = result?.summary
+    ? {
+        ...result.summary,
+        window_start: result.window_start,
+        window_end: result.window_end,
+      }
+    : undefined
   return (
-    <div className='bg-muted/20 grid overflow-hidden rounded-lg border sm:grid-cols-3 sm:divide-x'>
-      <OverviewMetric
-        icon={Timer}
-        label='TPS'
-        value={formatThroughput(avgTps)}
-      />
-      <OverviewMetric
-        icon={Timer}
-        label={t('Average latency')}
-        value={formatLatency(avgLatency)}
-      />
-      <OverviewMetric
-        icon={HeartPulse}
-        label={t('Success rate')}
-        value={formatUptimePct(successRate)}
-        valueClassName={getSuccessRateTextClass(successRate)}
-      />
-    </div>
+    <ModelPerfBadge
+      perf={perf}
+      className='bg-muted/20 @container/market-card rounded-lg border p-3'
+    />
   )
 }
 
@@ -519,11 +482,21 @@ function ModelBackendSignalsSection(props: { model: PricingModel }) {
   )
 }
 
-function ModelBackendProviderSection(props: { model: PricingModel }) {
+function ModelBackendProviderSection(props: {
+  selectedGroup?: string
+  model: PricingModel
+  endpointMap: ModelEndpointMap
+}) {
   const { t } = useTranslation()
   const model = props.model
-  const groups = normalizeCatalogItems(model.enable_groups)
-  const endpoints = normalizeCatalogItems(model.supported_endpoint_types)
+  const groups = normalizeCatalogItems(model.enable_groups).map((group) =>
+    marketGroupLabel(group, model.group_catalog)
+  )
+  const endpoints = getModelEndpoints(
+    model,
+    props.endpointMap,
+    props.selectedGroup
+  ).map((endpoint) => endpoint.type)
   const tags = parseTags(model.tags)
   const cells: React.ReactNode[] = []
 
@@ -543,19 +516,26 @@ function ModelBackendProviderSection(props: { model: PricingModel }) {
 
   if (groups.length > 0) {
     cells.push(
-      <CatalogInfoCell key='groups' label={t('Groups')}>
+      <CatalogInfoCell
+        key='groups'
+        label={
+          model.group_keys_are_display_only ? t('Pricing tiers') : t('Groups')
+        }
+      >
         <CatalogPillList items={groups} />
       </CatalogInfoCell>
     )
   }
 
-  if (endpoints.length > 0) {
-    cells.push(
-      <CatalogInfoCell key='endpoints' label={t('Endpoints')}>
+  cells.push(
+    <CatalogInfoCell key='endpoints' label={t('Endpoints')}>
+      {endpoints.length ? (
         <CatalogPillList items={endpoints} />
-      </CatalogInfoCell>
-    )
-  }
+      ) : (
+        <CatalogTextValue>{t('Not confirmed')}</CatalogTextValue>
+      )}
+    </CatalogInfoCell>
+  )
 
   if (tags.length > 0) {
     cells.push(
@@ -585,12 +565,20 @@ function ModelBackendProviderSection(props: { model: PricingModel }) {
   )
 }
 
-function ModelBackendDetailsSection(props: { model: PricingModel }) {
+function ModelBackendDetailsSection(props: {
+  selectedGroup?: string
+  model: PricingModel
+  endpointMap: ModelEndpointMap
+}) {
   return (
     <>
       <ModelBackendQuickStats model={props.model} />
       <ModelBackendSignalsSection model={props.model} />
-      <ModelBackendProviderSection model={props.model} />
+      <ModelBackendProviderSection
+        selectedGroup={props.selectedGroup}
+        model={props.model}
+        endpointMap={props.endpointMap}
+      />
     </>
   )
 }
@@ -602,15 +590,20 @@ function ModelBackendDetailsSection(props: { model: PricingModel }) {
 function ModelHeader(props: { model: PricingModel }) {
   const { t } = useTranslation()
   const model = props.model
-  const modelIconKey = model.icon || model.vendor_icon
-  const modelIcon = modelIconKey ? getLobeIcon(modelIconKey, 20) : null
   const description = model.description || model.vendor_description || null
 
   return (
     <header className='pb-4'>
       <div className='flex items-center gap-2.5'>
-        {modelIcon}
-        <h1 className='font-mono text-xl font-bold tracking-tight sm:text-2xl'>
+        <CatalogModelIcon
+          icon={model.icon}
+          vendorIcon={model.vendor_icon}
+          vendorName={model.vendor_name}
+          platformIcon={catalogModelPlatformIcon(model)}
+          name={model.model_name}
+          size={32}
+        />
+        <h1 className='min-w-0 font-mono text-xl font-bold tracking-tight [overflow-wrap:anywhere] sm:text-2xl'>
           {model.model_name}
         </h1>
         <CopyButton
@@ -655,7 +648,11 @@ function PriceSection(props: {
   const baseGroupKey = '_base'
   const baseGroupRatioMap = { [baseGroupKey]: 1 }
   const currency = useSystemConfigStore((state) => state.config.currency)
-  const billingTime = useBillingTime(props.model.billing_expr)
+  const expressions = useMemo(
+    () => activeBillingExpressions([props.model]),
+    [props.model]
+  )
+  const billingTime = useBillingTime(expressions)
   const dynamicSummary = useMemo(
     () =>
       getDynamicPricingSummary(props.model, {
@@ -935,7 +932,8 @@ function AutoGroupChain(props: { model: PricingModel; autoGroups: string[] }) {
     modelEnableGroups.includes(g)
   )
 
-  if (autoChain.length === 0) return null
+  if (props.model.group_keys_are_display_only || autoChain.length === 0)
+    return null
 
   return (
     <div className='text-muted-foreground mb-3 flex flex-wrap items-center gap-1 text-xs'>
@@ -943,7 +941,7 @@ function AutoGroupChain(props: { model: PricingModel; autoGroups: string[] }) {
       <span className='text-muted-foreground/40'>→</span>
       {autoChain.map((g, idx) => (
         <span key={g} className='flex items-center gap-1'>
-          <GroupBadge group={g} size='sm' />
+          <CatalogGroupBadge group={g} catalog={props.model.group_catalog} />
           {idx < autoChain.length - 1 && (
             <span className='text-muted-foreground/40'>→</span>
           )}
@@ -1020,10 +1018,16 @@ function GroupPricingSection(props: GroupPricingSectionProps) {
   if (!variants?.length) {
     return <ProviderGroupPricingSection {...props} />
   }
-  const ordinary = props.model.ordinary_pricing
+  const ordinary =
+    props.model.ordinary_pricing &&
+    props.model.ordinary_price_available !== false
   return (
     <section>
-      <SectionTitle>{t('Pricing by Group')}</SectionTitle>
+      <SectionTitle>
+        {props.model.group_keys_are_display_only
+          ? t('Pricing tiers')
+          : t('Pricing by Group')}
+      </SectionTitle>
       <Tabs
         key={props.model.model_name}
         defaultValue={ordinary ? ORDINARY_PRICING_TAB : variants[0].plugin_key}
@@ -1127,7 +1131,11 @@ function ProviderGroupPricingSection(
     return (
       <section>
         {!props.hideTitle && (
-          <SectionTitle>{t('Pricing by Group')}</SectionTitle>
+          <SectionTitle>
+            {props.model.group_keys_are_display_only
+              ? t('Pricing tiers')
+              : t('Pricing by Group')}
+          </SectionTitle>
         )}
         <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
         <p className='text-muted-foreground text-sm'>
@@ -1159,7 +1167,11 @@ function ProviderGroupPricingSection(
       return (
         <section>
           {!props.hideTitle && (
-            <SectionTitle>{t('Pricing by Group')}</SectionTitle>
+            <SectionTitle>
+              {props.model.group_keys_are_display_only
+                ? t('Pricing tiers')
+                : t('Pricing by Group')}
+            </SectionTitle>
           )}
           <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
           <div className='rounded-lg border border-amber-200/70 bg-amber-50/70 p-3 dark:border-amber-500/20 dark:bg-amber-500/10'>
@@ -1203,7 +1215,7 @@ function ProviderGroupPricingSection(
     })
     const formattedPricesByGroup = new Map(
       availableGroups.map((group) => {
-        const ratio = props.groupRatio[group] || 1
+        const ratio = getConfiguredGroupRatio(props.groupRatio, group)
         return [
           group,
           getDynamicFormattedPricesByTier(dynamicTiers, {
@@ -1222,12 +1234,16 @@ function ProviderGroupPricingSection(
     return (
       <section>
         {!props.hideTitle && (
-          <SectionTitle>{t('Pricing by Group')}</SectionTitle>
+          <SectionTitle>
+            {props.model.group_keys_are_display_only
+              ? t('Pricing tiers')
+              : t('Pricing by Group')}
+          </SectionTitle>
         )}
         <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
         <div className='space-y-3'>
           {availableGroups.map((group) => {
-            const ratio = props.groupRatio[group] || 1
+            const ratio = getConfiguredGroupRatio(props.groupRatio, group)
             const formattedPricesByTier =
               formattedPricesByGroup.get(group) ??
               new Map<DynamicPricingTier, Map<string, string>>()
@@ -1235,10 +1251,23 @@ function ProviderGroupPricingSection(
             return (
               <div key={group} className='overflow-hidden rounded-lg border'>
                 <div className='bg-muted/20 flex items-center justify-between gap-3 border-b px-3 py-2'>
-                  <GroupBadge group={group} size='sm' />
-                  <span className='text-muted-foreground font-mono text-xs'>
-                    {ratio}x
-                  </span>
+                  <div className='flex min-w-0 flex-wrap items-center gap-1.5'>
+                    <CatalogGroupBadge
+                      group={group}
+                      catalog={props.model.group_catalog}
+                    />
+                    <GroupMarketBadges
+                      activity={getRecentGroupActivity(
+                        props.model.group_market_activity?.[group],
+                        props.model.group_catalog?.[group]?.public_line
+                      )}
+                    />
+                  </div>
+                  {(!props.model.group_keys_are_display_only || props.model.group_catalog?.[group]?.public_line) && (
+                    <span className='text-muted-foreground font-mono text-xs'>
+                      {ratio}x
+                    </span>
+                  )}
                 </div>
                 <StaticDataTable
                   className='rounded-none border-0'
@@ -1381,7 +1410,11 @@ function ProviderGroupPricingSection(
     return (
       <section>
         {!props.hideTitle && (
-          <SectionTitle>{t('Pricing by Group')}</SectionTitle>
+          <SectionTitle>
+            {props.model.group_keys_are_display_only
+              ? t('Pricing tiers')
+              : t('Pricing by Group')}
+          </SectionTitle>
         )}
         <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
         <UnconfiguredTaskPricingNotice model={props.model} />
@@ -1412,7 +1445,13 @@ function ProviderGroupPricingSection(
 
   return (
     <section>
-      {!props.hideTitle && <SectionTitle>{t('Pricing by Group')}</SectionTitle>}
+      {!props.hideTitle && (
+        <SectionTitle>
+          {props.model.group_keys_are_display_only
+            ? t('Pricing tiers')
+            : t('Pricing by Group')}
+        </SectionTitle>
+      )}
       <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
       <StaticDataTable
         className='-mx-4 rounded-none border-0 sm:mx-0'
@@ -1423,17 +1462,33 @@ function ProviderGroupPricingSection(
         columns={[
           {
             id: 'group',
-            header: t('Group'),
+            header: props.model.group_keys_are_display_only
+              ? t('Tier')
+              : t('Group'),
             className: thClass,
             cellClassName: 'py-2.5',
-            cell: (group) => <GroupBadge group={group} size='sm' />,
+            cell: (group) => (
+              <div className='flex min-w-0 flex-wrap items-center gap-1.5'>
+                <CatalogGroupBadge
+                  group={group}
+                  catalog={props.model.group_catalog}
+                />
+                <GroupMarketBadges
+                  activity={getRecentGroupActivity(
+                    props.model.group_market_activity?.[group],
+                        props.model.group_catalog?.[group]?.public_line
+                  )}
+                />
+              </div>
+            ),
           },
           {
             id: 'ratio',
             header: t('Ratio'),
             className: thClass,
             cellClassName: 'text-muted-foreground py-2.5 font-mono',
-            cell: (group) => `${props.groupRatio[group] || 1}x`,
+            cell: (group) =>
+              `${getConfiguredGroupRatio(props.groupRatio, group)}x`,
           },
           ...(isTokenBased
             ? [
@@ -1494,6 +1549,7 @@ const TAB_META: Record<
 }
 
 export interface ModelDetailsContentProps {
+  selectedGroup?: string
   model: PricingModel
   groupRatio: Record<string, number>
   usableGroup: Record<string, { desc: string; ratio: number }>
@@ -1512,8 +1568,15 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
   // prices.
   const baseModel = useMemo(() => withBasePricing(props.model), [props.model])
 
+  const redactedProviderPricing = hasRedactedProviderPricing(baseModel)
+  const quoteUnavailable = isCatalogPriceUnavailable(baseModel)
+  const providerOnly =
+    baseModel.ordinary_price_available === false &&
+    Boolean(baseModel.billing_plugin_variants?.length)
   const isDynamic =
-    baseModel.billing_mode === 'tiered_expr' && Boolean(baseModel.billing_expr)
+    !providerOnly &&
+    baseModel.billing_mode === 'tiered_expr' &&
+    Boolean(baseModel.billing_expr)
 
   const simpleTaskPricing = hasSimpleTaskPricing(baseModel)
   const taskTiers = getTaskPricingDisplayTiers(
@@ -1551,7 +1614,17 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
 
           <section className='bg-card/60 space-y-5 rounded-xl border p-4 shadow-sm'>
             <SectionTitle>{t('Pricing')}</SectionTitle>
-            {showBasePrices && (
+            {redactedProviderPricing && (
+              <p className='text-muted-foreground text-sm'>
+                {t('Sign in to view provider pricing')}
+              </p>
+            )}
+            {quoteUnavailable && !redactedProviderPricing && (
+              <p className='text-muted-foreground text-sm'>
+                {t('Unset price')}
+              </p>
+            )}
+            {!quoteUnavailable && showBasePrices && (
               <PriceSection
                 model={baseModel}
                 priceRate={props.priceRate}
@@ -1560,7 +1633,7 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
                 showRechargePrice={showRechargePrice}
               />
             )}
-            {isDynamic && !simpleTaskPricing && (
+            {!quoteUnavailable && isDynamic && !simpleTaskPricing && (
               <DynamicPricingBreakdown
                 modelName={baseModel.model_name}
                 billingExpr={baseModel.billing_expr}
@@ -1572,19 +1645,25 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
                 }}
               />
             )}
-            <GroupPricingSection
-              model={props.model}
-              groupRatio={props.groupRatio}
-              usableGroup={props.usableGroup}
-              autoGroups={props.autoGroups}
-              priceRate={props.priceRate}
-              usdExchangeRate={props.usdExchangeRate}
-              tokenUnit={props.tokenUnit}
-              showRechargePrice={showRechargePrice}
-            />
+            {!quoteUnavailable && (
+              <GroupPricingSection
+                model={props.model}
+                groupRatio={props.groupRatio}
+                usableGroup={props.usableGroup}
+                autoGroups={props.autoGroups}
+                priceRate={props.priceRate}
+                usdExchangeRate={props.usdExchangeRate}
+                tokenUnit={props.tokenUnit}
+                showRechargePrice={showRechargePrice}
+              />
+            )}
           </section>
 
-          <ModelBackendDetailsSection model={props.model} />
+          <ModelBackendDetailsSection
+            selectedGroup={props.selectedGroup}
+            model={props.model}
+            endpointMap={props.endpointMap}
+          />
         </TabsContent>
 
         <TabsContent value='performance' className='outline-none'>
@@ -1593,6 +1672,7 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
 
         <TabsContent value='api' className='outline-none'>
           <ModelDetailsApi
+            selectedGroup={props.selectedGroup}
             model={props.model}
             endpointMap={props.endpointMap}
           />
@@ -1627,7 +1707,7 @@ export function ModelDetailsDrawer(props: ModelDetailsDrawerProps) {
           <SheetTitle>{props.model.model_name}</SheetTitle>
           <SheetDescription>{t('Model details')}</SheetDescription>
         </SheetHeader>
-        <div className='flex-1 overflow-y-auto px-4 pt-11 pb-5 sm:px-6 sm:pt-12 sm:pb-6'>
+        <div className='min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-11 pb-5 sm:px-6 sm:pt-12 sm:pb-6'>
           <ModelDetailsContent {...contentProps} />
         </div>
       </SheetContent>
@@ -1648,6 +1728,8 @@ export function ModelDetails() {
     endpointMap,
     autoGroups,
     isLoading,
+    error,
+    refetch,
     priceRate,
     usdExchangeRate,
   } = usePricingData()
@@ -1662,6 +1744,18 @@ export function ModelDetails() {
 
   const handleBack = () => {
     navigate({ to: '/pricing', search })
+  }
+
+  if (error) {
+    return (
+      <PublicLayout>
+        <ErrorState
+          onRetry={() => {
+            void refetch()
+          }}
+        />
+      </PublicLayout>
+    )
   }
 
   if (isLoading) {
@@ -1722,6 +1816,7 @@ export function ModelDetails() {
 
         <ModelDetailsContent
           model={model}
+          selectedGroup={search.group}
           groupRatio={groupRatio || {}}
           usableGroup={usableGroup || {}}
           autoGroups={autoGroups || []}

@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useSyncExternalStore } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
 
 import { compileBillingExpression } from '../lib/billing-expression/parser'
 import { TIME_FUNCTIONS } from '../lib/billing-expression/types'
@@ -62,14 +62,21 @@ function getNoTime(): undefined {
 
 /** One minute clock for active time-dependent previews; never used by settlement logs. */
 export function useBillingTime(
-  expression: string | null | undefined,
+  expression: string | readonly string[] | null | undefined,
   enabled = true
 ): number | undefined {
-  const compiled =
-    expression && enabled ? compileBillingExpression(expression) : null
-  const needsTime =
-    compiled?.status === 'ready' &&
-    TIME_FUNCTIONS.some((name) => compiled.functions.has(name))
+  const needsTime = useMemo(() => {
+    if (!enabled || !expression) return false
+    const expressions =
+      typeof expression === 'string' ? [expression] : expression
+    return expressions.some((expr) => {
+      const compiled = compileBillingExpression(expr)
+      return (
+        compiled.status === 'ready' &&
+        TIME_FUNCTIONS.some((name) => compiled.functions.has(name))
+      )
+    })
+  }, [enabled, expression])
   return useSyncExternalStore(
     needsTime ? subscribeBillingTime : subscribeWithoutTime,
     needsTime ? getBillingTime : getNoTime,

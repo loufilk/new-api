@@ -44,15 +44,68 @@ import (
 )
 
 func main() {
+	if err := loadStartupDotenv(".env"); err != nil {
+		common.FatalLog(err)
+	}
+	mode, err := model.IM21MigrationMode()
+	if err != nil {
+		common.FatalLog(err)
+	}
+	if mode == model.IM21Migrate {
+		if err := validateIM21MigratorArgs(os.Args[1:]); err != nil {
+			common.FatalLog(err)
+		}
+	}
 	if len(os.Args) > 1 && os.Args[1] == "plugin" {
 		os.Exit(jsplugin.RunCLI(os.Args[2:], os.Stdout, os.Stderr))
 	}
-	if err := runApplication(); err != nil {
+	if err := runApplication(mode); err != nil {
 		common.FatalLog(common.MaskSensitiveLogInfo(err.Error()))
 	}
 }
 
-func runApplication() error {
+// Managed containers use only their explicit launch environment. A mounted
+// development .env must neither amend the audited DB pair nor enter managed mode.
+func loadStartupDotenv(path string) error {
+	keys := []string{common.IM21RolloutModeEnv, "CORE_IM21_MIGRATION_MODE", "CORE_IM21_RELEASE_ID"}
+	for _, key := range keys {
+		if _, explicit := os.LookupEnv(key); explicit {
+			return nil
+		}
+	}
+	_ = godotenv.Load(path) // preserve existing optional .env behavior outside managed rollout
+	for _, key := range keys {
+		if _, set := os.LookupEnv(key); set {
+			return fmt.Errorf("%s must be supplied by the launch environment, not .env", key)
+		}
+	}
+	return nil
+}
+
+// A job exiting 0 for "--version", "--help" or a plugin CLI invocation must
+// never be mistaken for a successful migration by an orchestrator.
+func validateIM21MigratorArgs(args []string) error {
+	for len(args) > 0 {
+		name, value, equals := strings.Cut(args[0], "=")
+		if name != "--log-dir" && name != "-log-dir" {
+			return errors.New("managed migrator accepts only --log-dir")
+		}
+		args = args[1:]
+		if !equals {
+			if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+				return errors.New("managed migrator requires a log directory argument")
+			}
+			value = args[0]
+			args = args[1:]
+		}
+		if value == "" {
+			return errors.New("managed migrator requires a non-empty log directory")
+		}
+	}
+	return nil
+}
+
+func runApplication(mode string) error {
 	startTime := time.Now()
 	kitutil.SetLogging(common.SysLog, func(message string) {
 		logger.LogError(nil, message)
@@ -74,8 +127,28 @@ func runApplication() error {
 		}
 	}()
 
+	// 加载环境变量
+	common.InitEnv()
+
+	logger.SetupLogger()
+
+	if !common.IM21RolloutActive() && model.UserGroupPricingEnabled() {
+		return errors.New("USER_GROUP_PRICING_ENABLED must be disabled during locked rollout")
+	}
 	app := newApplicationRuntime()
-	err := InitResources(app.workers)
+	if err := registerStartupExtensions(app.workers); err != nil {
+		return err
+	}
+	if mode != "" {
+		if err := model.InitIM21Databases(mode); err != nil {
+			return err
+		}
+		if mode == model.IM21Migrate {
+			common.SysLog("im21 main and log schema migration completed")
+			return nil
+		}
+	}
+	err := initServingResources(mode == model.IM21Serve)
 	if err != nil {
 		return fmt.Errorf("failed to initialize resources: %w", err)
 	}
@@ -311,21 +384,28 @@ func InjectGoogleAnalytics() {
 	indexPage = bytes.ReplaceAll(indexPage, placeholder, analyticsInject)
 }
 
-func InitResources(workers *lifecycle.Group) error {
-	// Initialize resources here if needed
-	// This is a placeholder function for future resource initialization
-	err := godotenv.Load(".env")
-	if err != nil {
-		if common.DebugEnabled {
-			common.SysLog(common.LogText("No .env file found, using default environment variables. If needed, please create a .env file and set the relevant variables."))
-		}
+func registerStartupExtensions(workers *lifecycle.Group) error {
+	// Compose the extension registry before any migration runs: model.InitDB
+	// reads extension.Default() to append extension models to the core
+	// AutoMigrate call and to run extension data steps. Registration is
+	// build-time and explicit, so a wiring failure here must abort startup
+	// rather than silently start with an unmigrated extension schema.
+	registry := extension.NewRegistry()
+	if err := imagegen.Register(registry, workers); err != nil {
+		return err
+	}
+	if err := chuanapi.Register(registry); err != nil {
+		return err
+	}
+	if err := extension.SetDefault(registry); err != nil {
+		return err
 	}
 
-	// 加载环境变量
-	common.InitEnv()
+	return nil
+}
 
-	logger.SetupLogger()
-
+func initServingResources(managed bool) error {
+	var err error
 	// Initialize model settings
 	ratio_setting.InitRatioSettings()
 
@@ -351,30 +431,16 @@ func InitResources(workers *lifecycle.Group) error {
 		return err
 	}
 
-	// Compose the extension registry before any migration runs: model.InitDB
-	// reads extension.Default() to append extension models to the core
-	// AutoMigrate call and to run extension data steps. Registration is
-	// build-time and explicit, so a wiring failure here must abort startup
-	// rather than silently start with an unmigrated extension schema.
-	registry := extension.NewRegistry()
-	if err := imagegen.Register(registry, workers); err != nil {
-		common.FatalLog("failed to register image generation module: " + err.Error())
-		return err
-	}
-	if err := chuanapi.Register(registry); err != nil {
-		common.FatalLog("failed to register chuanapi extension: " + err.Error())
-		return err
-	}
-	if err := extension.SetDefault(registry); err != nil {
-		common.FatalLog("failed to install extension registry: " + err.Error())
-		return err
-	}
-
 	// Initialize SQL Database
-	err = model.InitDB()
-	if err != nil {
-		common.FatalLog(common.LogText("failed to initialize database: %s", err.Error()))
-		return err
+	if !managed {
+		if err := model.InitDB(); err != nil {
+			return err
+		}
+	}
+	if !common.IM21RolloutActive() {
+		if err := model.CheckIM21LockedState(model.DB); err != nil {
+			return err
+		}
 	}
 	// Before the loads below: a write made while they run is reloaded later.
 	service.ReadStartupSyncRevisions()
@@ -395,8 +461,8 @@ func InitResources(workers *lifecycle.Group) error {
 
 	model.CheckSetup()
 
-	// Initialize options, should after model.InitDB()
-	if common.IsMasterNode {
+	// The managed migrator already completed these option conversions.
+	if common.IsMasterNode && !managed {
 		if err := model.MigrateRetiredFrontendOptions(); err != nil {
 			common.SysError(common.LogText("failed to migrate retired frontend options: %s", err.Error()))
 		}
@@ -409,9 +475,10 @@ func InitResources(workers *lifecycle.Group) error {
 	common.CleanupOldCacheFiles()
 
 	// Initialize SQL Database
-	err = model.InitLogDB()
-	if err != nil {
-		return err
+	if !managed {
+		if err := model.InitLogDB(); err != nil {
+			return err
+		}
 	}
 
 	// Initialize Redis

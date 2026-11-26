@@ -119,6 +119,23 @@ function SupportEmailSettingsForm(props: {
     },
   })
   const pending = form.formState.isSubmitting || mutation.isPending
+  const provider = props.settings.delivery_provider
+  const configured =
+    props.settings.delivery_configured ?? props.settings.smtp_configured
+  const providerNames = {
+    smtp: 'SMTP',
+    resend: 'Resend',
+    unsupported: t('Unknown'),
+  }
+  let deliveryStatus = t(
+    'Configure SMTP in email settings before enabling notifications.'
+  )
+  if (provider) {
+    const status = configured ? t('Configured') : t('Not configured')
+    deliveryStatus = `${t('Email sending method')}: ${providerNames[provider]} · ${status}`
+  } else if (configured) {
+    deliveryStatus = t('SMTP is configured')
+  }
   useResetForm(form, pending ? undefined : initial)
   const submit = form.handleSubmit(async (values) => {
     try {
@@ -208,11 +225,7 @@ function SupportEmailSettingsForm(props: {
             )}
           </p>
           <p role='status' className='text-sm'>
-            {props.settings.smtp_configured
-              ? t('SMTP is configured')
-              : t(
-                  'Configure SMTP in email settings before enabling notifications.'
-                )}
+            {deliveryStatus}
           </p>
           <p className='text-muted-foreground text-sm'>
             {t(

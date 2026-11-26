@@ -29,13 +29,18 @@ import type {
   SupportTicketCreateSubmission,
 } from './types'
 
-const mutationConfig: ApiRequestConfig = {
+const requestConfig: ApiRequestConfig = {
   skipBusinessError: true,
   skipErrorHandler: true,
 }
 
-function requireSuccess<T>(response: ApiResponse<T>): T {
-  if (!response.success) throw new Error(response.message)
+export class SupportTicketQueryRejected extends Error {}
+
+function requireSuccess<T>(
+  response: ApiResponse<T>,
+  ErrorType: new (message: string) => Error = Error
+): T {
+  if (!response.success) throw new ErrorType(response.message)
   return response.data
 }
 
@@ -94,10 +99,13 @@ export async function listSupportTickets(params: {
   unreadOnly?: boolean
   page?: number
   pageSize?: number
+  signal?: AbortSignal
 }): Promise<SupportTicketListData> {
   const response = await api.get<ApiResponse<SupportTicketListData>>(
     supportBasePath(params.admin),
     {
+      ...requestConfig,
+      signal: params.signal,
       params: {
         keyword: params.keyword || undefined,
         status: params.status || undefined,
@@ -107,7 +115,7 @@ export async function listSupportTickets(params: {
       },
     }
   )
-  return requireSuccess(response.data)
+  return requireSuccess(response.data, SupportTicketQueryRejected)
 }
 
 export async function createSupportTicket(
@@ -116,19 +124,21 @@ export async function createSupportTicket(
   const response = await api.post<ApiResponse<SupportTicketDetail>>(
     '/api/support/tickets',
     supportPayload(input),
-    mutationConfig
+    requestConfig
   )
   return requireSuccess(response.data)
 }
 
 export async function getSupportTicket(
   admin: boolean,
-  ticketId: number
+  ticketId: number,
+  signal?: AbortSignal
 ): Promise<SupportTicketDetail> {
   const response = await api.get<ApiResponse<SupportTicketDetail>>(
-    `${supportBasePath(admin)}/${ticketId}`
+    `${supportBasePath(admin)}/${ticketId}`,
+    { ...requestConfig, signal }
   )
-  return requireSuccess(response.data)
+  return requireSuccess(response.data, SupportTicketQueryRejected)
 }
 
 export async function replySupportTicket(
@@ -144,7 +154,7 @@ export async function replySupportTicket(
       request_id: input.request_id,
       images: input.images,
     }),
-    mutationConfig
+    requestConfig
   )
   return requireSuccess(response.data)
 }
@@ -152,13 +162,23 @@ export async function replySupportTicket(
 export async function markSupportTicketRead(input: {
   admin: boolean
   ticketId: number
-}): Promise<void> {
-  const response = await api.post<ApiResponse<null>>(
-    `${supportBasePath(input.admin)}/${input.ticketId}/read`,
-    undefined,
-    mutationConfig
+  throughMessageId: number
+  sessionEpoch?: number
+  observedStatus: SupportTicketStatus
+}): Promise<{ acknowledged: boolean }> {
+  const response = await api.post<ApiResponse<{ acknowledged: boolean }>>(
+    `${supportBasePath(input.admin)}/${input.ticketId}/read-observed`,
+    {
+      through_message_id: input.throughMessageId,
+      observed_status: input.observedStatus,
+    },
+    {
+      ...requestConfig,
+      authSessionEpoch: input.sessionEpoch,
+      singleUseAuthorization: true,
+    }
   )
-  requireSuccess(response.data)
+  return requireSuccess(response.data)
 }
 
 export async function updateSupportTicketStatus(input: {
@@ -168,7 +188,7 @@ export async function updateSupportTicketStatus(input: {
   const response = await api.put<ApiResponse<SupportTicket>>(
     `/api/admin/support/tickets/${input.ticketId}/status`,
     { status: input.status },
-    mutationConfig
+    requestConfig
   )
   return requireSuccess(response.data)
 }

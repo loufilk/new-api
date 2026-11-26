@@ -107,11 +107,13 @@ test('the selected conversation stays visible after reading the last unread tick
     }
   )
   vi.spyOn(api, 'post').mockImplementation(async (url) => {
-    if (url !== '/api/support/tickets/7/read') {
+    if (url !== '/api/support/tickets/7/read-observed') {
       throw new Error(`Unexpected support POST: ${url}`)
     }
     unreadTicket.user_unread = false
-    return { data: { success: true, message: '', data: null } }
+    return {
+      data: { success: true, message: '', data: { acknowledged: true } },
+    }
   })
 
   const rendered = render(

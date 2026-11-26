@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -54,5 +55,43 @@ func TestAwsClientTokenNoRetryDisablesHiddenSDKAttempts(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestKeyDiagnosticBedrockSDKNeverFollowsRedirectOrResends(t *testing.T) {
+	for _, status := range []int{http.StatusFound, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var original, redirected atomic.Int32
+			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/redirected" {
+					redirected.Add(1)
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				original.Add(1)
+				assert.Equal(t, http.MethodPost, r.Method)
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Location", "/redirected")
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, `{"message":"synthetic diagnostic redirect"}`)
+			}))
+			defer remote.Close()
+
+			c := newAwsTestContext(httptest.NewRecorder(), common.WithPrivateKeyDiagnosticLog(context.Background()))
+			common.SetContextKey(c, constant.ContextKeyModelTestSingleAttempt, true)
+			info := newAwsTestRelayInfo()
+			// SigV4 permits a synthetic loopback HTTP fixture. Bearer
+			// credentials correctly require TLS and would never reach it.
+			info.ApiKey = "synthetic-access|synthetic-secret|us-east-1"
+			client, err := newAwsClient(c, info)
+			require.NoError(t, err)
+			option := func(o *bedrockruntime.Options) { o.BaseEndpoint = aws.String(remote.URL) }
+			_, err = client.InvokeModel(c.Request.Context(), newAwsInvokeModelInput(), option)
+			require.Error(t, err)
+			_, err = client.InvokeModel(c.Request.Context(), newAwsInvokeModelInput(), option)
+			require.ErrorContains(t, err, "already dispatched")
+			require.EqualValues(t, 1, original.Load())
+			require.Zero(t, redirected.Load())
+		})
 	}
 }

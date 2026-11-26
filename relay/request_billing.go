@@ -26,6 +26,12 @@ const requestBillingUsageObservedKey = "request_billing_usage_observed"
 const requestBillingDeliveryUnknownKey = "request_billing_delivery_unknown"
 const requestBillingNotSubmittedKey = "request_billing_not_submitted"
 
+// RequestBillingDeliveryUnknown reports the shared relay's uncertain upstream
+// delivery decision so an owner-only diagnostic never misstates it as rejected.
+func RequestBillingDeliveryUnknown(c *gin.Context) bool {
+	return c.GetBool(requestBillingDeliveryUnknownKey)
+}
+
 // PrepareRequestBilling estimates and reserves one request's charge. Transports
 // provide the current request body through BodyStorage or BillingRequestInput;
 // channel retries retain the resulting billing session and pricing snapshot.
@@ -62,6 +68,9 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 
 	priceData, err := helper.ModelPriceHelper(c, info, tokens, meta)
 	if err != nil {
+		if errors.Is(err, model.ErrUserGroupPricingUnavailable) {
+			return types.NewError(errors.New(i18n.T(c, i18n.MsgUserGroupPricingUnavailable)), "user_group_pricing_unavailable", types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
+		}
 		if errors.Is(err, model.ErrGroupConfigChanged) {
 			return types.NewError(errors.New(i18n.T(c, i18n.MsgGroupConfigChanged)), "group_config_changed", types.ErrOptionWithStatusCode(http.StatusServiceUnavailable), types.ErrOptionWithSkipRetry())
 		}

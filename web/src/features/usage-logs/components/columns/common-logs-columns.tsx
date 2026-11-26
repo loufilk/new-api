@@ -68,6 +68,7 @@ import {
   renderAuditContent,
   renderLogContent,
 } from '../../lib/format'
+import { getLogGroupPrice } from '../../lib/group-price'
 import {
   isDisplayableLogType,
   isTimingLogType,
@@ -90,27 +91,15 @@ interface DetailSegment {
 
 function formatRatioCompact(ratio: number | undefined): string {
   if (ratio == null || !Number.isFinite(ratio)) return '-'
+  if (ratio > 0 && ratio < 0.0001) return String(ratio)
   return ratio % 1 === 0
     ? String(ratio)
     : ratio.toFixed(4).replace(/\.?0+$/, '')
 }
 
 function getGroupRatio(other: LogOtherData | null): number | null {
-  const userGroupRatio = other?.user_group_ratio
-  if (
-    userGroupRatio != null &&
-    userGroupRatio !== -1 &&
-    Number.isFinite(userGroupRatio)
-  ) {
-    return userGroupRatio
-  }
-
-  const groupRatio = other?.group_ratio
-  if (groupRatio != null && groupRatio !== 1 && Number.isFinite(groupRatio)) {
-    return groupRatio
-  }
-
-  return null
+  const { ratio, label } = getLogGroupPrice(other)
+  return ratio === 1 && label === 'Group Ratio' ? null : ratio
 }
 
 function buildDetailSegments(
@@ -322,20 +311,10 @@ function buildTypeDetailSegments(
         }
       }
     } else {
-      const userGroupRatio = other.user_group_ratio
-      const groupRatio = other.group_ratio
-      const isUserGroup =
-        userGroupRatio != null &&
-        Number.isFinite(userGroupRatio) &&
-        userGroupRatio !== -1
-      const effectiveRatio = isUserGroup ? userGroupRatio : groupRatio
-      const ratioLabel = isUserGroup
-        ? t('User Exclusive Ratio')
-        : t('Group Ratio')
-
-      if (effectiveRatio != null && Number.isFinite(effectiveRatio)) {
+      const { ratio, label } = getLogGroupPrice(other)
+      if (ratio != null) {
         segments.push({
-          text: `${ratioLabel} ${formatRatioCompact(effectiveRatio)}x`,
+          text: `${t(label)} ${formatRatioCompact(ratio)}x`,
         })
       }
     }

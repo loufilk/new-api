@@ -29,6 +29,7 @@ import {
 import type { Row, PaginationState } from '@/lib/console-table'
 
 import { DEFAULT_PRICING_PAGE_SIZE, DEFAULT_TOKEN_UNIT } from '../constants'
+import type { ModelEndpointMap } from '../lib/model-endpoints'
 import type { PricingModel, TokenUnit } from '../types'
 import { usePricingColumns } from './pricing-columns'
 
@@ -40,6 +41,8 @@ export interface PricingTableProps {
   tokenUnit?: TokenUnit
   showRechargePrice?: boolean
   selectedGroup?: string
+  platformPriceGroups?: ReadonlySet<string>
+  endpointMap?: ModelEndpointMap
   onModelClick?: (modelName: string) => void
 }
 
@@ -62,11 +65,15 @@ export function PricingTable(props: PricingTableProps) {
   })
 
   const columns = usePricingColumns({
+    displayTiers: models[0]?.group_keys_are_display_only,
     tokenUnit,
     priceRate,
     usdExchangeRate,
     showRechargePrice,
     selectedGroup,
+    platformPriceGroups: props.platformPriceGroups,
+    endpointMap: props.endpointMap,
+    onModelClick,
   })
 
   const { table } = useDataTable({
@@ -89,9 +96,11 @@ export function PricingTable(props: PricingTableProps) {
   )
 
   return (
-    <div className='space-y-4'>
+    <div className='w-full max-w-full min-w-0 space-y-4'>
       <DataTableView
         table={table}
+        containerClassName='w-full min-w-0 max-w-full'
+        tableContainerClassName='min-w-0 max-w-full'
         isLoading={isLoading}
         emptyTitle={t('No Models Found')}
         emptyDescription={t('No models match your current filters.')}
@@ -104,8 +113,17 @@ export function PricingTable(props: PricingTableProps) {
           <DataTableRow
             key={row.id}
             row={row}
+            cellRenderColumns={columns}
             className='hover:bg-muted/30 cursor-pointer transition-colors'
-            onClick={() => handleRowClick(row.original)}
+            onClick={(event) => {
+              if (
+                event.target instanceof Element &&
+                event.target.closest('button,a,[role=button]')
+              ) {
+                return
+              }
+              handleRowClick(row.original)
+            }}
           />
         )}
       />

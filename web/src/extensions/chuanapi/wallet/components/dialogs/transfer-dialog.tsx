@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Loader2 } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -38,36 +38,41 @@ interface TransferDialogProps {
   allowAgentTarget?: boolean
   availableQuota: number
   transferring: boolean
+  unavailable?: boolean
+  pending?: { quota: number; target?: 'wallet' | 'agent' } | null
 }
 
-export function TransferDialog({
+export function TransferDialog(props: TransferDialogProps) {
+  return props.open ? <OpenTransferDialog {...props} /> : null
+}
+
+function OpenTransferDialog({
   open,
   onOpenChange,
   onConfirm,
   availableQuota,
   transferring,
   allowAgentTarget,
+  unavailable,
+  pending,
 }: TransferDialogProps) {
   const { t } = useTranslation()
   const minimumQuota = 1
   const minimumAmount = quotaUnitsToDollars(minimumQuota)
   const maximumAmount = quotaUnitsToDollars(availableQuota)
   const initialAmount = Math.min(1, Math.max(0, maximumAmount))
-  const [amount, setAmount] = useState(initialAmount)
-  const [target, setTarget] = useState<'wallet' | 'agent'>('wallet')
-  const transferQuota = parseQuotaFromDollars(amount)
+  const [draftAmount, setAmount] = useState(initialAmount)
+  const amount = pending ? quotaUnitsToDollars(pending.quota) : draftAmount
+  const [draftTarget, setTarget] = useState<'wallet' | 'agent'>('wallet')
+  const target = pending?.target ?? draftTarget
+  const transferQuota = pending?.quota ?? parseQuotaFromDollars(amount)
   const canTransfer =
-    Number.isFinite(amount) &&
-    transferQuota >= minimumQuota &&
-    transferQuota <= availableQuota
-
-  useEffect(() => {
-    if (open) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setAmount(initialAmount)
-      setTarget('wallet')
-    }
-  }, [initialAmount, open])
+    !unavailable &&
+    (!!pending ||
+      (Number.isFinite(amount) &&
+        transferQuota >= minimumQuota &&
+        transferQuota <= availableQuota &&
+        (target === 'wallet' || allowAgentTarget === true)))
 
   const handleConfirm = async () => {
     if (!canTransfer) return
@@ -103,13 +108,20 @@ export function TransferDialog({
             disabled={transferring || !canTransfer}
           >
             {transferring && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
-            {t('Transfer')}
+            {pending && !transferring ? t('Retry transfer') : t('Transfer')}
           </Button>
         </>
       }
     >
       <div className='space-y-4 py-3 sm:space-y-6 sm:py-4'>
-        {allowAgentTarget && (
+        {pending && (
+          <p role='status' className='text-muted-foreground text-sm'>
+            {t(
+              'A transfer is awaiting confirmation. Retry the same transfer to check its result. Closing this dialog does not cancel a submitted transfer.'
+            )}
+          </p>
+        )}
+        {(allowAgentTarget || pending?.target === 'agent') && (
           <div className='space-y-2'>
             <Label htmlFor='transfer-target'>{t('Transfer target')}</Label>
             <NativeSelect
@@ -118,7 +130,7 @@ export function TransferDialog({
               onChange={(event) =>
                 setTarget(event.target.value as 'wallet' | 'agent')
               }
-              disabled={transferring}
+              disabled={transferring || !!pending}
             >
               <NativeSelectOption value='wallet'>
                 {t('User wallet')}
@@ -147,6 +159,7 @@ export function TransferDialog({
           </Label>
           <Input
             id='transfer-amount'
+            readOnly={!!pending || transferring}
             type='number'
             value={amount}
             onChange={(e) => setAmount(Number(e.target.value))}

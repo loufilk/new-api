@@ -32,7 +32,7 @@ import { z } from 'zod'
 
 import { SettingsPageProvider } from '../../components/settings-page-context'
 import { positiveIntegerSchema } from '../../utils/numeric-field'
-import { GroupRatioForm } from '../group-ratio-form'
+import { GroupRatioForm, type GroupWorkspacePanel } from '../group-ratio-form'
 
 const defaults = {
   GroupRatio: '{"default":1,"vip":0.8}',
@@ -60,6 +60,8 @@ function Fixture(props: {
   onSave?: (values: typeof defaults) => Promise<void>
   initial?: Partial<typeof defaults>
   isSaving?: boolean
+  workspacePanel?: GroupWorkspacePanel
+  workspaceActive?: boolean
 }) {
   const [actions, setActions] = useState<HTMLDivElement | null>(null)
   const baseline = useMemo(
@@ -86,12 +88,129 @@ function Fixture(props: {
         baseline={baseline}
         onSave={onSave}
         isSaving={props.isSaving ?? false}
+        workspacePanel={props.workspacePanel}
+        workspaceActive={props.workspaceActive}
       />
     </SettingsPageProvider>
   )
 }
 
 describe('group settings workspace', () => {
+  it('blocks a blank ratio without serializing it as free; a deliberate zero saves', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn<(values: typeof defaults) => Promise<void>>()
+    render(<Fixture workspacePanel='pricing' onSave={onSave} />)
+    const vip = within(screen.getByRole('row', { name: /vip/ }))
+    const ratio = vip.getByRole('spinbutton', { name: 'Ratio' })
+    const save = screen.getByRole('button', { name: 'Save group settings' })
+    await user.clear(ratio)
+    expect(ratio).toHaveValue(null)
+    expect(ratio).toHaveAttribute('aria-invalid', 'true')
+    expect(save).toBeDisabled()
+    await user.click(save)
+    expect(onSave).not.toHaveBeenCalled()
+    await user.type(ratio, '0')
+    expect(save).toBeEnabled()
+    await user.click(save)
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce())
+    const [saved] = onSave.mock.calls[0]
+    expect(JSON.parse(saved.GroupRatio)).toEqual({ default: 1, vip: 0 })
+  })
+
+  it('searches descriptions only among priced rows, without admitting access-only groups', async () => {
+    const user = userEvent.setup()
+    render(
+      <Fixture
+        workspacePanel='pricing'
+        initial={{
+          UserUsableGroups:
+            '{"vip":"Premium access","unpriced":"Premium only"}',
+        }}
+      />
+    )
+    await user.type(
+      screen.getByRole('textbox', {
+        name: 'Search groups by name or description',
+      }),
+      'premium'
+    )
+    expect(screen.getByRole('row', { name: /vip/ })).toBeVisible()
+    expect(
+      screen.queryByRole('row', { name: /unpriced/ })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('row', { name: /default/ })
+    ).not.toBeInTheDocument()
+  })
+
+  it('keeps one searchable pricing draft while switching between workspace panels', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn<(values: typeof defaults) => Promise<void>>()
+    const initial = { DefaultUseAutoGroup: true }
+    const { rerender } = render(
+      <Fixture workspacePanel='pricing' onSave={onSave} initial={initial} />
+    )
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Add group' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('textbox', { name: 'Group name' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Delete' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('spinbutton', { name: 'Top-up ratio' })
+    ).not.toBeInTheDocument()
+    const findSearch = () =>
+      screen.getByRole('textbox', {
+        name: 'Search groups by name or description',
+      })
+    await user.type(findSearch(), 'premium')
+    const ratio = screen.getByRole('spinbutton', { name: 'Ratio' })
+    await user.clear(ratio)
+    await user.type(ratio, '0.67')
+
+    rerender(
+      <Fixture workspacePanel='advanced' onSave={onSave} initial={initial} />
+    )
+    await user.click(screen.getByRole('tab', { name: 'Legacy Auto' }))
+    expect(
+      screen.getByText(
+        'Applies to existing API keys using Auto. New API keys use a single selected group.'
+      )
+    ).toBeVisible()
+    expect(
+      screen.queryByText('Use Auto for registration-generated keys')
+    ).not.toBeInTheDocument()
+    rerender(
+      <Fixture
+        workspacePanel='advanced'
+        workspaceActive={false}
+        onSave={onSave}
+        initial={initial}
+      />
+    )
+    expect(
+      screen.queryByRole('button', { name: 'Save group settings' })
+    ).not.toBeInTheDocument()
+
+    rerender(
+      <Fixture workspacePanel='pricing' onSave={onSave} initial={initial} />
+    )
+    expect(findSearch()).toHaveValue('premium')
+    expect(screen.getByRole('spinbutton', { name: 'Ratio' })).toHaveValue(0.67)
+    await user.click(
+      screen.getByRole('button', { name: 'Save group settings' })
+    )
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce())
+    const [saved] = onSave.mock.calls[0]
+    expect(JSON.parse(saved.GroupRatio)).toEqual({ default: 1, vip: 0.67 })
+    expect(JSON.parse(saved.TopupGroupRatio)).toEqual({ vip: 1.2 })
+    expect(saved.DefaultUseAutoGroup).toBe(true)
+  })
+
   it('filters by description and clears search without discarding edits', async () => {
     const user = userEvent.setup()
     render(<Fixture />)
