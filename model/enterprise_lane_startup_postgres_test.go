@@ -87,6 +87,9 @@ func TestEnterpriseLaneStartupSchemaPostgres(t *testing.T) {
 		{"missing_projection_column", 4, "ALTER TABLE enterprise_lane_requests DROP COLUMN usage_projection_pending", true},
 		{"malformed_empty_table", 3, "ALTER TABLE enterprise_lanes DROP COLUMN paid_returned", true},
 		{"not_a_table", 3, "ALTER TABLE enterprise_lanes RENAME TO lane_source; CREATE VIEW enterprise_lanes AS SELECT * FROM lane_source", true},
+		{"rls_masks_escrow", 3, "ALTER TABLE enterprise_lanes ENABLE ROW LEVEL SECURITY; ALTER TABLE enterprise_lanes FORCE ROW LEVEL SECURITY", true},
+		{"temporary_persistence_not_allowed", 3, "ALTER TABLE enterprise_lanes SET UNLOGGED", true},
+		{"inherited_escrow", 3, "CREATE TABLE inherited_lane () INHERITS (enterprise_lanes)", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := laneStartupFixture(t, tc.generation)
@@ -224,4 +227,21 @@ func TestEnterpriseLaneStartupNonPostgresNoIO(t *testing.T) {
 		assert.NoError(t, CheckEnterpriseLaneGatewayDisabled(t.Context(), db))
 	}
 	assert.ErrorIs(t, CheckEnterpriseLaneGatewayDisabled(t.Context(), nil), ErrEnterpriseLaneUnavailable)
+}
+
+func TestEnterpriseLaneStartupRejectsAnotherVisibleApplicationSchema(t *testing.T) {
+	primary := laneStartupFixture(t, 0)
+	sibling := laneStartupFixture(t, 3)
+	var primarySchema, siblingSchema string
+	require.NoError(t, primary.Raw("SELECT pg_catalog.current_schema()").Scan(&primarySchema).Error)
+	require.NoError(t, sibling.Raw("SELECT pg_catalog.current_schema()").Scan(&siblingSchema).Error)
+	seedLaneStartupDrained(t, sibling)
+	require.NoError(t, sibling.Exec("UPDATE enterprise_lanes SET state='open'").Error)
+	require.NoError(t, CheckEnterpriseLaneGatewayDisabled(t.Context(), primary), "invisible fixture is independent")
+	require.NoError(t, primary.Connection(func(conn *gorm.DB) error {
+		require.NoError(t, conn.Exec("SELECT pg_catalog.set_config('search_path',?,false)", primarySchema+","+siblingSchema).Error)
+		defer conn.Exec("SELECT pg_catalog.set_config('search_path',?,false)", primarySchema)
+		require.ErrorIs(t, CheckEnterpriseLaneGatewayDisabled(t.Context(), conn), ErrEnterpriseLaneUnavailable)
+		return nil
+	}))
 }

@@ -14,12 +14,9 @@ import (
 )
 
 const (
-	laneAdmissionWaitMSEnv     = "ENTERPRISE_LANE_LAB_ADMISSION_WAIT_MS"
-	laneAdmissionQueueTotalEnv = "ENTERPRISE_LANE_LAB_ADMISSION_QUEUE_GLOBAL"
-	laneAdmissionQueueLaneEnv  = "ENTERPRISE_LANE_LAB_ADMISSION_QUEUE_PER_LANE"
-	admissionBusy              = "enterprise_lane_admission_busy"
-	admissionQueueFull         = "enterprise_lane_admission_queue_full"
-	admissionQueueTimeout      = "enterprise_lane_admission_wait_timeout"
+	admissionBusy         = "enterprise_lane_admission_busy"
+	admissionQueueFull    = "enterprise_lane_admission_queue_full"
+	admissionQueueTimeout = "enterprise_lane_admission_wait_timeout"
 )
 
 type enterpriseLaneWaitConfig struct {

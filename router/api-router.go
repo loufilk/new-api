@@ -292,6 +292,7 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 			customOAuthRoute.PUT("/:id", controller.UpdateCustomOAuthProvider)
 			customOAuthRoute.DELETE("/:id", controller.DeleteCustomOAuthProvider)
 		}
+		apiRouter.GET("/performance/lane_status", middleware.DisableCache(), middleware.RootAuth(), controller.GetEnterpriseLaneStatus)
 		performanceRoute := apiRouter.Group("/performance")
 		performanceRoute.Use(middleware.RootAuth())
 		{

@@ -47,13 +47,23 @@ func CheckEnterpriseLaneGatewayDisabled(ctx context.Context, db *gorm.DB) error 
 	reader := db.Session(&gorm.Session{NewDB: true, Context: ctx, SkipHooks: true, Logger: logger.Discard})
 	err := reader.Transaction(func(tx *gorm.DB) error {
 		var schema string
-		if err := tx.Raw("SELECT current_schema()").Scan(&schema).Error; err != nil || schema == "" {
+		if err := tx.Raw("SELECT pg_catalog.current_schema()").Scan(&schema).Error; err != nil || schema == "" {
 			return ErrEnterpriseLaneUnavailable
 		}
-		var tables []struct{ Name, Kind string }
-		if err := tx.Raw(`SELECT c.relname AS name, c.relkind::text AS kind
-			FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-			WHERE n.nspname = ? AND c.relname IN ('enterprise_lanes', 'enterprise_lane_requests', 'enterprise_lane_usage_projections')`, schema).Scan(&tables).Error; err != nil {
+		var tables []struct {
+			Schema, Name string
+			Physical     bool
+		}
+		// Refuse an ambiguous app search path. The financial queries below
+		// remain qualified; an unrelated session's temporary tables are not
+		// application store evidence and never satisfy this scan.
+		if err := tx.Raw(`SELECT n.nspname AS schema, c.relname AS name,
+          c.relkind='r' AND c.relpersistence='p' AND NOT (c.relrowsecurity OR c.relforcerowsecurity)
+          AND NOT EXISTS (SELECT FROM pg_catalog.pg_inherits i WHERE i.inhrelid=c.oid OR i.inhparent=c.oid) AS physical
+          FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+          WHERE n.nspname = ANY (pg_catalog.current_schemas(false))
+          AND n.nspname !~ '^pg_(toast_)?temp_'
+          AND c.relname IN ('enterprise_lanes', 'enterprise_lane_requests', 'enterprise_lane_usage_projections')`).Scan(&tables).Error; err != nil {
 			return err
 		}
 		if len(tables) == 0 {
@@ -61,7 +71,7 @@ func CheckEnterpriseLaneGatewayDisabled(ctx context.Context, db *gorm.DB) error 
 		}
 		present := make(map[string]bool, len(tables))
 		for _, table := range tables {
-			if table.Kind != "r" && table.Kind != "p" {
+			if table.Schema != schema || !table.Physical {
 				return ErrEnterpriseLaneUnavailable
 			}
 			present[table.Name] = true

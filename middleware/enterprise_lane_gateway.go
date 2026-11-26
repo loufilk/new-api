@@ -22,20 +22,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const (
-	laneEnabledEnv          = "ENTERPRISE_LANE_LAB_ENABLED"
-	laneStopEnv             = "ENTERPRISE_LANE_LAB_STOP"
-	laneTokenIDEnv          = "ENTERPRISE_LANE_LAB_TOKEN_ID"
-	laneCountEnv            = "ENTERPRISE_LANE_LAB_COUNT"
-	lanePaidBudgetEnv       = "ENTERPRISE_LANE_LAB_PAID_PER_LANE"
-	laneTokenBudgetEnv      = "ENTERPRISE_LANE_LAB_TOKEN_PER_LANE"
-	laneChannelEnv          = "ENTERPRISE_LANE_LAB_CHANNEL_ID"
-	laneModelEnv            = "ENTERPRISE_LANE_LAB_MODEL"
-	laneAdmissionGlobalEnv  = "ENTERPRISE_LANE_LAB_ADMISSION_GLOBAL"
-	laneAdmissionPerLaneEnv = "ENTERPRISE_LANE_LAB_ADMISSION_PER_LANE"
-
-	enterpriseLaneGatewayContextKey = "enterprise_lane_gateway_authorized"
-)
+const enterpriseLaneGatewayContextKey = "enterprise_lane_gateway_authorized"
 
 type enterpriseLaneGatewayConfig struct {
 	tokenID, count, paid, token, channelID int
@@ -58,10 +45,6 @@ type enterpriseLaneGatewayAuthorization struct {
 
 var enterpriseLaneGatewayLaunch *enterpriseLaneGatewayConfig
 var enterpriseLaneGatewayRuntime atomic.Pointer[enterpriseLaneGatewayConfig]
-
-func EnterpriseLaneGatewayLaunchKeys() []string {
-	return []string{laneEnabledEnv, laneStopEnv, laneTokenIDEnv, laneCountEnv, lanePaidBudgetEnv, laneTokenBudgetEnv, laneChannelEnv, laneModelEnv, laneAdmissionGlobalEnv, laneAdmissionPerLaneEnv, laneAdmissionWaitMSEnv, laneAdmissionQueueTotalEnv, laneAdmissionQueueLaneEnv}
-}
 
 func enterpriseLaneLoopbackURL(raw string, sql bool) bool {
 	u, err := url.Parse(raw)
@@ -106,11 +89,8 @@ func PrepareEnterpriseLaneGateway(migrating bool) error {
 	enterpriseLaneGatewayLaunch = nil
 	flag := os.Getenv(laneEnabledEnv)
 	if flag == "" || flag == "false" {
-		if stop := os.Getenv(laneStopEnv); stop != "" && stop != "false" {
-			return errors.New("enterprise lane lab stop requires explicit isolated opt-in")
-		}
-		if os.Getenv(laneAdmissionGlobalEnv) != "" || os.Getenv(laneAdmissionPerLaneEnv) != "" || os.Getenv(laneAdmissionWaitMSEnv) != "" || os.Getenv(laneAdmissionQueueTotalEnv) != "" || os.Getenv(laneAdmissionQueueLaneEnv) != "" {
-			return errors.New("enterprise lane admission requires explicit isolated opt-in")
+		if enterpriseLaneLaunchRequested() {
+			return errors.New("enterprise lane settings require explicit isolated opt-in")
 		}
 		return nil
 	}
@@ -283,3 +263,5 @@ func RecheckEnterpriseLaneAuthorization(c *gin.Context) error {
 
 // EnterpriseLaneGatewayEnabled reports whether an isolated manifest was bound at startup.
 func EnterpriseLaneGatewayEnabled() bool { return enterpriseLaneGatewayRuntime.Load() != nil }
+
+func EnterpriseLaneBuildProfile() string { return "enterprise_lane_lab" }
