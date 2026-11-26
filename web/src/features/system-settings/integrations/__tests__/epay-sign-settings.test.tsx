@@ -112,6 +112,37 @@ async function openEpayTab(values: Partial<PaymentValues> = {}) {
 
 afterEach(() => vi.restoreAllMocks())
 
+describe('payment gateway settings', () => {
+  it('opens USDT without replacing the active Epay tab', async () => {
+    const get = vi.spyOn(api, 'get').mockResolvedValue({
+      data: {
+        success: true,
+        data: {
+          configured: false,
+          enabled: false,
+          min_amount: '10.00',
+          max_amount: '10000.00',
+          networks: [
+            { id: 'bsc', enabled: false, bonus_bps: 0 },
+            { id: 'polygon', enabled: false, bonus_bps: 0 },
+            { id: 'tron', enabled: false, bonus_bps: 0 },
+          ],
+        },
+      },
+    })
+    const user = await openEpayTab()
+    await user.click(screen.getByRole('button', { name: 'USDT recharge' }))
+    expect(
+      await screen.findByRole('form', { name: 'USDT recharge' })
+    ).toBeVisible()
+    expect(screen.getByRole('tab', { name: 'Epay' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(get).toHaveBeenCalledWith('/api/option/usdt', expect.any(Object))
+  })
+})
+
 describe('Epay signature type', () => {
   it('shows only the MD5 secret by default and only the RSA keys after choosing RSA', async () => {
     const user = await openEpayTab()

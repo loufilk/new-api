@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/Calcium-Ion/go-epay/epay"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -117,7 +119,30 @@ func TestEpayIntentConcurrentReceiptsPostgres(t *testing.T) {
 }
 
 func TestEpayIntentCheckoutHandlerPostgres(t *testing.T) {
+	for _, signType := range []string{epay.SignTypeMD5, epay.SignTypeRSA} {
+		t.Run(signType, func(t *testing.T) { exerciseEpayIntentCheckout(t, signType) })
+	}
+}
+
+func exerciseEpayIntentCheckout(t *testing.T, signType string) {
+	t.Helper()
 	db := setupNewUserBenefitControllerPostgres(t)
+	settings := operation_setting.GetPaymentSetting()
+	oldSign, oldMerchantKey, oldPlatformKey := settings.EpaySignType, settings.EpayMerchantPrivateKey, settings.EpayPlatformPublicKey
+	t.Cleanup(func() {
+		settings.EpaySignType, settings.EpayMerchantPrivateKey, settings.EpayPlatformPublicKey = oldSign, oldMerchantKey, oldPlatformKey
+	})
+	settings.EpaySignType = signType
+	var platform *epay.Client
+	if signType == epay.SignTypeRSA {
+		merchantKey, merchantPublic := newEpayRSAKeyPairForTest(t)
+		platformKey, platformPublic := newEpayRSAKeyPairForTest(t)
+		settings.EpayMerchantPrivateKey, settings.EpayPlatformPublicKey = merchantKey, platformPublic
+		var err error
+		platform, err = epay.NewClient(&epay.Config{PartnerID: operation_setting.EpayId, SignType: epay.SignTypeRSA, MerchantPrivateKey: platformKey, PlatformPublicKey: merchantPublic}, operation_setting.PayAddress)
+		require.NoError(t, err)
+	}
+	intent := testEpayUUID + "." + epayQuoteGatewayRef(operation_setting.PayAddress, signType)
 	// The benefit fixture assigns model.DB directly; an ordinary wallet checkout
 	// also needs the dialect-quoted user group column initialized by application startup.
 	t.Setenv("SQL_DSN", db.Dialector.(*postgres.Dialector).DSN)
@@ -140,7 +165,7 @@ func TestEpayIntentCheckoutHandlerPostgres(t *testing.T) {
 	var quote map[string]any
 	require.NoError(t, json.Unmarshal(quoteResponse.Body.Bytes(), &quote))
 	require.Equal(t, "7700.00", quote["data"])
-	require.Equal(t, testEpayIntent, testEpayUUID+"."+quote["epay_gateway"].(string))
+	require.Equal(t, intent, testEpayUUID+"."+quote["epay_gateway"].(string))
 	post := func(intent, body string) (int, map[string]any) {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
@@ -160,43 +185,43 @@ func TestEpayIntentCheckoutHandlerPostgres(t *testing.T) {
 	// is authoritatively refused before any local order insertion or handoff.
 	quotedOn := operation_setting.PayAddress
 	operation_setting.PayAddress = "https://new-gateway.example.invalid"
-	firstCode, firstResponse := post(testEpayIntent, payload)
+	firstCode, firstResponse := post(intent, payload)
 	require.Equal(t, 409, firstCode)
-	require.Equal(t, testEpayIntent, firstResponse["intent_id"])
+	require.Equal(t, intent, firstResponse["intent_id"])
 	require.Equal(t, false, firstResponse["insert_attempted"])
 	require.NotContains(t, firstResponse, "data")
 	var before int64
 	require.NoError(t, db.Model(&model.TopUp{}).Count(&before).Error)
 	require.Zero(t, before)
 	operation_setting.PayAddress = quotedOn
-	code, body := post(testEpayIntent, `{"amount":100,"payment_method":"alipay","expected_minor":11}`)
+	code, body := post(intent, `{"amount":100,"payment_method":"alipay","expected_minor":11}`)
 	require.Equal(t, 409, code, "%v", body)
 	require.Equal(t, "quote_changed", body["code"])
-	code, body = post(testEpayIntent, payload)
+	code, body = post(intent, payload)
 	require.Equal(t, 200, code)
 	require.Equal(t, "success", body["message"], "%v", body)
 	trade := body["trade_no"]
 	require.NotEmpty(t, trade)
 	require.Equal(t, "pending", body["order_status"])
 	require.Equal(t, trade, body["data"].(map[string]any)["out_trade_no"])
-	_, next := post(testEpayIntent, payload)
+	_, next := post(intent, payload)
 	require.Equal(t, trade, next["trade_no"])
-	code, body = post(testEpayIntent, `{"amount":100,"payment_method":"wxpay","expected_minor":770000}`)
+	code, body = post(intent, `{"amount":100,"payment_method":"wxpay","expected_minor":770000}`)
 	require.Equal(t, 409, code, "%v", body)
 	require.Equal(t, "intent_conflict", body["code"])
 	orig := operation_setting.PayAddress
 	operation_setting.PayAddress = "https://other.example.invalid"
-	code, body = post(testEpayIntent, payload)
+	code, body = post(intent, payload)
 	require.Equal(t, 409, code, "%v", body)
 	require.Equal(t, "gateway_changed", body["code"])
 	require.Equal(t, false, body["insert_attempted"])
-	require.Equal(t, testEpayIntent, body["intent_id"])
+	require.Equal(t, intent, body["intent_id"])
 	require.NotContains(t, body, "url")
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/fixture", nil)
 	c.Set("id", user.Id)
-	c.Params = gin.Params{{Key: "intent", Value: testEpayIntent}}
+	c.Params = gin.Params{{Key: "intent", Value: intent}}
 	GetEpayIntent(c)
 	require.Equal(t, 200, w.Code)
 	require.Contains(t, w.Body.String(), trade)
@@ -210,10 +235,28 @@ func TestEpayIntentCheckoutHandlerPostgres(t *testing.T) {
 	require.Equal(t, user.Quota, after.Quota)
 	// Only the already-existing, verified callback can settle this ordinary order.
 	for range 2 {
-		callback := newUserBenefitSignedCallbackForTest(t, trade.(string), "new-user-test-merchant", "alipay", "7700.00", "synthetic-ref-1")
+		var callback *httptest.ResponseRecorder
+		if platform == nil {
+			callback = newUserBenefitSignedCallbackForTest(t, trade.(string), "new-user-test-merchant", "alipay", "7700.00", "synthetic-ref-1")
+		} else {
+			signed, err := platform.SignParams(map[string]string{
+				"out_trade_no": trade.(string), "trade_no": "synthetic-ref-1", "type": "alipay",
+				"money": "7700.00", "trade_status": epay.StatusTradeSuccess, "name": "fixture-top-up",
+			})
+			require.NoError(t, err)
+			form := url.Values{}
+			for key, value := range signed {
+				form.Set(key, value)
+			}
+			callback = httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(callback)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/api/user/epay/notify", strings.NewReader(form.Encode()))
+			ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			EpayNotify(ctx)
+		}
 		require.Equal(t, "success", strings.TrimSpace(callback.Body.String()))
 	}
-	_, body = post(testEpayIntent, payload)
+	_, body = post(intent, payload)
 	require.Equal(t, "success", body["order_status"])
 	require.NotContains(t, body, "data")
 	require.NotContains(t, body, "url")

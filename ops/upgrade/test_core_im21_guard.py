@@ -120,6 +120,34 @@ class ReleaseGateTest(unittest.TestCase):
         with self.assertRaises(guard.Blocked):
             self.window(lambda _: None)
 
+    def test_im22_requires_explicit_plan_and_exact_stamped_version(self):
+        version = "v1.0.0-rc.51.chuanapi.im.22"
+
+        def stage_im22(stage):
+            self.engine.stage(stage)
+            self.engine.image["Config"]["Labels"]["org.opencontainers.image.version"] = version + "+g" + REV[:12]
+
+        stage_im22("locked")
+        with self.assertRaisesRegex(guard.Blocked, "candidate image"):
+            self.inspect("locked")
+        self.plan["version"] = version
+        self.assertEqual(self.window(stage_im22), [("drained", 1), ("migrated", 2),
+                                                   ("locked", 4), ("active", 4)])
+
+        for stamp in (guard.BASE + "+g" + REV[:12], version, version + "+g" + "0" * 12):
+            with self.subTest(stamp=stamp):
+                self.engine.image["Config"]["Labels"]["org.opencontainers.image.version"] = stamp
+                with self.assertRaisesRegex(guard.Blocked, "candidate image"):
+                    self.inspect("locked")
+
+    def test_refuse_unapproved_explicit_release_versions_before_engine_inspection(self):
+        for bad in ("v1.0.0-rc.51.chuanapi.im.23", "v1.0.0-rc.51.chuanapi.im.22+g" + REV[:12], None):
+            with self.subTest(bad=bad):
+                self.plan["version"] = bad
+                with self.assertRaisesRegex(guard.Blocked, "unapproved release plan version"):
+                    guard.gate(self.plan, "drained", lambda *_: self.fail("bad plan must not inspect the engine"),
+                               lambda: NOW)
+
     def test_engine_speaks_http_get_no_shell_and_refuses_redirect(self):
         with patch("socket.socket") as sock:
             mock = sock.return_value

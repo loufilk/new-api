@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only CORE im.21 maintenance-window gates. No pull, exec, start or deploy."""
+"""Read-only CORE im.21 and im.22 maintenance-window gates. No pull, exec, start or deploy."""
 import argparse
 from datetime import datetime, timedelta, timezone
 import http.client
@@ -12,6 +12,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 
 BASE = "v1.0.0-rc.51.chuanapi.im.21"
+APPROVED_VERSIONS = (BASE, "v1.0.0-rc.51.chuanapi.im.22")
 RAW = "0dff956284eda773db217445724d1d85e8d0b840"
 SHA = re.compile(r"[0-9a-f]{40}")
 HEX64 = re.compile(r"[0-9a-f]{64}")
@@ -93,8 +94,9 @@ def store_target(value, is_redis=False):
 
 
 def validate_plan(plan, now):
-    require(set(plan) == {"revision", "image", "opens", "expires", "personal_pricing", "hosts", "release_id", "stores"},
-            "invalid release plan fields")
+    required = {"revision", "image", "opens", "expires", "personal_pricing", "hosts", "release_id", "stores"}
+    require(required <= set(plan) <= required | {"version"}, "invalid release plan fields")
+    require(plan.get("version", BASE) in APPROVED_VERSIONS, "unapproved release plan version")
     require(SHA.fullmatch(plan["revision"]) and plan["revision"] not in (RAW, "0" * 40)
             and PIN.fullmatch(plan["image"]), "unapproved target revision or image pin")
     require(re.fullmatch(r"[0-9a-f]{32}", plan["release_id"]), "expected unique window release ID")
@@ -139,7 +141,7 @@ def verify_candidate(c, img, plan, stage, role, now):
     require(re.fullmatch(r"sha256:[0-9a-f]{64}", iid) and img["Id"] == iid and
             cfg["Image"] == plan["image"] and plan["image"] in img["RepoDigests"] and
             labels.get("org.opencontainers.image.revision") == rev and
-            labels.get("org.opencontainers.image.version") == BASE + "+g" + rev[:12] and
+            labels.get("org.opencontainers.image.version") == plan.get("version", BASE) + "+g" + rev[:12] and
             img["Os"] == "linux", "candidate image does not match approved digest and stamped full revision")
     require(c["Path"] == "/new-api" and c["Args"] in ([], ["--log-dir", "/app/logs"]) and
             cfg["Entrypoint"] == img["Config"]["Entrypoint"] == ["/new-api"],

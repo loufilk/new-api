@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { ArrowUpDown, Check, RotateCcw } from 'lucide-react'
+import { Fragment } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DataTableViewModeToggle } from '@/components/data-table'
@@ -26,6 +27,7 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
@@ -33,7 +35,12 @@ import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import { getSortLabels, type SortOption, type ViewMode } from '../constants'
+import {
+  getSortLabels,
+  MODEL_ORDER_SORTS,
+  type SortOption,
+  type ViewMode,
+} from '../constants'
 import type { TokenUnit } from '../types'
 
 export interface PricingToolbarProps {
@@ -56,6 +63,17 @@ export function PricingToolbar(props: PricingToolbarProps) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const sortLabels = getSortLabels(t)
+  const sortEntries = Object.entries(sortLabels)
+  const sortGroups = [
+    {
+      id: 'order',
+      entries: sortEntries.filter(([value]) => MODEL_ORDER_SORTS.has(value)),
+    },
+    {
+      id: 'other',
+      entries: sortEntries.filter(([value]) => !MODEL_ORDER_SORTS.has(value)),
+    },
+  ]
 
   return (
     <div className='min-w-0 border-b pb-3'>
@@ -142,23 +160,28 @@ export function PricingToolbar(props: PricingToolbarProps) {
               </span>
             </DropdownMenuTrigger>
             <DropdownMenuContent align='end' className='w-44'>
-              <DropdownMenuGroup>
-                {Object.entries(sortLabels).map(([value, label]) => (
-                  <DropdownMenuItem
-                    key={value}
-                    onClick={() => props.onSortChange(value)}
-                    className='gap-2'
-                  >
-                    <Check
-                      className={cn(
-                        'size-4 shrink-0',
-                        props.sortBy === value ? 'opacity-100' : 'opacity-0'
-                      )}
-                    />
-                    {label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuGroup>
+              {sortGroups.map((group, index) => (
+                <Fragment key={group.id}>
+                  {index > 0 && <DropdownMenuSeparator />}
+                  <DropdownMenuGroup>
+                    {group.entries.map(([value, label]) => (
+                      <DropdownMenuItem
+                        key={value}
+                        onClick={() => props.onSortChange(value)}
+                        className='gap-2 [overflow-wrap:anywhere] whitespace-normal'
+                      >
+                        <Check
+                          className={cn(
+                            'size-4 shrink-0',
+                            props.sortBy === value ? 'opacity-100' : 'opacity-0'
+                          )}
+                        />
+                        {label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuGroup>
+                </Fragment>
+              ))}
             </DropdownMenuContent>
           </DropdownMenu>
 

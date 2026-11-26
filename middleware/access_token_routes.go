@@ -123,6 +123,16 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/verify/methods":             accessTokenAnyRule,
 	"POST /api/verify":                    accessTokenAnyRule,
 
+	// The USDT wallet is interactive. Do not grant scoped or legacy PATs
+	// access to user order history, addresses, or checkout creation.
+	"GET /api/user/usdt/options":             accessTokenSessionRule,
+	"GET /api/user/usdt/orders":              accessTokenSessionRule,
+	"GET /api/user/usdt/orders/:id":          accessTokenSessionRule,
+	"GET /api/user/usdt/order-requests/:key": accessTokenSessionRule,
+	"POST /api/user/usdt/orders":             accessTokenSessionRule,
+	"GET /api/option/usdt":                   accessTokenSessionRule,
+	"PUT /api/option/usdt":                   accessTokenSessionRule,
+
 	// router/api-router.go: /api/user (self)
 	"GET /api/user/sessions":                       accessTokenSessionRule,
 	"DELETE /api/user/sessions/:sid":               accessTokenSessionRule,
@@ -420,6 +430,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/models/sync_upstream":        accessTokenScopeRule("model:write"),
 	"POST /api/models/delete":               accessTokenScopeRule("model:write"),
 	"GET /api/models/missing":               accessTokenScopeRule("model:read"),
+	"GET /api/models/square_usage":          accessTokenScopeRule("log:read"),
 	"GET /api/models/":                      accessTokenScopeRule("model:read"),
 	"GET /api/models/search":                accessTokenScopeRule("model:read"),
 	"GET /api/models/:id":                   accessTokenScopeRule("model:read"),

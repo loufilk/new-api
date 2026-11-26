@@ -54,6 +54,7 @@ export function Pricing() {
     usableGroup,
     endpointMap,
     autoGroups,
+    modelOrder,
     isLoading,
     priceRate,
     usdExchangeRate,
@@ -91,7 +92,7 @@ export function Pricing() {
     hasActiveFilters,
     clearFilters,
     clearSearch,
-  } = useFilters(models, groupCatalog, scope, availableGroups)
+  } = useFilters(models, groupCatalog, scope, availableGroups, modelOrder)
 
   const handleModelClick = useCallback((modelName: string) => {
     setSelectedModelName(modelName)

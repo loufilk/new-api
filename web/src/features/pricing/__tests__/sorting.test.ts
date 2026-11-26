@@ -19,8 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import { describe, expect, test } from 'vitest'
 
 import { normalizeSortOption, SORT_OPTIONS } from '../constants'
-import { sortModels } from '../lib/filters'
-import type { PricingModel } from '../types'
+import { filterAndSortModels, sortModels } from '../lib/filters'
+import type { ModelOrder, PricingModel } from '../types'
 
 function pricingModel(
   modelName: string,
@@ -129,8 +129,8 @@ describe('sort compatibility and unavailable prices', () => {
   test.each([
     ['price-low', SORT_OPTIONS.INPUT_PRICE_LOW],
     ['price-high', SORT_OPTIONS.INPUT_PRICE_HIGH],
-    [undefined, SORT_OPTIONS.NAME],
-    ['unknown-old-value', SORT_OPTIONS.NAME],
+    [undefined, SORT_OPTIONS.RECOMMENDED],
+    ['unknown-old-value', SORT_OPTIONS.RECOMMENDED],
     [SORT_OPTIONS.OUTPUT_PRICE_HIGH, SORT_OPTIONS.OUTPUT_PRICE_HIGH],
   ])('normalizes persisted sort %s', (value, expected) => {
     expect(normalizeSortOption(value)).toBe(expected)
@@ -249,4 +249,45 @@ test('sort uses the displayed group multiplier, including free groups and active
   expect(order('standard', '09')).toEqual(['timed', 'plain'])
   expect(order('standard', '15')).toEqual(['plain', 'timed'])
   expect(order('all', '15')).toEqual(['timed', 'plain'])
+})
+
+test('uses the server order for authorized models only and falls back to name when it is absent', () => {
+  const visible = ['beta', 'alpha', 'delta'].map((name) =>
+    pricingModel(name, {})
+  )
+  const modelOrder: ModelOrder = {
+    recommended: ['delta', 'not-in-view', 'beta'],
+    requests: ['beta', 'delta'],
+    tokens: ['alpha', 'delta'],
+  }
+  const ordered = (sortBy: string, order?: ModelOrder) =>
+    filterAndSortModels(visible, {
+      search: '',
+      group: 'all',
+      endpointType: 'all',
+      quotaType: 'all',
+      sortBy,
+      modelOrder: order,
+    }).map((model) => model.model_name)
+  expect(ordered(SORT_OPTIONS.RECOMMENDED, modelOrder)).toEqual([
+    'delta',
+    'beta',
+    'alpha',
+  ])
+  expect(ordered(SORT_OPTIONS.MOST_REQUESTS, modelOrder)).toEqual([
+    'beta',
+    'delta',
+    'alpha',
+  ])
+  expect(ordered(SORT_OPTIONS.MOST_TOKENS, modelOrder)).toEqual([
+    'alpha',
+    'delta',
+    'beta',
+  ])
+  expect(ordered(SORT_OPTIONS.NAME, modelOrder)).toEqual([
+    'alpha',
+    'beta',
+    'delta',
+  ])
+  expect(ordered(SORT_OPTIONS.RECOMMENDED)).toEqual(['alpha', 'beta', 'delta'])
 })

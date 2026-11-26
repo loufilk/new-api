@@ -167,7 +167,11 @@ export type MarketActivityByGroup = Record<string, GroupMarketActivity>
 
 export type MarketGroupCatalog = Record<string, MarketGroup>
 
+/** Authorized model names in server order. No raw usage is included. */
+export type ModelOrder = Record<'recommended' | 'requests' | 'tokens', string[]>
+
 export type PricingData = {
+  model_order?: ModelOrder
   group_keys_are_display_only?: boolean
   group_catalog?: MarketGroupCatalog
   group_market_activity?: MarketActivityByGroup

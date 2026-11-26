@@ -26,6 +26,9 @@ import type { TokenUnit } from './types'
 
 /** Sort options for pricing models */
 export const SORT_OPTIONS = {
+  RECOMMENDED: 'recommended',
+  MOST_REQUESTS: 'requests',
+  MOST_TOKENS: 'tokens',
   NAME: 'name',
   INPUT_PRICE_LOW: 'input-price-low',
   INPUT_PRICE_HIGH: 'input-price-high',
@@ -37,17 +40,27 @@ export const SORT_OPTIONS = {
 
 export type SortOption = (typeof SORT_OPTIONS)[keyof typeof SORT_OPTIONS]
 
+/** Sorts that follow server-ranked model names, not account-specific prices. */
+export const MODEL_ORDER_SORTS: ReadonlySet<string> = new Set([
+  SORT_OPTIONS.RECOMMENDED,
+  SORT_OPTIONS.MOST_REQUESTS,
+  SORT_OPTIONS.MOST_TOKENS,
+])
+
 /** Keep bookmarked pre-upgrade sorting meaningful and reject stale unknown values. */
 export function normalizeSortOption(value: unknown): SortOption {
   if (value === 'price-low') return SORT_OPTIONS.INPUT_PRICE_LOW
   if (value === 'price-high') return SORT_OPTIONS.INPUT_PRICE_HIGH
   return Object.values(SORT_OPTIONS).includes(value as SortOption)
     ? (value as SortOption)
-    : SORT_OPTIONS.NAME
+    : SORT_OPTIONS.RECOMMENDED
 }
 
 export function getSortLabels(t: TFunction): Record<SortOption, string> {
   return {
+    [SORT_OPTIONS.RECOMMENDED]: t('Recommended'),
+    [SORT_OPTIONS.MOST_REQUESTS]: t('Most requests'),
+    [SORT_OPTIONS.MOST_TOKENS]: t('Most tokens'),
     [SORT_OPTIONS.NAME]: t('Name'),
     [SORT_OPTIONS.INPUT_PRICE_LOW]: t('Input Price: Low to High'),
     [SORT_OPTIONS.INPUT_PRICE_HIGH]: t('Input Price: High to Low'),

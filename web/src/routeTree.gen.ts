@@ -44,6 +44,7 @@ import { Route as AuthenticatedAgentPlatformIndexRouteImport } from './routes/_a
 import { Route as AuthenticatedAgentPlatformClaimRouteImport } from './routes/_authenticated/agent-platform/claim'
 import { Route as AuthenticatedAgentPlatformFinanceRouteImport } from './routes/_authenticated/agent-platform/finance'
 import { Route as AuthenticatedAgentRedemptionIndexRouteImport } from './routes/_authenticated/agent-redemption/index'
+import { Route as AuthenticatedChannelStatusIndexRouteImport } from './routes/_authenticated/channel-status/index'
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
 import { Route as AuthenticatedDashboardSectionRouteImport } from './routes/_authenticated/dashboard/$section'
@@ -272,6 +273,12 @@ const AuthenticatedAgentRedemptionIndexRoute =
   AuthenticatedAgentRedemptionIndexRouteImport.update({
     id: '/agent-redemption/',
     path: '/agent-redemption/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedChannelStatusIndexRoute =
+  AuthenticatedChannelStatusIndexRouteImport.update({
+    id: '/channel-status/',
+    path: '/channel-status/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedChannelsIndexRoute =
@@ -597,6 +604,7 @@ export interface FileRoutesByFullPath {
   '/affiliate/': typeof AuthenticatedAffiliateIndexRoute
   '/agent-platform/': typeof AuthenticatedAgentPlatformIndexRoute
   '/agent-redemption/': typeof AuthenticatedAgentRedemptionIndexRoute
+  '/channel-status/': typeof AuthenticatedChannelStatusIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/image/': typeof AuthenticatedImageIndexRoute
@@ -679,6 +687,7 @@ export interface FileRoutesByTo {
   '/affiliate': typeof AuthenticatedAffiliateIndexRoute
   '/agent-platform': typeof AuthenticatedAgentPlatformIndexRoute
   '/agent-redemption': typeof AuthenticatedAgentRedemptionIndexRoute
+  '/channel-status': typeof AuthenticatedChannelStatusIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
   '/image': typeof AuthenticatedImageIndexRoute
@@ -765,6 +774,7 @@ export interface FileRoutesById {
   '/_authenticated/affiliate/': typeof AuthenticatedAffiliateIndexRoute
   '/_authenticated/agent-platform/': typeof AuthenticatedAgentPlatformIndexRoute
   '/_authenticated/agent-redemption/': typeof AuthenticatedAgentRedemptionIndexRoute
+  '/_authenticated/channel-status/': typeof AuthenticatedChannelStatusIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/_authenticated/image/': typeof AuthenticatedImageIndexRoute
@@ -850,6 +860,7 @@ export interface FileRouteTypes {
     | '/affiliate/'
     | '/agent-platform/'
     | '/agent-redemption/'
+    | '/channel-status/'
     | '/channels/'
     | '/dashboard/'
     | '/image/'
@@ -932,6 +943,7 @@ export interface FileRouteTypes {
     | '/affiliate'
     | '/agent-platform'
     | '/agent-redemption'
+    | '/channel-status'
     | '/channels'
     | '/dashboard'
     | '/image'
@@ -1017,6 +1029,7 @@ export interface FileRouteTypes {
     | '/_authenticated/affiliate/'
     | '/_authenticated/agent-platform/'
     | '/_authenticated/agent-redemption/'
+    | '/_authenticated/channel-status/'
     | '/_authenticated/channels/'
     | '/_authenticated/dashboard/'
     | '/_authenticated/image/'
@@ -1330,6 +1343,13 @@ declare module '@tanstack/react-router' {
       path: '/agent-redemption'
       fullPath: '/agent-redemption/'
       preLoaderRoute: typeof AuthenticatedAgentRedemptionIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/channel-status/': {
+      id: '/_authenticated/channel-status/'
+      path: '/channel-status'
+      fullPath: '/channel-status/'
+      preLoaderRoute: typeof AuthenticatedChannelStatusIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/channels/': {
@@ -1775,6 +1795,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedAffiliateIndexRoute: typeof AuthenticatedAffiliateIndexRoute
   AuthenticatedAgentPlatformIndexRoute: typeof AuthenticatedAgentPlatformIndexRoute
   AuthenticatedAgentRedemptionIndexRoute: typeof AuthenticatedAgentRedemptionIndexRoute
+  AuthenticatedChannelStatusIndexRoute: typeof AuthenticatedChannelStatusIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
   AuthenticatedImageIndexRoute: typeof AuthenticatedImageIndexRoute
@@ -1819,6 +1840,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAgentPlatformIndexRoute: AuthenticatedAgentPlatformIndexRoute,
   AuthenticatedAgentRedemptionIndexRoute:
     AuthenticatedAgentRedemptionIndexRoute,
+  AuthenticatedChannelStatusIndexRoute: AuthenticatedChannelStatusIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
   AuthenticatedImageIndexRoute: AuthenticatedImageIndexRoute,

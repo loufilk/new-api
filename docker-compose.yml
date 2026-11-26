@@ -61,6 +61,11 @@ services:
       - CUSTOMER_INVOICE_ENABLED
       - CUSTOMER_INVOICE_EPAY_MERCHANT_SCOPE
       - CUSTOMER_INVOICE_WALLET_QUOTA_PER_CNY_CENT
+      # Optional USDT provider config for serving nodes only; leave unset until staging is approved.
+      - USDT_GMPAY_ORIGIN
+      - USDT_GMPAY_PID
+      - USDT_GMPAY_SECRET
+      - USDT_CALLBACK_ORIGIN
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
       - SHUTDOWN_TIMEOUT_SECONDS # Optional pass-through; application default is 120s

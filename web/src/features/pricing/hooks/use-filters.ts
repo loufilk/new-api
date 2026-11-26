@@ -23,6 +23,7 @@ import { useDebounce } from '@/hooks/use-debounce'
 
 import {
   FILTER_ALL,
+  MODEL_ORDER_SORTS,
   SORT_OPTIONS,
   normalizeSortOption,
   QUOTA_TYPES,
@@ -38,7 +39,12 @@ import {
   groupPlatform,
 } from '../lib/market-groups'
 import type { PricingSearch } from '../lib/search'
-import type { MarketGroupCatalog, PricingModel, TokenUnit } from '../types'
+import type {
+  MarketGroupCatalog,
+  ModelOrder,
+  PricingModel,
+  TokenUnit,
+} from '../types'
 import { useBillingTime } from './use-billing-time'
 
 function normalizeViewMode(value: unknown): ViewMode {
@@ -58,7 +64,8 @@ export function useFilters(
   models: PricingModel[],
   groupCatalog?: MarketGroupCatalog,
   scope = 'public',
-  availableGroups?: readonly string[]
+  availableGroups?: readonly string[],
+  modelOrder?: ModelOrder
 ) {
   const filterState = useSearch({ from: '/pricing/' })
   const navigate = useNavigate({ from: '/pricing/' })
@@ -144,7 +151,7 @@ export function useFilters(
   )
   const setSortBy = useCallback(
     (v: string) =>
-      updateFilters({ sort: v === SORT_OPTIONS.NAME ? undefined : v }),
+      updateFilters({ sort: v === SORT_OPTIONS.RECOMMENDED ? undefined : v }),
     [updateFilters]
   )
   const setGroupFilter = useCallback(
@@ -195,7 +202,9 @@ export function useFilters(
 
   const sortExpressions = useMemo(
     () =>
-      sortBy === SORT_OPTIONS.NAME ? [] : activeBillingExpressions(models),
+      sortBy === SORT_OPTIONS.NAME || MODEL_ORDER_SORTS.has(sortBy)
+        ? []
+        : activeBillingExpressions(models),
     [models, sortBy]
   )
   const clock = useBillingTime(sortExpressions)
@@ -207,11 +216,13 @@ export function useFilters(
         quotaType: quotaTypeFilter,
         endpointType: endpointTypeFilter,
         sortBy,
+        modelOrder,
         platformPriceGroups,
         now: clock === undefined ? undefined : new Date(clock),
       }),
     [
       models,
+      modelOrder,
       debouncedSearchInput,
       platformPriceGroups,
       groupFilter,

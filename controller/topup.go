@@ -195,6 +195,20 @@ func GetEpayClient() *epay.Client {
 	return withUrl
 }
 
+func epayCallbackPartnerMatches(client *epay.Client, params map[string]string) bool {
+	if client == nil || client.Config == nil {
+		return false
+	}
+	if !strings.EqualFold(client.Config.SignType, epay.SignTypeRSA) {
+		return true
+	}
+	expectedPID := client.Config.PartnerID
+	if strings.TrimSpace(expectedPID) == "" {
+		return false
+	}
+	return params["pid"] == expectedPID
+}
+
 func getPayMoney(amount int64, group string) decimal.Decimal {
 	dAmount := decimal.NewFromInt(amount)
 	// 充值金额以“展示类型”为准：
@@ -495,8 +509,14 @@ func EpayNotify(c *gin.Context) {
 		}
 		return
 	}
-	if merchant := params["pid"]; merchant != "" && merchant != client.Config.PartnerID {
-		_, _ = c.Writer.Write([]byte("fail"))
+	// Keep the fork's existing non-empty mismatch rejection (including MD5),
+	// and require an exact, present partner ID for RSA on every callback path.
+	merchant := params["pid"]
+	if !epayCallbackPartnerMatches(client, params) || (merchant != "" && merchant != client.Config.PartnerID) {
+		if _, writeErr := c.Writer.Write([]byte("fail")); writeErr != nil {
+			logger.LogError(c.Request.Context(), common.LogText("Epay webhook failed to write response path=%q client_ip=%s error=%q", c.Request.RequestURI, c.ClientIP(), writeErr.Error()))
+		}
+		logger.LogWarn(c.Request.Context(), common.LogText("Epay webhook partner id mismatch path=%q client_ip=%s callback_pid=%q", c.Request.RequestURI, c.ClientIP(), merchant))
 		return
 	}
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 webhook 验签成功 trade_no=%s callback_type=%s trade_status=%s callback_money=%s client_ip=%s", verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.TradeStatus, verifyInfo.Money, c.ClientIP()))

@@ -34,6 +34,7 @@ import { LedgerTable } from './components/ledger-table'
 import { RechargeFormCard } from './components/recharge-form-card'
 import { RechargeHistoryButton } from './components/recharge-history-dialog'
 import { ReferralPanel } from './components/referral-panel'
+import { UsdtRecharge } from './components/usdt-recharge'
 import { WalletStatsCard } from './components/wallet-stats-card'
 import { DEFAULT_DISCOUNT_RATE, PAYMENT_TYPES } from './constants'
 import {
@@ -400,6 +401,15 @@ export function Wallet(props: WalletPageProps) {
                   </div>
                 )}
                 <RechargeFormCard
+                  usdtRecharge={
+                    user?.id ? (
+                      <UsdtRecharge
+                        key={user.id}
+                        userId={user.id}
+                        onPaid={refreshBalances}
+                      />
+                    ) : null
+                  }
                   topupInfo={topupInfo}
                   presetAmounts={presetAmounts}
                   selectedPreset={selectedPreset}

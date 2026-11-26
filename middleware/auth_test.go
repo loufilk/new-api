@@ -591,7 +591,7 @@ func TestFinancialAndFingerprintRoutesRequireBrowserSessions(t *testing.T) {
 	legacy := "session-only-legacy-token"
 	user := createMiddlewarePATUser(t, "session-only-admin", legacy)
 	require.NoError(t, model.DB.Model(user).Update("role", common.RoleRootUser).Error)
-	scoped, _ := createMiddlewareScopedToken(t, user.Id, 0, "wallet:write", "profile:read", "option:read", "option:write")
+	scoped, _ := createMiddlewareScopedToken(t, user.Id, 0, "wallet:read", "wallet:write", "profile:read", "option:read", "option:write")
 	bundle, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "session-route-test")
 	require.NoError(t, err)
 
@@ -600,6 +600,13 @@ func TestFinancialAndFingerprintRoutesRequireBrowserSessions(t *testing.T) {
 		{http.MethodGet, "/api/model-tests/settings"},
 		{http.MethodPut, "/api/model-tests/settings"},
 		{http.MethodGet, "/api/user/model-tests/site"},
+		{http.MethodGet, "/api/user/usdt/options"},
+		{http.MethodGet, "/api/user/usdt/orders"},
+		{http.MethodGet, "/api/user/usdt/orders/:id"},
+		{http.MethodGet, "/api/user/usdt/order-requests/:key"},
+		{http.MethodPost, "/api/user/usdt/orders"},
+		{http.MethodGet, "/api/option/usdt"},
+		{http.MethodPut, "/api/option/usdt"},
 	} {
 		t.Run(route.method+" "+route.path, func(t *testing.T) {
 			handled := 0
@@ -608,8 +615,9 @@ func TestFinancialAndFingerprintRoutesRequireBrowserSessions(t *testing.T) {
 				handled++
 				c.Status(http.StatusNoContent)
 			})
+			path := strings.NewReplacer(":id", "fixture", ":key", "fixture").Replace(route.path)
 			for _, token := range []string{legacy, scoped} {
-				request := httptest.NewRequest(route.method, route.path, strings.NewReader(`{}`))
+				request := httptest.NewRequest(route.method, path, strings.NewReader(`{}`))
 				request.Header.Set("Authorization", "Bearer "+token)
 				response := httptest.NewRecorder()
 				router.ServeHTTP(response, request)
@@ -618,7 +626,7 @@ func TestFinancialAndFingerprintRoutesRequireBrowserSessions(t *testing.T) {
 			}
 			assert.Zero(t, handled, "neither legacy nor scoped PATs may reach the handler")
 
-			request := httptest.NewRequest(route.method, route.path, strings.NewReader(`{}`))
+			request := httptest.NewRequest(route.method, path, strings.NewReader(`{}`))
 			request.Header.Set("Authorization", "Bearer "+bundle.AccessToken)
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)

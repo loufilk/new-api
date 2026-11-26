@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   SORT_OPTIONS,
+  MODEL_ORDER_SORTS,
   normalizeSortOption,
   FILTER_ALL,
   QUOTA_TYPES,
@@ -26,7 +27,7 @@ import {
   type QuotaTypeOption,
   type SortOption,
 } from '../constants'
-import type { PricingModel } from '../types'
+import type { ModelOrder, PricingModel } from '../types'
 import { compileBillingExpression } from './billing-expression/parser'
 import { visitExpression } from './billing-expression/types'
 import {
@@ -210,6 +211,21 @@ function isValidSortPrice(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
 }
 
+function compareModelNames(a: PricingModel, b: PricingModel): number {
+  return (a.model_name || '').localeCompare(b.model_name || '')
+}
+
+/** Compare admin usage rows using the same tie-breaking as the server. */
+export function compareModelUsage(
+  a: { name: string; usage: number },
+  b: { name: string; usage: number }
+): number {
+  if (a.usage !== b.usage) return b.usage - a.usage
+  if (a.usage === 0) return a.name.localeCompare(b.name)
+  if (a.name === b.name) return 0
+  return a.name < b.name ? -1 : 1
+}
+
 /**
  * Sort models by specified option
  */
@@ -218,7 +234,8 @@ export function sortModels(
   sortBy: string,
   selectedGroup?: string,
   now?: Date,
-  platformPriceGroups?: ReadonlySet<string>
+  platformPriceGroups?: ReadonlySet<string>,
+  modelOrder?: ModelOrder
 ): PricingModel[] {
   const sorted = [...models]
 
@@ -251,15 +268,18 @@ export function sortModels(
     return sorted
   }
 
-  switch (normalizedSort) {
-    case SORT_OPTIONS.NAME:
-      sorted.sort((a, b) =>
-        (a.model_name || '').localeCompare(b.model_name || '')
-      )
-      break
+  if (MODEL_ORDER_SORTS.has(normalizedSort)) {
+    const order = modelOrder?.[normalizedSort as keyof ModelOrder] ?? []
+    const rank = new Map(order.map((name, index) => [name, index]))
+    sorted.sort(
+      (a, b) =>
+        (rank.get(a.model_name) ?? order.length) -
+          (rank.get(b.model_name) ?? order.length) || compareModelNames(a, b)
+    )
+    return sorted
   }
 
-  return sorted
+  return sorted.sort(compareModelNames)
 }
 
 /**
@@ -275,6 +295,7 @@ export function filterAndSortModels(
     endpointType: string
     tag?: string
     sortBy: string
+    modelOrder?: ModelOrder
     platformPriceGroups?: ReadonlySet<string>
     now?: Date
   }
@@ -298,7 +319,8 @@ export function filterAndSortModels(
     filters.sortBy,
     filters.group,
     filters.now,
-    platformGroups
+    platformGroups,
+    filters.modelOrder
   )
 
   return result

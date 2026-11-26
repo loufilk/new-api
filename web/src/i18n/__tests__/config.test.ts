@@ -105,6 +105,30 @@ describe('lazy interface translations', () => {
     }
   )
 
+  test.each([
+    ['en', 'Most requests', 'Update installed plugins'],
+    ['zhCN', '请求最多', '更新已安装插件'],
+    ['zhTW', '請求最多', '更新已安裝的外掛'],
+  ])(
+    'loads official model sorting and plugin update text in %s',
+    async (language, ranking, plugins) => {
+      window.localStorage.setItem('i18nextLng', 'en')
+      const { initI18n } = await import('../config')
+      const instance = await initI18n()
+      await instance.changeLanguage(language)
+      expect(
+        instance.getResource(language, 'translation', 'Most requests')
+      ).toBe(ranking)
+      expect(
+        instance.getResource(
+          language,
+          'translation',
+          'Update installed plugins'
+        )
+      ).toBe(plugins)
+    }
+  )
+
   test('keeps the most recently selected language when an earlier bundle finishes later', async () => {
     window.localStorage.setItem('i18nextLng', 'en')
     let markFrenchStarted!: () => void
