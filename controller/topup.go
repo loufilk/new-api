@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -658,6 +659,28 @@ func GetUserTopUps(c *gin.Context) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(topups)
 	common.ApiSuccess(c, pageInfo)
+}
+
+func GetRechargeHistory(c *gin.Context) {
+	userID := c.GetInt("id")
+	if userID <= 0 {
+		c.Status(http.StatusUnauthorized)
+		return
+	}
+	orderNo := strings.TrimSpace(c.Query("order_no"))
+	method := c.Query("method")
+	if !utf8.ValidString(orderNo) || utf8.RuneCountInString(orderNo) > 255 || strings.ContainsRune(orderNo, 0) ||
+		!utf8.ValidString(method) || utf8.RuneCountInString(method) > 5+50 || strings.ContainsRune(method, 0) {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
+	}
+	history, err := model.GetRechargeHistory(c.Request.Context(), userID, orderNo, method, common.GetPageQuery(c))
+	if err != nil {
+		common.SysError(common.LogText("Failed to load recharge history: %s", err.Error()))
+		common.ApiError(c, common.NewMessage("Request failed"))
+		return
+	}
+	common.ApiSuccess(c, history)
 }
 
 // GetAllTopUps 管理员获取全平台充值记录

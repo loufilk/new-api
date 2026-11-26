@@ -1,5 +1,8 @@
 {
   "translation": {
+    "All payment methods": "全部支付方式",
+    "Enter the full order number": "请输入完整订单号",
+    "USDT order quote": "订单报价（USDT）",
     "Check order status": "查询订单状态",
     "Order not confirmed yet. Check this request or contact support with its reference. Do not transfer again.": "订单尚未确认。请查询此请求，或将请求编号提供给客服。请勿重复转账。",
     "Recharge options changed. Review the current network and amount before creating an order.": "充值选项已更改。请核对当前网络和金额，再创建订单。",

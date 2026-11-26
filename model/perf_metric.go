@@ -10,17 +10,21 @@ import (
 
 // PerfMetric stores aggregated relay performance metrics for the model square.
 type PerfMetric struct {
-	Id             int    `json:"id" gorm:"primaryKey"`
-	ModelName      string `json:"model_name" gorm:"size:128;uniqueIndex:idx_perf_model_group_bucket,priority:1"`
-	Group          string `json:"group" gorm:"column:group;size:64;uniqueIndex:idx_perf_model_group_bucket,priority:2"`
-	BucketTs       int64  `json:"bucket_ts" gorm:"uniqueIndex:idx_perf_model_group_bucket,priority:3;index:idx_perf_bucket_ts"`
-	RequestCount   int64  `json:"-" gorm:"default:0"`
-	SuccessCount   int64  `json:"-" gorm:"default:0"`
-	TotalLatencyMs int64  `json:"-" gorm:"default:0"`
-	TtftSumMs      int64  `json:"-" gorm:"default:0"`
-	TtftCount      int64  `json:"-" gorm:"default:0"`
-	OutputTokens   int64  `json:"-" gorm:"default:0"`
-	GenerationMs   int64  `json:"-" gorm:"default:0"`
+	Id                int    `json:"id" gorm:"primaryKey"`
+	ModelName         string `json:"model_name" gorm:"size:128;uniqueIndex:idx_perf_model_group_bucket,priority:1"`
+	Group             string `json:"group" gorm:"column:group;size:64;uniqueIndex:idx_perf_model_group_bucket,priority:2"`
+	BucketTs          int64  `json:"bucket_ts" gorm:"uniqueIndex:idx_perf_model_group_bucket,priority:3;index:idx_perf_bucket_ts"`
+	RequestCount      int64  `json:"-" gorm:"default:0"`
+	SuccessCount      int64  `json:"-" gorm:"default:0"`
+	TotalLatencyMs    int64  `json:"-" gorm:"default:0"`
+	LatencyCount      int64  `json:"-" gorm:"not null;default:0"`
+	MeasuredLatencyMs int64  `json:"-" gorm:"not null;default:0"`
+	CacheSampleCount  int64  `json:"-" gorm:"not null;default:0"`
+	CacheHitCount     int64  `json:"-" gorm:"not null;default:0"`
+	TtftSumMs         int64  `json:"-" gorm:"default:0"`
+	TtftCount         int64  `json:"-" gorm:"default:0"`
+	OutputTokens      int64  `json:"-" gorm:"default:0"`
+	GenerationMs      int64  `json:"-" gorm:"default:0"`
 }
 
 func (PerfMetric) TableName() string {
@@ -42,13 +46,17 @@ func UpsertPerfMetricContext(ctx context.Context, metric *PerfMetric) error {
 			{Name: "bucket_ts"},
 		},
 		DoUpdates: clause.Assignments(map[string]any{
-			"request_count":    gorm.Expr("perf_metrics.request_count + ?", metric.RequestCount),
-			"success_count":    gorm.Expr("perf_metrics.success_count + ?", metric.SuccessCount),
-			"total_latency_ms": gorm.Expr("perf_metrics.total_latency_ms + ?", metric.TotalLatencyMs),
-			"ttft_sum_ms":      gorm.Expr("perf_metrics.ttft_sum_ms + ?", metric.TtftSumMs),
-			"ttft_count":       gorm.Expr("perf_metrics.ttft_count + ?", metric.TtftCount),
-			"output_tokens":    gorm.Expr("perf_metrics.output_tokens + ?", metric.OutputTokens),
-			"generation_ms":    gorm.Expr("perf_metrics.generation_ms + ?", metric.GenerationMs),
+			"request_count":       gorm.Expr("perf_metrics.request_count + ?", metric.RequestCount),
+			"success_count":       gorm.Expr("perf_metrics.success_count + ?", metric.SuccessCount),
+			"total_latency_ms":    gorm.Expr("perf_metrics.total_latency_ms + ?", metric.TotalLatencyMs),
+			"latency_count":       gorm.Expr("perf_metrics.latency_count + ?", metric.LatencyCount),
+			"measured_latency_ms": gorm.Expr("perf_metrics.measured_latency_ms + ?", metric.MeasuredLatencyMs),
+			"cache_sample_count":  gorm.Expr("perf_metrics.cache_sample_count + ?", metric.CacheSampleCount),
+			"cache_hit_count":     gorm.Expr("perf_metrics.cache_hit_count + ?", metric.CacheHitCount),
+			"ttft_sum_ms":         gorm.Expr("perf_metrics.ttft_sum_ms + ?", metric.TtftSumMs),
+			"ttft_count":          gorm.Expr("perf_metrics.ttft_count + ?", metric.TtftCount),
+			"output_tokens":       gorm.Expr("perf_metrics.output_tokens + ?", metric.OutputTokens),
+			"generation_ms":       gorm.Expr("perf_metrics.generation_ms + ?", metric.GenerationMs),
 		}),
 	}).Create(metric).Error
 }

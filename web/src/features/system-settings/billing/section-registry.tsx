@@ -26,6 +26,7 @@ import { RatioSettingsCard } from '../models/ratio-settings-card'
 import type { BillingSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
 import { GroupCatalogSettings } from './group-catalog-settings'
+import { PublicModelLineSettings } from './public-model-line-settings'
 import { GroupMarketActivityPreview } from './group-market-activity-preview'
 import { GroupPricingWorkspace } from './group-pricing-workspace'
 
@@ -133,10 +134,13 @@ const BILLING_SECTIONS = [
           </>
         )}
         renderCatalog={(panel) => (
-          <GroupCatalogSettings
-            groupRatios={settings.GroupRatio}
-            panel={panel}
-          />
+          <>
+            {panel === 'groups' && <PublicModelLineSettings groupRatios={settings.GroupRatio} />}
+            <GroupCatalogSettings
+              groupRatios={settings.GroupRatio}
+              panel={panel}
+            />
+          </>
         )}
       />
     ),

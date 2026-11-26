@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Client setup wizard": "用戶端接入精靈",
+    "Choose a published model group, a model, a client and a connection address to generate setup instructions.": "選擇公開群組、模型、用戶端和連線位址，即可產生設定步驟。",
+    "Public group names are for reference only. The group and permissions on your API Key determine actual routing.": "公開群組名稱僅供參考。實際路由由 API 金鑰所屬群組與權限決定。",
+    "No published group is available. The examples below use a placeholder for your model ID.": "目前沒有可用的公開群組。下方範例使用模型 ID 預留位置。",
+    "Published model group": "公開模型群組",
+    "Protocol": "通訊協定",
+    "Connection address": "連線位址",
+    "No verified connection address": "沒有可用的連線位址",
+    "Operating system": "作業系統",
+    "Setup instructions": "設定步驟",
+    "Create or choose an API Key in the console. Set WANCHUAN_API_KEY locally for commands, or replace the placeholder in your client settings. Never paste your Key into this page.": "在控制台建立或選用 API 金鑰。在本機設定 WANCHUAN_API_KEY，或在用戶端設定內取代預留位置。請勿在此頁面貼上真實金鑰。",
+    "Merge these settings with your existing configuration. Test in your client and check the request time, model and status in your usage logs. A model request may incur charges.": "將這些設定合併到既有設定。於用戶端測試後，到用量記錄核對請求時間、模型及狀態。模型請求可能收費。",
+    "Read the full guide": "查看完整教學",
     "This application changed while you were reviewing it. Load the latest status before continuing.": "這份申請在審核期間已更新。請載入最新狀態後再繼續。",
     "Reload latest application": "載入最新申請",
     "This application is read-only for your account.": "目前帳號只能檢視這份申請。",

@@ -25,7 +25,7 @@ export const quickStart: GuideDoc = {
   recommended: true,
   updated: '2026-11-23',
   body: `
-> Base URL 固定为 \`{{BASE_URL}}/v1\`。令牌只在控制台创建，请妥善保管，泄露后立即在控制台删除重建。
+> OpenAI 兼容 API 的 Base URL 为 \`{{BASE_URL}}/v1\`。令牌只在控制台创建，请妥善保管，泄露后立即在控制台删除重建。
 
 万川是一个 OpenAI 兼容的多模型 API 网关：你在这里创建一个 \`sk-\` 开头的令牌，然后像调用 OpenAI / Anthropic 官方接口一样调用它，站点会把请求转发到各家模型。
 
@@ -56,7 +56,9 @@ curl {{BASE_URL}}/v1/models \\
 
 从响应的 \`data\` 数组中复制一个支持 Chat Completions 的模型 \`id\`，替换下面的 \`MODEL_ID\`。[定价页](/pricing) 可查模型介绍和价格，但不是这把密钥的模型列表。如果列表为空，先在 [API 密钥](/keys) 核对分组和模型限制。列出某个模型也不代表它支持所有协议，或上游此刻一定可用。
 
-## 第 5 步：用同一把密钥发送请求
+## 第 5 步：选客户端或用 HTTP 发出第一个请求
+
+日常通过工具使用，可先打开 [客户端接入向导](/help/integrations)，按模型、分组、客户端与线路选择本地配置。若自己调用 HTTP，可继续：
 
 \`\`\`bash
 curl {{BASE_URL}}/v1/chat/completions \\

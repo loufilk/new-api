@@ -1,5 +1,8 @@
 {
   "translation": {
+    "All payment methods": "Tất cả phương thức thanh toán",
+    "Enter the full order number": "Nhập đầy đủ mã đơn hàng",
+    "USDT order quote": "Báo giá đơn hàng USDT",
     "Check order status": "Kiểm tra trạng thái đơn",
     "Order not confirmed yet. Check this request or contact support with its reference. Do not transfer again.": "Đơn chưa được xác nhận. Hãy tra cứu yêu cầu này hoặc cung cấp mã tham chiếu cho bộ phận hỗ trợ. Không chuyển tiền lần nữa.",
     "Recharge options changed. Review the current network and amount before creating an order.": "Tùy chọn nạp tiền đã thay đổi. Kiểm tra mạng và số tiền hiện tại trước khi tạo đơn.",

@@ -335,19 +335,7 @@ func replyUSDTExisting(c *gin.Context, o model.USDTTopUpOrder, network string, a
 	common.ApiSuccess(c, usdtOrderReply(o))
 }
 func usdtOrderReply(o model.USDTTopUpOrder) gin.H {
-	state := o.Status
-	now := time.Now().Unix()
-	if state == model.USDTCreating && now > o.CreatedAt+20 {
-		state = model.USDTReview
-	}
-	if o.ExpiresAt > 0 && now > o.ExpiresAt {
-		if state == model.USDTPending {
-			state = model.USDTExpired
-		}
-		if state == model.USDTConfirming {
-			state = model.USDTReview
-		}
-	}
+	state := o.DisplayStatus(time.Now().Unix())
 	expiry := ""
 	if o.ExpiresAt > 0 {
 		expiry = time.Unix(o.ExpiresAt, 0).UTC().Format(time.RFC3339)

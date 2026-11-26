@@ -23,7 +23,8 @@ import { useStatus } from '@/hooks/use-status'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { getPricing, getPublicPricing } from '../api'
+import { getPricing, getPublicPricing, getPublishedModelLines } from '../api'
+import { mergePublishedModelLines } from '../lib/published-model-lines'
 import { projectMarketActivity } from '../lib/group-market-activity'
 import { publicTierCatalog, publicModelBrand } from '../lib/market-facets'
 
@@ -73,6 +74,21 @@ export function usePricingData(enabled = true) {
     enabled: enabled && identityResolved,
   })
 
+  // Revocable names never ride in the edge-cached base catalogue. Hide them on
+  // an overlay failure rather than using React Query's previously loaded data.
+  const linesQuery = useQuery({
+    queryKey: ['public-model-lines'],
+    enabled: enabled && identityResolved && !isAuthenticated,
+    queryFn: async ({ signal }) =>
+      requireServerSuccess(await getPublishedModelLines(signal)),
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: 'always',
+    refetchInterval: 15_000,
+    gcTime: 0,
+    retry: false,
+  })
+  const publicLines = linesQuery.isError ? undefined : linesQuery.data
+
   // Ensure rates never reach zero to prevent division errors
   const priceRate = useMemo(
     () => Math.max((status?.price as number) ?? 1, 0.001),
@@ -94,11 +110,13 @@ export function usePricingData(enabled = true) {
   const displayTiers =
     !isAuthenticated || data?.group_keys_are_display_only === true
   const catalog = useMemo(() => {
-    if (!data?.data) return { models: [], groupCatalog: undefined }
+    if (!data?.data) return { models: [], groupCatalog: undefined, groupRatio: {}, usableGroup: {} }
+
+    const displayData = displayTiers ? mergePublishedModelLines(data, publicLines) : data
 
     const vendorMap = new Map((data.vendors ?? []).map((v) => [v.id, v]))
 
-    const rows = data.data.map((model) => {
+    const rows = displayData.data.map((model) => {
       const vendor = model.vendor_id
         ? vendorMap.get(model.vendor_id)
         : undefined
@@ -108,7 +126,7 @@ export function usePricingData(enabled = true) {
         vendor_name: vendor?.name,
         vendor_icon: vendor?.icon,
         vendor_description: vendor?.description,
-        group_ratio: data.group_ratio,
+        group_ratio: displayData.group_ratio,
         group_market_activity: modelGroupDetails(
           groupMarketActivity,
           model.enable_groups ?? [],
@@ -133,7 +151,10 @@ export function usePricingData(enabled = true) {
       }
     })
     const groupCatalog = displayTiers
-      ? publicTierCatalog(rows, data.group_ratio ?? {})
+      ? {
+          ...publicTierCatalog(rows, data.group_ratio ?? {}),
+          ...(displayData !== data ? displayData.group_catalog : undefined),
+        }
       : data.group_catalog
     const models = rows.map((row) => ({
       ...row,
@@ -142,15 +163,15 @@ export function usePricingData(enabled = true) {
         row.vendor_icon ||
         (displayTiers ? publicModelBrand(row).icon || undefined : undefined),
     }))
-    return { models, groupCatalog }
-  }, [data, isAuthenticated, groupMarketActivity, displayTiers])
+    return { models, groupCatalog, groupRatio: displayData.group_ratio, usableGroup: displayData.usable_group }
+  }, [data, isAuthenticated, groupMarketActivity, displayTiers, publicLines])
 
   return {
     models: catalog.models,
     displayTiers,
     vendors: data?.vendors ?? [],
-    groupRatio: data?.group_ratio ?? {},
-    usableGroup: data?.usable_group ?? {},
+    groupRatio: catalog.groupRatio ?? {},
+    usableGroup: catalog.usableGroup ?? {},
     endpointMap: data?.supported_endpoint ?? {},
     autoGroups: data?.auto_groups ?? [],
     modelOrder: data?.model_order,

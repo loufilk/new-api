@@ -279,6 +279,33 @@ export interface BillingHistoryResponse {
   total: number
 }
 
+export interface USDTRechargeHistoryDetails {
+  network: string
+  status:
+    | 'creating'
+    | 'pending'
+    | 'confirming'
+    | 'paid'
+    | 'expired'
+    | 'review'
+    | 'failed'
+  quote_usdt?: string
+  wallet_credit_cny?: string
+}
+
+export interface RechargeHistoryItem {
+  order_no: string
+  created_at: number
+  fiat?: Omit<TopupRecord, 'id' | 'user_id' | 'create_time' | 'trade_no'>
+  usdt?: USDTRechargeHistoryDetails
+}
+
+export interface RechargeHistoryResponse {
+  items: RechargeHistoryItem[]
+  total: number
+  methods: string[]
+}
+
 /**
  * Complete order request (admin only)
  */

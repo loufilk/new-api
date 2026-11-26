@@ -45,6 +45,8 @@ import { cn } from '@/lib/utils'
 import { AiDocsCallout } from '../components/ai-docs-callout'
 import { ApiCodeBlock } from '../components/api-code-block'
 import { ApiEndpointTree } from '../components/api-endpoint-tree'
+import { ApiQuickReference } from '../components/api-quick-reference'
+import { DocsSearch } from '../components/docs-search'
 import { getEndpoint } from '../content/endpoints'
 import type { EndpointDoc, HttpMethod } from '../content/types'
 import { generateEndpointSamples, sampleLanguages } from '../lib/api-samples'
@@ -276,12 +278,22 @@ export function ApiReferencePage({
               </CollapsibleContent>
             </Collapsible>
 
+            <div className='mb-6'>
+              <DocsSearch />
+            </div>
+            {!endpointId && <ApiQuickReference origin={origin} />}
             <section id='overview' className='scroll-mt-24 space-y-5'>
               <div className='space-y-3'>
                 <MethodBadge method={endpoint.method} />
-                <h1 className='text-foreground text-3xl font-bold tracking-tight'>
-                  {endpoint.name}
-                </h1>
+                {endpointId ? (
+                  <h1 className='text-foreground text-3xl font-bold tracking-tight'>
+                    {endpoint.name}
+                  </h1>
+                ) : (
+                  <h2 className='text-foreground text-2xl font-bold tracking-tight'>
+                    {endpoint.name}
+                  </h2>
+                )}
                 <p className='text-muted-foreground max-w-3xl text-sm leading-7 sm:text-base'>
                   {endpoint.description}
                 </p>

@@ -282,6 +282,11 @@ func advanceGroupConfigVersionTx(tx *gorm.DB, change *marketTransition) (int64, 
 	}); err != nil {
 		common.SysError("marketplace activity recording unavailable; notices suppressed")
 	}
+	if change != nil {
+		if err := retireChangedPublicModelLinesTx(tx, change); err != nil {
+			return 0, err
+		}
+	}
 	return next, nil
 }
 

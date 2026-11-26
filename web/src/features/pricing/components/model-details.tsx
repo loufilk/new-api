@@ -1258,11 +1258,12 @@ function ProviderGroupPricingSection(
                     />
                     <GroupMarketBadges
                       activity={getRecentGroupActivity(
-                        props.model.group_market_activity?.[group]
+                        props.model.group_market_activity?.[group],
+                        props.model.group_catalog?.[group]?.public_line
                       )}
                     />
                   </div>
-                  {!props.model.group_keys_are_display_only && (
+                  {(!props.model.group_keys_are_display_only || props.model.group_catalog?.[group]?.public_line) && (
                     <span className='text-muted-foreground font-mono text-xs'>
                       {ratio}x
                     </span>
@@ -1474,7 +1475,8 @@ function ProviderGroupPricingSection(
                 />
                 <GroupMarketBadges
                   activity={getRecentGroupActivity(
-                    props.model.group_market_activity?.[group]
+                    props.model.group_market_activity?.[group],
+                        props.model.group_catalog?.[group]?.public_line
                   )}
                 />
               </div>

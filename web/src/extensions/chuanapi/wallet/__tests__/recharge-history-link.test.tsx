@@ -50,7 +50,7 @@ beforeEach(() => {
   useAuthStore.getState().auth.setUser(currentUser)
   vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)
   vi.spyOn(api, 'get').mockImplementation(async (url: string) => {
-    let data: unknown = { items: [], total: 0 }
+    let data: unknown = { items: [], total: 0, methods: [] }
     if (url === '/api/user/self') data = currentUser
     if (url === '/api/status') data = {}
     if (url === '/api/user/wallet') {
@@ -111,7 +111,10 @@ test('the payment return URL opens only personal recharge history and dismisses 
   expect(
     await within(dialog).findByText('No recharge records yet')
   ).toBeVisible()
-  expect(api.get).toHaveBeenCalledWith('/api/user/topup/self?p=1&page_size=10')
+  expect(api.get).toHaveBeenCalledWith(
+    '/api/user/topup/history?p=1&page_size=10',
+    expect.objectContaining({ signal: expect.anything() })
+  )
   expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   // Wallet loading may quote the default amount, but never creates an order.
   expect(
@@ -137,7 +140,8 @@ test('navigating to a return link in an already mounted wallet opens history and
   await screen.findByRole('button', historyName)
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   expect(api.get).not.toHaveBeenCalledWith(
-    '/api/user/topup/self?p=1&page_size=10'
+    '/api/user/topup/history?p=1&page_size=10',
+    expect.objectContaining({ signal: expect.anything() })
   )
 
   await act(async () => {
@@ -168,4 +172,85 @@ test('a standalone wallet can dismiss an initially open history dialog without a
   await waitFor(() =>
     expect(screen.queryByRole('dialog', historyName)).not.toBeInTheDocument()
   )
+})
+
+test('history searches full order numbers with server-side methods and resets filters on account change', async () => {
+  const user = userEvent.setup()
+  const get = vi.mocked(api.get)
+  const defaultGet = get.getMockImplementation()
+  const older = 'USDT-older-than-50'
+  get.mockImplementation(async (url, ...args) => {
+    if (!url.startsWith('/api/user/topup/history?')) {
+      if (!defaultGet) throw new Error('Missing wallet API fixture')
+      return defaultGet(url, ...args)
+    }
+    const params = new URLSearchParams(url.split('?')[1])
+    const owner = useAuthStore.getState().auth.user?.id === currentUser.id
+    const method = params.get('method')
+    const order = params.get('order_no')
+    const items =
+      owner && method === 'usdt' && order === older
+        ? [
+            {
+              order_no: older,
+              created_at: 1735689600,
+              usdt: {
+                network: 'tron',
+                status: 'paid',
+                quote_usdt: '14.234501',
+                wallet_credit_cny: '101.25',
+              },
+            },
+          ]
+        : []
+    return {
+      data: {
+        success: true,
+        data: {
+          methods: owner ? ['fiat:alipay', 'usdt'] : [],
+          items,
+          total: items.length || (!order && owner ? 55 : 0),
+        },
+      },
+    }
+  })
+
+  renderWallet('/wallet?show_history=true')
+  const dialog = await screen.findByRole('dialog', historyName)
+  const history = within(dialog)
+  await history.findByRole('option', { name: 'USDT' })
+  await user.click(await history.findByLabelText('Go to next page'))
+  await waitFor(() =>
+    expect(get).toHaveBeenCalledWith(
+      '/api/user/topup/history?p=2&page_size=10',
+      expect.anything()
+    )
+  )
+  await user.selectOptions(
+    history.getByRole('combobox', { name: 'Payment method' }),
+    'usdt'
+  )
+  await user.type(history.getByRole('searchbox', { name: 'Order ID' }), older)
+  await user.click(history.getByRole('button', { name: 'Search' }))
+  const row = await history.findByRole('row', { name: /USDT-older-than-50/ })
+  expect(row).toHaveTextContent('14.234501 USDT')
+  expect(row).toHaveTextContent('USDT order quote')
+  expect(row).toHaveTextContent('CN¥101.25')
+  expect(row).toHaveTextContent('USDT · TRC20')
+  expect(get).toHaveBeenCalledWith(
+    '/api/user/topup/history?p=1&page_size=10&order_no=USDT-older-than-50&method=usdt',
+    expect.anything()
+  )
+
+  act(() =>
+    useAuthStore
+      .getState()
+      .auth.setUser({ id: 9, username: 'another', role: 1 })
+  )
+  expect(history.queryByText(older)).not.toBeInTheDocument()
+  expect(history.getByRole('searchbox', { name: 'Order ID' })).toHaveValue('')
+  expect(history.getByRole('combobox', { name: 'Payment method' })).toHaveValue(
+    ''
+  )
+  expect(await history.findByText('No recharge records yet')).toBeVisible()
 })

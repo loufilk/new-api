@@ -23,10 +23,12 @@ import { useTranslation } from 'react-i18next'
 import { CopyButton } from '@/components/copy-button'
 import { Button } from '@/components/ui/button'
 
+import { ArticleToc } from '../components/article-toc'
 import { DocsShell } from '../components/docs-shell'
 import { DocsMarkdown } from '../components/guide-article'
 import { PrevNextNav } from '../components/prev-next-nav'
 import { getGuide, getGuideGroup } from '../content/nav'
+import { getDocHeadings } from '../lib/doc-headings'
 import { buildGuideMarkdown } from '../lib/docs-utils'
 
 export function GuidePage({ slug }: { slug: string }) {
@@ -53,6 +55,7 @@ export function GuidePage({ slug }: { slug: string }) {
   }
 
   const group = getGuideGroup(slug)
+  const headings = getDocHeadings(guide.body)
 
   return (
     <DocsShell>
@@ -87,7 +90,12 @@ export function GuidePage({ slug }: { slug: string }) {
           </div>
         </header>
 
-        <DocsMarkdown body={guide.body} />
+        <div className='grid gap-6 xl:grid-cols-[minmax(0,1fr)_180px]'>
+          <div className='xl:order-last'>
+            <ArticleToc headings={headings} />
+          </div>
+          <DocsMarkdown body={guide.body} headings={headings} />
+        </div>
 
         <PrevNextNav slug={slug} />
       </article>

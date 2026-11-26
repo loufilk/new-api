@@ -85,6 +85,26 @@ http://:8081 {
 			respond "Method Not Allowed" 405
 		}
 
+		# Public line publications can be revoked; never inherit pricing's stale cache.
+		@public_model_lines {
+			method GET HEAD
+			path /public-api/model-lines
+		}
+		handle @public_model_lines {
+			reverse_proxy http://127.0.0.1:3000 {
+				header_up -Cookie
+				header_up -Authorization
+				header_down -Set-Cookie
+				header_down Cache-Control "private, no-store"
+			}
+		}
+
+		@public_model_lines_other path /public-api/model-lines
+		handle @public_model_lines_other {
+			header Cache-Control "private, no-store"
+			respond "Method Not Allowed" 405
+		}
+
 		# Checkout uses a body token, not browser credentials. Never cache a
 		# payment lookup or route an entire anonymous API namespace.
 		@public_agent_payment {

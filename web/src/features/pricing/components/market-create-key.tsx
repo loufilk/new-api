@@ -42,6 +42,8 @@ export function MarketCreateKey(props: {
   ) {
     group = props.selectedGroup
   }
+  const publicLine = props.model.group_keys_are_display_only &&
+    group && props.model.group_catalog?.[group]?.public_line ? group : undefined
   if (props.model.group_keys_are_display_only) group = undefined
   const name = props.model.model_name
   // Names of exclusive groups and of their models must not appear in
@@ -76,6 +78,7 @@ export function MarketCreateKey(props: {
           search={{
             create: true,
             group,
+            publicLine,
             model: sensitiveModel ? undefined : name,
           }}
         />

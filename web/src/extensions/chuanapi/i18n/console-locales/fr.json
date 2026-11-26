@@ -1,5 +1,8 @@
 {
   "translation": {
+    "All payment methods": "Tous les modes de paiement",
+    "Enter the full order number": "Saisissez le numéro de commande complet",
+    "USDT order quote": "Devis de la commande USDT",
     "Check order status": "Vérifier le statut de la commande",
     "Order not confirmed yet. Check this request or contact support with its reference. Do not transfer again.": "Commande non confirmée. Vérifiez cette demande ou communiquez sa référence au support. Ne faites pas de nouveau transfert.",
     "Recharge options changed. Review the current network and amount before creating an order.": "Les options de recharge ont changé. Vérifiez le réseau et le montant avant de créer une commande.",

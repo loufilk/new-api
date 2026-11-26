@@ -33,6 +33,7 @@ import { Route as AboutIndexRouteImport } from './routes/about/index'
 import { Route as AgentPayPublicIDRouteImport } from './routes/agent-pay/$publicID'
 import { Route as HealthIndexRouteImport } from './routes/health/index'
 import { Route as HelpIndexRouteImport } from './routes/help/index'
+import { Route as HelpIntegrationsRouteImport } from './routes/help/integrations'
 import { Route as ModelMonitorIndexRouteImport } from './routes/model-monitor/index'
 import { Route as OauthProviderRouteImport } from './routes/oauth/$provider'
 import { Route as PricingIndexRouteImport } from './routes/pricing/index'
@@ -213,6 +214,11 @@ const HealthIndexRoute = HealthIndexRouteImport.update({
 const HelpIndexRoute = HelpIndexRouteImport.update({
   id: '/help/',
   path: '/help/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HelpIntegrationsRoute = HelpIntegrationsRouteImport.update({
+  id: '/help/integrations',
+  path: '/help/integrations',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ModelMonitorIndexRoute = ModelMonitorIndexRouteImport.update({
@@ -590,6 +596,7 @@ export interface FileRoutesByFullPath {
   '/partner': typeof AuthenticatedPartnerRoute
   '/partner-apply': typeof AuthenticatedPartnerApplyRoute
   '/agent-pay/$publicID': typeof AgentPayPublicIDRoute
+  '/help/integrations': typeof HelpIntegrationsRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
   '/health/': typeof HealthIndexRoute
@@ -674,6 +681,7 @@ export interface FileRoutesByTo {
   '/partner': typeof AuthenticatedPartnerRoute
   '/partner-apply': typeof AuthenticatedPartnerApplyRoute
   '/agent-pay/$publicID': typeof AgentPayPublicIDRoute
+  '/help/integrations': typeof HelpIntegrationsRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about': typeof AboutIndexRoute
   '/health': typeof HealthIndexRoute
@@ -762,6 +770,7 @@ export interface FileRoutesById {
   '/_authenticated/partner': typeof AuthenticatedPartnerRoute
   '/_authenticated/partner-apply': typeof AuthenticatedPartnerApplyRoute
   '/agent-pay/$publicID': typeof AgentPayPublicIDRoute
+  '/help/integrations': typeof HelpIntegrationsRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
   '/health/': typeof HealthIndexRoute
@@ -849,6 +858,7 @@ export interface FileRouteTypes {
     | '/partner'
     | '/partner-apply'
     | '/agent-pay/$publicID'
+    | '/help/integrations'
     | '/oauth/$provider'
     | '/about/'
     | '/health/'
@@ -933,6 +943,7 @@ export interface FileRouteTypes {
     | '/partner'
     | '/partner-apply'
     | '/agent-pay/$publicID'
+    | '/help/integrations'
     | '/oauth/$provider'
     | '/about'
     | '/health'
@@ -1020,6 +1031,7 @@ export interface FileRouteTypes {
     | '/_authenticated/partner'
     | '/_authenticated/partner-apply'
     | '/agent-pay/$publicID'
+    | '/help/integrations'
     | '/oauth/$provider'
     | '/about/'
     | '/health/'
@@ -1098,6 +1110,7 @@ export interface RootRouteChildren {
   errors500Route: typeof errors500Route
   errors503Route: typeof errors503Route
   AgentPayPublicIDRoute: typeof AgentPayPublicIDRoute
+  HelpIntegrationsRoute: typeof HelpIntegrationsRoute
   OauthProviderRoute: typeof OauthProviderRoute
   AboutIndexRoute: typeof AboutIndexRoute
   HealthIndexRoute: typeof HealthIndexRoute
@@ -1279,6 +1292,13 @@ declare module '@tanstack/react-router' {
       path: '/help'
       fullPath: '/help/'
       preLoaderRoute: typeof HelpIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/help/integrations': {
+      id: '/help/integrations'
+      path: '/help/integrations'
+      fullPath: '/help/integrations'
+      preLoaderRoute: typeof HelpIntegrationsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/model-monitor/': {
@@ -1908,6 +1928,7 @@ const rootRouteChildren: RootRouteChildren = {
   errors500Route: errors500Route,
   errors503Route: errors503Route,
   AgentPayPublicIDRoute: AgentPayPublicIDRoute,
+  HelpIntegrationsRoute: HelpIntegrationsRoute,
   OauthProviderRoute: OauthProviderRoute,
   AboutIndexRoute: AboutIndexRoute,
   HealthIndexRoute: HealthIndexRoute,

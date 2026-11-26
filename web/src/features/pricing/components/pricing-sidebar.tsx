@@ -263,12 +263,12 @@ export const PricingSidebar = memo(function PricingSidebar(
           value: group,
           label: marketGroupLabel(group, props.groupCatalog),
           description: meta?.description,
-          activity: getRecentGroupActivity(props.groupMarketActivity?.[group]),
+          activity: getRecentGroupActivity(props.groupMarketActivity?.[group], meta?.public_line),
           accessiblePrefix: [
             ...(meta?.exclusive ? [t('Exclusive')] : []),
             ...groupCatalogBadgeLabels(meta?.badges).map((label) => t(label)),
           ],
-          suffix: ratio == null || props.displayTiers ? undefined : `×${ratio}`,
+          suffix: ratio == null || (props.displayTiers && !meta?.public_line) ? undefined : `×${ratio}`,
           leading: (
             <>
               <MarketGroupIcon meta={meta} />
@@ -322,7 +322,7 @@ export const PricingSidebar = memo(function PricingSidebar(
         />
         <FilterRow
           key={props.platform}
-          title={props.displayTiers ? t('Pricing tiers') : t('Group')}
+          title={props.displayTiers && !groupOptions.some(({value}) => props.groupCatalog?.[value]?.public_line) ? t('Pricing tiers') : t('Group')}
           collapsible={compact}
           value={props.groupFilter}
           options={groupOptions}

@@ -717,19 +717,15 @@ it.each([
   }
 )
 
-it('opens the row diagnostic from More, keeps the Key preselected, and returns keyboard focus without submitting', async () => {
+it('opens the visible row diagnostic, keeps the Key preselected, and returns keyboard focus without submitting', async () => {
   useAuthStore.getState().auth.setUser({ id: 51, username: 'fixture', role: 1 })
   const { post } = await renderKeysPage(1, {}, true, '/keys/', true)
   const user = userEvent.setup()
-  const more = screen.getByRole('button', { name: 'Open menu' })
-
-  expect(
-    screen.getAllByRole('button', { name: 'Key diagnostic' })
-  ).toHaveLength(1)
-  act(() => more.focus())
-  await user.keyboard('{Enter}')
-  await user.keyboard('{End}{ArrowUp}')
-  expect(screen.getByRole('menuitem', { name: 'Key diagnostic' })).toHaveFocus()
+  const [pageDiagnostic, rowDiagnostic] = screen.getAllByRole('button', {
+    name: 'Key diagnostic',
+  })
+  expect(pageDiagnostic).toBeEnabled()
+  act(() => rowDiagnostic.focus())
   await user.keyboard('{Enter}')
 
   const dialog = await screen.findByRole('dialog', { name: 'Key diagnostic' })
@@ -748,7 +744,23 @@ it('opens the row diagnostic from More, keeps the Key preselected, and returns k
 
   await user.keyboard('{Escape}')
   await waitFor(() => expect(dialog).not.toBeInTheDocument())
-  await waitFor(() => expect(more).toHaveFocus())
+  await waitFor(() => expect(rowDiagnostic).toHaveFocus())
+  expect(post).not.toHaveBeenCalled()
+})
+
+it('offers the same safe visible diagnostic on mobile without posting on open', async () => {
+  useMobileViewport()
+  useAuthStore.getState().auth.setUser({ id: 51, username: 'fixture', role: 1 })
+  const { post } = await renderKeysPage(1, {}, true, '/keys/', true)
+  const [, rowDiagnostic] = screen.getAllByRole('button', {
+    name: 'Key diagnostic',
+  })
+  expect(rowDiagnostic).toBeVisible()
+  await userEvent.click(rowDiagnostic)
+  const dialog = await screen.findByRole('dialog', { name: 'Key diagnostic' })
+  const key = await within(dialog).findByRole('combobox', { name: 'API Key' })
+  expect(key).toHaveValue('7')
+  expect(key).toBeDisabled()
   expect(post).not.toHaveBeenCalled()
 })
 
@@ -757,9 +769,10 @@ it('does not open the row diagnostic on a disabled Key', async () => {
   const { post } = await renderKeysPage(2)
   const user = userEvent.setup()
 
-  await user.click(screen.getByRole('button', { name: 'Open menu' }))
-  const diagnostic = screen.getByRole('menuitem', { name: 'Key diagnostic' })
-  expect(diagnostic).toHaveAttribute('aria-disabled', 'true')
+  const diagnostic = screen.getByRole('button', {
+    name: 'Key diagnostic',
+  })
+  expect(diagnostic).toBeDisabled()
   await user.click(diagnostic)
   expect(
     screen.queryByRole('dialog', { name: 'Key diagnostic' })
@@ -1023,10 +1036,10 @@ it('keeps a diagnostic opened from a row across the table clock tick and outside
   const timer = vi.spyOn(window, 'setInterval')
   const { post } = await renderKeysPage(1, {}, true, '/keys/', true)
   const user = userEvent.setup()
-  await user.click(screen.getByRole('button', { name: 'Open menu' }))
-  await user.click(
-    await screen.findByRole('menuitem', { name: 'Key diagnostic' })
-  )
+  const [, rowDiagnostic] = screen.getAllByRole('button', {
+    name: 'Key diagnostic',
+  })
+  await user.click(rowDiagnostic)
   const dialog = await screen.findByRole('dialog', { name: 'Key diagnostic' })
   await within(dialog).findByDisplayValue('production · default')
   const tick = timer.mock.calls.find(([, ms]) => ms === 30_000)?.[0]

@@ -17,11 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
+  BookOpen,
   Braces,
   Code,
+  Image,
   LayoutGrid,
   Monitor,
   Rocket,
+  Repeat,
   Terminal,
   Wrench,
   type LucideIcon,
@@ -35,7 +38,7 @@ export const docsGroups: readonly GuideGroup[] = [
   {
     id: 'getting-started',
     title: '快速上手',
-    slugs: ['quick-start', 'authentication'],
+    slugs: ['quick-start', 'cli-environment', 'authentication'],
   },
   {
     id: 'platform',
@@ -45,12 +48,53 @@ export const docsGroups: readonly GuideGroup[] = [
   {
     id: 'cli',
     title: '编程 CLI 工具',
-    slugs: ['claude-code', 'codex-cli', 'cc-switch'],
+    slugs: [
+      'claude-code',
+      'codex-cli',
+      'kimi-code',
+      'grok-build',
+      'opencode',
+      'openclaw',
+      'hermes-agent',
+    ],
   },
   {
     id: 'clients',
     title: '客户端与工具',
-    slugs: ['cherry-studio', 'cline-roo', 'immersive-translate'],
+    slugs: [
+      'desktop-overview',
+      'claude-desktop',
+      'workbuddy',
+      'aionui',
+      'all-api-hub',
+      'cherry-studio',
+      'cline-roo',
+      'immersive-translate',
+    ],
+  },
+  {
+    id: 'cross-protocol',
+    title: '跨协议接入',
+    slugs: ['gpt-claude-code', 'deepseek-claude-code', 'deepseek-codex'],
+  },
+  {
+    id: 'cc-switch',
+    title: 'CC Switch',
+    slugs: [
+      'cc-switch',
+      'cc-switch-common',
+      'cc-switch-claude-code',
+      'cc-switch-codex',
+      'cc-switch-codex-app',
+      'cc-switch-claude-desktop',
+      'cc-switch-usage',
+      'cc-switch-cli',
+    ],
+  },
+  {
+    id: 'images',
+    title: '图像生成',
+    slugs: ['images-overview', 'gemini-images', 'openai-images'],
   },
   {
     id: 'sdk',
@@ -65,7 +109,19 @@ export const docsGroups: readonly GuideGroup[] = [
   {
     id: 'troubleshooting',
     title: '故障排查',
-    slugs: ['troubleshooting'],
+    slugs: [
+      'faq',
+      'faq-claude-code',
+      'faq-codex',
+      'faq-gemini',
+      'cli-cache-fix',
+      'troubleshooting',
+    ],
+  },
+  {
+    id: 'policies',
+    title: '条款与政策',
+    slugs: ['terms-and-policies'],
   },
 ]
 
@@ -74,6 +130,10 @@ export const docsGroupIcons: Record<string, LucideIcon> = {
   platform: LayoutGrid,
   cli: Terminal,
   clients: Monitor,
+  'cross-protocol': Braces,
+  'cc-switch': Repeat,
+  images: Image,
+  policies: BookOpen,
   sdk: Code,
   protocol: Braces,
   troubleshooting: Wrench,

@@ -34,6 +34,7 @@ import {
   LazyAffiliate,
   LazyHelpApiReference,
   LazyHelpGuide,
+  LazyHelpIntegrationWizard,
   LazyHelpIndex,
   LazyNewUserBenefitSettings,
   LazyPaymentSettingsRenderer,
@@ -63,6 +64,7 @@ export const chuanapiHelpExtension: HelpExtension = {
   id: 'chuanapi/help',
   indexPage: LazyHelpIndex,
   guidePage: LazyHelpGuide,
+  integrationWizard: LazyHelpIntegrationWizard,
   apiReferencePage: LazyHelpApiReference,
 }
 

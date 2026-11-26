@@ -21,6 +21,7 @@ import type {
   MarketActivityByGroup,
   MarketRateChange,
   PricingData,
+  PublishedModelLine,
 } from '../types'
 
 // The API uses positive Unix seconds (not milliseconds) at market-event times.
@@ -50,13 +51,23 @@ export function validMarketRateChange(
 
 export interface RecentGroupActivity {
   isNew: boolean
-  change?: MarketRateChange
+  change?: Pick<MarketRateChange, 'old_ratio' | 'new_ratio'>
 }
 
 /** Compact customer annotation, without the older history shown to admins. */
 export function getRecentGroupActivity(
-  activity?: GroupMarketActivity
+  activity?: GroupMarketActivity,
+  line?: PublishedModelLine
 ): RecentGroupActivity | undefined {
+  if (line) {
+    const previous = line.previous_ratio
+    const change =
+      previous !== undefined && Number.isFinite(previous) && previous >= 0 &&
+      Number.isFinite(line.ratio) && previous !== line.ratio
+        ? { old_ratio: previous, new_ratio: line.ratio }
+        : undefined
+    return line.is_new || change ? { isNew: line.is_new === true, change } : undefined
+  }
   const isNew =
     activity?.is_new === true && validMarketTime(activity.first_configured_at)
   const latest = activity?.rate_changes?.[0]
@@ -114,7 +125,7 @@ const decimal = new Intl.NumberFormat('en-US', {
   useGrouping: false,
   maximumSignificantDigits: 21,
 })
-export function marketRateDifference(change: MarketRateChange): string {
+export function marketRateDifference(change: Pick<MarketRateChange, 'old_ratio' | 'new_ratio'>): string {
   const [oldWhole, oldFraction = ''] = decimal
     .format(change.old_ratio)
     .split('.')

@@ -24,7 +24,6 @@ import {
   PowerOff,
   ArrowRightLeft,
   Bird,
-  Brain,
   Copy,
   Link,
   Loader2,
@@ -50,13 +49,13 @@ import { encodeChannelConnectionInfo } from '@/lib/channel-connection-info'
 import type { Row } from '@/lib/console-table'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
 import { handleServerError } from '@/lib/handle-server-error'
-import { useAuthStore } from '@/stores/auth-store'
 
 import { updateApiKeyStatus } from '../api'
 import { API_KEY_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import { isMagpieEligibleKey } from '../lib/magpie-import'
 import type { ApiKey } from '../types'
 import { useApiKeys } from './api-keys-provider'
+import { KeyDiagnosticButton } from './key-diagnostic-dialog'
 
 function getServerAddress(): string {
   // Connection info must point API clients at the API origin.
@@ -83,7 +82,6 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const {
     setOpen,
     setCurrentRow,
-    openDiagnostic,
     triggerRefresh,
     setResolvedKey,
     resolveRealKey,
@@ -92,7 +90,6 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const isEnabled = apiKey.status === API_KEY_STATUS.ENABLED
   const [isTogglingStatus, setIsTogglingStatus] = useState(false)
   const isRealKeyLoading = Boolean(loadingKeys[apiKey.id])
-  const owner = useAuthStore((state) => state.auth.user?.id)
   const moreRef = useRef<HTMLButtonElement>(null)
 
   const toggleLabel = isEnabled ? t('Disable') : t('Enable')
@@ -174,6 +171,8 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         <TooltipContent>{t('Edit')}</TooltipContent>
       </Tooltip>
 
+      <KeyDiagnosticButton tokenId={apiKey.id} disabled={!isEnabled} />
+
       <DataTableRowActionMenu
         triggerRef={moreRef}
         ariaLabel={t('Open menu')}
@@ -238,16 +237,6 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           {t('Add to Magpie')}
           <DropdownMenuShortcut>
             <Bird size={16} aria-hidden='true' />
-          </DropdownMenuShortcut>
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          disabled={!isEnabled || !owner}
-          onClick={() => openDiagnostic(moreRef, apiKey.id)}
-        >
-          {t('Key diagnostic')}
-          <DropdownMenuShortcut>
-            <Brain size={16} aria-hidden='true' />
           </DropdownMenuShortcut>
         </DropdownMenuItem>
         <DropdownMenuSeparator />

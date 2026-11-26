@@ -19,6 +19,10 @@ For commercial licensing, please contact support@quantumnous.com
 import { getRouteApi } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
+
+import { api } from '@/lib/api'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { SectionPageLayout } from '@/components/layout'
 
@@ -46,24 +50,49 @@ function ApiKeysPage() {
   const { t } = useTranslation()
   const apiAddresses = useApiKeyAddresses()
   const navigate = route.useNavigate()
-  const { create, group, model } = route.useSearch()
+  const { create, group, model, publicLine } = route.useSearch()
   const { createDraft, openMarketCreate } = useApiKeys()
 
   useEffect(() => {
     if (!create) return
+    const controller = new AbortController()
+    const clearIntent = () =>
+      void navigate({
+        replace: true,
+        search: (previous) => ({
+          ...previous,
+          create: undefined,
+          group: undefined,
+          model: undefined,
+          publicLine: undefined,
+        }),
+      })
+    if (publicLine) {
+      // Resolve the opaque line after login with current permissions. No Key
+      // is issued by this lookup or when the dialog opens.
+      void api.get('/api/user/public-model-line', {
+        params: { id: publicLine, model },
+        signal: controller.signal,
+        disableDuplicate: true,
+      })
+        .then((result) => {
+          const draft = requireServerSuccess(result.data).data
+          if (!controller.signal.aborted && draft?.group && draft.model === model)
+            openMarketCreate({ group: draft.group, model: draft.model })
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) toast.error(t('Public model line not available'))
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) clearIntent()
+        })
+      return () => controller.abort()
+    }
     const privateDraft = consumePrivateMarketKeyDraft()
     openMarketCreate(group || model ? { group, model } : privateDraft)
     // One-time intent: never re-open if the user cancels or clicks Back.
-    void navigate({
-      replace: true,
-      search: (previous) => ({
-        ...previous,
-        create: undefined,
-        group: undefined,
-        model: undefined,
-      }),
-    })
-  }, [create, group, model, navigate, openMarketCreate])
+    clearIntent()
+  }, [create, group, model, publicLine, navigate, openMarketCreate, t])
 
   return (
     <>

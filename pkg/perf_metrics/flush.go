@@ -51,16 +51,20 @@ func flushBuckets(ctx context.Context, includeCurrent bool) error {
 		}
 
 		err := model.UpsertPerfMetricContext(ctx, &model.PerfMetric{
-			ModelName:      k.model,
-			Group:          k.group,
-			BucketTs:       k.bucketTs,
-			RequestCount:   drained.requestCount,
-			SuccessCount:   drained.successCount,
-			TotalLatencyMs: drained.totalLatencyMs,
-			TtftSumMs:      drained.ttftSumMs,
-			TtftCount:      drained.ttftCount,
-			OutputTokens:   drained.outputTokens,
-			GenerationMs:   drained.generationMs,
+			ModelName:         k.model,
+			Group:             k.group,
+			BucketTs:          k.bucketTs,
+			RequestCount:      drained.requestCount,
+			SuccessCount:      drained.successCount,
+			TotalLatencyMs:    drained.totalLatencyMs,
+			LatencyCount:      drained.latencyCount,
+			MeasuredLatencyMs: drained.measuredLatencyMs,
+			CacheSampleCount:  drained.cacheSampleCount,
+			CacheHitCount:     drained.cacheHitCount,
+			TtftSumMs:         drained.ttftSumMs,
+			TtftCount:         drained.ttftCount,
+			OutputTokens:      drained.outputTokens,
+			GenerationMs:      drained.generationMs,
 		})
 		if err != nil {
 			bucket.addCounters(drained)

@@ -1,5 +1,8 @@
 {
   "translation": {
+    "All payment methods": "すべての支払い方法",
+    "Enter the full order number": "注文番号をすべて入力",
+    "USDT order quote": "USDT 注文の見積額",
     "Check order status": "注文状況を確認",
     "Order not confirmed yet. Check this request or contact support with its reference. Do not transfer again.": "注文はまだ確認できません。このリクエストを照会するか、参照番号を添えてサポートにお問い合わせください。再送金しないでください。",
     "Recharge options changed. Review the current network and amount before creating an order.": "チャージ条件が変更されました。現在のネットワークと金額を確認してから注文してください。",

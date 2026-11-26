@@ -266,6 +266,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, (*relaycommon.StreamStatus)(nil))
 		relayInfo.PerformanceBusinessRejection = false
 		relayInfo.PerformanceOutputTokens = 0
+		relayInfo.PerformanceCacheMeasured = false
+		relayInfo.PerformanceCacheHit = false
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {

@@ -362,6 +362,9 @@ func UpdateGroupCatalog(ctx context.Context, request GroupCatalogSnapshot, ident
 				return ErrGroupCatalogGrants
 			}
 		}
+		if err := retirePublicModelLinesTx(tx, func(name string) bool { return groups[name].Exclusive }); err != nil {
+			return err
+		}
 		if err := writeGroupCatalogTx(tx, groups); err != nil {
 			return err
 		}

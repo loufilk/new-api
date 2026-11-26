@@ -138,7 +138,30 @@ export type ModelCapability =
   | 'caching'
   | 'embeddings'
 
+export type PublishedModelLine = {
+  id: string
+  label: string
+  ratio: number
+  sort_order?: number
+  badges?: string[]
+  is_new?: boolean
+  previous_ratio?: number
+  representative_model?: string
+}
+
+export type PublishedModelLinesResponse = {
+  success: boolean
+  public_lines: PublishedModelLine[]
+  models: {
+    model_name: string
+    public_line_ids: string[]
+    supported_endpoint_types_by_public_line: Record<string, string[]>
+  }[]
+}
+
 export interface MarketGroup {
+  public_line?: PublishedModelLine
+
   /** Locally derived from unanimous public model-brand metadata, never a route identity. */
   public_tier_icon?: string
   label?: string

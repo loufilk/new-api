@@ -563,4 +563,11 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		Other:            other,
 	})
 	relayInfo.PerformanceOutputTokens = int64(summary.CompletionTokens)
+	if originUsage != nil {
+		if originUsage.BillingUsage != nil {
+			relayInfo.PerformanceCacheMeasured, relayInfo.PerformanceCacheHit = originUsage.BillingUsage.NativeCacheReadMeasurement()
+		} else if !common.GetContextKeyBool(ctx, constant.ContextKeyLocalCountTokens) {
+			relayInfo.PerformanceCacheMeasured, relayInfo.PerformanceCacheHit = originUsage.OpenAICacheReadMeasurement()
+		}
+	}
 }

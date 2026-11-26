@@ -284,7 +284,7 @@ func LoadOptionsFromDatabase() (loadErr error) {
 	passkeyOptions := make(map[string]string)
 	modelSquareOptions := make(map[string]string)
 	for _, option := range options {
-		if isGroupMarketOption(option.Key) || option.Key == groupRateLimitBucketsOptionKey || isGroupCatalogOption(option.Key) {
+		if option.Key == publicModelLinesOptionKey || isGroupMarketOption(option.Key) || option.Key == groupRateLimitBucketsOptionKey || isGroupCatalogOption(option.Key) {
 			continue
 		}
 		if IsPasskeyDomainOption(option.Key) {
@@ -337,7 +337,7 @@ func validateOptionValue(key string, value string) error {
 	if key == groupRenameAliasesOptionKey || key == groupConfigVersionOptionKey {
 		return common.NewMessage("Group namespace metadata is read-only.")
 	}
-	if isGroupMarketOption(key) || isGroupCatalogOption(key) {
+	if key == publicModelLinesOptionKey || isGroupMarketOption(key) || isGroupCatalogOption(key) {
 		return ErrInvalidGroupCatalog
 	}
 	if key == groupRateLimitBucketsOptionKey {

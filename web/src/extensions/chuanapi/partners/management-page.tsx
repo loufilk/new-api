@@ -119,7 +119,7 @@ function PartnerSettings(props: { settings: PartnerApplicationSettings }) {
               }
               onClick={() => save.mutate()}
             >
-              {save.isPending ? t('Saving…') : t('Save settings')}
+              {save.isPending ? t('Saving...') : t('Save Settings')}
             </Button>
           </div>
         </FieldGroup>

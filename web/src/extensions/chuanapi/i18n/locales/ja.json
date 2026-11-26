@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Client setup wizard": "クライアント設定ウィザード",
+    "Choose a published model group, a model, a client and a connection address to generate setup instructions.": "公開モデルグループ、モデル、クライアント、接続先を選ぶと設定手順が生成されます。",
+    "Public group names are for reference only. The group and permissions on your API Key determine actual routing.": "公開グループ名は参考情報です。実際のルーティングは API キーのグループと権限によって決まります。",
+    "No published group is available. The examples below use a placeholder for your model ID.": "利用できる公開グループはありません。以下の例ではモデル ID のプレースホルダーを使います。",
+    "Published model group": "公開モデルグループ",
+    "Protocol": "プロトコル",
+    "Connection address": "接続先",
+    "No verified connection address": "利用できる接続先がありません",
+    "Operating system": "オペレーティングシステム",
+    "Setup instructions": "設定手順",
+    "Create or choose an API Key in the console. Set WANCHUAN_API_KEY locally for commands, or replace the placeholder in your client settings. Never paste your Key into this page.": "コンソールでキーを作成または選択します。ローカルで WANCHUAN_API_KEY を設定するか、クライアントの設定でプレースホルダーを置き換えます。このページにはキーを貼り付けないでください。",
+    "Merge these settings with your existing configuration. Test in your client and check the request time, model and status in your usage logs. A model request may incur charges.": "既存の設定とマージしてください。クライアントでテストし、利用ログで時刻、モデル、ステータスを確認します。モデルへのリクエストは有料の場合があります。",
+    "Read the full guide": "ガイド全文を読む",
     "This application changed while you were reviewing it. Load the latest status before continuing.": "審査中にこの申請が更新されました。最新の状態を読み込んでから続行してください。",
     "Reload latest application": "最新の申請を読み込む",
     "This application is read-only for your account.": "このアカウントでは、この申請の閲覧のみ可能です。",

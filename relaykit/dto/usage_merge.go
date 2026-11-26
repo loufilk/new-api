@@ -45,7 +45,7 @@ func MergeUsageNonZero(current *Usage, incoming *Usage) *Usage {
 	mergeInputTokenDetails(&current.PromptTokensDetails, incoming.PromptTokensDetails)
 	if incoming.InputTokensDetails != nil {
 		details := *incoming.InputTokensDetails
-		if details.CachedTokens > 0 ||
+		if details.CacheReadReported || details.CachedTokens > 0 ||
 			details.CachedCreationTokens > 0 ||
 			details.CacheWriteTokens > 0 ||
 			details.CacheCreationInputTokens > 0 ||
@@ -165,6 +165,7 @@ func MergeClaudeUsageNonZero(current *ClaudeUsage, incoming *ClaudeUsage) *Claud
 	if incoming.CacheCreationInputTokens > 0 {
 		merged.CacheCreationInputTokens = incoming.CacheCreationInputTokens
 	}
+	merged.CacheReadReported = merged.CacheReadReported || incoming.CacheReadReported
 	if incoming.CacheReadInputTokens > 0 {
 		merged.CacheReadInputTokens = incoming.CacheReadInputTokens
 	}
@@ -247,6 +248,7 @@ func MergeGeminiUsageMetadataNonZero(current *GeminiUsageMetadata, incoming *Gem
 	if incoming.TotalTokenCount > 0 {
 		merged.TotalTokenCount = incoming.TotalTokenCount
 	}
+	merged.CacheReadReported = merged.CacheReadReported || incoming.CacheReadReported
 	if incoming.CachedContentTokenCount > 0 {
 		merged.CachedContentTokenCount = incoming.CachedContentTokenCount
 	}
@@ -293,6 +295,7 @@ func mergeGeminiTokenDetails(current []GeminiPromptTokensDetails, incoming []Gem
 }
 
 func mergeInputTokenDetails(current *InputTokenDetails, incoming InputTokenDetails) {
+	current.CacheReadReported = current.CacheReadReported || incoming.CacheReadReported
 	if incoming.CachedTokensDetails != nil {
 		// Unlike legacy scalar counters, these optional fields explicitly report
 		// zero. Merge only present modalities and detach the resulting snapshot.

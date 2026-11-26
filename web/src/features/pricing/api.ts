@@ -17,8 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
+import { apiUrl } from '@/lib/api-url'
 
-import type { PricingData } from './types'
+import type { PricingData, PublishedModelLinesResponse } from './types'
 
 // ----------------------------------------------------------------------------
 // Pricing APIs
@@ -46,4 +47,16 @@ export async function getPublicPricing(): Promise<PricingData> {
     skipAuthRefresh: true,
   })
   return res.data
+}
+
+// Keep named lines out of the anonymously cacheable pricing response.
+export async function getPublishedModelLines(signal?: AbortSignal): Promise<PublishedModelLinesResponse> {
+  const response = await fetch(apiUrl('/public-api/model-lines'), {
+    signal,
+    credentials: 'omit',
+    redirect: 'error',
+    cache: 'no-store',
+  })
+  if (!response.ok) throw new Error('Public model lines are temporarily unavailable')
+  return response.json()
 }

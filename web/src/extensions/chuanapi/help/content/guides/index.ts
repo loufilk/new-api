@@ -30,6 +30,10 @@ import { consoleTour } from './console-tour'
 import { functionCalling } from './function-calling'
 import { immersiveTranslate } from './immersive-translate'
 import { openaiSdk } from './openai-sdk'
+import { parityCcSwitchGuides } from './parity-cc-switch'
+import { parityCliGuides } from './parity-cli'
+import { parityDesktopGuides } from './parity-desktop'
+import { paritySupportGuides } from './parity-support'
 import { playground } from './playground'
 import { quickStart } from './quick-start'
 import { streaming } from './streaming'
@@ -55,4 +59,8 @@ export const guides: readonly GuideDoc[] = [
   functionCalling,
   vision,
   troubleshooting,
+  ...parityCliGuides,
+  ...parityDesktopGuides,
+  ...parityCcSwitchGuides,
+  ...paritySupportGuides,
 ]

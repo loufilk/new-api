@@ -28,6 +28,7 @@ describe('help extension composition', () => {
     expect(pages.id).toBe('chuanapi/help')
     expect(typeof pages.indexPage).toBe('function')
     expect(typeof pages.guidePage).toBe('function')
+    expect(typeof pages.integrationWizard).toBe('function')
     expect(typeof pages.apiReferencePage).toBe('function')
   })
 })

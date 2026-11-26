@@ -31,6 +31,7 @@ const apiKeySearchSchema = z.object({
     .catch([]),
   filter: z.string().optional().catch(''),
   create: z.literal(true).optional().catch(undefined),
+  publicLine: z.string().regex(/^line-[0-9a-f]{32}$/).optional().catch(undefined),
   group: z.string().trim().min(1).max(255).optional().catch(undefined),
   model: z.string().trim().min(1).max(255).optional().catch(undefined),
 })

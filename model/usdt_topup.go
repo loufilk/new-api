@@ -78,6 +78,22 @@ type USDTTopUpOrder struct {
 	ReviewReason     string  `gorm:"type:varchar(32);not null"`
 }
 
+// DisplayStatus accounts for elapsed checkout time without mutating the order.
+func (o USDTTopUpOrder) DisplayStatus(now int64) string {
+	if o.Status == USDTCreating && now > o.CreatedAt+20 {
+		return USDTReview
+	}
+	if o.ExpiresAt > 0 && now > o.ExpiresAt {
+		switch o.Status {
+		case USDTPending:
+			return USDTExpired
+		case USDTConfirming:
+			return USDTReview
+		}
+	}
+	return o.Status
+}
+
 func FindUSDTTopUpRequest(ctx context.Context, userID int, key string) (USDTTopUpOrder, error) {
 	var order USDTTopUpOrder
 	err := DB.WithContext(ctx).Where("user_id = ? AND request_key = ?", userID, key).First(&order).Error

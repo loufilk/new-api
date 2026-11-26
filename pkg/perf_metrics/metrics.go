@@ -48,7 +48,12 @@ func RecordRelayResult(ctx context.Context, info *relaycommon.RelayInfo, apiErr 
 	if hasTtft {
 		ttftMs = info.FirstResponseTime.Sub(info.StartTime).Milliseconds()
 	}
-	latencyMs := now.Sub(info.StartTime).Milliseconds()
+	duration := now.Sub(info.StartTime)
+	hasLatency := !info.StartTime.IsZero() && duration >= 0
+	latencyMs := int64(0)
+	if hasLatency {
+		latencyMs = duration.Milliseconds()
+	}
 	generationMs := latencyMs
 	if hasTtft {
 		generationMs = now.Sub(info.FirstResponseTime).Milliseconds()
@@ -57,14 +62,17 @@ func RecordRelayResult(ctx context.Context, info *relaycommon.RelayInfo, apiErr 
 		generationMs = latencyMs
 	}
 	Record(Sample{
-		Model:        info.OriginModelName,
-		Group:        info.UsingGroup,
-		LatencyMs:    latencyMs,
-		TtftMs:       ttftMs,
-		HasTtft:      hasTtft,
-		Success:      outcome == OutcomeSuccess,
-		OutputTokens: info.PerformanceOutputTokens,
-		GenerationMs: generationMs,
+		Model:         info.OriginModelName,
+		Group:         info.UsingGroup,
+		LatencyMs:     latencyMs,
+		HasLatency:    hasLatency,
+		TtftMs:        ttftMs,
+		HasTtft:       hasTtft,
+		Success:       outcome == OutcomeSuccess,
+		OutputTokens:  info.PerformanceOutputTokens,
+		CacheMeasured: info.PerformanceCacheMeasured,
+		CacheHit:      info.PerformanceCacheHit,
+		GenerationMs:  generationMs,
 	})
 }
 
@@ -131,6 +139,7 @@ func Record(sample Sample) {
 	}
 	if sample.LatencyMs < 0 {
 		sample.LatencyMs = 0
+		sample.HasLatency = false
 	}
 
 	key := bucketKey{

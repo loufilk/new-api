@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Client setup wizard": "Client setup wizard",
+    "Choose a published model group, a model, a client and a connection address to generate setup instructions.": "Choose a published model group, a model, a client and a connection address to generate setup instructions.",
+    "Public group names are for reference only. The group and permissions on your API Key determine actual routing.": "Public group names are for reference only. The group and permissions on your API Key determine actual routing.",
+    "No published group is available. The examples below use a placeholder for your model ID.": "No published group is available. The examples below use a placeholder for your model ID.",
+    "Published model group": "Published model group",
+    "Protocol": "Protocol",
+    "Connection address": "Connection address",
+    "No verified connection address": "No verified connection address",
+    "Operating system": "Operating system",
+    "Setup instructions": "Setup instructions",
+    "Create or choose an API Key in the console. Set WANCHUAN_API_KEY locally for commands, or replace the placeholder in your client settings. Never paste your Key into this page.": "Create or choose an API Key in the console. Set WANCHUAN_API_KEY locally for commands, or replace the placeholder in your client settings. Never paste your Key into this page.",
+    "Merge these settings with your existing configuration. Test in your client and check the request time, model and status in your usage logs. A model request may incur charges.": "Merge these settings with your existing configuration. Test in your client and check the request time, model and status in your usage logs. A model request may incur charges.",
+    "Read the full guide": "Read the full guide",
     "This application changed while you were reviewing it. Load the latest status before continuing.": "This application changed while you were reviewing it. Load the latest status before continuing.",
     "Reload latest application": "Reload latest application",
     "This application is read-only for your account.": "This application is read-only for your account.",

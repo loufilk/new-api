@@ -1,5 +1,18 @@
 {
   "translation": {
+    "Client setup wizard": "Trình hướng dẫn cấu hình ứng dụng",
+    "Choose a published model group, a model, a client and a connection address to generate setup instructions.": "Chọn nhóm công khai, mô hình, ứng dụng và địa chỉ kết nối để tạo hướng dẫn.",
+    "Public group names are for reference only. The group and permissions on your API Key determine actual routing.": "Tên nhóm công khai chỉ để tham khảo. Định tuyến thực tế phụ thuộc vào nhóm và quyền của khóa API.",
+    "No published group is available. The examples below use a placeholder for your model ID.": "Không có nhóm công khai khả dụng. Ví dụ bên dưới dùng mã mô hình giữ chỗ.",
+    "Published model group": "Nhóm mô hình công khai",
+    "Protocol": "Giao thức",
+    "Connection address": "Địa chỉ kết nối",
+    "No verified connection address": "Không có địa chỉ kết nối đã xác minh",
+    "Operating system": "Hệ điều hành",
+    "Setup instructions": "Các bước cấu hình",
+    "Create or choose an API Key in the console. Set WANCHUAN_API_KEY locally for commands, or replace the placeholder in your client settings. Never paste your Key into this page.": "Tạo hoặc chọn khóa ở bảng điều khiển. Đặt WANCHUAN_API_KEY trên máy hoặc thay chỗ giữ chỗ trong ứng dụng. Không dán khóa vào trang này.",
+    "Merge these settings with your existing configuration. Test in your client and check the request time, model and status in your usage logs. A model request may incur charges.": "Hợp nhất với cấu hình hiện tại. Thử trong ứng dụng và kiểm tra thời gian, mô hình và trạng thái trong nhật ký. Yêu cầu mô hình có thể bị tính phí.",
+    "Read the full guide": "Đọc hướng dẫn đầy đủ",
     "This application changed while you were reviewing it. Load the latest status before continuing.": "Đơn này đã thay đổi trong lúc bạn xét duyệt. Hãy tải trạng thái mới nhất trước khi tiếp tục.",
     "Reload latest application": "Tải lại đơn mới nhất",
     "This application is read-only for your account.": "Tài khoản của bạn chỉ có thể xem đơn này.",

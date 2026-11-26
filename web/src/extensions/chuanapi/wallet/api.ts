@@ -30,6 +30,7 @@ import type {
   StripePaymentResponse,
   AffiliateCodeResponse,
   BillingHistoryResponse,
+  RechargeHistoryResponse,
   CompleteOrderRequest,
   CreemPaymentRequest,
   CreemPaymentResponse,
@@ -219,19 +220,21 @@ export async function getAffiliateCode(): Promise<AffiliateCodeResponse> {
 /**
  * Get billing history for current user
  */
-export async function getUserBillingHistory(
+export async function getRechargeHistory(
   page: number,
   pageSize: number,
-  keyword?: string
-): Promise<ApiResponse<BillingHistoryResponse>> {
+  orderNo: string,
+  method: string,
+  signal?: AbortSignal
+): Promise<ApiResponse<RechargeHistoryResponse>> {
   const params = new URLSearchParams({
     p: page.toString(),
     page_size: pageSize.toString(),
   })
-  if (keyword) {
-    params.append('keyword', keyword)
-  }
-  const res = await api.get(`/api/user/topup/self?${params.toString()}`)
+  if (orderNo) params.set('order_no', orderNo)
+  if (method) params.set('method', method)
+  const url = `/api/user/topup/history?${params.toString()}`
+  const res = await api.get(url, { signal })
   return res.data
 }
 
