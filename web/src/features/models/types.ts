@@ -69,6 +69,7 @@ export interface Model {
   enable_groups?: string[]
   quota_types?: number[]
   matched_models?: string[]
+  pricing_candidates?: string[]
   matched_count?: number
 }
 

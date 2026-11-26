@@ -73,7 +73,14 @@ api.get = ((url: string, config: ApiRequestConfig = {}) => {
     return originalGet(url, config)
   }
 
-  const params = config.params ? JSON.stringify(config.params) : '{}'
+  // JSON.stringify(URLSearchParams) is always "{}". Use the wire encoding
+  // for that type so distinct (including repeated) query values stay distinct.
+  const params =
+    Object.prototype.toString.call(config.params) === '[object URLSearchParams]'
+      ? config.params.toString() || '{}'
+      : config.params
+        ? JSON.stringify(config.params)
+        : '{}'
   const sessionSID = useAuthStore.getState().auth.session?.sid || 'anonymous'
   const key = `${getAuthSessionEpoch()}:${sessionSID}:${url}?${params}`
   const existingRequest = inFlightGet.get(key)

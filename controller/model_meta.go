@@ -269,14 +269,19 @@ func enrichModels(models []*model.Model) error {
 			continue
 		}
 		metadata.HasMetadata = metadata.Id > 0
+		metadata.PricingCandidates = nil
 		channelIDs := make(map[int]struct{})
 		for name, ids := range configured {
 			if metadata.MatchesName(name) {
+				if metadata.NameRule != model.NameRuleExact {
+					metadata.PricingCandidates = append(metadata.PricingCandidates, name)
+				}
 				for _, id := range ids {
 					channelIDs[id] = struct{}{}
 				}
 			}
 		}
+		sort.Strings(metadata.PricingCandidates)
 		metadata.ConfiguredChannelCount = len(channelIDs)
 	}
 	connections, err := model.GetModelConnections()

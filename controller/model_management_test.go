@@ -912,6 +912,22 @@ export function parseTaskResult() { return {}; }
 				require.NoError(t, db.Model(&model.Model{}).Where("model_name = ?", update.ModelName).Count(&count).Error)
 				assert.EqualValues(t, 1, count)
 			})
+			t.Run("rule_pricing_candidates_include_configured_inactive_names_only", func(t *testing.T) {
+				const name = "claude-haiku-4-5"
+				disabled := model.Channel{Name: "Unrouted pricing candidate", Type: 1, Status: common.ChannelStatusManuallyDisabled, Models: name}
+				require.NoError(t, db.Create(&disabled).Error)
+				rule := &model.Model{ModelName: name, NameRule: model.NameRulePrefix}
+				unmatched := &model.Model{ModelName: "no-concrete-model-", NameRule: model.NameRulePrefix}
+				require.NoError(t, enrichModels([]*model.Model{rule, unmatched}))
+				assert.Equal(t, []string{name}, rule.PricingCandidates)
+				assert.Equal(t, 1, rule.ConfiguredChannelCount)
+				assert.Empty(t, rule.MatchedModels)
+				assert.Zero(t, rule.MatchedCount)
+				assert.Empty(t, rule.EnableGroups)
+				assert.Empty(t, rule.BoundChannels)
+				assert.Empty(t, unmatched.PricingCandidates)
+			})
+
 			t.Run("metadata_keeps_pricing_and_channel_identity", func(t *testing.T) {
 				active := model.Channel{Name: "Active route", Type: 1, Status: common.ChannelStatusEnabled}
 				disabled := model.Channel{Name: "Disabled route", Type: 1, Status: common.ChannelStatusManuallyDisabled}

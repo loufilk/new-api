@@ -78,14 +78,14 @@ export function ModelPricingPanel(props: {
     return pricingRow(entry.model_name, values)
   }, [entry])
 
+  const loadedEntry = query.data?.entries.find(
+    (item) => item.model_name === props.modelName
+  )
   useEffect(() => {
-    const loaded = query.data?.entries.find(
-      (item) => item.model_name === props.modelName
-    )
-    if (loaded && (!entry || entry.model_name !== props.modelName)) {
-      setEntry(loaded)
+    if (loadedEntry && (!entry || entry.model_name !== props.modelName)) {
+      setEntry(loadedEntry)
     }
-  }, [query.data, entry, props.modelName])
+  }, [loadedEntry, entry, props.modelName])
 
   const persist = async (reset = false) => {
     if (!entry) return
@@ -128,7 +128,18 @@ export function ModelPricingPanel(props: {
       />
     )
   }
-  if (!editData || !entry) return <LoadingState />
+  // Single-model snapshots include the requested entry even for an unpriced
+  // model. An omitted entry is not a successful empty result or a pending load.
+  if (query.isSuccess && !loadedEntry) {
+    return (
+      <ErrorState
+        description={t('Failed to load model pricing')}
+        onRetry={() => void query.refetch()}
+      />
+    )
+  }
+  if (!editData || !entry || entry.model_name !== props.modelName)
+    return <LoadingState />
   const effectivePricing = modelPricingDisplay(entry)
   const siteCurrency = getSitePricingCurrency(currencyConfig)
   const currency =

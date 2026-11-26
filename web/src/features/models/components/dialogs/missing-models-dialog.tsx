@@ -40,7 +40,6 @@ import { createServerError } from '@/lib/server-error-message'
 import { getMissingModels } from '../../api'
 import { DEFAULT_PAGE_SIZE } from '../../constants'
 import { modelsQueryKeys } from '../../lib'
-import type { Model } from '../../types'
 import { useModels } from '../models-provider'
 
 type MissingModelsDialogProps = {
@@ -74,7 +73,18 @@ export function MissingModelsDialog({
   const pageSize = DEFAULT_PAGE_SIZE
 
   const handleConfigureModel = (modelName: string) => {
-    setCurrentRow({ model_name: modelName } as unknown as Model)
+    // /models/missing returns concrete names referenced by enabled channels,
+    // not metadata matching rules. No persisted metadata row exists yet.
+    setCurrentRow({
+      id: 0,
+      has_metadata: false,
+      model_name: modelName,
+      name_rule: 0,
+      status: 0,
+      sync_official: 0,
+      created_time: 0,
+      updated_time: 0,
+    })
     setOpen('create-model')
   }
 

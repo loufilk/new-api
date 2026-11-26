@@ -37,7 +37,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { DataTableRowActions } from '../components/data-table-row-actions'
 import { ModelMutateDrawer } from '../components/drawers/model-mutate-drawer'
 import { ModelsDialogs } from '../components/models-dialogs'
-import { ModelsProvider } from '../components/models-provider'
+import { ModelsProvider, useModels } from '../components/models-provider'
 import type { Model } from '../types'
 
 const model = {
@@ -78,11 +78,176 @@ function renderModelActions(currentModel: Model = model, role = 100) {
   return client
 }
 
+function MissingModelEntry() {
+  const { setOpen } = useModels()
+  return <button onClick={() => setOpen('missing-models')}>Show missing</button>
+}
+
 describe('model pricing entry', () => {
+  const haiku = 'claude-haiku-4-5'
+  const requestedModel = (params: unknown) =>
+    params instanceof URLSearchParams ? params.get('model') : null
+  function mockPricingRead(record: Model = model, omitRequestedEntry = false) {
+    const get = vi.spyOn(api, 'get').mockImplementation(async (url, config) => {
+      if (url === '/api/option/' || url === '/api/option')
+        return { data: { success: true, data: [] } }
+      if (url === '/api/models/missing')
+        return { data: { success: true, data: [haiku] } }
+      if (url === '/api/models/7')
+        return { data: { success: true, data: record } }
+      if (url === '/api/option/model_pricing') {
+        const name = requestedModel(config?.params)
+        return {
+          data: {
+            success: true,
+            data: {
+              entries: omitRequestedEntry
+                ? []
+                : [
+                    {
+                      model_name: name,
+                      configured: { ModelPrice: 1.5 },
+                      effective: { ModelPrice: 1.5 },
+                      version: 'v1',
+                    },
+                  ],
+              options: pricingOptions({}),
+              empty_version: 'empty',
+            },
+          },
+        }
+      }
+      if (url === '/api/pricing')
+        return { data: { success: true, data: [], vendors: [] } }
+      return { data: { success: true, data: { items: [] } } }
+    })
+    return get
+  }
+
+  it('prices the exact name from Missing Models without saving metadata first', async () => {
+    useAuthStore
+      .getState()
+      .auth.setUser({ id: 1, username: 'admin', role: 100 })
+    const get = mockPricingRead()
+    const patch = vi.spyOn(api, 'patch')
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <ModelsProvider>
+          <MissingModelEntry />
+          <ModelsDialogs />
+        </ModelsProvider>
+      </QueryClientProvider>
+    )
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Show missing' }))
+    await user.click(await screen.findByRole('button', { name: 'Configure' }))
+    await user.click(await screen.findByRole('tab', { name: 'Pricing' }))
+    expect(await screen.findByPlaceholderText('0.01')).toHaveValue('1.5')
+    expect(
+      screen.queryByRole('combobox', { name: 'Select model' })
+    ).not.toBeInTheDocument()
+    expect(
+      get.mock.calls
+        .filter(([url]) => url === '/api/option/model_pricing')
+        .map(([, config]) => requestedModel(config?.params))
+    ).toEqual([haiku])
+    expect(patch).not.toHaveBeenCalled()
+    client.clear()
+  })
+
+  it.each(['enabled route', 'configured inactive route'])(
+    'lets a matching rule explicitly price a concrete model from an %s',
+    async (source) => {
+      const record = {
+        ...model,
+        model_name: haiku,
+        name_rule: 1,
+        matched_models: source === 'enabled route' ? [haiku] : [],
+        pricing_candidates: source === 'enabled route' ? [] : [haiku],
+      }
+      const get = mockPricingRead(record)
+      const client = renderModelActions(record)
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('button', { name: 'Pricing' }))
+      await user.click(
+        await screen.findByRole('combobox', { name: 'Select model' })
+      )
+      expect(
+        get.mock.calls.filter(([url]) => url === '/api/option/model_pricing')
+      ).toHaveLength(0)
+      await user.click(await screen.findByRole('option', { name: haiku }))
+      expect(await screen.findByPlaceholderText('0.01')).toHaveValue('1.5')
+      client.clear()
+    }
+  )
+
+  it('shows ordinary administrators the permission explanation, not a broken model picker', async () => {
+    const record = {
+      ...model,
+      model_name: haiku,
+      name_rule: 1,
+      matched_models: [haiku],
+    }
+    const get = mockPricingRead(record)
+    const client = renderModelActions(record, 10)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Edit' }))
+    await user.click(await screen.findByRole('tab', { name: 'Pricing' }))
+    expect(
+      await screen.findByText(
+        'Model pricing is managed by a super administrator.'
+      )
+    ).toBeVisible()
+    expect(
+      screen.queryByRole('combobox', { name: 'Select model' })
+    ).not.toBeInTheDocument()
+    expect(
+      get.mock.calls.filter(([url]) => url === '/api/option/model_pricing')
+    ).toHaveLength(0)
+    client.clear()
+  })
+
+  it('does not treat an unconfigured prefix as a concrete pricing target', async () => {
+    const record = {
+      ...model,
+      model_name: 'claude-',
+      name_rule: 1,
+      matched_models: [],
+    }
+    const get = mockPricingRead(record)
+    const client = renderModelActions(record)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Pricing' }))
+    expect(await screen.findByText('No matching models')).toBeVisible()
+    expect(
+      screen.queryByRole('combobox', { name: 'Select model' })
+    ).not.toBeInTheDocument()
+    expect(
+      get.mock.calls.filter(([url]) => url === '/api/option/model_pricing')
+    ).toHaveLength(0)
+    client.clear()
+  })
+
+  it('offers retry, not an endless spinner, if the snapshot omits the requested exact model', async () => {
+    mockPricingRead(model, true)
+    const client = renderModelActions()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Pricing' }))
+    expect(
+      await screen.findByText('Failed to load model pricing')
+    ).toBeVisible()
+    expect(screen.getByRole('button', { name: /retry/i })).toBeVisible()
+    client.clear()
+  })
+
   it('saves pricing and opens connections for a channel model without creating metadata', async () => {
     const channelModel = { ...model, id: 0, model_name: 'channel-only' }
     let storedPrice = 1.5
     const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+      if (url === '/api/option/') return { data: { success: true, data: [] } }
       if (url === '/api/option/model_pricing') {
         return {
           data: {
@@ -175,6 +340,7 @@ describe('model pricing entry', () => {
       }
     )
     vi.spyOn(api, 'get').mockImplementation(async (url) => {
+      if (url === '/api/option/') return { data: { success: true, data: [] } }
       if (url === '/api/models/7') return detail
       if (url === '/api/option/model_pricing') {
         return {
@@ -274,6 +440,7 @@ describe('model pricing entry', () => {
       matched_models: ['example-concrete'],
     }
     const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+      if (url === '/api/option/') return { data: { success: true, data: [] } }
       if (url === '/api/models/7') {
         return { data: { success: true, data: matchedModel } }
       }
@@ -331,6 +498,7 @@ describe('metadata editing', () => {
   it('saves the selected local icon from the row editor without overwriting visibility or vendor', async () => {
     const record = { ...model, icon: '', status: 0 }
     vi.spyOn(api, 'get').mockImplementation(async (url) => {
+      if (url === '/api/option/') return { data: { success: true, data: [] } }
       if (url === '/api/models/7') {
         return { data: { success: true, data: record } }
       }
@@ -464,6 +632,7 @@ describe('metadata editing', () => {
         }
       )
       const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+        if (url === '/api/option/') return { data: { success: true, data: [] } }
         if (url === '/api/models/7') {
           return { data: { success: true, data: model } }
         }
@@ -541,6 +710,7 @@ describe('metadata editing', () => {
   it('allows an administrator to save metadata without loading or changing system pricing', async () => {
     useAuthStore.getState().auth.setUser({ id: 2, username: 'admin', role: 10 })
     const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+      if (url === '/api/option/') return { data: { success: true, data: [] } }
       if (url === '/api/models/7') {
         return { data: { success: true, data: model } }
       }
@@ -626,6 +796,7 @@ describe('metadata editing', () => {
     let version = 'v1'
     let storedPrice = 1.5
     const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+      if (url === '/api/option/') return { data: { success: true, data: [] } }
       if (url === '/api/models/7') {
         return { data: { success: true, data: model } }
       }
