@@ -192,7 +192,9 @@ export function AffiliateRewardsCard(props: AffiliateRewardsCardProps) {
         <CollapsibleContent>
           <ol className='text-muted-foreground list-decimal space-y-1 ps-4 text-xs'>
             <li>
-              {t('Only website online top-ups qualify for invitation rewards.')}
+              {t(
+                'Only online top-ups on this site qualify for invitation rewards. USDT top-ups do not qualify.'
+              )}
             </li>
             <li>
               {t('Earn {{rate}} from every qualifying top-up, with no cap.', {

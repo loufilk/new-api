@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { t } from 'i18next'
-import { ClipboardCheck, Handshake } from 'lucide-react'
+import { Activity, ClipboardCheck, Handshake } from 'lucide-react'
 
 import { ROLE } from '@/lib/roles'
 
@@ -79,22 +79,26 @@ export const chuanapiSidebarNavigationExtension: SidebarNavigationExtension = {
       ...sidebar,
       navGroups: sidebar.navGroups.map((group) => {
         if (group.id === 'personal') {
-          const hasPartnerApplication = group.items.some(
-            (item) => 'url' in item && item.url === '/partner-applications'
+          const additions = [
+            {
+              title: t('Channel status'),
+              url: '/channel-status',
+              icon: Activity,
+            },
+            {
+              title: t('Partner application'),
+              url: '/partner-applications',
+              icon: Handshake,
+            },
+          ].filter(
+            (link) =>
+              !group.items.some(
+                (item) => 'url' in item && item.url === link.url
+              )
           )
-          return hasPartnerApplication
-            ? group
-            : {
-                ...group,
-                items: [
-                  ...group.items,
-                  {
-                    title: t('Partner application'),
-                    url: '/partner-applications',
-                    icon: Handshake,
-                  },
-                ],
-              }
+          return additions.length
+            ? { ...group, items: [...group.items, ...additions] }
+            : group
         }
 
         if (
