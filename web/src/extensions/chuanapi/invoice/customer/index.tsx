@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { IconBadge } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { getServerErrorStatus } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { invoiceAPI, invoiceKey, privateRead } from './api'
@@ -54,7 +55,11 @@ function CustomerInvoiceCenter(props: { owner: number }) {
     queryKey: [...invoiceKey(props.owner), 'summary'],
     queryFn: ({ signal }) => invoiceAPI.totals(signal),
   })
-  const policy = config.isSuccess ? config.data : undefined
+  // A background read failure is not a decision to revoke invoicing. Keep
+  // the draft mounted, but only enable submission after a current policy read.
+  const denied = [401, 403].includes(getServerErrorStatus(config.error) ?? 0)
+  const policy = denied ? undefined : config.data
+  const policyReady = config.isSuccess && !config.isFetching
   const accepting =
     policy?.enabled &&
     policy.categories.length > 0 &&
@@ -187,7 +192,7 @@ function CustomerInvoiceCenter(props: { owner: number }) {
                   owner={props.owner}
                   selection={selection}
                   onChange={setSelection}
-                  locked={busy}
+                  locked={busy || !policyReady}
                 />
               )}
               <div className='order-last min-w-0 lg:order-none'>
@@ -201,6 +206,7 @@ function CustomerInvoiceCenter(props: { owner: number }) {
             {accepting && (
               <ApplicationForm
                 policy={policy}
+                policyReady={policyReady}
                 selection={selection}
                 onBusy={setBusy}
                 onConflict={refresh}
@@ -218,7 +224,9 @@ function CustomerInvoiceCenter(props: { owner: number }) {
             key={detailId}
             owner={props.owner}
             id={detailId}
-            paymentMethods={policy?.fee_payment_methods ?? []}
+            paymentMethods={
+              policyReady ? (policy?.fee_payment_methods ?? []) : []
+            }
             onClose={() => setDetailId(null)}
           />
         )}

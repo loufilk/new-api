@@ -21,6 +21,8 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 
 import { getAuthSessionEpoch } from '@/lib/auth-session'
+import { createServerError } from '@/lib/server-error-message'
+import { useEpayIntent } from './use-epay-intent'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import {
@@ -28,16 +30,10 @@ import {
   calculateStripeAmount,
   calculateWaffoAmount,
   calculateWaffoPancakeAmount,
-  requestPayment,
   requestStripePayment,
   isApiSuccess,
 } from '../api'
-import {
-  isStripePayment,
-  isWaffoPayment,
-  isWaffoPancakePayment,
-  submitPaymentForm,
-} from '../lib'
+import { isStripePayment, isWaffoPayment, isWaffoPancakePayment } from '../lib'
 import type { AmountRequest, AmountResponse } from '../types'
 
 // ============================================================================
@@ -60,11 +56,11 @@ const defaultPaymentAmountCalculators: PaymentAmountCalculators = {
   waffoPancake: calculateWaffoPancakeAmount,
 }
 
-export async function requestPaymentAmount(
+async function requestPaymentQuote(
   topupAmount: number,
   paymentType: string,
   calculators: PaymentAmountCalculators = defaultPaymentAmountCalculators
-): Promise<number> {
+) {
   let calculator = calculators.regular
   if (isStripePayment(paymentType)) {
     calculator = calculators.stripe
@@ -76,10 +72,22 @@ export async function requestPaymentAmount(
 
   const response = await calculator({ amount: topupAmount })
   if (!isApiSuccess(response) || !response.data) {
-    return 0
+    throw createServerError(response, i18next.t('Payment request failed'))
   }
 
-  return Number.parseFloat(response.data)
+  return {
+    price: Number(response.data),
+    gateway: response.epay_gateway ?? '',
+    regular: calculator === calculators.regular,
+  }
+}
+export async function requestPaymentAmount(
+  topupAmount: number,
+  paymentType: string,
+  calculators: PaymentAmountCalculators = defaultPaymentAmountCalculators
+): Promise<number> {
+  return (await requestPaymentQuote(topupAmount, paymentType, calculators))
+    .price
 }
 
 export function usePayment() {
@@ -91,8 +99,18 @@ export function usePayment() {
   const quoteRef = useRef<{
     topupAmount: number
     paymentType: string
+    gateway: string
+    price: number
     sessionEpoch: number
   } | null>(null)
+
+  const invalidateQuote = useCallback(() => {
+    quoteSequenceRef.current++
+    quoteRef.current = null
+    setAmount(0)
+    setCalculating(false)
+  }, [])
+  const { pay: epay, ...epayRecovery } = useEpayIntent(invalidateQuote)
 
   useEffect(
     () => () => {
@@ -127,19 +145,32 @@ export function usePayment() {
       setAmount(0)
       setCalculating(true)
       try {
-        const calculatedAmount = await requestPaymentAmount(
-          topupAmount,
-          paymentType
-        )
+        const {
+          price: calculatedAmount,
+          gateway,
+          regular,
+        } = await requestPaymentQuote(topupAmount, paymentType)
         if (!isLatest()) return 0
         // Preserve the server's fractional price/fees; never round the quote.
-        if (!Number.isFinite(calculatedAmount) || calculatedAmount <= 0) {
-          return 0
+        if (
+          (regular && paymentType && !/^[0-9a-f]{32}$/.test(gateway)) ||
+          !Number.isFinite(calculatedAmount) ||
+          calculatedAmount <= 0
+        ) {
+          throw Error(i18next.t('Payment request failed'))
         }
-        quoteRef.current = { topupAmount, paymentType, sessionEpoch }
+        quoteRef.current = {
+          topupAmount,
+          paymentType,
+          sessionEpoch,
+          price: calculatedAmount,
+          gateway,
+        }
         setAmount(calculatedAmount)
         return calculatedAmount
-      } catch {
+      } catch (error) {
+        if (isLatest() && topupAmount > 0)
+          handleServerError(error, i18next.t('Payment request failed'))
         return 0
       } finally {
         if (isLatest()) setCalculating(false)
@@ -157,15 +188,20 @@ export function usePayment() {
         const isStripe = isStripePayment(paymentType)
         const amount = Math.floor(topupAmount)
 
-        const response = isStripe
-          ? await requestStripePayment({
-              amount,
-              payment_method: 'stripe',
-            })
-          : await requestPayment({
-              amount,
-              payment_method: paymentType,
-            })
+        if (!isStripe) {
+          if (!isQuoteCurrent(topupAmount, paymentType) || !quoteRef.current)
+            return false
+          return await epay(
+            amount,
+            paymentType,
+            Math.round(quoteRef.current.price * 100),
+            quoteRef.current.gateway
+          )
+        }
+        const response = await requestStripePayment({
+          amount,
+          payment_method: 'stripe',
+        })
 
         if (!isApiSuccess(response)) {
           handleServerError(response, i18next.t('Payment request failed'))
@@ -179,16 +215,6 @@ export function usePayment() {
           return true
         }
 
-        // Handle non-Stripe payment
-        if (!isStripe && response.data) {
-          const url = (response as unknown as { url?: string }).url
-          if (url) {
-            submitPaymentForm(url, response.data)
-            toast.success(i18next.t('Redirecting to payment page...'))
-            return true
-          }
-        }
-
         return false
       } catch (error) {
         handleServerError(error, i18next.t('Payment request failed'))
@@ -197,10 +223,11 @@ export function usePayment() {
         setProcessing(false)
       }
     },
-    []
+    [epay, isQuoteCurrent]
   )
 
   return {
+    ...epayRecovery,
     amount,
     calculating,
     processing,

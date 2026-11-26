@@ -95,6 +95,7 @@ describe('support ticket API keeps user and admin routes separate', () => {
         admin: true,
         ticketId: 9,
         throughMessageId: 43,
+        sessionEpoch: 12,
         observedStatus: 'processing',
       })
     ).resolves.toEqual({ acknowledged: false })
@@ -102,7 +103,10 @@ describe('support ticket API keeps user and admin routes separate', () => {
     expect(postMock).toHaveBeenCalledWith(
       '/api/admin/support/tickets/9/read-observed',
       { through_message_id: 43, observed_status: 'processing' },
-      expect.any(Object)
+      expect.objectContaining({
+        authSessionEpoch: 12,
+        singleUseAuthorization: true,
+      })
     )
   })
 

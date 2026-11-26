@@ -258,6 +258,13 @@
     "Invoice fee refund": "Remboursement des frais d’émission de facture",
     "Site information": "Informations sur le site",
     "Press Enter to add a model.": "Appuyez sur Entrée pour ajouter un modèle.",
-    "Top-up rates, settlement terms, or anything else you would like to share.": "Taux de recharge, modalités de règlement ou toute autre précision."
+    "Top-up rates, settlement terms, or anything else you would like to share.": "Taux de recharge, modalités de règlement ou toute autre précision.",
+    "Previous EPay order": "Commande EPay précédente",
+    "Order not confirmed. Retry the same checkout to avoid duplicate orders.": "Commande non confirmée. Réessayez avec le même montant et le même mode de paiement pour éviter un doublon.",
+    "Check the previous EPay order before starting another.": "Vérifiez la commande EPay précédente avant d’en créer une autre.",
+    "Check status": "Vérifier le statut",
+    "Dismiss reminder (does not cancel the order)": "Masquer le rappel (sans annuler la commande)",
+    "The payment quote changed. Close this dialog and select the payment method again.": "Le montant a changé. Fermez cette fenêtre et sélectionnez à nouveau le moyen de paiement.",
+    "If it stays unconfirmed, check recharge history or give support this reference:": "Si la commande reste non confirmée, consultez l’historique des recharges ou communiquez cette référence au support :"
   }
 }

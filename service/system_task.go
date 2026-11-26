@@ -166,9 +166,30 @@ func StartSystemTaskRunner() {
 	})
 }
 
-func StartLogCleanupTask(targetTimestamp int64) (*model.SystemTask, error) {
+var ErrLogCleanupTaskConflict = errors.New("log cleanup task ID already exists with different parameters")
+
+func savedLogCleanupTask(taskID string, cutoff int64) (*model.SystemTask, error) {
+	task, err := model.GetSystemTaskByTaskID(taskID)
+	if err != nil || task == nil {
+		return task, err
+	}
+	var payload LogCleanupPayload
+	if task.Type != model.SystemTaskTypeLogCleanup ||
+		common.UnmarshalJsonStr(task.Payload, &payload) != nil || payload.TargetTimestamp != cutoff {
+		return nil, ErrLogCleanupTaskConflict
+	}
+	return task, nil
+}
+
+func StartLogCleanupTask(targetTimestamp int64, taskID string) (*model.SystemTask, error) {
 	if targetTimestamp <= 0 {
 		return nil, errors.New("target timestamp is required")
+	}
+
+	if taskID != "" {
+		if task, err := savedLogCleanupTask(taskID, targetTimestamp); err != nil || task != nil {
+			return task, err
+		}
 	}
 
 	activeTask, err := model.GetActiveSystemTask(model.SystemTaskTypeLogCleanup)
@@ -184,8 +205,17 @@ func StartLogCleanupTask(targetTimestamp int64) (*model.SystemTask, error) {
 		BatchSize:       logCleanupBatchSize,
 	}
 	state := LogCleanupState{}
-	task, err := model.CreateSystemTask(model.SystemTaskTypeLogCleanup, payload, state)
+	if taskID == "" {
+		taskID, err = model.GenerateSystemTaskID()
+		if err != nil {
+			return nil, err
+		}
+	}
+	task, err := model.CreateSystemTaskWithID(taskID, model.SystemTaskTypeLogCleanup, payload, state)
 	if err != nil {
+		if saved, lookupErr := savedLogCleanupTask(taskID, targetTimestamp); saved != nil || errors.Is(lookupErr, ErrLogCleanupTaskConflict) {
+			return saved, lookupErr
+		}
 		activeTask, activeErr := model.GetActiveSystemTask(model.SystemTaskTypeLogCleanup)
 		if activeErr == nil && activeTask != nil {
 			return activeTask, nil

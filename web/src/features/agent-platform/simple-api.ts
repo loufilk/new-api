@@ -15,12 +15,14 @@ You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 import type { Redemption } from '@/features/redemption-codes/types'
+import { api } from '@/lib/api'
 import {
+  createServerError,
   getServerErrorSources,
   getServerErrorStatus,
 } from '@/lib/server-error-message'
 
-import { getPlatform, postPlatform } from './api'
+import { getPlatform, PLATFORM_ROOT, postPlatform } from './api'
 
 export interface SimpleAgentBalance {
   agent_user_id: number
@@ -213,13 +215,41 @@ export async function getSimplePaymentMethods(
   })
 }
 
-export function transferWalletToAgent(payload: {
+type AgentWalletTransferReceipt = {
   request_id: string
   quota: number
   expected_user_id: number
-}) {
-  return postPlatform<SimpleAgentBalance>('/simple/wallet-transfer', payload)
 }
+
+async function submitAgentWalletTransfer(
+  path: '/simple/wallet-transfer' | '/simple/finance/referral-transfer',
+  payload: AgentWalletTransferReceipt
+) {
+  const response = await api.request<{
+    success: boolean
+    data?: SimpleAgentBalance
+  }>({
+    method: 'post',
+    url: PLATFORM_ROOT + path,
+    data: payload,
+  })
+  if (
+    response.data?.success !== true ||
+    response.data.data?.agent_user_id !== payload.expected_user_id
+  ) {
+    throw createServerError(response.data)
+  }
+  return response.data.data
+}
+
+export function transferWalletToAgent(payload: AgentWalletTransferReceipt) {
+  return submitAgentWalletTransfer('/simple/wallet-transfer', payload)
+}
+
+export function transferReferralToAgent(payload: AgentWalletTransferReceipt) {
+  return submitAgentWalletTransfer('/simple/finance/referral-transfer', payload)
+}
+
 export function isWalletTransferRejected(error: unknown): boolean {
   const status = getServerErrorStatus(error)
   return getServerErrorSources(error).some((source) => {

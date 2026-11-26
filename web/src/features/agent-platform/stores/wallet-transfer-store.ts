@@ -21,6 +21,7 @@ const intentSchema = z.object({
   request_id: z.string().uuid(),
   quota: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   amount: z.string().max(24),
+  target: z.enum(['wallet', 'agent']).optional(),
   status: z.enum(['pending', 'completed', 'rejected']),
 })
 export type WalletTransferIntent = z.infer<typeof intentSchema>
@@ -32,57 +33,108 @@ export class WalletTransferChanged extends Error {
     super('The transfer changed in another page. Review it before continuing.')
   }
 }
-const key = (userId: number) => `agent-wallet-transfer:${userId}`
-export const useWalletTransferStore = create<{
-  read: (userId: number) => WalletTransferIntent | null
-  begin: (
-    userId: number,
-    version: string | null,
-    quota: number,
-    amount: string
-  ) => Promise<WalletTransferIntent>
-  finish: (
-    userId: number,
-    requestId: string,
-    status: 'completed' | 'rejected'
-  ) => Promise<boolean>
-}>((_, get) => ({
-  read: (userId) => {
-    const saved = localStorage.getItem(key(userId))
-    return saved ? intentSchema.parse(JSON.parse(saved)) : null
-  },
-  begin: async (userId, version, quota, amount) => {
-    if (!navigator.locks?.request) {
-      throw new Error('This browser cannot safely coordinate wallet transfers.')
-    }
-    return navigator.locks.request(key(userId), () => {
-      const saved = get().read(userId)
-      if (walletTransferVersion(saved) !== version) {
-        throw new WalletTransferChanged(saved)
+type TransferDraft = Pick<WalletTransferIntent, 'quota' | 'amount' | 'target'>
+
+interface TransferExecution {
+  userId: number
+  version: string | null
+  draft: TransferDraft
+  current: () => boolean
+  dispatch: (intent: WalletTransferIntent) => Promise<void>
+  isDefiniteRejection: (error: unknown) => boolean
+}
+
+export const transferConfirmationDeadline = 30_000
+
+async function withConfirmationDeadline(work: () => Promise<void>) {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(
+            new Error(
+              'A transfer is awaiting confirmation. Retry the same transfer to check its result. Closing this dialog does not cancel a submitted transfer.'
+            )
+          ),
+        transferConfirmationDeadline
+      )
+    })
+    await Promise.race([deadline, work()])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export function createWalletTransferStore(namespace: string) {
+  const key = (userId: number) => `${namespace}:${userId}`
+  return create<{
+    read: (userId: number) => WalletTransferIntent | null
+    execute: (operation: TransferExecution) => Promise<boolean>
+  }>((_, get) => ({
+    read: (userId) => {
+      const saved = localStorage.getItem(key(userId))
+      return saved ? intentSchema.parse(JSON.parse(saved)) : null
+    },
+    execute: async ({
+      userId,
+      version,
+      draft,
+      current,
+      dispatch,
+      isDefiniteRejection,
+    }) => {
+      if (!navigator.locks?.request) {
+        throw new Error(
+          'This browser cannot safely coordinate wallet transfers.'
+        )
       }
-      if (saved?.status === 'pending') return saved
-      const intent = intentSchema.parse({
-        request_id: crypto.randomUUID(),
-        quota,
-        amount,
-        status: 'pending',
+      return navigator.locks.request(key(userId), async () => {
+        if (!current()) return false
+        const saved = get().read(userId)
+        if (walletTransferVersion(saved) !== version) {
+          throw new WalletTransferChanged(saved)
+        }
+        const prior = saved?.status === 'pending' ? saved : null
+        // An existing pending entry is indistinguishable from an admitted
+        // request after response loss or browser crash, including older entries.
+        const intent =
+          prior ??
+          intentSchema.parse({
+            request_id: crypto.randomUUID(),
+            ...draft,
+            status: 'pending',
+          })
+        if (intent.quota !== draft.quota || intent.target !== draft.target) {
+          throw new WalletTransferChanged(intent)
+        }
+        if (!prior) localStorage.setItem(key(userId), JSON.stringify(intent))
+        const finish = (status: 'completed' | 'rejected') => {
+          const latest = get().read(userId)
+          if (walletTransferVersion(latest) !== walletTransferVersion(intent)) {
+            throw new WalletTransferChanged(latest)
+          }
+          // A tombstone prevents stale pages from creating another debit.
+          localStorage.setItem(
+            key(userId),
+            JSON.stringify({ ...intent, status })
+          )
+        }
+        try {
+          await withConfirmationDeadline(() => dispatch(intent))
+        } catch (error) {
+          // A non-durable rejection says only that THIS attempt did not debit.
+          // An earlier dispatch could still be settling; do not release its ID.
+          if (!prior && isDefiniteRejection(error)) finish('rejected')
+          throw error
+        }
+        finish('completed')
+        return true
       })
-      localStorage.setItem(key(userId), JSON.stringify(intent))
-      return intent
-    })
-  },
-  finish: async (userId, requestId, status) => {
-    if (!navigator.locks?.request) {
-      throw new Error('This browser cannot safely coordinate wallet transfers.')
-    }
-    return navigator.locks.request(key(userId), () => {
-      const saved = get().read(userId)
-      if (saved?.request_id !== requestId || saved.status !== 'pending') {
-        return false
-      }
-      // A tombstone prevents stale blank pages from creating another debit.
-      localStorage.setItem(key(userId), JSON.stringify({ ...saved, status }))
-      return true
-    })
-  },
-}))
+    },
+  }))
+}
+
+export const useWalletTransferStore = createWalletTransferStore(
+  'agent-wallet-transfer'
+)

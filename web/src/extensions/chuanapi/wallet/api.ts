@@ -113,15 +113,39 @@ export async function calculateWaffoAmount(
  * Request regular payment
  */
 export async function requestPayment(
-  request: PaymentRequest
+  {
+    intent_id,
+    ...request
+  }: PaymentRequest & { intent_id: string; expected_minor: number },
+  authSessionEpoch: number
 ): Promise<PaymentResponse> {
-  const res = await api.post('/api/user/pay', request, {
-    skipBusinessError: true,
-  } as Record<string, unknown>)
+  const res = await api.post(
+    '/api/user/pay/intents/' + encodeURIComponent(intent_id),
+    request,
+    {
+      singleUseAuthorization: true,
+      authSessionEpoch,
+      skipBusinessError: true,
+    } as Record<string, unknown>
+  )
   return {
     ...res.data,
     url: res.data.url || (res as unknown as { url?: string }).url,
   }
+}
+
+export type EpayReceipt = {
+  payment_method: string
+  payment_minor: number
+  success: boolean
+  trade_no: string
+  order_status: 'pending' | 'success' | 'failed' | 'expired'
+}
+export async function getEpayIntent(id: string): Promise<EpayReceipt> {
+  const res = await api.get('/api/user/pay/intents/' + encodeURIComponent(id), {
+    skipBusinessError: true,
+  } as Record<string, unknown>)
+  return res.data
 }
 
 /**

@@ -264,3 +264,86 @@ test('a slow detail for the previously selected ticket is never marked read', as
   expect(screen.queryByText('Support reply 12')).not.toBeInTheDocument()
   expect(post).not.toHaveBeenCalled()
 })
+
+test('recovers a transient unread acknowledgement only after fetching the same unread snapshot again', async () => {
+  vi.useFakeTimers()
+  const state = getConversationState()
+  receiveReply(state)
+  const { post, rendered } = setup(state)
+  post.mockRejectedValueOnce(new Error('Temporary read receipt outage'))
+  try {
+    await act(() => vi.advanceTimersByTimeAsync(50))
+    expect(screen.getByText('Support reply 12')).toBeVisible()
+    expect(post).toHaveBeenCalledTimes(1)
+    fireEvent.scroll(screen.getByRole('log'))
+    fireEvent.scroll(screen.getByRole('log'))
+    await act(() => vi.advanceTimersByTimeAsync(19_000))
+    expect(post).toHaveBeenCalledTimes(1)
+    await act(() => vi.advanceTimersByTimeAsync(2_000))
+    expect(post).toHaveBeenCalledTimes(2)
+    expect(post.mock.calls[1]).toEqual(post.mock.calls[0])
+    expect(state.ticket.user_unread).toBe(false)
+    await act(() => vi.advanceTimersByTimeAsync(42_000))
+    expect(post).toHaveBeenCalledTimes(2)
+  } finally {
+    rendered.unmount()
+  }
+})
+
+test('a slow acknowledgement is never sent twice and a lost success is reconciled by reading', async () => {
+  vi.useFakeTimers()
+  const state = getConversationState()
+  receiveReply(state)
+  const { post, rendered } = setup(state)
+  let rejectRead: ((err: Error) => void) | undefined
+  post.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        rejectRead = reject
+      })
+  )
+  try {
+    await act(() => vi.advanceTimersByTimeAsync(41_000))
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(rejectRead).toBeDefined()
+    // Server committed the update, but its response never made it back.
+    state.ticket.user_unread = false
+    await act(async () => rejectRead?.(new Error('Lost acknowledgement')))
+    await act(() => vi.advanceTimersByTimeAsync(42_000))
+    expect(post).toHaveBeenCalledTimes(1)
+  } finally {
+    rendered.unmount()
+  }
+})
+
+test('does not retry the previous owner’s read after a login change', async () => {
+  vi.useFakeTimers()
+  const state = getConversationState()
+  receiveReply(state)
+  const { post, rendered } = setup(state, {
+    getDetail: () => {
+      if (useAuthStore.getState().auth.user?.id !== 201) {
+        throw Object.assign(new Error('Ticket unavailable'), {
+          response: { status: 404 },
+        })
+      }
+      return state
+    },
+  })
+  post.mockRejectedValueOnce(new Error('Temporary read receipt outage'))
+  try {
+    await act(() => vi.advanceTimersByTimeAsync(50))
+    expect(post).toHaveBeenCalledTimes(1)
+    act(() => {
+      useAuthStore
+        .getState()
+        .auth.setUser({ id: 301, username: 'other', role: 1 })
+    })
+    await act(() => vi.advanceTimersByTimeAsync(42_000))
+    expect(screen.queryByText('Support reply 12')).not.toBeInTheDocument()
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(state.ticket.user_unread).toBe(true)
+  } finally {
+    rendered.unmount()
+  }
+})

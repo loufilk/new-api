@@ -41,7 +41,7 @@ type GenerateInput = {
   style: string
   images: File[]
   acceptedTask?: PendingImageTask
-  onAccepted?: (id: string, expiresAt: number) => void
+  prepareOperation?: (id: string) => void
   onTerminalFailure?: () => void
   asyncMode?: boolean
 }
@@ -119,7 +119,7 @@ export function useImageGeneration() {
             style: input.style,
             images: input.images,
             asyncMode: input.asyncMode,
-            onAccepted: input.onAccepted,
+            prepareOperation: input.prepareOperation,
             onTerminalFailure: input.onTerminalFailure,
             signal: controller.signal,
           })

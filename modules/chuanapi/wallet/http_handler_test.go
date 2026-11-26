@@ -338,6 +338,12 @@ func TestTransferAffQuotaMovesRewardOnceAndReplaysByKey(t *testing.T) {
 	assert.Equal(t, 1000000, user.AffHistoryQuota, "累计收益不因划转减少")
 	assert.Equal(t, 500000, user.Quota, "quota 镜像 = paid + bonus + reward")
 
+	// A restored client receipt must never debit a newly active browser account.
+	c, recorder = performWalletRequest(t, http.MethodPost, "/api/user/aff_transfer", `{"quota":500000,"expected_user_id":99999}`, user.Id, common.RoleCommonUser)
+	c.Request.Header.Set("Idempotency-Key", "wrong-owner")
+	TransferAffQuota(c)
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+
 	// 同键同金额重放：返回原结果，不重复扣加。
 	c, recorder = performWalletRequest(t, http.MethodPost, "/api/user/aff_transfer", `{"quota":500000}`, user.Id, common.RoleCommonUser)
 	c.Request.Header.Set("Idempotency-Key", "transfer-key-1")
@@ -367,6 +373,7 @@ func TestTransferAffQuotaMovesRewardOnceAndReplaysByKey(t *testing.T) {
 	TransferAffQuota(c)
 	assert.Contains(t, recorder.Body.String(), `"success":false`)
 	assert.Contains(t, recorder.Body.String(), "不足")
+	assert.Contains(t, recorder.Body.String(), `"code":"REFERRAL_TRANSFER_INSUFFICIENT"`)
 	require.NoError(t, db.First(&user, user.Id).Error)
 	assert.Equal(t, 500000, user.AffQuota)
 	assert.Equal(t, 500000, user.QuotaPaid)

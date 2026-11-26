@@ -859,6 +859,25 @@ func GetChannelBalanceTask(c *gin.Context) {
 		common.ApiErrorT(c, "Balance update task not found")
 		return
 	}
+	writeChannelBalanceTask(c, task)
+}
+
+// GetCurrentChannelBalanceTask never enqueues an update. Operators can use it
+// when progress is lost without gaining access to any other system task type.
+func GetCurrentChannelBalanceTask(c *gin.Context) {
+	task, err := model.GetLatestSystemTask(model.SystemTaskTypeChannelBalance)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if task == nil {
+		common.ApiSuccess(c, nil)
+		return
+	}
+	writeChannelBalanceTask(c, task)
+}
+
+func writeChannelBalanceTask(c *gin.Context, task *model.SystemTask) {
 	response := task.ToResponse()
 	common.ApiSuccess(c, gin.H{
 		"task_id": response.TaskID,

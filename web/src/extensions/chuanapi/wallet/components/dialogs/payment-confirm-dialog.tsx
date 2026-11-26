@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Loader2 } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -37,6 +38,7 @@ import { formatCurrency, getPaymentIcon } from '../../lib'
 import type { PaymentMethod } from '../../types'
 
 interface PaymentConfirmDialogProps {
+  orderRecovery?: ReactNode
   open: boolean
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
@@ -52,6 +54,7 @@ interface PaymentConfirmDialogProps {
 
 export function PaymentConfirmDialog({
   open,
+  orderRecovery,
   onOpenChange,
   onConfirm,
   topupAmount,
@@ -143,6 +146,11 @@ export function PaymentConfirmDialog({
           </div>
         </div>
 
+        {orderRecovery && (
+          <div role='status' className='text-muted-foreground text-sm'>
+            {orderRecovery}
+          </div>
+        )}
         <AlertDialogFooter className='grid grid-cols-2 gap-2 sm:flex'>
           <AlertDialogCancel disabled={processing}>
             {t('Cancel')}

@@ -30,6 +30,7 @@ import type { ReferralCommissionPage, WalletSummary } from '../types'
 export function useWalletSummary() {
   const query = useQuery({
     queryKey: ['wallet', 'summary'],
+    meta: { redirectOnInternalServerError: false },
     queryFn: async (): Promise<WalletSummary> => {
       const response = requireServerSuccess(await getWalletSummary())
       if (!response.data) throw new Error('Wallet summary is unavailable')
@@ -48,6 +49,7 @@ export function useWalletSummary() {
 export function useReferralRewards(page: number, pageSize: number) {
   const query = useQuery({
     queryKey: ['wallet', 'referral-rewards', page, pageSize],
+    meta: { redirectOnInternalServerError: false },
     queryFn: async (): Promise<ReferralCommissionPage> => {
       const response = requireServerSuccess(
         await getReferralRewards(page, pageSize)

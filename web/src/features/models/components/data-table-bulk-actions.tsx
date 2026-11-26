@@ -35,21 +35,21 @@ import { copyToClipboard } from '@/lib/copy-to-clipboard'
 import { handleBatchEnableModels, handleBatchDisableModels } from '../lib'
 import type { Model } from '../types'
 import type { VendorOperation } from '../vendor-api'
-import { ModelDeleteDialog } from './dialogs/model-delete-dialog'
 import { VendorOperationDialog } from './dialogs/vendor-operation-dialog'
 
 interface DataTableBulkActionsProps<TData extends object> {
   table: Table<TData>
+  onDelete: (targets: Model[], bulk: boolean) => void
 }
 
 export function DataTableBulkActions<TData extends object>({
   table,
+  onDelete,
 }: DataTableBulkActionsProps<TData>) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [vendorOperation, setVendorOperation] =
     useState<VendorOperation | null>(null)
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
   const selectedRows = table.getFilteredSelectedRowModel().rows
   const selectedIds = selectedRows.reduce<number[]>((ids, row) => {
@@ -246,7 +246,7 @@ export function DataTableBulkActions<TData extends object>({
                 variant='destructive'
                 size='icon'
                 disabled={hasMissingMetadata}
-                onClick={() => setShowDeleteConfirm(true)}
+                onClick={() => onDelete(selectedModels, true)}
                 className='size-8'
                 aria-label={t('Delete selected models')}
                 title={t('Delete selected models')}
@@ -267,14 +267,6 @@ export function DataTableBulkActions<TData extends object>({
           </TooltipContent>
         </Tooltip>
       </BulkActionsToolbar>
-
-      {showDeleteConfirm && (
-        <ModelDeleteDialog
-          models={selectedModels}
-          onClose={() => setShowDeleteConfirm(false)}
-          onSuccess={handleClearSelection}
-        />
-      )}
     </>
   )
 }

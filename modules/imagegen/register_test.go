@@ -20,9 +20,13 @@ func TestRegisterOwnsAsyncImageTaskRoutes(t *testing.T) {
 	require.NoError(t, reg.ApplyRoutes(engine, extension.PriorityBeforePlugin))
 
 	want := map[string]bool{
-		"POST /v1/images/tasks/generations": false,
-		"POST /v1/images/tasks/edits":       false,
-		"GET /v1/images/tasks/:id":          false,
+		"POST /v1/images/tasks/generations":                       false,
+		"POST /v1/images/tasks/edits":                             false,
+		"GET /v1/images/tasks/operation-ticket":                   false,
+		"GET /v1/images/tasks/operations/:operation":              false,
+		"POST /v1/images/tasks/operations/:operation/generations": false,
+		"POST /v1/images/tasks/operations/:operation/edits":       false,
+		"GET /v1/images/tasks/:id":                                false,
 	}
 	for _, route := range engine.Routes() {
 		key := route.Method + " " + route.Path

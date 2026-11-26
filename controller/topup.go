@@ -127,6 +127,7 @@ func GetTopUpInfo(c *gin.Context) {
 }
 
 type EpayRequest struct {
+	ExpectedMinor int64  `json:"expected_minor,omitempty"`
 	Amount        int64  `json:"amount"`
 	PaymentMethod string `json:"payment_method"`
 }
@@ -326,11 +327,22 @@ func RequestEpay(c *gin.Context) {
 	callBackAddress := service.GetCallbackAddress()
 	returnUrl, _ := url.Parse(paymentReturnPath("/wallet"))
 	notifyUrl, _ := url.Parse(callBackAddress + "/api/user/epay/notify")
-	tradeNo, err := buildEpayTradeNo(
-		id,
-		time.Now().UnixMilli(),
-		strings.ToUpper(common.GetRandomString(epayTradeNoRandomLength)),
-	)
+	// The separate URL fails closed on older nodes, which ignore new JSON fields.
+	intent := c.Param("intent")
+	var tradeNo string
+	if intent != "" {
+		tradeNo, err = epayIntentTradeNo(id, intent)
+		if err != nil {
+			epayIntentError(c, http.StatusBadRequest, "invalid_intent")
+			return
+		}
+		if req.ExpectedMinor != amountMinor.IntPart() {
+			rejectEpayIntentBeforeCreate(c, "quote_changed")
+			return
+		}
+	} else {
+		tradeNo, err = buildEpayTradeNo(id, time.Now().UnixMilli(), strings.ToUpper(common.GetRandomString(epayTradeNoRandomLength)))
+	}
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 生成订单号失败 user_id=%d error=%q", id, err.Error()))
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "生成支付订单失败"})
@@ -340,6 +352,13 @@ func RequestEpay(c *gin.Context) {
 	if client == nil {
 		paymentError(c, common.NewMessage("Payment information has not been configured by administrator"))
 		return
+	}
+	if intent != "" {
+		_, wanted, _ := strings.Cut(intent, ".")
+		if ref := epayQuoteGatewayRef(client.BaseUrl.String(), client.Config.SignType); ref == "" || wanted != ref {
+			rejectEpayIntentBeforeCreate(c, "gateway_changed")
+			return
+		}
 	}
 	uri, params, err := client.Purchase(&epay.PurchaseArgs{
 		Type:           req.PaymentMethod,
@@ -354,6 +373,13 @@ func RequestEpay(c *gin.Context) {
 		logger.LogError(c.Request.Context(), common.LogText("Epay failed to start payment user_id=%d trade_no=%s payment_method=%s amount=%d error=%q", id, tradeNo, req.PaymentMethod, req.Amount, err.Error()))
 		paymentError(c, common.NewMessage("Failed to start payment"))
 		return
+	}
+	if intent != "" {
+		_, wanted, _ := strings.Cut(intent, ".")
+		if ref := epayEndpointRef(uri); ref == "" || wanted != ref {
+			rejectEpayIntentBeforeCreate(c, "gateway_changed")
+			return
+		}
 	}
 	amount := req.Amount
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
@@ -376,14 +402,32 @@ func RequestEpay(c *gin.Context) {
 		QuotedPaymentScope:       client.Config.PartnerID,
 		QuotedPaymentEnvironment: "live",
 	}
-	err = topUp.Insert()
+	if intent != "" {
+		var stored model.TopUp
+		stored, err = persistEpayIntent(c.Request.Context(), topUp)
+		if errors.Is(err, errEpayIntentConflict) {
+			epayIntentError(c, http.StatusConflict, "intent_conflict")
+			return
+		}
+		if err == nil && stored.Status != common.TopUpStatusPending {
+			c.JSON(http.StatusOK, gin.H{"message": "success", "order_status": stored.Status, "trade_no": tradeNo})
+			return
+		}
+	} else {
+		err = topUp.Insert()
+	}
 	if err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("Epay failed to create top-up order user_id=%d trade_no=%s payment_method=%s amount=%d error=%q", id, tradeNo, req.PaymentMethod, req.Amount, err.Error()))
 		paymentError(c, common.NewMessage("Failed to create order"))
 		return
 	}
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 充值订单创建成功 user_id=%d trade_no=%s payment_method=%s amount=%d money=%s", id, tradeNo, req.PaymentMethod, req.Amount, payMoney.StringFixed(2)))
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": params, "url": uri})
+	reply := gin.H{"message": "success", "data": params, "url": uri}
+	if intent != "" {
+		reply["trade_no"] = tradeNo
+		reply["order_status"] = common.TopUpStatusPending
+	}
+	c.JSON(http.StatusOK, reply)
 }
 
 // LockOrder 尝试对给定订单号加锁
@@ -564,7 +608,11 @@ func RequestAmount(c *gin.Context) {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": payMoney.StringFixed(2)})
+	response := gin.H{"message": "success", "data": payMoney.StringFixed(2)}
+	if ref := epayQuoteGatewayRef(operation_setting.PayAddress, operation_setting.GetPaymentSetting().EpaySignType); ref != "" {
+		response["epay_gateway"] = ref
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 func GetUserTopUps(c *gin.Context) {

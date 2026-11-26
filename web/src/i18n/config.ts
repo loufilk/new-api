@@ -25,6 +25,8 @@ import {
   type ExtensionLocaleKey,
 } from '@/extensions'
 
+import { adminQuotaTranslations } from './admin-quota-translations'
+import { adminTaskTranslations } from './admin-task-translations'
 import { keyDiagnosticTranslations } from './key-diagnostic-translations'
 import {
   INTERFACE_LANGUAGE_OPTIONS,
@@ -67,6 +69,8 @@ async function loadLocalizedBundle(
     translation: {
       ...core.translation,
       ...keyDiagnosticTranslations[locale],
+      ...adminQuotaTranslations[locale],
+      ...adminTaskTranslations[locale],
       ...extension?.translation,
     },
   }

@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
 import { Eye, EyeOff, Trash2 } from 'lucide-react'
-import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DataTableRowActionMenu } from '@/components/data-table/core/row-action-menu'
@@ -32,20 +31,22 @@ import type { Row } from '@/lib/console-table'
 
 import { handleToggleModelStatus, isModelEnabled } from '../lib'
 import type { Model } from '../types'
-import { ModelDeleteDialog } from './dialogs/model-delete-dialog'
 import { useModels } from './models-provider'
 
 interface DataTableRowActionsProps {
   row: Row<Model>
+  onDelete: (models: Model[]) => void
 }
 
-export function DataTableRowActions({ row }: DataTableRowActionsProps) {
+export function DataTableRowActions({
+  row,
+  onDelete,
+}: DataTableRowActionsProps) {
   const { t } = useTranslation()
   const canPrice = useCanEditModelPricing()
   const model = row.original
   const { setOpen, setCurrentRow } = useModels()
   const queryClient = useQueryClient()
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
 
   const isEnabled = isModelEnabled(model)
 
@@ -97,10 +98,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuShortcut>
           </DropdownMenuItem>
           <DropdownMenuItem
-            onSelect={(e) => {
-              e.preventDefault()
-              setDeleteConfirmOpen(true)
-            }}
+            onClick={() => onDelete([model])}
             className='text-destructive focus:text-destructive'
           >
             {t('Delete')}
@@ -109,13 +107,6 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuShortcut>
           </DropdownMenuItem>
         </DataTableRowActionMenu>
-      )}
-
-      {deleteConfirmOpen && (
-        <ModelDeleteDialog
-          models={[model]}
-          onClose={() => setDeleteConfirmOpen(false)}
-        />
       )}
     </div>
   )

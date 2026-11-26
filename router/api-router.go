@@ -163,6 +163,8 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 				selfRoute.POST("/new-user-benefit/recheck", middleware.CriticalRateLimitByScope("new-user-benefit-recheck"), middleware.UserCriticalRateLimit("new-user-benefit-recheck"), controller.RecheckNewUserBenefitPayment)
 				selfRoute.POST("/topup", middleware.CriticalRateLimit(), controller.TopUp)
 				selfRoute.POST("/pay", middleware.CriticalRateLimit(), controller.RequestEpay)
+				selfRoute.POST("/pay/intents/:intent", middleware.CriticalRateLimit(), controller.RequestEpay)
+				selfRoute.GET("/pay/intents/:intent", middleware.DisableCache(), controller.GetEpayIntent)
 				selfRoute.POST("/amount", controller.RequestAmount)
 				selfRoute.POST("/stripe/pay", middleware.CriticalRateLimit(), controller.RequestStripePay)
 				selfRoute.POST("/stripe/amount", controller.RequestStripeAmount)
@@ -397,6 +399,7 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 		systemTaskRoute.Use(middleware.RootAuth())
 		{
 			systemTaskRoute.POST("/log-cleanup", controller.CreateLogCleanupSystemTask)
+			systemTaskRoute.POST("/log-cleanup/receipt-v1", controller.CreateLogCleanupSystemTaskWithReceipt)
 			systemTaskRoute.GET("/list", controller.ListSystemTasks)
 			systemTaskRoute.DELETE("/history", controller.DeleteSystemTaskHistory)
 			systemTaskRoute.GET("/current", controller.GetCurrentSystemTask)

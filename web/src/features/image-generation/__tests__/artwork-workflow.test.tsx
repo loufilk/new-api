@@ -405,3 +405,113 @@ test('after reload the owner can recover a paid image with no usable key, withou
   )
   expect(post).not.toHaveBeenCalled()
 })
+
+test.each(['lost acknowledgement', 'busy node'] as const)(
+  'an uncertain submit (%s) preserves the server-minted operation across reload',
+  async (scenario) => {
+    const issuedId = '1'.repeat(48)
+    const fixtureError = new Error(scenario)
+    if (scenario === 'busy node')
+      Object.assign(fixtureError, {
+        isAxiosError: true,
+        response: {
+          status: 429,
+          data: { id: issuedId, error: { code: 'async_image_busy' } },
+        },
+      })
+    vi.mocked(api.get).mockImplementation(async (url) => {
+      if (url === '/v1/images/tasks/operation-ticket')
+        return { data: { id: issuedId, kind: 'async_image_operation' } }
+      return { data: { success: true, data: tokenModels } }
+    })
+    const submitted: string[] = []
+    vi.spyOn(api, 'post').mockImplementation(async (url) => {
+      if (url === '/api/token/7/key')
+        return { data: { success: true, data: { key: 'fixture' } } }
+      const id = String(url).match(
+        /^\/v1\/images\/tasks\/operations\/([0-9a-f]{48})\/generations$/
+      )?.[1]
+      expect(id).toBe(issuedId)
+      expect(readPendingImageTask()?.id).toBe(id)
+      submitted.push(id!)
+      throw fixtureError
+    })
+    const page = renderPage(),
+      user = userEvent.setup()
+    await waitFor(() =>
+      expect(screen.getByLabelText('Model')).toHaveTextContent('dall-e-3')
+    )
+    await user.click(
+      screen.getByRole('switch', {
+        name: 'Async generation (avoid gateway timeouts)',
+      })
+    )
+    await user.type(screen.getByLabelText('Prompt'), 'Lost ACK artwork')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText(scenario)
+    expect(screen.getByRole('button', { name: 'Generate' })).toBeDisabled()
+    page.unmount()
+    vi.mocked(api.get).mockImplementation(async (url) => {
+      if (url === `/v1/images/tasks/operations/${submitted[0]}`)
+        return {
+          data: {
+            id: submitted[0],
+            status: 'succeeded',
+            result: { data: [{ url: 'https://example.com/kept.png' }] },
+          },
+        }
+      return { data: { success: true, data: tokenModels } }
+    })
+    renderPage()
+    await user.click(
+      await screen.findByRole('button', { name: 'Retrieve image result' })
+    )
+    await screen.findByAltText('Lost ACK artwork')
+    expect(readPendingImageTask()).toBeNull()
+    expect(submitted).toHaveLength(1)
+    expect(
+      vi
+        .mocked(api.get)
+        .mock.calls.filter(
+          ([url]) => url === '/v1/images/tasks/operation-ticket'
+        )
+    ).toHaveLength(1)
+  }
+)
+
+test.each([undefined, 2] as const)(
+  'an edge HTML 404/410 never erases a saved receipt (protocol=%s)',
+  async (protocol) => {
+    const id = 'a'.repeat(48)
+    writePendingImageTask(HISTORY_OWNER_ID, id, {
+      id,
+      protocol,
+      expiresAt: Date.now() + 60_000,
+      prompt: 'fixture',
+      model: 'dall-e-3',
+      size: 'auto',
+      count: 1,
+      quality: 'auto',
+      style: '',
+    })
+    const post = vi.spyOn(api, 'post')
+    for (const status of [404, 410]) {
+      vi.mocked(api.get).mockImplementation(async (url) => {
+        if (String(url).includes('/v1/images/tasks/'))
+          throw Object.assign(new Error('proxy unavailable'), {
+            isAxiosError: true,
+            response: { status, data: '<html>not found</html>' },
+          })
+        return { data: { success: true, data: tokenModels } }
+      })
+      const page = renderPage()
+      await userEvent.click(
+        await screen.findByRole('button', { name: 'Retrieve image result' })
+      )
+      await screen.findByText('proxy unavailable')
+      expect(readPendingImageTask()?.id).toBe(id)
+      page.unmount()
+    }
+    expect(post).not.toHaveBeenCalled()
+  }
+)

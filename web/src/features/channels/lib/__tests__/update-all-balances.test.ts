@@ -22,7 +22,11 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
-import { channelsQueryKeys, handleUpdateAllBalances } from '../channel-actions'
+import {
+  channelsQueryKeys,
+  checkChannelBalanceUpdate,
+  handleUpdateAllBalances,
+} from '../channel-actions'
 
 const TASK_URL = '/api/channel/update_balance/task/systask_1'
 
@@ -160,7 +164,7 @@ test('a second click while an update is followed adds no second follower', async
   expect(success).toHaveBeenCalledWith('All balances updated')
 })
 
-test('a failed progress check stops following after one last reload', async () => {
+test('repeated failed progress checks back off and surface read-only recovery', async () => {
   const get = serve({
     success: true,
     data: { started: true, task_id: 'systask_1', status: 'pending' },
@@ -169,11 +173,13 @@ test('a failed progress check stops following after one last reload', async () =
   const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
 
   await handleUpdateAllBalances(queryClient)
-  await vi.advanceTimersByTimeAsync(30_000)
+  await vi.advanceTimersByTimeAsync(65_000)
 
-  expect(get).toHaveBeenCalledTimes(2)
+  expect(get).toHaveBeenCalledTimes(5)
   expect(invalidate).toHaveBeenCalledOnce()
-  expect(error).not.toHaveBeenCalled()
+  expect(error).toHaveBeenCalledWith(
+    'Balance update status is unavailable. Check the latest status instead of starting it again.'
+  )
 })
 
 test('a refused update shows the server message and checks no progress', async () => {
@@ -190,4 +196,60 @@ test('a refused update shows the server message and checks no progress', async (
   expect(error).toHaveBeenCalledWith('Balance updates are turned off')
   expect(get).toHaveBeenCalledOnce()
   expect(invalidate).not.toHaveBeenCalled()
+})
+
+test('one status error is recoverable and no new update is started', async () => {
+  const get = serve(
+    { success: true, data: { started: true, task_id: 'systask_1' } },
+    [{ success: false }, progressOf('succeeded', 3)]
+  )
+  const complete = vi.spyOn(toast, 'success')
+  await handleUpdateAllBalances(queryClient)
+  await vi.advanceTimersByTimeAsync(15_000)
+  expect(get.mock.calls.map(([url]) => url)).toEqual([
+    '/api/channel/update_balance',
+    TASK_URL,
+    TASK_URL,
+  ])
+  expect(complete).toHaveBeenLastCalledWith('All balances updated')
+})
+
+test('lost start ACK recovers through latest read without calling the start route again', async () => {
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url: string) => {
+    if (url === '/api/channel/update_balance') {
+      throw new Error('lost start response')
+    }
+    if (url === '/api/channel/update_balance/task/current') {
+      return { data: progressOf('running', 1) }
+    }
+    if (url === TASK_URL) return { data: progressOf('succeeded', 3) }
+    throw new Error('unexpected request')
+  })
+  const complete = vi.spyOn(toast, 'success')
+  await handleUpdateAllBalances(queryClient)
+  await vi.advanceTimersByTimeAsync(5_000)
+  expect(get.mock.calls.map(([url]) => url)).toEqual([
+    '/api/channel/update_balance',
+    '/api/channel/update_balance/task/current',
+    TASK_URL,
+  ])
+  expect(complete).toHaveBeenLastCalledWith('All balances updated')
+})
+
+test('page reload only reads an active task and follows its known id', async () => {
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url: string) => {
+    if (url === '/api/channel/update_balance/task/current') {
+      return { data: progressOf('running', 1) }
+    }
+    if (url === TASK_URL) return { data: progressOf('succeeded', 3) }
+    throw new Error('unexpected request')
+  })
+  const complete = vi.spyOn(toast, 'success')
+  await checkChannelBalanceUpdate(queryClient, { quiet: true })
+  await vi.advanceTimersByTimeAsync(5_000)
+  expect(get.mock.calls.map(([url]) => url)).toEqual([
+    '/api/channel/update_balance/task/current',
+    TASK_URL,
+  ])
+  expect(complete).toHaveBeenLastCalledWith('All balances updated')
 })

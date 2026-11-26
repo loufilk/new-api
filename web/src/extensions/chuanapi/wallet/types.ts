@@ -39,8 +39,10 @@ export interface ApiResponse<T = unknown> {
  */
 export type TopupInfoResponse = ApiResponse<TopupInfo>
 export type RedemptionResponse = ApiResponse<number>
-export type AmountResponse = ApiResponse<string>
+export type AmountResponse = ApiResponse<string> & { epay_gateway?: string }
 export type PaymentResponse = ApiResponse<Record<string, unknown>> & {
+  trade_no?: string
+  order_status?: string
   url?: string
 }
 export type StripePaymentResponse = ApiResponse<{ pay_link: string }>
@@ -346,6 +348,7 @@ export interface WalletLedgerPage {
  * into the spendable reward account.
  */
 export interface AffiliateTransferRequest {
+  expected_user_id?: number
   quota: number
 }
 

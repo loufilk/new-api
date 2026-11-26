@@ -258,6 +258,13 @@
     "Invoice fee refund": "Hoàn phí xuất hóa đơn",
     "Site information": "Thông tin trang web",
     "Press Enter to add a model.": "Nhấn Enter để thêm mô hình.",
-    "Top-up rates, settlement terms, or anything else you would like to share.": "Tỷ lệ nạp tiền, phương thức thanh toán hoặc các thông tin khác bạn muốn chia sẻ."
+    "Top-up rates, settlement terms, or anything else you would like to share.": "Tỷ lệ nạp tiền, phương thức thanh toán hoặc các thông tin khác bạn muốn chia sẻ.",
+    "Previous EPay order": "Đơn EPay trước đó",
+    "Order not confirmed. Retry the same checkout to avoid duplicate orders.": "Chưa xác nhận được đơn hàng. Hãy thử lại với cùng số tiền và phương thức thanh toán để tránh tạo đơn trùng.",
+    "Check the previous EPay order before starting another.": "Hãy kiểm tra đơn EPay trước khi tạo đơn mới.",
+    "Check status": "Kiểm tra trạng thái",
+    "Dismiss reminder (does not cancel the order)": "Ẩn lời nhắc (không hủy đơn hàng)",
+    "The payment quote changed. Close this dialog and select the payment method again.": "Số tiền đã thay đổi. Đóng hộp thoại và chọn lại phương thức thanh toán.",
+    "If it stays unconfirmed, check recharge history or give support this reference:": "Nếu vẫn chưa xác nhận được, hãy kiểm tra lịch sử nạp tiền hoặc cung cấp mã này cho bộ phận hỗ trợ:"
   }
 }

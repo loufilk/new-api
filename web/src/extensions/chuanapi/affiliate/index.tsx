@@ -47,18 +47,23 @@ export function AffiliatePage() {
   const rewards = useReferralRewards(page, REFERRAL_RECORDS_PAGE_SIZE)
   const user = useQuery({
     queryKey: ['affiliate', 'self'],
+    meta: { redirectOnInternalServerError: false },
     queryFn: async () =>
       requireServerSuccess(await getSelf()).data as UserWalletData,
   })
   const compliance = useQuery({
     queryKey: ['affiliate', 'compliance'],
+    meta: { redirectOnInternalServerError: false },
     queryFn: async () => requireServerSuccess(await getTopupInfo()).data,
   })
   const loadFailed =
     user.isError || !!wallet.error || compliance.isError || !!affiliate.error
   const ready = !!user.data && !!wallet.summary && !!compliance.data
 
-  const transfer = async (quota: number): Promise<boolean> => {
+  const transfer = async (
+    quota: number,
+    target: 'wallet' | 'agent'
+  ): Promise<boolean> => {
     if (
       loadFailed ||
       !ready ||
@@ -66,7 +71,7 @@ export function AffiliatePage() {
     ) {
       return false
     }
-    if (!(await affiliate.transferQuota(quota))) return false
+    if (!(await affiliate.transferQuota(quota, target))) return false
     await Promise.all([user.refetch(), wallet.refetch(), rewards.refetch()])
     return true
   }
@@ -96,6 +101,7 @@ export function AffiliatePage() {
             {ready && !loadFailed && (
               <AffiliateRewardsCard
                 standalone
+                pendingTransfer={!!affiliate.pendingTransfer}
                 availableQuota={wallet.summary?.referral_available_quota ?? 0}
                 user={user.data ?? null}
                 affiliateCode={affiliate.affiliateCode}
@@ -124,6 +130,12 @@ export function AffiliatePage() {
         onConfirm={transfer}
         availableQuota={wallet.summary?.referral_available_quota ?? 0}
         transferring={affiliate.transferring}
+        pending={affiliate.pendingTransfer}
+        unavailable={
+          loadFailed ||
+          !ready ||
+          compliance.data?.payment_compliance_confirmed === false
+        }
       />
     </>
   )

@@ -326,6 +326,13 @@
     "Invoice fee refund": "开票手续费退款",
     "Site information": "站点信息",
     "Press Enter to add a model.": "按回车添加模型。",
-    "Top-up rates, settlement terms, or anything else you would like to share.": "充值比例、结算方式等任何想说明的内容"
+    "Top-up rates, settlement terms, or anything else you would like to share.": "充值比例、结算方式等任何想说明的内容",
+    "Previous EPay order": "上一次易支付订单",
+    "Order not confirmed. Retry the same checkout to avoid duplicate orders.": "订单状态未确认。请用相同金额和支付方式继续，不要重复下单。",
+    "Check the previous EPay order before starting another.": "请先核对上一笔易支付订单，再创建新订单。",
+    "Check status": "查询状态",
+    "Dismiss reminder (does not cancel the order)": "忽略提醒（不会取消订单）",
+    "The payment quote changed. Close this dialog and select the payment method again.": "应付金额已变更。请关闭确认框，重新选择支付方式并核对报价。",
+    "If it stays unconfirmed, check recharge history or give support this reference:": "若一直无法确认，请先查看充值记录，或将此编号提供给客服核对："
   }
 }

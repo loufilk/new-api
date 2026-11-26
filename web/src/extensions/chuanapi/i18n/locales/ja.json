@@ -258,6 +258,13 @@
     "Invoice fee refund": "発票発行手数料の返金",
     "Site information": "サイト情報",
     "Press Enter to add a model.": "Enter キーを押してモデルを追加します。",
-    "Top-up rates, settlement terms, or anything else you would like to share.": "チャージ比率や精算方法など、補足事項があればご記入ください。"
+    "Top-up rates, settlement terms, or anything else you would like to share.": "チャージ比率や精算方法など、補足事項があればご記入ください。",
+    "Previous EPay order": "前回の EPay 注文",
+    "Order not confirmed. Retry the same checkout to avoid duplicate orders.": "注文は未確認です。重複を避けるため、同じ金額と支払方法で再試行してください。",
+    "Check the previous EPay order before starting another.": "新しい注文の前に、前回の EPay 注文を確認してください。",
+    "Check status": "状態を確認",
+    "Dismiss reminder (does not cancel the order)": "通知を非表示（注文はキャンセルされません）",
+    "The payment quote changed. Close this dialog and select the payment method again.": "支払金額が変わりました。この画面を閉じて支払い方法を選び直してください。",
+    "If it stays unconfirmed, check recharge history or give support this reference:": "確認できない場合は、チャージ履歴を確認するか、この番号をサポートにお伝えください："
   }
 }

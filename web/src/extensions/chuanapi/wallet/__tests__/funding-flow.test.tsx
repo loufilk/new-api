@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -30,6 +31,7 @@ import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 
+import { mockTransferLocks } from '@/extensions/chuanapi/wallet/__tests__/mock-transfer-locks'
 import en from '@/i18n/locales/en.json'
 import { api, getSelf } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
@@ -175,6 +177,7 @@ function renderWallet() {
 
 describe('wallet funding flow', () => {
   beforeEach(() => {
+    mockTransferLocks()
     vi.spyOn(api, 'request')
     sessionStorage.clear()
     useAuthStore.getState().auth.setUser({ ...walletUser, role: 1 })
@@ -194,7 +197,11 @@ describe('wallet funding flow', () => {
       success: true,
       data: referralRewards,
     })
-    vi.mocked(calculateAmount).mockResolvedValue({ success: true, data: '73' })
+    vi.mocked(calculateAmount).mockResolvedValue({
+      success: true,
+      data: '73',
+      epay_gateway: 'a'.repeat(32),
+    })
   })
 
   test('hides payment methods and the redemption input when topup info fails to load', async () => {
@@ -298,7 +305,9 @@ describe('wallet funding flow', () => {
     })
     vi.mocked(requestPayment).mockResolvedValue({
       success: true,
-      data: {},
+      data: { out_trade_no: 'EI' + 'A'.repeat(26) },
+      trade_no: 'EI' + 'A'.repeat(26),
+      order_status: 'pending',
       url: 'https://pay.example.com/submit',
     })
     // jsdom cannot submit real payment forms; the redirect target itself is
@@ -321,10 +330,15 @@ describe('wallet funding flow', () => {
       .click(within(dialog).getByRole('button', { name: 'Confirm Payment' }))
 
     await waitFor(() => {
-      expect(requestPayment).toHaveBeenCalledWith({
-        amount: 10,
-        payment_method: 'epay',
-      })
+      expect(requestPayment).toHaveBeenCalledWith(
+        {
+          amount: 10,
+          payment_method: 'epay',
+          expected_minor: 7300,
+          intent_id: expect.any(String),
+        },
+        expect.any(Number)
+      )
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
       expect(vi.mocked(getWalletSummary).mock.calls.length).toBe(
         summaryCallsBeforeConfirm + 1
@@ -456,7 +470,7 @@ describe('wallet funding flow', () => {
     await waitFor(() => expect(transferCalls()).toHaveLength(1))
     expect(transferCalls()[0]).toEqual([
       '/api/user/aff_transfer',
-      { quota: 500000 },
+      { quota: 500000, expected_user_id: walletUser.id },
       expect.objectContaining({
         headers: { 'Idempotency-Key': expect.any(String) },
       }),
@@ -481,11 +495,11 @@ describe('wallet funding flow', () => {
     expect(screen.getByRole('dialog')).toBeVisible()
     await waitFor(() =>
       expect(
-        within(dialog).getByRole('button', { name: 'Transfer' })
+        within(dialog).getByRole('button', { name: 'Retry transfer' })
       ).toBeEnabled()
     )
     await userEvent.click(
-      within(dialog).getByRole('button', { name: 'Transfer' })
+      within(dialog).getByRole('button', { name: 'Retry transfer' })
     )
     await waitFor(() => expect(transferCalls()).toHaveLength(2))
     expect(transferCalls()[0][2]?.headers).toEqual(
@@ -513,7 +527,7 @@ describe('wallet funding flow', () => {
       target: { value: '1' },
     })
     await userEvent.click(
-      within(reopened).getByRole('button', { name: 'Transfer' })
+      within(reopened).getByRole('button', { name: 'Retry transfer' })
     )
     await waitFor(() => expect(transferCalls()).toHaveLength(2))
     expect(transferCalls()[0][2]?.headers).toEqual(
@@ -550,7 +564,10 @@ describe('wallet funding flow', () => {
     expect(button).toBeEnabled()
     fireEvent.click(button)
     await waitFor(() => expect(transferCalls()).toHaveLength(1))
-    expect(transferCalls()[0][1]).toEqual({ quota: 250000 })
+    expect(transferCalls()[0][1]).toEqual({
+      quota: 250000,
+      expected_user_id: walletUser.id,
+    })
   })
 
   test('copies the real sign-up link generated from the affiliate code', async () => {
@@ -675,10 +692,18 @@ describe('wallet funding flow', () => {
         })
       )
       await act(async () => {
-        resolveAmount({ success: true, data: '146.5' })
+        resolveAmount({
+          success: true,
+          data: '146.5',
+          epay_gateway: 'a'.repeat(32),
+        })
       })
       await act(async () => {
-        resolveMethod({ success: true, data: '73' })
+        resolveMethod({
+          success: true,
+          data: '73',
+          epay_gateway: 'a'.repeat(32),
+        })
       })
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
       expect(epay).toBeEnabled()
@@ -693,4 +718,70 @@ describe('wallet funding flow', () => {
       })
     }
   )
+  test('lost acknowledgement survives remount and zero remaining rewards; reopening never auto-transfers', async () => {
+    vi.mocked(api.post)
+      .mockRejectedValueOnce(new Error('response lost'))
+      .mockResolvedValue({ data: { success: true } })
+    const first = await openTransfer()
+    fireEvent.change(within(first).getByLabelText('Transfer Amount'), {
+      target: { value: '0.25' },
+    })
+    await userEvent.click(
+      within(first).getByRole('button', { name: 'Transfer' })
+    )
+    await within(first).findByRole('button', { name: 'Retry transfer' })
+    const submitted = transferCalls()[0]
+    cleanup()
+    vi.mocked(getWalletSummary).mockResolvedValue({
+      success: true,
+      data: { ...walletSummary, referral_available_quota: 0 },
+    })
+    renderWallet()
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Transfer to Balance' })
+    )
+    const second = await screen.findByRole('dialog')
+    expect(within(second).getByLabelText('Transfer Amount')).toHaveValue(0.25)
+    expect(within(second).getByLabelText('Transfer Amount')).toHaveAttribute(
+      'readonly'
+    )
+    expect(transferCalls()).toHaveLength(1)
+    await userEvent.click(
+      within(second).getByRole('button', { name: 'Retry transfer' })
+    )
+    await waitFor(() => expect(transferCalls()).toHaveLength(2))
+    expect(transferCalls()[1]).toEqual(submitted)
+  })
+  test('wallet focus failure, recovery and changed summary preserve the open transfer and its draft', async () => {
+    const dialog = await openTransfer()
+    const input = within(dialog).getByLabelText('Transfer Amount')
+    fireEvent.change(input, { target: { value: '0.25' } })
+    vi.mocked(getWalletSummary).mockResolvedValue({
+      success: false,
+      message: 'temporary outage',
+    })
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole('button', { name: 'Transfer' })
+      ).toBeDisabled()
+    )
+    expect(input).toHaveValue(0.25)
+    vi.mocked(getWalletSummary).mockResolvedValue({
+      success: true,
+      data: { ...walletSummary, referral_available_quota: 200000 },
+    })
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole('button', { name: 'Transfer' })
+      ).toBeEnabled()
+    )
+    expect(input).toHaveValue(0.25)
+    expect(transferCalls()).toHaveLength(0)
+  })
 })

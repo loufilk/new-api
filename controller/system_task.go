@@ -1,29 +1,65 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 func CreateLogCleanupSystemTask(c *gin.Context) {
-	targetTimestamp, _ := strconv.ParseInt(c.Query("target_timestamp"), 10, 64)
-	if targetTimestamp == 0 {
+	createLogCleanupSystemTask(c, false)
+}
+
+// Keep the receipt contract on a distinct route. An older server must reject
+// a new client's write rather than accept it while silently dropping the ID.
+func CreateLogCleanupSystemTaskWithReceipt(c *gin.Context) {
+	createLogCleanupSystemTask(c, true)
+}
+
+func createLogCleanupSystemTask(c *gin.Context, requireReceipt bool) {
+	targetTimestamp, cutoffErr := strconv.ParseInt(c.Query("target_timestamp"), 10, 64)
+	if cutoffErr != nil || targetTimestamp <= 0 {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "target timestamp is required",
+			"code":    "invalid_log_cleanup_cutoff",
 		})
 		return
 	}
 
-	task, err := service.StartLogCleanupTask(targetTimestamp)
+	taskID := ""
+	if requireReceipt {
+		taskID = c.Query("task_id")
+		rawID, hasPrefix := strings.CutPrefix(taskID, "systask_")
+		parsed, err := uuid.Parse(rawID)
+		if !hasPrefix || err != nil || parsed == uuid.Nil || parsed.String() != rawID {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "code": "invalid_log_cleanup_task_id"})
+			return
+		}
+	}
+	task, err := service.StartLogCleanupTask(targetTimestamp, taskID)
+	if errors.Is(err, service.ErrLogCleanupTaskConflict) {
+		c.JSON(http.StatusConflict, gin.H{"success": false, "code": "log_cleanup_task_id_conflict"})
+		return
+	}
 	if err != nil {
 		common.ApiError(c, err)
+		return
+	}
+	if requireReceipt && task.TaskID != taskID {
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"code":    "log_cleanup_already_running",
+			"data":    task.ToResponse(),
+		})
 		return
 	}
 

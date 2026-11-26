@@ -258,6 +258,13 @@
     "Invoice fee refund": "Invoice fee refund",
     "Site information": "Site information",
     "Press Enter to add a model.": "Press Enter to add a model.",
-    "Top-up rates, settlement terms, or anything else you would like to share.": "Top-up rates, settlement terms, or anything else you would like to share."
+    "Top-up rates, settlement terms, or anything else you would like to share.": "Top-up rates, settlement terms, or anything else you would like to share.",
+    "Previous EPay order": "Previous EPay order",
+    "Order not confirmed. Retry the same checkout to avoid duplicate orders.": "Order not confirmed. Retry the same checkout to avoid duplicate orders.",
+    "Check the previous EPay order before starting another.": "Check the previous EPay order before starting another.",
+    "Check status": "Check status",
+    "Dismiss reminder (does not cancel the order)": "Dismiss reminder (does not cancel the order)",
+    "The payment quote changed. Close this dialog and select the payment method again.": "The payment quote changed. Close this dialog and select the payment method again.",
+    "If it stays unconfirmed, check recharge history or give support this reference:": "If it stays unconfirmed, check recharge history or give support this reference:"
   }
 }

@@ -107,10 +107,31 @@ async function amount(value = '5.25') {
   })
 }
 const store = () => useWalletTransferStore.getState()
+const executeElsewhere = (dispatch: () => Promise<void>) =>
+  store().execute({
+    userId: 42,
+    version: walletTransferVersion(store().read(42)),
+    draft: { quota: 500_000, amount: '1' },
+    current: () => true,
+    dispatch,
+    isDefiniteRejection: () => false,
+  })
+async function seedLostTransfer() {
+  const failure = new Error('Simulated response loss in another tab')
+  await expect(
+    executeElsewhere(async () => {
+      throw failure
+    })
+  ).rejects.toBe(failure)
+  return store().read(42)
+}
 
 test('success transfers exact 1:1 quota with expected identity and invalidates wallet and agent data', async () => {
   const request = vi.spyOn(api, 'request').mockResolvedValue({
-    data: { success: true, data: { wallet_quota: 2_625_000 } },
+    data: {
+      success: true,
+      data: { agent_user_id: 42, wallet_quota: 2_625_000 },
+    },
   })
   const view = mount()
   view.client.setQueryData(['wallet', 'user'], { quota: 5_000_000 })
@@ -174,14 +195,14 @@ test('double clicks and Escape during submission cannot repeat or dismiss the tr
   expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
   fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
   expect(view.onClose).not.toHaveBeenCalled()
-  response.resolve({ data: { success: true, data: {} } })
+  response.resolve({ data: { success: true, data: { agent_user_id: 42 } } })
   await waitFor(() => expect(view.onClose).toHaveBeenCalledOnce())
 })
 test('lost response reopens immutable original transfer even if wallet is empty', async () => {
   const request = vi
     .spyOn(api, 'request')
     .mockRejectedValueOnce(new Error('Lost response'))
-    .mockResolvedValue({ data: { success: true, data: {} } })
+    .mockResolvedValue({ data: { success: true, data: { agent_user_id: 42 } } })
   const first = mount()
   await amount()
   fireEvent.click(screen.getByRole('button', { name: 'Transfer' }))
@@ -250,7 +271,7 @@ test('stale blank page adopts another pending amount only for review without pos
   const request = vi.spyOn(api, 'request')
   mount()
   await amount('2')
-  const pending = await store().begin(42, null, 500_000, '1')
+  const pending = await seedLostTransfer()
   fireEvent.click(screen.getByRole('button', { name: 'Transfer' }))
   await waitFor(() =>
     expect(screen.getByRole('textbox', { name: 'Amount ($)' })).toHaveValue('1')
@@ -259,11 +280,11 @@ test('stale blank page adopts another pending amount only for review without pos
   expect(store().read(42)).toEqual(pending)
 })
 test('a stale retry completed elsewhere does not POST with a new identity', async () => {
-  const pending = await store().begin(42, null, 500_000, '1')
+  await seedLostTransfer()
   const request = vi.spyOn(api, 'request')
   mount()
   await screen.findByRole('button', { name: 'Retry transfer' })
-  await store().finish(42, pending.request_id, 'completed')
+  await executeElsewhere(async () => {})
   fireEvent.click(screen.getByRole('button', { name: 'Retry transfer' }))
   await screen.findByRole('button', { name: 'Transfer' })
   expect(request).not.toHaveBeenCalled()
@@ -278,7 +299,10 @@ test('late success after switching users cannot close or overwrite the new user 
   view.changeUser(43)
   await amount('3')
   response.resolve({
-    data: { success: true, data: { wallet_quota: 2_625_000 } },
+    data: {
+      success: true,
+      data: { agent_user_id: 42, wallet_quota: 2_625_000 },
+    },
   })
   await waitFor(() => expect(store().read(42)?.status).toBe('completed'))
   expect(view.onClose).not.toHaveBeenCalled()
@@ -307,47 +331,54 @@ test('user switch while waiting for a lock prevents sending with the new session
   expect(view.onClose).not.toHaveBeenCalled()
 })
 
-test.each(['success', 'rejection'])(
-  'late %s cannot delete or misdisplay the newer cross-page intent',
-  async (outcome) => {
-    const response = deferred<{ data: { success: boolean; data: object } }>()
-    const request = vi.spyOn(api, 'request').mockReturnValue(response.promise)
-    const view = mount()
-    await amount('1')
-    fireEvent.click(screen.getByRole('button', { name: 'Transfer' }))
-    await waitFor(() => expect(request).toHaveBeenCalledOnce())
-    const first = store().read(42)
-    if (!first) throw new Error('Expected a pending transfer')
-    await store().finish(42, first.request_id, 'completed')
-    const second = await store().begin(
-      42,
-      walletTransferVersion(store().read(42)),
-      1_000_000,
-      '2'
-    )
-    if (outcome === 'success') {
-      response.resolve({ data: { success: true, data: {} } })
-    } else {
-      response.reject({
-        response: {
-          status: 409,
-          data: {
-            success: false,
-            message_key: 'insufficient agent balance or credit',
-          },
+test('late ambiguous dispatch followed by insufficient does not unlock a second debit identity', async () => {
+  const response = deferred<{ data: { success: boolean; data: object } }>()
+  const request = vi
+    .spyOn(api, 'request')
+    .mockReturnValueOnce(response.promise)
+    .mockRejectedValueOnce({
+      response: {
+        status: 409,
+        data: {
+          success: false,
+          message_key: 'insufficient agent balance or credit',
         },
-      })
-    }
-    await waitFor(() =>
-      expect(screen.getByRole('textbox', { name: 'Amount ($)' })).toHaveValue(
-        '2'
-      )
-    )
-    expect(store().read(42)).toEqual(second)
-    expect(view.onClose).not.toHaveBeenCalled()
-    expect(request).toHaveBeenCalledOnce()
+      },
+    })
+    .mockResolvedValue({ data: { success: true, data: { agent_user_id: 42 } } })
+  const first = mount()
+  await amount('1')
+  fireEvent.click(screen.getByRole('button', { name: 'Transfer' }))
+  await waitFor(() => expect(request).toHaveBeenCalledOnce())
+  const original = store().read(42)
+  expect(original?.status).toBe('pending')
+  first.unmount()
+
+  const second = mount()
+  fireEvent.click(await screen.findByRole('button', { name: 'Retry transfer' }))
+  await act(async () => {
+    await Promise.resolve()
+  })
+  expect(request).toHaveBeenCalledTimes(1)
+  response.reject(
+    new Error('Original response lost; server may still be settling')
+  )
+  await waitFor(() => expect(request).toHaveBeenCalledTimes(2))
+  const retry = await screen.findByRole('button', { name: 'Retry transfer' })
+  await waitFor(() => expect(retry).toBeEnabled())
+  expect(store().read(42)).toEqual(original)
+  const input = screen.getByRole('textbox', { name: 'Amount ($)' })
+  expect(input).toHaveAttribute('readonly')
+  expect(input).toHaveValue('1')
+  expect(second.onClose).not.toHaveBeenCalled()
+  fireEvent.click(retry)
+  await waitFor(() => expect(second.onClose).toHaveBeenCalledOnce())
+  expect(request).toHaveBeenCalledTimes(3)
+  for (const [config] of request.mock.calls) {
+    expect(config.data).toMatchObject({ request_id: original?.request_id })
   }
-)
+  expect(store().read(42)?.status).toBe('completed')
+})
 
 test('storage write failure cannot send a transfer without durable recovery identity', async () => {
   const request = vi.spyOn(api, 'request')
@@ -372,6 +403,21 @@ test('unclassified business failure must not close the dialog or release its ide
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'Retry transfer' })).toBeEnabled()
   )
+  expect(store().read(42)?.status).toBe('pending')
+  expect(view.onClose).not.toHaveBeenCalled()
+})
+
+test.each([
+  '<!doctype html><html>Transient proxy fallback</html>',
+  { data: { agent_user_id: 42 } },
+  { success: true, data: { agent_user_id: 43 } },
+])('unconfirmed agent response %j leaves the receipt pending', async (data) => {
+  vi.spyOn(api, 'request').mockResolvedValue({ data })
+  const view = mount()
+  await amount()
+  fireEvent.click(screen.getByRole('button', { name: 'Transfer' }))
+  const retry = await screen.findByRole('button', { name: 'Retry transfer' })
+  await waitFor(() => expect(retry).toBeEnabled())
   expect(store().read(42)?.status).toBe('pending')
   expect(view.onClose).not.toHaveBeenCalled()
 })

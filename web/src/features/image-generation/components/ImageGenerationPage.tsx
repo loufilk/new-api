@@ -70,9 +70,13 @@ function ImageGenerationWorkspace() {
   const [owner] = useState(getImageHistoryOwnerId)
   const [pending, setPending] = useState(() => readPendingImageTask(owner))
   const remember = (id: string, task: PendingImageTask | null) => {
-    if (owner !== getImageHistoryOwnerId()) return
-    writePendingImageTask(owner, id, task)
+    if (
+      owner !== getImageHistoryOwnerId() ||
+      !writePendingImageTask(owner, id, task)
+    )
+      return false
     setPending(task ?? readPendingImageTask(owner))
+    return true
   }
   const [reuseEntry, setReuseEntry] = useState<ImageHistoryEntry | null>(null)
   const artworkRef = useRef<HTMLDivElement>(null)
@@ -150,9 +154,20 @@ function ImageGenerationWorkspace() {
       images: resume ? [] : references.items.map((item) => item.file),
       asyncMode,
       acceptedTask: resume,
-      onAccepted: (id, expiresAt) => {
+      prepareOperation: (id) => {
+        // A lost acknowledgement or a reload must never erase the only link to
+        // a paid result. Without owner-scoped storage, do not post.
+        if (
+          !remember(id, {
+            ...settings,
+            id,
+            protocol: 2,
+            expiresAt: Date.now() + 24 * 60 * 60_000,
+          })
+        ) {
+          throw new Error(t('Failed to save'))
+        }
         acceptedId = id
-        remember(id, { ...settings, id, expiresAt })
       },
       onTerminalFailure: clearPending,
     })
@@ -328,8 +343,19 @@ function ImageGenerationWorkspace() {
       </div>
       {pending && !generation.isGenerating ? (
         <Alert>
-          <AlertTitle>{t('An image task was already submitted.')}</AlertTitle>
+          <AlertTitle>
+            {t(
+              pending.protocol === 2
+                ? 'Retrieve image result'
+                : 'An image task was already submitted.'
+            )}
+          </AlertTitle>
           <AlertDescription>
+            {pending.protocol === 2
+              ? t(
+                  'A failed wait does not confirm a refund. Check request status and billing before submitting again.'
+                )
+              : null}
             <Button
               type='button'
               size='sm'

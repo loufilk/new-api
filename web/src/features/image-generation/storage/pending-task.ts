@@ -23,6 +23,7 @@ import { getImageHistoryOwnerId } from './history-owner'
 const pendingTask = z.object({
   id: z.string().regex(/^[0-9a-f]{48}$/),
   expiresAt: z.number().finite(),
+  protocol: z.literal(2).optional(),
   prompt: z.string(),
   model: z.string(),
   size: z.string(),
@@ -53,7 +54,7 @@ export function readPendingImageTask(
       if (
         item.success &&
         key === prefix + item.data.id &&
-        item.data.expiresAt > Date.now()
+        (item.data.protocol === 2 || item.data.expiresAt > Date.now())
       ) {
         return item.data
       }
@@ -74,13 +75,14 @@ export function writePendingImageTask(
     owner !== getImageHistoryOwnerId() ||
     !/^[0-9a-f]{48}$/.test(id)
   ) {
-    return
+    return false
   }
   try {
     const key = `image-pending:v1:${owner}:${id}`
     if (task) localStorage.setItem(key, JSON.stringify(pendingTask.parse(task)))
     else localStorage.removeItem(key)
+    return true
   } catch {
-    /* Keep the live page functional when browser storage is unavailable. */
+    return false
   }
 }

@@ -67,7 +67,10 @@ function renderModelActions(currentModel: Model = model, role = 100) {
   render(
     <QueryClientProvider client={client}>
       <ModelsProvider>
-        <DataTableRowActions row={{ original: currentModel } as Row<Model>} />
+        <DataTableRowActions
+          row={{ original: currentModel } as Row<Model>}
+          onDelete={vi.fn()}
+        />
         <ModelsDialogs />
       </ModelsProvider>
     </QueryClientProvider>

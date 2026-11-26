@@ -16,24 +16,61 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 import {
   DEFAULT_CURRENCY_CONFIG,
   useSystemConfigStore,
 } from '@/stores/system-config-store'
 
 import { UserQuotaDialog } from '../components/user-quota-dialog'
+import { quotaIntentKey } from '../lib/quota-intent'
 import type { ManageUserQuotaPayload, QuotaAdjustMode } from '../types'
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 let previousCurrency = useSystemConfigStore.getState().config.currency
 
+const retryName = /Retry the same request|intelligence\.retrySame/i
+const scope = { actorId: 42, userId: 17 }
+
+function actor(id: number) {
+  useAuthStore.getState().auth.setUser({ id, username: 'synthetic', role: 10 })
+}
 beforeEach(() => {
+  localStorage.clear()
+  actor(42)
+  // Model exclusive ifAvailable semantics without involving any real ledger.
+  const held = new Set<string>()
+  Object.defineProperty(navigator, 'locks', {
+    configurable: true,
+    value: {
+      request: async (
+        name: string,
+        _options: unknown,
+        fn: (lock: unknown) => Promise<void>
+      ) => {
+        if (held.has(name)) return fn(null)
+        held.add(name)
+        try {
+          await fn({ name })
+        } finally {
+          held.delete(name)
+        }
+      },
+    },
+  })
   previousCurrency = useSystemConfigStore.getState().config.currency
   useSystemConfigStore
     .getState()
@@ -41,6 +78,10 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+  localStorage.clear()
+  useAuthStore.getState().auth.reset()
   vi.restoreAllMocks()
   useSystemConfigStore.getState().setConfig({ currency: previousCurrency })
 })
@@ -80,7 +121,9 @@ function fill(amount = '1') {
 async function submitRejected() {
   const confirm = screen.getByRole('button', { name: 'Confirm' })
   fireEvent.click(confirm)
-  await waitFor(() => expect(confirm).toBeEnabled())
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: retryName })).toBeEnabled()
+  )
 }
 
 function capturedWireBody(body: unknown): ManageUserQuotaPayload {
@@ -131,6 +174,7 @@ describe('admin quota intent at the existing HTTP boundary', () => {
     await submitRejected()
     expect(post).toHaveBeenCalledTimes(1)
     expect(post.mock.calls[0][0]).toBe('/api/user/manage')
+    expect(post.mock.calls[0][2]).toEqual({ singleUseAuthorization: true })
     expect(capturedWireBody(post.mock.calls[0][1])).toEqual({
       id: 17,
       action: 'add_quota',
@@ -196,8 +240,12 @@ describe('admin quota intent at the existing HTTP boundary', () => {
       await submitRejected()
       expect(wire).toHaveLength(1)
       expect(wire[0].request_id).toMatch(uuidPattern)
-      view.rerender(<Harness currentQuota={4_000_000} onSuccess={onSuccess} />)
-      fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+      view.unmount()
+      render(<Harness currentQuota={4_000_000} onSuccess={onSuccess} />)
+      expect(screen.getByText(wire[0].request_id)).toBeVisible()
+      expect(screen.queryByRole('spinbutton')).toBeNull()
+      expect(wire).toHaveLength(1)
+      fireEvent.click(screen.getByRole('button', { name: retryName }))
       await waitFor(() => expect(onSuccess).toHaveBeenCalledTimes(1))
       expect(wire).toHaveLength(2)
       expect(wire[1]).toEqual(wire[0])
@@ -205,90 +253,149 @@ describe('admin quota intent at the existing HTTP boundary', () => {
     }
   )
 
-  it('retains the unresolved intent when amount formatting leaves the backend value unchanged', async () => {
-    const post = vi
-      .spyOn(api, 'post')
-      .mockRejectedValue(new Error('ACK unknown'))
+  it('cannot edit or mint another operation after an unknown result, including after close/reopen', async () => {
+    const post = vi.spyOn(api, 'post').mockRejectedValue(new Error('lost ACK'))
     render(<Harness />)
     fill()
     await submitRejected()
-    const input = fill('1.0') as HTMLInputElement
-    expect(input.value).toBe('1.0')
-    await submitRejected()
-    expect(post).toHaveBeenCalledTimes(2)
     const first = capturedWireBody(post.mock.calls[0][1])
-    const second = capturedWireBody(post.mock.calls[1][1])
-    expect(first.request_id).toMatch(uuidPattern)
-    expect(second.value).toBe(first.value)
-    expect(second).toEqual(first)
+    expect(
+      JSON.parse(localStorage.getItem(quotaIntentKey(scope)) ?? 'null')
+    ).toEqual({
+      ...scope,
+      mode: 'add',
+      value: 500_000,
+      request_id: first.request_id,
+      status: 'pending',
+    })
+    fireEvent.click(screen.getByText('Close', { selector: 'button' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open quota' }))
+    expect(screen.getByText(first.request_id)).toBeVisible()
+    expect(screen.queryByRole('spinbutton')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Subtract' })).toBeNull()
+    expect(post).toHaveBeenCalledTimes(1)
   })
 
-  it('starts a new intent when the amount changes, including change then restore', async () => {
-    const post = vi
-      .spyOn(api, 'post')
-      .mockRejectedValue(new Error('ACK unknown'))
-    render(<Harness />)
-    fill()
-    await submitRejected()
-    fill('2')
-    fill('1')
-    await submitRejected()
-    const first = capturedWireBody(post.mock.calls[0][1])
-    const second = capturedWireBody(post.mock.calls[1][1])
-    expect(first.request_id).toMatch(uuidPattern)
-    expect(second.value).toBe(first.value)
-    expect(second.request_id).not.toBe(first.request_id)
-  })
-
-  it('starts a new intent when the mode changes', async () => {
-    const post = vi
-      .spyOn(api, 'post')
-      .mockRejectedValue(new Error('ACK unknown'))
-    render(<Harness />)
-    fill()
-    await submitRejected()
-    fireEvent.click(screen.getByRole('button', { name: 'Subtract' }))
-    fill()
-    await submitRejected()
-    const first = capturedWireBody(post.mock.calls[0][1])
-    const second = capturedWireBody(post.mock.calls[1][1])
-    expect(second.mode).toBe('subtract')
-    expect(second.request_id).toMatch(uuidPattern)
-    expect(second.request_id).not.toBe(first.request_id)
-  })
-
-  it('never reuses an unresolved intent for a different target user', async () => {
-    const post = vi
-      .spyOn(api, 'post')
-      .mockRejectedValue(new Error('ACK unknown'))
+  it('never exposes or replays the tuple for a different actor or a different target', async () => {
+    const post = vi.spyOn(api, 'post').mockRejectedValue(new Error('network'))
     const view = render(<Harness />)
     fill()
     await submitRejected()
-    view.rerender(<Harness userId={18} />)
-    await submitRejected()
     const first = capturedWireBody(post.mock.calls[0][1])
-    const second = capturedWireBody(post.mock.calls[1][1])
-    expect(second.id).toBe(18)
-    expect(second.request_id).toMatch(uuidPattern)
-    expect(second.request_id).not.toBe(first.request_id)
+    act(() => actor(43))
+    expect(screen.queryByText(first.request_id)).toBeNull()
+    expect(screen.getByRole('spinbutton')).toHaveValue(null)
+    act(() => actor(42))
+    expect(screen.getByText(first.request_id)).toBeVisible()
+    view.rerender(<Harness userId={18} />)
+    expect(screen.queryByText(first.request_id)).toBeNull()
+    expect(screen.getByRole('spinbutton')).toHaveValue(null)
+    expect(post).toHaveBeenCalledTimes(1)
   })
 
-  it('starts a new explicit operation after cancellation and reopening', async () => {
+  it('does not close the new actor form when the old actor receives a late success', async () => {
+    let release!: () => void
+    vi.spyOn(api, 'post').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ data: { success: true } })
+        })
+    )
+    const onSuccess = vi.fn()
+    render(<Harness onSuccess={onSuccess} />)
+    fill()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+    act(() => actor(55))
+    await act(async () => release())
+    expect(onSuccess).not.toHaveBeenCalled()
+    expect(screen.getByRole('spinbutton')).toBeVisible()
+    expect(
+      localStorage.getItem(quotaIntentKey({ actorId: 55, userId: 17 }))
+    ).toBeNull()
+  })
+
+  it('keeps an unresolved adjustment on a later rejection but unlocks a first confirmed rejection', async () => {
+    const rejection = {
+      data: { success: false, message: 'insufficient balance' },
+    }
     const post = vi
       .spyOn(api, 'post')
-      .mockRejectedValue(new Error('ACK unknown'))
+      .mockResolvedValueOnce(rejection)
+      .mockRejectedValueOnce(new Error('unknown'))
+      .mockResolvedValueOnce(rejection)
     render(<Harness />)
     fill()
-    await submitRejected()
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Open quota' }))
-    fill()
-    await submitRejected()
-    expect(capturedWireBody(post.mock.calls[1][1]).request_id).not.toBe(
-      capturedWireBody(post.mock.calls[0][1]).request_id
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Confirm' })).toBeEnabled()
     )
+    fill('2')
+    await submitRejected()
+    fireEvent.click(screen.getByRole('button', { name: retryName }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: retryName })).toBeEnabled()
+    )
+    const bodies = post.mock.calls.map((call) => capturedWireBody(call[1]))
+    expect(bodies[0].request_id).not.toBe(bodies[1].request_id)
+    expect(bodies[1]).toEqual(bodies[2])
   })
 
+  it('requires review of a changed scope record before a stale tab can dispatch', async () => {
+    const post = vi
+      .spyOn(api, 'post')
+      .mockResolvedValue({ data: { success: true } })
+    render(<Harness />)
+    fill('17')
+    const other = {
+      ...scope,
+      request_id: crypto.randomUUID(),
+      mode: 'subtract',
+      value: 71,
+      status: 'pending',
+    }
+    localStorage.setItem(quotaIntentKey(scope), JSON.stringify(other))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+    expect(await screen.findByText(other.request_id)).toBeVisible()
+    expect(post).not.toHaveBeenCalled()
+    // The other tab finished before this operator clicked retry; do not replay
+    // its operation or implicitly start a fresh one.
+    localStorage.setItem(
+      quotaIntentKey(scope),
+      JSON.stringify({
+        ...scope,
+        request_id: other.request_id,
+        status: 'closed',
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: retryName }))
+    await screen.findByRole('spinbutton')
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it('sends nothing when storage cannot journal the request or is corrupt', async () => {
+    const post = vi
+      .spyOn(api, 'post')
+      .mockRejectedValue(new Error('Unexpected call'))
+    localStorage.setItem(quotaIntentKey(scope), '{}')
+    render(<Harness />)
+    expect(screen.getByRole('button', { name: 'Confirm' })).toBeDisabled()
+    cleanup()
+    localStorage.clear()
+    const savedStorage = localStorage
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => savedStorage.getItem(key),
+      setItem: () => {
+        throw new Error('full')
+      },
+    })
+    render(<Harness />)
+    fill()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Confirm' })).toBeDisabled()
+    )
+    expect(post).not.toHaveBeenCalled()
+  })
   it('does not reuse a successful intent for the next explicit operation', async () => {
     const post = vi
       .spyOn(api, 'post')
@@ -307,5 +414,13 @@ describe('admin quota intent at the existing HTTP boundary', () => {
     expect(second.value).toBe(first.value)
     expect(second.request_id).toMatch(uuidPattern)
     expect(second.request_id).not.toBe(first.request_id)
+    const record = JSON.parse(
+      localStorage.getItem(quotaIntentKey(scope)) ?? 'null'
+    )
+    expect(record).toEqual({
+      ...scope,
+      status: 'closed',
+      request_id: second.request_id,
+    })
   })
 })

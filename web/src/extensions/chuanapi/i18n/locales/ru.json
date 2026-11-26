@@ -258,6 +258,13 @@
     "Invoice fee refund": "Возврат комиссии за выставление счёта",
     "Site information": "Сведения о сайте",
     "Press Enter to add a model.": "Нажмите Enter, чтобы добавить модель.",
-    "Top-up rates, settlement terms, or anything else you would like to share.": "Укажите условия пополнения, порядок расчётов или другие сведения."
+    "Top-up rates, settlement terms, or anything else you would like to share.": "Укажите условия пополнения, порядок расчётов или другие сведения.",
+    "Previous EPay order": "Предыдущий заказ EPay",
+    "Order not confirmed. Retry the same checkout to avoid duplicate orders.": "Статус заказа не подтверждён. Чтобы избежать дублирования, повторите с той же суммой и способом оплаты.",
+    "Check the previous EPay order before starting another.": "Проверьте предыдущий заказ EPay перед созданием нового.",
+    "Check status": "Проверить статус",
+    "Dismiss reminder (does not cancel the order)": "Скрыть напоминание (не отменяет заказ)",
+    "The payment quote changed. Close this dialog and select the payment method again.": "Сумма изменилась. Закройте окно и снова выберите способ оплаты.",
+    "If it stays unconfirmed, check recharge history or give support this reference:": "Если статус не подтверждён, проверьте историю пополнений или сообщите поддержке этот номер:"
   }
 }

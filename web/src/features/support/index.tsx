@@ -100,6 +100,7 @@ export function SupportCenter(
   const queryClient = useQueryClient()
   const admin = useIsAdmin()
   const userId = useAuthStore((state) => state.auth.user?.id)
+  const sessionId = useAuthStore((state) => state.auth.session?.sid)
   const [searchInput, setSearchInput] = useState('')
   const [keyword, setKeyword] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | SupportTicketStatus>(
@@ -125,6 +126,7 @@ export function SupportCenter(
     statusFilter,
     unreadOnly,
     page,
+    sessionId,
   ] as const
   const listQuery = useQuery<SupportTicketListData>({
     ...supportRefreshOptions,
@@ -147,7 +149,7 @@ export function SupportCenter(
   })
   const detailQuery = useQuery({
     ...supportRefreshOptions,
-    queryKey: ['support-ticket', userId, admin, selectedId],
+    queryKey: ['support-ticket', userId, admin, selectedId, sessionId],
     queryFn: ({ signal }) =>
       getSupportTicket(admin, selectedId as number, signal),
     enabled: userId != null && selectedId != null,
@@ -199,20 +201,36 @@ export function SupportCenter(
     },
     onError: (error) => handleServerError(error),
   })
+  // Never treat dispatch as proof the server marked the conversation read.
+  const lastAcknowledgment = useRef<string | null>(null)
+  const lastReportedReadError = useRef<string | null>(null)
+  const pendingReads = useRef(new Set<string>())
+  const lastReadAttempt = useRef<{
+    snapshot: string
+    observedAt: number
+    startedAt: number
+  } | null>(null)
   const { mutate: acknowledgeRead } = useMutation({
     // An automatic acknowledgement should never be queued for later replay.
     networkMode: 'always',
+    retry: false,
     mutationFn: async (
       input: Parameters<typeof markSupportTicketRead>[0] & {
         userId: number
         sessionEpoch: number
+        scope: string
+        snapshot: string
       }
     ) => {
       if (getAuthSessionEpoch() !== input.sessionEpoch) return
       return markSupportTicketRead(input)
     },
     onSuccess: async (result, input) => {
+      pendingReads.current.delete(input.scope)
       if (!result || getAuthSessionEpoch() !== input.sessionEpoch) return
+      if (result.acknowledged === true) {
+        lastAcknowledgment.current = input.snapshot
+      }
       const refetchType = focusManager.isFocused() ? 'active' : 'none'
       const tasks = [
         queryClient.invalidateQueries({
@@ -235,11 +253,22 @@ export function SupportCenter(
       }
       await Promise.all(tasks)
     },
-    onError: (error) => handleServerError(error),
+    onError: (error, input) => {
+      pendingReads.current.delete(input.scope)
+      // A lost response may already have cleared unread. No blind write:
+      // the next successful detail read must still show this snapshot unread.
+      if (
+        getAuthSessionEpoch() === input.sessionEpoch &&
+        lastReportedReadError.current !== input.snapshot
+      ) {
+        lastReportedReadError.current = input.snapshot
+        handleServerError(error)
+      }
+    },
   })
 
-  const lastAcknowledgment = useRef<string | null>(null)
   const detail = detailQuery.data
+  const observedAt = detailQuery.dataUpdatedAt
   const detailReady = detailQuery.isSuccess && !detailQuery.isFetching
   const onLatestSeen = useCallback(() => {
     if (
@@ -257,19 +286,43 @@ export function SupportCenter(
     if (ticket.id !== selectedId || !unread || !latest) return
     // Only acknowledge the snapshot that was actually displayed. The server
     // rejects it if the ticket changes before this request reaches it.
+    const auth = useAuthStore.getState().auth
+    if (auth.user?.id !== userId || auth.session?.sid !== sessionId) return
     const sessionEpoch = getAuthSessionEpoch()
-    const snapshot = `${sessionEpoch}:${userId}:${admin}:${ticket.id}:${latest.id}:${ticket.status}:${ticket.updated_at}`
-    if (lastAcknowledgment.current === snapshot) return
-    lastAcknowledgment.current = snapshot
+    const scope = `${sessionEpoch}:${userId}:${admin}:${ticket.id}`
+    const snapshot = `${scope}:${latest.id}:${ticket.status}:${ticket.updated_at}`
+    const last = lastReadAttempt.current
+    if (
+      lastAcknowledgment.current === snapshot ||
+      pendingReads.current.has(scope) ||
+      (last?.snapshot === snapshot &&
+        (last.observedAt === observedAt ||
+          Date.now() - last.startedAt < TICKET_DETAIL_POLL_MS / 2))
+    ) {
+      return
+    }
+    pendingReads.current.add(scope)
+    lastReadAttempt.current = { snapshot, observedAt, startedAt: Date.now() }
     acknowledgeRead({
       userId,
       sessionEpoch,
       admin,
       ticketId: ticket.id,
+      scope,
+      snapshot,
       throughMessageId: latest.id,
       observedStatus: ticket.status,
     })
-  }, [acknowledgeRead, admin, detail, detailReady, selectedId, userId])
+  }, [
+    acknowledgeRead,
+    admin,
+    detail,
+    detailReady,
+    observedAt,
+    selectedId,
+    sessionId,
+    userId,
+  ])
 
   const totalPages = Math.max(
     1,

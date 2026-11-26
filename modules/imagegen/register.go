@@ -44,5 +44,11 @@ func registerRoutes(engine *gin.Engine, workers *lifecycle.Group) error {
 	// Result reads use the dashboard session rather than quota-bearing token auth;
 	// exhausting token quota must not hide a completed image from its owner.
 	routes.GET("/:id", middleware.UserAuth(), handler.Poll)
+	// New clients must not submit an idempotency header to an old node that
+	// silently ignores it. Unknown versioned routes never fall back to a paid POST.
+	routes.POST("/operations/:operation/generations", middleware.TokenAuth(), handler.Submit)
+	routes.POST("/operations/:operation/edits", middleware.TokenAuth(), handler.Submit)
+	routes.GET("/operation-ticket", middleware.UserAuth(), handler.Issue)
+	routes.GET("/operations/:operation", middleware.UserAuth(), handler.Poll)
 	return nil
 }

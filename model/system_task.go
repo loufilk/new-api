@@ -104,6 +104,12 @@ func CreateSystemTask(taskType string, payload any, state any) (*SystemTask, err
 	if err != nil {
 		return nil, err
 	}
+	return CreateSystemTaskWithID(taskID, taskType, payload, state)
+}
+
+// CreateSystemTaskWithID lets callers identify an operation before admission.
+// The existing unique task_id and active_key constraints still apply.
+func CreateSystemTaskWithID(taskID, taskType string, payload any, state any) (*SystemTask, error) {
 	payloadText, err := marshalSystemTaskJSON(payload)
 	if err != nil {
 		return nil, err

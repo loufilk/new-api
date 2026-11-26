@@ -35,8 +35,11 @@ import { deleteModel, deleteModels } from '../../api'
 import type { Model } from '../../types'
 import { invalidateVendorData } from '../../vendor-api'
 
+export type ModelDeleteTarget = Pick<Model, 'id' | 'model_name' | 'name_rule'>
+
 interface ModelDeleteDialogProps {
-  models: Pick<Model, 'id' | 'model_name' | 'name_rule'>[]
+  models: ModelDeleteTarget[]
+  isCurrent?: () => boolean
   onClose: () => void
   onSuccess?: () => void
 }
@@ -54,6 +57,9 @@ export function ModelDeleteDialog(props: ModelDeleteDialogProps) {
   const client = useQueryClient()
   const mutation = useMutation({
     mutationFn: async () => {
+      if (props.isCurrent && !props.isCurrent()) {
+        throw new Error(t('Refresh the list and try again.'))
+      }
       const ids = props.models.map((model) => model.id)
       const response =
         ids.length === 1
@@ -87,6 +93,7 @@ export function ModelDeleteDialog(props: ModelDeleteDialogProps) {
       props.onClose()
     },
   })
+  const stale = props.isCurrent ? !props.isCurrent() : false
   const description =
     props.models.length === 1
       ? t('Delete model "{{name}}"?', { name: props.models[0].model_name })
@@ -106,11 +113,16 @@ export function ModelDeleteDialog(props: ModelDeleteDialogProps) {
       desc={description}
       confirmText={t('Delete')}
       destructive
-      disabled={!props.models.length}
+      disabled={!props.models.length || stale}
       isLoading={mutation.isPending}
       handleConfirm={() => mutation.mutate()}
     >
       <div className='space-y-3'>
+        {stale && !mutation.isPending && (
+          <p role='status' className='text-muted-foreground text-sm'>
+            {t('Refresh the list and try again.')}
+          </p>
+        )}
         <div className='flex items-start gap-2'>
           <Checkbox
             id={checkboxId}

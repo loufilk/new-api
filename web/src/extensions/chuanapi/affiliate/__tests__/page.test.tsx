@@ -22,8 +22,10 @@ import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
+import { mockTransferLocks } from '@/extensions/chuanapi/wallet/__tests__/mock-transfer-locks'
 import en from '@/i18n/locales/en.json'
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { AffiliatePage } from '../index'
 
@@ -74,6 +76,10 @@ function renderPage() {
   )
 }
 beforeEach(async () => {
+  mockTransferLocks()
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, role: 1, username: 'test-user' })
   i18next.addResourceBundle('en', 'translation', en.translation, true, true)
   await i18next.changeLanguage('en')
 })
@@ -112,7 +118,7 @@ describe('ordinary referral page', () => {
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
     expect(post).toHaveBeenCalledWith(
       '/api/user/aff_transfer',
-      { quota: 500000 },
+      { quota: 500000, expected_user_id: 1 },
       expect.objectContaining({
         headers: { 'Idempotency-Key': expect.any(String) },
       })

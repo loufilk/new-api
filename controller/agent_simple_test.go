@@ -87,6 +87,28 @@ func TestAgentSimpleWalletTransferHTTPRequiresMatchingSessionAccount(t *testing.
 	}
 }
 
+func TestAgentSimpleReferralTransferHTTPRequiresMatchingSessionAccount(t *testing.T) {
+	confirmPaymentComplianceForTest(t)
+	previousDB := model.DB
+	model.DB = nil
+	t.Cleanup(func() { model.DB = previousDB })
+	for _, signedIn := range []bool{false, true} {
+		t.Run(strconv.FormatBool(signedIn), func(t *testing.T) {
+			response := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(response)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/api/agent-platform/simple/finance/referral-transfer", strings.NewReader(`{"request_id":"wallet-http-account-switch","quota":100,"expected_user_id":1}`))
+			if signedIn {
+				ctx.Set("id", 2)
+				ctx.Set("session_id", "wallet-new-account-session")
+				ctx.Set("auth_version", int64(1))
+				ctx.Set("session_version", int64(1))
+			}
+			TransferReferralToAgentBalance(ctx)
+			assert.Equal(t, http.StatusForbidden, response.Code)
+		})
+	}
+}
+
 func TestAgentSimpleHTTPRechargeReplayAndSignedPaymentDelivery(t *testing.T) {
 	dialect, dsn := "sqlite", ""
 	if configured := strings.TrimSpace(os.Getenv("TEST_POSTGRES_DSN")); configured != "" {

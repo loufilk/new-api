@@ -130,44 +130,25 @@ function WalletTransferSession(props: Props) {
           )
         }
         try {
-          const intent = await store.begin(
-            props.userId,
-            walletTransferVersion(snapshot),
-            quota ?? 0,
-            String(values.amount)
-          )
-          if (!current()) return
-          setSnapshot(intent)
-          await transfer
-            .mutateAsync({
-              request_id: intent.request_id,
-              quota: intent.quota,
-              expected_user_id: props.userId,
-            })
-            .catch(async (error: unknown) => {
-              if (isWalletTransferRejected(error)) {
-                const rejected = await store.finish(
-                  props.userId,
-                  intent.request_id,
-                  'rejected'
-                )
-                if (current()) {
-                  const latest = store.read(props.userId)
-                  if (!rejected) throw new WalletTransferChanged(latest)
-                  setSnapshot(latest)
-                }
-              }
-              throw error
-            })
-          const settled = await store.finish(
-            props.userId,
-            intent.request_id,
-            'completed'
-          )
-          if (!current()) return
-          if (!settled) {
-            throw new WalletTransferChanged(store.read(props.userId))
-          }
+          const settled = await store.execute({
+            userId: props.userId,
+            version: walletTransferVersion(snapshot),
+            draft: {
+              quota: pending?.quota ?? quota ?? 0,
+              amount: String(values.amount),
+            },
+            current,
+            dispatch: async (intent) => {
+              setSnapshot(intent)
+              await transfer.mutateAsync({
+                request_id: intent.request_id,
+                quota: intent.quota,
+                expected_user_id: props.userId,
+              })
+            },
+            isDefiniteRejection: isWalletTransferRejected,
+          })
+          if (!settled || !current()) return
           // Refetch: a replay response may contain an older account snapshot.
           await Promise.all([
             client.invalidateQueries({ queryKey: ['agent-platform'] }),
@@ -180,6 +161,14 @@ function WalletTransferSession(props: Props) {
           if (error instanceof WalletTransferChanged) {
             setSnapshot(error.current)
             setGeneration((value) => value + 1)
+          } else {
+            // A definite first response can release a draft. An ambiguous or
+            // repeated rejection leaves it pending and retains the amount.
+            try {
+              setSnapshot(store.read(props.userId))
+            } catch {
+              // Preserve what the customer last reviewed if storage failed.
+            }
           }
           throw error
         }

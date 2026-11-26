@@ -163,6 +163,7 @@ export async function markSupportTicketRead(input: {
   admin: boolean
   ticketId: number
   throughMessageId: number
+  sessionEpoch?: number
   observedStatus: SupportTicketStatus
 }): Promise<{ acknowledged: boolean }> {
   const response = await api.post<ApiResponse<{ acknowledged: boolean }>>(
@@ -171,7 +172,11 @@ export async function markSupportTicketRead(input: {
       through_message_id: input.throughMessageId,
       observed_status: input.observedStatus,
     },
-    requestConfig
+    {
+      ...requestConfig,
+      authSessionEpoch: input.sessionEpoch,
+      singleUseAuthorization: true,
+    }
   )
   return requireSuccess(response.data)
 }

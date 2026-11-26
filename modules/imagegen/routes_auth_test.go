@@ -41,6 +41,10 @@ func TestImageTasksRequireAuthentication(t *testing.T) {
 	for _, tc := range []struct{ method, path string }{
 		{"POST", "/v1/images/tasks/generations"},
 		{"POST", "/v1/images/tasks/edits"},
+		{"POST", "/v1/images/tasks/operations/" + strings.Repeat("a", 48) + "/generations"},
+		{"POST", "/v1/images/tasks/operations/" + strings.Repeat("a", 48) + "/edits"},
+		{"GET", "/v1/images/tasks/operation-ticket"},
+		{"GET", "/v1/images/tasks/operations/" + strings.Repeat("a", 48)},
 		{"GET", "/v1/images/tasks/" + strings.Repeat("a", 48)},
 	} {
 		t.Run(tc.method+tc.path, func(t *testing.T) {
