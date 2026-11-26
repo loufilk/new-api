@@ -35,6 +35,7 @@ import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { checkIsActive } from '@/components/layout/lib/url-utils'
+import { chuanapiSidebarNavigationExtension } from '@/extensions/chuanapi/navigation'
 import { invalidateModelPricing } from '@/features/model-pricing/api'
 import {
   parseSidebarModulesAdmin,
@@ -114,12 +115,21 @@ it('root uses one agent management entry while only agents see the sales workspa
   ).toHaveLength(3)
 })
 
-function sidebarFor(admin?: object, user?: object, canConfigure = true) {
+function sidebarFor(
+  admin?: object,
+  user?: object,
+  canConfigure = true,
+  capabilities?: {
+    customer_invoice_center_visible: boolean
+    account_pool_enabled: boolean
+  }
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   client.setQueryData(['status'], {
     SidebarModulesAdmin: admin ? JSON.stringify(admin) : '',
+    ...capabilities,
   })
   useAuthStore.getState().auth.setUser({
     id: 1,
@@ -136,7 +146,17 @@ function sidebarFor(admin?: object, user?: object, canConfigure = true) {
     )
   }
   const result = renderHook(
-    () => useSidebarConfig(useSidebarData().navGroups),
+    () => {
+      const data = useSidebarData()
+      // The unbranded core does not register the supplier extension in this suite.
+      const sidebar = capabilities
+        ? chuanapiSidebarNavigationExtension.apply(data, {
+            isAuthenticated: true,
+            user: useAuthStore.getState().auth.user,
+          })
+        : data
+      return useSidebarConfig(sidebar.navGroups)
+    },
     { wrapper: Wrapper }
   )
   return result
@@ -192,6 +212,67 @@ describe('security sidebar visibility', () => {
         .flatMap((group) => group.items)
         .some((item) => item.title === 'Security & Access')
     ).toBe(true)
+  })
+})
+
+describe('DIY sidebar entries respect their existing parent section', () => {
+  const capabilities = {
+    customer_invoice_center_visible: true,
+    account_pool_enabled: true,
+  }
+  const personalLinks = [
+    '/wallet',
+    '/invoice',
+    '/support',
+    '/affiliate',
+    '/account-pool',
+    '/partner-applications',
+  ]
+  it.each([
+    [
+      { personal: { enabled: false }, admin: { enabled: false } },
+      { personal: { enabled: true } },
+    ],
+    [undefined, { personal: { enabled: false }, admin: { enabled: false } }],
+  ])(
+    'hides the entire section, including extension links, but not unrelated groups',
+    (admin, user) => {
+      const { result } = sidebarFor(admin, user, true, capabilities)
+      expect(result.current.some((group) => group.id === 'personal')).toBe(
+        false
+      )
+      expect(result.current.some((group) => group.id === 'admin')).toBe(false)
+      expect(result.current.some((group) => group.id === 'chat')).toBe(true)
+    }
+  )
+
+  it.each([
+    [undefined, undefined, true],
+    [{ personal: { enabled: true, security: false } }, undefined, true],
+    [undefined, { personal: { enabled: false } }, false],
+  ])(
+    'keeps default-visible or capability-approved links when their section remains visible',
+    (admin, user, canConfigure) => {
+      const { result } = sidebarFor(admin, user, canConfigure, capabilities)
+      const urls = result.current
+        .find((group) => group.id === 'personal')
+        ?.items.map((item) => item.url)
+      expect(urls).toEqual(expect.arrayContaining(personalLinks))
+    }
+  )
+
+  it('does not bypass invoice, account-pool or supplier management capability gates', () => {
+    const { result } = sidebarFor(undefined, undefined, true, {
+      customer_invoice_center_visible: false,
+      account_pool_enabled: false,
+    })
+    const urls = result.current.flatMap((group) =>
+      group.items.map((item) => item.url)
+    )
+    expect(urls).not.toContain('/invoice')
+    expect(urls).not.toContain('/account-pool')
+    expect(urls).not.toContain('/partner-application-management')
+    expect(urls).toContain('/partner-applications')
   })
 })
 

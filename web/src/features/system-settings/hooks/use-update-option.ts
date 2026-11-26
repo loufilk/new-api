@@ -35,6 +35,12 @@ const STATUS_RELATED_KEYS = new Set([
   'HeaderNavModules',
   'SidebarModulesAdmin',
   'Notice',
+  'console_setting.api_info',
+  'console_setting.api_info_enabled',
+  'console_setting.faq',
+  'console_setting.faq_enabled',
+  // The group list itself is read from the separate uptime endpoint.
+  'console_setting.uptime_kuma_enabled',
   'console_setting.announcements',
   'console_setting.announcements_enabled',
   'LogConsumeEnabled',
