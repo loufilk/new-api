@@ -22,6 +22,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { createAppQueryClient } from '@/lib/query-client'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
@@ -118,7 +119,12 @@ afterEach(() => {
   localStorage.clear()
 })
 
-function setup(tokenId?: number) {
+function setup(
+  tokenId?: number,
+  client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+) {
   const runs = new Map<string, DiagnosticRun>()
   const get = vi.spyOn(api, 'get').mockImplementation(async (url: string) => {
     if (url === `${endpoint}/options`) return ok(options)
@@ -139,9 +145,6 @@ function setup(tokenId?: number) {
     runs.set(queued.id, queued)
     return ok(queued)
   })
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  })
   const component = (
     <QueryClientProvider client={client}>
       <ApiKeysProvider>
@@ -151,7 +154,7 @@ function setup(tokenId?: number) {
     </QueryClientProvider>
   )
   const rendered = render(component)
-  return { get, post, user: userEvent.setup(), runs, rendered }
+  return { get, post, user: userEvent.setup(), runs, rendered, client }
 }
 
 async function selectModel(
@@ -236,6 +239,157 @@ test('list entry uses per-Key models, resets consent and selection when changing
   ).not.toBeChecked()
   await user.keyboard('{Escape}')
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(post).not.toHaveBeenCalled()
+})
+
+test.each([500, 503])(
+  'recovers diagnostic options after HTTP %s without reopening or submitting',
+  async (status) => {
+    const redirect = vi.fn()
+    const { user, get, post } = setup(undefined, createAppQueryClient(redirect))
+    get.mockRejectedValueOnce({ response: { status } })
+    await user.click(screen.getByRole('button', { name: 'Key diagnostic' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not load test options.'
+    )
+    const start = screen.getByRole('button', { name: 'Start test' })
+    const retry = screen.getByRole('button', {
+      name: 'Retry',
+      description: 'Could not load test options.',
+    })
+    expect(start).toBeDisabled()
+    expect(
+      get.mock.calls.filter(([url]) => url.endsWith('/options'))
+    ).toHaveLength(1)
+
+    await user.click(retry)
+    expect(
+      await screen.findByRole('option', { name: 'Personal · group-a' })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Retry' })
+    ).not.toBeInTheDocument()
+    expect(start).toBeDisabled()
+    expect(
+      get.mock.calls.filter(([url]) => url.endsWith('/options'))
+    ).toHaveLength(2)
+    expect(get.mock.calls.some(([url]) => url.endsWith('/models'))).toBe(false)
+    expect(post).not.toHaveBeenCalled()
+    expect(redirect).not.toHaveBeenCalled()
+  }
+)
+
+test.each([429, 500])(
+  'recovers a row Key model catalogue after HTTP %s without stale consent',
+  async (status) => {
+    const redirect = vi.fn()
+    const { user, get, post, client } = setup(9, createAppQueryClient(redirect))
+    await user.click(screen.getByRole('button', { name: 'Key diagnostic' }))
+    expect(await screen.findByDisplayValue('Personal · group-a')).toBeDisabled()
+    await selectModel(user, 'chat-model')
+    const consent = screen.getByRole('checkbox', {
+      name: 'I agree to one paid test with this API key.',
+    })
+    const start = screen.getByRole('button', { name: 'Start test' })
+    await user.click(consent)
+    expect(start).toBeEnabled()
+
+    get.mockRejectedValueOnce({ response: { status } })
+    await act(() =>
+      client.invalidateQueries({
+        predicate: ({ queryKey }) => queryKey.at(-2) === 'models',
+      })
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not load models for this key.'
+    )
+    expect(start).toBeDisabled()
+    expect(consent).not.toBeChecked()
+    get.mockClear()
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Retry',
+        description: 'Could not load models for this key.',
+      })
+    )
+    const model = screen.getByRole('combobox', { name: 'Model' })
+    await waitFor(() => expect(model).toBeEnabled())
+    expect(model).toHaveValue('')
+    expect(screen.getByDisplayValue('Personal · group-a')).toBeDisabled()
+    expect(get.mock.calls.map(([url]) => url)).toEqual([
+      `${endpoint}/keys/9/models`,
+    ])
+    expect(post).not.toHaveBeenCalled()
+
+    await selectModel(user, 'chat-model')
+    expect(consent).toBeEnabled()
+    expect(consent).not.toBeChecked()
+    expect(start).toBeDisabled()
+    await user.click(consent)
+    expect(start).toBeEnabled()
+    expect(post).not.toHaveBeenCalled()
+    expect(redirect).not.toHaveBeenCalled()
+  }
+)
+
+test('keeps an HTTP 500 recent-history failure inside the diagnostic dialog', async () => {
+  const redirect = vi.fn()
+  const { user, get, post } = setup(9, createAppQueryClient(redirect))
+  const read = get.getMockImplementation()
+  if (!read) throw new Error('Diagnostic GET fixture is missing')
+  get.mockImplementation(async (url: string) => {
+    if (url === `${endpoint}/runs`) throw { response: { status: 500 } }
+    return read(url)
+  })
+  await user.click(screen.getByRole('button', { name: 'Key diagnostic' }))
+  expect(await screen.findByDisplayValue('Personal · group-a')).toBeDisabled()
+  await user.click(screen.getByText('Recent tests'))
+  expect(await screen.findByText('Could not load recent tests.')).toBeVisible()
+  expect(screen.getByRole('dialog', { name: 'Key diagnostic' })).toBeVisible()
+  expect(redirect).not.toHaveBeenCalled()
+  expect(post).not.toHaveBeenCalled()
+})
+
+test('keeps a saved test detail HTTP 500 in the dialog and checks the same ID again by GET', async () => {
+  const redirect = vi.fn()
+  const { user, get, post, runs } = setup(9, createAppQueryClient(redirect))
+  runs.set(testID, {
+    id: testID,
+    token_id: 9,
+    model: 'saved-chat-model',
+    question: 'pelican-svg-v2',
+    status: 'completed',
+    billing: { scope: 'generation', status: 'unconfirmed' },
+  })
+  const read = get.getMockImplementation()
+  if (!read) throw new Error('Diagnostic GET fixture is missing')
+  let failed = false
+  get.mockImplementation(async (url: string) => {
+    if (url === testRunURL && !failed) {
+      failed = true
+      throw { response: { status: 500 } }
+    }
+    return read(url)
+  })
+
+  await user.click(screen.getByRole('button', { name: 'Key diagnostic' }))
+  await user.click(screen.getByText('Recent tests'))
+  await user.click(
+    await screen.findByRole('button', { name: /saved-chat-model/ })
+  )
+  expect(
+    await screen.findByText(/Submission could not be confirmed/)
+  ).toBeVisible()
+  expect(screen.getByText(testID, { exact: false })).toBeVisible()
+  expect(redirect).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('button', { name: 'Check result' }))
+  await waitFor(() =>
+    expect(
+      screen.queryByText(/Submission could not be confirmed/)
+    ).not.toBeInTheDocument()
+  )
+  expect(get.mock.calls.filter(([url]) => url === testRunURL)).toHaveLength(2)
+  expect(redirect).not.toHaveBeenCalled()
   expect(post).not.toHaveBeenCalled()
 })
 

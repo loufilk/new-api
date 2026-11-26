@@ -26,7 +26,7 @@ import {
   getGuideGroup,
   orderedGuides,
 } from '../../content/nav'
-import { getDocHeadings } from '../doc-headings'
+import { getDocHeadings, getDocSections } from '../doc-headings'
 import { searchDocs } from '../docs-search'
 
 const existingSlugs = [
@@ -111,5 +111,57 @@ describe('public documentation corpus', () => {
       { id: 'section-设置', label: '设置', depth: 3 },
       { id: 'section-配置-2', label: '配置', depth: 2 },
     ])
+  })
+
+  it('ranks precise matching sections and only returns existing authored anchors', () => {
+    expect(searchDocs('状态码速查')[0]).toMatchObject({
+      type: 'guide',
+      id: 'troubleshooting',
+      sectionId: 'section-状态码速查',
+      title: '状态码速查',
+    })
+    expect(
+      searchDocs('４０１').some(
+        (result) =>
+          result.type === 'guide' && result.sectionId === 'section-状态码速查'
+      )
+    ).toBe(true)
+
+    for (const query of ['401', '原生 MIME', 'workbuddy 配置', '流式']) {
+      for (const result of searchDocs(query)) {
+        if (result.type !== 'guide' || !result.sectionId) continue
+        const guide = getGuide(result.id)
+        expect(guide).toBeDefined()
+        expect(
+          getDocHeadings(guide?.body ?? '').some(
+            (heading) => heading.id === result.sectionId
+          )
+        ).toBe(true)
+      }
+    }
+  })
+
+  it('keeps section body boundaries and duplicate anchor suffixes', () => {
+    const sections = getDocSections(
+      [
+        'Intro (not a section)',
+        '## 配置',
+        'First section',
+        '',
+        '```sh',
+        '## not a heading',
+        '```',
+        '',
+        '### 配置',
+        'Second section',
+      ].join('\n')
+    )
+    expect(sections.map(({ id, depth }) => ({ id, depth }))).toEqual([
+      { id: 'section-配置', depth: 2 },
+      { id: 'section-配置-2', depth: 3 },
+    ])
+    expect(sections[0]?.body).toContain('## not a heading')
+    expect(sections[0]?.body).not.toContain('Second section')
+    expect(sections[1]?.body).not.toContain('Intro')
   })
 })

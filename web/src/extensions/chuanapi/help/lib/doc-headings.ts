@@ -24,28 +24,46 @@ export interface DocHeading {
   depth: 2 | 3
 }
 
-export function getDocHeadings(markdown: string): readonly DocHeading[] {
+export interface DocSection extends DocHeading {
+  body: string
+}
+
+/** Keep matching text and rendered anchor IDs derived from the same lexer. */
+export function getDocSections(markdown: string): readonly DocSection[] {
+  const sections: DocSection[] = []
   const used = new Set<string>()
-  return Lexer.lex(markdown).flatMap((token) => {
-    if (token.type !== 'heading' || (token.depth !== 2 && token.depth !== 3)) {
-      return []
+  let active: DocSection | undefined
+  for (const token of Lexer.lex(markdown)) {
+    if (token.type === 'heading' && (token.depth === 2 || token.depth === 3)) {
+      const label = token.text
+        .replaceAll(/\[([^\]]+)\]\([^)]+\)/gu, '$1')
+        .replaceAll(/[*_`~]/gu, '')
+      const stem = label
+        .normalize('NFKC')
+        .toLowerCase()
+        .replaceAll(/[^\p{L}\p{N}]+/gu, '-')
+        .replaceAll(/^-|-$/gu, '')
+      const base = `section-${stem || 'heading'}`
+      let id = base
+      let sequence = 2
+      while (used.has(id)) {
+        id = `${base}-${sequence}`
+        sequence += 1
+      }
+      used.add(id)
+      active = { id, label, depth: token.depth, body: '' }
+      sections.push(active)
+    } else if (active) {
+      active.body += token.raw
     }
-    const label = token.text
-      .replaceAll(/\[([^\]]+)\]\([^)]+\)/gu, '$1')
-      .replaceAll(/[*_`~]/gu, '')
-    const stem = label
-      .normalize('NFKC')
-      .toLowerCase()
-      .replaceAll(/[^\p{L}\p{N}]+/gu, '-')
-      .replaceAll(/^-|-$/gu, '')
-    const base = `section-${stem || 'heading'}`
-    let id = base
-    let sequence = 2
-    while (used.has(id)) {
-      id = `${base}-${sequence}`
-      sequence += 1
-    }
-    used.add(id)
-    return [{ id, label, depth: token.depth }]
-  })
+  }
+  return sections
+}
+
+export function getDocHeadings(markdown: string): readonly DocHeading[] {
+  return getDocSections(markdown).map(({ id, label, depth }) => ({
+    id,
+    label,
+    depth,
+  }))
 }

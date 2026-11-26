@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useNavigate } from '@tanstack/react-router'
-import { Search } from 'lucide-react'
+import { Search, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -30,6 +30,7 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command'
+import { DialogClose } from '@/components/ui/dialog'
 
 import { searchDocs, type DocsSearchResult } from '../lib/docs-search'
 
@@ -67,7 +68,11 @@ export function DocsSearch() {
       void navigate({ to: '/help/api', search: { endpoint: result.id } })
       return
     }
-    void navigate({ to: '/help/guides/$slug', params: { slug: result.id } })
+    void navigate({
+      to: '/help/guides/$slug',
+      params: { slug: result.id },
+      hash: result.sectionId ?? '',
+    })
   }
 
   return (
@@ -86,10 +91,10 @@ export function DocsSearch() {
         open={open}
         onOpenChange={changeOpen}
         title={t('Search documentation')}
+        className='[&_[data-slot=command-input-wrapper]]:pr-9'
       >
-        <Command shouldFilter={false}>
+        <Command label={t('Search documentation')} shouldFilter={false}>
           <CommandInput
-            aria-label={t('Search documentation')}
             placeholder={t('Search documentation')}
             value={query}
             onValueChange={setQuery}
@@ -103,21 +108,40 @@ export function DocsSearch() {
             {query.trim() && (
               <CommandEmpty>{t('No results found.')}</CommandEmpty>
             )}
-            {searchDocs(query).map((result) => (
-              <CommandItem
-                key={`${result.type}:${result.id}`}
-                value={`${result.type}:${result.id}`}
-                onSelect={() => selectResult(result)}
-                className='flex-col items-start gap-0.5'
-              >
-                <span className='font-medium'>{result.title}</span>
-                <span className='text-muted-foreground text-xs'>
-                  {result.description}
-                </span>
-              </CommandItem>
-            ))}
+            {searchDocs(query).map((result) => {
+              const key =
+                result.type === 'guide' && result.sectionId
+                  ? `guide:${result.id}:${result.sectionId}`
+                  : `${result.type}:${result.id}`
+              return (
+                <CommandItem
+                  key={key}
+                  value={key}
+                  onSelect={() => selectResult(result)}
+                  className='flex-col items-start gap-0.5'
+                >
+                  <span className='font-medium'>{result.title}</span>
+                  <span className='text-muted-foreground text-xs'>
+                    {result.description}
+                  </span>
+                </CommandItem>
+              )
+            })}
           </CommandList>
         </Command>
+        <DialogClose
+          aria-label={t('Close')}
+          render={
+            <Button
+              type='button'
+              variant='ghost'
+              size='icon-sm'
+              className='absolute top-2 right-2'
+            />
+          }
+        >
+          <X aria-hidden='true' />
+        </DialogClose>
       </CommandDialog>
     </>
   )

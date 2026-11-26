@@ -63,6 +63,12 @@ import {
 import { useApiKeys } from './api-keys-provider'
 import { KeyDiagnosticResult } from './key-diagnostic-result'
 
+// The dialog presents failures for its reads in place, including HTTP 500.
+const diagnosticReadMeta = {
+  errorToast: false,
+  redirectOnInternalServerError: false,
+}
+
 const routingLabels = {
   auto: 'Automatic',
   success_rate: 'Success rate first',
@@ -112,6 +118,36 @@ function KeyRouting({
         t('Group not available')
       )}
     </p>
+  )
+}
+
+function DiagnosticSetupError(props: {
+  message: string
+  retrying: boolean
+  onRetry: () => void
+}) {
+  const { t } = useTranslation()
+  const errorId = useId()
+  return (
+    <div className='flex flex-wrap items-center gap-x-3 gap-y-2'>
+      <p
+        id={errorId}
+        role='alert'
+        className='text-destructive min-w-0 flex-1 basis-48 text-sm'
+      >
+        {props.message}
+      </p>
+      <Button
+        type='button'
+        variant='outline'
+        size='sm'
+        aria-describedby={errorId}
+        disabled={props.retrying}
+        onClick={props.onRetry}
+      >
+        {t('Retry')}
+      </Button>
+    </div>
   )
 }
 
@@ -214,7 +250,7 @@ function KeyDiagnosticDialog(
     staleTime: 0,
     gcTime: 0,
     retry: false,
-    meta: { errorToast: false },
+    meta: diagnosticReadMeta,
   })
   const selected = options.data?.keys.find((key) => key.id === tokenId)
   const models = useQuery({
@@ -225,7 +261,7 @@ function KeyDiagnosticDialog(
     gcTime: 0,
     retry: false,
     refetchOnWindowFocus: false,
-    meta: { errorToast: false },
+    meta: diagnosticReadMeta,
   })
   const question = options.data?.questions.find(
     (item) => item.id === questionId
@@ -242,7 +278,7 @@ function KeyDiagnosticDialog(
     queryFn: ({ signal }) => readDiagnosticHistory(signal),
     retry: false,
     gcTime: 0,
-    meta: { errorToast: false },
+    meta: diagnosticReadMeta,
   })
   function hasConsentSession() {
     const auth = useAuthStore.getState().auth
@@ -309,7 +345,7 @@ function KeyDiagnosticDialog(
       }
       return Math.min(2500 * 2 ** (state.errorUpdateCount - 1), 10000)
     },
-    meta: { errorToast: false },
+    meta: diagnosticReadMeta,
   })
   const found =
     detail.data ??
@@ -586,9 +622,15 @@ function KeyDiagnosticDialog(
             <LoadingState inline message={t('Loading...')} />
           )}
           {options.isError && (
-            <p role='alert' className='text-destructive text-sm'>
-              {t('Could not load test options.')}
-            </p>
+            <DiagnosticSetupError
+              message={t('Could not load test options.')}
+              retrying={options.isFetching}
+              onRetry={() => {
+                setSelection(null)
+                setApproved(false)
+                void options.refetch({ cancelRefetch: false })
+              }}
+            />
           )}
           {options.data && (
             <>
@@ -680,9 +722,15 @@ function KeyDiagnosticDialog(
                   <LoadingState inline message={t('Loading...')} />
                 )}
                 {selected && models.isError && (
-                  <p role='alert' className='text-destructive text-sm'>
-                    {t('Could not load models for this key.')}
-                  </p>
+                  <DiagnosticSetupError
+                    message={t('Could not load models for this key.')}
+                    retrying={models.isFetching}
+                    onRetry={() => {
+                      setSelection(null)
+                      setApproved(false)
+                      void models.refetch({ cancelRefetch: false })
+                    }}
+                  />
                 )}
                 {selected && models.data?.length === 0 && (
                   <p className='text-muted-foreground text-sm'>
