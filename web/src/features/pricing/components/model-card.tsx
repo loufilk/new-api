@@ -400,59 +400,57 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
             </span>
           )}
         </div>
-        {(groups.length > 0 || endpoints.length > 0) && (
-          <dl
-            className={cn(
-              'grid min-w-0 grid-cols-2 gap-3 text-sm',
-              (groups.length === 0 || endpoints.length === 0) && 'grid-cols-1'
-            )}
-          >
-            {groups.length > 0 && (
-              <div className='flex min-w-0 items-baseline gap-1.5'>
-                <dt className='text-muted-foreground shrink-0'>
-                  {t('Groups')}
-                </dt>
-                <dd className='flex min-w-0 items-baseline gap-1'>
-                  <MarketGroupIcon
-                    meta={props.model.group_catalog?.[groupKeys[0]]}
-                    size={14}
-                  />
-                  <span className='truncate' title={groups.join(', ')}>
-                    {groups[0]}
+        <dl
+          className={cn(
+            'grid min-w-0 grid-cols-2 gap-3 text-sm',
+            groups.length === 0 && 'grid-cols-1'
+          )}
+        >
+          {groups.length > 0 && (
+            <div className='flex min-w-0 items-baseline gap-1.5'>
+              <dt className='text-muted-foreground shrink-0'>
+                {props.model.group_keys_are_display_only
+                  ? t('Pricing tiers')
+                  : t('Groups')}
+              </dt>
+              <dd className='flex min-w-0 items-baseline gap-1'>
+                <MarketGroupIcon
+                  meta={props.model.group_catalog?.[groupKeys[0]]}
+                  size={14}
+                />
+                <span className='truncate' title={groups.join(', ')}>
+                  {groups[0]}
+                </span>
+                {groups.length > 1 && (
+                  <span
+                    className='text-muted-foreground shrink-0'
+                    title={groups.slice(1).join(', ')}
+                  >
+                    +{groups.length - 1}
                   </span>
-                  {groups.length > 1 && (
-                    <span
-                      className='text-muted-foreground shrink-0'
-                      title={groups.slice(1).join(', ')}
-                    >
-                      +{groups.length - 1}
-                    </span>
-                  )}
-                </dd>
-              </div>
-            )}
-            {endpoints.length > 0 && (
-              <div className='flex min-w-0 items-baseline gap-1.5'>
-                <dt className='text-muted-foreground shrink-0'>
-                  {t('Endpoints')}
-                </dt>
-                <dd className='flex min-w-0 items-baseline gap-1'>
-                  <span className='truncate' title={endpoints.join(', ')}>
-                    {endpoints.slice(0, 2).join(', ')}
-                  </span>
-                  {endpoints.length > 2 && (
-                    <span
-                      className='text-muted-foreground shrink-0'
-                      title={endpoints.slice(2).join(', ')}
-                    >
-                      +{endpoints.length - 2}
-                    </span>
-                  )}
-                </dd>
-              </div>
-            )}
-          </dl>
-        )}
+                )}
+              </dd>
+            </div>
+          )}
+          <div className='flex min-w-0 items-baseline gap-1.5'>
+            <dt className='text-muted-foreground shrink-0'>{t('Endpoints')}</dt>
+            <dd className='flex min-w-0 items-baseline gap-1'>
+              <span className='truncate' title={endpoints.join(', ')}>
+                {endpoints.length
+                  ? endpoints.slice(0, 2).join(', ')
+                  : t('Not confirmed')}
+              </span>
+              {endpoints.length > 2 && (
+                <span
+                  className='text-muted-foreground shrink-0'
+                  title={endpoints.slice(2).join(', ')}
+                >
+                  +{endpoints.length - 2}
+                </span>
+              )}
+            </dd>
+          </div>
+        </dl>
         {props.endpointMap && (
           <ModelApiActions
             model={props.model}

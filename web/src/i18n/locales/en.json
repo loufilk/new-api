@@ -1,5 +1,11 @@
 {
   "translation": {
+    "Show the channel status link in the header.": "Show the channel status link in the header.",
+    "Only publicly configured monitors are shown. Sign in for the status of your groups.": "Only publicly configured monitors are shown. Sign in for the status of your groups.",
+    "Unable to load public monitoring data.": "Unable to load public monitoring data.",
+    "No public monitoring data": "No public monitoring data",
+    "Showing the last reported status.": "Showing the last reported status.",
+    "View my group status": "View my group status",
     "Channel status": "Channel status",
     "Lowest multiplier": "Lowest multiplier",
     "Highest success rate": "Highest success rate",

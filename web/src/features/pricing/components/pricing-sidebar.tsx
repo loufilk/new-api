@@ -36,12 +36,8 @@ import {
   getRecentGroupActivity,
   type RecentGroupActivity,
 } from '../lib/group-market-activity'
-import {
-  groupPlatform,
-  marketGroupLabel,
-  MARKET_PLATFORMS,
-  type MarketPlatform,
-} from '../lib/market-groups'
+import { marketFacets } from '../lib/market-facets'
+import { marketGroupLabel } from '../lib/market-groups'
 import { getModelEndpointTypes } from '../lib/model-endpoints'
 import type {
   PricingModel,
@@ -174,6 +170,8 @@ function FilterRow(props: {
 }
 
 export interface PricingSidebarProps {
+  facets?: ReturnType<typeof marketFacets>
+  displayTiers?: boolean
   platform: string
   quotaTypeFilter: string
   endpointTypeFilter: string
@@ -194,13 +192,32 @@ export const PricingSidebar = memo(function PricingSidebar(
 ) {
   const { t } = useTranslation()
   const compact = useMediaQuery('(max-width: 639px)')
+  const facets = useMemo(
+    () =>
+      props.facets ??
+      marketFacets(
+        props.models,
+        props.groups,
+        props.groupCatalog,
+        props.platform,
+        props.displayTiers ?? false
+      ),
+    [
+      props.facets,
+      props.models,
+      props.groups,
+      props.groupCatalog,
+      props.platform,
+      props.displayTiers,
+    ]
+  )
   const counts = useMemo(() => {
     const endpoints = new Map<string, number>()
     const quotas = { token: 0, request: 0, task: 0 }
     const groupModels =
       props.groupFilter === FILTER_ALL
-        ? props.models
-        : props.models.filter((model) =>
+        ? facets.visibleModels
+        : facets.visibleModels.filter((model) =>
             model.enable_groups.includes(props.groupFilter)
           )
     for (const model of groupModels) {
@@ -213,45 +230,24 @@ export const PricingSidebar = memo(function PricingSidebar(
       if (quota) quotas[quota]++
     }
     return { endpoints, quotas, total: groupModels.length }
-  }, [props.models, props.groupFilter])
-  const platformCounts = useMemo(() => {
-    const counts = new Map<MarketPlatform, number>()
-    for (const group of props.groups) {
-      const key = groupPlatform(props.groupCatalog?.[group])
-      counts.set(key, (counts.get(key) ?? 0) + 1)
-    }
-    return counts
-  }, [props.groups, props.groupCatalog])
+  }, [facets.visibleModels, props.groupFilter])
   const all = (suffix?: number): Option => ({
     value: FILTER_ALL,
     label: t('All'),
     suffix,
   })
   const platformOptions = [
-    all(props.groups.length),
-    ...Object.entries(MARKET_PLATFORMS).flatMap(([key, label]) => {
-      const value = key as MarketPlatform
-      const count = platformCounts.get(value)
-      return count
-        ? [
-            {
-              value,
-              label: value === 'other' ? t('Other') : label,
-              leading: <MarketGroupIcon platform={value} />,
-              suffix: count,
-            },
-          ]
-        : []
-    }),
+    all(props.displayTiers ? props.models.length : props.groups.length),
+    ...facets.options.map((option) => ({
+      value: option.key,
+      label: option.key === 'other' ? t('Other') : option.label,
+      leading: <MarketGroupIcon brandIcon={option.icon} />,
+      suffix: option.count,
+    })),
   ]
   const groupOptions = [
     all(),
-    ...props.groups
-      .filter(
-        (group) =>
-          props.platform === FILTER_ALL ||
-          props.platform === groupPlatform(props.groupCatalog?.[group])
-      )
+    ...[...facets.visibleGroups]
       .sort(
         (a, b) =>
           (props.groupCatalog?.[a]?.sort_order ?? 0) -
@@ -272,7 +268,7 @@ export const PricingSidebar = memo(function PricingSidebar(
             ...(meta?.exclusive ? [t('Exclusive')] : []),
             ...groupCatalogBadgeLabels(meta?.badges).map((label) => t(label)),
           ],
-          suffix: ratio == null ? undefined : `×${ratio}`,
+          suffix: ratio == null || props.displayTiers ? undefined : `×${ratio}`,
           leading: (
             <>
               <MarketGroupIcon meta={meta} />
@@ -317,14 +313,16 @@ export const PricingSidebar = memo(function PricingSidebar(
       <div className='divide-border/60 divide-y'>
         <FilterRow
           title={t('Platform')}
-          description={t('Available group counts')}
+          description={
+            props.displayTiers ? t('Models') : t('Available group counts')
+          }
           value={props.platform}
           options={platformOptions}
           onChange={props.onPlatformChange}
         />
         <FilterRow
           key={props.platform}
-          title={t('Group')}
+          title={props.displayTiers ? t('Pricing tiers') : t('Group')}
           collapsible={compact}
           value={props.groupFilter}
           options={groupOptions}

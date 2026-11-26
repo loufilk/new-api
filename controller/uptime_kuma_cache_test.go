@@ -75,3 +75,25 @@ func TestUptimeKumaRejectsOversizedRemoteResponse(t *testing.T) {
 	var dest map[string]any
 	require.ErrorContains(t, getAndDecode(t.Context(), server.Client(), server.URL, &dest), "exceeds limit")
 }
+
+func TestPublicUptimeUsesLatestHeartbeatForPublishedMonitorsOnly(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status-page/published":
+			_, _ = fmt.Fprint(w, `{"publicGroupList":[{"name":"Visible","monitorList":[{"id":1,"name":"Recovered"},{"id":2,"name":"Now down"},{"id":3,"name":"No heartbeat"},{"id":4,"name":"Incomplete"}]}]}`)
+		case "/api/status-page/heartbeat/published":
+			_, _ = fmt.Fprint(w, `{"heartbeatList":{"1":[{"status":0},{"status":1}],"2":[{"status":1},{"status":0}],"4":[{"status":1},{}],"5":[{"status":1}]}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	result := fetchGroupData(t.Context(), server.Client(), map[string]any{"url": server.URL, "slug": "published", "categoryName": "Public"})
+	require.Equal(t, "ready", result.State)
+	assert.Equal(t, []Monitor{
+		{Name: "Recovered", Group: "Visible", Status: 1},
+		{Name: "Now down", Group: "Visible", Status: 0},
+		{Name: "No heartbeat", Group: "Visible", Status: -1},
+		{Name: "Incomplete", Group: "Visible", Status: -1},
+	}, result.Monitors)
+}

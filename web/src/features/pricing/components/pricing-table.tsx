@@ -65,6 +65,7 @@ export function PricingTable(props: PricingTableProps) {
   })
 
   const columns = usePricingColumns({
+    displayTiers: models[0]?.group_keys_are_display_only,
     tokenUnit,
     priceRate,
     usdExchangeRate,

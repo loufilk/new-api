@@ -47,6 +47,7 @@ export function Pricing() {
     models,
     groupCatalog,
     groupMarketActivity,
+    displayTiers,
     scope,
     error,
     refetch,
@@ -69,6 +70,7 @@ export function Pricing() {
   )
 
   const {
+    facets,
     platform,
     platformPriceGroups,
     setPlatform,
@@ -92,7 +94,14 @@ export function Pricing() {
     hasActiveFilters,
     clearFilters,
     clearSearch,
-  } = useFilters(models, groupCatalog, scope, availableGroups, modelOrder)
+  } = useFilters(
+    models,
+    groupCatalog,
+    scope,
+    availableGroups,
+    modelOrder,
+    displayTiers
+  )
 
   const handleModelClick = useCallback((modelName: string) => {
     setSelectedModelName(modelName)
@@ -101,11 +110,11 @@ export function Pricing() {
   const selectedModel = useMemo(
     () =>
       selectedModelName
-        ? (models || []).find(
+        ? facets.visibleModels.find(
             (model) => model.model_name === selectedModelName
           ) || null
         : null,
-    [models, selectedModelName]
+    [facets.visibleModels, selectedModelName]
   )
 
   const renderPricingContent = () => {
@@ -199,6 +208,8 @@ export function Pricing() {
         </header>
         <main className='min-w-0 space-y-5'>
           <PricingSidebar
+            facets={facets}
+            displayTiers={displayTiers}
             platform={platform}
             onPlatformChange={setPlatform}
             groups={availableGroups}

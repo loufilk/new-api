@@ -1,5 +1,11 @@
 {
   "translation": {
+    "Show the channel status link in the header.": "Afficher le lien vers l’état des canaux dans la barre de navigation.",
+    "Only publicly configured monitors are shown. Sign in for the status of your groups.": "Seuls les services surveillés publiquement sont affichés. Connectez-vous pour voir l’état de vos groupes.",
+    "Unable to load public monitoring data.": "Impossible de charger les données de surveillance publiques.",
+    "No public monitoring data": "Aucune donnée de surveillance publique",
+    "Showing the last reported status.": "Dernier état signalé.",
+    "View my group status": "Voir l’état de mes groupes",
     "Channel status": "État des canaux",
     "Lowest multiplier": "Multiplicateur le plus bas",
     "Highest success rate": "Meilleur taux de réussite",

@@ -139,6 +139,8 @@ export type ModelCapability =
   | 'embeddings'
 
 export interface MarketGroup {
+  /** Locally derived from unanimous public model-brand metadata, never a route identity. */
+  public_tier_icon?: string
   label?: string
   description?: string
   platform?: string

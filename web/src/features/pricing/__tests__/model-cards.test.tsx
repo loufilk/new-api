@@ -289,7 +289,7 @@ describe('model cards', () => {
     ).toBeVisible()
   })
 
-  it('omits metadata fields when the model has no groups, endpoints or tags', () => {
+  it('omits empty groups and tags but distinguishes unconfirmed protocols from unsupported', () => {
     render(
       <ModelCard
         model={pricingModel({ enable_groups: [] })}
@@ -297,7 +297,8 @@ describe('model cards', () => {
       />
     )
     expect(screen.queryByText('Groups')).not.toBeInTheDocument()
-    expect(screen.queryByText('Endpoints')).not.toBeInTheDocument()
+    expect(screen.getByText('Endpoints')).toBeVisible()
+    expect(screen.getByText('Not confirmed')).toBeVisible()
     expect(
       screen.queryByRole('group', { name: 'Tags' })
     ).not.toBeInTheDocument()

@@ -25,6 +25,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { getPricing, getPublicPricing } from '../api'
 import { projectMarketActivity } from '../lib/group-market-activity'
+import { publicTierCatalog, publicModelBrand } from '../lib/market-facets'
 
 // Project private per-group details onto this model's already authorized groups.
 // Absence is meaningful (public response or no configured value), not zero.
@@ -90,12 +91,14 @@ export function usePricingData(enabled = true) {
     [data, isAuthenticated]
   )
 
-  const models = useMemo(() => {
-    if (!data?.data) return []
+  const displayTiers =
+    !isAuthenticated || data?.group_keys_are_display_only === true
+  const catalog = useMemo(() => {
+    if (!data?.data) return { models: [], groupCatalog: undefined }
 
     const vendorMap = new Map((data.vendors ?? []).map((v) => [v.id, v]))
 
-    return data.data.map((model) => {
+    const rows = data.data.map((model) => {
       const vendor = model.vendor_id
         ? vendorMap.get(model.vendor_id)
         : undefined
@@ -106,7 +109,6 @@ export function usePricingData(enabled = true) {
         vendor_icon: vendor?.icon,
         vendor_description: vendor?.description,
         group_ratio: data.group_ratio,
-        group_catalog: data.group_catalog,
         group_market_activity: modelGroupDetails(
           groupMarketActivity,
           model.enable_groups ?? [],
@@ -130,10 +132,22 @@ export function usePricingData(enabled = true) {
           !isAuthenticated || data.group_keys_are_display_only,
       }
     })
-  }, [data, isAuthenticated, groupMarketActivity])
+    const groupCatalog = displayTiers
+      ? publicTierCatalog(rows, data.group_ratio ?? {})
+      : data.group_catalog
+    const models = rows.map((row) => ({
+      ...row,
+      group_catalog: groupCatalog,
+      vendor_icon:
+        row.vendor_icon ||
+        (displayTiers ? publicModelBrand(row).icon || undefined : undefined),
+    }))
+    return { models, groupCatalog }
+  }, [data, isAuthenticated, groupMarketActivity, displayTiers])
 
   return {
-    models,
+    models: catalog.models,
+    displayTiers,
     vendors: data?.vendors ?? [],
     groupRatio: data?.group_ratio ?? {},
     usableGroup: data?.usable_group ?? {},
@@ -141,7 +155,7 @@ export function usePricingData(enabled = true) {
     autoGroups: data?.auto_groups ?? [],
     modelOrder: data?.model_order,
     isLoading: isLoading || !identityResolved,
-    groupCatalog: data?.group_catalog,
+    groupCatalog: catalog.groupCatalog,
     groupMarketActivity,
     scope: isAuthenticated ? `user:${userID}:${sessionSID ?? ''}` : 'public',
     error,

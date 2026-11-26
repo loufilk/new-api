@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
@@ -92,12 +93,10 @@ func GetPricing(c *gin.Context) {
 	}
 	autoGroups := service.GetUserAutoGroup(user.Group)
 	vendorIDs := make(map[int]struct{})
-	visibleEndpoints := make(map[string]struct{})
+	visibleEndpoints := make(map[string][]constant.EndpointType, len(pricing))
 	for _, row := range pricing {
 		vendorIDs[row.VendorID] = struct{}{}
-		for _, endpoint := range row.SupportedEndpointTypes {
-			visibleEndpoints[string(endpoint)] = struct{}{}
-		}
+		visibleEndpoints[row.ModelName] = row.SupportedEndpointTypes
 	}
 	vendors := make([]model.PricingVendor, 0)
 	for _, vendor := range snapshot.Vendors {
@@ -105,12 +104,7 @@ func GetPricing(c *gin.Context) {
 			vendors = append(vendors, vendor)
 		}
 	}
-	endpoints := make(map[string]common.EndpointInfo)
-	for endpoint, info := range snapshot.Endpoints {
-		if _, ok := visibleEndpoints[endpoint]; ok {
-			endpoints[endpoint] = info
-		}
-	}
+	endpoints := snapshot.ProjectEndpointPaths(visibleEndpoints)
 	rateLimits := pricingRateLimits(groups)
 	activityScopes := make(map[string]bool)
 pricedModels:

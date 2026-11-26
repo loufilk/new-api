@@ -31,6 +31,7 @@ import { Route as AuthenticatedPartnerApplyRouteImport } from './routes/_authent
 import { Route as AuthenticatedSystemSettingsRouteRouteImport } from './routes/_authenticated/system-settings/route'
 import { Route as AboutIndexRouteImport } from './routes/about/index'
 import { Route as AgentPayPublicIDRouteImport } from './routes/agent-pay/$publicID'
+import { Route as HealthIndexRouteImport } from './routes/health/index'
 import { Route as HelpIndexRouteImport } from './routes/help/index'
 import { Route as ModelMonitorIndexRouteImport } from './routes/model-monitor/index'
 import { Route as OauthProviderRouteImport } from './routes/oauth/$provider'
@@ -202,6 +203,11 @@ const AboutIndexRoute = AboutIndexRouteImport.update({
 const AgentPayPublicIDRoute = AgentPayPublicIDRouteImport.update({
   id: '/agent-pay/$publicID',
   path: '/agent-pay/$publicID',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HealthIndexRoute = HealthIndexRouteImport.update({
+  id: '/health/',
+  path: '/health/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HelpIndexRoute = HelpIndexRouteImport.update({
@@ -586,6 +592,7 @@ export interface FileRoutesByFullPath {
   '/agent-pay/$publicID': typeof AgentPayPublicIDRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
+  '/health/': typeof HealthIndexRoute
   '/help/': typeof HelpIndexRoute
   '/model-monitor/': typeof ModelMonitorIndexRoute
   '/pricing/': typeof PricingIndexRoute
@@ -669,6 +676,7 @@ export interface FileRoutesByTo {
   '/agent-pay/$publicID': typeof AgentPayPublicIDRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about': typeof AboutIndexRoute
+  '/health': typeof HealthIndexRoute
   '/help': typeof HelpIndexRoute
   '/model-monitor': typeof ModelMonitorIndexRoute
   '/pricing': typeof PricingIndexRoute
@@ -756,6 +764,7 @@ export interface FileRoutesById {
   '/agent-pay/$publicID': typeof AgentPayPublicIDRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
+  '/health/': typeof HealthIndexRoute
   '/help/': typeof HelpIndexRoute
   '/model-monitor/': typeof ModelMonitorIndexRoute
   '/pricing/': typeof PricingIndexRoute
@@ -842,6 +851,7 @@ export interface FileRouteTypes {
     | '/agent-pay/$publicID'
     | '/oauth/$provider'
     | '/about/'
+    | '/health/'
     | '/help/'
     | '/model-monitor/'
     | '/pricing/'
@@ -925,6 +935,7 @@ export interface FileRouteTypes {
     | '/agent-pay/$publicID'
     | '/oauth/$provider'
     | '/about'
+    | '/health'
     | '/help'
     | '/model-monitor'
     | '/pricing'
@@ -1011,6 +1022,7 @@ export interface FileRouteTypes {
     | '/agent-pay/$publicID'
     | '/oauth/$provider'
     | '/about/'
+    | '/health/'
     | '/help/'
     | '/model-monitor/'
     | '/pricing/'
@@ -1088,6 +1100,7 @@ export interface RootRouteChildren {
   AgentPayPublicIDRoute: typeof AgentPayPublicIDRoute
   OauthProviderRoute: typeof OauthProviderRoute
   AboutIndexRoute: typeof AboutIndexRoute
+  HealthIndexRoute: typeof HealthIndexRoute
   HelpIndexRoute: typeof HelpIndexRoute
   ModelMonitorIndexRoute: typeof ModelMonitorIndexRoute
   PricingIndexRoute: typeof PricingIndexRoute
@@ -1252,6 +1265,13 @@ declare module '@tanstack/react-router' {
       path: '/agent-pay/$publicID'
       fullPath: '/agent-pay/$publicID'
       preLoaderRoute: typeof AgentPayPublicIDRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/health/': {
+      id: '/health/'
+      path: '/health'
+      fullPath: '/health/'
+      preLoaderRoute: typeof HealthIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/help/': {
@@ -1890,6 +1910,7 @@ const rootRouteChildren: RootRouteChildren = {
   AgentPayPublicIDRoute: AgentPayPublicIDRoute,
   OauthProviderRoute: OauthProviderRoute,
   AboutIndexRoute: AboutIndexRoute,
+  HealthIndexRoute: HealthIndexRoute,
   HelpIndexRoute: HelpIndexRoute,
   ModelMonitorIndexRoute: ModelMonitorIndexRoute,
   PricingIndexRoute: PricingIndexRoute,

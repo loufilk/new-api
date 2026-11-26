@@ -34,11 +34,8 @@ import {
   type ViewMode,
 } from '../constants'
 import { filterAndSortModels } from '../lib/filters'
-import {
-  activeBillingExpressions,
-  MARKET_PLATFORMS,
-  groupPlatform,
-} from '../lib/market-groups'
+import { marketFacets } from '../lib/market-facets'
+import { activeBillingExpressions } from '../lib/market-groups'
 import type { PricingSearch } from '../lib/search'
 import type {
   MarketGroupCatalog,
@@ -66,7 +63,8 @@ export function useFilters(
   groupCatalog?: MarketGroupCatalog,
   scope = 'public',
   availableGroups?: readonly string[],
-  modelOrder?: ModelOrder
+  modelOrder?: ModelOrder,
+  displayTiers = false
 ) {
   const filterState = useSearch({ from: '/pricing/' })
   const navigate = useNavigate({ from: '/pricing/' })
@@ -79,23 +77,18 @@ export function useFilters(
     select: (location) => location.state.marketGroupRef,
   })
   const selection = ref ? privateGroups.get(ref) : undefined
-  const platformKey = filterState.platform
-  const platform =
-    platformKey && Object.hasOwn(MARKET_PLATFORMS, platformKey)
-      ? platformKey
-      : FILTER_ALL
-
-  const platformPriceGroups = useMemo(
+  const facets = useMemo(
     () =>
-      platform === FILTER_ALL
-        ? undefined
-        : new Set(
-            (availableGroups ?? []).filter(
-              (group) => groupPlatform(groupCatalog?.[group]) === platform
-            )
-          ),
-    [availableGroups, groupCatalog, platform]
+      marketFacets(
+        models,
+        availableGroups ?? [],
+        groupCatalog,
+        filterState.platform,
+        displayTiers
+      ),
+    [models, availableGroups, groupCatalog, filterState.platform, displayTiers]
   )
+  const { platform, priceGroups: platformPriceGroups, visibleModels } = facets
 
   const searchInput = filterState.search || ''
   const debouncedSearchInput = useDebounce(searchInput, 200)
@@ -107,9 +100,7 @@ export function useFilters(
     selection?.scope === scope ? selection.group : filterState.group
   const groupFilter =
     selectedGroup &&
-    (!availableGroups || availableGroups.includes(selectedGroup)) &&
-    (platform === FILTER_ALL ||
-      groupPlatform(groupCatalog?.[selectedGroup]) === platform)
+    (!availableGroups || facets.visibleGroups.includes(selectedGroup))
       ? selectedGroup
       : FILTER_ALL
   const quotaTypeFilter = filterState.quotaType || QUOTA_TYPES.ALL
@@ -214,7 +205,7 @@ export function useFilters(
   const clock = useBillingTime(sortExpressions)
   const filteredModels = useMemo(
     () =>
-      filterAndSortModels(models, {
+      filterAndSortModels(visibleModels, {
         search: debouncedSearchInput,
         group: groupFilter,
         quotaType: quotaTypeFilter,
@@ -225,7 +216,7 @@ export function useFilters(
         now: clock === undefined ? undefined : new Date(clock),
       }),
     [
-      models,
+      visibleModels,
       modelOrder,
       debouncedSearchInput,
       platformPriceGroups,
@@ -261,6 +252,7 @@ export function useFilters(
   }, [updateFilters])
 
   return {
+    facets,
     platform,
     platformPriceGroups,
     setPlatform,

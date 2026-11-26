@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { Layers3 } from 'lucide-react'
 
+import { catalogIconID } from '@/lib/catalog-icon-registry'
 import { getLobeIcon } from '@/lib/lobe-icon'
 
 import {
@@ -31,6 +32,7 @@ import type { MarketGroup } from '../types'
 export function MarketGroupIcon(props: {
   meta?: MarketGroup
   platform?: MarketPlatform
+  brandIcon?: string | null
   size?: number
 }) {
   const custom = props.meta?.icon
@@ -39,6 +41,8 @@ export function MarketGroupIcon(props: {
       ? (custom as MarketPlatform)
       : (props.platform ?? groupPlatform(props.meta))
   const size = props.size ?? 15
-  const key = MARKET_PLATFORM_ICONS[platform]
+  const key =
+    catalogIconID(props.brandIcon || props.meta?.public_tier_icon) ||
+    MARKET_PLATFORM_ICONS[platform]
   return key ? getLobeIcon(key, size) : <Layers3 size={size} aria-hidden />
 }

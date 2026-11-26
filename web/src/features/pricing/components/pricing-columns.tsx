@@ -52,6 +52,7 @@ import { ModelPriceCell, type ModelPriceCellOptions } from './model-price-cell'
 // ----------------------------------------------------------------------------
 
 export type PricingColumnsOptions = ModelPriceCellOptions & {
+  displayTiers?: boolean
   onModelClick?: (name: string) => void
   endpointMap?: ModelEndpointMap
   platformPriceGroups?: ReadonlySet<string>
@@ -211,6 +212,10 @@ export function usePricingColumns(
               options.selectedGroup
             ).map((ep) => ep.type)
           : getModelEndpointTypes(row.original, options.selectedGroup)
+        if (!endpoints.length)
+          return (
+            <span className='text-muted-foreground'>{t('Not confirmed')}</span>
+          )
         return (
           <BadgeListCell
             items={endpoints.map((ep) => (
@@ -232,7 +237,7 @@ export function usePricingColumns(
     // Enable Groups column
     {
       accessorKey: 'enable_groups',
-      header: t('Groups'),
+      header: options.displayTiers ? t('Pricing tiers') : t('Groups'),
       cell: ({ row }) => {
         const groups = quotedMarketGroups(
           getMarketPriceModel(row.original, options.platformPriceGroups),

@@ -37,6 +37,7 @@ describe('model capability categories', () => {
   it('uses the chosen group for protocol search and playground actions', () => {
     const shared = model({
       output_modalities: ['text'],
+      enable_groups: ['text-group', 'other-group', 'unverified-group'],
       supported_endpoint_types: ['openai', 'anthropic'],
       supported_endpoint_types_by_group: {
         'text-group': ['openai'],
@@ -60,6 +61,7 @@ describe('model capability categories', () => {
   it('does not use another group’s audio route when checking whether the current one supports chat', () => {
     const shared = model({
       output_modalities: ['text'],
+      enable_groups: ['chat', 'transcription'],
       supported_endpoint_types: ['openai', 'audio-transcription'],
       supported_endpoint_types_by_group: {
         chat: ['openai'],

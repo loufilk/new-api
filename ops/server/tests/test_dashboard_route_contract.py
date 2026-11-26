@@ -151,11 +151,11 @@ class DashboardRouteContractTest(unittest.TestCase):
 
     def test_public_and_new_api_product_routes_remain_split(self) -> None:
         matcher_tokens = set(self.ui_matcher.split())
-        for path in ("/", "/models", "/docs"):
+        for path in ("/", "/models", "/docs", "/status"):
             self.assertNotIn(path, matcher_tokens)
             self.assertNotIn(f"{path}/*", matcher_tokens)
 
-        for path in ("/pricing", "/playground", "/image", "/model-monitor", "/account-pool", "/intelligence", "/affiliate"):
+        for path in ("/pricing", "/playground", "/image", "/health", "/channel-status", "/model-monitor", "/account-pool", "/intelligence", "/affiliate"):
             self.assertIn(path, matcher_tokens)
             self.assertIn(f"{path}/*", matcher_tokens)
 

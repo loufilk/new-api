@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
@@ -128,19 +127,12 @@ func GetPublicPricing(c *gin.Context) {
 		return
 	}
 	publicVendorIDs := make(map[int]bool)
-	publicEndpointKeys := make(map[string]bool)
+	publicEndpoints := make(map[string][]constant.EndpointType, len(catalog.Models))
 	for _, row := range catalog.Models {
 		publicVendorIDs[row.VendorID] = true
-		for _, kind := range row.SupportedEndpointTypes {
-			publicEndpointKeys[string(kind)] = true
-		}
+		publicEndpoints[row.ModelName] = row.SupportedEndpointTypes
 	}
-	endpointMap := make(map[string]common.EndpointInfo)
-	for key, info := range catalog.snapshot.Endpoints {
-		if publicEndpointKeys[key] {
-			endpointMap[key] = info
-		}
-	}
+	endpointMap := catalog.snapshot.ProjectEndpointPaths(publicEndpoints)
 	vendors := make([]gin.H, 0)
 	for _, vendor := range catalog.snapshot.Vendors {
 		if !publicVendorIDs[vendor.ID] {

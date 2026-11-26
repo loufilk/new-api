@@ -150,7 +150,7 @@ http://:8081 {
 			path /task-plugins /task-plugins/*
 			path /401 /403 /404 /500 /503
 			path /help /help/*
-			path /model-monitor /model-monitor/* /channel-status /channel-status/*
+			path /model-monitor /model-monitor/* /channel-status /channel-status/* /health /health/*
 			path /account-pool /account-pool/* /intelligence /intelligence/* /affiliate /affiliate/*
 			path /support /support/*
 			path /llms.txt /llms-full.txt

@@ -1,5 +1,11 @@
 {
   "translation": {
+    "Show the channel status link in the header.": "在顶部导航显示渠道状态入口。",
+    "Only publicly configured monitors are shown. Sign in for the status of your groups.": "仅显示管理员公开的监控项目。登录后可查看自己分组的状态。",
+    "Unable to load public monitoring data.": "无法加载公开监控数据。",
+    "No public monitoring data": "暂无公开监控数据",
+    "Showing the last reported status.": "当前显示最近一次上报的状态。",
+    "View my group status": "查看我的分组状态",
     "Channel status": "渠道状态",
     "Lowest multiplier": "倍率最低",
     "Highest success rate": "成功率最高",

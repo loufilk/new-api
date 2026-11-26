@@ -516,19 +516,26 @@ function ModelBackendProviderSection(props: {
 
   if (groups.length > 0) {
     cells.push(
-      <CatalogInfoCell key='groups' label={t('Groups')}>
+      <CatalogInfoCell
+        key='groups'
+        label={
+          model.group_keys_are_display_only ? t('Pricing tiers') : t('Groups')
+        }
+      >
         <CatalogPillList items={groups} />
       </CatalogInfoCell>
     )
   }
 
-  if (endpoints.length > 0) {
-    cells.push(
-      <CatalogInfoCell key='endpoints' label={t('Endpoints')}>
+  cells.push(
+    <CatalogInfoCell key='endpoints' label={t('Endpoints')}>
+      {endpoints.length ? (
         <CatalogPillList items={endpoints} />
-      </CatalogInfoCell>
-    )
-  }
+      ) : (
+        <CatalogTextValue>{t('Not confirmed')}</CatalogTextValue>
+      )}
+    </CatalogInfoCell>
+  )
 
   if (tags.length > 0) {
     cells.push(
@@ -925,7 +932,8 @@ function AutoGroupChain(props: { model: PricingModel; autoGroups: string[] }) {
     modelEnableGroups.includes(g)
   )
 
-  if (autoChain.length === 0) return null
+  if (props.model.group_keys_are_display_only || autoChain.length === 0)
+    return null
 
   return (
     <div className='text-muted-foreground mb-3 flex flex-wrap items-center gap-1 text-xs'>
@@ -1015,7 +1023,11 @@ function GroupPricingSection(props: GroupPricingSectionProps) {
     props.model.ordinary_price_available !== false
   return (
     <section>
-      <SectionTitle>{t('Pricing by Group')}</SectionTitle>
+      <SectionTitle>
+        {props.model.group_keys_are_display_only
+          ? t('Pricing tiers')
+          : t('Pricing by Group')}
+      </SectionTitle>
       <Tabs
         key={props.model.model_name}
         defaultValue={ordinary ? ORDINARY_PRICING_TAB : variants[0].plugin_key}
@@ -1119,7 +1131,11 @@ function ProviderGroupPricingSection(
     return (
       <section>
         {!props.hideTitle && (
-          <SectionTitle>{t('Pricing by Group')}</SectionTitle>
+          <SectionTitle>
+            {props.model.group_keys_are_display_only
+              ? t('Pricing tiers')
+              : t('Pricing by Group')}
+          </SectionTitle>
         )}
         <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
         <p className='text-muted-foreground text-sm'>
@@ -1151,7 +1167,11 @@ function ProviderGroupPricingSection(
       return (
         <section>
           {!props.hideTitle && (
-            <SectionTitle>{t('Pricing by Group')}</SectionTitle>
+            <SectionTitle>
+              {props.model.group_keys_are_display_only
+                ? t('Pricing tiers')
+                : t('Pricing by Group')}
+            </SectionTitle>
           )}
           <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
           <div className='rounded-lg border border-amber-200/70 bg-amber-50/70 p-3 dark:border-amber-500/20 dark:bg-amber-500/10'>
@@ -1214,7 +1234,11 @@ function ProviderGroupPricingSection(
     return (
       <section>
         {!props.hideTitle && (
-          <SectionTitle>{t('Pricing by Group')}</SectionTitle>
+          <SectionTitle>
+            {props.model.group_keys_are_display_only
+              ? t('Pricing tiers')
+              : t('Pricing by Group')}
+          </SectionTitle>
         )}
         <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
         <div className='space-y-3'>
@@ -1238,9 +1262,11 @@ function ProviderGroupPricingSection(
                       )}
                     />
                   </div>
-                  <span className='text-muted-foreground font-mono text-xs'>
-                    {ratio}x
-                  </span>
+                  {!props.model.group_keys_are_display_only && (
+                    <span className='text-muted-foreground font-mono text-xs'>
+                      {ratio}x
+                    </span>
+                  )}
                 </div>
                 <StaticDataTable
                   className='rounded-none border-0'
@@ -1383,7 +1409,11 @@ function ProviderGroupPricingSection(
     return (
       <section>
         {!props.hideTitle && (
-          <SectionTitle>{t('Pricing by Group')}</SectionTitle>
+          <SectionTitle>
+            {props.model.group_keys_are_display_only
+              ? t('Pricing tiers')
+              : t('Pricing by Group')}
+          </SectionTitle>
         )}
         <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
         <UnconfiguredTaskPricingNotice model={props.model} />
@@ -1414,7 +1444,13 @@ function ProviderGroupPricingSection(
 
   return (
     <section>
-      {!props.hideTitle && <SectionTitle>{t('Pricing by Group')}</SectionTitle>}
+      {!props.hideTitle && (
+        <SectionTitle>
+          {props.model.group_keys_are_display_only
+            ? t('Pricing tiers')
+            : t('Pricing by Group')}
+        </SectionTitle>
+      )}
       <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
       <StaticDataTable
         className='-mx-4 rounded-none border-0 sm:mx-0'
@@ -1425,7 +1461,9 @@ function ProviderGroupPricingSection(
         columns={[
           {
             id: 'group',
-            header: t('Group'),
+            header: props.model.group_keys_are_display_only
+              ? t('Tier')
+              : t('Group'),
             className: thClass,
             cellClassName: 'py-2.5',
             cell: (group) => (

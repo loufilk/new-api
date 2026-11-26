@@ -29,8 +29,8 @@ type PricingPluginVariant struct {
 type Pricing struct {
 	SupportedEndpointTypesByGroup map[string][]constant.EndpointType `json:"supported_endpoint_types_by_group,omitempty"`
 
-	channelEndpointsByGroup map[string][]constant.EndpointType // unscoped cache data; never serialized
-	declaredEndpoints       []constant.EndpointType            // model-level declarations, not verified group capabilities
+	channelEndpointsByGroup map[string][]constant.EndpointType            // unscoped cache data; never serialized
+	declaredEndpointInfo    map[constant.EndpointType]common.EndpointInfo // per-model declarations; never serialized
 
 	declaredImageEndpoint  bool                                 // explicit model metadata, not inferred from unrelated channels
 	BillingPluginVariants  []PricingPluginVariant               `json:"billing_plugin_variants,omitempty"`
@@ -346,8 +346,14 @@ func updatePricing() {
 	//这里使用切片而不是Set，因为一个模型可能支持多个端点类型，并且第一个端点是优先使用端点
 	modelSupportEndpointsStr := make(map[string][]string)
 	channelEndpointsByModel := make(map[string]map[string][]constant.EndpointType)
-	declaredEndpointsByModel := make(map[string][]constant.EndpointType)
 	advancedCustomConfigs := loadPricingAdvancedCustomConfigs(enableAbilities)
+
+	declaredInfoByModel := make(map[string]map[constant.EndpointType]common.EndpointInfo)
+	for name, meta := range metaMap {
+		if info := parseCatalogEndpointDeclarations(meta.Endpoints); len(info) != 0 {
+			declaredInfoByModel[name] = info
+		}
+	}
 
 	// 先根据已有能力填充原生端点
 	for _, ability := range enableAbilities {
@@ -370,10 +376,19 @@ func updatePricing() {
 		if groupEndpoints == nil {
 			groupEndpoints = []constant.EndpointType{}
 		}
-		for _, channelType := range channelTypes {
-			if !slices.Contains(groupEndpoints, channelType) {
-				groupEndpoints = append(groupEndpoints, channelType)
+		// A transparent upstream can forward several wire protocols without
+		// serving all of them for this model. Only the marketplace uses this
+		// projection: the global adapter/relay capability cache stays intact.
+		confirmedTypes := channelTypes
+		if ability.ChannelType == constant.ChannelTypeNewAPI || ability.ChannelType == constant.ChannelTypeSub2API {
+			confirmedTypes = gatewayCatalogEndpoints(channelTypes, declaredInfoByModel[ability.Model], ability.Model)
+		}
+		for _, kind := range confirmedTypes {
+			if !slices.Contains(groupEndpoints, kind) {
+				groupEndpoints = append(groupEndpoints, kind)
 			}
+		}
+		for _, channelType := range channelTypes {
 			if !common.StringsContains(endpoints, string(channelType)) {
 				endpoints = append(endpoints, string(channelType))
 			}
@@ -395,7 +410,6 @@ func updatePricing() {
 				switch v.(type) {
 				case string, map[string]any:
 					endpoints = appendPricingEndpoint(endpoints, k)
-					declaredEndpointsByModel[modelName] = append(declaredEndpointsByModel[modelName], constant.EndpointType(k))
 					if k == string(constant.EndpointTypeImageGeneration) {
 						declaredImageEndpoints[modelName] = true
 					}
@@ -460,7 +474,7 @@ func updatePricing() {
 	for model, groups := range modelGroupsMap {
 		pricing := Pricing{
 			channelEndpointsByGroup: channelEndpointsByModel[model],
-			declaredEndpoints:       declaredEndpointsByModel[model],
+			declaredEndpointInfo:    declaredInfoByModel[model],
 
 			ModelName:              model,
 			declaredImageEndpoint:  declaredImageEndpoints[model],
