@@ -1,5 +1,8 @@
 {
   "translation": {
+    "Check order status": "注文状況を確認",
+    "Order not confirmed yet. Check this request or contact support with its reference. Do not transfer again.": "注文はまだ確認できません。このリクエストを照会するか、参照番号を添えてサポートにお問い合わせください。再送金しないでください。",
+    "Recharge options changed. Review the current network and amount before creating an order.": "チャージ条件が変更されました。現在のネットワークと金額を確認してから注文してください。",
     "Only online top-ups on this site qualify for invitation rewards. USDT top-ups do not qualify.": "紹介報酬の対象はこのサイトでのオンラインチャージのみです。USDT でのチャージは対象外です。",
     "Invalid USDT recharge configuration": "USDT チャージ設定が無効です",
     "USDT recharge is unavailable": "USDT チャージを利用できません",

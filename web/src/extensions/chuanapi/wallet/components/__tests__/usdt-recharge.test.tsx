@@ -49,7 +49,8 @@ function setServer(
   enabled = true,
   history: UsdtOrder[] = [],
   detail = order,
-  optionsUnavailable = false
+  optionsUnavailable = false,
+  networks = [{ id: 'polygon', name: 'Polygon', bonus_bps: 250 }]
 ) {
   calls.get.mockImplementation(async (url: string) => {
     if (url.endsWith('/options')) {
@@ -57,12 +58,13 @@ function setServer(
       return ok({
         enabled,
         currency: 'CNY',
-        networks: enabled
-          ? [{ id: 'polygon', name: 'Polygon', bonus_bps: 250 }]
-          : [],
+        networks: enabled ? networks : [],
         min_amount: '10',
         max_amount: '200',
       })
+    }
+    if (url.includes('/order-requests/')) {
+      return ok({ idempotency_key: url.split('/').at(-1), order: detail })
     }
     if (url.endsWith('/orders')) return ok(history)
     if (url.includes('/orders/')) return ok(detail)
@@ -143,35 +145,160 @@ describe('USDT wallet rail', () => {
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
   })
 
-  test('reload after a lost response retries only the original account-scoped order request', async () => {
+  test('a request-bound pre-insert refusal refreshes options and unlocks the form', async () => {
+    calls.post.mockImplementationOnce(async (_url, draft) => {
+      setServer(false)
+      return {
+        status: 400,
+        data: {
+          success: false,
+          code: 'usdt_terms_rejected_before_insert',
+          ...draft,
+        },
+      }
+    })
+    const { user } = mount()
+    await prepare(user)
+    await user.click(
+      screen.getByRole('button', { name: 'Confirm and create order' })
+    )
+    expect(await screen.findByText(/Recharge options changed/)).toBeVisible()
+    expect(
+      screen.queryByRole('button', { name: 'Check order status' })
+    ).not.toBeInTheDocument()
+    expect(sessionStorage.getItem('wallet-usdt-unconfirmed:7')).toBeNull()
+    expect(
+      calls.get.mock.calls.filter(([url]) => url.endsWith('/options')).length
+    ).toBeGreaterThan(1)
+    expect(
+      screen.queryByRole('button', { name: 'Confirm and create order' })
+    ).not.toBeInTheDocument()
+    expect(calls.post).toHaveBeenCalledTimes(1)
+  })
+
+  test('changed terms with another available network allow a fresh, explicit review', async () => {
+    calls.post.mockImplementationOnce(async (_url, draft) => {
+      setServer(true, [], order, false, [
+        { id: 'bsc', name: 'BSC', bonus_bps: 0 },
+      ])
+      return {
+        status: 400,
+        data: {
+          success: false,
+          code: 'usdt_terms_rejected_before_insert',
+          ...draft,
+        },
+      }
+    })
+    const { user } = mount()
+    await prepare(user)
+    await user.click(
+      screen.getByRole('button', { name: 'Confirm and create order' })
+    )
+    expect(await screen.findByText(/Recharge options changed/)).toBeVisible()
+    const selector = screen.getByRole('combobox', { name: 'Payment network' })
+    expect(selector).toBeEnabled()
+    expect(selector).toHaveValue('')
+    expect(
+      within(selector).queryByRole('option', { name: 'Polygon' })
+    ).toBeNull()
+    expect(
+      within(selector).getByRole('option', { name: 'BSC (BEP-20)' })
+    ).toBeVisible()
+    expect(
+      screen.getByRole('textbox', { name: 'Recharge principal (CNY)' })
+    ).toBeEnabled()
+    expect(
+      screen.getByRole('button', { name: 'Review USDT order' })
+    ).toBeDisabled()
+    expect(calls.post).toHaveBeenCalledTimes(1)
+  })
+
+  test.each(['proxy-400', 'wrong-key', 'outside-400', 'duplicate', 'timeout'])(
+    '%s keeps the original receipt; recovery never re-posts even when lookup is inconclusive',
+    async (kind) => {
+      calls.post.mockImplementationOnce(async (_url, draft) => {
+        if (kind === 'timeout' || kind === 'duplicate') throw new Error(kind)
+        return {
+          status: kind === 'outside-400' ? 200 : 400,
+          data:
+            kind === 'proxy-400'
+              ? '<html>Bad request</html>'
+              : {
+                  success: false,
+                  code: 'usdt_terms_rejected_before_insert',
+                  ...draft,
+                  idempotency_key:
+                    kind === 'wrong-key'
+                      ? 'different-receipt'
+                      : draft.idempotency_key,
+                },
+        }
+      })
+      const { user } = mount()
+      await prepare(user)
+      await user.click(
+        screen.getByRole('button', { name: 'Confirm and create order' })
+      )
+      const button = await screen.findByRole('button', {
+        name: 'Check order status',
+      })
+      await waitFor(() => expect(button).toBeEnabled())
+      calls.get.mockRejectedValueOnce(new Error('not visible yet'))
+      await user.click(button)
+      await waitFor(() => expect(button).toBeEnabled())
+      expect(sessionStorage.getItem('wallet-usdt-unconfirmed:7')).toContain(
+        calls.post.mock.calls[0][1].idempotency_key
+      )
+      expect(screen.getByText(/Order not confirmed yet/)).toBeVisible()
+      expect(
+        screen.queryByRole('button', { name: 'Review USDT order' })
+      ).not.toBeInTheDocument()
+      expect(calls.post).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  test('reload after a lost response looks up the owner receipt, even with no eligible network and empty recent history', async () => {
     calls.post.mockRejectedValueOnce(new Error('ambiguous'))
     const first = mount()
     await prepare(first.user)
     await first.user.click(
       screen.getByRole('button', { name: 'Confirm and create order' })
     )
-    await screen.findByRole('button', { name: 'Retry the same order' })
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Check order status' })
+      ).toBeEnabled()
+    )
     first.unmount()
     const other = mount(9)
     await other.user.click(
       await screen.findByRole('button', { name: 'Pay with USDT' })
     )
     expect(
-      screen.queryByRole('button', { name: 'Retry the same order' })
+      screen.queryByRole('button', { name: 'Check order status' })
     ).not.toBeInTheDocument()
     other.unmount()
-    calls.post.mockResolvedValueOnce(ok(order))
+    setServer(false)
     const restored = mount()
     await restored.user.click(
-      await screen.findByRole('button', { name: 'Pay with USDT' })
+      await screen.findByRole('button', { name: 'USDT orders' })
     )
     expect(calls.post).toHaveBeenCalledTimes(1)
     await restored.user.click(
-      await screen.findByRole('button', { name: 'Retry the same order' })
+      await screen.findByRole('button', { name: 'Check order status' })
     )
     expect(await screen.findByText('8.099007000000000005 USDT')).toBeVisible()
-    expect(calls.post.mock.calls[1][1]).toEqual(calls.post.mock.calls[0][1])
+    expect(
+      calls.get.mock.calls.some(
+        ([path]) =>
+          path ===
+          `/api/user/usdt/order-requests/${calls.post.mock.calls[0][1].idempotency_key}`
+      )
+    ).toBe(true)
+    expect(calls.post).toHaveBeenCalledTimes(1)
     expect(sessionStorage.getItem('wallet-usdt-unconfirmed:7')).toBeNull()
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
   })
 
   test('when disabled only previously saved orders may be viewed', async () => {

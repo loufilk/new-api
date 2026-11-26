@@ -1,5 +1,8 @@
 {
   "translation": {
+    "Check order status": "Kiểm tra trạng thái đơn",
+    "Order not confirmed yet. Check this request or contact support with its reference. Do not transfer again.": "Đơn chưa được xác nhận. Hãy tra cứu yêu cầu này hoặc cung cấp mã tham chiếu cho bộ phận hỗ trợ. Không chuyển tiền lần nữa.",
+    "Recharge options changed. Review the current network and amount before creating an order.": "Tùy chọn nạp tiền đã thay đổi. Kiểm tra mạng và số tiền hiện tại trước khi tạo đơn.",
     "Only online top-ups on this site qualify for invitation rewards. USDT top-ups do not qualify.": "Chỉ các giao dịch nạp tiền trực tuyến trên trang này mới được tính thưởng giới thiệu. Nạp bằng USDT không được tính.",
     "Invalid USDT recharge configuration": "Cấu hình nạp bằng USDT không hợp lệ",
     "USDT recharge is unavailable": "Tạm thời không thể nạp bằng USDT",

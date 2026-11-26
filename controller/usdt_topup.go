@@ -199,7 +199,7 @@ func USDTCreateOrder(c *gin.Context) {
 	}
 	cfg, err := readUSDTConfig(ctx)
 	client, gatewayErr := loadUSDTPayClient()
-	if err != nil || !cfg.Enabled || gatewayErr != nil || !operation_setting.IsPaymentComplianceConfirmed() {
+	if err != nil || gatewayErr != nil || !operation_setting.IsPaymentComplianceConfirmed() {
 		common.ApiErrorStatus(c, http.StatusServiceUnavailable, errUSDTDisabled)
 		return
 	}
@@ -211,8 +211,8 @@ func USDTCreateOrder(c *gin.Context) {
 	}
 	min, _ := gmpay.ParseAmount(cfg.MinAmount, 2)
 	max, _ := gmpay.ParseAmount(cfg.MaxAmount, 2)
-	if bonusBPS < 0 || amount.LessThan(min) || amount.GreaterThan(max) {
-		common.ApiErrorStatus(c, http.StatusBadRequest, errUSDTIncompatible)
+	if !cfg.Enabled || bonusBPS < 0 || amount.LessThan(min) || amount.GreaterThan(max) {
+		replyUSDTTermsRejected(c, req.RequestKey, req.Network, req.Amount)
 		return
 	}
 	// 1 CNY principal buys 1 displayed wallet unit. Bonus rounds down to fen.
@@ -234,6 +234,11 @@ func USDTCreateOrder(c *gin.Context) {
 	created, err := model.InsertUSDTTopUpOrder(ctx, &order, cfg)
 	if !created || err != nil {
 		prior, findErr := model.FindUSDTTopUpRequest(ctx, uid, req.RequestKey)
+		if errors.Is(err, model.ErrUSDTConflict) && errors.Is(findErr, gorm.ErrRecordNotFound) {
+			// The config changed inside the admission transaction, before INSERT.
+			replyUSDTTermsRejected(c, req.RequestKey, req.Network, req.Amount)
+			return
+		}
 		if findErr != nil {
 			common.ApiErrorStatus(c, http.StatusServiceUnavailable, errUSDTDisabled)
 			return
@@ -290,6 +295,38 @@ func usdtMatchesDetail(order model.USDTTopUpOrder, d gmpay.Snapshot) bool {
 		amount.Equal(decimal.New(order.AmountMinor, -2)) && actual.Equal(quote) &&
 		gmpay.Address(network, d.Address) == order.Address && d.Expires > 0 && d.Expires/1000 == order.ExpiresAt
 }
+
+// This describes only this invocation. A proxy error, insertion failure or
+// conflicting pre-existing request must never advertise a pre-insert refusal.
+func replyUSDTTermsRejected(c *gin.Context, key, network, amount string) {
+	common.ApiErrorStatus(c, http.StatusBadRequest, errUSDTIncompatible, gin.H{
+		"code": "usdt_terms_rejected_before_insert", "idempotency_key": key, "network": network, "amount": amount,
+	})
+}
+
+func GetUSDTOrderRequest(c *gin.Context) {
+	uid, key := c.GetInt("id"), c.Param("key")
+	if uid <= 0 {
+		c.Status(http.StatusUnauthorized)
+		return
+	}
+	if !usdtRequestID.MatchString(key) {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	order, err := model.FindUSDTTopUpRequest(c.Request.Context(), uid, key)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// Not visible yet is not evidence that a timed-out POST never arrived.
+		c.Status(http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusServiceUnavailable, errUSDTDisabled)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"idempotency_key": key, "order": usdtOrderReply(order)})
+}
+
 func replyUSDTExisting(c *gin.Context, o model.USDTTopUpOrder, network string, amount int64) {
 	if o.Network != network || o.AmountMinor != amount {
 		common.ApiErrorStatus(c, http.StatusConflict, model.ErrUSDTConflict)

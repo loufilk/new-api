@@ -30,6 +30,16 @@ receiving address never belongs in New API.
   create calls on the dedicated provider and ledger. Never send another order
   with the same idempotency key; replay only reads its recorded result.
   Never manually complete a USDT order via a fiat order operation.
+- If checkout terms changed before admission, the server echoes an explicit
+  rejection bound to the original request, network and amount. The wallet
+  reloads the current options and asks the customer to review again.
+  A lost response, an unrecognized error or a duplicate is **not** this signal.
+  Check an uncertain request via the signed-in wallet (“Check order status”);
+  this only reads the customer's receipt and does not create a provider order.
+  A 404 does not prove that the original request will never commit. Keep the
+  request reference for support, and do not send another payment. This lookup
+  also works after the payment network is disabled and beyond the latest 50
+  entries shown in history.
 
 ## Provider and staging
 

@@ -1,5 +1,8 @@
 {
   "translation": {
+    "Check order status": "Vérifier le statut de la commande",
+    "Order not confirmed yet. Check this request or contact support with its reference. Do not transfer again.": "Commande non confirmée. Vérifiez cette demande ou communiquez sa référence au support. Ne faites pas de nouveau transfert.",
+    "Recharge options changed. Review the current network and amount before creating an order.": "Les options de recharge ont changé. Vérifiez le réseau et le montant avant de créer une commande.",
     "Only online top-ups on this site qualify for invitation rewards. USDT top-ups do not qualify.": "Seules les recharges en ligne effectuées sur ce site donnent droit aux récompenses de parrainage. Les recharges en USDT sont exclues.",
     "Invalid USDT recharge configuration": "Configuration de recharge USDT non valide",
     "USDT recharge is unavailable": "La recharge en USDT est indisponible",

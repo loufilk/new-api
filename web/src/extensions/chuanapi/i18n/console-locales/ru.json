@@ -1,5 +1,8 @@
 {
   "translation": {
+    "Check order status": "Проверить статус заказа",
+    "Order not confirmed yet. Check this request or contact support with its reference. Do not transfer again.": "Заказ пока не подтверждён. Проверьте этот запрос или сообщите его номер поддержке. Не переводите средства повторно.",
+    "Recharge options changed. Review the current network and amount before creating an order.": "Условия пополнения изменились. Проверьте сеть и сумму перед созданием заказа.",
     "Only online top-ups on this site qualify for invitation rewards. USDT top-ups do not qualify.": "Для получения реферального вознаграждения учитываются только онлайн-пополнения на этом сайте. Пополнения в USDT не учитываются.",
     "Invalid USDT recharge configuration": "Недопустимые настройки пополнения в USDT",
     "USDT recharge is unavailable": "Пополнение в USDT недоступно",

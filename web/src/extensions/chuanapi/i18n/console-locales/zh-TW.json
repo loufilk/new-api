@@ -1,5 +1,8 @@
 {
   "translation": {
+    "Check order status": "查詢訂單狀態",
+    "Order not confirmed yet. Check this request or contact support with its reference. Do not transfer again.": "訂單尚未確認。請查詢此請求，或將請求編號提供給客服。請勿重複轉帳。",
+    "Recharge options changed. Review the current network and amount before creating an order.": "儲值選項已變更。請核對目前的網路和金額，再建立訂單。",
     "Only online top-ups on this site qualify for invitation rewards. USDT top-ups do not qualify.": "僅本站線上儲值可獲得邀請返利，USDT 儲值不參與邀請返利。",
     "Invalid USDT recharge configuration": "USDT 儲值設定無效",
     "USDT recharge is unavailable": "USDT 儲值暫不可用",

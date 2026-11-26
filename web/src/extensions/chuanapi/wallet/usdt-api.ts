@@ -106,12 +106,49 @@ export async function usdtOrder(id: string, signal?: AbortSignal) {
   return order
 }
 
+export class UsdtTermsRejected extends Error {}
+
+export async function lookupUsdtRequest(draft: UsdtDraft) {
+  const { data } = await api.get<unknown>(
+    `${path}/order-requests/${encodeURIComponent(draft.idempotency_key)}`,
+    silent
+  )
+  const receipt = read(
+    z.object({
+      idempotency_key: z.literal(draft.idempotency_key),
+      order: orderSchema,
+    }),
+    data
+  )
+  return checkOrderTerms(receipt.order, draft)
+}
+
 export async function postUsdtOrder(draft: UsdtDraft) {
-  const { data } = await api.post<unknown>(`${path}/orders`, draft, {
+  const { data, status } = await api.post<unknown>(`${path}/orders`, draft, {
     ...silent,
     timeout: 30_000,
+    // Only the application's typed, request-bound admission refusal is final.
+    // All network, upstream/proxy and unrecognized error responses stay unknown.
+    validateStatus: (status) =>
+      (status >= 200 && status < 300) || status === 400,
   })
-  const order = read(orderSchema, data)
+  if (status === 400) {
+    const rejected = z
+      .object({
+        success: z.literal(false),
+        code: z.literal('usdt_terms_rejected_before_insert'),
+        idempotency_key: z.literal(draft.idempotency_key),
+        network: z.literal(draft.network),
+        amount: z.literal(draft.amount),
+      })
+      .safeParse(data)
+    if (rejected.success) throw new UsdtTermsRejected()
+    throw new Error('Unconfirmed USDT order request')
+  }
+  return checkOrderTerms(read(orderSchema, data), draft)
+}
+
+function checkOrderTerms(order: UsdtOrder, draft: UsdtDraft) {
   if (
     order.network !== draft.network ||
     cents(order.amount) !== cents(draft.amount)

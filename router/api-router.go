@@ -161,6 +161,7 @@ func SetApiRouter(router *gin.Engine) extension.RouteScopes {
 				selfRoute.GET("/usdt/options", controller.GetUSDTOptions)
 				selfRoute.GET("/usdt/orders", controller.ListUSDTOrders)
 				selfRoute.GET("/usdt/orders/:id", controller.GetUSDTOrder)
+				selfRoute.GET("/usdt/order-requests/:key", controller.GetUSDTOrderRequest)
 				selfRoute.POST("/usdt/orders", middleware.SessionCookieOriginGuard(), middleware.UserCriticalRateLimit("usdt-recharge"), controller.USDTCreateOrder)
 				selfRoute.GET("/topup/self", controller.GetUserTopUps)
 				selfRoute.GET("/new-user-benefit", controller.GetNewUserBenefit)

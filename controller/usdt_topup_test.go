@@ -106,6 +106,7 @@ func TestUSDTWalletRoutesSettleExactlyOnce(t *testing.T) {
 	mux.GET("/api/user/usdt/options", GetUSDTOptions)
 	mux.POST("/api/user/usdt/orders", USDTCreateOrder)
 	mux.GET("/api/user/usdt/orders/:id", GetUSDTOrder)
+	mux.GET("/api/user/usdt/order-requests/:key", GetUSDTOrderRequest)
 	mux.GET("/api/user/usdt/orders", ListUSDTOrders)
 	mux.POST("/api/user/usdt/notify", USDTNotify)
 	mux.PUT("/api/option/usdt", PutUSDTConfig)
@@ -157,11 +158,30 @@ func TestUSDTWalletRoutesSettleExactlyOnce(t *testing.T) {
 	require.Equal(t, int32(1), created.Load())
 	require.Equal(t, 404, makeReq("GET", "/api/user/usdt/orders/"+id, nil, true).Code)
 	require.Equal(t, 200, makeReq("GET", "/api/user/usdt/orders", nil, false).Code)
-	require.Equal(t, 400, makeReq("POST", "/api/user/usdt/orders", map[string]any{"network": "tron", "amount": "100.00", "idempotency_key": "another-sample-wallet-key"}, false).Code)
+	rejected := makeReq("POST", "/api/user/usdt/orders", map[string]any{"network": "tron", "amount": "100.00", "idempotency_key": "another-sample-wallet-key"}, false)
+	require.Equal(t, 400, rejected.Code)
+	var refusal map[string]any
+	require.NoError(t, json.Unmarshal(rejected.Body.Bytes(), &refusal))
+	require.Equal(t, false, refusal["success"])
+	require.Equal(t, "usdt_terms_rejected_before_insert", refusal["code"])
+	require.Equal(t, "another-sample-wallet-key", refusal["idempotency_key"])
+	require.Equal(t, "tron", refusal["network"])
+	require.Equal(t, "100.00", refusal["amount"])
+	require.Equal(t, 404, makeReq("GET", "/api/user/usdt/order-requests/another-sample-wallet-key", nil, false).Code)
+	require.Equal(t, int32(1), created.Load())
 	f["amount"] = "101"
-	require.Equal(t, 409, makeReq("POST", "/api/user/usdt/orders", f, false).Code)
+	conflict := makeReq("POST", "/api/user/usdt/orders", f, false)
+	require.Equal(t, 409, conflict.Code)
+	require.NotContains(t, conflict.Body.String(), "usdt_terms_rejected_before_insert")
 	config.Enabled = false
 	require.Equal(t, false, envelope(makeReq("PUT", "/api/option/usdt", config, false))["enabled"])
+	// An accepted request can be recovered read-only even with new orders disabled.
+	const receiptPath = "/api/user/usdt/order-requests/sample-wallet-order-key"
+	require.Equal(t, 404, makeReq("GET", receiptPath, nil, true).Code)
+	receipt := envelope(makeReq("GET", receiptPath, nil, false))
+	require.Equal(t, "sample-wallet-order-key", receipt["idempotency_key"])
+	require.Equal(t, id, receipt["order"].(map[string]any)["id"])
+	require.Equal(t, int32(1), created.Load())
 	f["amount"] = "100.25"
 	require.Equal(t, id, envelope(makeReq("POST", "/api/user/usdt/orders", f, false))["id"])
 	callback := map[string]any{"pid": "1000", "trade_id": tradeID, "order_id": id, "amount": 100.25, "actual_amount": 14.23, "receive_address": receiver, "token": "USDT",

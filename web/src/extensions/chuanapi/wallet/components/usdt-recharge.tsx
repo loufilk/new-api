@@ -41,12 +41,14 @@ import { toIntlLocale } from '@/i18n/languages'
 import {
   liveUsdtOrder,
   loadUsdtDraft,
+  lookupUsdtRequest,
   payableUsdtOrder,
   postUsdtOrder,
   saveUsdtDraft,
   usdtOptions,
   usdtOrder,
   usdtOrders,
+  UsdtTermsRejected,
   validUsdtAddress,
   withinCnyLimits,
   type UsdtDraft,
@@ -79,6 +81,7 @@ export function UsdtRecharge({
   const [amount, setAmount] = useState(attempt?.amount ?? '')
   const [confirmed, setConfirmed] = useState('')
   const [creating, setCreating] = useState(false)
+  const [termsChanged, setTermsChanged] = useState(false)
   const [reviewing, setReviewing] = useState(false)
   const [selection, setSelection] = useState<string | null>(null)
   const [now, setNow] = useState(Date.now)
@@ -164,7 +167,12 @@ export function UsdtRecharge({
   )
   const selectedNetwork = networks.find((item) => item.id === network)
   const createAllowed =
-    enabled && !!selectedNetwork && validAmount && !creating && orders.isSuccess
+    enabled &&
+    !options.isFetching &&
+    !!selectedNetwork &&
+    validAmount &&
+    !creating &&
+    orders.isSuccess
   const canPay = order && detail.isSuccess && payableUsdtOrder(order, now)
   const address =
     canPay && validUsdtAddress(order.network, order.address)
@@ -181,18 +189,26 @@ export function UsdtRecharge({
     : ''
 
   async function submitOrder() {
-    if (!createAllowed || !selectedNetwork || lock.current) return
+    if (lock.current || (!attempt && !createAllowed)) return
     lock.current = true
     setCreating(true)
     try {
-      const draft: UsdtDraft = attempt ?? {
-        network: selectedNetwork.id,
-        amount: requestedAmount,
-        idempotency_key: crypto.randomUUID(),
+      let result: UsdtOrder
+      if (attempt) {
+        // Recovery never creates an order, including after a 404 or a reload.
+        result = await lookupUsdtRequest(attempt)
+      } else {
+        if (!selectedNetwork) return
+        const draft: UsdtDraft = {
+          network: selectedNetwork.id,
+          amount: requestedAmount,
+          idempotency_key: crypto.randomUUID(),
+        }
+        saveUsdtDraft(userId, draft)
+        setAttempt(draft)
+        setTermsChanged(false)
+        result = await postUsdtOrder(draft)
       }
-      saveUsdtDraft(userId, draft)
-      setAttempt(draft)
-      const result = await postUsdtOrder(draft)
       saveUsdtDraft(userId)
       setAttempt(undefined)
       setSelection(result.id)
@@ -207,10 +223,18 @@ export function UsdtRecharge({
         void client.invalidateQueries({ queryKey: ['wallet', 'ledger'] })
         onPaid()
       }
-    } catch {
-      // The order could exist even though the response was lost. The next human
-      // retry retains the original idempotency key and terms.
-      void client.invalidateQueries({ queryKey: ordersKey })
+    } catch (error) {
+      if (!attempt && error instanceof UsdtTermsRejected) {
+        saveUsdtDraft(userId)
+        setAttempt(undefined)
+        setNetwork('')
+        setReviewing(false)
+        setTermsChanged(true)
+        await options.refetch()
+      } else {
+        // Unknown/duplicate outcomes keep the original receipt for lookup.
+        void client.invalidateQueries({ queryKey: ordersKey })
+      }
     } finally {
       lock.current = false
       setCreating(false)
@@ -236,7 +260,9 @@ export function UsdtRecharge({
     }
   }
 
-  if (!enabled && history.length === 0) return null
+  if (!enabled && history.length === 0 && !attempt && !(open && termsChanged)) {
+    return null
+  }
 
   return (
     <section
@@ -271,7 +297,16 @@ export function UsdtRecharge({
               {t('Only transfer USDT on the network shown in the order.')}
             </DialogDescription>
           </DialogHeader>
-          {order ? (
+          {termsChanged && !order && (
+            <Alert>
+              <AlertDescription>
+                {t(
+                  'Recharge options changed. Review the current network and amount before creating an order.'
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+          {order && (
             <div className='min-w-0 space-y-3'>
               <p aria-live='polite' className='font-medium'>
                 {statusLabel(order.status)}
@@ -423,7 +458,7 @@ export function UsdtRecharge({
                 >
                   {t('Refresh status')}
                 </Button>
-                {enabled && (
+                {(enabled || attempt) && (
                   <Button
                     variant='outline'
                     onClick={() => {
@@ -439,138 +474,144 @@ export function UsdtRecharge({
                 )}
               </div>
             </div>
-          ) : (
-            enabled && (
-              <div className='space-y-3'>
-                {attempt && (
+          )}
+          {!order && attempt && (
+            <div className='space-y-3'>
+              <Alert>
+                <AlertDescription>
+                  {t(
+                    'Order not confirmed yet. Check this request or contact support with its reference. Do not transfer again.'
+                  )}
+                </AlertDescription>
+              </Alert>
+              <p className='text-sm'>
+                {networkNames[attempt.network]} · CNY {attempt.amount}
+              </p>
+              <p className='font-mono text-xs break-all'>
+                {attempt.idempotency_key}
+              </p>
+              <Button disabled={creating} onClick={() => void submitOrder()}>
+                {creating && (
+                  <Loader2 className='size-4 animate-spin' aria-hidden='true' />
+                )}
+                {t('Check order status')}
+              </Button>
+            </div>
+          )}
+          {!order && !attempt && enabled && (
+            <div className='space-y-3'>
+              {orders.isError && (
+                <Alert variant='destructive'>
+                  <AlertDescription>
+                    {t(
+                      'Could not load USDT orders. Refresh before creating an order.'
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
+              <div className='grid gap-3 sm:grid-cols-2'>
+                <div className='space-y-1.5'>
+                  <Label htmlFor={`${htmlId}-network`}>
+                    {t('Payment network')}
+                  </Label>
+                  <NativeSelect
+                    id={`${htmlId}-network`}
+                    className='w-full'
+                    value={selectedNetwork?.id ?? ''}
+                    disabled={creating || reviewing}
+                    onChange={(event) =>
+                      setNetwork(
+                        networks.find((item) => item.id === event.target.value)
+                          ?.id ?? ''
+                      )
+                    }
+                  >
+                    <NativeSelectOption value=''>
+                      {t('Select a network')}
+                    </NativeSelectOption>
+                    {networks.map((item) => (
+                      <NativeSelectOption key={item.id} value={item.id}>
+                        {networkNames[item.id]}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                  {selectedNetwork && selectedNetwork.bonus_bps > 0 && (
+                    <p className='text-muted-foreground text-xs'>
+                      {t('Wallet bonus: {{percent}}', {
+                        percent: new Intl.NumberFormat(
+                          toIntlLocale(i18n.resolvedLanguage || i18n.language),
+                          { style: 'percent', maximumFractionDigits: 2 }
+                        ).format(selectedNetwork.bonus_bps / 10000),
+                      })}
+                    </p>
+                  )}
+                </div>
+                <div className='space-y-1.5'>
+                  <Label htmlFor={`${htmlId}-amount`}>
+                    {t('Recharge principal (CNY)')}
+                  </Label>
+                  <Input
+                    id={`${htmlId}-amount`}
+                    inputMode='decimal'
+                    value={amount}
+                    maxLength={15}
+                    aria-invalid={!!amount && !validAmount}
+                    aria-describedby={`${htmlId}-range`}
+                    disabled={creating || reviewing}
+                    onChange={(event) => setAmount(event.target.value)}
+                  />
+                  <p
+                    id={`${htmlId}-range`}
+                    className='text-muted-foreground text-xs'
+                  >
+                    {t('CNY {{min}} to {{max}}; up to two decimal places.', {
+                      min: options.data?.min_amount,
+                      max: options.data?.max_amount,
+                    })}
+                  </p>
+                </div>
+              </div>
+              {reviewing ? (
+                <>
                   <Alert>
                     <AlertDescription>
                       {t(
-                        'The previous order request is unconfirmed. Retry the same request to avoid a duplicate.'
+                        'This only creates an order. No transfer is sent automatically.'
                       )}
                     </AlertDescription>
                   </Alert>
-                )}
-                {orders.isError && (
-                  <Alert variant='destructive'>
-                    <AlertDescription>
-                      {t(
-                        'Could not load USDT orders. Refresh before creating an order.'
-                      )}
-                    </AlertDescription>
-                  </Alert>
-                )}
-                <div className='grid gap-3 sm:grid-cols-2'>
-                  <div className='space-y-1.5'>
-                    <Label htmlFor={`${htmlId}-network`}>
-                      {t('Payment network')}
-                    </Label>
-                    <NativeSelect
-                      id={`${htmlId}-network`}
-                      className='w-full'
-                      value={selectedNetwork?.id ?? ''}
-                      disabled={creating || !!attempt || reviewing}
-                      onChange={(event) =>
-                        setNetwork(
-                          networks.find(
-                            (item) => item.id === event.target.value
-                          )?.id ?? ''
-                        )
-                      }
+                  <div className='grid gap-2 sm:flex sm:justify-end'>
+                    <Button
+                      variant='outline'
+                      disabled={creating}
+                      onClick={() => setReviewing(false)}
                     >
-                      <NativeSelectOption value=''>
-                        {t('Select a network')}
-                      </NativeSelectOption>
-                      {networks.map((item) => (
-                        <NativeSelectOption key={item.id} value={item.id}>
-                          {networkNames[item.id]}
-                        </NativeSelectOption>
-                      ))}
-                    </NativeSelect>
-                    {selectedNetwork && selectedNetwork.bonus_bps > 0 && (
-                      <p className='text-muted-foreground text-xs'>
-                        {t('Wallet bonus: {{percent}}', {
-                          percent: new Intl.NumberFormat(
-                            toIntlLocale(
-                              i18n.resolvedLanguage || i18n.language
-                            ),
-                            { style: 'percent', maximumFractionDigits: 2 }
-                          ).format(selectedNetwork.bonus_bps / 10000),
-                        })}
-                      </p>
-                    )}
-                  </div>
-                  <div className='space-y-1.5'>
-                    <Label htmlFor={`${htmlId}-amount`}>
-                      {t('Recharge principal (CNY)')}
-                    </Label>
-                    <Input
-                      id={`${htmlId}-amount`}
-                      inputMode='decimal'
-                      value={amount}
-                      maxLength={15}
-                      aria-invalid={!!amount && !validAmount}
-                      aria-describedby={`${htmlId}-range`}
-                      disabled={creating || !!attempt || reviewing}
-                      onChange={(event) => setAmount(event.target.value)}
-                    />
-                    <p
-                      id={`${htmlId}-range`}
-                      className='text-muted-foreground text-xs'
+                      {t('Back')}
+                    </Button>
+                    <Button
+                      disabled={!createAllowed}
+                      onClick={() => void submitOrder()}
                     >
-                      {t('CNY {{min}} to {{max}}; up to two decimal places.', {
-                        min: options.data?.min_amount,
-                        max: options.data?.max_amount,
-                      })}
-                    </p>
-                  </div>
-                </div>
-                {reviewing || attempt ? (
-                  <>
-                    <Alert>
-                      <AlertDescription>
-                        {t(
-                          'This only creates an order. No transfer is sent automatically.'
-                        )}
-                      </AlertDescription>
-                    </Alert>
-                    <div className='grid gap-2 sm:flex sm:justify-end'>
-                      {!attempt && (
-                        <Button
-                          variant='outline'
-                          disabled={creating}
-                          onClick={() => setReviewing(false)}
-                        >
-                          {t('Back')}
-                        </Button>
+                      {creating && (
+                        <Loader2
+                          className='size-4 animate-spin'
+                          aria-hidden='true'
+                        />
                       )}
-                      <Button
-                        disabled={!createAllowed}
-                        onClick={() => void submitOrder()}
-                      >
-                        {creating && (
-                          <Loader2
-                            className='size-4 animate-spin'
-                            aria-hidden='true'
-                          />
-                        )}
-                        {attempt && !creating
-                          ? t('Retry the same order')
-                          : t('Confirm and create order')}
-                      </Button>
-                    </div>
-                  </>
-                ) : (
-                  <Button
-                    className='w-full sm:w-auto'
-                    disabled={!createAllowed}
-                    onClick={() => setReviewing(true)}
-                  >
-                    {t('Review USDT order')}
-                  </Button>
-                )}
-              </div>
-            )
+                      {t('Confirm and create order')}
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <Button
+                  className='w-full sm:w-auto'
+                  disabled={!createAllowed}
+                  onClick={() => setReviewing(true)}
+                >
+                  {t('Review USDT order')}
+                </Button>
+              )}
+            </div>
           )}
           <section
             aria-label={t('USDT order history')}
@@ -588,7 +629,7 @@ export function UsdtRecharge({
               </Button>
             </div>
             {orders.isLoading && <p role='status'>{t('Loading...')}</p>}
-            {orders.isSuccess && history.length === 0 && (
+            {orders.isSuccess && history.length === 0 && !attempt && (
               <p className='text-muted-foreground text-sm'>
                 {t('No USDT recharge orders yet.')}
               </p>
