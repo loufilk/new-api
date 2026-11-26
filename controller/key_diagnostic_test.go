@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -262,7 +263,12 @@ func TestKeyDiagnosticPostgresOneConfirmedRequestUsesOwnedKeyAndReplaysReceipt(t
 	assert.Equal(t, 409, post(context.Background(), denied, "192.0.2.4").Code)
 	denied = selection
 	denied.ClientID = uuid.NewString()
-	assert.Equal(t, 429, post(context.Background(), denied, "192.0.2.4").Code, "the current paid call occupies the same owner concurrency slot")
+	busy := post(context.Background(), denied, "192.0.2.4")
+	require.Equal(t, http.StatusTooManyRequests, busy.Code, "the current paid call occupies the same owner concurrency slot")
+	assert.Contains(t, busy.Body.String(), `"limit_reason":"user_active"`)
+	assert.Empty(t, busy.Header().Get("Retry-After"))
+	require.Equal(t, http.StatusNotFound, request(context.Background(), "GET", "/runs/"+denied.ClientID, "", "192.0.2.4", false).Code)
+	assert.EqualValues(t, 1, calls.Load())
 	release.Do(func() { close(allowUpstream) })
 
 	var completed *httptest.ResponseRecorder
@@ -338,6 +344,55 @@ func TestKeyDiagnosticPostgresOneConfirmedRequestUsesOwnedKeyAndReplaysReceipt(t
 	assert.NotContains(t, failed, `"candy_result"`)
 	assert.NotContains(t, failed, "fixture error body")
 	assert.EqualValues(t, 2, calls.Load())
+	// Third saved task is allowed, then a new UUID is refused before there
+	// is anything to poll or charge. Existing receipts remain replayable.
+	forceFailure.Store(false)
+	third := selection
+	third.ClientID = uuid.NewString()
+	require.Equal(t, http.StatusAccepted, post(context.Background(), third, "192.0.2.4").Code)
+	require.Eventually(t, func() bool {
+		get := request(context.Background(), "GET", "/runs/"+third.ClientID, "", "192.0.2.4", false)
+		return get.Code == http.StatusOK && strings.Contains(get.Body.String(), `"status":"completed"`)
+	}, 5*time.Second, 25*time.Millisecond)
+	fourth := selection
+	fourth.ClientID = uuid.NewString()
+	// Keep two new runs and a third expiring in about a minute. A fourth
+	// historical row just inside the window must not determine this wait.
+	now := time.Now().Unix()
+	require.NoError(t, db.Model(&model.ModelTestRun{}).Where("id = ?", run.ID).Update("created_at", now-3540).Error)
+	require.NoError(t, db.Model(&model.ModelTestRun{}).Where("id = ?", legacyRow.ID).Update("created_at", now-3590).Error)
+	limited := post(context.Background(), fourth, "192.0.2.4")
+	require.Equal(t, http.StatusTooManyRequests, limited.Code, limited.Body.String())
+	var reply struct {
+		Success bool
+		Code    string
+		Reason  string `json:"limit_reason"`
+		Seconds int    `json:"retry_after_seconds"`
+	}
+	require.NoError(t, common.Unmarshal(limited.Body.Bytes(), &reply))
+	assert.False(t, reply.Success)
+	assert.Equal(t, "rate_or_concurrency_limit", reply.Code)
+	assert.Equal(t, "hourly", reply.Reason)
+	assert.InDelta(t, 61, reply.Seconds, 3)
+	assert.Equal(t, strconv.Itoa(reply.Seconds), limited.Header().Get("Retry-After"))
+	assert.Equal(t, http.StatusNotFound, request(context.Background(), "GET", "/runs/"+fourth.ClientID, "", "192.0.2.4", false).Code)
+	assert.Equal(t, http.StatusOK, post(context.Background(), third, "192.0.2.4").Code)
+	assert.EqualValues(t, 3, calls.Load())
+
+	// Simulate the sliding window advancing: repeat the refused UUID under
+	// fresh explicit consent, prove only one paid task is ever dispatched.
+	require.NoError(t, db.Model(&model.ModelTestRun{}).Where("id IN ?", []string{run.ID, legacyRow.ID}).Update("created_at", now-3602).Error)
+	require.Equal(t, http.StatusAccepted, post(context.Background(), fourth, "192.0.2.4").Code)
+	require.Eventually(t, func() bool {
+		reply := request(context.Background(), "GET", "/runs/"+fourth.ClientID, "", "192.0.2.4", false)
+		return reply.Code == http.StatusOK && strings.Contains(reply.Body.String(), `"status":"completed"`)
+	}, 5*time.Second, 25*time.Millisecond)
+	assert.Equal(t, http.StatusOK, post(context.Background(), fourth, "192.0.2.4").Code)
+	assert.EqualValues(t, 4, calls.Load())
+	var settlements int64
+	require.NoError(t, db.Model(&model.BillingFinalization{}).Where("request_id = ?", "diag-"+model.KeyDiagnosticRowID(userID, fourth.ClientID)).Count(&settlements).Error)
+	assert.EqualValues(t, 1, settlements)
+
 	common.LogWriterMu.Lock()
 	captured := capturedLogs.String()
 	common.LogWriterMu.Unlock()
@@ -435,4 +490,29 @@ func TestKeyDiagnosticPostgresClaimsNeverRedispatchAfterInterruptedProcess(t *te
 	var billCount int64
 	require.NoError(t, db.Model(&model.BillingFinalization{}).Where("user_id = ?", owner).Count(&billCount).Error)
 	assert.Zero(t, billCount)
+}
+
+func TestKeyDiagnosticPostgresCapacityClearsAndCannotDoubleAdmit(t *testing.T) {
+	db, owner := setupModelTestsPostgres(t)
+	now := time.Now().Unix()
+	for n := 1; n <= 4; n++ {
+		row := model.ModelTestRun{ID: uuid.NewString(), UserID: owner + n, Source: model.KeyDiagnosticSource,
+			Status: model.KeyDiagnosticRunning, CreatedAt: now, ExpiresAt: now + 120}
+		require.NoError(t, db.Create(&row).Error)
+	}
+	id := uuid.NewString()
+	row := model.ModelTestRun{UserID: owner, TokenID: 1, Model: "fixture", BenchmarkID: keyDiagnosticCandyV2, CreatedAt: now, ExpiresAt: now + 30}
+	_, err := model.CreateKeyDiagnosticRun(t.Context(), &row, id)
+	var limit *model.KeyDiagnosticLimit
+	require.ErrorAs(t, err, &limit)
+	assert.ErrorIs(t, err, model.ErrModelTestLimit)
+	assert.Equal(t, "capacity", limit.Reason)
+	assert.Zero(t, limit.RetryAfterSeconds)
+	require.NoError(t, db.Model(&model.ModelTestRun{}).Where("user_id = ?", owner+1).Update("expires_at", now-1).Error)
+	replay, err := model.CreateKeyDiagnosticRun(t.Context(), &row, id)
+	require.NoError(t, err)
+	require.False(t, replay)
+	replay, err = model.CreateKeyDiagnosticRun(t.Context(), &row, id)
+	require.NoError(t, err)
+	require.True(t, replay)
 }

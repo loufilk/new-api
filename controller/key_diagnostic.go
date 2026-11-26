@@ -320,11 +320,12 @@ func SaveKeyDiagnostic(c *gin.Context) {
 		BenchmarkID: admit.question.ID, Assessment: "unassessed", CreatedAt: now.Unix(),
 		ExpiresAt: now.Add(keyDiagnosticAdmissionTTL).Unix(), MaxOutputTokens: admit.question.Limit, RequestID: "diag-" + model.KeyDiagnosticRowID(admit.identity.UserID, admit.input.ClientID)}
 	replayed, err := model.CreateKeyDiagnosticRun(c.Request.Context(), &run, admit.input.ClientID)
+	var limit *model.KeyDiagnosticLimit
 	switch {
 	case errors.Is(err, model.ErrModelTestConflict):
 		keyDiagnosticError(c, 409, "request_id_conflict")
-	case errors.Is(err, model.ErrModelTestLimit):
-		keyDiagnosticError(c, 429, "rate_or_concurrency_limit")
+	case errors.As(err, &limit):
+		keyDiagnosticLimited(c, limit.Reason, limit.RetryAfterSeconds)
 	case errors.Is(err, model.ErrKeyDiagnosticNotAuthorized):
 		keyDiagnosticError(c, 403, "token_unavailable")
 	case err != nil:
@@ -339,6 +340,23 @@ func SaveKeyDiagnostic(c *gin.Context) {
 		}
 		diagnosticResponse(c, http.StatusAccepted, &run)
 	}
+}
+
+// KeyDiagnosticRequestThrottled is called only by this route's pre-save
+// user limiter. Never convert an arbitrary proxy, relay or lookup 429 into
+// a promise that a paid submission wasn't admitted.
+func KeyDiagnosticRequestThrottled(c *gin.Context, retryAfterSeconds int64) {
+	keyDiagnosticLimited(c, "request_rate", retryAfterSeconds)
+}
+
+func keyDiagnosticLimited(c *gin.Context, reason string, retryAfterSeconds int64) {
+	body := gin.H{"success": false, "message": "Key diagnostic request could not be completed",
+		"code": "rate_or_concurrency_limit", "limit_reason": reason}
+	if retryAfterSeconds > 0 {
+		c.Header("Retry-After", strconv.FormatInt(retryAfterSeconds, 10))
+		body["retry_after_seconds"] = retryAfterSeconds
+	}
+	c.AbortWithStatusJSON(http.StatusTooManyRequests, body)
 }
 
 func keyDiagnosticError(c *gin.Context, status int, code string) {

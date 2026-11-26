@@ -128,3 +128,4 @@ export type ApiKeysDialogType =
   | 'batch-delete'
   | 'cc-switch'
   | 'magpie'
+  | 'diagnostic'

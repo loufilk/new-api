@@ -123,23 +123,44 @@ func CreateKeyDiagnosticRun(ctx context.Context, run *ModelTestRun, clientID str
 			return tx.Model(&ModelTestRun{}).Where("expires_at > ? AND (status = ? OR (source = ? AND status = ?))",
 				now, KeyDiagnosticRunning, KeyDiagnosticSource, KeyDiagnosticQueued)
 		}
-		var ownerActive, recent, globalActive int64
+		var ownerActive, globalActive int64
 		if err := active().Where("user_id = ?", run.UserID).Count(&ownerActive).Error; err != nil {
 			return err
 		}
-		if err := tx.Model(&ModelTestRun{}).Where("user_id = ? AND created_at >= ?", run.UserID, now-3600).Count(&recent).Error; err != nil {
+		if ownerActive != 0 {
+			return &KeyDiagnosticLimit{Reason: "user_active"}
+		}
+		// Only the three newest rows matter. Preserve the original inclusive
+		// one-hour limit across all sources. The third newest determines when
+		// a slot opens, even with more historical rows than the current cap.
+		var thirdNewest []int64
+		if err := tx.Model(&ModelTestRun{}).Where("user_id = ? AND created_at >= ?", run.UserID, now-3600).
+			Order("created_at DESC").Offset(2).Limit(1).Pluck("created_at", &thirdNewest).Error; err != nil {
 			return err
+		}
+		if len(thirdNewest) != 0 {
+			return &KeyDiagnosticLimit{Reason: "hourly", RetryAfterSeconds: thirdNewest[0] + 3601 - now}
 		}
 		if err := active().Count(&globalActive).Error; err != nil {
 			return err
 		}
-		if ownerActive != 0 || recent >= 3 || globalActive >= 4 {
-			return ErrModelTestLimit
+		if globalActive >= 4 {
+			return &KeyDiagnosticLimit{Reason: "capacity"}
 		}
 		return tx.Create(run).Error
 	})
 	return
 }
+
+// KeyDiagnosticLimit describes a pre-insert admission refusal, not a
+// running task or an upstream 429. Concurrent work has no fixed end time.
+type KeyDiagnosticLimit struct {
+	Reason            string
+	RetryAfterSeconds int64
+}
+
+func (*KeyDiagnosticLimit) Error() string { return ErrModelTestLimit.Error() }
+func (*KeyDiagnosticLimit) Unwrap() error { return ErrModelTestLimit }
 
 var ErrKeyDiagnosticNotAuthorized = errors.New("key diagnostic authority is no longer current")
 

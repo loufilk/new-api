@@ -25,6 +25,7 @@ import {
   type ExtensionLocaleKey,
 } from '@/extensions'
 
+import { keyDiagnosticTranslations } from './key-diagnostic-translations'
 import {
   INTERFACE_LANGUAGE_OPTIONS,
   normalizeInterfaceLanguage,
@@ -62,11 +63,11 @@ async function loadLocalizedBundle(
     loadExtensionI18nOverride(locale as ExtensionLocaleKey),
   ])
   const core = normalizeBundle(coreModule)
-  if (!extension) return core
   return {
     translation: {
       ...core.translation,
-      ...extension.translation,
+      ...keyDiagnosticTranslations[locale],
+      ...extension?.translation,
     },
   }
 }

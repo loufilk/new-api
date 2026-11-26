@@ -29,7 +29,11 @@ import {
   loadDiagnosticDraft,
   saveDiagnosticDraft,
 } from '../../lib/key-diagnostic'
-import { KeyDiagnosticButton } from '../key-diagnostic-dialog'
+import { ApiKeysProvider } from '../api-keys-provider'
+import {
+  KeyDiagnosticButton,
+  KeyDiagnosticHost,
+} from '../key-diagnostic-dialog'
 import { KeyDiagnosticResult } from '../key-diagnostic-result'
 
 const endpoint = '/api/user/key-diagnostics'
@@ -140,7 +144,10 @@ function setup(tokenId?: number) {
   })
   const component = (
     <QueryClientProvider client={client}>
-      <KeyDiagnosticButton tokenId={tokenId} />
+      <ApiKeysProvider>
+        <KeyDiagnosticButton tokenId={tokenId} />
+        <KeyDiagnosticHost />
+      </ApiKeysProvider>
     </QueryClientProvider>
   )
   const rendered = render(component)
@@ -677,4 +684,131 @@ test('a generation refund does not claim that all charges were refunded', () => 
       'Generation settlement only. Other fees are not confirmed here.'
     )
   ).toBeVisible()
+})
+
+test('a confirmed hourly refusal explains when to retry without starting or replaying a test', async () => {
+  const { user, post, rendered } = setup(9)
+  post.mockRejectedValueOnce({
+    response: {
+      status: 429,
+      data: {
+        success: false,
+        code: 'rate_or_concurrency_limit',
+        limit_reason: 'hourly',
+        retry_after_seconds: 180,
+      },
+    },
+  })
+  await user.click(screen.getByRole('button', { name: 'Key diagnostic' }))
+  await screen.findByDisplayValue('Personal · group-a')
+  await selectModel(user, 'chat-model')
+  await user.click(screen.getByRole('checkbox'))
+  await user.click(screen.getByRole('button', { name: 'Start test' }))
+  expect(await screen.findByText(/hourly test limit/i)).toBeVisible()
+  await screen.findByRole('button', { name: 'New test' })
+  expect(
+    screen.queryByRole('button', { name: 'Retry same request' })
+  ).toBeNull()
+  rendered.unmount()
+  const reopened = setup(9)
+  await reopened.user.click(
+    screen.getByRole('button', { name: 'Key diagnostic' })
+  )
+  expect(await screen.findByText(/hourly test limit/i)).toBeVisible()
+  expect(screen.getByText(/Try again after/)).toBeVisible()
+  await reopened.user.click(
+    await screen.findByRole('button', { name: 'New test' })
+  )
+  expect(screen.getByRole('button', { name: 'Start test' })).toBeDisabled()
+  expect(post).toHaveBeenCalledTimes(1)
+})
+
+test.each([
+  { status: 429, data: { success: false, code: 'rate_or_concurrency_limit' } },
+  {
+    status: 429,
+    data: {
+      success: false,
+      code: 'rate_or_concurrency_limit',
+      limit_reason: 'request_rate',
+    },
+  },
+])(
+  'keeps the original UUID when a retry is rate limited after a lost response',
+  async (error) => {
+    const original = {
+      id: testID,
+      token_id: 9,
+      model: 'chat-model',
+      question: 'candy-logic-v2',
+    } as const
+    saveDiagnosticDraft(51, firstSession, original)
+    const { user, post } = setup(9)
+    post.mockRejectedValueOnce({ response: error })
+    await user.click(screen.getByRole('button', { name: 'Key diagnostic' }))
+    await user.click(
+      await screen.findByRole('button', { name: 'Retry same request' })
+    )
+    await screen.findByText(
+      /test limit was reached|requests were made too quickly/i
+    )
+    expect(loadDiagnosticDraft(51, firstSession)).toMatchObject({
+      ...original,
+      retryStarted: true,
+    })
+    expect(screen.queryByText(/not started or charged/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'New test' })).toBeNull()
+    expect(post).toHaveBeenCalledTimes(1)
+  }
+)
+
+test('a bare edge 429 leaves the first attempt ambiguous', async () => {
+  const { user, post } = setup(9)
+  post.mockRejectedValueOnce({ response: { status: 429, data: '' } })
+  await user.click(screen.getByRole('button', { name: 'Key diagnostic' }))
+  await screen.findByDisplayValue('Personal · group-a')
+  await selectModel(user, 'chat-model')
+  await user.click(screen.getByRole('checkbox'))
+  await user.click(screen.getByRole('button', { name: 'Start test' }))
+  await screen.findByRole('button', { name: 'Retry same request' })
+  expect(screen.queryByRole('button', { name: 'New test' })).toBeNull()
+  expect(loadDiagnosticDraft(51, firstSession)?.state).toBeUndefined()
+  expect(post).toHaveBeenCalledTimes(1)
+})
+
+test('a limited result lookup can recover the paid result by GET without another submission', async () => {
+  const original = {
+    id: testID,
+    token_id: 9,
+    model: 'chat-model',
+    question: 'candy-logic-v2',
+  } as const
+  saveDiagnosticDraft(51, firstSession, original)
+  const { user, get, post } = setup(9)
+  const initial = get.getMockImplementation()
+  if (!initial) throw new Error('Missing route fixture')
+  let limited = true
+  get.mockImplementation(async (url, config) => {
+    if (url !== testRunURL) return initial(url, config)
+    if (limited) throw { response: { status: 429, data: '' } }
+    return ok({
+      ...original,
+      status: 'completed',
+      answer: '21',
+      candy_result: 'correct',
+    })
+  })
+  await user.click(screen.getByRole('button', { name: 'Key diagnostic' }))
+  expect(
+    await screen.findByText(/lookup is temporarily limited/i)
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('button', { name: 'Retry same request' })
+  ).toBeNull()
+  expect(screen.queryByRole('button', { name: 'New test' })).toBeNull()
+  expect(loadDiagnosticDraft(51, firstSession)).toEqual(original)
+  limited = false
+  await user.click(screen.getByRole('button', { name: 'Check result' }))
+  expect(await screen.findByText('Correct answer')).toBeVisible()
+  expect(post).not.toHaveBeenCalled()
 })

@@ -60,7 +60,17 @@ const draft = z.object({
   model: z.string().min(1).max(512),
   question,
 })
+const limitReason = z.enum([
+  'hourly',
+  'user_active',
+  'capacity',
+  'request_rate',
+  'unspecified',
+])
+const limitInfo = z.object({ reason: limitReason, retryAt: safeInt.optional() })
 const pendingDraft = draft.extend({
+  limit: limitInfo.optional(),
+  retryStarted: z.literal(true).optional(),
   state: z.literal('rejected-before-save').optional(),
 })
 const options = z.object({
@@ -234,7 +244,33 @@ export function isDiagnosticConflict(error: unknown): boolean {
   )
 }
 
+// A bare 429 from an edge proxy is not an admission receipt.
+export function diagnosticLimit(
+  error: unknown,
+  receivedAt: number
+): z.infer<typeof limitInfo> | undefined {
+  if (getServerErrorStatus(error) !== 429) return
+  const body = getServerErrorSources(error).find(
+    (value) =>
+      value.success === false && value.code === 'rate_or_concurrency_limit'
+  )
+  if (!body) return
+  const seconds = body.retry_after_seconds
+  const parsed = limitReason.safeParse(body.limit_reason)
+  return {
+    reason: parsed.success ? parsed.data : 'unspecified',
+    retryAt:
+      typeof seconds === 'number' &&
+      Number.isInteger(seconds) &&
+      seconds > 0 &&
+      seconds <= 86400
+        ? receivedAt + seconds * 1000
+        : undefined,
+  }
+}
+
 export function isDiagnosticRejected(error: unknown): boolean {
+  if (diagnosticLimit(error, 0)) return true
   const status = getServerErrorStatus(error)
   // Match only exact HTTP contracts for failures before saving the request.
   return getServerErrorSources(error).some(
@@ -295,21 +331,47 @@ export function saveDiagnosticDraft(
   }
 }
 
+// A second tab can retry while the original POST is still in flight. Record
+// that fact BEFORE sending, so a late rejection cannot retire the shared ID.
+export function markDiagnosticRetry(
+  owner: number,
+  sessionId: string | undefined,
+  attempt: DiagnosticDraft
+): boolean {
+  const key = diagnosticDraftKey(owner, sessionId)
+  if (!key) return false
+  try {
+    const stored = loadDiagnosticDraft(owner, sessionId)
+    if (!stored || stored.state || !matchesDiagnosticRun(stored, attempt)) {
+      return false
+    }
+    localStorage.setItem(key, JSON.stringify({ ...stored, retryStarted: true }))
+    return true
+  } catch {
+    return false
+  }
+}
+
 // Persist only a definitive first-attempt pre-save rejection. A retry error
 // cannot prove an earlier attempt with a lost response was never accepted.
 export function markDiagnosticDraftRejected(
   owner: number,
   sessionId: string | undefined,
-  attempt: DiagnosticDraft
+  attempt: DiagnosticDraft,
+  limit?: z.infer<typeof limitInfo>
 ) {
   const key = diagnosticDraftKey(owner, sessionId)
   if (!key) return
   try {
     const stored = loadDiagnosticDraft(owner, sessionId)
-    if (stored && matchesDiagnosticRun(stored, attempt)) {
+    if (
+      stored &&
+      !stored.retryStarted &&
+      matchesDiagnosticRun(stored, attempt)
+    ) {
       localStorage.setItem(
         key,
-        JSON.stringify({ ...stored, state: 'rejected-before-save' })
+        JSON.stringify({ ...stored, state: 'rejected-before-save', limit })
       )
     }
   } catch {

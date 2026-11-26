@@ -290,3 +290,36 @@ func TestGlobalWebRateLimitCountsFrontendFilesInStaticBucket(t *testing.T) {
 		assert.Equal(t, "1", webCount)
 	})
 }
+
+// A structured rejection is opt-in per route; neither infrastructure failures
+// nor ordinary routes should be mislabelled as a pre-save diagnostic refusal.
+func TestScopedUserLimiterCustomizesAdmissionDenialOnly(t *testing.T) {
+	_, client := useRateLimitMiniRedis(t)
+	old, n, sec := common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration
+	common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration = true, 1, 19
+	t.Cleanup(func() {
+		common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration = old, n, sec
+	})
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) { c.Set("id", 41) })
+	accepted := func(c *gin.Context) { c.Status(http.StatusNoContent) }
+	engine.GET("/limited", UserCriticalRateLimitWithResponse("key-diagnostic", func(c *gin.Context, wait int64) {
+		c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"wait": wait})
+	}), accepted)
+	engine.GET("/ordinary", UserCriticalRateLimit("other"), accepted)
+	get := func(path string) *httptest.ResponseRecorder {
+		return performRateLimitRequest(engine, path, "192.0.2.1:12345")
+	}
+	assert.Equal(t, http.StatusNoContent, get("/limited").Code)
+	limited := get("/limited")
+	assert.Equal(t, http.StatusTooManyRequests, limited.Code)
+	assert.JSONEq(t, `{"wait":19}`, limited.Body.String())
+	assert.Equal(t, http.StatusNoContent, get("/ordinary").Code)
+	ordinary := get("/ordinary")
+	assert.Equal(t, http.StatusTooManyRequests, ordinary.Code)
+	assert.Empty(t, ordinary.Body.String())
+	require.NoError(t, client.Close())
+	failed := get("/limited")
+	assert.Equal(t, http.StatusInternalServerError, failed.Code)
+	assert.Empty(t, failed.Body.String())
+}

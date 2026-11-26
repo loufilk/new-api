@@ -57,7 +57,6 @@ import { API_KEY_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import { isMagpieEligibleKey } from '../lib/magpie-import'
 import type { ApiKey } from '../types'
 import { useApiKeys } from './api-keys-provider'
-import { KeyDiagnosticLauncher } from './key-diagnostic-dialog'
 
 function getServerAddress(): string {
   // Connection info must point API clients at the API origin.
@@ -84,6 +83,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const {
     setOpen,
     setCurrentRow,
+    openDiagnostic,
     triggerRefresh,
     setResolvedKey,
     resolveRealKey,
@@ -93,7 +93,6 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [isTogglingStatus, setIsTogglingStatus] = useState(false)
   const isRealKeyLoading = Boolean(loadingKeys[apiKey.id])
   const owner = useAuthStore((state) => state.auth.user?.id)
-  const [diagnosticOpen, setDiagnosticOpen] = useState(false)
   const moreRef = useRef<HTMLButtonElement>(null)
 
   const toggleLabel = isEnabled ? t('Disable') : t('Enable')
@@ -244,7 +243,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         <DropdownMenuSeparator />
         <DropdownMenuItem
           disabled={!isEnabled || !owner}
-          onClick={() => setDiagnosticOpen(true)}
+          onClick={() => openDiagnostic(moreRef, apiKey.id)}
         >
           {t('Key diagnostic')}
           <DropdownMenuShortcut>
@@ -265,13 +264,6 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuShortcut>
         </DropdownMenuItem>
       </DataTableRowActionMenu>
-      {diagnosticOpen && (
-        <KeyDiagnosticLauncher
-          tokenId={apiKey.id}
-          onClose={() => setDiagnosticOpen(false)}
-          finalFocus={moreRef}
-        />
-      )}
     </div>
   )
 }

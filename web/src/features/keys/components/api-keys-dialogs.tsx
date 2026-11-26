@@ -22,6 +22,7 @@ import { ApiKeysMutateDrawer } from './api-keys-mutate-drawer'
 import { useApiKeys } from './api-keys-provider'
 import { CCSwitchDialog } from './dialogs/cc-switch-dialog'
 import { MagpieImportDialog } from './dialogs/magpie-import-dialog'
+import { KeyDiagnosticHost } from './key-diagnostic-dialog'
 import { KeyGroupHealthPreview } from './key-group-health-preview'
 
 export function ApiKeysDialogs({ draft }: { draft?: MarketKeyDraft }) {
@@ -42,6 +43,7 @@ export function ApiKeysDialogs({ draft }: { draft?: MarketKeyDraft }) {
         previewDetails={KeyGroupHealthPreview}
       />
       <ApiKeysDeleteDialog />
+      <KeyDiagnosticHost />
       <CCSwitchDialog
         open={open === 'cc-switch'}
         onOpenChange={(isOpen) => !isOpen && setOpen(null)}

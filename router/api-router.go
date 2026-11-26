@@ -519,12 +519,14 @@ func registerPlaygroundRoutes(apiRouter *gin.RouterGroup) {
 	apiRouter.GET("/model-tests/settings", middleware.AdminAuth(), controller.RetiredModelTests)
 	apiRouter.PUT("/model-tests/settings", middleware.AdminAuth(), controller.RetiredModelTests)
 
-	diagnostics := apiRouter.Group("/user/key-diagnostics", middleware.DisableCache(), middleware.UserAuth())
-	diagnostics.GET("/options", controller.GetKeyDiagnosticOptions)
-	diagnostics.GET("/keys/:id/models", controller.GetKeyDiagnosticModels)
-	diagnostics.GET("/runs", controller.ListKeyDiagnostics)
-	diagnostics.GET("/runs/:id", controller.GetKeyDiagnostic)
-	diagnostics.POST("/runs", middleware.SessionCookieOriginGuard(), controller.PrepareKeyDiagnostic, middleware.UserCriticalRateLimit("key-diagnostic"), controller.SaveKeyDiagnostic)
+	// A receipt read needs live owner/session checks, not an available routing
+	// catalogue. Only this read surface may skip the group configuration fence.
+	diagnostics := apiRouter.Group("/user/key-diagnostics", middleware.DisableCache())
+	diagnostics.GET("/options", middleware.UserAuth(), controller.GetKeyDiagnosticOptions)
+	diagnostics.GET("/keys/:id/models", middleware.UserAuth(), controller.GetKeyDiagnosticModels)
+	diagnostics.GET("/runs", middleware.ModelTestHistoryAuth(), controller.ListKeyDiagnostics)
+	diagnostics.GET("/runs/:id", middleware.ModelTestHistoryAuth(), controller.GetKeyDiagnostic)
+	diagnostics.POST("/runs", middleware.UserAuth(), middleware.SessionCookieOriginGuard(), controller.PrepareKeyDiagnostic, middleware.UserCriticalRateLimitWithResponse("key-diagnostic", controller.KeyDiagnosticRequestThrottled), controller.SaveKeyDiagnostic)
 	playgroundRoute := apiRouter.Group("/user/playground")
 	playgroundRoute.Use(middleware.UserAuth())
 	{

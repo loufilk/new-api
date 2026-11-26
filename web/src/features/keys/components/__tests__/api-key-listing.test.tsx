@@ -1017,3 +1017,27 @@ it('opens and consumes a catalogue create link, without writing or reopening aft
   })
   expect(post).not.toHaveBeenCalledWith('/api/token/', expect.anything())
 })
+
+it('keeps a diagnostic opened from a row across the table clock tick and outside clicks', async () => {
+  useAuthStore.getState().auth.setUser({ id: 51, username: 'fixture', role: 1 })
+  const timer = vi.spyOn(window, 'setInterval')
+  const { post } = await renderKeysPage(1, {}, true, '/keys/', true)
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Open menu' }))
+  await user.click(
+    await screen.findByRole('menuitem', { name: 'Key diagnostic' })
+  )
+  const dialog = await screen.findByRole('dialog', { name: 'Key diagnostic' })
+  await within(dialog).findByDisplayValue('production · default')
+  const tick = timer.mock.calls.find(([, ms]) => ms === 30_000)?.[0]
+  expect(typeof tick).toBe('function')
+  act(() => {
+    if (typeof tick === 'function') tick()
+  })
+  expect(dialog).toBeVisible()
+  const overlay = document.querySelector('[data-slot="dialog-overlay"]')
+  if (!overlay) throw new Error('Missing dialog backdrop')
+  await user.click(overlay)
+  expect(dialog).toBeVisible()
+  expect(post).not.toHaveBeenCalled()
+})

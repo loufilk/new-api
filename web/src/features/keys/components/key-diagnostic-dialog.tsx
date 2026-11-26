@@ -33,6 +33,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { toIntlLocale } from '@/i18n/languages'
 import { getAuthSessionEpoch } from '@/lib/auth-session'
 import { formatNumber } from '@/lib/format'
+import { getServerErrorStatus } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
@@ -41,6 +42,7 @@ import {
   type ActiveDiagnosticQuestion,
   clearDiagnosticDraft,
   diagnosticInProgress,
+  diagnosticLimit,
   diagnosticQuestionLabels,
   diagnosticStatusLabels,
   isActiveDiagnosticQuestion,
@@ -49,6 +51,7 @@ import {
   isDiagnosticRejected,
   loadDiagnosticDraft,
   markDiagnosticDraftRejected,
+  markDiagnosticRetry,
   matchesDiagnosticRun,
   readDiagnosticHistory,
   readDiagnosticModels,
@@ -57,6 +60,7 @@ import {
   saveDiagnosticDraft,
   submitDiagnostic,
 } from '../lib/key-diagnostic'
+import { useApiKeys } from './api-keys-provider'
 import { KeyDiagnosticResult } from './key-diagnostic-result'
 
 const routingLabels = {
@@ -117,31 +121,25 @@ export function KeyDiagnosticButton(props: {
 }) {
   const { t } = useTranslation()
   const owner = useAuthStore((state) => state.auth.user?.id)
-  const [open, setOpen] = useState(false)
+  const { openDiagnostic } = useApiKeys()
+  const trigger = useRef<HTMLButtonElement>(null)
   return (
-    <>
-      <Button
-        type='button'
-        variant={props.tokenId ? 'ghost' : 'outline'}
-        size={props.tokenId ? 'icon-sm' : 'sm'}
-        title={t('Key diagnostic')}
-        aria-label={t('Key diagnostic')}
-        disabled={props.disabled || !owner}
-        onClick={() => setOpen(true)}
-      >
-        <Brain
-          className='text-violet-600 dark:text-violet-400'
-          aria-hidden='true'
-        />
-        {!props.tokenId && t('Key diagnostic')}
-      </Button>
-      {open && (
-        <KeyDiagnosticLauncher
-          tokenId={props.tokenId}
-          onClose={() => setOpen(false)}
-        />
-      )}
-    </>
+    <Button
+      ref={trigger}
+      type='button'
+      variant={props.tokenId ? 'ghost' : 'outline'}
+      size={props.tokenId ? 'icon-sm' : 'sm'}
+      title={t('Key diagnostic')}
+      aria-label={t('Key diagnostic')}
+      disabled={props.disabled || !owner}
+      onClick={() => openDiagnostic(trigger, props.tokenId)}
+    >
+      <Brain
+        className='text-violet-600 dark:text-violet-400'
+        aria-hidden='true'
+      />
+      {!props.tokenId && t('Key diagnostic')}
+    </Button>
   )
 }
 
@@ -151,7 +149,21 @@ type KeyDiagnosticLauncherProps = {
   finalFocus?: RefObject<HTMLButtonElement | null>
 }
 
-export function KeyDiagnosticLauncher(props: KeyDiagnosticLauncherProps) {
+// The table can replace row renderers on a clock tick, refetch or breakpoint
+// change. Keep both launch paths in one session-scoped host above the table.
+export function KeyDiagnosticHost() {
+  const { diagnostic, setOpen } = useApiKeys()
+  if (!diagnostic) return null
+  return (
+    <KeyDiagnosticLauncher
+      tokenId={diagnostic.tokenId}
+      finalFocus={diagnostic.trigger}
+      onClose={() => setOpen(null)}
+    />
+  )
+}
+
+function KeyDiagnosticLauncher(props: KeyDiagnosticLauncherProps) {
   const owner = useAuthStore((state) => state.auth.user?.id)
   const sessionId = useAuthStore((state) => state.auth.session?.sid)
 
@@ -194,6 +206,7 @@ function KeyDiagnosticDialog(
   const [approved, setApproved] = useState(false)
   const [localError, setLocalError] = useState<'storage' | null>(null)
   const submitting = useRef(false)
+  const [lastLimit, setLastLimit] = useState(draft?.limit)
 
   const options = useQuery({
     queryKey: [...queryNamespace, 'options'],
@@ -250,8 +263,13 @@ function KeyDiagnosticDialog(
     gcTime: 0,
     meta: { errorToast: false },
     onError: (error, { attempt, retry }) => {
-      if (!retry && hasConsentSession() && isDiagnosticRejected(error)) {
-        markDiagnosticDraftRejected(owner, sessionId, attempt)
+      if (!hasConsentSession()) return
+      const limit = diagnosticLimit(error, Date.now())
+      setLastLimit(limit)
+      if (!retry && isDiagnosticRejected(error)) {
+        markDiagnosticDraftRejected(owner, sessionId, attempt, limit)
+        const stored = loadDiagnosticDraft(owner, sessionId)
+        if (stored && matchesDiagnosticRun(stored, attempt)) setDraft(stored)
       }
     },
     onSuccess: (run, { attempt }) => {
@@ -273,8 +291,24 @@ function KeyDiagnosticDialog(
     staleTime: 0,
     gcTime: 0,
     retry: false,
-    refetchInterval: ({ state }) =>
-      state.data && diagnosticInProgress(state.data.status) ? 2500 : false,
+    refetchInterval: ({ state }) => {
+      if (!state.error) {
+        return state.data && diagnosticInProgress(state.data.status)
+          ? 2500
+          : false
+      }
+      // If an acknowledgement or detail read was lost, reconcile briefly by
+      // GET only. No automatic paid POST and no retry storm on access/edge limits.
+      const status = getServerErrorStatus(state.error)
+      if (state.errorUpdateCount >= 4 || submission.isPending) return false
+      if (draft?.state === 'rejected-before-save' && viewId === draft.id) {
+        return false
+      }
+      if (status && status < 500 && !isDiagnosticMissing(state.error)) {
+        return false
+      }
+      return Math.min(2500 * 2 ** (state.errorUpdateCount - 1), 10000)
+    },
     meta: { errorToast: false },
   })
   const found =
@@ -290,7 +324,9 @@ function KeyDiagnosticDialog(
   const run = mismatch ? undefined : found
   const accepted = !!(run && draft && matchesDiagnosticRun(run, draft))
   useEffect(() => {
-    if (accepted && draft) clearDiagnosticDraft(owner, sessionId, draft.id)
+    if (accepted && draft) {
+      clearDiagnosticDraft(owner, sessionId, draft.id)
+    }
   }, [accepted, draft, owner, sessionId])
 
   const conflict =
@@ -311,10 +347,7 @@ function KeyDiagnosticDialog(
     approved &&
     !submission.isPending
   )
-  const knownNotSaved =
-    draft?.state === 'rejected-before-save' ||
-    (submission.variables?.retry === false &&
-      isDiagnosticRejected(submission.error))
+  const knownNotSaved = draft?.state === 'rejected-before-save'
   const rejected = draftWasViewed && missing && knownNotSaved
   const retiredDraft =
     draft && draftWasViewed && !isActiveDiagnosticQuestion(draft.question)
@@ -334,14 +367,43 @@ function KeyDiagnosticDialog(
     draft &&
     draftWasViewed &&
     missing &&
-    !detail.isFetching &&
     !conflict &&
     !rejected &&
     !retiredDraft &&
     !submission.isPending
   )
+  const limit = draftWasViewed ? lastLimit : undefined
+  let limitMessage = ''
+  if (limit) {
+    switch (limit.reason) {
+      case 'hourly':
+        limitMessage = t('Your hourly test limit has been reached.')
+        break
+      case 'user_active':
+        limitMessage = t(
+          'You already have a test in progress. Wait for it to finish.'
+        )
+        break
+      case 'capacity':
+        limitMessage = t('All test slots are busy. Please try again later.')
+        break
+      case 'request_rate':
+        limitMessage = t('Test requests were made too quickly.')
+        break
+      default:
+        limitMessage = t(
+          'The test limit was reached. Wait before trying again.'
+        )
+    }
+  }
   let recoveryMessage = t('Loading...')
-  if (rejected) {
+  if (rejected && limit) {
+    recoveryMessage = t('This test was not started or charged.')
+  } else if (!run && getServerErrorStatus(detail.error) === 429) {
+    recoveryMessage = t(
+      'Result lookup is temporarily limited. Check this ID again later; do not submit another test.'
+    )
+  } else if (rejected) {
     recoveryMessage = t(
       'The server rejected this test before saving it. Review your selection.'
     )
@@ -364,7 +426,7 @@ function KeyDiagnosticDialog(
       submitting.current ||
       !hasConsentSession() ||
       !isActiveDiagnosticQuestion(attempt.question) ||
-      (retry && !canRetry)
+      (retry && (!canRetry || detail.isFetching))
     ) {
       return
     }
@@ -373,10 +435,17 @@ function KeyDiagnosticDialog(
       if (!stored || !matchesDiagnosticRun(stored, attempt)) return
       if (stored.state === 'rejected-before-save') {
         setDraft(stored)
+        setLastLimit(stored.limit)
+        return
+      }
+      if (!markDiagnosticRetry(owner, sessionId, attempt)) {
+        setLocalError('storage')
         return
       }
     }
     submitting.current = true
+    setLocalError(null)
+    setLastLimit(undefined)
     submission.mutate({ attempt, retry })
   }
 
@@ -437,12 +506,14 @@ function KeyDiagnosticDialog(
     setSelection(null)
     setApproved(false)
     setViewId(null)
+    setLastLimit(undefined)
     submission.reset()
   }
 
   return (
     <Dialog
       open
+      disablePointerDismissal
       onOpenChange={(next) => !next && props.onClose()}
       finalFocus={props.finalFocus}
       title={t('Key diagnostic')}
@@ -463,7 +534,12 @@ function KeyDiagnosticDialog(
           )}
           {viewId && !submission.isPending && (
             <>
-              {(!draftWasViewed ||
+              {draft && !draftWasViewed && (
+                <Button variant='outline' onClick={() => setViewId(draft.id)}>
+                  {t('Resume previous test')}
+                </Button>
+              )}
+              {(!draft ||
                 accepted ||
                 conflict ||
                 rejected ||
@@ -480,7 +556,10 @@ function KeyDiagnosticDialog(
                 {t('Check result')}
               </Button>
               {canRetry && draft && (
-                <Button onClick={() => send(draft, true)}>
+                <Button
+                  disabled={detail.isFetching}
+                  onClick={() => send(draft, true)}
+                >
                   {t('Retry same request')}
                 </Button>
               )}
@@ -489,15 +568,15 @@ function KeyDiagnosticDialog(
         </>
       }
     >
+      {localError && (
+        <p role='alert' className='text-destructive text-sm'>
+          {t(
+            'This browser could not save the request for recovery. No test was sent.'
+          )}
+        </p>
+      )}
       {!viewId && (
         <>
-          {localError && (
-            <p role='alert' className='text-destructive text-sm'>
-              {t(
-                'This browser could not save the request for recovery. No test was sent.'
-              )}
-            </p>
-          )}
           {draft && (
             <Button variant='outline' onClick={() => setViewId(draft.id)}>
               {t('Resume previous test')}
@@ -641,9 +720,20 @@ function KeyDiagnosticDialog(
             </p>
           )}
           {!conflict && !run && !submission.isPending && (
-            <p role='status' className='text-sm'>
-              {recoveryMessage}
-            </p>
+            <div role='status' className='space-y-2 text-sm'>
+              {limit && <p>{limitMessage}</p>}
+              {limit?.retryAt && (
+                <p>
+                  {t('Try again after {{time}}.', {
+                    time: new Date(limit.retryAt).toLocaleTimeString(locale),
+                  })}
+                </p>
+              )}
+              <p>{recoveryMessage}</p>
+              <p className='text-muted-foreground text-xs break-all'>
+                {t('Test ID')}: {viewId}
+              </p>
+            </div>
           )}
           {run && <KeyDiagnosticResult run={run} />}
         </>
@@ -674,7 +764,10 @@ function KeyDiagnosticDialog(
               className='w-full justify-between gap-2'
               aria-pressed={viewId === item.id}
               disabled={submission.isPending}
-              onClick={() => setViewId(item.id)}
+              onClick={() => {
+                if (accepted) setDraft(null)
+                setViewId(item.id)
+              }}
             >
               <span className='truncate'>{item.model ?? item.id}</span>
               <span className='text-muted-foreground text-xs'>

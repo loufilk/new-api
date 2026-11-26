@@ -284,13 +284,19 @@ func CriticalRateLimitByScope(scope string) func(c *gin.Context) {
 }
 
 func UserCriticalRateLimit(scope string) func(c *gin.Context) {
+	return UserCriticalRateLimitWithResponse(scope, writeRateLimited)
+}
+
+// UserCriticalRateLimitWithResponse customizes only the response to a known
+// admission denial. Authentication/storage failures retain their own status.
+func UserCriticalRateLimitWithResponse(scope string, onLimit func(*gin.Context, int64)) func(c *gin.Context) {
 	if !common.CriticalRateLimitEnable {
 		return defNext
 	}
-	return userRateLimitFactory(
+	return userRateLimitFactoryWithResponse(
 		common.CriticalRateLimitNum,
 		common.CriticalRateLimitDuration,
-		"UC:"+scope,
+		"UC:"+scope, onLimit,
 	)
 }
 
@@ -306,6 +312,10 @@ func UploadRateLimit() func(c *gin.Context) {
 // instead of client IP, making it resistant to proxy rotation attacks.
 // Must be used AFTER authentication middleware (UserAuth).
 func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c *gin.Context) {
+	return userRateLimitFactoryWithResponse(maxRequestNum, duration, mark, writeRateLimited)
+}
+
+func userRateLimitFactoryWithResponse(maxRequestNum int, duration int64, mark string, onLimit func(*gin.Context, int64)) func(c *gin.Context) {
 	if common.RedisEnabled {
 		return func(c *gin.Context) {
 			userID := c.GetInt("id")
@@ -314,7 +324,7 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 				c.Abort()
 				return
 			}
-			userRedisRateLimiter(c, maxRequestNum, duration, redisUserRateLimitKey(mark, userID))
+			userRedisRateLimiter(c, maxRequestNum, duration, redisUserRateLimitKey(mark, userID), onLimit)
 		}
 	}
 	// It's safe to call multi times.
@@ -328,7 +338,7 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 		}
 		key := fmt.Sprintf("%s:user:%d", mark, userID)
 		if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
-			writeRateLimited(c, duration)
+			onLimit(c, duration)
 			return
 		}
 	}
@@ -336,7 +346,7 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 
 // userRedisRateLimiter is like redisRateLimiter but accepts a pre-built key
 // (to support user-ID-based keys).
-func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key string) {
+func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key string, onLimit func(*gin.Context, int64)) {
 	allowed, _, ttlSeconds, err := redisFixedWindowTake(c.Request.Context(), key, maxRequestNum, duration)
 	if err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("rate limit check failed (key=%s): %v", key, err))
@@ -345,7 +355,7 @@ func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key
 		return
 	}
 	if !allowed {
-		writeRateLimited(c, ttlSeconds)
+		onLimit(c, ttlSeconds)
 	}
 }
 

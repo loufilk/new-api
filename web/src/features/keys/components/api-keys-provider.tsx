@@ -39,6 +39,14 @@ type ApiKeysContextType = {
   open: ApiKeysDialogType | null
   setOpen: (str: ApiKeysDialogType | null) => void
   createDraft: MarketKeyDraft | undefined
+  diagnostic?: {
+    tokenId?: number
+    trigger: React.RefObject<HTMLButtonElement | null>
+  }
+  openDiagnostic: (
+    trigger: React.RefObject<HTMLButtonElement | null>,
+    tokenId?: number
+  ) => void
   openMarketCreate: (draft?: MarketKeyDraft) => void
   currentRow: ApiKey | null
   setCurrentRow: React.Dispatch<React.SetStateAction<ApiKey | null>>
@@ -83,11 +91,17 @@ function SessionApiKeysProvider({
   const [dialog, setDialog] = useDialogState<{
     type: ApiKeysDialogType
     draft?: MarketKeyDraft
+    diagnostic?: ApiKeysContextType['diagnostic']
   }>(null)
   const open = dialog?.type ?? null
   const createDraft = open === 'create' ? dialog?.draft : undefined
   const setOpen = useCallback(
     (type: ApiKeysDialogType | null) => setDialog(type ? { type } : null),
+    [setDialog]
+  )
+  const openDiagnostic: ApiKeysContextType['openDiagnostic'] = useCallback(
+    (trigger, tokenId) =>
+      setDialog({ type: 'diagnostic', diagnostic: { trigger, tokenId } }),
     [setDialog]
   )
   const openMarketCreate = useCallback(
@@ -262,6 +276,8 @@ function SessionApiKeysProvider({
         setOpen,
         createDraft,
         openMarketCreate,
+        diagnostic: dialog?.diagnostic,
+        openDiagnostic,
         currentRow,
         setCurrentRow,
         refreshTrigger,
